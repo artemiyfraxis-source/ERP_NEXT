@@ -12,6 +12,10 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 ## Sibling repos (expected next to this one in `Projects\`)
 - `../SUPPLYMAP` — live GAS system and the **source of domain rules**. Read-only from here: port the
   rules, not the GAS files or the sheet layout. `SUPPLYMAP_SOURCE_REPOSITORY` overrides the path.
+- SUPPLYMAP keeps changing (the owner maintains it in VS Code; this repo is worked on in Claude Desktop).
+  The SessionStart hook `.claude/hooks/supplymap-drift.mjs` prints how many SUPPLYMAP code commits each
+  ported module is behind, plus the latest ones — start a session by checking whether any of them change
+  a rule that is already ported.
 - `../ERP_RECOVERED` — recovered legacy ERP; serves Projects/Calculation through `legacy-bridge.mjs`
   and the contract in `contracts/`. `ERP_RECOVERED_ROOT` overrides the path.
 
