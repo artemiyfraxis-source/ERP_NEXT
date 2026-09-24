@@ -1,0 +1,296 @@
+"""SQLAlchemy persistence adapters for the Procurement bounded context."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    Uuid,
+    and_,
+    or_,
+    select,
+)
+from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+
+from app.shared.identity import Actor
+from app.shared.persistence import (
+    Base,
+    SqlAlchemyAuditRepository,
+    SqlAlchemyOutboxRepository,
+)
+
+from .domain import ProcurementLine, ProcurementStatus
+
+
+class ProcurementLineRow(Base):
+    __tablename__ = "procurement_lines"
+    __table_args__ = (
+        Index("ix_procurement_status_created_id", "status", "created_at", "id"),
+        Index(
+            "ix_procurement_buyer_status_created_id",
+            "buyer_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    source_event_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), unique=True, nullable=False)
+    source_idempotency_key: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False
+    )
+    source_request_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    legacy_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    revision: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    request_date: Mapped[Any] = mapped_column(Date, nullable=False)
+    initiator: Mapped[str] = mapped_column(String(255), nullable=False)
+    department: Mapped[str] = mapped_column(String(255), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    designation: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    project_reference: Mapped[str | None] = mapped_column(String(128), index=True)
+    priority: Mapped[str] = mapped_column(String(64), nullable=False)
+    delivery_point: Mapped[str] = mapped_column(String(512), nullable=False)
+    planned_date: Mapped[Any] = mapped_column(Date, nullable=False)
+    link: Mapped[str | None] = mapped_column(Text)
+    item_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    design_article: Mapped[str | None] = mapped_column(String(512))
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    calculated_name: Mapped[str] = mapped_column(String(1024), nullable=False)
+    calculated_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    calculated_unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    quality_document: Mapped[str] = mapped_column(String(8), nullable=False, server_default="Нет")
+    calculated_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    calculated_price_with_vat: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    calculated_sum: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    buyer_name: Mapped[str | None] = mapped_column(String(255))
+    buyer_department: Mapped[str | None] = mapped_column(String(255))
+    buyer_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    supplier: Mapped[str | None] = mapped_column(String(512))
+    site_name: Mapped[str | None] = mapped_column(String(512))
+    actual_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    actual_unit: Mapped[str | None] = mapped_column(String(32))
+    supplier_request_reference: Mapped[str | None] = mapped_column(Text)
+    expected_arrival: Mapped[Any | None] = mapped_column(Date)
+    invoice_url: Mapped[str | None] = mapped_column(Text)
+    paid_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+
+    __mapper_args__ = {
+        "version_id_col": version,
+        "version_id_generator": False,
+    }
+
+
+def _line_row(line: ProcurementLine) -> ProcurementLineRow:
+    return ProcurementLineRow(
+        id=line.id,
+        source_event_id=line.source_event_id,
+        source_idempotency_key=line.source_idempotency_key,
+        source_request_id=line.source_request_id,
+        legacy_id=line.legacy_id,
+        revision=line.revision,
+        status=line.status.value,
+        version=line.version,
+        created_at=line.created_at,
+        request_date=line.request_date,
+        initiator=line.initiator,
+        department=line.department,
+        task_type=line.task_type,
+        designation=line.designation,
+        project_reference=line.project_reference,
+        priority=line.priority,
+        delivery_point=line.delivery_point,
+        planned_date=line.planned_date,
+        link=line.link,
+        item_type=line.item_type,
+        design_article=line.design_article,
+        category=line.category,
+        calculated_name=line.calculated_name,
+        calculated_quantity=line.calculated_quantity,
+        calculated_unit=line.calculated_unit,
+        quality_document=line.quality_document,
+        calculated_price=line.calculated_price,
+        calculated_price_with_vat=line.calculated_price_with_vat,
+        calculated_sum=line.calculated_sum,
+        buyer_name=line.buyer.name if line.buyer else None,
+        buyer_department=line.buyer.department if line.buyer else None,
+        buyer_id=line.buyer.id if line.buyer else None,
+        supplier=line.supplier,
+        site_name=line.site_name,
+        actual_quantity=line.actual_quantity,
+        actual_unit=line.actual_unit,
+        supplier_request_reference=line.supplier_request_reference,
+        expected_arrival=line.expected_arrival,
+        invoice_url=line.invoice_url,
+        paid_at=line.paid_at,
+    )
+
+
+def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
+    buyer = None
+    if row.buyer_name:
+        buyer = Actor(
+            id=row.buyer_id,
+            name=row.buyer_name,
+            department=row.buyer_department or "",
+        )
+    return ProcurementLine(
+        id=row.id,
+        source_event_id=row.source_event_id,
+        source_idempotency_key=row.source_idempotency_key,
+        source_request_id=row.source_request_id,
+        legacy_id=row.legacy_id,
+        revision=row.revision,
+        status=ProcurementStatus(row.status),
+        version=row.version,
+        created_at=row.created_at,
+        request_date=row.request_date,
+        initiator=row.initiator,
+        department=row.department,
+        task_type=row.task_type,
+        designation=row.designation,
+        project_reference=row.project_reference,
+        priority=row.priority,
+        delivery_point=row.delivery_point,
+        planned_date=row.planned_date,
+        link=row.link,
+        item_type=row.item_type,
+        design_article=row.design_article,
+        category=row.category,
+        calculated_name=row.calculated_name,
+        calculated_quantity=row.calculated_quantity,
+        calculated_unit=row.calculated_unit,
+        quality_document=row.quality_document,
+        calculated_price=row.calculated_price,
+        calculated_price_with_vat=row.calculated_price_with_vat,
+        calculated_sum=row.calculated_sum,
+        buyer=buyer,
+        supplier=row.supplier,
+        site_name=row.site_name,
+        actual_quantity=row.actual_quantity,
+        actual_unit=row.actual_unit,
+        supplier_request_reference=row.supplier_request_reference,
+        expected_arrival=row.expected_arrival,
+        invoice_url=row.invoice_url,
+        paid_at=row.paid_at,
+    )
+
+
+class SqlAlchemyProcurementRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def by_source_idempotency_key(self, key: str) -> ProcurementLine | None:
+        row = self.session.scalar(
+            select(ProcurementLineRow).where(
+                ProcurementLineRow.source_idempotency_key == key
+            )
+        )
+        return _line_domain(row) if row is not None else None
+
+    def get(self, line_id: UUID) -> ProcurementLine | None:
+        row = self.session.get(ProcurementLineRow, line_id)
+        return _line_domain(row) if row is not None else None
+
+    def _after(self, statement, after_id: UUID | None):
+        if after_id is None:
+            return statement
+        cursor = self.session.get(ProcurementLineRow, after_id)
+        if cursor is None:
+            return statement.where(False)
+        return statement.where(
+            or_(
+                ProcurementLineRow.created_at > cursor.created_at,
+                and_(
+                    ProcurementLineRow.created_at == cursor.created_at,
+                    ProcurementLineRow.id > cursor.id,
+                ),
+            )
+        )
+
+    def available(
+        self, limit: int, after_id: UUID | None = None
+    ) -> list[ProcurementLine]:
+        statement = (
+            select(ProcurementLineRow)
+            .where(ProcurementLineRow.status == ProcurementStatus.NEW.value)
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+            .limit(limit)
+        )
+        statement = self._after(statement, after_id)
+        return [_line_domain(row) for row in self.session.scalars(statement)]
+
+    def by_buyer(
+        self, actor: Actor, limit: int, after_id: UUID | None = None
+    ) -> list[ProcurementLine]:
+        statement = (
+            select(ProcurementLineRow)
+            .where(
+                ProcurementLineRow.buyer_id == actor.id,
+                ProcurementLineRow.status.not_in(
+                    [ProcurementStatus.DONE.value, ProcurementStatus.CANCELLED.value]
+                ),
+            )
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+            .limit(limit)
+        )
+        statement = self._after(statement, after_id)
+        return [_line_domain(row) for row in self.session.scalars(statement)]
+
+    def list(self, limit: int = 10_000) -> list[ProcurementLine]:
+        rows = self.session.scalars(
+            select(ProcurementLineRow)
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+            .limit(limit)
+        )
+        return [_line_domain(row) for row in rows]
+
+    def add(self, line: ProcurementLine) -> None:
+        incoming = _line_row(line)
+        stored = self.session.get(ProcurementLineRow, line.id)
+        if stored is None:
+            self.session.add(incoming)
+            return
+        for column in ProcurementLineRow.__table__.columns:
+            if column.name != "id":
+                setattr(stored, column.name, getattr(incoming, column.name))
+
+
+class SqlAlchemyProcurementUnitOfWork:
+    def __init__(self, session_factory: sessionmaker[Session]):
+        self.session_factory = session_factory
+        self.session: Session | None = None
+        self.committed = False
+
+    def __enter__(self) -> SqlAlchemyProcurementUnitOfWork:
+        self.committed = False
+        self.session = self.session_factory()
+        self.procurement = SqlAlchemyProcurementRepository(self.session)
+        self.audit = SqlAlchemyAuditRepository(self.session)
+        self.outbox = SqlAlchemyOutboxRepository(self.session)
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        if self.session is None:
+            return
+        if exc_type is not None or not self.committed:
+            self.session.rollback()
+        self.session.close()
+
+    def commit(self) -> None:
+        if self.session is None:
+            raise RuntimeError("Unit of Work has not been entered")
+        self.session.commit()
+        self.committed = True

@@ -1,0 +1,13 @@
+node_modules/
+.pytest_cache/
+__pycache__/
+backend/.venv/
+backend/.env
+backend/*.db
+backend/*.sqlite*
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+.claude/settings.local.json
+.claude/worktrees/

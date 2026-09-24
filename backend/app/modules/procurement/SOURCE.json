@@ -1,0 +1,22 @@
+{
+  "sourceRef": "feat/techmap-web-generator",
+  "sourceCommit": "83b223ab5cb857692803ef3700a95cd84c387228",
+  "sourceFiles": [
+    "Config.gs",
+    "Portal.gs",
+    "Schema.gs",
+    "SupplierRequest.gs",
+    "Kp.gs",
+    "Invoices.gs"
+  ],
+  "portedInvariants": [
+    "idempotent procurement.requested consumer",
+    "Procurement-owned New status and revision A",
+    "buyer-only take-in-work transition",
+    "buyer ownership of editable facts",
+    "ready status requires supplier delivery point positive actual quantity and unit",
+    "transactional audit and outbox dispatch",
+    "supplier request then invoice then paid-to-in-transit sequence",
+    "paid line emits one receiving.expected snapshot"
+  ]
+}

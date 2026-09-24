@@ -1,0 +1,15 @@
+{
+  "module": "shipping",
+  "owner": "supplymap",
+  "strategy": "native-rewrite",
+  "sourceRef": "a923c9a868d0d1e8620f5a24ff69b161b5cf035b",
+  "sourceCommit": "a923c9a868d0d1e8620f5a24ff69b161b5cf035b",
+  "sources": ["Shipment.gs", "docs/adr/0016-shipments-queue-from-project.md"],
+  "implementedStage": "finished-goods-and-shipment-workflow",
+  "invariants": [
+    "finished-goods-register-is-the-stock-ledger",
+    "requested-and-picked-quantities-are-distinct",
+    "cancellation-returns-picked-goods",
+    "shipment-status-gates-are-server-enforced"
+  ]
+}

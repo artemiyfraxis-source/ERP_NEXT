@@ -1,0 +1,22 @@
+{
+  "sourceRef": "feat/techmap-web-generator",
+  "sourceCommit": "83b223ab5cb857692803ef3700a95cd84c387228",
+  "sourceFiles": [
+    "Staff.gs",
+    "Portal.gs",
+    "Config.gs"
+  ],
+  "portedInvariants": [
+    "server-owned stable employee identity",
+    "role and per-user section access matrix",
+    "user override wins over role access",
+    "inactive user session revocation",
+    "account and client login throttling"
+  ],
+  "intentionalSecurityUpgrades": [
+    "Argon2id password hashes replace fast SHA-256 PIN hashes",
+    "opaque HttpOnly SameSite session cookie replaces localStorage token",
+    "CSRF token required for cookie-authenticated writes",
+    "absolute session lifetime limits sliding renewal"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "module": "audit-jobs-notifications",
+  "owner": "supplymap",
+  "strategy": "native-rewrite",
+  "sourceRef": "a923c9a868d0d1e8620f5a24ff69b161b5cf035b",
+  "sourceCommit": "a923c9a868d0d1e8620f5a24ff69b161b5cf035b",
+  "sources": ["Trace.gs", "OwnerTick.gs", "Triggers.gs", "Notify.gs", "Master.gs"],
+  "invariants": [
+    "audit-is-append-only",
+    "notification-recipient-comes-from-the-session-or-event",
+    "notification-delivery-is-idempotent",
+    "background-failure-does-not-roll-back-business-data",
+    "minute-owner-tick-is-not-recreated"
+  ]
+}

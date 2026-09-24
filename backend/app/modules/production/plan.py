@@ -1,0 +1,311 @@
+"""Pure production-plan rules ported from current SUPPLYMAP ProdPlan.gs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, datetime
+import re
+from typing import Collection, Iterable, Mapping
+from uuid import UUID, uuid4
+
+from .domain import ProductionValidationError
+
+
+PLAN_KINDS = {
+    "note": "Комментарий",
+    "block": "Блокер",
+    "unblock": "Блокер снят",
+    "deadline": "Дедлайн",
+    "stage": "Этап КБ",
+    "tcReview": "Проверка ТК",
+}
+PLAN_BLOCKERS = ("ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА")
+KIT_STAGES = ("Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено")
+TC_REVIEW_VALUES = ("не проверена", "проверена", "с погрешностями")
+PLAN_STAGE_AUTO = "авто"
+_KIT_STAGE_FACTS = ("", "tc", "kit", "work", "stock", "shipped")
+_HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
+
+
+def normalize_project_number(value: object) -> str:
+    normalized = re.sub(r"\s+", "", str(value or "").strip().upper()).translate(_HOMOGLYPHS)
+    if re.fullmatch(r"[1-9]\d*(?:К[А-Я]?|МФ)(?:\.[А-Я]{1,3})?\.?", normalized):
+        return normalized.rstrip(".") + ".1"
+    return normalized
+
+
+MANUAL_TECHCARD_PROJECTS = frozenset(("714К.1", "35К.М.34"))
+
+
+def project_from_purpose(value: object) -> str:
+    purpose = re.sub(r"[\s·,;:\-—]*КБ\s*\d+[\s\S]*$", "", str(value or "").strip(), flags=re.I)
+    token = re.split(r"[\s·,;]+", purpose)[0] if purpose else ""
+    token = re.sub(r"\.\d{3,}$", "", token)
+    return normalize_project_number(token) if token else ""
+
+
+def kit_stage_key(project: object, item_index: object) -> str:
+    return f"{normalize_project_number(project)}|{str(item_index or '').strip().upper()}"
+
+
+def kit_key_from_purpose(value: object) -> str:
+    match = re.match(r"^(.*?)[\s·,;:\-—]*(КБ\s*\d+)", str(value or "").strip(), flags=re.I)
+    if not match:
+        return ""
+    project = re.sub(r"[\s·,;:\-—]+$", "", match[1]).strip()
+    item_index = re.sub(r"\s+", "", match[2]).upper()
+    return kit_stage_key(project, item_index) if project else ""
+
+
+@dataclass(frozen=True)
+class KitStage:
+    item_index: str
+    status: str
+    manual: bool = False
+    review: KitReview | None = None
+
+
+@dataclass(frozen=True)
+class KitReview:
+    value: str
+    text: str = ""
+    who: str = ""
+    occurred_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class KitMark:
+    stage: str | None = None
+    review: KitReview | None = None
+
+
+@dataclass(frozen=True)
+class ProjectStage:
+    status: str
+    kits: tuple[KitStage, ...]
+
+
+def project_stage(
+    project: str,
+    item_indexes: Iterable[str],
+    facts: Mapping[str, Collection[str]],
+    terminal_status: str = "",
+    marks: Mapping[str, KitMark] | None = None,
+) -> ProjectStage:
+    stages: list[tuple[str, int, bool, KitReview | None]] = []
+    marks = marks or {}
+    manual_tc = normalize_project_number(project) in facts.get("tc_project", ())
+    for item_index in item_indexes:
+        key = kit_stage_key(project, item_index)
+        stage_index = len(KIT_STAGES) - 1
+        while stage_index > 0:
+            fact = _KIT_STAGE_FACTS[stage_index]
+            if key in facts.get(fact, ()) or (fact == "tc" and manual_tc):
+                break
+            stage_index -= 1
+        mark = marks.get(key, KitMark())
+        manual_index = KIT_STAGES.index(mark.stage) if mark.stage in KIT_STAGES else -1
+        stages.append((
+            str(item_index).strip().upper(),
+            manual_index if manual_index >= 0 else stage_index,
+            manual_index >= 0,
+            mark.review,
+        ))
+    project_index = min(
+        (stage_index for _, stage_index, _, _ in stages),
+        default=1 if manual_tc else 0,
+    )
+    return ProjectStage(
+        terminal_status or KIT_STAGES[project_index],
+        tuple(KitStage(item_index, KIT_STAGES[index], manual, review) for item_index, index, manual, review in stages),
+    )
+
+
+def supply_bucket(status: object, in_purchase: bool) -> str:
+    normalized = str(status or "").strip().casefold()
+    if normalized == "отменено":
+        return ""
+    if normalized in {"готово", "закрыто"}:
+        return "stock"
+    if normalized in {"в пути", "карантин"}:
+        return "transit"
+    return "buying" if in_purchase else "request"
+
+
+def _date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    match = re.match(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})", str(value or ""))
+    if not match:
+        return None
+    try:
+        return date(int(match[3]), int(match[2]), int(match[1]))
+    except ValueError:
+        return None
+
+
+def days_left(deadline: object, today: date | datetime) -> int | None:
+    parsed = _date(deadline)
+    if parsed is None:
+        return None
+    current = today.date() if isinstance(today, datetime) else today
+    return (parsed - current).days
+
+
+@dataclass(frozen=True)
+class SupplyPosition:
+    project: str
+    bucket: str
+    eta: str = ""
+    customer_supplied: bool = False
+
+
+@dataclass(frozen=True)
+class SupplySummary:
+    total: int = 0
+    stock: int = 0
+    transit: int = 0
+    buying: int = 0
+    request: int = 0
+    customer_supplied: int = 0
+    customer_supplied_stock: int = 0
+    eta: str = ""
+
+
+def summarize_supply(positions: Iterable[SupplyPosition]) -> dict[str, SupplySummary]:
+    counters: dict[str, dict[str, int | str]] = {}
+    for position in positions:
+        if not position.project or not position.bucket:
+            continue
+        project = normalize_project_number(position.project)
+        row = counters.setdefault(project, {
+            "total": 0, "stock": 0, "transit": 0, "buying": 0, "request": 0,
+            "customer_supplied": 0, "customer_supplied_stock": 0, "eta": "",
+        })
+        row["total"] += 1
+        row[position.bucket] += 1
+        if position.customer_supplied:
+            row["customer_supplied"] += 1
+            if position.bucket == "stock":
+                row["customer_supplied_stock"] += 1
+        current_eta = str(row["eta"])
+        if position.bucket != "stock" and (_date(position.eta) or date.min) > (_date(current_eta) or date.min):
+            row["eta"] = position.eta
+    return {project: SupplySummary(**row) for project, row in counters.items()}
+
+
+@dataclass(frozen=True)
+class PlanEvent:
+    project: str
+    occurred_at: datetime
+    who: str
+    kind: str
+    blocker: str = ""
+    text: str = ""
+    deadline: date | None = None
+    item_index: str = ""
+    value: str = ""
+    sequence: int = 0
+    id: UUID = field(default_factory=uuid4)
+
+
+@dataclass(frozen=True)
+class PlanProjectSnapshot:
+    project: str
+    customer: str = ""
+    opened_on: date | None = None
+    deadline: date | None = None
+    status: str = ""
+    terminal: bool = False
+    imported_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ActiveBlocker:
+    type: str
+    text: str
+    since: datetime
+    who: str
+
+
+@dataclass(frozen=True)
+class LastComment:
+    occurred_at: datetime
+    who: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ProjectJournal:
+    blocker: ActiveBlocker | None
+    last: LastComment | None
+    events: tuple[PlanEvent, ...]
+    deadline: date | None = None
+
+
+def summarize_journal(events: Iterable[PlanEvent]) -> dict[str, ProjectJournal]:
+    state: dict[str, dict[str, object]] = {}
+    for event in events:
+        project = normalize_project_number(event.project)
+        if not project:
+            continue
+        row = state.setdefault(project, {"blocker": None, "last": None, "events": [], "deadline": None})
+        row["events"].insert(0, event)
+        if event.kind == PLAN_KINDS["block"]:
+            row["blocker"] = ActiveBlocker(event.blocker, event.text, event.occurred_at, event.who)
+        elif event.kind == PLAN_KINDS["unblock"]:
+            row["blocker"] = None
+        elif event.kind == PLAN_KINDS["deadline"]:
+            row["deadline"] = event.deadline
+        if event.text and event.kind in {
+            PLAN_KINDS["note"], PLAN_KINDS["block"], PLAN_KINDS["unblock"],
+        }:
+            row["last"] = LastComment(event.occurred_at, event.who, event.text)
+    return {
+        project: ProjectJournal(row["blocker"], row["last"], tuple(row["events"]), row["deadline"])
+        for project, row in state.items()
+    }
+
+
+def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
+    marks: dict[str, KitMark] = {}
+    for event in events:
+        if event.kind not in {PLAN_KINDS["stage"], PLAN_KINDS["tcReview"]}:
+            continue
+        key = kit_stage_key(event.project, event.item_index)
+        current = marks.get(key, KitMark())
+        if event.kind == PLAN_KINDS["stage"]:
+            stage = None if event.value == PLAN_STAGE_AUTO else event.value
+            marks[key] = KitMark(stage=stage, review=current.review)
+        else:
+            marks[key] = KitMark(
+                stage=current.stage,
+                review=KitReview(event.value, event.text, event.who, event.occurred_at),
+            )
+    return marks
+
+
+def validate_plan_note(payload: Mapping[str, object], known_projects: Iterable[str]) -> None:
+    known = {normalize_project_number(project) for project in known_projects}
+    project = normalize_project_number(payload.get("project"))
+    kind = str(payload.get("kind") or "")
+    if not project or project not in known:
+        raise ProductionValidationError("Проект не найден в реестре.")
+    if kind not in PLAN_KINDS:
+        raise ProductionValidationError("Неизвестный вид записи.")
+    if kind == "block" and payload.get("blocker") not in PLAN_BLOCKERS:
+        raise ProductionValidationError("Выбери вид блокера.")
+    if kind in {"note", "block"} and not str(payload.get("text") or "").strip():
+        raise ProductionValidationError("Напиши, что происходит.")
+    if kind == "deadline" and _date(payload.get("deadline")) is None:
+        raise ProductionValidationError("Укажи дату дедлайна.")
+    if kind in {"stage", "tcReview"} and not re.match(r"^КБ\d+", str(payload.get("item_index") or "").strip(), flags=re.I):
+        raise ProductionValidationError("Укажи КБ.")
+    if kind == "stage" and payload.get("value") not in (*KIT_STAGES, PLAN_STAGE_AUTO):
+        raise ProductionValidationError("Неизвестный этап.")
+    if kind == "tcReview" and payload.get("value") not in TC_REVIEW_VALUES:
+        raise ProductionValidationError("Неизвестная отметка проверки.")
+    if kind == "tcReview" and payload.get("value") == "с погрешностями" and not str(payload.get("text") or "").strip():
+        raise ProductionValidationError("Напиши, какие погрешности.")

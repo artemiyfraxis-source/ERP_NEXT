@@ -1,0 +1,15 @@
+{
+  "sourceRef": "origin/main",
+  "sourceCommit": "5a039db3d63d6bfdd282a71e73dd9c91d620c504",
+  "sourceFiles": ["Receiving.gs", "Schema.gs", "Config.gs", "DocGen.gs", "SupplierReturn.gs"],
+  "portedInvariants": [
+    "incoming-control order and deterministic verdict",
+    "terminal wrong-item and expiry returns",
+    "document and remediable-defect quarantine",
+    "surplus accepted by factual quantity",
+    "GRN prefix and yearly seven-digit sequence",
+    "accepted and placed line emits one warehouse event",
+    "procurement article follows the receiving line into warehouse stock",
+    "manufacturer series is recorded during incoming control and remains distinct from GRN"
+  ]
+}

@@ -1,0 +1,213 @@
+"""Compose the native production plan from module-owned snapshots and facts."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from typing import Iterable
+
+from app.modules.fulfillment.domain import FulfillmentRequest, FulfillmentStatus
+from app.modules.procurement.domain import ProcurementLine
+from app.modules.production.domain import ProductionStatus, ProductionTask
+from app.modules.production.plan import (
+    PlanEvent,
+    KitMark,
+    KitReview,
+    PlanProjectSnapshot,
+    ProjectJournal,
+    ProjectStage,
+    MANUAL_TECHCARD_PROJECTS,
+    SupplyPosition,
+    SupplySummary,
+    days_left,
+    kit_key_from_purpose,
+    kit_stage_key,
+    normalize_project_number,
+    project_from_purpose,
+    project_stage,
+    summarize_journal,
+    summarize_kit_marks,
+    summarize_supply,
+    supply_bucket,
+)
+from app.modules.requests.domain import Request
+from app.modules.shipping.domain import FinishedGood
+from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
+
+
+def _utc_timestamp(value: datetime) -> float:
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return aware.astimezone(timezone.utc).timestamp()
+
+
+@dataclass(frozen=True)
+class ProjectTaskPlan:
+    tasks: int
+    assigned: int
+    total: int
+    start: datetime | None
+    finish: datetime | None
+
+
+@dataclass(frozen=True)
+class ProductionPlanRow:
+    project: str
+    customer: str
+    opened_on: date | None
+    deadline: date | None
+    days_left: int | None
+    stage: ProjectStage
+    supply: SupplySummary | None
+    plan: ProjectTaskPlan | None
+    journal: ProjectJournal
+
+
+def _project_for_request(request: Request) -> str:
+    return normalize_project_number(request.project_reference) if request.project_reference else project_from_purpose(request.purpose)
+
+
+def _date_text(value: date | None) -> str:
+    return value.strftime("%d.%m.%Y") if value else ""
+
+
+def _supply(
+    requests: Iterable[Request], procurement: Iterable[ProcurementLine],
+) -> dict[str, SupplySummary]:
+    procurement_by_request = {line.source_request_id: line for line in procurement}
+    positions = []
+    for request in requests:
+        project = _project_for_request(request)
+        line = procurement_by_request.get(request.id)
+        status = line.status.value if line else request.status.value
+        eta = line.expected_arrival if line and line.expected_arrival else request.planned_date
+        positions.append(SupplyPosition(
+            project=project,
+            bucket=supply_bucket(status, line is not None),
+            eta=_date_text(eta),
+            customer_supplied=bool(request.link and "давальческ" in request.link.casefold()),
+        ))
+    return summarize_supply(positions)
+
+
+def _task_plan(tasks: Iterable[ProductionTask]) -> dict[str, ProjectTaskPlan]:
+    grouped: dict[str, list[ProductionTask]] = {}
+    for task in tasks:
+        if task.status is ProductionStatus.RUNNING:
+            grouped.setdefault(normalize_project_number(task.project), []).append(task)
+    result = {}
+    for project, project_tasks in grouped.items():
+        operations = [operation for task in project_tasks for operation in task.operations]
+        assigned = [operation for operation in operations if operation.operator_ids]
+        starts = [operation.planned_start for operation in assigned if operation.planned_start]
+        finishes = [operation.planned_finish for operation in assigned if operation.planned_finish]
+        result[project] = ProjectTaskPlan(
+            tasks=len(project_tasks), assigned=len(assigned), total=len(operations),
+            start=min(starts) if starts else None,
+            finish=max(finishes) if finishes else None,
+        )
+    return result
+
+
+def build_production_plan(
+    *,
+    cards: Iterable[ProjectTechcard],
+    tasks: Iterable[ProductionTask],
+    fulfillment: Iterable[FulfillmentRequest],
+    goods: Iterable[FinishedGood],
+    requests: Iterable[Request],
+    procurement: Iterable[ProcurementLine],
+    projects: Iterable[PlanProjectSnapshot],
+    events: Iterable[PlanEvent],
+    today: date,
+) -> tuple[ProductionPlanRow, ...]:
+    cards = tuple(cards)
+    tasks = tuple(tasks)
+    fulfillment = tuple(fulfillment)
+    goods = tuple(goods)
+    events = tuple(events)
+    project_snapshots = {normalize_project_number(item.project): item for item in projects}
+    journal = summarize_journal(events)
+    marks = summarize_kit_marks(events)
+    supply = _supply(requests, procurement)
+    task_plan = _task_plan(tasks)
+
+    cards_by_project: dict[str, list[ProjectTechcard]] = {}
+    for card in cards:
+        cards_by_project.setdefault(normalize_project_number(card.project), []).append(card)
+
+    facts: dict[str, set[str]] = {
+        "tc": set(), "tc_project": set(), "kit": set(), "work": set(),
+        "stock": set(), "shipped": set(),
+    }
+    facts["tc_project"].update(MANUAL_TECHCARD_PROJECTS)
+    for card in cards:
+        if card.status is TechcardStatus.ISSUED:
+            key = kit_stage_key(card.project, card.item_index)
+            facts["tc"].add(key)
+            current = marks.get(key, KitMark())
+            if current.review is None or (
+                current.review.occurred_at is not None
+                and _utc_timestamp(current.review.occurred_at) < _utc_timestamp(card.updated_at)
+            ):
+                marks[key] = KitMark(
+                    stage=current.stage,
+                    review=KitReview("не проверена", "ТК выдана", "генератор", card.updated_at),
+                )
+    picked = {
+        FulfillmentStatus.COMPLETE, FulfillmentStatus.READY, FulfillmentStatus.ISSUED,
+        FulfillmentStatus.RETURNED, FulfillmentStatus.DONE,
+    }
+    for request in fulfillment:
+        if request.status in picked:
+            key = kit_key_from_purpose(request.purpose)
+            if key:
+                facts["kit"].add(key)
+    for task in tasks:
+        if task.status is ProductionStatus.RUNNING:
+            facts["work"].add(kit_stage_key(task.project, task.item))
+    for good in goods:
+        key = kit_stage_key(good.project, good.item_index)
+        need = good.ordered or good.accepted
+        if good.accepted > 0 and good.accepted >= need:
+            facts["stock"].add(key)
+        if good.shipped > 0 and good.shipped >= need:
+            facts["shipped"].add(key)
+
+    rows = []
+    for project in project_snapshots.keys() | cards_by_project.keys():
+        project_cards = cards_by_project.get(project, [])
+        snapshot = project_snapshots.get(project)
+        project_journal = journal.get(project, ProjectJournal(None, None, ()))
+        card_deadlines = [card.deadline for card in project_cards if card.deadline]
+        deadline = (
+            project_journal.deadline
+            or (snapshot.deadline if snapshot else None)
+            or (min(card_deadlines) if card_deadlines else None)
+        )
+        project_goods = [good for good in goods if normalize_project_number(good.project) == project]
+        customer = (snapshot.customer if snapshot else "") or next(
+            (good.customer for good in project_goods if good.customer), "",
+        )
+        opened_on = (
+            snapshot.opened_on if snapshot else min(card.created_at.date() for card in project_cards)
+        )
+        terminal = snapshot.status if snapshot and snapshot.terminal else ""
+        stage = project_stage(
+            project,
+            (card.item_index for card in project_cards),
+            facts,
+            terminal,
+            marks,
+        )
+        rows.append(ProductionPlanRow(
+            project=project, customer=customer, opened_on=opened_on,
+            deadline=deadline, days_left=days_left(deadline, today),
+            stage=stage, supply=supply.get(project), plan=task_plan.get(project),
+            journal=project_journal,
+        ))
+    return tuple(sorted(rows, key=lambda row: (
+        row.journal.blocker is None,
+        row.deadline is None,
+        row.deadline or date.max,
+        row.project,
+    )))

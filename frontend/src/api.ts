@@ -1,0 +1,1087 @@
+export type AccessMode = "view" | "edit";
+export const AUTH_REQUIRED_EVENT = "erp:auth-required";
+
+export interface Principal {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    department: string;
+  };
+  roles: string[];
+  permissions: Record<string, AccessMode>;
+}
+
+export interface RequestSchema {
+  required: string[];
+  purposes: string[];
+  delivery_points: string[];
+  units: string[];
+  categories: string[];
+}
+
+export interface RequestRow {
+  id: string;
+  legacy_id: string;
+  designation: string;
+  status: string;
+  created_at: string;
+  initiator: string;
+  department: string;
+  purpose: string;
+  project_reference: string | null;
+  delivery_point: string;
+  name: string;
+  item_type: string;
+  category: string;
+  quantity: string;
+  unit: string;
+  priority: string;
+  planned_date: string;
+}
+
+export interface ProcurementLine {
+  id: string;
+  legacy_id: string;
+  revision: string;
+  status: string;
+  version: number;
+  request_date: string;
+  initiator: string;
+  department: string;
+  designation: string;
+  project_reference: string | null;
+  priority: string;
+  delivery_point: string;
+  planned_date: string;
+  link: string | null;
+  item_type: string;
+  design_article: string | null;
+  category: string;
+  calculated_name: string;
+  calculated_quantity: string;
+  calculated_unit: string;
+  buyer: string | null;
+  supplier: string | null;
+  site_name: string | null;
+  actual_quantity: string | null;
+  actual_unit: string | null;
+  quality_document: string;
+  supplier_request_reference: string | null;
+  expected_arrival: string | null;
+  invoice_url: string | null;
+  paid_at: string | null;
+}
+
+export interface ReceivingLine {
+  id: string;
+  legacy_id: string;
+  status: string;
+  version: number;
+  warehouse: string;
+  article: string;
+  series: string;
+  name: string;
+  item_type: string;
+  purpose: string;
+  supplier: string;
+  ordered_quantity: string;
+  unit: string;
+  quality_document_required: boolean;
+  shipping_document_url: string | null;
+  quality_document_url: string | null;
+  document_quantity: string | null;
+  fact_quantity: string | null;
+  expiry_date: string | null;
+  disposition: string | null;
+  verdict: string | null;
+  nonconformities: string[];
+  accepted_quantity: string | null;
+  backorder_quantity: string;
+  grn: string | null;
+  package: string;
+  storage_location: string | null;
+  inspector: string | null;
+  warehouse_event_emitted: boolean;
+}
+
+export interface WarehouseLot {
+  id: string;
+  version: number;
+  warehouse: string;
+  grn: string;
+  package: string;
+  article: string;
+  series: string;
+  name: string;
+  item_type: string;
+  purpose: string;
+  unit: string;
+  storage_location: string;
+  inbound: string;
+  written_off: string;
+  reserved: string;
+  balance: string;
+  available: string;
+  source_receiving_ids: string[];
+}
+
+export interface WarehouseArticleInfo {
+  series: string;
+  name: string;
+  item_type: string;
+  source: string;
+}
+
+export interface FulfillmentLot {
+  id: string;
+  warehouse: string;
+  grn: string;
+  package: string;
+  article: string;
+  name: string;
+  unit: string;
+  storage_location: string;
+  available: string;
+}
+
+export interface FulfillmentLine {
+  id: string;
+  requirement_id: string;
+  article: string;
+  name: string;
+  unit: string;
+  requirement: string;
+  reserved: string;
+  issued: string;
+  returned_good: string;
+  defective_returned: string;
+  defective_missing: string;
+  consumed: string;
+  lot: null | {
+    id: string;
+    warehouse: string;
+    grn: string;
+    package: string;
+    storage_location: string;
+  };
+}
+
+export interface FulfillmentRequest {
+  id: string;
+  number: string;
+  version: number;
+  created_at: string;
+  requester: string;
+  purpose: string;
+  deadline: string | null;
+  status: string;
+  handout_location: string | null;
+  return_location: string | null;
+  fully_reserved: boolean;
+  lines: FulfillmentLine[];
+}
+
+export interface ProductionOperator {
+  id: string;
+  name: string;
+  site: string;
+}
+
+export interface ProductionOperation {
+  id: string;
+  position: number;
+  code: string;
+  stage: string;
+  description: string;
+  seconds_per_unit: string;
+  setup_seconds: string;
+  norm_seconds: number;
+  operator_ids: string[];
+  planned_start: string | null;
+  planned_finish: string | null;
+  assigned_by: string | null;
+}
+
+export interface ProductionTask {
+  id: string;
+  number: string;
+  version: number;
+  created_at: string;
+  project: string;
+  item: string;
+  name: string;
+  quantity: number;
+  fulfillment_request_id: string | null;
+  deadline: string | null;
+  status: string;
+  launched_by: string;
+  planned_start: string | null;
+  planned_finish: string | null;
+  assigned: number;
+  operations: ProductionOperation[];
+}
+
+export interface ProductionPlanEvent {
+  id: string;
+  project: string;
+  occurred_at: string;
+  who: string;
+  kind: string;
+  blocker: string;
+  text: string;
+  deadline: string | null;
+  item_index: string;
+  value: string;
+}
+
+export interface ProductionPlanRow {
+  project: string;
+  customer: string;
+  opened_on: string | null;
+  deadline: string | null;
+  days_left: number | null;
+  stage: string;
+  kits: Array<{
+    item_index: string;
+    status: string;
+    manual: boolean;
+    review: null | { value: string; text: string; who: string; occurred_at: string | null };
+  }>;
+  supply: null | {
+    total: number;
+    stock: number;
+    transit: number;
+    buying: number;
+    request: number;
+    customer_supplied: number;
+    customer_supplied_stock: number;
+    eta: string;
+  };
+  plan: null | {
+    tasks: number;
+    assigned: number;
+    total: number;
+    start: string | null;
+    finish: string | null;
+  };
+  blocker: null | { type: string; text: string; since: string; who: string };
+  last: null | { occurred_at: string; who: string; text: string };
+  events: ProductionPlanEvent[];
+}
+
+export interface ProductionPlanResult {
+  blockers: string[];
+  stages: string[];
+  review_values: string[];
+  rows: ProductionPlanRow[];
+}
+
+export interface ProductionAbsence {
+  id?: string;
+  operator_id: string;
+  from_date: string;
+  to_date: string;
+  kind: string;
+}
+
+export interface ProductionShift {
+  weekdays: number[];
+  start: string;
+  finish: string;
+  breaks: [string, string][];
+  effective_hours: string;
+}
+
+export interface ProductionSkill {
+  operator_id: string;
+  operation_code: string;
+  allowed: boolean;
+  stars: number;
+  coefficient: string;
+}
+
+export interface ProductionScheduleVariant {
+  transfer_batch: number;
+  first_ready: string;
+  start: string;
+  finish: string;
+  idle_seconds: number;
+  warnings: string[];
+  operations: Array<{
+    operation_id: string;
+    position: number;
+    operator_ids: string[];
+    start: string;
+    finish: string;
+    automatic: boolean;
+  }>;
+}
+
+export interface ProductionBox {
+  id: string;
+  number: string | null;
+  version: number;
+  task_id: string;
+  operation_id: string;
+  item: string;
+  operation_position: number;
+  operator_id: string;
+  quantity: string;
+  consumed: string;
+  reserved: string;
+  rejected: string;
+  available: string;
+  status: string;
+  created_at: string;
+  closed_at: string | null;
+  closed_by: string | null;
+  confirmed_at: string | null;
+  confirmed_by: string | null;
+  return_reason: string;
+  qc_inspected?: boolean;
+}
+
+export interface ProductionWorkSession {
+  id: string;
+  task_id: string;
+  operation_id: string;
+  operator_id: string;
+  started_at: string;
+  status: string;
+  pause_started_at: string | null;
+  pause_seconds: number;
+}
+
+export interface ProductionMaterialSource {
+  fulfillment_line_id: string;
+  article: string;
+  name: string;
+  unit: string;
+  grn: string;
+  package: string;
+  issued: string;
+  consumed: string;
+  reserved: string;
+  available: string;
+}
+
+export interface FinishedGoodsReadyBox extends ProductionBox {
+  project: string;
+  task_item: string;
+}
+
+export interface ProductionDefect {
+  id: string;
+  number: string;
+  version: number;
+  created_at: string;
+  output_id: string;
+  source_box_id: string;
+  task_id: string;
+  operation_id: string;
+  operator_id: string;
+  quantity: string;
+  character: string;
+  description: string;
+  status: string;
+}
+
+export interface ProductionInstrument {
+  id: string;
+  version: number;
+  inventory_number: string;
+  name: string;
+  instrument_type: string;
+  verification_number: string;
+  verified_at: string;
+  verification_due: string;
+  status: string;
+}
+
+export interface ProductionQcRejection {
+  id: string;
+  box_id: string;
+  box_number: string | null;
+  item: string;
+  inspected_at: string;
+  rejected: number;
+  defect_number: string;
+  defect_character: string;
+  defect_description: string;
+  status: string;
+  decision: null | {
+    id: string;
+    disposition: string;
+    decided_by: string;
+    decided_at: string;
+    act_reference: string;
+  };
+}
+
+export interface ProductionSerial {
+  id: string;
+  serial_number: string;
+  position: number;
+  status: string;
+  current_box_id: string | null;
+  finished_goods_grn: string | null;
+}
+
+export interface GenealogyResult {
+  nodes: Array<{ key: string; kind: string; label: string; details: string }>;
+  edges: Array<{ source: string; target: string; quantity: string; relation: string }>;
+}
+
+export interface FinishedGood {
+  id: string;
+  version: number;
+  project: string;
+  item_index: string;
+  customer: string;
+  article: string;
+  name: string;
+  ordered: string;
+  unit: string;
+  accepted: string;
+  shipped: string;
+  remaining: string;
+  received_at: string | null;
+  grn: string | null;
+  note: string;
+}
+
+export interface ShipmentLine {
+  id: string;
+  good_id: string;
+  project: string;
+  item_index: string;
+  article: string;
+  name: string;
+  requested: string;
+  picked: string;
+  shortage: string;
+  unit: string;
+  grn: string | null;
+}
+
+export interface Shipment {
+  id: string;
+  number: string;
+  version: number;
+  created_at: string;
+  status: string;
+  customer: string;
+  receiver: string;
+  shipping_point: string;
+  contact: string;
+  phone: string;
+  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК";
+  carrier: string;
+  deadline: string | null;
+  upd_type: "ЭДО" | "БУМАГА";
+  upd_number: string;
+  upd_date: string | null;
+  upd_url: string;
+  pl_number: string;
+  dn_number: string;
+  track_number: string;
+  packed_at: string | null;
+  shipped_at: string | null;
+  manager: string;
+  note: string;
+  lines: ShipmentLine[];
+}
+
+export interface ReferencePair {
+  key: string;
+  value: string;
+}
+
+export interface ReferenceMaps {
+  suppliers: ReferencePair[];
+  countries: ReferencePair[];
+}
+
+export type TechOperationTab = "ob" | "op" | "ter" | "coax";
+
+export interface TechOperationRecord {
+  id: string;
+  tab: TechOperationTab;
+  display_text: string;
+  source_sheet: string;
+  fields: Record<string, string>;
+}
+
+export interface TechOperationResult {
+  metadata: null | {
+    schema_version: number;
+    source_updated_at: string | null;
+    imported_at: string;
+    record_count: number;
+  };
+  records: TechOperationRecord[];
+}
+
+export interface ProjectTechcard {
+  id: string;
+  version: number;
+  project: string;
+  item_index: string;
+  product_name: string;
+  source_calculation: string;
+  deadline: string | null;
+  status: "Черновик" | "Выдана";
+  revision: number;
+  document: Record<string, unknown> | null;
+  manual_operation_keys: string[];
+  created_at: string;
+  updated_at: string;
+  issued_at: string | null;
+}
+
+export interface TechcardRevision {
+  id: string;
+  revision: number;
+  reason: string;
+  actor_name: string;
+  occurred_at: string;
+  document: Record<string, unknown>;
+}
+
+export interface OperationCardSummary {
+  id: string;
+  code: string;
+  side: string;
+  title: string;
+  name: string;
+  category: string;
+  steps: number;
+  tooling: number;
+}
+
+export interface OperationCardDetail extends OperationCardSummary {
+  document: {
+    safety: string;
+    defects: string;
+    steps: Array<{ number: string; kind: string; text: string; tolerance: string }>;
+    tooling: Array<{ section: string; number: string; name: string; inventory_number: string; program: string }>;
+  };
+  raw_rows: string[][];
+}
+
+export interface GrapherImportResult {
+  project: { designation: string; name: string };
+  harnesses: Array<{
+    designation: string;
+    quantity: number;
+    pairs: number;
+    warnings: string[];
+    connectors: Array<{ designation: string; part_number: string; terminals: string[] }>;
+    groups: Array<{
+      material: string;
+      length_mm: string | number | null;
+      quantity: number;
+      cores: number;
+      jacket_mm: string | number | null;
+      correction_from_mm: string | number;
+      correction_to_mm: string | number;
+      cut_mm: string | number | null;
+      ends: string[];
+      source_ids: string[];
+      component_id: string;
+      mixed_corrections?: boolean;
+    }>;
+  }>;
+}
+
+export interface NotificationItem {
+  id: string;
+  created_at: string;
+  type: string;
+  reference: string;
+  title: string;
+  body: string;
+  read: boolean;
+}
+
+export interface AuditItem {
+  id: string;
+  aggregate_id: string;
+  event_type: string;
+  actor: string;
+  department: string;
+  occurred_at: string;
+  details: Record<string, unknown>;
+}
+
+export interface OutboxHealth {
+  total: number;
+  published: number;
+  pending: number;
+  dead: number;
+  failures: Array<{
+    id: string;
+    topic: string;
+    attempts: number;
+    error: string;
+    dead: boolean;
+  }>;
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+function cookie(name: string): string {
+  const prefix = `${encodeURIComponent(name)}=`;
+  const item = document.cookie.split("; ").find((part) => part.startsWith(prefix));
+  return item ? decodeURIComponent(item.slice(prefix.length)) : "";
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const method = (init.method ?? "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+    const csrf = cookie("__Host-erp_csrf") || cookie("erp_csrf");
+    if (csrf) headers.set("X-CSRF-Token", csrf);
+  }
+  const response = await fetch(path, { ...init, headers, credentials: "include" });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 401 && path !== "/api/auth/login") {
+      window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+    }
+    throw new ApiError(payload.detail ?? `HTTP ${response.status}`, response.status);
+  }
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
+
+export const identityApi = {
+  me: () => api<Principal>("/api/auth/me"),
+  login: (login: string, password: string) =>
+    api<Principal>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ login, password }),
+    }),
+  logout: () => api<void>("/api/auth/logout", { method: "POST" }),
+};
+
+export const legacyApi = {
+  grant: (scope: "projects" | "calculation") =>
+    api<{ grant: string; expires_at: string; scope: string }>("/api/legacy/grant", {
+      method: "POST",
+      body: JSON.stringify({ scope }),
+    }),
+  exchange: async (base: string, grant: string) => {
+    const endpoint = new URL("/_erp_bridge/exchange", base);
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "X-ERP-Legacy-Grant": grant },
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new ApiError(payload.detail ?? `HTTP ${response.status}`, response.status);
+    }
+    return response.json() as Promise<{ ticket: string }>;
+  },
+};
+
+export const requestsApi = {
+  schema: () => api<RequestSchema>("/api/requests/schema"),
+  list: () => api<{ requests: RequestRow[] }>("/api/requests"),
+  create: (request: Record<string, unknown>, idempotencyKey: string) =>
+    api<{ requests: RequestRow[] }>("/api/requests", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ requests: [request] }),
+    }),
+  handoff: (requestIds: string[]) =>
+    api<{ accepted: unknown[] }>("/api/requests/handoff", {
+      method: "POST",
+      body: JSON.stringify({ request_ids: requestIds }),
+    }),
+};
+
+export const procurementApi = {
+  available: (after?: string) =>
+    api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
+      `/api/procurement/available${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+    ),
+  mine: (after?: string) =>
+    api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
+      `/api/procurement/mine${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+    ),
+  take: (lineIds: string[]) =>
+    api<{ lines: ProcurementLine[] }>("/api/procurement/take", {
+      method: "POST",
+      body: JSON.stringify({ line_ids: lineIds }),
+    }),
+  save: (lineId: string, facts: Record<string, unknown>) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/facts`, {
+      method: "PATCH",
+      body: JSON.stringify(facts),
+    }),
+  sendSupplierRequest: (lineId: string, version: number, reference: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/supplier-request`, {
+      method: "POST",
+      body: JSON.stringify({ version, reference }),
+    }),
+  recordInvoice: (
+    lineId: string,
+    version: number,
+    invoiceUrl: string,
+    expectedArrival: string,
+  ) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/invoice`, {
+      method: "POST",
+      body: JSON.stringify({
+        version,
+        invoice_url: invoiceUrl,
+        expected_arrival: expectedArrival,
+      }),
+    }),
+  markPaid: (lineId: string, version: number) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/paid`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+};
+
+export const receivingApi = {
+  list: (after?: string) =>
+    api<{ lines: ReceivingLine[]; next_cursor: string | null }>(
+      `/api/receiving${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+    ),
+  inspect: (lineId: string, payload: Record<string, unknown>) =>
+    api<{ line: ReceivingLine }>(`/api/receiving/${lineId}/inspect`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  place: (lineId: string, version: number, storageLocation: string) =>
+    api<{ line: ReceivingLine }>(`/api/receiving/${lineId}/place`, {
+      method: "POST",
+      body: JSON.stringify({ version, storage_location: storageLocation }),
+    }),
+};
+
+export const warehouseApi = {
+  list: ({ after, query = "", includeZero = false, warehouse = "" }: {
+    after?: string;
+    query?: string;
+    includeZero?: boolean;
+    warehouse?: string;
+  } = {}) => {
+    const params = new URLSearchParams();
+    if (after) params.set("after", after);
+    if (query.trim()) params.set("q", query.trim());
+    if (includeZero) params.set("zero", "true");
+    if (warehouse) params.set("warehouse", warehouse);
+    const suffix = params.size ? `?${params}` : "";
+    return api<{ lots: WarehouseLot[]; total: number; truncated: number; next_cursor: string | null }>(`/api/stock${suffix}`);
+  },
+  articleInfo: (article: string) => api<{ info: WarehouseArticleInfo | null }>(
+    `/api/stock/article-info?q=${encodeURIComponent(article)}`,
+  ),
+  add: (items: Array<{
+    warehouse: string;
+    article: string;
+    series: string;
+    name: string;
+    item_type: string;
+    purpose: string;
+    unit: string;
+    quantity: string;
+    storage_location: string;
+  }>) => api<{ lots: WarehouseLot[] }>("/api/stock/batches", {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  }),
+  writeOff: (lotId: string, version: number, quantity: string, reason: string) =>
+    api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/writeoff`, {
+      method: "POST",
+      body: JSON.stringify({ version, quantity, reason }),
+    }),
+  editIdentity: (lotId: string, version: number, article: string, name: string, series: string) =>
+    api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/identity`, {
+      method: "PUT",
+      body: JSON.stringify({ version, article, name, series }),
+    }),
+  move: (lotId: string, version: number, storageLocation: string) =>
+    api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/move`, {
+      method: "POST",
+      body: JSON.stringify({ version, storage_location: storageLocation }),
+    }),
+  moveLocation: (warehouse: string, sourceLocation: string, targetLocation: string) =>
+    api<{ lots: WarehouseLot[] }>("/api/stock/locations/move", {
+      method: "POST",
+      body: JSON.stringify({ warehouse, source_location: sourceLocation, target_location: targetLocation }),
+    }),
+};
+
+export const fulfillmentApi = {
+  list: (after?: string) => api<{ requests: FulfillmentRequest[]; next_cursor: string | null }>(
+    `/api/issues${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+  ),
+  lots: () => api<{ lots: FulfillmentLot[] }>("/api/issues/lots"),
+  bind: (requestId: string, lineId: string, version: number, lotId: string) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/bind`, {
+      method: "POST",
+      body: JSON.stringify({ version, lot_id: lotId }),
+    }),
+  unbind: (requestId: string, lineId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/bind`, {
+      method: "DELETE",
+      body: JSON.stringify({ version }),
+    }),
+  ready: (requestId: string, version: number, handoutLocation: string) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/ready`, {
+      method: "POST",
+      body: JSON.stringify({ version, handout_location: handoutLocation }),
+    }),
+  issue: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/issue`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  returned: (requestId: string, version: number, returnLocation: string) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/returned`, {
+      method: "POST",
+      body: JSON.stringify({ version, return_location: returnLocation }),
+    }),
+  completeReturn: (
+    requestId: string,
+    version: number,
+    lines: Array<{
+      line_id: string;
+      returned_good: string;
+      defective_returned: string;
+      defective_missing: string;
+      storage_location: string | null;
+    }>,
+  ) => api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/complete-return`, {
+    method: "POST",
+    body: JSON.stringify({ version, lines }),
+  }),
+  cancel: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+};
+
+export const productionApi = {
+  list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
+  mine: () => api<{ tasks: ProductionTask[] }>("/api/production/my"),
+  operators: () => api<{ operators: ProductionOperator[] }>("/api/production/operators"),
+  calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
+  saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
+    method: "PUT",
+    body: JSON.stringify({ holidays, shift, absences: absences.map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
+  }),
+  skills: () => api<{ skills: ProductionSkill[] }>("/api/production/skills"),
+  saveSkills: (operatorId: string, skills: Omit<ProductionSkill, "operator_id">[]) => api<void>(`/api/production/skills/${operatorId}`, {
+    method: "PUT", body: JSON.stringify({ skills }),
+  }),
+  launch: (idempotencyKey: string, payload: {
+    project: string;
+    item: string;
+    name: string;
+    quantity: number;
+    deadline: string | null;
+    fulfillment_request_id: string | null;
+    operations: Array<{
+      position: number;
+      code: string;
+      stage: string;
+      description: string;
+      seconds_per_unit: string;
+      setup_seconds: string;
+    }>;
+  }) => api<{ task: ProductionTask }>("/api/production/tasks", {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  assign: (taskId: string, operationId: string, version: number, operatorIds: string[], requestedStart: string | null) =>
+    api<{ task: ProductionTask; warnings: string[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/assign`, {
+      method: "POST",
+      body: JSON.stringify({ version, operator_ids: operatorIds, requested_start: requestedStart }),
+    }),
+  cancel: (taskId: string, version: number, cancelled: boolean) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ version, cancelled }),
+      }),
+  schedule: (taskId: string, version: number, replan: boolean, maxCrew: number) =>
+    api<{ variants: ProductionScheduleVariant[] }>(`/api/production/tasks/${taskId}/schedule`, {
+      method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew }),
+    }),
+  applySchedule: (taskId: string, version: number, replan: boolean, maxCrew: number, transferBatch: number) =>
+    api<{ task: ProductionTask; variant: ProductionScheduleVariant }>(`/api/production/tasks/${taskId}/schedule/apply`, {
+      method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew, transfer_batch: transferBatch }),
+    }),
+  execution: () => api<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>("/api/production/my/execution"),
+  inputs: (taskId: string, operationId: string) =>
+    api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs`),
+  boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
+  startWork: (taskId: string, operationId: string, inputs: Array<{ box_id: string; quantity: string }>, materials: Array<{ fulfillment_line_id: string; quantity: string }> = []) =>
+    api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start`, {
+      method: "POST", body: JSON.stringify({ inputs, materials }),
+    }),
+  workAction: (sessionId: string, action: "pause" | "resume" | "cancel") =>
+    api<{ session: ProductionWorkSession }>(`/api/production/work/${sessionId}/${action}`, { method: "POST" }),
+  submitWork: (sessionId: string, goodQuantity: string, defectQuantity: string, defectCharacter = "", defectDescription = "") =>
+    api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit`, {
+      method: "POST", body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
+    }),
+  boxAction: (boxId: string, action: "close" | "reopen" | "confirm", version: number) =>
+    api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/${action}`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  returnBox: (boxId: string, version: number, reason: string) =>
+    api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/return`, {
+      method: "POST", body: JSON.stringify({ version, reason }),
+    }),
+  finishedGoodsReady: () => api<{ boxes: FinishedGoodsReadyBox[] }>("/api/production/finished-goods-ready"),
+  handoff: (boxId: string, version: number, finishedGoodId: string) =>
+    api<{ box: ProductionBox; finished_good: { id: string; version: number; grn: string; accepted: string; remaining: string }; receipt_id: string }>(`/api/production/boxes/${boxId}/handoff`, {
+      method: "POST", body: JSON.stringify({ version, finished_good_id: finishedGoodId }),
+    }),
+  defects: () => api<{ defects: ProductionDefect[] }>("/api/production/defects"),
+  decideDefect: (defectId: string, version: number, disposition: "Доработка" | "Списание" | "Использовать как есть", actReference: string) =>
+    api<{ defect: ProductionDefect; decision_id: string }>(`/api/production/defects/${defectId}/decide`, {
+      method: "POST", body: JSON.stringify({ version, disposition, act_reference: actReference }),
+    }),
+  instruments: () => api<{ instruments: ProductionInstrument[] }>("/api/production/instruments"),
+  qcRejections: () => api<{ rejections: ProductionQcRejection[] }>("/api/production/qc/rejections"),
+  decideQcRejection: (inspectionId: string, disposition: "Доработка" | "Списание" | "Использовать как есть", actReference: string) =>
+    api(`/api/production/qc/rejections/${inspectionId}/decide`, {
+      method: "POST", body: JSON.stringify({ disposition, act_reference: actReference }),
+    }),
+  registerInstrument: (payload: Omit<ProductionInstrument, "id" | "version" | "status">) =>
+    api<{ instrument: ProductionInstrument }>("/api/production/instruments", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  inspectBox: (boxId: string, payload: { version: number; accepted: number; rejected: number; defect_character: string; defect_description: string; instrument_ids: string[] }) =>
+    api<{ box: ProductionBox; inspection_id: string; defect_number: string | null; serials: Array<{ serial_number: string; status: string }> }>(`/api/production/boxes/${boxId}/qc`, {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  serials: (taskId: string) => api<{ serials: ProductionSerial[] }>(`/api/production/tasks/${taskId}/serials`),
+  traceability: (query: string) => api<GenealogyResult>(`/api/production/traceability?q=${encodeURIComponent(query)}`),
+};
+
+export const productionPlanApi = {
+  load: () => api<ProductionPlanResult>("/api/production/plan"),
+  addEvent: (payload: {
+    project: string;
+    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview";
+    blocker?: string;
+    text?: string;
+    deadline?: string | null;
+    item_index?: string;
+    value?: string;
+  }) => api<{ event: ProductionPlanEvent }>("/api/production/plan/events", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+};
+
+export const shippingApi = {
+  goods: () => api<{ goods: FinishedGood[] }>("/api/shipping/goods"),
+  shipments: () => api<{ shipments: Shipment[] }>("/api/shipping/shipments"),
+  registerGood: (payload: Record<string, unknown>) => api<{ good: FinishedGood }>("/api/shipping/goods", {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  accept: (goodId: string, version: number, quantity: string) => api<{ good: FinishedGood }>(`/api/shipping/goods/${goodId}/accept`, {
+    method: "POST", body: JSON.stringify({ version, quantity }),
+  }),
+  create: (payload: Record<string, unknown>) => api<{ shipment: Shipment }>("/api/shipping/shipments", {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  action: (shipmentId: string, action: "pick" | "pack" | "ship" | "close" | "cancel", version: number) =>
+    api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/${action}`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  unpick: (shipmentId: string, version: number, lineId: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/unpick`, {
+    method: "POST", body: JSON.stringify({ version, line_id: lineId }),
+  }),
+  documents: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/documents`, {
+    method: "PUT", body: JSON.stringify(payload),
+  }),
+};
+
+export const referencesApi = {
+  maps: () => api<ReferenceMaps>("/api/references/maps"),
+  saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
+    method: "PUT",
+    body: JSON.stringify(maps),
+  }),
+  techOperations: (tab: TechOperationTab, query = "") => {
+    const params = new URLSearchParams({ tab });
+    if (query.trim()) params.set("q", query.trim());
+    return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
+  },
+};
+
+export const techcardsApi = {
+  list: () => api<{ items: ProjectTechcard[] }>("/api/techcards/projects"),
+  templates: () => api<{
+    metadata: null | { source_commit: string; imported_at: string; template_count: number };
+    items: OperationCardSummary[];
+  }>("/api/techcards/templates"),
+  template: (templateId: string) =>
+    api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`),
+  importGrapher: (filename: string, contentBase64: string) =>
+    api<GrapherImportResult>("/api/techcards/grapher/import", {
+      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components: [] }),
+    }),
+  create: (payload: {
+    project: string;
+    item_index: string;
+    product_name: string;
+    source_calculation: string;
+    deadline: string | null;
+  }) => api<ProjectTechcard>("/api/techcards/projects", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  rebuild: (cardId: string, version: number, document: Record<string, unknown>) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/etk`, {
+      method: "PUT",
+      body: JSON.stringify({ version, document }),
+    }),
+  autoBuild: (cardId: string, version: number, config: Record<string, unknown>) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build`, {
+      method: "POST",
+      body: JSON.stringify({ version, config }),
+    }),
+  issue: (cardId: string, version: number) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/issue`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  revisions: (cardId: string) =>
+    api<{ items: TechcardRevision[] }>(`/api/techcards/projects/${cardId}/revisions`),
+};
+
+export const operationsApi = {
+  notifications: () => api<{ notifications: NotificationItem[]; unread: number }>("/api/notifications"),
+  markRead: (ids: string[] = []) => api<{ unread: number }>("/api/notifications/read", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  }),
+  audit: (eventType = "") => {
+    const params = new URLSearchParams();
+    if (eventType.trim()) params.set("event_type", eventType.trim());
+    return api<{ events: AuditItem[] }>(`/api/operations/audit${params.size ? `?${params}` : ""}`);
+  },
+  outbox: () => api<OutboxHealth>("/api/operations/outbox"),
+};

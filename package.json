@@ -1,0 +1,15 @@
+{
+  "name": "fraxis-erp-next-architecture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync:legacy-contracts": "node scripts/sync-legacy-contracts.mjs",
+    "sync:techcards": "node scripts/sync-techcards.mjs",
+    "sync:techcard-library": "node scripts/sync-techcard-library.mjs",
+    "legacy:bridge": "node legacy-bridge.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:backend": "node scripts/run-backend-tests.mjs",
+    "test:frontend": "npm --prefix frontend run check",
+    "check": "node --check scripts/sync-legacy-contracts.mjs && node --check scripts/sync-techcards.mjs && node --check scripts/sync-techcard-library.mjs && node --check scripts/run-backend-tests.mjs && node --check legacy-bridge.mjs && npm test && npm run test:backend && npm run test:frontend"
+  }
+}

@@ -1,0 +1,1133 @@
+"""SQLAlchemy persistence for production resource planning."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import date, datetime, time
+from decimal import Decimal
+import json
+from uuid import UUID, uuid4
+
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, and_, delete, func, or_, select, text
+from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+
+from app.modules.identity.infrastructure import IdentityUserRow
+from app.modules.fulfillment.domain import FulfillmentStatus
+from app.modules.fulfillment.infrastructure import FulfillmentLineRow, FulfillmentRequestRow
+from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinishedGoodsRepository
+from app.shared.persistence import Base, SqlAlchemyAuditRepository
+
+from .application import Absence, Operator
+from .domain import DEFAULT_SHIFT, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, WorkShift
+from .plan import PlanEvent, PlanProjectSnapshot
+from .genealogy import (
+    BoxConsumptionSnapshot,
+    BoxSnapshot,
+    FinishedReceiptSnapshot,
+    MaterialConsumptionSnapshot,
+    SerialSnapshot,
+    build_genealogy,
+)
+from .traceability import (
+    BoxStatus,
+    ConsumptionEdge,
+    DefectDecision,
+    DefectDisposition,
+    DefectRecord,
+    DefectStatus,
+    FinishedGoodsReceipt,
+    MaterialConsumption,
+    MaterialInput,
+    MaterialSource,
+    InstrumentStatus,
+    MeasurementInstrument,
+    ProductionBox,
+    ProductionOutput,
+    QcDecision,
+    QcInspection,
+    SerialStatus,
+    SerialUnit,
+    WorkInput,
+    WorkSession,
+    WorkStatus,
+    format_box_number,
+)
+
+
+class ProductionTaskRow(Base):
+    __tablename__ = "production_tasks"
+    __table_args__ = (Index("ix_production_status_created_id", "status", "created_at", "id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    number: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    source_idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    item: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(512), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    fulfillment_request_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    launched_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class ProductionOperationRow(Base):
+    __tablename__ = "production_operations"
+    __table_args__ = (
+        Index("ux_production_operation_position", "task_id", "position", unique=True),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    code: Mapped[str] = mapped_column(String(255), nullable=False)
+    stage: Mapped[str] = mapped_column(String(512), nullable=False)
+    description: Mapped[str] = mapped_column(Text(), nullable=False)
+    seconds_per_unit: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    setup_seconds: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    norm_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    planned_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    planned_finish: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    assigned_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class ProductionOperationOperatorRow(Base):
+    __tablename__ = "production_operation_operators"
+
+    operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="CASCADE"), primary_key=True)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ProductionHolidayRow(Base):
+    __tablename__ = "production_holidays"
+    day: Mapped[date] = mapped_column(Date(), primary_key=True)
+
+
+class ProductionAbsenceRow(Base):
+    __tablename__ = "production_absences"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    from_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    to_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class ProductionShiftRow(Base):
+    __tablename__ = "production_shift"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    weekdays: Mapped[str] = mapped_column(String(32), nullable=False)
+    start_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    finish_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    breaks_json: Mapped[str] = mapped_column(Text(), nullable=False)
+    effective_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ProductionOperatorSkillRow(Base):
+    __tablename__ = "production_operator_skills"
+    __table_args__ = (
+        Index("ix_production_operator_skills_code_allowed", "operation_code", "allowed"),
+    )
+    operator_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="CASCADE"), primary_key=True,
+    )
+    operation_code: Mapped[str] = mapped_column(String(255), primary_key=True)
+    allowed: Mapped[bool] = mapped_column(Boolean(), nullable=False)
+    stars: Mapped[int] = mapped_column(Integer, nullable=False)
+    coefficient: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+
+
+class ProductionSequenceRow(Base):
+    __tablename__ = "production_sequences"
+    name: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ProductionPlanProjectRow(Base):
+    __tablename__ = "production_plan_projects"
+
+    project: Mapped[str] = mapped_column(String(255), primary_key=True)
+    customer: Mapped[str] = mapped_column(String(512), nullable=False)
+    opened_on: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    terminal: Mapped[bool] = mapped_column(Boolean(), nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProductionPlanEventRow(Base):
+    __tablename__ = "production_plan_events"
+    __table_args__ = (
+        Index("ix_production_plan_events_project_time", "project", "occurred_at", "id"),
+        Index("ux_production_plan_events_project_sequence", "project", "sequence", unique=True),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    who: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    blocker: Mapped[str] = mapped_column(String(32), nullable=False)
+    text: Mapped[str] = mapped_column(Text(), nullable=False)
+    deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    item_index: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    value: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+
+
+class ProductionBoxRow(Base):
+    __tablename__ = "production_boxes"
+    __table_args__ = (
+        Index("ix_production_boxes_task_status", "task_id", "status"),
+        Index(
+            "ux_production_open_box_operator", "task_id", "operation_id", "operator_id",
+            unique=True, sqlite_where=text("status = 'Открыта'"),
+            postgresql_where=text("status = 'Открыта'"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    number: Mapped[str | None] = mapped_column(String(16), unique=True, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    item: Mapped[str] = mapped_column(String(255), nullable=False)
+    operation_position: Mapped[int] = mapped_column(Integer, nullable=False)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    consumed: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    reserved: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    return_reason: Mapped[str] = mapped_column(Text(), nullable=False)
+    rejected: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, server_default="0")
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class ProductionWorkSessionRow(Base):
+    __tablename__ = "production_work_sessions"
+    __table_args__ = (
+        Index(
+            "ux_production_active_work_operator", "operator_id", unique=True,
+            sqlite_where=text("status IN ('В работе', 'Пауза')"),
+            postgresql_where=text("status IN ('В работе', 'Пауза')"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    pause_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pause_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ProductionWorkInputRow(Base):
+    __tablename__ = "production_work_inputs"
+    session_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_work_sessions.id", ondelete="CASCADE"), primary_key=True)
+    box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), primary_key=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+
+
+class ProductionWorkMaterialInputRow(Base):
+    __tablename__ = "production_work_material_inputs"
+    session_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_work_sessions.id", ondelete="CASCADE"), primary_key=True)
+    fulfillment_line_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("fulfillment_lines.id", ondelete="RESTRICT"), primary_key=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+
+
+class ProductionOutputRow(Base):
+    __tablename__ = "production_outputs"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    session_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_work_sessions.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    pause_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    good_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    defect_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    output_box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    correction_of_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_outputs.id", ondelete="RESTRICT"), nullable=True)
+
+
+class ProductionConsumptionRow(Base):
+    __tablename__ = "production_consumption"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    source_box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    target_box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    output_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_outputs.id", ondelete="RESTRICT"), nullable=False, index=True)
+
+
+class ProductionMaterialConsumptionRow(Base):
+    __tablename__ = "production_material_consumption"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    fulfillment_line_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("fulfillment_lines.id", ondelete="RESTRICT"), nullable=False, index=True)
+    target_box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    output_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_outputs.id", ondelete="RESTRICT"), nullable=False, index=True)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    package: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class ProductionFinishedGoodsReceiptRow(Base):
+    __tablename__ = "production_finished_goods_receipts"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    source_box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    finished_good_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("finished_goods.id", ondelete="RESTRICT"), nullable=False, index=True)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProductionDefectRow(Base):
+    __tablename__ = "production_defects"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    number: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
+    version: Mapped[int] = mapped_column(Integer(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    output_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_outputs.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    source_box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    character: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text(), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class ProductionDefectDecisionRow(Base):
+    __tablename__ = "production_defect_decisions"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    defect_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_defects.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    disposition: Mapped[str] = mapped_column(String(32), nullable=False)
+    decided_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    act_reference: Mapped[str] = mapped_column(Text(), nullable=False)
+
+
+class ProductionSerialRow(Base):
+    __tablename__ = "production_serials"
+    __table_args__ = (Index("ux_production_serial_task_position", "task_id", "position", unique=True),)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    serial_number: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(Integer(), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    current_box_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=True, index=True)
+    finished_goods_grn: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
+
+class ProductionInstrumentRow(Base):
+    __tablename__ = "production_instruments"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer(), nullable=False)
+    inventory_number: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    instrument_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    verification_number: Mapped[str] = mapped_column(String(255), nullable=False)
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    verification_due: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class ProductionQcInspectionRow(Base):
+    __tablename__ = "production_qc_inspections"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    inspector_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    inspected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted: Mapped[int] = mapped_column(Integer(), nullable=False)
+    rejected: Mapped[int] = mapped_column(Integer(), nullable=False)
+    defect_number: Mapped[str | None] = mapped_column(String(20), nullable=True, unique=True)
+    defect_character: Mapped[str] = mapped_column(String(255), nullable=False)
+    defect_description: Mapped[str] = mapped_column(Text(), nullable=False)
+
+
+class ProductionQcInstrumentRow(Base):
+    __tablename__ = "production_qc_instruments"
+    inspection_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_qc_inspections.id", ondelete="CASCADE"), primary_key=True)
+    instrument_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_instruments.id", ondelete="RESTRICT"), primary_key=True)
+
+
+class ProductionQcDecisionRow(Base):
+    __tablename__ = "production_qc_decisions"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    inspection_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_qc_inspections.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    disposition: Mapped[str] = mapped_column(String(64), nullable=False)
+    decided_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    act_reference: Mapped[str] = mapped_column(Text(), nullable=False)
+
+
+class SqlAlchemyProductionRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _domain(self, row: ProductionTaskRow) -> ProductionTask:
+        operation_rows = list(self.session.scalars(
+            select(ProductionOperationRow).where(ProductionOperationRow.task_id == row.id).order_by(ProductionOperationRow.position)
+        ))
+        operators = list(self.session.execute(
+            select(ProductionOperationOperatorRow.operation_id, ProductionOperationOperatorRow.operator_id)
+            .join(ProductionOperationRow, ProductionOperationRow.id == ProductionOperationOperatorRow.operation_id)
+            .where(ProductionOperationRow.task_id == row.id)
+            .order_by(ProductionOperationOperatorRow.operation_id, ProductionOperationOperatorRow.position)
+        ))
+        by_operation: dict[UUID, list[UUID]] = {}
+        for operation_id, operator_id in operators:
+            by_operation.setdefault(operation_id, []).append(operator_id)
+        return ProductionTask(
+            id=row.id, number=row.number, source_idempotency_key=row.source_idempotency_key,
+            source_fingerprint=row.source_fingerprint, version=row.version, created_at=row.created_at,
+            project=row.project, item=row.item, name=row.name, quantity=row.quantity,
+            fulfillment_request_id=row.fulfillment_request_id, deadline=row.deadline,
+            status=ProductionStatus(row.status), launched_by=row.launched_by,
+            operations=tuple(ProductionOperation(
+                id=operation.id, position=operation.position, code=operation.code,
+                stage=operation.stage, description=operation.description,
+                seconds_per_unit=operation.seconds_per_unit, setup_seconds=operation.setup_seconds,
+                norm_seconds=operation.norm_seconds,
+                operator_ids=tuple(by_operation.get(operation.id, ())),
+                planned_start=operation.planned_start, planned_finish=operation.planned_finish,
+                assigned_by=operation.assigned_by,
+            ) for operation in operation_rows),
+        )
+
+    def get(self, task_id: UUID) -> ProductionTask | None:
+        row = self.session.get(ProductionTaskRow, task_id)
+        return self._domain(row) if row is not None else None
+
+    def by_idempotency_key(self, key: str) -> ProductionTask | None:
+        row = self.session.scalar(select(ProductionTaskRow).where(ProductionTaskRow.source_idempotency_key == key))
+        return self._domain(row) if row is not None else None
+
+    def list(self, limit: int = 200, after_id: UUID | None = None) -> list[ProductionTask]:
+        statement = select(ProductionTaskRow)
+        if after_id is not None:
+            cursor = self.session.get(ProductionTaskRow, after_id)
+            if cursor is None:
+                return []
+            statement = statement.where(or_(
+                ProductionTaskRow.created_at < cursor.created_at,
+                and_(ProductionTaskRow.created_at == cursor.created_at, ProductionTaskRow.id < cursor.id),
+            ))
+        rows = self.session.scalars(
+            statement.order_by(ProductionTaskRow.created_at.desc(), ProductionTaskRow.id.desc()).limit(limit)
+        )
+        return [self._domain(row) for row in rows]
+
+    def reserve_number(self) -> str:
+        row = self.session.scalar(select(ProductionSequenceRow).where(ProductionSequenceRow.name == "task").with_for_update())
+        if row is None:
+            row = ProductionSequenceRow(name="task", value=0)
+            self.session.add(row)
+            self.session.flush()
+        row.value += 1
+        return f"ПЗ-{row.value:04d}"
+
+    def add(self, task: ProductionTask) -> None:
+        row = self.session.get(ProductionTaskRow, task.id)
+        if row is None:
+            row = ProductionTaskRow(id=task.id)
+            self.session.add(row)
+        row.number = task.number
+        row.source_idempotency_key = task.source_idempotency_key
+        row.source_fingerprint = task.source_fingerprint
+        row.version = task.version
+        row.created_at = task.created_at
+        row.project = task.project
+        row.item = task.item
+        row.name = task.name
+        row.quantity = task.quantity
+        row.fulfillment_request_id = task.fulfillment_request_id
+        row.deadline = task.deadline
+        row.status = task.status.value
+        row.launched_by = task.launched_by
+        self.session.flush()
+        existing = {item.id: item for item in self.session.scalars(select(ProductionOperationRow).where(ProductionOperationRow.task_id == task.id))}
+        for operation in task.operations:
+            stored = existing.pop(operation.id, None)
+            if stored is None:
+                stored = ProductionOperationRow(id=operation.id, task_id=task.id)
+                self.session.add(stored)
+            stored.position = operation.position
+            stored.code = operation.code
+            stored.stage = operation.stage
+            stored.description = operation.description
+            stored.seconds_per_unit = operation.seconds_per_unit
+            stored.setup_seconds = operation.setup_seconds
+            stored.norm_seconds = operation.norm_seconds
+            stored.planned_start = operation.planned_start
+            stored.planned_finish = operation.planned_finish
+            stored.assigned_by = operation.assigned_by
+            self.session.execute(delete(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operation_id == operation.id))
+            for position, operator_id in enumerate(operation.operator_ids):
+                self.session.add(ProductionOperationOperatorRow(operation_id=operation.id, operator_id=operator_id, position=position))
+        for stale in existing.values():
+            self.session.delete(stale)
+
+
+class SqlAlchemyOperatorRepository:
+    def __init__(self, session: Session): self.session = session
+
+    @staticmethod
+    def _domain(row: IdentityUserRow) -> Operator:
+        return Operator(row.id, row.name, row.site or "", row.active)
+
+    def get(self, operator_id: UUID) -> Operator | None:
+        row = self.session.get(IdentityUserRow, operator_id)
+        return self._domain(row) if row is not None else None
+
+    def list(self) -> list[Operator]:
+        rows = self.session.scalars(select(IdentityUserRow).where(IdentityUserRow.active.is_(True)).order_by(IdentityUserRow.name))
+        return [self._domain(row) for row in rows]
+
+
+class SqlAlchemyCalendarRepository:
+    def __init__(self, session: Session): self.session = session
+
+    def holidays(self) -> frozenset[date]:
+        return frozenset(self.session.scalars(select(ProductionHolidayRow.day)))
+
+    def absences(self) -> list[Absence]:
+        rows = self.session.scalars(select(ProductionAbsenceRow).order_by(ProductionAbsenceRow.from_date, ProductionAbsenceRow.id))
+        return [Absence(row.id, row.operator_id, row.from_date, row.to_date, row.kind) for row in rows]
+
+    def shift(self) -> WorkShift:
+        row = self.session.get(ProductionShiftRow, 1)
+        if row is None:
+            return DEFAULT_SHIFT
+        def clock(minutes: int) -> time:
+            return time(minutes // 60, minutes % 60)
+        return WorkShift(
+            weekdays=tuple(int(value) for value in row.weekdays.split(",") if value != ""),
+            start=clock(row.start_minutes), finish=clock(row.finish_minutes),
+            breaks=tuple((clock(start), clock(finish)) for start, finish in json.loads(row.breaks_json)),
+            effective_seconds=row.effective_seconds,
+        )
+
+    def replace(self, holidays: frozenset[date], absences: tuple[Absence, ...], shift: WorkShift) -> None:
+        self.session.execute(delete(ProductionHolidayRow))
+        self.session.execute(delete(ProductionAbsenceRow))
+        self.session.add_all(ProductionHolidayRow(day=day) for day in sorted(holidays))
+        self.session.add_all(ProductionAbsenceRow(
+            id=item.id, operator_id=item.operator_id, from_date=item.from_date,
+            to_date=item.to_date, kind=item.kind,
+        ) for item in absences)
+        def minutes(value: time) -> int:
+            return value.hour * 60 + value.minute
+        row = self.session.get(ProductionShiftRow, 1)
+        values = {
+            "weekdays": ",".join(str(day) for day in shift.weekdays),
+            "start_minutes": minutes(shift.start), "finish_minutes": minutes(shift.finish),
+            "breaks_json": json.dumps([
+                [minutes(start), minutes(finish)] for start, finish in shift.breaks
+            ], separators=(",", ":")),
+            "effective_seconds": shift.effective_seconds,
+        }
+        if row is None:
+            self.session.add(ProductionShiftRow(id=1, **values))
+        else:
+            for key, value in values.items():
+                setattr(row, key, value)
+
+
+class SqlAlchemySkillRepository:
+    def __init__(self, session: Session): self.session = session
+
+    def list(self) -> list[OperatorSkill]:
+        rows = self.session.scalars(select(ProductionOperatorSkillRow).order_by(
+            ProductionOperatorSkillRow.operation_code, ProductionOperatorSkillRow.operator_id,
+        ))
+        return [OperatorSkill(
+            row.operator_id, row.operation_code, row.allowed, row.stars, row.coefficient,
+        ) for row in rows]
+
+    def replace_for_operator(self, operator_id: UUID, skills: tuple[OperatorSkill, ...]) -> None:
+        self.session.execute(delete(ProductionOperatorSkillRow).where(
+            ProductionOperatorSkillRow.operator_id == operator_id,
+        ))
+        self.session.add_all(ProductionOperatorSkillRow(
+            operator_id=item.operator_id, operation_code=item.operation_code,
+            allowed=item.allowed, stars=item.stars, coefficient=item.coefficient,
+        ) for item in skills)
+
+
+class SqlAlchemyPlanProjectRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def list(self) -> list[PlanProjectSnapshot]:
+        rows = self.session.scalars(select(ProductionPlanProjectRow).order_by(ProductionPlanProjectRow.project))
+        return [PlanProjectSnapshot(
+            project=row.project, customer=row.customer, opened_on=row.opened_on,
+            deadline=row.deadline, status=row.status, terminal=row.terminal,
+            imported_at=row.imported_at,
+        ) for row in rows]
+
+    def replace(self, projects: tuple[PlanProjectSnapshot, ...]) -> None:
+        self.session.execute(delete(ProductionPlanProjectRow))
+        self.session.add_all(ProductionPlanProjectRow(
+            project=item.project, customer=item.customer, opened_on=item.opened_on,
+            deadline=item.deadline, status=item.status, terminal=item.terminal,
+            imported_at=item.imported_at,
+        ) for item in projects)
+
+
+class SqlAlchemyPlanEventRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionPlanEventRow) -> PlanEvent:
+        return PlanEvent(
+            id=row.id, project=row.project, occurred_at=row.occurred_at,
+            who=row.who, kind=row.kind, blocker=row.blocker,
+            text=row.text, deadline=row.deadline, sequence=row.sequence,
+            item_index=row.item_index, value=row.value,
+        )
+
+    def list(self, project: str | None = None, limit: int = 10_000) -> list[PlanEvent]:
+        statement = select(ProductionPlanEventRow)
+        if project is not None:
+            statement = statement.where(ProductionPlanEventRow.project == project)
+        rows = self.session.scalars(
+            statement.order_by(ProductionPlanEventRow.project, ProductionPlanEventRow.sequence).limit(limit)
+        )
+        return [self._domain(row) for row in rows]
+
+    def add(self, event: PlanEvent) -> PlanEvent:
+        sequence = self.session.scalar(select(func.max(ProductionPlanEventRow.sequence)).where(
+            ProductionPlanEventRow.project == event.project,
+        )) or 0
+        stored = replace(event, sequence=sequence + 1)
+        self.session.add(ProductionPlanEventRow(
+            id=stored.id, project=stored.project, sequence=stored.sequence,
+            occurred_at=stored.occurred_at, who=stored.who, kind=stored.kind,
+            blocker=stored.blocker, text=stored.text, deadline=stored.deadline,
+            item_index=stored.item_index, value=stored.value,
+        ))
+        return stored
+
+
+class SqlAlchemyBoxRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionBoxRow) -> ProductionBox:
+        return ProductionBox(
+            id=row.id, number=row.number, version=row.version,
+            task_id=row.task_id, operation_id=row.operation_id, item=row.item,
+            operation_position=row.operation_position, operator_id=row.operator_id,
+            quantity=row.quantity, consumed=row.consumed, reserved=row.reserved,
+            status=BoxStatus(row.status), created_at=row.created_at,
+            closed_at=row.closed_at, closed_by=row.closed_by,
+            confirmed_at=row.confirmed_at, confirmed_by=row.confirmed_by,
+            return_reason=row.return_reason,
+            rejected=row.rejected,
+        )
+
+    def get(self, box_id: UUID) -> ProductionBox | None:
+        row = self.session.get(ProductionBoxRow, box_id)
+        return self._domain(row) if row is not None else None
+
+    def open_for(self, task_id: UUID, operation_id: UUID, operator_id: UUID) -> ProductionBox | None:
+        row = self.session.scalar(select(ProductionBoxRow).where(
+            ProductionBoxRow.task_id == task_id,
+            ProductionBoxRow.operation_id == operation_id,
+            ProductionBoxRow.operator_id == operator_id,
+            ProductionBoxRow.status == BoxStatus.OPEN.value,
+        ).order_by(ProductionBoxRow.created_at, ProductionBoxRow.id).limit(1))
+        return self._domain(row) if row is not None else None
+
+    def list(self, *, task_id: UUID | None = None, operator_id: UUID | None = None, limit: int = 500) -> list[ProductionBox]:
+        statement = select(ProductionBoxRow)
+        if task_id is not None:
+            statement = statement.where(ProductionBoxRow.task_id == task_id)
+        if operator_id is not None:
+            statement = statement.where(ProductionBoxRow.operator_id == operator_id)
+        rows = self.session.scalars(statement.order_by(ProductionBoxRow.created_at.desc(), ProductionBoxRow.id.desc()).limit(limit))
+        return [self._domain(row) for row in rows]
+
+    def reserve_number(self) -> str:
+        row = self.session.scalar(select(ProductionSequenceRow).where(ProductionSequenceRow.name == "box").with_for_update())
+        if row is None:
+            row = ProductionSequenceRow(name="box", value=0)
+            self.session.add(row)
+            self.session.flush()
+        row.value += 1
+        return format_box_number(row.value)
+
+    def save(self, box: ProductionBox) -> None:
+        row = self.session.get(ProductionBoxRow, box.id)
+        if row is None:
+            row = ProductionBoxRow(id=box.id)
+            self.session.add(row)
+        for name in (
+            "number", "version", "task_id", "operation_id", "item",
+            "operation_position", "operator_id", "quantity", "consumed",
+            "reserved", "created_at", "closed_at", "closed_by",
+            "confirmed_at", "confirmed_by", "return_reason",
+            "rejected",
+        ):
+            setattr(row, name, getattr(box, name))
+        row.status = box.status.value
+
+
+class SqlAlchemyWorkRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionWorkSessionRow) -> WorkSession:
+        return WorkSession(
+            id=row.id, task_id=row.task_id, operation_id=row.operation_id,
+            operator_id=row.operator_id, started_at=row.started_at,
+            status=WorkStatus(row.status), pause_started_at=row.pause_started_at,
+            pause_seconds=row.pause_seconds,
+        )
+
+    def get(self, session_id: UUID) -> WorkSession | None:
+        row = self.session.get(ProductionWorkSessionRow, session_id)
+        return self._domain(row) if row is not None else None
+
+    def current(self, operator_id: UUID) -> WorkSession | None:
+        row = self.session.scalar(select(ProductionWorkSessionRow).where(
+            ProductionWorkSessionRow.operator_id == operator_id,
+            ProductionWorkSessionRow.status.in_((WorkStatus.ACTIVE.value, WorkStatus.PAUSED.value)),
+        ).order_by(ProductionWorkSessionRow.started_at.desc()).limit(1))
+        return self._domain(row) if row is not None else None
+
+    def inputs(self, session_id: UUID) -> list[WorkInput]:
+        rows = self.session.scalars(select(ProductionWorkInputRow).where(
+            ProductionWorkInputRow.session_id == session_id,
+        ).order_by(ProductionWorkInputRow.box_id))
+        return [WorkInput(row.box_id, row.quantity) for row in rows]
+
+    def material_inputs(self, session_id: UUID) -> list[MaterialInput]:
+        rows = self.session.scalars(select(ProductionWorkMaterialInputRow).where(
+            ProductionWorkMaterialInputRow.session_id == session_id,
+        ).order_by(ProductionWorkMaterialInputRow.fulfillment_line_id))
+        return [MaterialInput(row.fulfillment_line_id, row.quantity) for row in rows]
+
+    def save(self, session: WorkSession) -> None:
+        row = self.session.get(ProductionWorkSessionRow, session.id)
+        if row is None:
+            row = ProductionWorkSessionRow(id=session.id)
+            self.session.add(row)
+        row.task_id = session.task_id
+        row.operation_id = session.operation_id
+        row.operator_id = session.operator_id
+        row.started_at = session.started_at
+        row.status = session.status.value
+        row.pause_started_at = session.pause_started_at
+        row.pause_seconds = session.pause_seconds
+
+    def add_inputs(self, session_id: UUID, inputs: tuple[WorkInput, ...]) -> None:
+        self.session.add_all(ProductionWorkInputRow(
+            session_id=session_id, box_id=item.box_id, quantity=item.quantity,
+        ) for item in inputs)
+
+    def add_material_inputs(self, session_id: UUID, inputs: tuple[MaterialInput, ...]) -> None:
+        self.session.add_all(ProductionWorkMaterialInputRow(
+            session_id=session_id, fulfillment_line_id=item.fulfillment_line_id,
+            quantity=item.quantity,
+        ) for item in inputs)
+
+
+class SqlAlchemyOutputRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, output: ProductionOutput) -> None:
+        self.session.add(ProductionOutputRow(**output.__dict__))
+
+    def list_for_task(self, task_id: UUID) -> list[ProductionOutput]:
+        rows = self.session.scalars(select(ProductionOutputRow).where(
+            ProductionOutputRow.task_id == task_id,
+        ).order_by(ProductionOutputRow.finished_at, ProductionOutputRow.id))
+        return [ProductionOutput(**{
+            name: getattr(row, name) for name in ProductionOutput.__dataclass_fields__
+        }) for row in rows]
+
+    def total_for_operation(self, operation_id: UUID) -> Decimal:
+        value = self.session.scalar(select(func.coalesce(
+            func.sum(ProductionOutputRow.good_quantity + ProductionOutputRow.defect_quantity), 0,
+        )).where(ProductionOutputRow.operation_id == operation_id))
+        return Decimal(value or 0)
+
+
+class SqlAlchemyConsumptionRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, edge: ConsumptionEdge) -> None:
+        self.session.add(ProductionConsumptionRow(**edge.__dict__))
+
+
+class SqlAlchemyMaterialRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def request_status(self, request_id: UUID) -> FulfillmentStatus | None:
+        value = self.session.scalar(select(FulfillmentRequestRow.status).where(FulfillmentRequestRow.id == request_id))
+        return FulfillmentStatus(value) if value is not None else None
+
+    def list_sources(self, request_id: UUID) -> list[MaterialSource]:
+        rows = self.session.scalars(select(FulfillmentLineRow).where(
+            FulfillmentLineRow.request_id == request_id,
+            FulfillmentLineRow.issued > 0,
+        ).order_by(FulfillmentLineRow.position))
+        result = []
+        for row in rows:
+            consumed = self.session.scalar(select(func.coalesce(func.sum(ProductionMaterialConsumptionRow.quantity), 0)).where(
+                ProductionMaterialConsumptionRow.fulfillment_line_id == row.id,
+            ))
+            reserved = self.session.scalar(select(func.coalesce(func.sum(ProductionWorkMaterialInputRow.quantity), 0)).join(
+                ProductionWorkSessionRow,
+                ProductionWorkSessionRow.id == ProductionWorkMaterialInputRow.session_id,
+            ).where(
+                ProductionWorkMaterialInputRow.fulfillment_line_id == row.id,
+                ProductionWorkSessionRow.status.in_((WorkStatus.ACTIVE.value, WorkStatus.PAUSED.value)),
+            ))
+            result.append(MaterialSource(
+                fulfillment_line_id=row.id, article=row.article, name=row.name, unit=row.unit,
+                grn=row.lot_grn or "", package=row.lot_package or "",
+                issued=row.issued, consumed=Decimal(consumed or 0), reserved=Decimal(reserved or 0),
+            ))
+        return result
+
+    def source(self, request_id: UUID, line_id: UUID) -> MaterialSource | None:
+        self.session.scalar(select(FulfillmentLineRow.id).where(
+            FulfillmentLineRow.request_id == request_id,
+            FulfillmentLineRow.id == line_id,
+        ).with_for_update())
+        return next((item for item in self.list_sources(request_id) if item.fulfillment_line_id == line_id), None)
+
+    def add_consumption(self, item: MaterialConsumption) -> None:
+        self.session.add(ProductionMaterialConsumptionRow(**item.__dict__))
+
+
+class SqlAlchemyFinishedGoodsReceiptRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def by_box(self, box_id: UUID) -> FinishedGoodsReceipt | None:
+        row = self.session.scalar(select(ProductionFinishedGoodsReceiptRow).where(
+            ProductionFinishedGoodsReceiptRow.source_box_id == box_id,
+        ))
+        return FinishedGoodsReceipt(
+            id=row.id, source_box_id=row.source_box_id,
+            finished_good_id=row.finished_good_id, grn=row.grn,
+            quantity=row.quantity, received_at=row.received_at,
+        ) if row is not None else None
+
+    def add(self, receipt: FinishedGoodsReceipt) -> None:
+        self.session.add(ProductionFinishedGoodsReceiptRow(**receipt.__dict__))
+
+
+class SqlAlchemyDefectRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionDefectRow) -> DefectRecord:
+        return DefectRecord(
+            id=row.id, number=row.number, version=row.version,
+            created_at=row.created_at, output_id=row.output_id,
+            source_box_id=row.source_box_id, task_id=row.task_id,
+            operation_id=row.operation_id, operator_id=row.operator_id,
+            quantity=row.quantity, character=row.character,
+            description=row.description, status=DefectStatus(row.status),
+        )
+
+    def get(self, defect_id: UUID) -> DefectRecord | None:
+        row = self.session.get(ProductionDefectRow, defect_id)
+        return self._domain(row) if row is not None else None
+
+    def list(self, limit: int = 500) -> list[DefectRecord]:
+        rows = self.session.scalars(select(ProductionDefectRow).order_by(
+            ProductionDefectRow.created_at.desc(), ProductionDefectRow.id.desc(),
+        ).limit(limit))
+        return [self._domain(row) for row in rows]
+
+    def reserve_number(self) -> str:
+        row = self.session.scalar(select(ProductionSequenceRow).where(
+            ProductionSequenceRow.name == "defect",
+        ).with_for_update())
+        if row is None:
+            row = ProductionSequenceRow(name="defect", value=0)
+            self.session.add(row)
+            self.session.flush()
+        row.value += 1
+        return format_box_number(row.value)
+
+    def save(self, defect: DefectRecord) -> None:
+        row = self.session.get(ProductionDefectRow, defect.id)
+        if row is None:
+            row = ProductionDefectRow(id=defect.id)
+            self.session.add(row)
+        for field in (
+            "number", "version", "created_at", "output_id", "source_box_id",
+            "task_id", "operation_id", "operator_id", "quantity", "character", "description",
+        ):
+            setattr(row, field, getattr(defect, field))
+        row.status = defect.status.value
+
+    def add_decision(self, decision: DefectDecision) -> None:
+        self.session.add(ProductionDefectDecisionRow(
+            id=decision.id, defect_id=decision.defect_id,
+            disposition=decision.disposition.value,
+            decided_by=decision.decided_by, decided_at=decision.decided_at,
+            act_reference=decision.act_reference,
+        ))
+
+
+class SqlAlchemyInstrumentRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionInstrumentRow) -> MeasurementInstrument:
+        return MeasurementInstrument(
+            id=row.id, version=row.version, inventory_number=row.inventory_number,
+            name=row.name, instrument_type=row.instrument_type,
+            verification_number=row.verification_number,
+            verified_at=row.verified_at, verification_due=row.verification_due,
+            status=InstrumentStatus(row.status),
+        )
+
+    def get(self, instrument_id: UUID) -> MeasurementInstrument | None:
+        row = self.session.get(ProductionInstrumentRow, instrument_id)
+        return self._domain(row) if row is not None else None
+
+    def list(self) -> list[MeasurementInstrument]:
+        rows = self.session.scalars(select(ProductionInstrumentRow).order_by(ProductionInstrumentRow.inventory_number))
+        return [self._domain(row) for row in rows]
+
+    def by_inventory_number(self, number: str) -> MeasurementInstrument | None:
+        row = self.session.scalar(select(ProductionInstrumentRow).where(
+            ProductionInstrumentRow.inventory_number == number,
+        ))
+        return self._domain(row) if row is not None else None
+
+    def save(self, instrument: MeasurementInstrument) -> None:
+        row = self.session.get(ProductionInstrumentRow, instrument.id)
+        if row is None:
+            row = ProductionInstrumentRow(id=instrument.id)
+            self.session.add(row)
+        for field in (
+            "version", "inventory_number", "name", "instrument_type",
+            "verification_number", "verified_at", "verification_due",
+        ):
+            setattr(row, field, getattr(instrument, field))
+        row.status = instrument.status.value
+
+
+class SqlAlchemySerialRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionSerialRow) -> SerialUnit:
+        return SerialUnit(
+            id=row.id, serial_number=row.serial_number, task_id=row.task_id,
+            position=row.position, status=SerialStatus(row.status),
+            current_box_id=row.current_box_id, finished_goods_grn=row.finished_goods_grn,
+        )
+
+    def ensure_task(self, task_id: UUID, task_number: str, quantity: int) -> bool:
+        existing = set(self.session.scalars(select(ProductionSerialRow.position).where(
+            ProductionSerialRow.task_id == task_id,
+        )))
+        missing = [position for position in range(1, quantity + 1) if position not in existing]
+        self.session.add_all(ProductionSerialRow(
+            id=uuid4(), serial_number=f"{task_number}-{position:04d}",
+            task_id=task_id, position=position, status=SerialStatus.IN_PROGRESS.value,
+            current_box_id=None, finished_goods_grn=None,
+        ) for position in missing)
+        return bool(missing)
+
+    def list_for_task(self, task_id: UUID) -> list[SerialUnit]:
+        rows = self.session.scalars(select(ProductionSerialRow).where(
+            ProductionSerialRow.task_id == task_id,
+        ).order_by(ProductionSerialRow.position))
+        return [self._domain(row) for row in rows]
+
+    def assign_qc(self, task_id: UUID, box_id: UUID, accepted: int, rejected: int) -> list[SerialUnit]:
+        rows = list(self.session.scalars(select(ProductionSerialRow).where(
+            ProductionSerialRow.task_id == task_id,
+            ProductionSerialRow.current_box_id.is_(None),
+            ProductionSerialRow.status == SerialStatus.IN_PROGRESS.value,
+        ).order_by(ProductionSerialRow.position).limit(accepted + rejected).with_for_update()))
+        if len(rows) != accepted + rejected:
+            raise ProductionValidationError("Недостаточно свободных серийных номеров задания")
+        for index, row in enumerate(rows):
+            row.current_box_id = box_id
+            row.status = SerialStatus.QC_ACCEPTED.value if index < accepted else SerialStatus.DEFECT.value
+        return [self._domain(row) for row in rows]
+
+    def mark_handed(self, box_id: UUID, grn: str) -> None:
+        rows = self.session.scalars(select(ProductionSerialRow).where(
+            ProductionSerialRow.current_box_id == box_id,
+            ProductionSerialRow.status == SerialStatus.QC_ACCEPTED.value,
+        ).with_for_update())
+        for row in rows:
+            row.status = SerialStatus.FINISHED_GOODS.value
+            row.finished_goods_grn = grn
+
+
+class SqlAlchemyQcRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _domain(self, row: ProductionQcInspectionRow) -> QcInspection:
+        instrument_ids = tuple(self.session.scalars(select(ProductionQcInstrumentRow.instrument_id).where(
+            ProductionQcInstrumentRow.inspection_id == row.id,
+        )))
+        return QcInspection(
+            id=row.id, box_id=row.box_id, inspector_id=row.inspector_id,
+            inspected_at=row.inspected_at, accepted=row.accepted,
+            rejected=row.rejected, defect_number=row.defect_number,
+            defect_character=row.defect_character,
+            defect_description=row.defect_description,
+            instrument_ids=instrument_ids,
+        )
+
+    def by_box(self, box_id: UUID) -> QcInspection | None:
+        row = self.session.scalar(select(ProductionQcInspectionRow).where(
+            ProductionQcInspectionRow.box_id == box_id,
+        ))
+        return self._domain(row) if row is not None else None
+
+    def get(self, inspection_id: UUID) -> QcInspection | None:
+        row = self.session.get(ProductionQcInspectionRow, inspection_id)
+        return self._domain(row) if row is not None else None
+
+    def list_rejections(self) -> list[QcInspection]:
+        rows = self.session.scalars(select(ProductionQcInspectionRow).where(
+            ProductionQcInspectionRow.rejected > 0,
+        ).order_by(ProductionQcInspectionRow.inspected_at.desc(), ProductionQcInspectionRow.id.desc()))
+        return [self._domain(row) for row in rows]
+
+    def decision_for(self, inspection_id: UUID) -> QcDecision | None:
+        row = self.session.scalar(select(ProductionQcDecisionRow).where(
+            ProductionQcDecisionRow.inspection_id == inspection_id,
+        ))
+        if row is None:
+            return None
+        return QcDecision(
+            id=row.id, inspection_id=row.inspection_id,
+            disposition=DefectDisposition(row.disposition), decided_by=row.decided_by,
+            decided_at=row.decided_at, act_reference=row.act_reference,
+        )
+
+    def add(self, inspection: QcInspection) -> None:
+        self.session.add(ProductionQcInspectionRow(
+            id=inspection.id, box_id=inspection.box_id,
+            inspector_id=inspection.inspector_id, inspected_at=inspection.inspected_at,
+            accepted=inspection.accepted, rejected=inspection.rejected,
+            defect_number=inspection.defect_number,
+            defect_character=inspection.defect_character,
+            defect_description=inspection.defect_description,
+        ))
+        self.session.add_all(ProductionQcInstrumentRow(
+            inspection_id=inspection.id, instrument_id=instrument_id,
+        ) for instrument_id in inspection.instrument_ids)
+
+    def add_decision(self, decision: QcDecision) -> None:
+        self.session.add(ProductionQcDecisionRow(
+            id=decision.id, inspection_id=decision.inspection_id,
+            disposition=decision.disposition.value, decided_by=decision.decided_by,
+            decided_at=decision.decided_at, act_reference=decision.act_reference,
+        ))
+
+
+class SqlAlchemyGenealogyRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def search(self, query: str):
+        boxes = tuple(BoxSnapshot(
+            id=row.id, number=row.number, item=row.item,
+            operation_position=row.operation_position, status=row.status,
+        ) for row in self.session.scalars(select(ProductionBoxRow)))
+        box_consumption = tuple(BoxConsumptionSnapshot(
+            source_box_id=row.source_box_id, target_box_id=row.target_box_id,
+            quantity=row.quantity,
+        ) for row in self.session.scalars(select(ProductionConsumptionRow)))
+        material_consumption = tuple(MaterialConsumptionSnapshot(
+            fulfillment_line_id=row.fulfillment_line_id,
+            target_box_id=row.target_box_id, grn=row.grn,
+            package=row.package, quantity=row.quantity,
+        ) for row in self.session.scalars(select(ProductionMaterialConsumptionRow)))
+        finished_receipts = tuple(FinishedReceiptSnapshot(
+            source_box_id=row.source_box_id, finished_good_id=row.finished_good_id,
+            grn=row.grn, quantity=row.quantity,
+        ) for row in self.session.scalars(select(ProductionFinishedGoodsReceiptRow)))
+        serials = tuple(SerialSnapshot(
+            serial_number=row.serial_number, current_box_id=row.current_box_id,
+            finished_goods_grn=row.finished_goods_grn, status=row.status,
+        ) for row in self.session.scalars(select(ProductionSerialRow)))
+        return build_genealogy(
+            query, boxes=boxes, box_consumption=box_consumption,
+            material_consumption=material_consumption,
+            finished_receipts=finished_receipts, serials=serials,
+        )
+
+
+class SqlAlchemyProductionUnitOfWork:
+    def __init__(self, session_factory: sessionmaker[Session]):
+        self.session_factory = session_factory
+        self.session: Session | None = None
+        self.committed = False
+
+    def __enter__(self):
+        self.committed = False
+        self.session = self.session_factory()
+        self.production = SqlAlchemyProductionRepository(self.session)
+        self.operators = SqlAlchemyOperatorRepository(self.session)
+        self.calendar = SqlAlchemyCalendarRepository(self.session)
+        self.skills = SqlAlchemySkillRepository(self.session)
+        self.plan_projects = SqlAlchemyPlanProjectRepository(self.session)
+        self.plan_events = SqlAlchemyPlanEventRepository(self.session)
+        self.boxes = SqlAlchemyBoxRepository(self.session)
+        self.work = SqlAlchemyWorkRepository(self.session)
+        self.outputs = SqlAlchemyOutputRepository(self.session)
+        self.consumption = SqlAlchemyConsumptionRepository(self.session)
+        self.materials = SqlAlchemyMaterialRepository(self.session)
+        self.goods = SqlAlchemyFinishedGoodsRepository(self.session)
+        self.finished_goods_receipts = SqlAlchemyFinishedGoodsReceiptRepository(self.session)
+        self.defects = SqlAlchemyDefectRepository(self.session)
+        self.instruments = SqlAlchemyInstrumentRepository(self.session)
+        self.serials = SqlAlchemySerialRepository(self.session)
+        self.qc = SqlAlchemyQcRepository(self.session)
+        self.genealogy = SqlAlchemyGenealogyRepository(self.session)
+        self.audit = SqlAlchemyAuditRepository(self.session)
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        if self.session is None: return
+        if exc_type is not None or not self.committed: self.session.rollback()
+        self.session.close()
+
+    def commit(self) -> None:
+        if self.session is None: raise RuntimeError("Unit of Work has not been entered")
+        self.session.commit()
+        self.committed = True

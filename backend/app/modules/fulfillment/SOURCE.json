@@ -1,0 +1,18 @@
+{
+  "module": "fulfillment",
+  "owner": "supplymap",
+  "strategy": "native-rewrite",
+  "sourceRef": "origin/main",
+  "sourceCommit": "5a039db3d63d6bfdd282a71e73dd9c91d620c504",
+  "sources": [
+    "Issue.gs",
+    ".claude/knowledge/memory/issue-lot-binding.md"
+  ],
+  "invariants": [
+    "request-exists-without-stock",
+    "human-binds-specific-lot",
+    "requirement-and-reservation-are-distinct",
+    "whole-kit-is-issued-atomically",
+    "warehouse-lot-selection-displays-article-before-description"
+  ]
+}

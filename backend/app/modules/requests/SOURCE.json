@@ -1,0 +1,25 @@
+{
+  "sourceRef": "feat/techmap-web-generator",
+  "sourceCommit": "83b223ab5cb857692803ef3700a95cd84c387228",
+  "sourceFiles": [
+    "Config.gs",
+    "Forms.gs",
+    "Imports.gs",
+    "Pipeline.gs",
+    "Schema.gs",
+    "SystemId.gs",
+    "Triggers.gs",
+    "OwnerTick.gs"
+  ],
+  "portedInvariants": [
+    "required request fields",
+    "fixed purpose versus optional project reference",
+    "legacy System ID compatibility",
+    "batch designation allocation",
+    "category and quality-document rules",
+    "deadline priority and line total",
+    "explicit request-to-procurement transition",
+    "idempotent procurement handoff identity",
+    "self-contained procurement requested event"
+  ]
+}

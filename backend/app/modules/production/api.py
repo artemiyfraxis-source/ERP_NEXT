@@ -1,0 +1,915 @@
+"""HTTP contract for production resource planning."""
+
+from collections.abc import Callable
+from datetime import date, datetime, time
+from decimal import Decimal
+from typing import Annotated
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
+
+from app.shared.clock import moscow_now
+from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, shipping_warehouse_principal
+
+from .application import (
+    Absence,
+    AssignProductionCommand,
+    AutoScheduleCommand,
+    ConcurrentProductionUpdate,
+    LaunchProductionCommand,
+    ReplaceProductionCalendarCommand,
+    ReplaceOperatorSkillsCommand,
+    SetProductionCancelledCommand,
+    UnitOfWork,
+    assign_production,
+    apply_auto_schedule,
+    launch_production,
+    preview_auto_schedule,
+    replace_production_calendar,
+    replace_operator_skills,
+    set_production_cancelled,
+)
+from .domain import OperatorSkill, ProductionOperation, ProductionTask, ProductionValidationError, WorkShift
+from .scheduling import ScheduleVariant
+from .execution import (
+    BoxCommand,
+    DecideDefectCommand,
+    HandoffBoxCommand,
+    ReturnBoxCommand,
+    SessionCommand,
+    StartWorkCommand,
+    SubmitWorkCommand,
+    close_box,
+    cancel_work,
+    confirm_box,
+    decide_defect,
+    handoff_box,
+    pause_work,
+    reopen_box,
+    resume_work,
+    return_box,
+    start_work,
+    submit_work,
+)
+from .traceability import BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, WorkInput, WorkSession
+from .quality import (
+    DecideQcRejectionCommand,
+    InspectBoxCommand,
+    RegisterInstrumentCommand,
+    decide_qc_rejection,
+    inspect_box,
+    register_instrument,
+)
+
+
+router = APIRouter(prefix="/api/production", tags=["production"])
+NonnegativeDecimal = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=6)]
+
+
+class LaunchOperationPayload(BaseModel):
+    position: int = Field(gt=0)
+    code: str = Field(default="", max_length=255)
+    stage: str = Field(min_length=1, max_length=512)
+    description: str = Field(default="", max_length=5000)
+    seconds_per_unit: NonnegativeDecimal = Decimal("0")
+    setup_seconds: NonnegativeDecimal = Decimal("0")
+
+
+class LaunchPayload(BaseModel):
+    project: str = Field(min_length=1, max_length=255)
+    item: str = Field(min_length=1, max_length=255)
+    name: str = Field(default="", max_length=512)
+    quantity: int = Field(gt=0, le=1_000_000)
+    fulfillment_request_id: UUID | None = None
+    deadline: date | None = None
+    operations: list[LaunchOperationPayload] = Field(min_length=1, max_length=500)
+
+
+class AssignPayload(BaseModel):
+    version: int = Field(ge=1)
+    operator_ids: list[UUID] = Field(max_length=100)
+    requested_start: datetime | None = None
+
+
+class CancelPayload(BaseModel):
+    version: int = Field(ge=1)
+    cancelled: bool
+
+
+class AbsencePayload(BaseModel):
+    operator_id: UUID
+    from_date: date
+    to_date: date
+    kind: str = Field(min_length=1, max_length=32)
+
+
+class ShiftPayload(BaseModel):
+    weekdays: list[int] = Field(min_length=1, max_length=7)
+    start: time
+    finish: time
+    breaks: list[tuple[time, time]] = Field(default_factory=list, max_length=20)
+    effective_hours: Decimal = Field(gt=0, le=24, max_digits=5, decimal_places=2)
+
+
+class CalendarPayload(BaseModel):
+    holidays: list[date] = Field(max_length=500)
+    absences: list[AbsencePayload] = Field(max_length=2000)
+    shift: ShiftPayload | None = None
+
+
+class SkillPayload(BaseModel):
+    operation_code: str = Field(min_length=1, max_length=255)
+    allowed: bool
+    stars: int = Field(ge=0, le=5)
+    coefficient: Decimal = Field(gt=0, le=100, max_digits=18, decimal_places=6)
+
+
+class ReplaceSkillsPayload(BaseModel):
+    skills: list[SkillPayload] = Field(max_length=5000)
+
+
+class AutoSchedulePayload(BaseModel):
+    version: int = Field(ge=1)
+    replan: bool = False
+    max_crew: int = Field(default=1, ge=1, le=5)
+
+
+class ApplySchedulePayload(AutoSchedulePayload):
+    transfer_batch: int = Field(gt=0, le=1_000_000)
+
+
+class WorkInputPayload(BaseModel):
+    box_id: UUID
+    quantity: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+
+
+class StartWorkPayload(BaseModel):
+    inputs: list[WorkInputPayload] = Field(default_factory=list, max_length=100)
+    materials: list["MaterialInputPayload"] = Field(default_factory=list, max_length=500)
+
+
+class MaterialInputPayload(BaseModel):
+    fulfillment_line_id: UUID
+    quantity: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+
+
+class SubmitWorkPayload(BaseModel):
+    good_quantity: NonnegativeDecimal = Decimal("0")
+    defect_quantity: NonnegativeDecimal = Decimal("0")
+    correction_of_id: UUID | None = None
+    defect_character: str = Field(default="", max_length=255)
+    defect_description: str = Field(default="", max_length=5000)
+
+
+class BoxVersionPayload(BaseModel):
+    version: int = Field(ge=1)
+
+
+class ReturnBoxPayload(BoxVersionPayload):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class HandoffBoxPayload(BoxVersionPayload):
+    finished_good_id: UUID
+
+
+class DecideDefectPayload(BoxVersionPayload):
+    disposition: DefectDisposition
+    act_reference: str = Field(min_length=1, max_length=2000)
+
+
+class RegisterInstrumentPayload(BaseModel):
+    inventory_number: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
+    instrument_type: str = Field(min_length=1, max_length=255)
+    verification_number: str = Field(min_length=1, max_length=255)
+    verified_at: datetime
+    verification_due: datetime
+
+
+class InspectBoxPayload(BoxVersionPayload):
+    accepted: int = Field(ge=0)
+    rejected: int = Field(ge=0)
+    defect_character: str = Field(default="", max_length=255)
+    defect_description: str = Field(default="", max_length=5000)
+    instrument_ids: list[UUID] = Field(default_factory=list, max_length=100)
+
+
+class DecideQcRejectionPayload(BaseModel):
+    disposition: DefectDisposition
+    act_reference: str = Field(min_length=1, max_length=2000)
+
+
+def production_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
+    factory = getattr(request.app.state, "production_uow_factory", None)
+    if not callable(factory):
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    return factory
+
+
+def _number(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def _result(task: ProductionTask) -> dict:
+    starts = [operation.planned_start for operation in task.operations if operation.planned_start]
+    finishes = [operation.planned_finish for operation in task.operations if operation.planned_finish]
+    return {
+        "id": str(task.id), "number": task.number, "version": task.version,
+        "created_at": task.created_at.isoformat(), "project": task.project,
+        "item": task.item, "name": task.name, "quantity": task.quantity,
+        "fulfillment_request_id": str(task.fulfillment_request_id) if task.fulfillment_request_id else None,
+        "deadline": task.deadline.isoformat() if task.deadline else None,
+        "status": task.status.value, "launched_by": task.launched_by,
+        "planned_start": min(starts).isoformat() if starts else None,
+        "planned_finish": max(finishes).isoformat() if finishes else None,
+        "assigned": sum(bool(operation.operator_ids) for operation in task.operations),
+        "operations": [{
+            "id": str(operation.id), "position": operation.position,
+            "code": operation.code, "stage": operation.stage,
+            "description": operation.description,
+            "seconds_per_unit": _number(operation.seconds_per_unit),
+            "setup_seconds": _number(operation.setup_seconds),
+            "norm_seconds": operation.norm_seconds,
+            "operator_ids": [str(value) for value in operation.operator_ids],
+            "planned_start": operation.planned_start.isoformat() if operation.planned_start else None,
+            "planned_finish": operation.planned_finish.isoformat() if operation.planned_finish else None,
+            "assigned_by": operation.assigned_by,
+        } for operation in task.operations],
+    }
+
+
+def _shift_result(shift: WorkShift) -> dict:
+    return {
+        "weekdays": list(shift.weekdays),
+        "start": shift.start.isoformat(timespec="minutes"),
+        "finish": shift.finish.isoformat(timespec="minutes"),
+        "breaks": [
+            [start.isoformat(timespec="minutes"), finish.isoformat(timespec="minutes")]
+            for start, finish in shift.breaks
+        ],
+        "effective_hours": str(Decimal(shift.effective_seconds) / Decimal(3600)),
+    }
+
+
+def _variant_result(variant: ScheduleVariant) -> dict:
+    return {
+        "transfer_batch": variant.transfer_batch,
+        "first_ready": variant.first_ready.isoformat(),
+        "start": variant.start.isoformat(),
+        "finish": variant.finish.isoformat(),
+        "idle_seconds": variant.idle_seconds,
+        "warnings": list(variant.warnings),
+        "operations": [{
+            "operation_id": str(item.operation_id), "position": item.position,
+            "operator_ids": [str(value) for value in item.operator_ids],
+            "start": item.start.isoformat(), "finish": item.finish.isoformat(),
+            "automatic": item.automatic,
+        } for item in variant.operations],
+    }
+
+
+def _run(operation) -> dict:
+    try:
+        task = operation()
+    except ProductionValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ConcurrentProductionUpdate as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (IntegrityError, StaleDataError) as error:
+        raise HTTPException(status_code=409, detail="Конкурентное изменение: обновите данные") from error
+    return {"task": _result(task)}
+
+
+def _box_result(box: ProductionBox) -> dict:
+    return {
+        "id": str(box.id), "number": box.number, "version": box.version,
+        "task_id": str(box.task_id), "operation_id": str(box.operation_id),
+        "item": box.item, "operation_position": box.operation_position,
+        "operator_id": str(box.operator_id), "quantity": _number(box.quantity),
+        "consumed": _number(box.consumed), "reserved": _number(box.reserved),
+        "rejected": _number(box.rejected),
+        "available": _number(box.available), "status": box.status.value,
+        "created_at": box.created_at.isoformat(),
+        "closed_at": box.closed_at.isoformat() if box.closed_at else None,
+        "closed_by": box.closed_by, "confirmed_at": box.confirmed_at.isoformat() if box.confirmed_at else None,
+        "confirmed_by": box.confirmed_by, "return_reason": box.return_reason,
+    }
+
+
+def _session_result(session: WorkSession) -> dict:
+    return {
+        "id": str(session.id), "task_id": str(session.task_id),
+        "operation_id": str(session.operation_id), "operator_id": str(session.operator_id),
+        "started_at": session.started_at.isoformat(), "status": session.status.value,
+        "pause_started_at": session.pause_started_at.isoformat() if session.pause_started_at else None,
+        "pause_seconds": session.pause_seconds,
+    }
+
+
+def _defect_result(defect: DefectRecord) -> dict:
+    return {
+        "id": str(defect.id), "number": defect.number, "version": defect.version,
+        "created_at": defect.created_at.isoformat(), "output_id": str(defect.output_id),
+        "source_box_id": str(defect.source_box_id), "task_id": str(defect.task_id),
+        "operation_id": str(defect.operation_id), "operator_id": str(defect.operator_id),
+        "quantity": _number(defect.quantity), "character": defect.character,
+        "description": defect.description, "status": defect.status.value,
+    }
+
+
+def _execution(operation):
+    try:
+        return operation()
+    except ProductionValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (IntegrityError, StaleDataError) as error:
+        raise HTTPException(status_code=409, detail="Конкурентное изменение: обновите данные") from error
+
+
+@router.get("/tasks")
+def tasks(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    after: UUID | None = None,
+) -> dict:
+    with uow_factory() as uow:
+        if after is not None and uow.production.get(after) is None:
+            raise HTTPException(status_code=404, detail="Курсор задания не найден")
+        rows = list(uow.production.list(limit + 1, after))
+    page = rows[:limit]
+    return {"tasks": [_result(task) for task in page], "next_cursor": str(page[-1].id) if len(rows) > limit else None}
+
+
+@router.get("/traceability")
+def traceability(
+    q: Annotated[str, Query(min_length=1, max_length=128)],
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        nodes, edges = uow.genealogy.search(q)
+    return {
+        "nodes": [{
+            "key": item.key, "kind": item.kind,
+            "label": item.label, "details": item.details,
+        } for item in nodes],
+        "edges": [{
+            "source": item.source, "target": item.target,
+            "quantity": _number(item.quantity), "relation": item.relation,
+        } for item in edges],
+    }
+
+
+@router.get("/my")
+def my_operations(
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        rows = uow.production.list(limit=10_000)
+    operations = []
+    for task in rows:
+        if task.status.value == "Отменено":
+            continue
+        for operation in task.operations:
+            if principal.actor.id in operation.operator_ids:
+                operations.append({**_result(task), "operations": [_result(task)["operations"][task.operations.index(operation)]]})
+    operations.sort(key=lambda item: (item["operations"][0]["planned_start"] or "9999", item["number"], item["operations"][0]["position"]))
+    return {"tasks": operations}
+
+
+@router.get("/tasks/{task_id}/operations/{operation_id}/inputs")
+def available_inputs(
+    task_id: UUID,
+    operation_id: UUID,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+        try:
+            operation = task.operation(operation_id)
+        except ProductionValidationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if principal.actor.id not in operation.operator_ids:
+            raise HTTPException(status_code=403, detail="Операция не назначена сотруднику")
+        rows = [box for box in uow.boxes.list(task_id=task_id) if (
+            box.item == task.item
+            and box.operation_position == operation.position - 1
+            and box.status is BoxStatus.CONFIRMED
+            and box.available > 0
+        )]
+        materials = []
+        if operation.position == 1 and task.fulfillment_request_id is not None:
+            materials = [source for source in uow.materials.list_sources(task.fulfillment_request_id) if source.available > 0]
+    return {
+        "boxes": [_box_result(box) for box in rows],
+        "materials": [{
+            "fulfillment_line_id": str(item.fulfillment_line_id),
+            "article": item.article, "name": item.name, "unit": item.unit,
+            "grn": item.grn, "package": item.package,
+            "issued": _number(item.issued), "consumed": _number(item.consumed),
+            "reserved": _number(item.reserved), "available": _number(item.available),
+        } for item in materials],
+    }
+
+
+@router.get("/my/execution")
+def my_execution(
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        current = uow.work.current(principal.actor.id)
+        boxes = uow.boxes.list(operator_id=principal.actor.id)
+    return {
+        "session": _session_result(current) if current else None,
+        "boxes": [_box_result(box) for box in boxes],
+    }
+
+
+@router.get("/boxes")
+def boxes(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    task_id: UUID | None = None,
+) -> dict:
+    with uow_factory() as uow:
+        rows = uow.boxes.list(task_id=task_id)
+        result = [{**_box_result(box), "qc_inspected": uow.qc.by_box(box.id) is not None} for box in rows]
+    return {"boxes": result}
+
+
+@router.get("/finished-goods-ready")
+def finished_goods_ready(
+    _principal: Annotated[Principal, Depends(shipping_warehouse_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        tasks = {task.id: task for task in uow.production.list(limit=10_000)}
+        rows = []
+        for box in uow.boxes.list(limit=10_000):
+            task = tasks.get(box.task_id)
+            if task is None or box.status is not BoxStatus.CONFIRMED:
+                continue
+            if box.operation_position != max(operation.position for operation in task.operations):
+                continue
+            if uow.qc.by_box(box.id) is None:
+                continue
+            rows.append({**_box_result(box), "project": task.project, "task_item": task.item})
+    return {"boxes": rows}
+
+
+@router.post("/tasks/{task_id}/operations/{operation_id}/work/start")
+def start_execution(
+    task_id: UUID,
+    operation_id: UUID,
+    payload: StartWorkPayload,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    session = _execution(lambda: start_work(StartWorkCommand(
+        task_id=task_id, operation_id=operation_id,
+        inputs=tuple(WorkInput(item.box_id, item.quantity) for item in payload.inputs),
+        actor=principal.actor, now=now,
+        materials=tuple(MaterialInput(item.fulfillment_line_id, item.quantity) for item in payload.materials),
+    ), uow_factory()))
+    return {"session": _session_result(session)}
+
+
+@router.post("/work/{session_id}/pause")
+def pause_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    session = _execution(lambda: pause_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
+    return {"session": _session_result(session)}
+
+
+@router.post("/work/{session_id}/resume")
+def resume_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    session = _execution(lambda: resume_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
+    return {"session": _session_result(session)}
+
+
+@router.post("/work/{session_id}/cancel")
+def cancel_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    session = _execution(lambda: cancel_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
+    return {"session": _session_result(session)}
+
+
+@router.post("/work/{session_id}/submit")
+def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    session, box, output, defect = _execution(lambda: submit_work(SubmitWorkCommand(
+        session_id=session_id, actor=principal.actor, now=now,
+        good_quantity=payload.good_quantity, defect_quantity=payload.defect_quantity,
+        correction_of_id=payload.correction_of_id,
+        defect_character=payload.defect_character,
+        defect_description=payload.defect_description,
+    ), uow_factory()))
+    return {
+        "session": _session_result(session), "box": _box_result(box),
+        "output_id": str(output.id), "defect": _defect_result(defect) if defect else None,
+    }
+
+
+@router.post("/boxes/{box_id}/close")
+def close_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    box = _execution(lambda: close_box(BoxCommand(box_id, payload.version, principal.actor, now), uow_factory()))
+    return {"box": _box_result(box)}
+
+
+@router.post("/boxes/{box_id}/reopen")
+def reopen_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    box = _execution(lambda: reopen_box(BoxCommand(box_id, payload.version, principal.actor, now), uow_factory()))
+    return {"box": _box_result(box)}
+
+
+@router.post("/boxes/{box_id}/confirm")
+def confirm_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Annotated[Principal, Depends(production_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    box = _execution(lambda: confirm_box(BoxCommand(box_id, payload.version, principal.actor, now), uow_factory()))
+    return {"box": _box_result(box)}
+
+
+@router.post("/boxes/{box_id}/return")
+def return_execution_box(box_id: UUID, payload: ReturnBoxPayload, principal: Annotated[Principal, Depends(production_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    box = _execution(lambda: return_box(ReturnBoxCommand(
+        box_id=box_id, expected_version=payload.version, actor=principal.actor,
+        now=now, reason=payload.reason,
+    ), uow_factory()))
+    return {"box": _box_result(box)}
+
+
+@router.post("/boxes/{box_id}/handoff")
+def handoff_execution_box(box_id: UUID, payload: HandoffBoxPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    box, good, receipt = _execution(lambda: handoff_box(HandoffBoxCommand(
+        box_id=box_id, expected_version=payload.version, actor=principal.actor,
+        now=now, finished_good_id=payload.finished_good_id,
+    ), uow_factory()))
+    return {
+        "box": _box_result(box),
+        "finished_good": {
+            "id": str(good.id), "version": good.version, "grn": good.grn,
+            "accepted": _number(good.accepted), "remaining": _number(good.remaining),
+        },
+        "receipt_id": str(receipt.id),
+    }
+
+
+@router.get("/defects")
+def defects(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        rows = uow.defects.list()
+    return {"defects": [_defect_result(item) for item in rows]}
+
+
+@router.post("/defects/{defect_id}/decide")
+def decide_execution_defect(
+    defect_id: UUID,
+    payload: DecideDefectPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    defect, decision = _execution(lambda: decide_defect(DecideDefectCommand(
+        defect_id=defect_id, expected_version=payload.version,
+        disposition=payload.disposition, act_reference=payload.act_reference,
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {"defect": _defect_result(defect), "decision_id": str(decision.id)}
+
+
+@router.get("/instruments")
+def instruments(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        rows = uow.instruments.list()
+    return {"instruments": [{
+        "id": str(item.id), "version": item.version,
+        "inventory_number": item.inventory_number, "name": item.name,
+        "instrument_type": item.instrument_type,
+        "verification_number": item.verification_number,
+        "verified_at": item.verified_at.isoformat(),
+        "verification_due": item.verification_due.isoformat(),
+        "status": item.status.value,
+    } for item in rows]}
+
+
+@router.post("/instruments")
+def create_instrument(
+    payload: RegisterInstrumentPayload,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    item = _execution(lambda: register_instrument(RegisterInstrumentCommand(
+        **payload.model_dump(), actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {"instrument": {
+        "id": str(item.id), "version": item.version,
+        "inventory_number": item.inventory_number, "name": item.name,
+        "instrument_type": item.instrument_type,
+        "verification_number": item.verification_number,
+        "verified_at": item.verified_at.isoformat(),
+        "verification_due": item.verification_due.isoformat(),
+        "status": item.status.value,
+    }}
+
+
+@router.post("/boxes/{box_id}/qc")
+def inspect_execution_box(
+    box_id: UUID,
+    payload: InspectBoxPayload,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    box, inspection, serials = _execution(lambda: inspect_box(InspectBoxCommand(
+        box_id=box_id, expected_version=payload.version,
+        accepted=payload.accepted, rejected=payload.rejected,
+        defect_character=payload.defect_character,
+        defect_description=payload.defect_description,
+        instrument_ids=tuple(payload.instrument_ids), actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {
+        "box": _box_result(box), "inspection_id": str(inspection.id),
+        "defect_number": inspection.defect_number,
+        "serials": [{"serial_number": item.serial_number, "status": item.status.value} for item in serials],
+    }
+
+
+@router.get("/qc/rejections")
+def qc_rejections(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        rows = []
+        for inspection in uow.qc.list_rejections():
+            box = uow.boxes.get(inspection.box_id)
+            decision = uow.qc.decision_for(inspection.id)
+            rows.append({
+                "id": str(inspection.id), "box_id": str(inspection.box_id),
+                "box_number": box.number if box else None,
+                "item": box.item if box else "",
+                "inspected_at": inspection.inspected_at.isoformat(),
+                "rejected": inspection.rejected,
+                "defect_number": inspection.defect_number,
+                "defect_character": inspection.defect_character,
+                "defect_description": inspection.defect_description,
+                "status": "Решение принято" if decision else "Ожидает решения",
+                "decision": ({
+                    "id": str(decision.id), "disposition": decision.disposition.value,
+                    "decided_by": decision.decided_by,
+                    "decided_at": decision.decided_at.isoformat(),
+                    "act_reference": decision.act_reference,
+                } if decision else None),
+            })
+    return {"rejections": rows}
+
+
+@router.post("/qc/rejections/{inspection_id}/decide")
+def decide_qc_rejection_route(
+    inspection_id: UUID,
+    payload: DecideQcRejectionPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    decision = _execution(lambda: decide_qc_rejection(DecideQcRejectionCommand(
+        inspection_id=inspection_id, disposition=payload.disposition,
+        act_reference=payload.act_reference, actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {
+        "decision": {
+            "id": str(decision.id), "inspection_id": str(decision.inspection_id),
+            "disposition": decision.disposition.value, "decided_by": decision.decided_by,
+            "decided_at": decision.decided_at.isoformat(),
+            "act_reference": decision.act_reference,
+        },
+    }
+
+
+@router.get("/tasks/{task_id}/serials")
+def task_serials(
+    task_id: UUID,
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+        rows = uow.serials.list_for_task(task.id)
+    return {"serials": [{
+        "id": str(item.id), "serial_number": item.serial_number,
+        "position": item.position, "status": item.status.value,
+        "current_box_id": str(item.current_box_id) if item.current_box_id else None,
+        "finished_goods_grn": item.finished_goods_grn,
+    } for item in rows]}
+
+
+@router.get("/operators")
+def operators(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        rows = uow.operators.list()
+    return {"operators": [{"id": str(item.id), "name": item.name, "site": item.site} for item in rows]}
+
+
+@router.post("/tasks")
+def launch(
+    payload: LaunchPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    operations = tuple(ProductionOperation.create(
+        position=operation.position, code=operation.code, stage=operation.stage,
+        description=operation.description, seconds_per_unit=operation.seconds_per_unit,
+        setup_seconds=operation.setup_seconds, quantity=payload.quantity,
+    ) for operation in payload.operations)
+    return _run(lambda: launch_production(LaunchProductionCommand(
+        idempotency_key=idempotency_key, project=payload.project, item=payload.item,
+        name=payload.name, quantity=payload.quantity,
+        fulfillment_request_id=payload.fulfillment_request_id, deadline=payload.deadline,
+        operations=operations, actor=principal.actor, now=now,
+    ), uow_factory()))
+
+
+@router.post("/tasks/{task_id}/operations/{operation_id}/assign")
+def assign(
+    task_id: UUID,
+    operation_id: UUID,
+    payload: AssignPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    result: dict = {}
+    def execute():
+        task, plan = assign_production(AssignProductionCommand(
+            task_id=task_id, expected_version=payload.version, operation_id=operation_id,
+            operator_ids=tuple(payload.operator_ids), requested_start=payload.requested_start,
+            actor=principal.actor, now=now,
+        ), uow_factory())
+        result["warnings"] = list(plan.warnings)
+        return task
+    response = _run(execute)
+    response["warnings"] = result["warnings"]
+    return response
+
+
+@router.post("/tasks/{task_id}/cancel")
+def cancel(
+    task_id: UUID,
+    payload: CancelPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    return _run(lambda: set_production_cancelled(SetProductionCancelledCommand(
+        task_id=task_id, expected_version=payload.version, cancelled=payload.cancelled,
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+
+
+@router.post("/tasks/{task_id}/schedule")
+def auto_schedule(
+    task_id: UUID,
+    payload: AutoSchedulePayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    try:
+        variants = preview_auto_schedule(AutoScheduleCommand(
+            task_id=task_id, expected_version=payload.version,
+            replan=payload.replan, max_crew=payload.max_crew,
+            actor=principal.actor, now=now,
+        ), uow_factory())
+        return {"variants": [_variant_result(item) for item in variants]}
+    except (ProductionValidationError, ConcurrentProductionUpdate) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/tasks/{task_id}/schedule/apply")
+def apply_schedule(
+    task_id: UUID,
+    payload: ApplySchedulePayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    try:
+        task, variant = apply_auto_schedule(AutoScheduleCommand(
+            task_id=task_id, expected_version=payload.version,
+            replan=payload.replan, max_crew=payload.max_crew,
+            actor=principal.actor, now=now,
+        ), payload.transfer_batch, uow_factory())
+        return {"task": _result(task), "variant": _variant_result(variant)}
+    except (ProductionValidationError, ConcurrentProductionUpdate) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/calendar")
+def calendar(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        holidays = uow.calendar.holidays()
+        absences = uow.calendar.absences()
+        shift = uow.calendar.shift()
+    return {
+        "holidays": [day.isoformat() for day in sorted(holidays)],
+        "shift": _shift_result(shift),
+        "absences": [{
+            "id": str(item.id), "operator_id": str(item.operator_id),
+            "from_date": item.from_date.isoformat(), "to_date": item.to_date.isoformat(), "kind": item.kind,
+        } for item in absences],
+    }
+
+
+@router.put("/calendar", status_code=204)
+def replace_calendar(
+    payload: CalendarPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> None:
+    try:
+        if payload.shift is None:
+            with uow_factory() as uow:
+                shift = uow.calendar.shift()
+        else:
+            shift = WorkShift(
+                weekdays=tuple(payload.shift.weekdays),
+                start=payload.shift.start, finish=payload.shift.finish,
+                breaks=tuple(payload.shift.breaks),
+                effective_seconds=int(payload.shift.effective_hours * 3600),
+            )
+        replace_production_calendar(ReplaceProductionCalendarCommand(
+            holidays=frozenset(payload.holidays),
+            absences=tuple(Absence(uuid4(), item.operator_id, item.from_date, item.to_date, item.kind) for item in payload.absences),
+            actor=principal.actor, now=now,
+            shift=shift,
+        ), uow_factory())
+    except ProductionValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/skills")
+def skills(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        rows = uow.skills.list()
+    return {"skills": [{
+        "operator_id": str(item.operator_id), "operation_code": item.operation_code,
+        "allowed": item.allowed, "stars": item.stars,
+        "coefficient": str(item.coefficient),
+    } for item in rows]}
+
+
+@router.put("/skills/{operator_id}", status_code=204)
+def replace_skills(
+    operator_id: UUID,
+    payload: ReplaceSkillsPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> None:
+    try:
+        replace_operator_skills(ReplaceOperatorSkillsCommand(
+            operator_id=operator_id,
+            skills=tuple(OperatorSkill(
+                operator_id=operator_id, operation_code=item.operation_code,
+                allowed=item.allowed, stars=item.stars, coefficient=item.coefficient,
+            ) for item in payload.skills),
+            actor=principal.actor, now=now,
+        ), uow_factory())
+    except ProductionValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
