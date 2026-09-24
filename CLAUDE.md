@@ -30,6 +30,18 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 - Python 3.12 venv in `backend/.venv` (`pip install -r requirements.lock.txt`); schema changes only via
   Alembic migrations — the app never creates tables itself.
 
+## Choosing mode, model and depth — decide yourself, don't ask
+- **Plan first** (enter plan mode yourself) when starting a new module, porting a drift commit that
+  touches a status machine or money/stock quantities, or any change across 3+ files. Small fixes: act.
+- **Delegate by model:** wide SUPPLYMAP reading → `supplymap-scout` (haiku). Grading → `erp-verifier`
+  (sonnet), before saying a slice is done and before every commit. Mechanical bulk edits (renames,
+  fixtures, lint) → a general-purpose subagent with `model: haiku`, then check its diff yourself.
+  Keep architecture, domain modelling and migrations in the main session.
+- **Depth:** think hard on domain invariants, migrations and anything that moves stock or money. Go
+  quick on wiring, copy and tests that mirror existing ones.
+- **One slice per session.** Once the slice is green and committed, say so and suggest a fresh session
+  instead of starting the next module in the same context.
+
 ## Git — owner rule (2026-09-24)
 - Every commit is authored by the owner only. **No `Co-Authored-By: Claude`, no "Generated with Claude
   Code"** in commits or PRs — Claude is not a collaborator on this repo. `.claude/settings.json` turns
