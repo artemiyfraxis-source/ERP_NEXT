@@ -4,7 +4,7 @@
     {
       "name": "erp-api",
       "runtimeExecutable": "powershell",
-      "runtimeArgs": ["-NoProfile", "-Command", ".\\.venv\\Scripts\\uvicorn.exe app.main:app --host 127.0.0.1 --port 8021"],
+      "runtimeArgs": ["-NoProfile", "-Command", ".\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8021"],
       "cwd": "backend",
       "env": {
         "ERP_DATABASE_URL": "sqlite+pysqlite:///preview.db",
