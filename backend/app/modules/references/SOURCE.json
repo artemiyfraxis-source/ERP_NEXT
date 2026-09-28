@@ -2,8 +2,8 @@
   "module": "references",
   "owner": "supplymap",
   "strategy": "native-rewrite",
-  "sourceRef": "origin/main",
-  "sourceCommit": "5a039db3d63d6bfdd282a71e73dd9c91d620c504",
+  "sourceRef": "main",
+  "sourceCommit": "d2df8b80a89a9cd68dd7536f3fc844855045df74",
   "implementedStage": "technology-schema-v14-operation-and-terminal-norm-kernel",
   "sources": ["References.gs", "TcOpsDb.gs", "TcConfig.gs"],
   "invariants": [

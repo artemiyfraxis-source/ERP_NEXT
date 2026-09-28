@@ -172,6 +172,40 @@ def test_imports_raw_supplymap_snapshot_and_keeps_terminal_ranges(references_api
     assert resolved.json()["by_section"][0]["found"] is True
 
 
+def test_equipment_snapshot_keeps_group_row_and_both_size_machines(references_api):
+    # SUPPLYMAP bfef60d: the machine choice by cable size lives in data (two «Оборудование» rows of one
+    # operation, «Ø до 5,5 мм» / «свыше» in the name), and a multi-instance machine gets a «(R)» group row
+    # beside its instances. The catalog stores БД.ОБ rows as they come — nothing is merged or dropped.
+    def ob(base: str) -> dict:
+        return {
+            "tabKey": "ob", "displayText": base, "normalizedSearch": base.casefold(),
+            "sourceSheet": "БД.ОБ", "sortKey": f"Оборудование {base}", "obType": "Оборудование",
+        }
+
+    rows = [
+        ob("BZW-886+Q2/Станок резки провода с роторной зачисткой мал."),
+        ob("BZW-50X/Станок резки провода с роторной зачисткой больш."),
+        ob("BZW-D2.0S/Большой стрипер"),
+        ob("BZW-D2.0S/Большой стрипер"),
+        ob("BZW-D2.0S(R)/Большой стрипер"),
+    ]
+    imported = references_api.put("/api/references/tech-operations/supplymap-snapshot", json={
+        "meta": {"schemaVersion": 14, "updatedAt": "2026-09-28T18:20:00.000Z"},
+        "records": rows,
+    })
+    strippers = references_api.get("/api/references/tech-operations", params={"tab": "ob", "q": "bzw-d2.0s"})
+    rotary = references_api.get("/api/references/tech-operations", params={"tab": "ob", "q": "роторной зачисткой"})
+
+    assert imported.json() == {"records": 5, "schema_version": 14}
+    assert sorted(item["display_text"] for item in strippers.json()["records"]) == [
+        "BZW-D2.0S(R)/Большой стрипер", "BZW-D2.0S/Большой стрипер", "BZW-D2.0S/Большой стрипер",
+    ]
+    assert {item["fields"]["obType"] for item in strippers.json()["records"]} == {"Оборудование"}
+    assert sorted(item["display_text"].split("/")[0] for item in rotary.json()["records"]) == [
+        "BZW-50X", "BZW-886+Q2",
+    ]
+
+
 def test_viewer_cannot_replace_maps(references_api):
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(
