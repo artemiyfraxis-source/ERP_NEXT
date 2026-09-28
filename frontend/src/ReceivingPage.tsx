@@ -116,6 +116,8 @@ function ReceivingCard({
   );
   const [prefix, setPrefix] = useState("");
   const [series, setSeries] = useState(line.series);
+  // МАССА 1 ШТ: any one of 1/10/100 pieces; the server prefills the one it was likely weighed with.
+  const [mass, setMass] = useState(line.mass_fields ?? { mass_1: "", mass_10: "", mass_100: "" });
   const [location, setLocation] = useState(line.storage_location ?? "");
 
   function submitInspection(event: FormEvent) {
@@ -130,6 +132,7 @@ function ReceivingCard({
       disposition: disposition || null,
       manual_grn_prefix: prefix || null,
       series: series.trim(),
+      ...mass,
     }).catch(() => undefined);
   }
 
@@ -149,6 +152,9 @@ function ReceivingCard({
             <label>Фактическое количество<input type="number" min="0.000001" step="any" required value={fact} onChange={(event) => setFact(event.target.value)} /></label>
             <label>Срок годности<input type="date" value={expiry} onChange={(event) => setExpiry(event.target.value)} /></label>
             <label>Серия изготовителя<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
+            <label title="Вес ОДНОЙ штуки. Для крупного: разъём, катушка, корпус.">Масса 1 шт, г<input inputMode="decimal" value={mass.mass_1} onChange={(event) => setMass((current) => ({ ...current, mass_1: event.target.value }))} /></label>
+            <label title="Вес ДЕСЯТИ штук — система поделит на 10. Клеммы, наконечники, крепёж.">Масса 10 шт, г<input inputMode="decimal" value={mass.mass_10} onChange={(event) => setMass((current) => ({ ...current, mass_10: event.target.value }))} /></label>
+            <label title="Вес СТА штук — самый точный способ для мелочи. Хватит любого ОДНОГО из трёх полей.">Масса 100 шт, г<input inputMode="decimal" value={mass.mass_100} onChange={(event) => setMass((current) => ({ ...current, mass_100: event.target.value }))} /></label>
             <label>Ссылка на УПД/М-15<input type="url" required value={shippingDocument} onChange={(event) => setShippingDocument(event.target.value)} /></label>
             <label>Документ качества{line.quality_document_required ? " *" : ""}<input type="url" required={line.quality_document_required} value={qualityDocument} onChange={(event) => setQualityDocument(event.target.value)} /></label>
             <label>Решение<select value={disposition} onChange={(event) => setDisposition(event.target.value)}><option value="">Ещё не принято</option><option>Изолятор</option><option>Использование по разрешению</option><option>Возврат поставщику</option></select></label>

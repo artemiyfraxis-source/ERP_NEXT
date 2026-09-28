@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -37,6 +38,34 @@ def _quantity(value: Decimal, label: str) -> Decimal:
     return normalized
 
 
+# Text passport fields of a lot (SUPPLYMAP Config.gs WAREHOUSE_STOCK_COLS 172-174) → their longest value.
+LOT_DETAIL_LIMITS = {
+    "manufacturer": 255,  # ПРОИЗВОДИТЕЛЬ
+    "description": 4096,  # ОПИСАНИЕ
+    "storage_conditions": 1024,  # УСЛОВИЯ ХРАНЕНИЯ
+    "datasheet": 4096,  # DATASHEET: a link or a name, as typed
+    "certificate": 4096,  # СЕРТИФИКАТ: a link or a number, as typed
+}
+
+
+def _detail(field_name: str, value: str) -> str:
+    text = str(value or "").strip()
+    if len(text) > LOT_DETAIL_LIMITS[field_name]:
+        raise WarehouseValidationError(f"Слишком длинное поле {field_name}")
+    return text
+
+
+def _unit_mass(value: Decimal | None) -> Decimal | None:
+    """МАССА 1 ШТ, Г as the lot keeps it. SUPPLYMAP writes the mass into the stock row only when it is
+    truthy (Warehouse.gs:508, 527 `if (it2.mass)`), so a zero or missing mass means «no mass»."""
+    if value is None:
+        return None
+    mass = Decimal(value)
+    if mass < 0:
+        raise WarehouseValidationError("Масса 1 шт не может быть отрицательной")
+    return mass if mass > 0 else None
+
+
 @dataclass(frozen=True)
 class StockLot:
     id: UUID
@@ -55,6 +84,15 @@ class StockLot:
     written_off: Decimal
     reserved: Decimal
     source_receiving_ids: tuple[str, ...]
+    # Lot passport (SK-6): МАССА 1 ШТ, Г, СРОК ГОДНОСТИ, ПРОИЗВОДИТЕЛЬ, ОПИСАНИЕ, УСЛОВИЯ ХРАНЕНИЯ,
+    # DATASHEET, СЕРТИФИКАТ. None / "" = not filled.
+    unit_mass_g: Decimal | None = None
+    expiry_date: date | None = None
+    manufacturer: str = ""
+    description: str = ""
+    storage_conditions: str = ""
+    datasheet: str = ""
+    certificate: str = ""
 
     @classmethod
     def create(
@@ -73,6 +111,13 @@ class StockLot:
         article: str = "",
         series: str = "",
         location_as_is: bool = False,
+        unit_mass_g: Decimal | None = None,
+        expiry_date: date | None = None,
+        manufacturer: str = "",
+        description: str = "",
+        storage_conditions: str = "",
+        datasheet: str = "",
+        certificate: str = "",
     ) -> StockLot:
         """location_as_is — old data: an empty place or an old address is kept as it was."""
         if str(warehouse).strip() not in WAREHOUSES:
@@ -110,6 +155,13 @@ class StockLot:
             written_off=Decimal("0"),
             reserved=Decimal("0"),
             source_receiving_ids=tuple(dict.fromkeys(source_receiving_ids)),
+            unit_mass_g=_unit_mass(unit_mass_g),
+            expiry_date=expiry_date,
+            manufacturer=_detail("manufacturer", manufacturer),
+            description=_detail("description", description),
+            storage_conditions=_detail("storage_conditions", storage_conditions),
+            datasheet=_detail("datasheet", datasheet),
+            certificate=_detail("certificate", certificate),
         )
 
     @property
@@ -220,10 +272,13 @@ class StockLot:
         series: str = "",
         purpose: str = "",
         storage_location: str = "",
+        expiry_date: date | None = None,
+        unit_mass_g: Decimal | None = None,
     ) -> StockLot:
         """Repeated receipt of the same ГРН+ПАКЕТ (SUPPLYMAP Warehouse.gs applyWarehouseAdds_ 492-515): the
         incoming НАЗНАЧЕНИЕ and МЕСТО ХРАНЕНИЯ replace the lot's; an empty one keeps what the lot has.
-        The place goes through the same strict check as the first receipt."""
+        The place goes through the same strict check as the first receipt. СРОК ГОДНОСТИ is always the
+        incoming one, even empty (line 498); МАССА 1 ШТ changes only with a real mass (line 508)."""
         source = str(source_receiving_id or "").strip()
         if not source:
             raise WarehouseValidationError("Источник приёмки обязателен")
@@ -237,6 +292,8 @@ class StockLot:
             series=str(series or "").strip() or self.series,
             purpose=str(purpose or "").strip() or self.purpose,
             storage_location=normalize_location(place) if place else self.storage_location,
+            expiry_date=expiry_date,
+            unit_mass_g=_unit_mass(unit_mass_g) or self.unit_mass_g,
             inbound=self.inbound + amount,
             source_receiving_ids=(*self.source_receiving_ids, source),
             version=self.version + 1,

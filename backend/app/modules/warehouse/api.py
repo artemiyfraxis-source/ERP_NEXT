@@ -1,7 +1,7 @@
 """Warehouse HTTP contract for stock, movement, writeoff and its return."""
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -37,11 +37,12 @@ from .application import (
     warehouse_lots,
     write_off,
 )
-from .domain import StockLot, WarehouseValidationError
+from .domain import LOT_DETAIL_LIMITS, StockLot, WarehouseValidationError
 
 
 router = APIRouter(prefix="/api/stock", tags=["warehouse"])
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+MassInput = Annotated[str, Field(max_length=64)] | float | None
 
 
 class WriteOffPayload(BaseModel):
@@ -92,6 +93,16 @@ class ManualStockInput(BaseModel):
     unit: str = Field(default="шт", min_length=1, max_length=32)
     quantity: Quantity
     storage_location: str = Field(min_length=3, max_length=16)
+    # Lot passport (SK-6), all optional. МАССА 1 ШТ: weight of 1, 10 or 100 pieces, grams, as typed.
+    mass_1: MassInput = None
+    mass_10: MassInput = None
+    mass_100: MassInput = None
+    expiry_date: date | None = None
+    manufacturer: str = Field(default="", max_length=LOT_DETAIL_LIMITS["manufacturer"])
+    description: str = Field(default="", max_length=LOT_DETAIL_LIMITS["description"])
+    storage_conditions: str = Field(default="", max_length=LOT_DETAIL_LIMITS["storage_conditions"])
+    datasheet: str = Field(default="", max_length=LOT_DETAIL_LIMITS["datasheet"])
+    certificate: str = Field(default="", max_length=LOT_DETAIL_LIMITS["certificate"])
 
 
 class ManualStockPayload(BaseModel):
@@ -129,6 +140,13 @@ def _result(lot: StockLot) -> dict:
         "balance": _number(lot.balance),
         "available": _number(lot.available),
         "source_receiving_ids": list(lot.source_receiving_ids),
+        "unit_mass_g": _number(lot.unit_mass_g) if lot.unit_mass_g is not None else None,
+        "expiry_date": lot.expiry_date.isoformat() if lot.expiry_date else None,
+        "manufacturer": lot.manufacturer,
+        "description": lot.description,
+        "storage_conditions": lot.storage_conditions,
+        "datasheet": lot.datasheet,
+        "certificate": lot.certificate,
     }
 
 
@@ -218,6 +236,15 @@ def add_batches(
                         unit=item.unit.strip(),
                         quantity=item.quantity,
                         storage_location=item.storage_location,
+                        mass_1=item.mass_1,
+                        mass_10=item.mass_10,
+                        mass_100=item.mass_100,
+                        expiry_date=item.expiry_date,
+                        manufacturer=item.manufacturer,
+                        description=item.description,
+                        storage_conditions=item.storage_conditions,
+                        datasheet=item.datasheet,
+                        certificate=item.certificate,
                     )
                     for item in payload.items
                 ),

@@ -14,6 +14,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.clock import moscow_now
 from app.shared.document_url import normalize_document_url
 from app.shared.http_auth import Principal, receiving_edit_principal
+from app.shared.unit_mass import mass_fields_from
 
 from .application import (
     ConcurrentReceivingUpdate,
@@ -29,6 +30,7 @@ from .domain import InspectionInput, ReceivingLine, ReceivingValidationError
 
 router = APIRouter(prefix="/api/receiving", tags=["receiving"])
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+MassInput = Annotated[str, Field(max_length=64)] | float | None
 
 
 class InspectionPayload(BaseModel):
@@ -42,6 +44,10 @@ class InspectionPayload(BaseModel):
     disposition: str | None = Field(default=None, max_length=255)
     manual_grn_prefix: str | None = Field(default=None, max_length=8)
     series: str = Field(default="", max_length=255)
+    # МАССА 1 ШТ: weight of 1, 10 or 100 pieces, grams; «0,5» as typed is fine (SUPPLYMAP icrNum_).
+    mass_1: MassInput = None
+    mass_10: MassInput = None
+    mass_100: MassInput = None
 
     @field_validator("shipping_document_url", "quality_document_url")
     @classmethod
@@ -86,6 +92,8 @@ def _result(line: ReceivingLine) -> dict:
         "document_quantity": _decimal(line.document_quantity),
         "fact_quantity": _decimal(line.fact_quantity),
         "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
+        "unit_mass_g": _decimal(line.unit_mass_g),
+        "mass_fields": mass_fields_from(line.unit_mass_g),
         "disposition": line.disposition,
         "verdict": line.verdict,
         "nonconformities": list(line.nonconformities),
@@ -151,6 +159,9 @@ def inspect(
         shipping_document_url=payload.shipping_document_url,
         quality_document_url=payload.quality_document_url,
         series=payload.series,
+        mass_1=payload.mass_1,
+        mass_10=payload.mass_10,
+        mass_100=payload.mass_100,
     )
     line = _run(
         lambda: inspect_receiving(

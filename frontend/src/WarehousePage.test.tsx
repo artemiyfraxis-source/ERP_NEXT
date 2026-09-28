@@ -256,6 +256,48 @@ it("adds a manually counted lot through the live stock route", async () => {
   }] }));
 });
 
+it("sends the filled lot passport with a manual entry and shows it in the lot operations", async () => {
+  let payload: { items: Array<Record<string, unknown>> } | undefined;
+  const weighed = {
+    ...lot, unit_mass_g: "0.048", expiry_date: "2030-05-01", manufacturer: "Molex",
+    description: "", storage_conditions: "Сухо", datasheet: "", certificate: "РОСС RU.0001",
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) {
+      return json({ lots: payload ? [weighed] : [], total: payload ? 1 : 0, truncated: 0, next_cursor: null });
+    }
+    if (path === "/api/stock/batches" && init?.method === "POST") {
+      payload = JSON.parse(String(init.body));
+      return json({ lots: [weighed] });
+    }
+    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
+  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "10" } });
+  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F4" } });
+  fireEvent.change(screen.getByLabelText("Масса 100 шт, г"), { target: { value: "4,8" } });
+  fireEvent.change(screen.getByLabelText("Срок годности"), { target: { value: "2030-05-01" } });
+  fireEvent.change(screen.getByLabelText("Производитель"), { target: { value: "Molex" } });
+  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
+
+  await waitFor(() => expect(payload?.items[0]).toMatchObject({
+    article: "CON-001", mass_100: "4,8", expiry_date: "2030-05-01", manufacturer: "Molex",
+  }));
+  expect(payload?.items[0]).not.toHaveProperty("mass_1");
+  expect(payload?.items[0]).not.toHaveProperty("certificate");
+
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  expect(screen.getByLabelText("Паспорт партии")).toHaveTextContent(
+    "Масса 1 шт: 0.048 г · Годен до 01.05.2030 · Производитель: Molex · Условия хранения: Сухо · Сертификат: РОСС RU.0001",
+  );
+});
+
 it("fills name, series, and type from the current article catalog", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);

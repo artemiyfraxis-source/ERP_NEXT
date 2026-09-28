@@ -49,6 +49,7 @@ class ReceivingLineRow(Base):
     shipping_document_url: Mapped[str | None] = mapped_column(Text)
     quality_document_url: Mapped[str | None] = mapped_column(Text)
     expiry_date: Mapped[Any | None] = mapped_column(Date)
+    unit_mass_g: Mapped[Decimal | None] = mapped_column(Numeric(18, 5))
     disposition: Mapped[str | None] = mapped_column(String(255))
     verdict: Mapped[str | None] = mapped_column(String(64))
     nonconformities: Mapped[list[str]] = mapped_column(JSON, nullable=False)
@@ -92,6 +93,7 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         shipping_document_url=line.shipping_document_url,
         quality_document_url=line.quality_document_url,
         expiry_date=line.expiry_date,
+        unit_mass_g=line.unit_mass_g,
         disposition=line.disposition,
         verdict=line.verdict,
         nonconformities=list(line.nonconformities),
@@ -141,6 +143,7 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         shipping_document_url=row.shipping_document_url,
         quality_document_url=row.quality_document_url,
         expiry_date=row.expiry_date,
+        unit_mass_g=row.unit_mass_g,
         disposition=row.disposition,
         verdict=row.verdict,
         nonconformities=tuple(row.nonconformities),

@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 from app.shared.document_url import normalize_document_url
 from app.shared.events import OutboxMessage
 from app.shared.identity import Actor
+from app.shared.unit_mass import mass_per_unit
 from app.shared.warehouse_location import normalize_storage_location
 
 
@@ -60,6 +61,10 @@ class InspectionInput:
     shipping_document_url: str | None = None
     quality_document_url: str | None = None
     series: str = ""
+    # МАССА 1 ШТ: the weight of 1, 10 or 100 pieces as typed; any one is enough (Receiving.gs:437-441).
+    mass_1: object = None
+    mass_10: object = None
+    mass_100: object = None
 
 
 @dataclass(frozen=True)
@@ -201,6 +206,7 @@ class ReceivingLine:
     shipping_document_url: str | None = None
     quality_document_url: str | None = None
     expiry_date: date | None = None
+    unit_mass_g: Decimal | None = None
     disposition: str | None = None
     verdict: str | None = None
     nonconformities: tuple[str, ...] = ()
@@ -236,6 +242,10 @@ class ReceivingLine:
         except ValueError as error:
             raise ReceivingValidationError(str(error)) from error
         result = inspect_delivery(data)
+        try:
+            unit_mass = mass_per_unit(data.mass_1, data.mass_10, data.mass_100)
+        except ValueError as error:
+            raise ReceivingValidationError(str(error)) from error
         grn = self.grn
         if grn is None:
             prefix = grn_prefix_for(purpose=self.purpose, link=self.source_link, goal=self.goal)
@@ -257,6 +267,8 @@ class ReceivingLine:
             quality_document_url=quality_document_url,
             series=str(data.series or "").strip() or self.series,
             expiry_date=data.expiry_date,
+            # Nothing usable typed → the mass weighed before stays (Receiving.gs:441 `if (per.ok)`).
+            unit_mass_g=self.unit_mass_g if unit_mass is None else unit_mass,
             disposition=str(data.disposition or "").strip() or None,
             verdict=result.verdict,
             nonconformities=result.nonconformities,

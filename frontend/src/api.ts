@@ -152,6 +152,8 @@ export interface ReceivingLine {
   document_quantity: string | null;
   fact_quantity: string | null;
   expiry_date: string | null;
+  unit_mass_g?: string | null;
+  mass_fields?: UnitMassFields;
   disposition: string | null;
   verdict: string | null;
   nonconformities: string[];
@@ -183,6 +185,30 @@ export interface WarehouseLot {
   balance: string;
   available: string;
   source_receiving_ids: string[];
+  // Lot passport (SK-6); older payloads may lack it.
+  unit_mass_g?: string | null;
+  expiry_date?: string | null;
+  manufacturer?: string;
+  description?: string;
+  storage_conditions?: string;
+  datasheet?: string;
+  certificate?: string;
+}
+
+/** МАССА 1 ШТ as typed: the weight of 1, 10 or 100 pieces, grams; any one is enough. */
+export interface UnitMassFields {
+  mass_1: string;
+  mass_10: string;
+  mass_100: string;
+}
+
+export interface WarehouseLotPassport extends UnitMassFields {
+  expiry_date: string | null;
+  manufacturer: string;
+  description: string;
+  storage_conditions: string;
+  datasheet: string;
+  certificate: string;
 }
 
 export interface WarehouseArticleInfo {
@@ -946,7 +972,7 @@ export const warehouseApi = {
     unit: string;
     quantity: string;
     storage_location: string;
-  }>) => api<{ lots: WarehouseLot[] }>("/api/stock/batches", {
+  } & Partial<WarehouseLotPassport>>) => api<{ lots: WarehouseLot[] }>("/api/stock/batches", {
     method: "POST",
     body: JSON.stringify({ items }),
   }),

@@ -76,6 +76,30 @@ it("submits document URLs and optimistic version without browser-owned presence 
   expect(inspection).not.toHaveProperty("quality_document_present");
 });
 
+it("sends the weighed mass and prefills the sample it was weighed with on repeated control", async () => {
+  let inspection: Record<string, unknown> | undefined;
+  const weighed = { ...line, mass_fields: { mass_1: "", mass_10: "", mass_100: "0.123" } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [weighed] });
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      inspection = JSON.parse(String(init.body));
+      return json({ line: weighed });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  expect(await screen.findByLabelText("Масса 100 шт, г")).toHaveValue("0.123");
+  fireEvent.change(screen.getByLabelText("Масса 10 шт, г"), { target: { value: "0,5" } });
+  fireEvent.change(screen.getByLabelText("Ссылка на УПД/М-15"), { target: { value: "https://files.test/upd.pdf" } });
+  fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
+
+  await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
+    mass_1: "", mass_10: "0,5", mass_100: "0.123",
+  })));
+});
+
 it("keeps persisted documents and manual defects during repeated control", async () => {
   let inspection: Record<string, unknown> | undefined;
   const waiting: ReceivingLine = {

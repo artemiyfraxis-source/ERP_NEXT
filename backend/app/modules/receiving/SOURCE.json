@@ -11,6 +11,7 @@
     "accepted and placed line emits one warehouse event",
     "procurement article follows the receiving line into warehouse stock",
     "manufacturer series is recorded during incoming control and remains distinct from GRN",
-    "first inspection shortfall of a paid line becomes a -Д procurement backorder"
+    "first inspection shortfall of a paid line becomes a -Д procurement backorder",
+    "unit mass weighed at incoming control as 1, 10 or 100 pieces and the expiry date follow the line into warehouse stock"
   ]
 }

@@ -5,7 +5,9 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import JSON, Index, Integer, Numeric, String, UniqueConstraint, Uuid, func, or_, select
+from datetime import date
+
+from sqlalchemy import JSON, Date, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
@@ -37,6 +39,13 @@ class StockLotRow(Base):
     written_off: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     reserved: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     source_receiving_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    unit_mass_g: Mapped[Decimal | None] = mapped_column(Numeric(18, 5))
+    expiry_date: Mapped[date | None] = mapped_column(Date)
+    manufacturer: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    storage_conditions: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    datasheet: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    certificate: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -66,6 +75,13 @@ def _row(lot: StockLot) -> StockLotRow:
         written_off=lot.written_off,
         reserved=lot.reserved,
         source_receiving_ids=list(lot.source_receiving_ids),
+        unit_mass_g=lot.unit_mass_g,
+        expiry_date=lot.expiry_date,
+        manufacturer=lot.manufacturer,
+        description=lot.description,
+        storage_conditions=lot.storage_conditions,
+        datasheet=lot.datasheet,
+        certificate=lot.certificate,
     )
 
 
@@ -87,6 +103,13 @@ def _domain(row: StockLotRow) -> StockLot:
         written_off=row.written_off,
         reserved=row.reserved,
         source_receiving_ids=tuple(row.source_receiving_ids),
+        unit_mass_g=row.unit_mass_g,
+        expiry_date=row.expiry_date,
+        manufacturer=row.manufacturer,
+        description=row.description,
+        storage_conditions=row.storage_conditions,
+        datasheet=row.datasheet,
+        certificate=row.certificate,
     )
 
 

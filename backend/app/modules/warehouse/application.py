@@ -5,13 +5,14 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
+from app.shared.unit_mass import mass_per_unit
 from app.shared.warehouse_location import remap_storage_location, storage_location_has_slot
 
 from .domain import StockLot, WarehouseValidationError, normalize_location, normalize_location_as_is
@@ -150,6 +151,18 @@ class ManualStockItem:
     storage_location: str
     article: str = ""
     series: str = ""
+    # Lot passport, optional (SK-6). The mass comes as the weight of 1, 10 or 100 pieces, as typed
+    # (Stock05.gs:98-105); ERP also takes the other passport fields at entry — SUPPLYMAP has them only
+    # in the row edit (SK-7).
+    mass_1: object = None
+    mass_10: object = None
+    mass_100: object = None
+    expiry_date: date | None = None
+    manufacturer: str = ""
+    description: str = ""
+    storage_conditions: str = ""
+    datasheet: str = ""
+    certificate: str = ""
 
 
 @dataclass(frozen=True)
@@ -174,11 +187,23 @@ def _lot_from_payload(payload: dict) -> StockLot:
             source_receiving_ids=(str(payload["receiving_line_id"]),),
             article=str(payload.get("article") or ""),
             series=str(payload.get("series") or ""),
+            expiry_date=date.fromisoformat(payload["expiry_date"]) if payload.get("expiry_date") else None,
+            unit_mass_g=Decimal(str(payload["unit_mass_g"])) if payload.get("unit_mass_g") else None,
         )
     except (KeyError, ValueError, TypeError, DecimalException) as error:
         if isinstance(error, WarehouseValidationError):
             raise
         raise WarehouseValidationError(f"Invalid warehouse.received payload: {error}") from error
+
+
+def _audit_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+    return str(value)
 
 
 def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot | None:
@@ -196,6 +221,8 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
                 series=incoming.series,
                 purpose=incoming.purpose,
                 storage_location=incoming.storage_location,
+                expiry_date=incoming.expiry_date,
+                unit_mass_g=incoming.unit_mass_g,
             )
         except WarehouseValidationError as error:
             uow.outbox.mark_failed(message.id, now, str(error))
@@ -205,10 +232,10 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
         if existing is None or lot != existing:
             details = {"grn": lot.grn, "package": lot.package, "quantity": str(incoming.inbound)}
             if existing is not None:
-                for field_name in ("storage_location", "purpose"):
+                for field_name in ("storage_location", "purpose", "expiry_date", "unit_mass_g"):
                     old, new = getattr(existing, field_name), getattr(lot, field_name)
                     if old != new:
-                        details[f"{field_name}_from"], details[f"{field_name}_to"] = old, new
+                        details[f"{field_name}_from"], details[f"{field_name}_to"] = _audit_value(old), _audit_value(new)
             uow.audit.add(
                 AuditEvent(
                     id=uuid4(),
@@ -222,6 +249,13 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
         uow.outbox.mark_published(message.id, now)
         uow.commit()
         return lot
+
+
+def _manual_unit_mass(item: ManualStockItem) -> Decimal | None:
+    try:
+        return mass_per_unit(item.mass_1, item.mass_10, item.mass_100)
+    except ValueError as error:
+        raise WarehouseValidationError(str(error)) from error
 
 
 def add_manual_stock(command: AddManualStockCommand, uow: UnitOfWork) -> list[StockLot]:
@@ -248,6 +282,13 @@ def add_manual_stock(command: AddManualStockCommand, uow: UnitOfWork) -> list[St
                 source_receiving_ids=(source_id,),
                 article=item.article,
                 series=item.series,
+                unit_mass_g=_manual_unit_mass(item),
+                expiry_date=item.expiry_date,
+                manufacturer=item.manufacturer,
+                description=item.description,
+                storage_conditions=item.storage_conditions,
+                datasheet=item.datasheet,
+                certificate=item.certificate,
             )
             uow.warehouse.add(lot)
             uow.audit.add(

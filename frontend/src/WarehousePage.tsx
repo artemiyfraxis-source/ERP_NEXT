@@ -1,5 +1,23 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { warehouseApi, type WarehouseLot } from "./api";
+import { warehouseApi, type WarehouseLot, type WarehouseLotPassport } from "./api";
+
+const EMPTY_PASSPORT: WarehouseLotPassport = {
+  mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
+  manufacturer: "", description: "", storage_conditions: "", datasheet: "", certificate: "",
+};
+
+/** Lot passport as one line for the operations row (SK-6); empty fields are left out. */
+function passportLine(lot: WarehouseLot) {
+  return [
+    lot.unit_mass_g ? `Масса 1 шт: ${lot.unit_mass_g} г` : "",
+    lot.expiry_date ? `Годен до ${lot.expiry_date.split("-").reverse().join(".")}` : "",
+    lot.manufacturer ? `Производитель: ${lot.manufacturer}` : "",
+    lot.description ? `Описание: ${lot.description}` : "",
+    lot.storage_conditions ? `Условия хранения: ${lot.storage_conditions}` : "",
+    lot.datasheet ? `Datasheet: ${lot.datasheet}` : "",
+    lot.certificate ? `Сертификат: ${lot.certificate}` : "",
+  ].filter(Boolean).join(" · ");
+}
 
 export function WarehousePage() {
   const [lots, setLots] = useState<WarehouseLot[]>([]);
@@ -250,8 +268,16 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
     unit: string;
     quantity: string;
     storage_location: string;
-  }) => Promise<void>;
+  } & Partial<WarehouseLotPassport>) => Promise<void>;
 }) {
+  const [passport, setPassport] = useState<WarehouseLotPassport>(EMPTY_PASSPORT);
+  const passportField = (field: keyof WarehouseLotPassport) => ({
+    value: passport[field] ?? "",
+    onChange: (event: { target: { value: string } }) => {
+      const value = event.target.value;
+      setPassport((current) => ({ ...current, [field]: field === "expiry_date" ? value || null : value }));
+    },
+  });
   const [warehouse, setWarehouse] = useState("ЦАР");
   const [article, setArticle] = useState("");
   const [series, setSeries] = useState("");
@@ -313,6 +339,8 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
           unit: unit.trim(),
           quantity,
           storage_location: storageLocation.trim(),
+          // Only what was filled: an empty passport keeps the plain quick-entry payload.
+          ...Object.fromEntries(Object.entries(passport).filter(([, value]) => String(value ?? "").trim())),
         });
       } finally {
         setSubmitting(false);
@@ -333,6 +361,21 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
         <label>Назначение<input required value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
         <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" required value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>
       </div>
+      <details className="manual-stock-passport">
+        <summary>Паспорт партии — необязательно</summary>
+        <p className="page-sub">Масса: заполните любое одно поле — мелочь точнее взвесить десятком или сотней, хранится масса одной штуки.</p>
+        <div className="manual-stock-grid">
+          <label>Масса 1 шт, г<input aria-label="Масса 1 шт, г" inputMode="decimal" {...passportField("mass_1")} /></label>
+          <label>Масса 10 шт, г<input aria-label="Масса 10 шт, г" inputMode="decimal" {...passportField("mass_10")} /></label>
+          <label>Масса 100 шт, г<input aria-label="Масса 100 шт, г" inputMode="decimal" {...passportField("mass_100")} /></label>
+          <label>Срок годности<input aria-label="Срок годности" type="date" {...passportField("expiry_date")} /></label>
+          <label>Производитель<input aria-label="Производитель" {...passportField("manufacturer")} /></label>
+          <label>Описание<input aria-label="Описание" {...passportField("description")} /></label>
+          <label>Условия хранения<input aria-label="Условия хранения" {...passportField("storage_conditions")} /></label>
+          <label>Datasheet<input aria-label="Datasheet" {...passportField("datasheet")} /></label>
+          <label>Сертификат<input aria-label="Сертификат" {...passportField("certificate")} /></label>
+        </div>
+      </details>
       {articleSource && <p className="page-sub" role="status">{articleSource}</p>}
       <button className="primary" disabled={busy || submitting}>{submitting ? "Вносим…" : "Внести"}</button>
     </form>
@@ -415,6 +458,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
   const [returnSource, setReturnSource] = useState("");
   const [returnReason, setReturnReason] = useState("");
   const writtenOff = Number(lot.written_off) > 0;
+  const passport = passportLine(lot);
 
   function writeoff(event: FormEvent) {
     event.preventDefault();
@@ -433,7 +477,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
         <td>{lot.item_type || "—"}</td><td><strong>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</strong></td><td className="num">{lot.balance}</td><td className="num">{lot.available}</td><td>{lot.unit}</td><td>{lot.storage_location || "без места"}</td><td>{lot.series || "—"}</td><td className="text"><strong>{lot.article || "—"}</strong></td><td className="text">{lot.name || "—"}</td><td>{lot.purpose || "—"}</td><td>{lot.warehouse}</td>
         <td><button className="link-button table-link" onClick={() => setOpen((value) => !value)}>Операции</button></td>
       </tr>
-      {open && <tr className="stock-actions-row"><td colSpan={12}><div className="stock-actions">
+      {open && <tr className="stock-actions-row"><td colSpan={12}>{passport && <p className="page-sub" aria-label="Паспорт партии">{passport}</p>}<div className="stock-actions">
         <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
         <form className="inline-action" onSubmit={(event) => {
           event.preventDefault();

@@ -22,6 +22,7 @@
     "manual stock requires an article and keeps article and manufacturer series as strings",
     "manual stock suggests name series and type from existing lots terminal and coax references connector families and coax article codes",
     "article-derived suggestions only fill blank fields and remain editable",
-    "single-lot identity edits require the optimistic version so a stale article correction is rejected"
+    "single-lot identity edits require the optimistic version so a stale article correction is rejected",
+    "a lot keeps its passport: the mass of one piece from the largest filled 1/10/100-piece sample rounded to 5 decimals, expiry, manufacturer, description, storage conditions, datasheet and certificate; a repeated receipt replaces the expiry and only a real mass"
   ]
 }

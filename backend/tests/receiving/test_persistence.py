@@ -67,6 +67,7 @@ def test_receiving_to_warehouse_is_transactional_and_persistent():
                 shipping_document_url="https://files.test/upd.pdf",
                 expiry_date=date(2027, 1, 1),
                 inspection_date=date(2026, 9, 21),
+                mass_100="0,123",
             ),
             actor=actor,
             now=datetime(2026, 9, 21, 11, 0),
@@ -91,6 +92,12 @@ def test_receiving_to_warehouse_is_transactional_and_persistent():
     assert placed.warehouse_event_emitted is True
     assert lot.grn == "FRX.26.0000001"
     assert lot.balance == Decimal("10")
+    # SK-6: СРОК ГОДНОСТИ and МАССА 1 ШТ (weighed as a hundred at incoming control) reach the stored lot.
+    with receiving_factory() as uow:
+        assert uow.receiving.get(line.id).unit_mass_g == Decimal("0.00123")
+    with SqlAlchemyWarehouseUnitOfWork(sessions) as uow:
+        stored = uow.warehouse.get(lot.id)
+    assert (stored.expiry_date, stored.unit_mass_g) == (date(2027, 1, 1), Decimal("0.00123"))
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(ReceivingLineRow)) == 1
         assert session.scalar(select(func.count()).select_from(StockLotRow)) == 1
