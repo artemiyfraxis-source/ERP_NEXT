@@ -10,16 +10,15 @@ const root = join(import.meta.dirname, "..", "..");
 const supplymap = process.env.SUPPLYMAP_SOURCE_REPOSITORY || join(root, "..", "SUPPLYMAP");
 const modulesDir = join(root, "backend", "app", "modules");
 
-// Environment check: a Desktop worktree carries no gitignored envs, so `npm run check` dies on step one.
+// Environment check: runs after scripts/setup-env.mjs, so anything missing here means setup failed.
 const missing = [
   ["backend/.venv", join(root, "backend", ".venv")],
   ["frontend/node_modules", join(root, "frontend", "node_modules")],
 ].filter(([, p]) => !existsSync(p)).map(([name]) => name);
-if (/[\\/]\.claude[\\/]worktrees[\\/]/.test(root) || missing.length) {
+if (missing.length) {
   console.log(
-    `⚙ Setup: ${missing.length ? `missing ${missing.join(", ")}` : "running in a worktree"} — ` +
-      "tell the owner to restart this session with the worktree toggle OFF " +
-      "(or build the env here: README → Python venv, npm ci in frontend).",
+    `⚙ Setup: missing ${missing.join(", ")} — ` +
+      "scripts/setup-env.mjs did not finish; run `node scripts/setup-env.mjs` and fix what it reports.",
   );
 }
 if (!existsSync(join(supplymap, ".git")) || !existsSync(modulesDir)) process.exit(0);

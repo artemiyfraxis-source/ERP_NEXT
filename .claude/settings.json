@@ -11,8 +11,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/supplymap-drift.mjs",
-            "timeout": 30
+            "command": "node scripts/setup-env.mjs && node .claude/hooks/supplymap-drift.mjs",
+            "timeout": 600
           }
         ]
       }
