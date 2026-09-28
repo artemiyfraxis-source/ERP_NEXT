@@ -36,10 +36,16 @@ from .domain import (
     STATIC_PURPOSES,
     TASK_TYPE,
     UNITS,
+    CalcImport,
+    CalcImportItem,
     RequestDraft,
     ValidationError,
+    build_import_drafts,
     calculate_line_sum,
     derive_priority,
+    parse_calc_number,
+    parse_zpk,
+    project_from_title,
     validate_draft,
 )
 
@@ -47,6 +53,7 @@ from .domain import (
 router = APIRouter(prefix="/api/requests", tags=["requests"])
 Quantity = Annotated[Decimal, Field(max_digits=18, decimal_places=6)]
 Money = Annotated[Decimal, Field(max_digits=18, decimal_places=2)]
+CALC_IMPORT_LIMIT = 500  # SUPPLYMAP has no cap on an import; решено агентом — проверить
 
 
 class RequestDraftInput(BaseModel):
@@ -77,6 +84,44 @@ class ValidateRequestInput(BaseModel):
 
 class CreateRequestsInput(BaseModel):
     requests: list[RequestDraftInput] = Field(min_length=1, max_length=100)
+
+
+class CalcGridInput(BaseModel):
+    """The ЗКП sheet as display values (≤ 20 columns, as `extractFromCalc` reads) plus ЗКЗ!B2."""
+
+    grid: list[list[str | None]] = Field(max_length=5000)
+    project: str | None = Field(default=None, max_length=128)
+    title: str | None = Field(default=None, max_length=512)
+
+
+class CalcImportItemInput(BaseModel):
+    item_type: str = Field(default="", max_length=255)
+    name: str = Field(max_length=1024)
+    quantity: Quantity
+    unit: str | None = Field(default=None, max_length=32)
+    quality_document: str | None = Field(default=None, max_length=8)
+    planned_date: date | None = None
+    category: str | None = Field(default=None, max_length=32)
+    link: str | None = Field(default=None, max_length=4096)
+    price: Money | None = None
+    price_with_vat: Money | None = None
+
+
+class CalcImportInput(BaseModel):
+    project: str = Field(default="", max_length=128)
+    purpose: str = Field(max_length=128)
+    delivery_point: str | None = Field(default=None, max_length=512)
+    procurement_deadline: date | None = None
+    items: list[CalcImportItemInput] = Field(max_length=CALC_IMPORT_LIMIT)
+
+    def to_domain(self) -> CalcImport:
+        return CalcImport(
+            project=self.project,
+            purpose=self.purpose,
+            delivery_point=self.delivery_point,
+            procurement_deadline=self.procurement_deadline,
+            items=tuple(CalcImportItem(**item.model_dump()) for item in self.items),
+        )
 
 
 class HandoffRequestsInput(BaseModel):
@@ -212,6 +257,69 @@ def create_requests(
             drafts=tuple(item.to_domain() for item in payload.requests),
             actor=principal.actor,
             now=now,
+        )
+        requests = _retry_transaction(
+            lambda: create_requests_use_case(command, uow_factory()),
+        )
+    except ValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {"requests": [_request_result(request) for request in requests]}
+
+
+def _calc_number(value: str) -> str | None:
+    number = parse_calc_number(value)
+    return format(number.normalize(), "f") if number is not None else None
+
+
+@router.post("/import/parse")
+def parse_calculation(
+    payload: CalcGridInput,
+    _principal: Annotated[Principal, Depends(requests_edit_principal)],
+) -> dict:
+    """`extractFromCalc` without opening the sheet: the calculation module hands over the grid."""
+    grid = [[cell or "" for cell in row[:20]] for row in payload.grid]
+    project = (payload.project or "").strip() or project_from_title(payload.title)
+    return {
+        "project": project,
+        "items": [
+            {
+                "item_type": item.item_type,
+                "name": item.name,
+                "quantity": _calc_number(item.quantity),
+                "price": _calc_number(item.price),
+                "price_with_vat": _calc_number(item.price_with_vat),
+                "link": item.link,
+                "country": item.country,
+                "unit": item.unit,
+                "quality_document": "",
+                "planned_date": None,
+            }
+            for item in parse_zpk(grid)
+        ],
+    }
+
+
+@router.post("/import", status_code=201)
+def import_requests(
+    payload: CalcImportInput,
+    idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=1, max_length=255),
+    ],
+    principal: Annotated[Principal, Depends(requests_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
+) -> dict:
+    """`importRequests_`: one batch, one `project.NNN`, never blocked by an unknown project."""
+    try:
+        data = payload.to_domain()
+        command = CreateRequestsCommand(
+            creation_key=idempotency_key,
+            drafts=tuple(build_import_drafts(data)),
+            actor=principal.actor,
+            now=now,
+            designation_base=data.project.strip(),
+            source="import",
         )
         requests = _retry_transaction(
             lambda: create_requests_use_case(command, uow_factory()),

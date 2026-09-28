@@ -278,7 +278,9 @@ def create_request_batch(
     existing_designations: Sequence[str],
     creation_key: str = "",
     creation_fingerprint: str = "",
+    designation_base: str | None = None,
 ) -> list[Request]:
+    """``designation_base`` set (import from a calculation) → the whole batch shares ``base.NNN``."""
     if not drafts:
         raise ValidationError("Нет позиций")
     _validate_actor(actor)
@@ -292,16 +294,17 @@ def create_request_batch(
     for creation_index, item in enumerate(normalized_drafts):
         legacy_id = next_legacy_id(allocated_ids, now.date())
         allocated_ids.append(legacy_id)
-        if item.purpose not in designation_by_purpose:
-            designation = next_designation(item.purpose, allocated_designations)
-            designation_by_purpose[item.purpose] = designation
+        group = _text(designation_base) or item.purpose
+        if group not in designation_by_purpose:
+            designation = next_designation(group, allocated_designations)
+            designation_by_purpose[group] = designation
             allocated_designations.append(designation)
 
         requests.append(
             Request(
                 id=uuid4(),
                 legacy_id=legacy_id,
-                designation=designation_by_purpose[item.purpose],
+                designation=designation_by_purpose[group],
                 status=RequestStatus.NEW,
                 version=1,
                 created_at=now,
@@ -365,3 +368,174 @@ def build_procurement_requested_snapshot(
         calculated_price_with_vat=request.price_with_vat,
         calculated_sum=request.line_sum,
     )
+
+
+# ── Импорт позиций из расчёта (Imports.gs, Schema.gs `parseZpk_`) ──────────────────────────────
+
+ZPK_UNIT_BY_TYPE = {"Кабель": "м", "Провод": "м", "ТУТ": "м", "Шлейф": "м"}
+
+
+@dataclass(frozen=True)
+class CalcItem:
+    """One ЗКП row as read from the calculation, before the employee fills the dialog."""
+
+    item_type: str
+    name: str
+    quantity: str
+    price: str
+    price_with_vat: str
+    link: str
+    country: str
+    unit: str
+
+
+@dataclass(frozen=True)
+class CalcImportItem:
+    item_type: str
+    name: str
+    quantity: Decimal
+    unit: str | None
+    quality_document: str | None
+    planned_date: date | None
+    category: str | None = None
+    link: str | None = None
+    price: Decimal | None = None
+    price_with_vat: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class CalcImport:
+    project: str
+    purpose: str
+    delivery_point: str | None
+    procurement_deadline: date | None
+    items: Sequence[CalcImportItem]
+
+
+def _norm_header(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value)).strip().lower()
+
+
+def _find_col(header: Sequence[object], needle: str) -> int:
+    """`findCol_`: first column whose normalized header contains ``needle``."""
+    key = _norm_header(needle)
+    for index, value in enumerate(header):
+        if key in _norm_header(value):
+            return index
+    return -1
+
+
+def unit_for_type(item_type: str | None) -> str:
+    """`unitForType_`: cable-like types are measured in metres, everything else in pieces."""
+    return ZPK_UNIT_BY_TYPE.get(_text(item_type), "шт")
+
+
+def project_from_title(title: str | None) -> str:
+    """`projectFromTitle_`: the calculation file name without the word «Расчёт»."""
+    return re.sub(r"\s*расч[ёе]т\s*", " ", str(title or ""), flags=re.IGNORECASE).strip()
+
+
+def parse_calc_number(value: object) -> Decimal | None:
+    """`icrNum_`: spaces (incl. NBSP thousands separators) dropped, decimal comma allowed."""
+    text = re.sub(r"\s", "", str(value if value is not None else "")).replace(",", ".", 1)
+    match = re.match(r"^[+-]?(\d+(\.\d*)?|\.\d+)", text)
+    if not match:
+        return None
+    return Decimal(match.group(0))
+
+
+def parse_zpk(grid: Sequence[Sequence[object]]) -> list[CalcItem]:
+    """`parseZpk_`: the header row has «Обозначение» and «Без НДС»; rows with an empty Обозначение are skipped."""
+    header_row = next(
+        (
+            index
+            for index, row in enumerate(grid)
+            if _find_col(row, "Обозначение") >= 0 and _find_col(row, "Без НДС") >= 0
+        ),
+        -1,
+    )
+    if header_row < 0:
+        return []
+    head = grid[header_row]
+    columns = {
+        "type": _find_col(head, "Тип"),
+        "name": _find_col(head, "Обозначение"),
+        "qty": _find_col(head, "На проект"),
+        "net": _find_col(head, "Без НДС"),
+        "vat": _find_col(head, "С НДС"),
+        "link": _find_col(head, "Ссылка"),
+        "country": _find_col(head, "Место поставки"),
+    }
+
+    def cell(row: Sequence[object], key: str) -> str:
+        index = columns[key]
+        if index < 0 or index >= len(row):
+            return ""
+        return str(row[index] if row[index] is not None else "")
+
+    items: list[CalcItem] = []
+    for row in grid[header_row + 1 :]:
+        name = cell(row, "name").strip()
+        if not name:
+            continue
+        item_type = cell(row, "type")
+        items.append(
+            CalcItem(
+                item_type=item_type,
+                name=name,
+                quantity=cell(row, "qty"),
+                price=cell(row, "net"),
+                price_with_vat=cell(row, "vat"),
+                link=cell(row, "link"),
+                country=cell(row, "country"),
+                unit=unit_for_type(item_type),
+            )
+        )
+    return items
+
+
+def build_import_drafts(payload: CalcImport) -> list[RequestDraft]:
+    """`importRequests_` gates, in its order and wording; nothing is created when one fails.
+
+    One deadline for the whole batch (so one priority), the point is mandatory for «Закупка»,
+    every position needs its unit, quality document and planned date. АРТИКУЛ КД = Обозначение.
+    """
+    items = list(payload.items)
+    if not items:
+        raise ValidationError("Нет позиций для импорта")
+    if payload.procurement_deadline is None:
+        raise ValidationError("Не указан дедлайн — заявки не создаются")
+    if not _text(payload.delivery_point):
+        raise ValidationError("Не выбрана точка отгрузки — заявки не создаются")
+    for item in items:
+        if not _text(item.unit):
+            raise ValidationError(f"Не заполнена Ед.изм: {item.name}")
+        if not _text(item.quality_document):
+            raise ValidationError(f"Не выбран Документ по качеству (Да/Нет): {item.name}")
+        if item.planned_date is None:
+            raise ValidationError(f"Не указана план. дата поступления: {item.name}")
+
+    drafts: list[RequestDraft] = []
+    for item in items:
+        draft = RequestDraft(
+            purpose=payload.purpose,
+            delivery_point=_text(payload.delivery_point),
+            name=item.name,
+            item_type=item.item_type,
+            quantity=item.quantity,
+            unit=_text(item.unit),
+            quality_document=_text(item.quality_document),
+            procurement_deadline=payload.procurement_deadline,
+            planned_date=item.planned_date,
+            project_reference=_text(payload.project) or None,
+            category=_text(item.category) or DEFAULT_CATEGORY,
+            design_article=item.name,
+            link=item.link,
+            price=item.price,
+            price_with_vat=item.price_with_vat,
+        )
+        try:
+            drafts.append(validate_draft(draft))
+        except ValidationError as error:
+            raise ValidationError(f"{error}: {_text(item.name)}") from error
+    return drafts

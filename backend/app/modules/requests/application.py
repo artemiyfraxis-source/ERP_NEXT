@@ -74,6 +74,8 @@ class CreateRequestsCommand:
     drafts: Sequence[RequestDraft]
     actor: Actor
     now: datetime
+    designation_base: str | None = None  # import from a calculation: one `project.NNN` per batch
+    source: str = "form"
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,8 @@ def _creation_fingerprint(command: CreateRequestsCommand) -> str:
         "actor": asdict(command.actor),
         "drafts": [asdict(item) for item in command.drafts],
     }
+    if command.designation_base is not None:
+        payload["designation_base"] = command.designation_base
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode()
     return hashlib.sha256(encoded).hexdigest()
 
@@ -149,6 +153,7 @@ def create_requests(command: CreateRequestsCommand, uow: UnitOfWork) -> list[Req
             existing_designations=uow.requests.all_designations(),
             creation_key=creation_key,
             creation_fingerprint=fingerprint,
+            designation_base=command.designation_base,
         )
         for request in requests:
             uow.requests.add(request)
@@ -162,6 +167,7 @@ def create_requests(command: CreateRequestsCommand, uow: UnitOfWork) -> list[Req
                     details={
                         "legacy_id": request.legacy_id,
                         "designation": request.designation,
+                        **({"source": command.source} if command.source != "form" else {}),
                     },
                 )
             )
