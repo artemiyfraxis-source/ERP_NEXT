@@ -395,3 +395,57 @@ it("splits an own line into supplier copies with its optimistic version", async 
   await waitFor(() => expect(splitBody).toEqual({ version: 3, copies: 3 }));
   expect(await screen.findByText(/создано копий — 3/)).toBeInTheDocument();
 });
+
+it("fills the whole supplier order from a КП file and sends one invoice for it", async () => {
+  const awaiting = {
+    ...line,
+    status: "Жду счет" as const,
+    order_number: "PO-001",
+    actual_quantity: "2",
+    actual_unit: "шт",
+  };
+  const other = { ...awaiting, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", calculated_name: "Кабель", version: 5 };
+  let parsed: Record<string, unknown> | undefined;
+  let saved: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: saved ? [] : [awaiting, other] });
+    if (path === "/api/procurement/kp?reference=PO-001") return json({ order_reference: "PO-001", lines: [awaiting, other] });
+    if (path === "/api/procurement/kp/parse") {
+      parsed = JSON.parse(String(init?.body));
+      return json({
+        items: [{ name: "Разъём SMA", qty: "3", price: "100", vat: "20" }, { name: "Болт", qty: "", price: "", vat: "" }],
+        matches: [{ line_id: awaiting.id, name: "Разъём SMA", qty: "3", price: "100", vat: "20" }],
+        not_found: ["Болт"],
+      });
+    }
+    if (path === "/api/procurement/kp" && init?.method === "POST") {
+      saved = JSON.parse(String(init.body));
+      return json({ lines: [awaiting, other], invoice_error: "" });
+    }
+    throw new Error(`Unexpected ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.click((await screen.findAllByRole("button", { name: "Внести КП" }))[0]);
+  expect(await screen.findByLabelText("REQ-2 Кол-во (факт)")).toHaveValue("2");
+
+  const file = new File(["Наименование;Кол-во\n"], "kp.csv", { type: "text/csv" });
+  fireEvent.change(screen.getByLabelText("Файл КП (.xlsx, .csv)"), { target: { files: [file] } });
+  expect(await screen.findByText("Подтянуто строк: 1 из 2 · не найдены в заказе: Болт")).toBeInTheDocument();
+  expect(parsed).toMatchObject({ order_reference: "PO-001", file_name: "kp.csv" });
+  expect(screen.getByLabelText("REQ-1 Кол-во (факт)")).toHaveValue("3");
+  expect(screen.getByLabelText("REQ-1 Наименование (счёт)")).toHaveValue("Разъём SMA");
+
+  fireEvent.change(screen.getByLabelText("Ожид. дата — всем"), { target: { value: "2026-10-01" } });
+  fireEvent.change(screen.getByLabelText("Ссылка на счёт (один на заказ, необязательно)"), { target: { value: "https://files.test/inv.pdf" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить КП" }));
+
+  await waitFor(() => expect(saved).toBeDefined());
+  expect(saved).toMatchObject({ order_reference: "PO-001", invoice_url: "https://files.test/inv.pdf" });
+  const rows = saved?.rows as Record<string, unknown>[];
+  expect(rows[0]).toMatchObject({ line_id: awaiting.id, version: 3, actual_quantity: "3", price: "100", vat_rate: "20", driver: "net", expected_arrival: "2026-10-01" });
+  expect(rows[1]).toMatchObject({ line_id: other.id, version: 5, actual_quantity: "2", expected_arrival: "2026-10-01" });
+  expect(await screen.findByText("Заказ PO-001: КП сохранено по 2 строкам, счёт передан в оплату")).toBeInTheDocument();
+});

@@ -1,5 +1,7 @@
 """Procurement HTTP contract for buyer work queues and editable facts."""
 
+import base64
+import binascii
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
@@ -17,6 +19,8 @@ from app.shared.http_auth import Principal, procurement_edit_principal
 
 from .application import (
     CancelBackorderCommand,
+    KpRow,
+    SaveKpCommand,
     ConfirmBackorderCommand,
     ExchangeRates,
     ManualRateRequired,
@@ -39,6 +43,8 @@ from .application import (
     buyer_procurement,
     cancel_procurement_backorder,
     confirm_procurement_backorder,
+    kp_order_lines,
+    save_kp,
     save_procurement_facts,
     build_supplier_requests,
     supplier_order,
@@ -53,12 +59,14 @@ from .application import (
 )
 from .domain import (
     SPLIT_MAX_COPIES,
+    KpEntry,
     MoneyEntry,
     ProcurementFacts,
     ProcurementLine,
     ProcurementValidationError,
 )
 from .exchange_rates import CbrExchangeRates
+from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
 
 
@@ -193,6 +201,73 @@ class MoneyPayload(BaseModel):
             invoice_number=self.invoice_number,
             invoice_date=self.invoice_date,
         )
+
+
+class KpRowInput(BaseModel):
+    line_id: UUID
+    version: int = Field(ge=1)
+    actual_quantity: Annotated[
+        Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)] | None,
+        BeforeValidator(_loose_number),
+    ] = None
+    actual_unit: str | None = Field(default=None, max_length=64)
+    currency: str | None = Field(default=None, max_length=8)
+    driver: Literal["net", "gross", "vat", "qty", "sum"] | None = None
+    price: UnitPrice = None
+    vat_rate: VatRate = None
+    price_with_vat: UnitPrice = None
+    sum: Amount = None
+    invoice_item_name: str | None = Field(default=None, max_length=1024)
+    invoice_number: str | None = Field(default=None, max_length=128)
+    invoice_date: date | None = None
+    expected_arrival: date | None = None
+
+    def to_domain(self) -> KpRow:
+        return KpRow(
+            line_id=self.line_id,
+            expected_version=self.version,
+            entry=KpEntry(
+                money=MoneyEntry(
+                    amounts=MoneyInput(
+                        currency=(self.currency or "").strip() or None,
+                        price=self.price,
+                        vat_rate=self.vat_rate,
+                        price_with_vat=self.price_with_vat,
+                        sum=self.sum,
+                        driver=self.driver,
+                    ),
+                    invoice_item_name=self.invoice_item_name,
+                    invoice_number=self.invoice_number,
+                    invoice_date=self.invoice_date,
+                ),
+                actual_quantity=self.actual_quantity,
+                actual_unit=self.actual_unit,
+                expected_arrival=self.expected_arrival,
+            ),
+        )
+
+
+class KpInput(BaseModel):
+    order_reference: str = Field(min_length=1, max_length=512)
+    rows: list[KpRowInput] = Field(min_length=1, max_length=200)
+    manual_exchange_rate: Rate = None
+    invoice_url: str | None = Field(default=None, max_length=2048)
+
+    @field_validator("invoice_url")
+    @classmethod
+    def validate_invoice_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = normalize_document_url(value)
+        if normalized is None:
+            raise ValueError("Счёт обязателен")
+        return normalized
+
+
+class KpFileInput(BaseModel):
+    order_reference: str = Field(min_length=1, max_length=512)
+    file_name: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1, max_length=(MAX_FILE_BYTES * 4) // 3 + 8)
 
 
 def procurement_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -409,6 +484,78 @@ def _transition(operation) -> dict:
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"line": _line_result(line)}
+
+
+def _kp_errors(operation):
+    try:
+        return operation()
+    except ProcurementValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/kp")
+def kp_order(
+    reference: Annotated[str, Query(min_length=1, max_length=512)],
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    lines = _kp_errors(lambda: kp_order_lines(reference, principal.actor, uow_factory()))
+    return {"order_reference": reference.strip(), "lines": [_line_result(line) for line in lines]}
+
+
+@router.post("/kp/parse")
+def kp_parse(
+    payload: KpFileInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """`parseKpFile` + KpForm `applyImport`: offer rows and the order lines they match by name."""
+    lines = _kp_errors(lambda: kp_order_lines(payload.order_reference, principal.actor, uow_factory()))
+    try:
+        content = base64.b64decode(payload.content_base64, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(status_code=422, detail="Файл КП повреждён") from error
+    try:
+        items = extract_kp_items(read_kp_grid(payload.file_name, content))
+    except KpFileError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    matched, not_found = match_kp_items(
+        items, [(str(line.id), (line.calculated_name, line.site_name)) for line in lines],
+    )
+    return {
+        "items": [item.__dict__ for item in items],
+        "matches": [{"line_id": line_id, **item.__dict__} for line_id, item in matched],
+        "not_found": not_found,
+    }
+
+
+@router.post("/kp")
+def kp_save(
+    payload: KpInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    rates: Annotated[ExchangeRates, Depends(procurement_exchange_rates)],
+) -> dict:
+    command = SaveKpCommand(
+        order_reference=payload.order_reference,
+        rows=[row.to_domain() for row in payload.rows],
+        actor=principal.actor,
+        now=now,
+        manual_rate=payload.manual_exchange_rate,
+        invoice_url=payload.invoice_url,
+    )
+    outcome = {}
+
+    def operation():
+        outcome["result"] = save_kp(command, uow_factory(), rates)
+        return outcome["result"].lines[0]
+
+    _transition(operation)
+    result = outcome["result"]
+    return {"lines": [_line_result(line) for line in result.lines], "invoice_error": result.invoice_error}
 
 
 @router.patch("/{line_id}/money")

@@ -73,6 +73,16 @@ class MoneyEntry:
     invoice_date: date | None = None
 
 
+@dataclass(frozen=True)
+class KpEntry:
+    """One row of the «Внести КП» form (`KP_EDIT_FIELDS`): fact quantity and unit, money, invoice, date."""
+
+    money: MoneyEntry
+    actual_quantity: Decimal | None = None
+    actual_unit: str | None = None
+    expected_arrival: date | None = None
+
+
 MONEY_EDITABLE = frozenset({ProcurementStatus.AWAITING_INVOICE, ProcurementStatus.TO_PAY})
 
 
@@ -292,6 +302,39 @@ class ProcurementLine:
             invoice_item_name=_text(entry.invoice_item_name) or None,
             invoice_number=_text(entry.invoice_number) or None,
             invoice_date=entry.invoice_date,
+        )
+        if updated == self:
+            return self
+        return replace(updated, version=self.version + 1)
+
+    def apply_kp(self, entry: KpEntry, rate: ExchangeRate | None, actor: Actor) -> ProcurementLine:
+        """`submitKp_`: writes the form fields of one order line; the status stays «Жду счет»."""
+        self._require_owner(actor)
+        if self.status is not ProcurementStatus.AWAITING_INVOICE:
+            raise ProcurementValidationError(
+                f"«Внести КП» доступно только в статусе «{ProcurementStatus.AWAITING_INVOICE.value}». "
+                f"{self.legacy_id}: «{self.status.value}»"
+            )
+        quantity = entry.actual_quantity
+        if quantity is not None and quantity <= 0:
+            raise ProcurementValidationError(f"{self.legacy_id}: КОЛ-ВО (факт) должно быть больше нуля")
+        if entry.expected_arrival is not None and entry.expected_arrival < self.created_at.date():
+            raise ProcurementValidationError(
+                f"{self.legacy_id}: ожидаемая дата поступления не может быть раньше заказа"
+            )
+        try:
+            money = apply_currency_and_fact(entry.money.amounts, quantity, rate)
+        except MoneyValidationError as error:
+            raise ProcurementValidationError(f"{self.legacy_id}: {error}") from error
+        updated = replace(
+            self,
+            actual_quantity=quantity,
+            actual_unit=_text(entry.actual_unit) or None,
+            expected_arrival=entry.expected_arrival,
+            money=money,
+            invoice_item_name=_text(entry.money.invoice_item_name) or None,
+            invoice_number=_text(entry.money.invoice_number) or None,
+            invoice_date=entry.money.invoice_date,
         )
         if updated == self:
             return self

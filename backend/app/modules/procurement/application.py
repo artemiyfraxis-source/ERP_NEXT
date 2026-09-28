@@ -14,6 +14,7 @@ from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
 
 from .domain import (
+    KpEntry,
     MoneyEntry,
     ProcurementFacts,
     ProcurementLine,
@@ -197,6 +198,31 @@ class SaveProcurementMoneyCommand:
     actor: Actor
     now: datetime
     manual_rate: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class KpRow:
+    line_id: UUID
+    expected_version: int
+    entry: KpEntry
+
+
+@dataclass(frozen=True)
+class SaveKpCommand:
+    """«Внести КП»: all «Жду счет» lines of one supplier order, optionally with one invoice for all."""
+
+    order_reference: str
+    rows: Sequence[KpRow]
+    actor: Actor
+    now: datetime
+    manual_rate: Decimal | None = None
+    invoice_url: str | None = None
+
+
+@dataclass(frozen=True)
+class KpResult:
+    lines: list[ProcurementLine]
+    invoice_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -824,6 +850,117 @@ def mark_procurement_paid(
             uow.outbox.add(_receiving_expected(updated, command.now))
             uow.commit()
         return result
+
+
+def _order_reference(value: str) -> str:
+    reference = str(value or "").strip()
+    if not reference:
+        raise ProcurementValidationError("Не задан № заказа")
+    return reference
+
+
+def kp_order_lines(order_reference: str, actor: Actor, uow: UnitOfWork) -> list[ProcurementLine]:
+    """`openKpForm_` + `kpOrderRows_`: the buyer's order lines still waiting for the invoice."""
+    reference = _order_reference(order_reference)
+    with uow:
+        lines = [
+            line
+            for line in uow.procurement.by_buyer(actor, 10_000)
+            if line.order_number == reference
+            and line.status is ProcurementStatus.AWAITING_INVOICE
+        ]
+    if not lines:
+        raise ProcurementValidationError(
+            f"Нет строк заказа {reference} в статусе «{ProcurementStatus.AWAITING_INVOICE.value}»"
+        )
+    return lines
+
+
+def _kp_rate(line: ProcurementLine, entry: KpEntry, command: SaveKpCommand, rates) -> ExchangeRate | None:
+    day = rate_day(
+        paid_on=None,
+        invoice_date=entry.money.invoice_date,
+        stored=line.money.exchange_rate_date,
+        today=_moscow_day(command.now),
+    )
+    return _choose_rate(line, entry.money.amounts.currency, day, command.manual_rate, rates)
+
+
+def save_kp(
+    command: SaveKpCommand,
+    uow: UnitOfWork,
+    rates: ExchangeRates | None = None,
+) -> KpResult:
+    """`submitKp_`: one transaction for the whole order, then the optional invoice for every line.
+
+    An invoice the pay gate refuses does not roll the offer data back — the error is returned, as the
+    form reports `invoiceError` after the rows are already written.
+    """
+    reference = _order_reference(command.order_reference)
+    if not command.rows:
+        raise ProcurementValidationError("Нет строк для сохранения")
+    line_ids = [row.line_id for row in command.rows]
+    if len(set(line_ids)) != len(line_ids):
+        raise ProcurementValidationError("Строка заказа передана дважды")
+    chosen = {row.line_id: _kp_rate(_peek(row.line_id, uow), row.entry, command, rates) for row in command.rows}
+    with uow:
+        saved = []
+        changed = False
+        for row in command.rows:
+            current = _load_versioned(row.line_id, row.expected_version, uow)
+            if current.order_number != reference:
+                raise ProcurementValidationError(f"{current.legacy_id} не входит в заказ {reference}")
+            updated = current.apply_kp(row.entry, chosen[row.line_id], command.actor)
+            result = _save_transition(
+                current,
+                updated,
+                event_type="procurement.kp_saved",
+                actor=command.actor,
+                now=command.now,
+                uow=uow,
+                details={"order_reference": reference, **_money_details(current.money, updated.money)},
+            )
+            changed = changed or result != current
+            saved.append(result)
+        if changed:
+            uow.commit()
+    if not command.invoice_url:
+        return KpResult(saved)
+    try:
+        return KpResult(_invoice_order(saved, command.invoice_url, command, uow))
+    except (ProcurementValidationError, ConcurrentProcurementUpdate) as error:
+        return KpResult(saved, invoice_error=str(error))
+
+
+def _invoice_order(
+    lines: list[ProcurementLine], invoice_url: str, command: SaveKpCommand, uow: UnitOfWork,
+) -> list[ProcurementLine]:
+    """`uploadInvoice` over the order rows: one invoice for all of them, all or none go «В оплату»."""
+    with uow:
+        invoiced = []
+        for line in lines:
+            current = _load_versioned(line.id, line.version, uow)
+            try:
+                if current.expected_arrival is None:
+                    raise ProcurementValidationError(
+                        "Нельзя загрузить счёт — сначала заполните: " + ", ".join(current.pay_missing())
+                    )
+                updated = current.record_invoice(invoice_url, current.expected_arrival, command.actor)
+            except ProcurementValidationError as error:
+                raise ProcurementValidationError(f"{current.legacy_id}: {error}") from error
+            invoiced.append(
+                _save_transition(
+                    current,
+                    updated,
+                    event_type="procurement.invoice_recorded",
+                    actor=command.actor,
+                    now=command.now,
+                    uow=uow,
+                    details={"order_reference": current.order_number or ""},
+                )
+            )
+        uow.commit()
+    return invoiced
 
 
 def _receiving_expected(line: ProcurementLine, now: datetime) -> OutboxMessage:

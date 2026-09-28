@@ -916,7 +916,48 @@ export const requestsApi = {
     }),
 };
 
+export type KpRowInput = {
+  line_id: string;
+  version: number;
+  actual_quantity: string | null;
+  actual_unit: string | null;
+  currency: string | null;
+  driver?: MoneyDriver;
+  price: string | null;
+  vat_rate: string | null;
+  price_with_vat: string | null;
+  sum: string | null;
+  invoice_item_name: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  expected_arrival: string | null;
+};
+
+export type KpMatch = { line_id: string; name: string; qty: string; price: string; vat: string };
+
 export const procurementApi = {
+  kpOrder: (reference: string) =>
+    api<{ order_reference: string; lines: ProcurementLine[] }>(
+      `/api/procurement/kp?reference=${encodeURIComponent(reference)}`,
+    ),
+  parseKp: (reference: string, fileName: string, contentBase64: string) =>
+    api<{ matches: KpMatch[]; not_found: string[]; items: Omit<KpMatch, "line_id">[] }>(
+      "/api/procurement/kp/parse",
+      {
+        method: "POST",
+        body: JSON.stringify({ order_reference: reference, file_name: fileName, content_base64: contentBase64 }),
+      },
+    ),
+  saveKp: (reference: string, rows: KpRowInput[], invoiceUrl: string, manualExchangeRate?: string) =>
+    api<{ lines: ProcurementLine[]; invoice_error: string }>("/api/procurement/kp", {
+      method: "POST",
+      body: JSON.stringify({
+        order_reference: reference,
+        rows,
+        invoice_url: invoiceUrl || null,
+        manual_exchange_rate: manualExchangeRate || null,
+      }),
+    }),
   available: (after?: string) =>
     api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
       `/api/procurement/available${after ? `?after=${encodeURIComponent(after)}` : ""}`,

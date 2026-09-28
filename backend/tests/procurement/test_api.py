@@ -472,3 +472,216 @@ def test_invoice_replacement_needs_an_existing_invoice(procurement_api, rates):
 
     assert refused.status_code == 422
     assert refused.json()["detail"].startswith("Счёта ещё нет")
+def kp_row(line, version, **fields) -> dict:
+    return {"line_id": str(line.id), "version": version, **fields}
+
+
+KP_ROW = {
+    "actual_quantity": "3", "actual_unit": "шт", "currency": "RUB", "price": "100", "vat_rate": "22",
+    "invoice_item_name": "Разъём SMA", "invoice_number": "17", "invoice_date": "2026-09-15",
+    "expected_arrival": "2026-09-25",
+}
+
+
+def second_line(client, sessions, suffix: int = 2):
+    factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    return consume_procurement_requested(message(suffix), factory())
+
+
+def order_lines(client, *lines, supplier: str = "ООО Поставка") -> tuple[str, list[int]]:
+    """Takes the lines to «Готов к запросу» with one supplier and builds one supplier order (PR-3).
+
+    Returns the order number main gave it (PO-NNN) and each line's version, in the order given.
+    """
+    for line in lines:
+        taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id)]})
+        ready = client.patch(
+            f"/api/procurement/{line.id}/facts",
+            json={
+                "version": taken.json()["lines"][0]["version"],
+                "supplier": supplier,
+                "actual_quantity": "2",
+                "actual_unit": "шт",
+            },
+        )
+        assert ready.json()["line"]["status"] == "Готов к запросу"
+    requested = client.post("/api/procurement/supplier-requests")
+    assert requested.status_code == 200, requested.text
+    by_id = {item["id"]: item for item in requested.json()["lines"]}
+    (number,) = {by_id[str(line.id)]["order_number"] for line in lines}
+    return number, [by_id[str(line.id)]["version"] for line in lines]
+
+
+def test_kp_form_opens_only_on_order_lines_waiting_for_invoice(procurement_api, rates):
+    client, line, sessions = procurement_api
+    other = second_line(client, sessions)
+
+    assert client.get("/api/procurement/kp", params={"reference": "PO-001"}).status_code == 422
+    number, _ = order_lines(client, line, other)
+
+    opened = client.get("/api/procurement/kp", params={"reference": f" {number} "})
+    assert opened.status_code == 200
+    assert {item["legacy_id"] for item in opened.json()["lines"]} == {line.legacy_id, other.legacy_id}
+    missing = client.get("/api/procurement/kp", params={"reference": "REQ-OTHER"})
+    assert missing.status_code == 422
+    assert missing.json()["detail"] == "Нет строк заказа REQ-OTHER в статусе «Жду счет»"
+
+
+def test_kp_saves_whole_order_without_moving_status(procurement_api, rates):
+    client, line, sessions = procurement_api
+    other = second_line(client, sessions)
+    number, (first_version, second_version) = order_lines(client, line, other)
+
+    saved = client.post(
+        "/api/procurement/kp",
+        json={
+            "order_reference": number,
+            "rows": [
+                kp_row(line, first_version, **KP_ROW),
+                kp_row(other, second_version, currency="RUB", sum="1 220,00", vat_rate="22", actual_quantity="2"),
+            ],
+        },
+    )
+
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["invoice_error"] == ""
+    first, second = body["lines"]
+    assert first["status"] == second["status"] == "Жду счет"
+    assert (first["actual_quantity"], first["actual_price_with_vat"], first["actual_sum"]) == ("3", "122", "366")
+    assert (first["expected_arrival"], first["invoice_number"]) == ("2026-09-25", "17")
+    assert first["pay_missing"] == []
+    assert (second["actual_price_with_vat"], second["actual_price"]) == ("610", "500")
+    # The form sends every field: an omitted one is a cleared cell, as `submitKp_` writes all KP_EDIT_FIELDS.
+    assert second["actual_unit"] is None
+    assert second["pay_missing"] == ["ЕД.ИЗМ (факт)", "НАИМЕНОВАНИЕ (Счет)", "ОЖИД. ДАТА"]
+    with sessions() as session:
+        events = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "procurement.kp_saved")
+        ).all()
+    assert len(events) == 2
+    assert events[0].details["order_reference"] == number
+
+
+def test_kp_invoice_moves_every_order_line_to_payment(procurement_api, rates):
+    client, line, sessions = procurement_api
+    other = second_line(client, sessions)
+    number, (first_version, second_version) = order_lines(client, line, other)
+    rows = [kp_row(line, first_version, **KP_ROW), kp_row(other, second_version, **KP_ROW)]
+
+    saved = client.post(
+        "/api/procurement/kp",
+        json={"order_reference": number, "rows": rows, "invoice_url": "https://files.test/inv.pdf"},
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["invoice_error"] == ""
+    assert [item["status"] for item in saved.json()["lines"]] == ["В оплату", "В оплату"]
+    assert {item["invoice_url"] for item in saved.json()["lines"]} == {"https://files.test/inv.pdf"}
+
+
+def test_kp_invoice_refused_by_gate_keeps_offer_data(procurement_api, rates):
+    client, line, sessions = procurement_api
+    other = second_line(client, sessions)
+    incomplete = {key: value for key, value in KP_ROW.items() if key != "expected_arrival"}
+    number, (first_version, second_version) = order_lines(client, line, other)
+    rows = [kp_row(line, first_version, **KP_ROW), kp_row(other, second_version, **incomplete)]
+
+    saved = client.post(
+        "/api/procurement/kp",
+        json={"order_reference": number, "rows": rows, "invoice_url": "https://files.test/inv.pdf"},
+    )
+
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["invoice_error"] == f"{other.legacy_id}: Нельзя загрузить счёт — сначала заполните: ОЖИД. ДАТА"
+    assert [item["status"] for item in body["lines"]] == ["Жду счет", "Жду счет"]
+    assert body["lines"][0]["actual_sum"] == "366"
+    mine = client.get("/api/procurement/mine").json()["lines"]
+    assert {item["status"] for item in mine} == {"Жду счет"}
+    assert {item["actual_sum"] for item in mine} == {"366"}
+
+
+def test_kp_rejects_line_of_another_order_and_rolls_back(procurement_api, rates):
+    client, line, sessions = procurement_api
+    other = second_line(client, sessions)
+    number, (first_version,) = order_lines(client, line)
+    other_number, (other_version,) = order_lines(client, other, supplier="ООО")
+    assert other_number != number
+
+    refused = client.post(
+        "/api/procurement/kp",
+        json={"order_reference": number, "rows": [kp_row(line, first_version, **KP_ROW), kp_row(other, other_version, **KP_ROW)]},
+    )
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == f"{other.legacy_id} не входит в заказ {number}"
+    mine = {item["id"]: item for item in client.get("/api/procurement/mine").json()["lines"]}
+    assert mine[str(line.id)]["actual_sum"] is None
+
+
+def test_kp_is_closed_after_invoice_and_checks_quantity(procurement_api, rates):
+    client, line, _ = procurement_api
+    number, (version,) = order_lines(client, line)
+
+    zero = client.post(
+        "/api/procurement/kp",
+        json={"order_reference": number, "rows": [kp_row(line, version, **{**KP_ROW, "actual_quantity": "0"})]},
+    )
+    assert zero.status_code == 422
+    invoiced = client.post(
+        "/api/procurement/kp",
+        json={"order_reference": number, "rows": [kp_row(line, version, **KP_ROW)], "invoice_url": "https://files.test/i.pdf"},
+    )
+    paid_version = invoiced.json()["lines"][0]["version"]
+
+    closed = client.post(
+        "/api/procurement/kp",
+        json={"order_reference": number, "rows": [kp_row(line, paid_version, **KP_ROW)]},
+    )
+    assert closed.status_code == 422
+    assert closed.json()["detail"].startswith("«Внести КП» доступно только в статусе «Жду счет»")
+
+
+def test_kp_foreign_currency_converts_at_invoice_date_rate(procurement_api, rates):
+    client, line, _ = procurement_api
+    number, (version,) = order_lines(client, line)
+    rates.rates[("USD", "2026-09-15")] = Decimal("80")
+
+    saved = client.post(
+        "/api/procurement/kp",
+        json={"order_reference": number, "rows": [kp_row(line, version, **{**KP_ROW, "currency": "usd", "price": "10"})]},
+    )
+
+    assert saved.status_code == 200
+    body = saved.json()["lines"][0]
+    assert (body["currency"], body["source_currency"], body["actual_price"]) == ("RUB", "USD", "852")
+    assert body["exchange_rate_date"] == "2026-09-15"
+
+
+def test_kp_parse_matches_offer_rows_to_order_lines(procurement_api, rates):
+    import base64
+
+    client, line, _ = procurement_api
+    number, _ = order_lines(client, line)
+    csv_text = "КП № 5 от ООО Поставка\n\nНаименование;Кол-во;Цена, руб;НДС %\nРАЗЪЁМ!;3;100,50;22\nКабель;1;5;22\n"
+
+    parsed = client.post(
+        "/api/procurement/kp/parse",
+        json={
+            "order_reference": number,
+            "file_name": "kp.csv",
+            "content_base64": base64.b64encode(csv_text.encode("cp1251")).decode(),
+        },
+    )
+
+    assert parsed.status_code == 200
+    body = parsed.json()
+    assert body["matches"] == [{"line_id": str(line.id), "name": "РАЗЪЁМ!", "qty": "3", "price": "100,50", "vat": "22"}]
+    assert body["not_found"] == ["Кабель"]
+    broken = client.post(
+        "/api/procurement/kp/parse",
+        json={"order_reference": number, "file_name": "kp.xls", "content_base64": "AAAA"},
+    )
+    assert broken.status_code == 422
+    assert broken.json()["detail"] == "Поддерживаются файлы КП .xlsx и .csv"
