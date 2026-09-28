@@ -5,11 +5,13 @@ from uuid import UUID
 import pytest
 
 from app.modules.procurement.domain import (
+    MoneyEntry,
     ProcurementFacts,
     ProcurementStatus,
     ProcurementValidationError,
     create_line_from_requested,
 )
+from app.modules.procurement.money import ExchangeRate, MoneyInput
 from app.shared.events import OutboxMessage
 from tests.factories import Actor
 
@@ -192,7 +194,7 @@ def test_buyer_advances_ready_line_through_invoice_to_transit():
         )
     )
 
-    requested = ready.send_supplier_request("REQ-2026-1", buyer)
+    requested = ready.send_supplier_request("REQ-2026-1", buyer).update_money(RUB_ENTRY, None, buyer)
     invoiced = requested.record_invoice(
         "https://files.test/invoice.pdf",
         date(2026, 9, 30),
@@ -204,3 +206,123 @@ def test_buyer_advances_ready_line_through_invoice_to_transit():
     assert invoiced.status is ProcurementStatus.TO_PAY
     assert shipped.status is ProcurementStatus.IN_TRANSIT
     assert shipped.expected_arrival == date(2026, 9, 30)
+
+
+RUB_ENTRY = MoneyEntry(
+    amounts=MoneyInput(currency="RUB", price=Decimal("800"), vat_rate=Decimal("22")),
+    invoice_item_name="Разъём SMA-001",
+    invoice_number="СЧ-17",
+    invoice_date=date(2026, 9, 18),
+)
+
+
+def awaiting_invoice(buyer: Actor):
+    return (
+        create_line_from_requested(requested_message())
+        .take_in_work(buyer)
+        .update_facts(
+            ProcurementFacts(supplier="ООО Поставка", actual_quantity=Decimal("2"), actual_unit="шт"),
+            buyer,
+        )
+        .send_supplier_request("REQ-2026-1", buyer)
+    )
+
+
+def test_invoice_is_refused_until_fact_money_is_filled():
+    buyer = Actor(name="Петров", department="Закупки")
+    line = awaiting_invoice(buyer)
+
+    with pytest.raises(ProcurementValidationError) as error:
+        line.record_invoice("https://files.test/invoice.pdf", date(2026, 9, 30), buyer)
+
+    assert str(error.value) == (
+        "Нельзя загрузить счёт — сначала заполните: ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), "
+        "СУММА (факт), НАИМЕНОВАНИЕ (Счет)"
+    )
+
+
+def test_fact_money_is_derived_and_recorded_with_invoice_identity():
+    buyer = Actor(name="Петров", department="Закупки")
+    line = awaiting_invoice(buyer).update_money(RUB_ENTRY, None, buyer)
+
+    assert line.money.currency == "RUB"
+    assert (line.money.price, line.money.price_with_vat, line.money.sum) == (
+        Decimal("800"), Decimal("976.00"), Decimal("1952.00"),
+    )
+    assert (line.invoice_item_name, line.invoice_number, line.invoice_date) == (
+        "Разъём SMA-001", "СЧ-17", date(2026, 9, 18),
+    )
+    assert line.pay_missing(date(2026, 9, 30)) == []
+    assert line.update_money(RUB_ENTRY, None, buyer) is line
+
+
+def test_money_is_editable_only_by_owner_while_awaiting_invoice_or_payment():
+    buyer = Actor(name="Петров", department="Закупки")
+    other = Actor(name="Сидоров", department="Закупки")
+    line = awaiting_invoice(buyer)
+
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        line.update_money(RUB_ENTRY, None, other)
+    in_work = create_line_from_requested(requested_message()).take_in_work(buyer)
+    with pytest.raises(ProcurementValidationError, match="«Жду счет» и «В оплату»"):
+        in_work.update_money(RUB_ENTRY, None, buyer)
+
+
+def test_payment_is_refused_for_a_line_invoiced_without_money():
+    buyer = Actor(name="Петров", department="Закупки")
+    # A line that reached «В оплату» before the money gate existed.
+    legacy = awaiting_invoice(buyer).update_money(RUB_ENTRY, None, buyer).record_invoice(
+        "https://files.test/invoice.pdf", date(2026, 9, 30), buyer,
+    )
+    legacy = legacy.update_money(MoneyEntry(amounts=MoneyInput(currency=None)), None, buyer)
+
+    with pytest.raises(ProcurementValidationError, match="Нельзя провести оплату — сначала заполните: ВАЛЮТА"):
+        legacy.mark_paid(buyer, datetime(2026, 9, 22, 12, 0))
+    paid = legacy.update_money(RUB_ENTRY, None, buyer).mark_paid(buyer, datetime(2026, 9, 22, 12, 0))
+    assert paid.status is ProcurementStatus.IN_TRANSIT
+
+
+def test_foreign_invoice_is_repriced_at_the_payment_day_rate():
+    buyer = Actor(name="Петров", department="Закупки")
+    usd = MoneyEntry(
+        amounts=MoneyInput(currency="USD", price=Decimal("10"), vat_rate=Decimal("22")),
+        invoice_item_name="SMA", invoice_date=date(2026, 9, 18),
+    )
+    invoiced = (
+        awaiting_invoice(buyer)
+        .update_money(usd, ExchangeRate(Decimal("80"), date(2026, 9, 18)), buyer)
+        .record_invoice("https://files.test/invoice.pdf", date(2026, 9, 30), buyer)
+    )
+    assert invoiced.money.price == Decimal("852.00")
+
+    with pytest.raises(ProcurementValidationError, match="Нет курса USD на день оплаты"):
+        invoiced.mark_paid(buyer, datetime(2026, 9, 22, 12, 0))
+    paid = invoiced.mark_paid(
+        buyer, datetime(2026, 9, 22, 12, 0), ExchangeRate(Decimal("90"), date(2026, 9, 22)),
+    )
+
+    assert paid.money.price == Decimal("958.50")
+    assert paid.money.sum == Decimal("2338.74")
+    assert (paid.money.exchange_rate, paid.money.exchange_rate_date) == (Decimal("90"), date(2026, 9, 22))
+    assert paid.money.source_price == Decimal("10")
+
+
+def test_manual_rate_is_reconciled_with_cbr_rate_once():
+    buyer = Actor(name="Петров", department="Закупки")
+    usd = MoneyEntry(
+        amounts=MoneyInput(currency="USD", price=Decimal("10"), vat_rate=Decimal("22")), invoice_item_name="SMA",
+    )
+    manual = awaiting_invoice(buyer).update_money(
+        usd, ExchangeRate(Decimal("80"), date(2026, 9, 18), manual=True), buyer,
+    )
+    assert manual.money.exchange_rate_manual is True
+
+    with pytest.raises(ProcurementValidationError, match="только с курсом ЦБ"):
+        manual.reconcile_rate(ExchangeRate(Decimal("81"), date(2026, 9, 18), manual=True), buyer)
+    reconciled = manual.reconcile_rate(ExchangeRate(Decimal("90"), date(2026, 9, 18)), buyer)
+
+    assert reconciled.money.exchange_rate_manual is False
+    assert reconciled.money.price == Decimal("958.50")
+    assert reconciled.version == manual.version + 1
+    with pytest.raises(ProcurementValidationError, match="сверять нечего"):
+        reconciled.reconcile_rate(ExchangeRate(Decimal("90"), date(2026, 9, 18)), buyer)

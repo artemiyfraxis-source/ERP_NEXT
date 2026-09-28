@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     Date,
     DateTime,
     Index,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     Text,
     Uuid,
     and_,
+    false,
     or_,
     select,
 )
@@ -29,6 +31,7 @@ from app.shared.persistence import (
 )
 
 from .domain import ProcurementLine, ProcurementStatus
+from .money import FactMoney
 
 
 class ProcurementLineRow(Base):
@@ -86,6 +89,24 @@ class ProcurementLineRow(Base):
     expected_arrival: Mapped[Any | None] = mapped_column(Date)
     invoice_url: Mapped[str | None] = mapped_column(Text)
     paid_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+    currency: Mapped[str | None] = mapped_column(String(8))
+    actual_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    actual_vat_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    actual_price_with_vat: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    actual_sum: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    money_driver: Mapped[str | None] = mapped_column(String(8))
+    source_currency: Mapped[str | None] = mapped_column(String(8))
+    source_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    source_price_with_vat: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    source_sum: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(24, 10))
+    exchange_rate_date: Mapped[Any | None] = mapped_column(Date)
+    exchange_rate_manual: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    invoice_item_name: Mapped[str | None] = mapped_column(String(1024))
+    invoice_number: Mapped[str | None] = mapped_column(String(128))
+    invoice_date: Mapped[Any | None] = mapped_column(Date)
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -135,6 +156,22 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         expected_arrival=line.expected_arrival,
         invoice_url=line.invoice_url,
         paid_at=line.paid_at,
+        currency=line.money.currency,
+        actual_price=line.money.price,
+        actual_vat_rate=line.money.vat_rate,
+        actual_price_with_vat=line.money.price_with_vat,
+        actual_sum=line.money.sum,
+        money_driver=line.money.driver,
+        source_currency=line.money.source_currency,
+        source_price=line.money.source_price,
+        source_price_with_vat=line.money.source_price_with_vat,
+        source_sum=line.money.source_sum,
+        exchange_rate=line.money.exchange_rate,
+        exchange_rate_date=line.money.exchange_rate_date,
+        exchange_rate_manual=line.money.exchange_rate_manual,
+        invoice_item_name=line.invoice_item_name,
+        invoice_number=line.invoice_number,
+        invoice_date=line.invoice_date,
     )
 
 
@@ -185,6 +222,24 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
         expected_arrival=row.expected_arrival,
         invoice_url=row.invoice_url,
         paid_at=row.paid_at,
+        money=FactMoney(
+            currency=row.currency,
+            price=row.actual_price,
+            vat_rate=row.actual_vat_rate,
+            price_with_vat=row.actual_price_with_vat,
+            sum=row.actual_sum,
+            driver=row.money_driver,
+            source_currency=row.source_currency,
+            source_price=row.source_price,
+            source_price_with_vat=row.source_price_with_vat,
+            source_sum=row.source_sum,
+            exchange_rate=row.exchange_rate,
+            exchange_rate_date=row.exchange_rate_date,
+            exchange_rate_manual=bool(row.exchange_rate_manual),
+        ),
+        invoice_item_name=row.invoice_item_name,
+        invoice_number=row.invoice_number,
+        invoice_date=row.invoice_date,
     )
 
 

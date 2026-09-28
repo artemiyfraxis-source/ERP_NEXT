@@ -7,7 +7,8 @@
     "Schema.gs",
     "SupplierRequest.gs",
     "Kp.gs",
-    "Invoices.gs"
+    "Invoices.gs",
+    "Currency.gs"
   ],
   "portedInvariants": [
     "idempotent procurement.requested consumer",
@@ -17,6 +18,9 @@
     "ready status requires supplier delivery point positive actual quantity and unit",
     "transactional audit and outbox dispatch",
     "supplier request then invoice then paid-to-in-transit sequence",
-    "paid line emits one receiving.expected snapshot"
+    "paid line emits one receiving.expected snapshot",
+    "invoice and payment require PUR_PAY_REQUIRED fact money",
+    "fact prices follow the leading field and round to kopecks",
+    "foreign currency converts at CBR rate with CURRENCY_MARKUP"
   ]
 }

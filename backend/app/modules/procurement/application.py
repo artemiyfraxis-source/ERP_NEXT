@@ -4,18 +4,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
 
 from .domain import (
+    MoneyEntry,
     ProcurementFacts,
     ProcurementLine,
+    ProcurementStatus,
     ProcurementValidationError,
     create_line_from_requested,
 )
+from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
 
 
 SYSTEM_ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
@@ -62,6 +67,26 @@ class DispatchUnitOfWork(UnitOfWork, Protocol):
     outbox: DispatchOutboxRepository
 
 
+class ExchangeRates(Protocol):
+    def rate_to_rub(self, currency: str, day: date) -> Decimal | None: ...
+
+
+class ManualRateRequired(RuntimeError):
+    """The CBR gave no rate for a foreign invoice and the buyer has not typed one yet."""
+
+    def __init__(self, currency: str, day: date):
+        super().__init__(f"ЦБ не отдал курс {currency} на {day:%d.%m.%Y} — введите курс вручную")
+        self.currency = currency
+        self.day = day
+
+
+class RateUnavailable(RuntimeError):
+    def __init__(self, currency: str, day: date):
+        super().__init__(f"ЦБ не отдал курс {currency} на {day:%d.%m.%Y} — сверьте позже")
+        self.currency = currency
+        self.day = day
+
+
 class PoisonOutboxMessage(RuntimeError):
     def __init__(self, message_id: UUID, reason: str):
         super().__init__(reason)
@@ -105,6 +130,25 @@ class RecordInvoiceCommand:
 
 @dataclass(frozen=True)
 class MarkProcurementPaidCommand:
+    line_id: UUID
+    expected_version: int
+    actor: Actor
+    now: datetime
+    manual_rate: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class SaveProcurementMoneyCommand:
+    line_id: UUID
+    expected_version: int
+    entry: MoneyEntry
+    actor: Actor
+    now: datetime
+    manual_rate: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class ReconcileProcurementRateCommand:
     line_id: UUID
     expected_version: int
     actor: Actor
@@ -288,6 +332,7 @@ def _save_transition(
     actor: Actor,
     now: datetime,
     uow: UnitOfWork,
+    details: dict[str, str] | None = None,
 ) -> ProcurementLine:
     if updated == current:
         return current
@@ -303,6 +348,7 @@ def _save_transition(
                 "legacy_id": updated.legacy_id,
                 "from_status": current.status.value,
                 "to_status": updated.status.value,
+                **(details or {}),
             },
         )
     )
@@ -360,10 +406,146 @@ def warehouse_for_delivery_point(value: str) -> str:
     return warehouse
 
 
-def mark_procurement_paid(command: MarkProcurementPaidCommand, uow: UnitOfWork) -> ProcurementLine:
+_MOSCOW = ZoneInfo("Europe/Moscow")
+
+
+def _moscow_day(value: datetime) -> date:
+    return value.astimezone(_MOSCOW).date() if value.tzinfo is not None else value.date()
+
+
+def _peek(line_id: UUID, uow: UnitOfWork) -> ProcurementLine:
+    # Read outside the write transaction so the CBR request never holds row locks.
+    with uow:
+        current = uow.procurement.get(line_id)
+    if current is None:
+        raise KeyError(f"Procurement line not found: {line_id}")
+    return current
+
+
+def _choose_rate(
+    line: ProcurementLine,
+    currency: str | None,
+    day: date,
+    manual_rate: Decimal | None,
+    rates: ExchangeRates | None,
+) -> ExchangeRate | None:
+    """Stored CBR rate of that day, else a fresh CBR rate, else the rate the buyer typed."""
+    code = normalize_currency(currency)
+    if not is_foreign(code):
+        return None
+    stored = line.money.rate if line.money.source_currency == code else None
+    if stored is not None and not stored.manual and stored.day == day:
+        return stored
+    value = rates.rate_to_rub(code, day) if rates is not None else None
+    if value is not None:
+        return ExchangeRate(value, day)
+    if manual_rate is not None:
+        if manual_rate <= 0:
+            raise ProcurementValidationError("Курс должен быть больше нуля")
+        return ExchangeRate(manual_rate, day, manual=True)
+    if stored is not None and stored.day == day:
+        return stored  # the earlier manual rate stays until the CBR answers
+    raise ManualRateRequired(code, day)
+
+
+def _plain(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+def _money_details(before: FactMoney, after: FactMoney) -> dict[str, str]:
+    details = {
+        "currency": _plain(after.currency),
+        "price": _plain(after.price),
+        "price_with_vat": _plain(after.price_with_vat),
+        "sum": _plain(after.sum),
+    }
+    if after.source_currency:
+        details.update(
+            source_currency=after.source_currency,
+            source_price=_plain(after.source_price),
+            source_price_with_vat=_plain(after.source_price_with_vat),
+            source_sum=_plain(after.source_sum),
+            exchange_rate=_plain(after.exchange_rate),
+            exchange_rate_date=_plain(after.exchange_rate_date),
+            exchange_rate_source="manual" if after.exchange_rate_manual else "cbr",
+        )
+    if before.exchange_rate_manual and before.exchange_rate != after.exchange_rate:
+        details.update(previous_exchange_rate=_plain(before.exchange_rate), previous_sum=_plain(before.sum))
+    return details
+
+
+def save_procurement_money(
+    command: SaveProcurementMoneyCommand,
+    uow: UnitOfWork,
+    rates: ExchangeRates | None = None,
+) -> ProcurementLine:
+    current = _peek(command.line_id, uow)
+    day = rate_day(
+        paid_on=_moscow_day(current.paid_at) if current.paid_at else None,
+        invoice_date=command.entry.invoice_date,
+        stored=current.money.exchange_rate_date,
+        today=_moscow_day(command.now),
+    )
+    rate = _choose_rate(current, command.entry.amounts.currency, day, command.manual_rate, rates)
     with uow:
         current = _load_versioned(command.line_id, command.expected_version, uow)
-        updated = current.mark_paid(command.actor, command.now)
+        updated = current.update_money(command.entry, rate, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.money_saved",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details=_money_details(current.money, updated.money),
+        )
+        if result != current:
+            uow.commit()
+        return result
+
+
+def reconcile_procurement_rate(
+    command: ReconcileProcurementRateCommand,
+    uow: UnitOfWork,
+    rates: ExchangeRates | None = None,
+) -> ProcurementLine:
+    current = _peek(command.line_id, uow)
+    money = current.money
+    if not money.exchange_rate_manual or not money.source_currency or money.exchange_rate_date is None:
+        raise ProcurementValidationError("Курс уже взят у ЦБ — сверять нечего")
+    value = rates.rate_to_rub(money.source_currency, money.exchange_rate_date) if rates is not None else None
+    if value is None:
+        raise RateUnavailable(money.source_currency, money.exchange_rate_date)
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.reconcile_rate(ExchangeRate(value, money.exchange_rate_date), command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.rate_reconciled",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details=_money_details(current.money, updated.money),
+        )
+        uow.commit()
+        return result
+
+
+def mark_procurement_paid(
+    command: MarkProcurementPaidCommand,
+    uow: UnitOfWork,
+    rates: ExchangeRates | None = None,
+) -> ProcurementLine:
+    rate = None
+    peeked = _peek(command.line_id, uow)
+    if peeked.status is ProcurementStatus.TO_PAY and peeked.money.source_currency:
+        rate = _choose_rate(
+            peeked, peeked.money.source_currency, _moscow_day(command.now), command.manual_rate, rates,
+        )
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.mark_paid(command.actor, command.now, rate)
         result = _save_transition(
             current,
             updated,
@@ -371,6 +553,7 @@ def mark_procurement_paid(command: MarkProcurementPaidCommand, uow: UnitOfWork) 
             actor=command.actor,
             now=command.now,
             uow=uow,
+            details=_money_details(current.money, updated.money),
         )
         if result != current:
             uow.outbox.add(

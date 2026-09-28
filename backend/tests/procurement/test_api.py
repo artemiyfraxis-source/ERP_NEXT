@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -220,3 +221,112 @@ def test_invoice_requires_safe_absolute_http_url(procurement_api, invoice_url):
     )
 
     assert response.status_code == 422
+
+
+class StubRates:
+    def __init__(self, rates=None):
+        self.rates = dict(rates or {})
+
+    def rate_to_rub(self, currency, day):
+        return self.rates.get((currency, day.isoformat()))
+
+
+def awaiting_invoice(client, line) -> int:
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id)]})
+    ready = client.patch(
+        f"/api/procurement/{line.id}/facts",
+        json={
+            "version": taken.json()["lines"][0]["version"],
+            "supplier": "ООО Поставка",
+            "actual_quantity": "2",
+            "actual_unit": "шт",
+        },
+    )
+    requested = client.post(
+        f"/api/procurement/{line.id}/supplier-request",
+        json={"version": ready.json()["line"]["version"], "reference": "REQ-2026-1"},
+    )
+    return requested.json()["line"]["version"]
+
+
+@pytest.fixture()
+def rates():
+    stub = StubRates()
+    app.state.procurement_exchange_rates = stub
+    yield stub
+    del app.state.procurement_exchange_rates
+
+
+def test_invoice_waits_for_fact_money_typed_as_in_invoices(procurement_api, rates):
+    client, line, _ = procurement_api
+    version = awaiting_invoice(client, line)
+    invoice = {"invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25"}
+
+    refused = client.post(f"/api/procurement/{line.id}/invoice", json={"version": version, **invoice})
+    assert refused.status_code == 422
+    assert refused.json()["detail"].startswith("Нельзя загрузить счёт — сначала заполните: ВАЛЮТА")
+
+    saved = client.patch(
+        f"/api/procurement/{line.id}/money",
+        json={
+            "version": version, "currency": "rub", "price": "1 234,50", "vat_rate": "22%",
+            "invoice_item_name": "Разъём SMA", "invoice_number": "17", "invoice_date": "2026-09-14",
+        },
+    )
+    assert saved.status_code == 200
+    body = saved.json()["line"]
+    assert (body["currency"], body["actual_price"], body["actual_price_with_vat"], body["actual_sum"]) == (
+        "RUB", "1234.5", "1506.09", "3012.18",
+    )
+    assert body["pay_missing"] == ["ОЖИД. ДАТА"]
+
+    invoiced = client.post(f"/api/procurement/{line.id}/invoice", json={"version": body["version"], **invoice})
+    assert invoiced.status_code == 200
+    assert invoiced.json()["line"]["status"] == "В оплату"
+
+
+@pytest.mark.parametrize("field,value", [("price", "abc"), ("price", "-1"), ("sum", "1.005")])
+def test_money_rejects_garbage_negative_and_sub_kopeck_sum(procurement_api, rates, field, value):
+    client, line, _ = procurement_api
+    version = awaiting_invoice(client, line)
+
+    response = client.patch(
+        f"/api/procurement/{line.id}/money", json={"version": version, "currency": "RUB", field: value},
+    )
+
+    assert response.status_code == 422
+
+
+def test_cbr_outage_returns_manual_rate_prompt_then_marks_manual_rate(procurement_api, rates):
+    client, line, _ = procurement_api
+    version = awaiting_invoice(client, line)
+    usd = {"currency": "USD", "price": "10", "vat_rate": "22", "invoice_item_name": "SMA"}
+
+    prompt = client.patch(f"/api/procurement/{line.id}/money", json={"version": version, **usd})
+    assert prompt.status_code == 409
+    assert prompt.json()["detail"] == {
+        "code": "manual_rate_required",
+        "currency": "USD",
+        "date": "2026-09-15",
+        "message": "ЦБ не отдал курс USD на 15.09.2026 — введите курс вручную",
+    }
+
+    manual = client.patch(
+        f"/api/procurement/{line.id}/money",
+        json={"version": version, **usd, "manual_exchange_rate": "80,5"},
+    )
+    body = manual.json()["line"]
+    assert (body["exchange_rate"], body["exchange_rate_manual"], body["actual_price"]) == (
+        "80.5", True, "857.33",
+    )
+
+    stale = client.post(f"/api/procurement/{line.id}/exchange-rate/reconcile", json={"version": body["version"]})
+    assert stale.status_code == 503
+    rates.rates[("USD", "2026-09-15")] = Decimal("90")
+    reconciled = client.post(
+        f"/api/procurement/{line.id}/exchange-rate/reconcile", json={"version": body["version"]},
+    )
+    assert reconciled.status_code == 200
+    assert (reconciled.json()["line"]["exchange_rate_manual"], reconciled.json()["line"]["actual_price"]) == (
+        False, "958.5",
+    )

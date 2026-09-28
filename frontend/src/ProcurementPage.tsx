@@ -1,5 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { procurementApi, type ProcurementLine } from "./api";
+import {
+  manualRatePrompt,
+  procurementApi,
+  type ManualRatePrompt,
+  type MoneyDriver,
+  type ProcurementLine,
+} from "./api";
 
 type FactsDraft = {
   supplier: string;
@@ -231,6 +237,7 @@ function ProcurementCard({
   const [requestReference, setRequestReference] = useState(line.supplier_request_reference ?? "");
   const [invoiceUrl, setInvoiceUrl] = useState(line.invoice_url ?? "");
   const [expectedArrival, setExpectedArrival] = useState(line.expected_arrival ?? "");
+  const moneyMissing = line.pay_missing.filter((name) => name !== "ОЖИД. ДАТА");
 
   function field(name: keyof FactsDraft, value: string) {
     setDraft((current) => ({ ...current, [name]: value }));
@@ -264,16 +271,188 @@ function ProcurementCard({
         </form>
       )}
       {line.status === "Жду счет" && (
-        <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.recordInvoice(line.id, line.version, invoiceUrl, expectedArrival), `${line.legacy_id}: счёт передан в оплату`).catch(() => undefined); }}>
-          <label>Ссылка на счёт<input type="url" required value={invoiceUrl} onChange={(event) => setInvoiceUrl(event.target.value)} /></label>
-          <label>Ожидаемая дата<input type="date" required value={expectedArrival} onChange={(event) => setExpectedArrival(event.target.value)} /></label>
-          <button className="primary small" disabled={disabled}>{busy ? "Сохраняем…" : "В оплату"}</button>
-        </form>
+        <>
+          <MoneyForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
+          <MoneySummary line={line} />
+          <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.recordInvoice(line.id, line.version, invoiceUrl, expectedArrival), `${line.legacy_id}: счёт передан в оплату`).catch(() => undefined); }}>
+            <label>Ссылка на счёт<input type="url" required value={invoiceUrl} onChange={(event) => setInvoiceUrl(event.target.value)} /></label>
+            <label>Ожидаемая дата<input type="date" required value={expectedArrival} onChange={(event) => setExpectedArrival(event.target.value)} /></label>
+            <button className="primary small" disabled={disabled || moneyMissing.length > 0}>{busy ? "Сохраняем…" : "В оплату"}</button>
+          </form>
+          {moneyMissing.length > 0 && <small className="hint">Для счёта не хватает: {moneyMissing.join(", ")}</small>}
+        </>
       )}
       {line.status === "В оплату" && (
-        <div className="card-footer"><small>{line.invoice_url} · ожидается {line.expected_arrival}</small><button className="primary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.markPaid(line.id, line.version), `${line.legacy_id}: оплачено, передано в приёмку`).catch(() => undefined)}>{busy ? "Проводим…" : "Оплачено → в пути"}</button></div>
+        <>
+          {line.pay_missing.length > 0 ? (
+            <>
+              <MoneyForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
+              <small className="hint">Оплата закрыта, пока не заполнено: {line.pay_missing.join(", ")}</small>
+            </>
+          ) : (
+            <MoneySummary line={line} />
+          )}
+          <PaymentAction line={line} busy={busy} disabled={disabled || line.pay_missing.length > 0} onAdvance={onAdvance} />
+        </>
       )}
-      {line.status === "В пути" && <div className="success-banner">Позиция передана в приёмку · ожидается {line.expected_arrival}</div>}
+      {line.status === "В пути" && (
+        <>
+          <div className="success-banner">Позиция передана в приёмку · ожидается {line.expected_arrival}</div>
+          <MoneySummary line={line} />
+          {line.exchange_rate_manual && (
+            <div className="card-footer">
+              <small>Курс введён вручную — сверьте с ЦБ, когда он ответит</small>
+              <button className="secondary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.reconcileRate(line.id, line.version), `${line.legacy_id}: курс сверен с ЦБ`).catch(() => undefined)}>{busy ? "Сверяем…" : "Сверить курс с ЦБ"}</button>
+            </div>
+          )}
+        </>
+      )}
     </article>
+  );
+}
+
+type Advance = (line: ProcurementLine, operation: () => Promise<unknown>, message: string) => Promise<void>;
+
+type MoneyDraft = {
+  currency: string;
+  price: string;
+  vat_rate: string;
+  price_with_vat: string;
+  sum: string;
+  invoice_item_name: string;
+  invoice_number: string;
+  invoice_date: string;
+};
+
+function moneyDraftFrom(line: ProcurementLine): MoneyDraft {
+  // A converted line is edited in its invoice currency: the typed amounts, not the rouble result.
+  const source = Boolean(line.source_currency);
+  return {
+    currency: line.source_currency ?? line.currency ?? "RUB",
+    price: (source ? line.source_price : line.actual_price) ?? "",
+    vat_rate: line.actual_vat_rate ?? "22",
+    price_with_vat: (source ? line.source_price_with_vat : line.actual_price_with_vat) ?? "",
+    sum: (source ? line.source_sum : line.actual_sum) ?? "",
+    invoice_item_name: line.invoice_item_name ?? line.calculated_name,
+    invoice_number: line.invoice_number ?? "",
+    invoice_date: line.invoice_date ?? "",
+  };
+}
+
+const DRIVER_BY_FIELD: Partial<Record<keyof MoneyDraft, MoneyDriver>> = {
+  price: "net",
+  vat_rate: "vat",
+  price_with_vat: "gross",
+  sum: "sum",
+};
+
+function MoneyForm({ line, busy, disabled, onAdvance }: {
+  line: ProcurementLine;
+  busy: boolean;
+  disabled: boolean;
+  onAdvance: Advance;
+}) {
+  const [draft, setDraft] = useState(() => moneyDraftFrom(line));
+  const [driver, setDriver] = useState<MoneyDriver | undefined>();
+  const [prompt, setPrompt] = useState<ManualRatePrompt | null>(null);
+  const [manualRate, setManualRate] = useState("");
+
+  function field(name: keyof MoneyDraft, value: string) {
+    setDraft((current) => ({ ...current, [name]: value }));
+    const edited = DRIVER_BY_FIELD[name];
+    if (edited) setDriver(edited);
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const blank = (value: string) => value.trim() || null;
+    const money = {
+      driver,
+      currency: draft.currency.trim(),
+      price: blank(draft.price),
+      vat_rate: blank(draft.vat_rate),
+      price_with_vat: blank(draft.price_with_vat),
+      sum: blank(draft.sum),
+      invoice_item_name: blank(draft.invoice_item_name),
+      invoice_number: blank(draft.invoice_number),
+      invoice_date: blank(draft.invoice_date),
+      manual_exchange_rate: prompt ? blank(manualRate) : null,
+    };
+    void onAdvance(line, () => procurementApi.saveMoney(line.id, line.version, money), `${line.legacy_id}: суммы по счёту сохранены`)
+      .then(() => setPrompt(null))
+      .catch((reason) => setPrompt(manualRatePrompt(reason)));
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <div className="facts-grid">
+        <label>Валюта *<input list="procurement-currencies" required maxLength={8} value={draft.currency} onChange={(e) => field("currency", e.target.value)} /></label>
+        <label>Цена без НДС<input inputMode="decimal" value={draft.price} onChange={(e) => field("price", e.target.value)} /></label>
+        <label>НДС, %<input inputMode="decimal" value={draft.vat_rate} onChange={(e) => field("vat_rate", e.target.value)} /></label>
+        <label>Цена с НДС<input inputMode="decimal" value={draft.price_with_vat} onChange={(e) => field("price_with_vat", e.target.value)} /></label>
+        <label>Сумма<input inputMode="decimal" value={draft.sum} onChange={(e) => field("sum", e.target.value)} /></label>
+        <label>Наименование по счёту *<input required value={draft.invoice_item_name} onChange={(e) => field("invoice_item_name", e.target.value)} /></label>
+        <label>№ счёта<input value={draft.invoice_number} onChange={(e) => field("invoice_number", e.target.value)} /></label>
+        <label>Дата счёта<input type="date" value={draft.invoice_date} onChange={(e) => field("invoice_date", e.target.value)} /></label>
+        {prompt && (
+          <label className="wide">{prompt.message}. Курс, ₽ за 1 {prompt.currency} *
+            <input inputMode="decimal" required value={manualRate} onChange={(e) => setManualRate(e.target.value)} />
+          </label>
+        )}
+      </div>
+      <datalist id="procurement-currencies">
+        <option value="RUB" /><option value="USD" /><option value="EUR" /><option value="CNY" />
+      </datalist>
+      <div className="card-footer">
+        <small>Инвалюта пересчитывается в рубли по курсу ЦБ + 6,5 %</small>
+        <button className="primary small" disabled={disabled}>{busy ? "Сохраняем…" : "Сохранить суммы"}</button>
+      </div>
+    </form>
+  );
+}
+
+function MoneySummary({ line }: { line: ProcurementLine }) {
+  if (!line.actual_sum) return null;
+  return (
+    <p className="money-summary">
+      <small>
+        Сумма {line.actual_sum} ₽ · цена {line.actual_price ?? "—"} ₽ без НДС / {line.actual_price_with_vat ?? "—"} ₽ с НДС
+        {line.actual_vat_rate ? ` (НДС ${line.actual_vat_rate} %)` : ""}
+        {line.invoice_number ? ` · счёт № ${line.invoice_number}` : ""}
+        {line.source_currency && (line.source_sum
+          ? ` · в счёте ${line.source_sum} ${line.source_currency}`
+          : ` · в счёте цена ${line.source_price_with_vat ?? line.source_price} ${line.source_currency}`)}
+        {line.source_currency && ` по курсу ЦБ ${line.exchange_rate} на ${line.exchange_rate_date}`}
+        {line.exchange_rate_manual && " · курс введён вручную"}
+      </small>
+    </p>
+  );
+}
+
+function PaymentAction({ line, busy, disabled, onAdvance }: {
+  line: ProcurementLine;
+  busy: boolean;
+  disabled: boolean;
+  onAdvance: Advance;
+}) {
+  const [prompt, setPrompt] = useState<ManualRatePrompt | null>(null);
+  const [manualRate, setManualRate] = useState("");
+
+  function pay(event: FormEvent) {
+    event.preventDefault();
+    void onAdvance(line, () => procurementApi.markPaid(line.id, line.version, prompt ? manualRate.trim() : undefined), `${line.legacy_id}: оплачено, передано в приёмку`)
+      .catch((reason) => setPrompt(manualRatePrompt(reason)));
+  }
+
+  return (
+    <form className="card-footer" onSubmit={pay}>
+      <small>{line.invoice_url} · ожидается {line.expected_arrival}</small>
+      {prompt && (
+        <label>{prompt.message}. Курс, ₽ за 1 {prompt.currency} *
+          <input inputMode="decimal" required value={manualRate} onChange={(e) => setManualRate(e.target.value)} />
+        </label>
+      )}
+      <button className="primary small" disabled={disabled}>{busy ? "Проводим…" : "Оплачено → в пути"}</button>
+    </form>
   );
 }

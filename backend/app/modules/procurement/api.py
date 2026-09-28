@@ -3,11 +3,11 @@
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -16,6 +16,11 @@ from app.shared.document_url import normalize_document_url
 from app.shared.http_auth import Principal, procurement_edit_principal
 
 from .application import (
+    ExchangeRates,
+    ManualRateRequired,
+    RateUnavailable,
+    ReconcileProcurementRateCommand,
+    SaveProcurementMoneyCommand,
     SaveProcurementFactsCommand,
     SendSupplierRequestCommand,
     RecordInvoiceCommand,
@@ -29,13 +34,49 @@ from .application import (
     send_supplier_request,
     record_invoice,
     mark_procurement_paid,
+    reconcile_procurement_rate,
+    save_procurement_money,
     take_procurement_in_work,
 )
-from .domain import ProcurementFacts, ProcurementLine, ProcurementValidationError
+from .domain import MoneyEntry, ProcurementFacts, ProcurementLine, ProcurementValidationError
+from .exchange_rates import CbrExchangeRates
+from .money import MoneyInput, parse_number_loose
 
 
 router = APIRouter(prefix="/api/procurement", tags=["procurement"])
 Quantity = Annotated[Decimal, Field(max_digits=18, decimal_places=6)]
+
+
+def _loose_number(value: object) -> object:
+    # Money is typed the way it is written in invoices: «1 234,56», «1,234.56», «$1,234.56».
+    if value is None or isinstance(value, (int, Decimal)):
+        return value
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, str) and not value.strip():
+        return None
+    parsed = parse_number_loose(value)
+    if parsed is None:
+        raise ValueError("Не удалось прочитать число")
+    return parsed
+
+
+UnitPrice = Annotated[
+    Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=6)] | None,
+    BeforeValidator(_loose_number),
+]
+Amount = Annotated[
+    Annotated[Decimal, Field(ge=0, max_digits=20, decimal_places=2)] | None,
+    BeforeValidator(_loose_number),
+]
+VatRate = Annotated[
+    Annotated[Decimal, Field(ge=0, max_digits=5, decimal_places=2)] | None,
+    BeforeValidator(_loose_number),
+]
+Rate = Annotated[
+    Annotated[Decimal, Field(gt=0, max_digits=24, decimal_places=10)] | None,
+    BeforeValidator(_loose_number),
+]
 
 
 class TakeInWorkInput(BaseModel):
@@ -84,11 +125,52 @@ class VersionInput(BaseModel):
     version: int = Field(ge=1)
 
 
+class PaidInput(VersionInput):
+    manual_exchange_rate: Rate = None
+
+
+class MoneyPayload(BaseModel):
+    version: int = Field(ge=1)
+    driver: Literal["net", "gross", "vat", "qty", "sum"] | None = None
+    currency: str = Field(min_length=1, max_length=8)
+    price: UnitPrice = None
+    vat_rate: VatRate = None
+    price_with_vat: UnitPrice = None
+    sum: Amount = None
+    invoice_item_name: str | None = Field(default=None, max_length=1024)
+    invoice_number: str | None = Field(default=None, max_length=128)
+    invoice_date: date | None = None
+    manual_exchange_rate: Rate = None
+
+    def to_domain(self) -> MoneyEntry:
+        return MoneyEntry(
+            amounts=MoneyInput(
+                currency=self.currency,
+                price=self.price,
+                vat_rate=self.vat_rate,
+                price_with_vat=self.price_with_vat,
+                sum=self.sum,
+                driver=self.driver,
+            ),
+            invoice_item_name=self.invoice_item_name,
+            invoice_number=self.invoice_number,
+            invoice_date=self.invoice_date,
+        )
+
+
 def procurement_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
     factory = getattr(request.app.state, "procurement_uow_factory", None)
     if not callable(factory):
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     return factory
+
+
+def procurement_exchange_rates(request: Request) -> ExchangeRates:
+    rates = getattr(request.app.state, "procurement_exchange_rates", None)
+    if rates is None:
+        rates = CbrExchangeRates()
+        request.app.state.procurement_exchange_rates = rates
+    return rates
 
 
 def _decimal_result(value: Decimal | None) -> str | None:
@@ -128,6 +210,24 @@ def _line_result(line: ProcurementLine) -> dict:
         "expected_arrival": line.expected_arrival.isoformat() if line.expected_arrival else None,
         "invoice_url": line.invoice_url,
         "paid_at": line.paid_at.isoformat() if line.paid_at else None,
+        "currency": line.money.currency,
+        "actual_price": _decimal_result(line.money.price),
+        "actual_vat_rate": _decimal_result(line.money.vat_rate),
+        "actual_price_with_vat": _decimal_result(line.money.price_with_vat),
+        "actual_sum": _decimal_result(line.money.sum),
+        "source_currency": line.money.source_currency,
+        "source_price": _decimal_result(line.money.source_price),
+        "source_price_with_vat": _decimal_result(line.money.source_price_with_vat),
+        "source_sum": _decimal_result(line.money.source_sum),
+        "exchange_rate": _decimal_result(line.money.exchange_rate),
+        "exchange_rate_date": (
+            line.money.exchange_rate_date.isoformat() if line.money.exchange_rate_date else None
+        ),
+        "exchange_rate_manual": line.money.exchange_rate_manual,
+        "invoice_item_name": line.invoice_item_name,
+        "invoice_number": line.invoice_number,
+        "invoice_date": line.invoice_date.isoformat() if line.invoice_date else None,
+        "pay_missing": line.pay_missing(),
     }
 
 
@@ -254,9 +354,69 @@ def _transition(operation) -> dict:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentProcurementUpdate as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except ManualRateRequired as error:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "manual_rate_required",
+                "currency": error.currency,
+                "date": error.day.isoformat(),
+                "message": str(error),
+            },
+        ) from error
+    except RateUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"line": _line_result(line)}
+
+
+@router.patch("/{line_id}/money")
+def money(
+    line_id: UUID,
+    payload: MoneyPayload,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    rates: Annotated[ExchangeRates, Depends(procurement_exchange_rates)],
+) -> dict:
+    return _transition(
+        lambda: save_procurement_money(
+            SaveProcurementMoneyCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                entry=payload.to_domain(),
+                actor=principal.actor,
+                now=now,
+                manual_rate=payload.manual_exchange_rate,
+            ),
+            uow_factory(),
+            rates,
+        )
+    )
+
+
+@router.post("/{line_id}/exchange-rate/reconcile")
+def reconcile_rate(
+    line_id: UUID,
+    payload: VersionInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    rates: Annotated[ExchangeRates, Depends(procurement_exchange_rates)],
+) -> dict:
+    return _transition(
+        lambda: reconcile_procurement_rate(
+            ReconcileProcurementRateCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+            rates,
+        )
+    )
 
 
 @router.post("/{line_id}/supplier-request")
@@ -307,10 +467,11 @@ def invoice(
 @router.post("/{line_id}/paid")
 def paid(
     line_id: UUID,
-    payload: VersionInput,
+    payload: PaidInput,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    rates: Annotated[ExchangeRates, Depends(procurement_exchange_rates)],
 ) -> dict:
     return _transition(
         lambda: mark_procurement_paid(
@@ -319,7 +480,9 @@ def paid(
                 expected_version=payload.version,
                 actor=principal.actor,
                 now=now,
+                manual_rate=payload.manual_exchange_rate,
             ),
             uow_factory(),
+            rates,
         )
     )

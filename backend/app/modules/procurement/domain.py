@@ -12,6 +12,17 @@ from app.shared.document_url import normalize_document_url
 from app.shared.events import OutboxMessage
 from app.shared.identity import Actor
 
+from .money import (
+    EMPTY_MONEY,
+    ExchangeRate,
+    FactMoney,
+    MoneyInput,
+    MoneyValidationError,
+    apply_currency_and_fact,
+    pay_gate_missing,
+    reconvert,
+)
+
 
 class ProcurementValidationError(ValueError):
     """A procurement operation violates a business invariant."""
@@ -46,6 +57,19 @@ class ProcurementFacts:
     calculated_name: str | None | _Unset = UNSET
     actual_quantity: Decimal | None | _Unset = UNSET
     actual_unit: str | None | _Unset = UNSET
+
+
+@dataclass(frozen=True)
+class MoneyEntry:
+    """Invoice money form: typed amounts plus the invoice identity (НАИМЕНОВАНИЕ / № / ДАТА СЧЕТА)."""
+
+    amounts: MoneyInput
+    invoice_item_name: str | None = None
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+
+
+MONEY_EDITABLE = frozenset({ProcurementStatus.AWAITING_INVOICE, ProcurementStatus.TO_PAY})
 
 
 @dataclass(frozen=True)
@@ -88,6 +112,19 @@ class ProcurementLine:
     expected_arrival: date | None = None
     invoice_url: str | None = None
     paid_at: datetime | None = None
+    money: FactMoney = EMPTY_MONEY
+    invoice_item_name: str | None = None
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+
+    def pay_missing(self, expected_arrival: date | None = None) -> list[str]:
+        return pay_gate_missing(
+            self.money,
+            quantity=self.actual_quantity,
+            unit=self.actual_unit,
+            invoice_item_name=self.invoice_item_name,
+            expected_arrival=expected_arrival or self.expected_arrival,
+        )
 
     def take_in_work(self, actor: Actor) -> ProcurementLine:
         _validate_actor(actor)
@@ -169,6 +206,9 @@ class ProcurementLine:
             raise ProcurementValidationError("Ожидаемая дата поступления не может быть раньше заказа")
         if self.status is not ProcurementStatus.AWAITING_INVOICE:
             raise ProcurementValidationError("Счёт принимается только на этапе «Жду счет»")
+        missing = self.pay_missing(expected_arrival)
+        if missing:
+            raise ProcurementValidationError("Нельзя загрузить счёт — сначала заполните: " + ", ".join(missing))
         return replace(
             self,
             invoice_url=url,
@@ -177,16 +217,68 @@ class ProcurementLine:
             version=self.version + 1,
         )
 
-    def mark_paid(self, actor: Actor, paid_at: datetime) -> ProcurementLine:
+    def update_money(
+        self,
+        entry: MoneyEntry,
+        rate: ExchangeRate | None,
+        actor: Actor,
+    ) -> ProcurementLine:
+        self._require_owner(actor)
+        if self.status not in MONEY_EDITABLE:
+            raise ProcurementValidationError("Суммы по счёту меняются только на этапах «Жду счет» и «В оплату»")
+        try:
+            money = apply_currency_and_fact(entry.amounts, self.actual_quantity, rate)
+        except MoneyValidationError as error:
+            raise ProcurementValidationError(str(error)) from error
+        updated = replace(
+            self,
+            money=money,
+            invoice_item_name=_text(entry.invoice_item_name) or None,
+            invoice_number=_text(entry.invoice_number) or None,
+            invoice_date=entry.invoice_date,
+        )
+        if updated == self:
+            return self
+        return replace(updated, version=self.version + 1)
+
+    def mark_paid(
+        self,
+        actor: Actor,
+        paid_at: datetime,
+        rate: ExchangeRate | None = None,
+    ) -> ProcurementLine:
         self._require_owner(actor)
         if self.status is ProcurementStatus.IN_TRANSIT and self.paid_at == paid_at:
             return self
         if self.status is not ProcurementStatus.TO_PAY:
             raise ProcurementValidationError("Оплатить можно только строку со счётом в оплате")
+        money = self.money
+        if money.source_currency:
+            # Foreign invoice: the paid amount is fixed at the payment-day rate.
+            if rate is None:
+                raise ProcurementValidationError(f"Нет курса {money.source_currency} на день оплаты")
+            money = reconvert(money, self.actual_quantity, rate)
+        paid = replace(self, money=money)
+        missing = paid.pay_missing()
+        if missing:
+            raise ProcurementValidationError("Нельзя провести оплату — сначала заполните: " + ", ".join(missing))
         return replace(
-            self,
+            paid,
             status=ProcurementStatus.IN_TRANSIT,
             paid_at=paid_at,
+            version=self.version + 1,
+        )
+
+    def reconcile_rate(self, rate: ExchangeRate, actor: Actor) -> ProcurementLine:
+        """Replace a manually typed rate with the CBR one for the same day and replay the amounts."""
+        self._require_owner(actor)
+        if not self.money.exchange_rate_manual:
+            raise ProcurementValidationError("Курс уже взят у ЦБ — сверять нечего")
+        if rate.manual:
+            raise ProcurementValidationError("Сверка возможна только с курсом ЦБ")
+        return replace(
+            self,
+            money=reconvert(self.money, self.actual_quantity, rate),
             version=self.version + 1,
         )
 

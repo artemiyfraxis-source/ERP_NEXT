@@ -71,6 +71,44 @@ export interface ProcurementLine {
   expected_arrival: string | null;
   invoice_url: string | null;
   paid_at: string | null;
+  currency: string | null;
+  actual_price: string | null;
+  actual_vat_rate: string | null;
+  actual_price_with_vat: string | null;
+  actual_sum: string | null;
+  source_currency: string | null;
+  source_price: string | null;
+  source_price_with_vat: string | null;
+  source_sum: string | null;
+  exchange_rate: string | null;
+  exchange_rate_date: string | null;
+  exchange_rate_manual: boolean;
+  invoice_item_name: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  pay_missing: string[];
+}
+
+export type MoneyDriver = "net" | "gross" | "vat" | "qty" | "sum";
+
+export interface ProcurementMoneyInput {
+  driver?: MoneyDriver;
+  currency: string;
+  price?: string | null;
+  vat_rate?: string | null;
+  price_with_vat?: string | null;
+  sum?: string | null;
+  invoice_item_name?: string | null;
+  invoice_number?: string | null;
+  invoice_date?: string | null;
+  manual_exchange_rate?: string | null;
+}
+
+export interface ManualRatePrompt {
+  code: "manual_rate_required";
+  currency: string;
+  date: string;
+  message: string;
 }
 
 export interface ReceivingLine {
@@ -634,9 +672,24 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly detail?: unknown,
   ) {
     super(message);
   }
+}
+
+function errorMessage(detail: unknown, status: number): string {
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && typeof (detail as { message?: unknown }).message === "string") {
+    return (detail as { message: string }).message;
+  }
+  return `HTTP ${status}`;
+}
+
+export function manualRatePrompt(error: unknown): ManualRatePrompt | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail as Partial<ManualRatePrompt> | undefined;
+  return detail?.code === "manual_rate_required" ? (detail as ManualRatePrompt) : null;
 }
 
 function cookie(name: string): string {
@@ -659,7 +712,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (response.status === 401 && path !== "/api/auth/login") {
       window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
     }
-    throw new ApiError(payload.detail ?? `HTTP ${response.status}`, response.status);
+    throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -749,8 +802,20 @@ export const procurementApi = {
         expected_arrival: expectedArrival,
       }),
     }),
-  markPaid: (lineId: string, version: number) =>
+  saveMoney: (lineId: string, version: number, money: ProcurementMoneyInput) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/money`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, ...money }),
+    }),
+  markPaid: (lineId: string, version: number, manualExchangeRate?: string) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/paid`, {
+      method: "POST",
+      body: JSON.stringify(
+        manualExchangeRate ? { version, manual_exchange_rate: manualExchangeRate } : { version },
+      ),
+    }),
+  reconcileRate: (lineId: string, version: number) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/exchange-rate/reconcile`, {
       method: "POST",
       body: JSON.stringify({ version }),
     }),
