@@ -206,15 +206,13 @@ def test_invoice_requires_safe_absolute_http_url(procurement_api, invoice_url):
             "actual_unit": "шт",
         },
     )
-    requested = client.post(
-        f"/api/procurement/{line.id}/supplier-request",
-        json={"version": ready.json()["line"]["version"], "reference": "REQ-2026-1"},
-    )
+    assert ready.json()["line"]["status"] == "Готов к запросу"
+    requested = client.post("/api/procurement/supplier-requests")
 
     response = client.post(
         f"/api/procurement/{line.id}/invoice",
         json={
-            "version": requested.json()["line"]["version"],
+            "version": requested.json()["lines"][0]["version"],
             "invoice_url": invoice_url,
             "expected_arrival": "2026-09-25",
         },
@@ -242,11 +240,9 @@ def awaiting_invoice(client, line) -> int:
             "actual_unit": "шт",
         },
     )
-    requested = client.post(
-        f"/api/procurement/{line.id}/supplier-request",
-        json={"version": ready.json()["line"]["version"], "reference": "REQ-2026-1"},
-    )
-    return requested.json()["line"]["version"]
+    assert ready.json()["line"]["status"] == "Готов к запросу"
+    requested = client.post("/api/procurement/supplier-requests")
+    return requested.json()["lines"][0]["version"]
 
 
 @pytest.fixture()

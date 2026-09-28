@@ -24,7 +24,8 @@ from .application import (
     ReconcileProcurementRateCommand,
     SaveProcurementMoneyCommand,
     SaveProcurementFactsCommand,
-    SendSupplierRequestCommand,
+    BuildSupplierRequestsCommand,
+    SupplierOrder,
     RecordInvoiceCommand,
     MarkProcurementPaidCommand,
     OfflineAction,
@@ -37,7 +38,8 @@ from .application import (
     cancel_procurement_backorder,
     confirm_procurement_backorder,
     save_procurement_facts,
-    send_supplier_request,
+    build_supplier_requests,
+    supplier_order,
     record_invoice,
     mark_procurement_paid,
     reconcile_procurement_rate,
@@ -107,11 +109,6 @@ class ProcurementFactsInput(BaseModel):
             if name != "version"
         }
         return ProcurementFacts(**values)
-
-
-class SupplierRequestInput(BaseModel):
-    version: int = Field(ge=1)
-    reference: str = Field(min_length=1, max_length=4096)
 
 
 class InvoiceInput(BaseModel):
@@ -218,6 +215,8 @@ def _line_result(line: ProcurementLine) -> dict:
         "actual_unit": line.actual_unit,
         "quality_document": line.quality_document,
         "supplier_request_reference": line.supplier_request_reference,
+        "order_number": line.order_number,
+        "order_date": line.order_date.isoformat() if line.order_date else None,
         "expected_arrival": line.expected_arrival.isoformat() if line.expected_arrival else None,
         "invoice_url": line.invoice_url,
         "paid_at": line.paid_at.isoformat() if line.paid_at else None,
@@ -431,26 +430,52 @@ def reconcile_rate(
     )
 
 
-@router.post("/{line_id}/supplier-request")
-def supplier_request(
-    line_id: UUID,
-    payload: SupplierRequestInput,
+def _order_result(order: SupplierOrder) -> dict:
+    return {
+        "order_number": order.order_number,
+        "order_date": order.order_date.isoformat(),
+        "supplier": order.supplier,
+        "task_type": order.task_type,
+        "delivery_point": order.delivery_point,
+        "buyer": order.buyer.name,
+        "letter": order.letter,
+        "line_ids": [str(line_id) for line_id in order.line_ids],
+    }
+
+
+@router.post("/supplier-requests")
+def supplier_requests(
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    return _transition(
-        lambda: send_supplier_request(
-            SendSupplierRequestCommand(
-                line_id=line_id,
-                expected_version=payload.version,
-                reference=payload.reference,
-                actor=principal.actor,
-                now=now,
-            ),
-            uow_factory(),
+    try:
+        result = _retry_transaction(
+            lambda: build_supplier_requests(
+                BuildSupplierRequestsCommand(actor=principal.actor, now=now),
+                uow_factory(),
+            )
         )
-    )
+    except ProcurementValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {
+        "orders": [_order_result(order) for order in result.orders],
+        "lines": [_line_result(line) for line in result.lines],
+        "skipped": result.skipped,
+        "other_buyer": result.other_buyer,
+    }
+
+
+@router.get("/supplier-requests/{order_number}")
+def supplier_request_order(
+    order_number: str,
+    _principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    try:
+        return {"order": _order_result(supplier_order(order_number, uow_factory()))}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post("/{line_id}/invoice")

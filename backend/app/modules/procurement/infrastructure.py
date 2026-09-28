@@ -30,6 +30,7 @@ from app.shared.persistence import (
     SqlAlchemyOutboxRepository,
 )
 
+from .application import SupplierOrder
 from .domain import ProcurementLine, ProcurementStatus
 from .money import FactMoney
 
@@ -107,6 +108,8 @@ class ProcurementLineRow(Base):
     invoice_item_name: Mapped[str | None] = mapped_column(String(1024))
     invoice_number: Mapped[str | None] = mapped_column(String(128))
     invoice_date: Mapped[Any | None] = mapped_column(Date)
+    order_number: Mapped[str | None] = mapped_column(String(32), index=True)
+    order_date: Mapped[Any | None] = mapped_column(Date)
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -172,6 +175,8 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         invoice_item_name=line.invoice_item_name,
         invoice_number=line.invoice_number,
         invoice_date=line.invoice_date,
+        order_number=line.order_number,
+        order_date=line.order_date,
     )
 
 
@@ -240,7 +245,26 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
         invoice_item_name=row.invoice_item_name,
         invoice_number=row.invoice_number,
         invoice_date=row.invoice_date,
+        order_number=row.order_number,
+        order_date=row.order_date,
     )
+
+
+class ProcurementSupplierOrderRow(Base):
+    """An issued supplier request; the primary key keeps № ЗАКАЗА unique under concurrent buyers."""
+
+    __tablename__ = "procurement_supplier_orders"
+
+    order_number: Mapped[str] = mapped_column(String(32), primary_key=True)
+    order_date: Mapped[Any] = mapped_column(Date, nullable=False)
+    supplier: Mapped[str] = mapped_column(String(512), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    delivery_point: Mapped[str] = mapped_column(String(512), nullable=False)
+    buyer_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    buyer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    buyer_department: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    letter: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class SqlAlchemyProcurementRepository:
@@ -318,6 +342,59 @@ class SqlAlchemyProcurementRepository:
             ProcurementLineRow.legacy_id.startswith(prefix, autoescape=True)
         )
         return list(self.session.scalars(statement))
+
+    def ready_for_request(self) -> list[ProcurementLine]:
+        statement = (
+            select(ProcurementLineRow)
+            .where(ProcurementLineRow.status == ProcurementStatus.READY.value)
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+        )
+        return [_line_domain(row) for row in self.session.scalars(statement)]
+
+    def order_numbers_with_prefix(self, prefix: str) -> list[str]:
+        statement = select(ProcurementSupplierOrderRow.order_number).where(
+            ProcurementSupplierOrderRow.order_number.startswith(f"{prefix}-", autoescape=True)
+        )
+        return list(self.session.scalars(statement))
+
+    def add_order(self, order: SupplierOrder) -> None:
+        self.session.add(
+            ProcurementSupplierOrderRow(
+                order_number=order.order_number,
+                order_date=order.order_date,
+                supplier=order.supplier,
+                task_type=order.task_type,
+                delivery_point=order.delivery_point,
+                buyer_id=order.buyer.id,
+                buyer_name=order.buyer.name,
+                buyer_department=order.buyer.department,
+                created_at=order.created_at,
+                letter=order.letter,
+            )
+        )
+        # The PK insert runs now, so a number taken by a concurrent buyer fails before lines move.
+        self.session.flush()
+
+    def get_order(self, order_number: str) -> SupplierOrder | None:
+        row = self.session.get(ProcurementSupplierOrderRow, order_number)
+        if row is None:
+            return None
+        line_ids = self.session.scalars(
+            select(ProcurementLineRow.id)
+            .where(ProcurementLineRow.order_number == order_number)
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+        )
+        return SupplierOrder(
+            order_number=row.order_number,
+            order_date=row.order_date,
+            supplier=row.supplier,
+            task_type=row.task_type,
+            delivery_point=row.delivery_point,
+            buyer=Actor(id=row.buyer_id, name=row.buyer_name, department=row.buyer_department or ""),
+            created_at=row.created_at,
+            letter=row.letter,
+            line_ids=tuple(line_ids),
+        )
 
     def add(self, line: ProcurementLine) -> None:
         incoming = _line_row(line)

@@ -21,6 +21,7 @@
     "paid line emits one receiving.expected snapshot",
     "invoice and payment require PUR_PAY_REQUIRED fact money",
     "fact prices follow the leading field and round to kopecks",
-    "foreign currency converts at CBR rate with CURRENCY_MARKUP"
+    "foreign currency converts at CBR rate with CURRENCY_MARKUP",
+    "supplier requests group the buyer's ready lines by supplier and task type with prefix-NNN order numbers"
   ]
 }

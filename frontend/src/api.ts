@@ -40,6 +40,24 @@ export interface RequestRow {
   planned_date: string;
 }
 
+export interface SupplierOrder {
+  order_number: string;
+  order_date: string;
+  supplier: string;
+  task_type: string;
+  delivery_point: string;
+  buyer: string;
+  letter: string;
+  line_ids: string[];
+}
+
+export interface SupplierRequestsResult {
+  orders: SupplierOrder[];
+  lines: ProcurementLine[];
+  skipped: string[];
+  other_buyer: number;
+}
+
 export interface ProcurementLine {
   id: string;
   legacy_id: string;
@@ -68,6 +86,8 @@ export interface ProcurementLine {
   actual_unit: string | null;
   quality_document: string;
   supplier_request_reference: string | null;
+  order_number: string | null;
+  order_date: string | null;
   expected_arrival: string | null;
   invoice_url: string | null;
   paid_at: string | null;
@@ -804,11 +824,8 @@ export const procurementApi = {
       method: "PATCH",
       body: JSON.stringify(facts),
     }),
-  sendSupplierRequest: (lineId: string, version: number, reference: string) =>
-    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/supplier-request`, {
-      method: "POST",
-      body: JSON.stringify({ version, reference }),
-    }),
+  buildSupplierRequests: () =>
+    api<SupplierRequestsResult>("/api/procurement/supplier-requests", { method: "POST" }),
   recordInvoice: (
     lineId: string,
     version: number,

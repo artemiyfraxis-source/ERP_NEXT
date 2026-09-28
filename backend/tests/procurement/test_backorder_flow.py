@@ -18,7 +18,7 @@ from app.modules.procurement.application import (
     RecordInvoiceCommand,
     SaveProcurementFactsCommand,
     SaveProcurementMoneyCommand,
-    SendSupplierRequestCommand,
+    BuildSupplierRequestsCommand,
     TakeProcurementInWorkCommand,
     cancel_procurement_backorder,
     confirm_procurement_backorder,
@@ -28,7 +28,7 @@ from app.modules.procurement.application import (
     record_invoice,
     save_procurement_facts,
     save_procurement_money,
-    send_supplier_request,
+    build_supplier_requests,
     take_procurement_in_work,
 )
 from app.modules.procurement.domain import MoneyEntry, ProcurementFacts, ProcurementStatus
@@ -110,7 +110,7 @@ def paid_procurement_line(db):
         ),
         db.procurement(),
     )
-    line = send_supplier_request(SendSupplierRequestCommand(line.id, line.version, "REQ-1", BUYER, NOW), db.procurement())
+    line = build_supplier_requests(BuildSupplierRequestsCommand(BUYER, NOW), db.procurement()).lines[0]
     line = save_procurement_money(
         SaveProcurementMoneyCommand(
             line.id, line.version,

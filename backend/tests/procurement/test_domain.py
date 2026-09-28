@@ -197,7 +197,7 @@ def test_buyer_advances_ready_line_through_invoice_to_transit():
         )
     )
 
-    requested = ready.send_supplier_request("REQ-2026-1", buyer).update_money(RUB_ENTRY, None, buyer)
+    requested = ready.send_supplier_request("PO-001", date(2026, 9, 22), "REQ-2026-1", buyer).update_money(RUB_ENTRY, None, buyer)
     invoiced = requested.record_invoice(
         "https://files.test/invoice.pdf",
         date(2026, 9, 30),
@@ -227,7 +227,7 @@ def awaiting_invoice(buyer: Actor):
             ProcurementFacts(supplier="ООО Поставка", actual_quantity=Decimal("2"), actual_unit="шт"),
             buyer,
         )
-        .send_supplier_request("REQ-2026-1", buyer)
+        .send_supplier_request("PO-001", date(2026, 9, 22), "REQ-2026-1", buyer)
     )
 
 

@@ -31,6 +31,8 @@ const line: ProcurementLine = {
   actual_unit: null,
   quality_document: "Нет",
   supplier_request_reference: null,
+  order_number: null,
+  order_date: null,
   expected_arrival: null,
   invoice_url: null,
   paid_at: null,
@@ -295,4 +297,42 @@ it("does not offer generic approval or cancel on a backorder", async () => {
   render(<ProcurementPage />);
   expect(await screen.findByRole("button", { name: "Отменить дозавоз" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Отменить строку" })).not.toBeInTheDocument();
+});
+
+it("forms supplier requests for ready lines in one batch and shows the letters", async () => {
+  const ready: ProcurementLine = { ...line, status: "Готов к запросу", buyer: "Закупщик", supplier: "ООО А" };
+  let formed = false;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") {
+      return json({
+        lines: [formed ? { ...ready, status: "Жду счет", order_number: "PO-001", order_date: "2026-09-16" } : ready],
+        next_cursor: null,
+      });
+    }
+    if (path === "/api/procurement/supplier-requests" && init?.method === "POST") {
+      formed = true;
+      return json({
+        orders: [{
+          order_number: "PO-001", order_date: "2026-09-16", supplier: "ООО А", task_type: "Закупка",
+          delivery_point: "Москва", buyer: "Закупщик", letter: "ООО А · REQ# 16.09.2026 - MR#D-1 PO-001",
+          line_ids: [ready.id],
+        }],
+        lines: [],
+        skipped: [],
+        other_buyer: 2,
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  expect(await screen.findByText(/Готово к запросу: 1/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Сформировать запросы поставщикам" }));
+
+  expect(await screen.findByText("Сформировано запросов: 1; строк других закупщиков не тронуто: 2")).toBeInTheDocument();
+  expect(screen.getByText("ООО А · REQ# 16.09.2026 - MR#D-1 PO-001")).toBeInTheDocument();
+  expect(await screen.findByText("Заказ PO-001 от 2026-09-16")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Сформировать запросы поставщикам" })).toBeDisabled();
 });

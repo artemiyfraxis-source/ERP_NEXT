@@ -10,7 +10,7 @@ from app.modules.procurement.application import (
     ReconcileProcurementRateCommand,
     SaveProcurementFactsCommand,
     SaveProcurementMoneyCommand,
-    SendSupplierRequestCommand,
+    BuildSupplierRequestsCommand,
     RecordInvoiceCommand,
     MarkProcurementPaidCommand,
     TakeProcurementInWorkCommand,
@@ -18,7 +18,7 @@ from app.modules.procurement.application import (
     reconcile_procurement_rate,
     save_procurement_facts,
     save_procurement_money,
-    send_supplier_request,
+    build_supplier_requests,
     record_invoice,
     mark_procurement_paid,
     take_procurement_in_work,
@@ -69,6 +69,7 @@ def requested_message(suffix: int = 1) -> OutboxMessage:
 class FakeProcurementRepository:
     def __init__(self):
         self.items = {}
+        self.orders = {}
 
     def by_source_idempotency_key(self, key):
         return next(
@@ -81,6 +82,20 @@ class FakeProcurementRepository:
 
     def add(self, line):
         self.items[line.id] = line
+
+    def ready_for_request(self):
+        return [item for item in self.items.values() if item.status is ProcurementStatus.READY]
+
+    def order_numbers_with_prefix(self, prefix):
+        return [number for number in self.orders if number.startswith(f"{prefix}-")]
+
+    def add_order(self, order):
+        if order.order_number in self.orders:
+            raise AssertionError(f"duplicate order number {order.order_number}")
+        self.orders[order.order_number] = order
+
+    def get_order(self, order_number):
+        return self.orders.get(order_number)
 
 
 class FakeAppendOnlyRepository:
@@ -234,16 +249,10 @@ def test_paid_line_emits_receiving_snapshot_once():
         ),
         uow,
     )
-    line = send_supplier_request(
-        SendSupplierRequestCommand(
-            line_id=line.id,
-            expected_version=line.version,
-            reference="REQ-1",
-            actor=buyer,
-            now=datetime(2026, 9, 15, 11, 20),
-        ),
+    line = build_supplier_requests(
+        BuildSupplierRequestsCommand(actor=buyer, now=datetime(2026, 9, 15, 11, 20)),
         uow,
-    )
+    ).lines[0]
     line = save_procurement_money(
         SaveProcurementMoneyCommand(
             line_id=line.id,
@@ -313,13 +322,10 @@ def line_awaiting_invoice(uow, buyer):
         ),
         uow,
     )
-    return send_supplier_request(
-        SendSupplierRequestCommand(
-            line_id=line.id, expected_version=line.version, reference="REQ-1", actor=buyer,
-            now=datetime(2026, 9, 15, 11, 20),
-        ),
+    return build_supplier_requests(
+        BuildSupplierRequestsCommand(actor=buyer, now=datetime(2026, 9, 15, 11, 20)),
         uow,
-    )
+    ).lines[0]
 
 
 USD_ENTRY = MoneyEntry(

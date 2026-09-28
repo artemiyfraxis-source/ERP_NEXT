@@ -5,6 +5,7 @@ import {
   type ManualRatePrompt,
   type MoneyDriver,
   type ProcurementLine,
+  type SupplierOrder,
 } from "./api";
 
 type FactsDraft = {
@@ -37,6 +38,7 @@ export function ProcurementPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [orders, setOrders] = useState<SupplierOrder[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState<"available" | "mine" | "">("");
   const loadingQueue = refreshing || Boolean(loadingMore);
@@ -146,6 +148,27 @@ export function ProcurementPage() {
     }
   }
 
+  async function buildRequests() {
+    if (interactionLocked) return;
+    setBusyId("supplier-requests");
+    setError("");
+    try {
+      const result = await procurementApi.buildSupplierRequests();
+      setOrders(result.orders);
+      const parts = [`Сформировано запросов: ${result.orders.length}`];
+      if (result.skipped.length) parts.push(`пропущено: ${result.skipped.join(", ")}`);
+      if (result.other_buyer) parts.push(`строк других закупщиков не тронуто: ${result.other_buyer}`);
+      setNotice(parts.join("; "));
+      await reload(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Запросы поставщикам не сформированы");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  const readyCount = mine.filter((line) => line.status === "Готов к запросу").length;
+
   return (
     <section className="page">
       <header className="page-header">
@@ -195,6 +218,20 @@ export function ProcurementPage() {
 
       <section className="work-list">
         <div className="panel-heading"><h2>Мои позиции</h2><span>Изменения защищены версией строки</span></div>
+        <div className="inline-action">
+          <small>Готово к запросу: {readyCount}. Запросы группируются по поставщику и типу задачи, № заказа PO-NNN.</small>
+          <button className="primary small" disabled={interactionLocked || readyCount === 0} onClick={() => void buildRequests()}>
+            {busyId === "supplier-requests" ? "Формируем…" : "Сформировать запросы поставщикам"}
+          </button>
+        </div>
+        {orders.map((order) => (
+          <article className="panel procurement-card" key={order.order_number}>
+            <div className="procurement-title">
+              <div><strong>{order.order_number} · {order.supplier}</strong><small>{order.task_type} · от {order.order_date} · позиций: {order.line_ids.length}</small></div>
+            </div>
+            <pre className="supplier-letter">{order.letter}</pre>
+          </article>
+        ))}
         {mine.map((line) => (
           <ProcurementCard
             key={`${line.id}:${line.version}`}
@@ -234,7 +271,6 @@ function ProcurementCard({
   ) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(() => draftFrom(line));
-  const [requestReference, setRequestReference] = useState(line.supplier_request_reference ?? "");
   const [invoiceUrl, setInvoiceUrl] = useState(line.invoice_url ?? "");
   const [expectedArrival, setExpectedArrival] = useState(line.expected_arrival ?? "");
   const moneyMissing = line.pay_missing.filter((name) => name !== "ОЖИД. ДАТА");
@@ -265,10 +301,10 @@ function ProcurementCard({
       </div>
       <div className="card-footer"><small>Версия {line.version} · план {line.planned_date}</small><button className="primary small" disabled={disabled}>{busy ? "Сохраняем…" : "Сохранить"}</button></div></form>}
       {line.status === "Готов к запросу" && (
-        <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.sendSupplierRequest(line.id, line.version, requestReference), `${line.legacy_id}: запрос поставщику зафиксирован`).catch(() => undefined); }}>
-          <label>Номер или ссылка запроса поставщику<input required value={requestReference} onChange={(event) => setRequestReference(event.target.value)} /></label>
-          <button className="primary small" disabled={disabled}>{busy ? "Отправляем…" : "Запрос отправлен"}</button>
-        </form>
+        <small className="hint">Поставщик: {line.supplier} — строка войдёт в запрос поставщику при формировании.</small>
+      )}
+      {line.order_number && (
+        <small className="hint">Заказ {line.order_number} от {line.order_date}</small>
       )}
       {line.status === "Жду счет" && (
         <>

@@ -19,9 +19,15 @@ from .domain import (
     ProcurementLine,
     ProcurementStatus,
     ProcurementValidationError,
+    SupplierRequestGroup,
     create_backorder_line,
     create_line_from_requested,
+    group_supplier_requests,
     next_backorder_id,
+    next_order_number,
+    supplier_reference,
+    supplier_request_blockers,
+    supplier_request_letter,
 )
 from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
 
@@ -40,7 +46,11 @@ class ProcurementRepository(Protocol):
     ) -> Sequence[ProcurementLine]: ...
     def list(self, limit: int = 10_000) -> Sequence[ProcurementLine]: ...
     def legacy_ids_with_prefix(self, prefix: str) -> Sequence[str]: ...
+    def ready_for_request(self) -> Sequence[ProcurementLine]: ...
+    def order_numbers_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def add(self, line: ProcurementLine) -> None: ...
+    def add_order(self, order: SupplierOrder) -> None: ...
+    def get_order(self, order_number: str) -> SupplierOrder | None: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -114,12 +124,32 @@ class SaveProcurementFactsCommand:
 
 
 @dataclass(frozen=True)
-class SendSupplierRequestCommand:
-    line_id: UUID
-    expected_version: int
-    reference: str
+class SupplierOrder:
+    """An issued supplier request: № ЗАКАЗА, ДАТА ЗАКАЗА and the letter (SUPPLYMAP's Google Doc)."""
+
+    order_number: str
+    order_date: date
+    supplier: str
+    task_type: str
+    delivery_point: str
+    buyer: Actor
+    created_at: datetime
+    letter: str
+    line_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True)
+class BuildSupplierRequestsCommand:
     actor: Actor
     now: datetime
+
+
+@dataclass(frozen=True)
+class SupplierRequestsResult:
+    orders: list[SupplierOrder]
+    lines: list[ProcurementLine]
+    skipped: list[str]
+    other_buyer: int
 
 
 @dataclass(frozen=True)
@@ -449,21 +479,88 @@ def _save_transition(
     return updated
 
 
-def send_supplier_request(command: SendSupplierRequestCommand, uow: UnitOfWork) -> ProcurementLine:
+def build_supplier_requests(
+    command: BuildSupplierRequestsCommand, uow: UnitOfWork
+) -> SupplierRequestsResult:
+    """`buildSupplierRequestsCore_`: one order per supplier + task type over the buyer's ready lines.
+
+    № ЗАКАЗА is `<prefix>-NNN`, numbered through the whole procurement table per prefix; ДАТА ЗАКАЗА is
+    the Moscow day. Every line of a formed group goes «Жду счет» in the same transaction as its order.
+    """
     with uow:
-        current = _load_versioned(command.line_id, command.expected_version, uow)
-        updated = current.send_supplier_request(command.reference, command.actor)
-        result = _save_transition(
-            current,
-            updated,
+        groups, other_buyer = group_supplier_requests(uow.procurement.ready_for_request(), command.actor)
+        if not groups:
+            message = f"Нет ваших строк «{ProcurementStatus.READY.value}»"
+            if other_buyer:
+                message += (
+                    f". Есть {other_buyer} строк(и) других закупщиков — "
+                    "их формирует тот, кто взял их в работу"
+                )
+            raise ProcurementValidationError(message)
+        order_date = _moscow_day(command.now)
+        issued: dict[str, list[str]] = {}
+        orders: list[SupplierOrder] = []
+        lines: list[ProcurementLine] = []
+        skipped: list[str] = []
+        for group in groups:
+            blocker = supplier_request_blockers(group)
+            if blocker:
+                skipped.append(blocker)
+                continue
+            taken = issued.setdefault(
+                group.prefix, list(uow.procurement.order_numbers_with_prefix(group.prefix))
+            )
+            number = next_order_number(taken, group.prefix)
+            taken.append(number)
+            order, sent = _issue_order(group, number, order_date, command, uow)
+            orders.append(order)
+            lines.extend(sent)
+        if orders:
+            uow.commit()
+        return SupplierRequestsResult(orders=orders, lines=lines, skipped=skipped, other_buyer=other_buyer)
+
+
+def _issue_order(
+    group: SupplierRequestGroup,
+    number: str,
+    order_date: date,
+    command: BuildSupplierRequestsCommand,
+    uow: UnitOfWork,
+) -> tuple[SupplierOrder, list[ProcurementLine]]:
+    reference = supplier_reference(group.request_date, group.designation, number)
+    sent = [
+        _save_transition(
+            line,
+            line.send_supplier_request(number, order_date, reference, command.actor),
             event_type="procurement.supplier_request_sent",
             actor=command.actor,
             now=command.now,
             uow=uow,
+            details={"order_number": number},
         )
-        if result != current:
-            uow.commit()
-        return result
+        for line in group.lines
+    ]
+    order = SupplierOrder(
+        order_number=number,
+        order_date=order_date,
+        supplier=group.supplier,
+        task_type=group.task_type,
+        delivery_point=group.delivery_point,
+        buyer=command.actor,
+        created_at=command.now,
+        letter=supplier_request_letter(group, number),
+        line_ids=tuple(line.id for line in group.lines),
+    )
+    uow.procurement.add_order(order)
+    return order, sent
+
+
+def supplier_order(order_number: str, uow: UnitOfWork) -> SupplierOrder:
+    with uow:
+        order = uow.procurement.get_order(order_number)
+    if order is None:
+        raise KeyError(f"Supplier order not found: {order_number}")
+    return order
 
 
 def record_invoice(command: RecordInvoiceCommand, uow: UnitOfWork) -> ProcurementLine:

@@ -124,6 +124,8 @@ class ProcurementLine:
     invoice_item_name: str | None = None
     invoice_number: str | None = None
     invoice_date: date | None = None
+    order_number: str | None = None
+    order_date: date | None = None
 
     def pay_missing(self, expected_arrival: date | None = None) -> list[str]:
         return pay_gate_missing(
@@ -181,18 +183,27 @@ class ProcurementLine:
             version=self.version + 1,
         )
 
-    def send_supplier_request(self, reference: str, actor: Actor) -> ProcurementLine:
+    def send_supplier_request(
+        self,
+        order_number: str,
+        order_date: date,
+        reference: str,
+        actor: Actor,
+    ) -> ProcurementLine:
+        """`buildSupplierRequestsCore_`: the line joins supplier order № ЗАКАЗА of ДАТА ЗАКАЗА → «Жду счет»."""
         self._require_owner(actor)
-        value = _text(reference)
-        if not value:
-            raise ProcurementValidationError("Не задан номер или ссылка запроса поставщику")
-        if self.status is ProcurementStatus.AWAITING_INVOICE and self.supplier_request_reference == value:
+        number = _text(order_number)
+        if not number:
+            raise ProcurementValidationError("Не задан № заказа")
+        if self.status is ProcurementStatus.AWAITING_INVOICE and self.order_number == number:
             return self
         if self.status is not ProcurementStatus.READY:
             raise ProcurementValidationError("Запрос поставщику формируется только по готовой строке")
         return replace(
             self,
-            supplier_request_reference=value,
+            order_number=number,
+            order_date=order_date,
+            supplier_request_reference=_text(reference) or number,
             status=ProcurementStatus.AWAITING_INVOICE,
             version=self.version + 1,
         )
@@ -544,4 +555,151 @@ def create_backorder_line(original: ProcurementLine, message: OutboxMessage, leg
         actual_quantity=quantity,
         expected_arrival=None,
         money=rescale_to_quantity(original.money, original.actual_quantity or quantity, quantity),
+    )
+
+
+# --- Запрос поставщику (SupplierRequest.gs) -------------------------------------------------------
+
+ORDER_PREFIX = {"закупка": "PO"}
+DEFAULT_ORDER_PREFIX = "PO"
+SUPPLIER_REQUEST_VAT = "22%"
+NO_SUPPLIER = "(без поставщика)"
+
+
+def _norm(value: str | None) -> str:
+    """`normHeader_`: collapse whitespace, trim, lower-case."""
+    return " ".join(str(value or "").split()).lower()
+
+
+def order_prefix(task_type: str | None) -> str:
+    """`ORDER_PREFIX[normHeader_(ТИП ЗАДАЧИ)] || 'PO'`."""
+    return ORDER_PREFIX.get(_norm(task_type), DEFAULT_ORDER_PREFIX)
+
+
+def order_number(prefix: str, number: int) -> str:
+    """`orderNumber_`: at least three digits (001…999), 1000+ without padding."""
+    return f"{prefix}-{number:03d}"
+
+
+def next_order_number(existing: Iterable[str | None], prefix: str) -> str:
+    """`nextOrderNumber_`: max of `<prefix>-<digits>` already issued (case-insensitive) + 1."""
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$", re.IGNORECASE)
+    highest = 0
+    for value in existing:
+        match = pattern.match(str(value or "").strip())
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return order_number(prefix, highest + 1)
+
+
+@dataclass(frozen=True)
+class SupplierRequestGroup:
+    """One supplier order: the buyer's «Готов к запросу» lines of one supplier and one task type."""
+
+    supplier: str
+    task_type: str
+    lines: tuple[ProcurementLine, ...]
+
+    @property
+    def delivery_point(self) -> str:
+        # SUPPLYMAP takes the first non-empty ТОЧКА ОТГРУЗКИ of the group.
+        return next((_text(line.delivery_point) for line in self.lines if _text(line.delivery_point)), "")
+
+    @property
+    def designation(self) -> str:
+        return _text(self.lines[0].designation)
+
+    @property
+    def request_date(self) -> date:
+        return self.lines[0].request_date
+
+    @property
+    def prefix(self) -> str:
+        return order_prefix(self.task_type)
+
+
+def group_supplier_requests(
+    lines: Iterable[ProcurementLine], actor: Actor
+) -> tuple[list[SupplierRequestGroup], int]:
+    """Group the actor's «Готов к запросу» lines by supplier + task type, in line order.
+
+    Returns the groups and the number of ready lines owned by other buyers (skipped: each buyer
+    forms requests for their own lines only, otherwise two buyers' work would merge into one order).
+    """
+    _validate_actor(actor)
+    groups: dict[tuple[str, str], list[ProcurementLine]] = {}
+    other_buyer = 0
+    for line in lines:
+        if line.status is not ProcurementStatus.READY:
+            continue
+        if not _same_actor(line.buyer, actor):
+            other_buyer += 1
+            continue
+        key = (_text(line.supplier) or NO_SUPPLIER, _text(line.task_type))
+        groups.setdefault(key, []).append(line)
+    return (
+        [
+            SupplierRequestGroup(supplier=supplier, task_type=task_type, lines=tuple(members))
+            for (supplier, task_type), members in groups.items()
+        ],
+        other_buyer,
+    )
+
+
+def supplier_request_blockers(group: SupplierRequestGroup) -> str | None:
+    """Why `buildSupplierRequestsCore_` would not form this group; None — it may be formed."""
+    tag = group.supplier + (f" ({group.task_type})" if group.task_type else "")
+    if group.supplier == NO_SUPPLIER:
+        return f"{NO_SUPPLIER}: не сформирован"
+    if not group.delivery_point:
+        return f"{group.supplier}: нет адреса отгрузки"
+    if any(line.actual_quantity is None or not _text(line.actual_unit) for line in group.lines):
+        return f"{tag}: не заполнены КОЛ-ВО/ЕД.ИЗМ (факт) — не сформирован"
+    return None
+
+
+def supplier_reference(request_date: date | None, designation: str, order_no: str) -> str:
+    """`supplierRef_`: «REQ# <Дата запроса> - MR#<НАЗНАЧЕНИЕ> <№ заказа>»."""
+    shown = request_date.strftime("%d.%m.%Y") if request_date else ""
+    return f"REQ# {shown} - MR#{_text(designation)} {_text(order_no)}"
+
+
+def _quantity_text(value: Decimal | None) -> str:
+    if value is None:
+        return ""
+    return format(value.normalize(), "f").replace(".", ",")
+
+
+def position_paragraphs(lines: Iterable[ProcurementLine]) -> list[str]:
+    """`positionParagraphs_`: numbered name, then tab-indented quantity, link and quality document."""
+    out: list[str] = []
+    for index, line in enumerate(lines, start=1):
+        name = _text(line.site_name) or _text(line.calculated_name)
+        quantity = f"{_quantity_text(line.actual_quantity)} {_text(line.actual_unit)}".strip()
+        out.append(f"{index}. Наименование: {name}")
+        if quantity:
+            out.append(f"\tКол-во: {quantity}")
+        if _text(line.link):
+            out.append(f"\tСсылка: {_text(line.link)}")
+        if _norm(line.quality_document) == "да":
+            out.append("\tДокумент по качеству: требуется.")
+    return out
+
+
+def supplier_request_letter(group: SupplierRequestGroup, order_no: str) -> str:
+    """`supplierTemplateBody_` filled for one group (the Google Doc of SUPPLYMAP, as plain text)."""
+    return "\n".join(
+        [
+            f"{group.supplier} · {supplier_reference(group.request_date, group.designation, order_no)}",
+            "",
+            "Добрый день!",
+            "",
+            "Прошу сообщить о наличии и условиях поставки для следующих позиций:",
+            "",
+            *position_paragraphs(group.lines),
+            "",
+            "По каждой позиции по возможности, прошу указать изготовителя (бренд) и страну происхождения.",
+            f"Работаем с НДС {SUPPLIER_REQUEST_VAT}. Карточка организации — во вложении.",
+            f"Адрес доставки: {group.delivery_point}.",
+        ]
     )
