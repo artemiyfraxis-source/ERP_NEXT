@@ -236,6 +236,43 @@ class ProcurementLine:
             version=self.version + 1,
         )
 
+    def replace_invoice(
+        self,
+        invoice_url: str,
+        actor: Actor,
+        invoice_number: str | None = None,
+        invoice_date: date | None = None,
+    ) -> ProcurementLine:
+        """`uploadInvoice` on a line that already has an invoice: correction, not a new stage.
+
+        СЧЕТ keeps only the new file (the old one stays in the audit trail); № and ДАТА СЧЕТА from the
+        file overwrite, an empty value leaves the stored one. ОПЛАТА, status and dates stay as they are.
+        """
+        self._require_owner(actor)
+        try:
+            url = normalize_document_url(invoice_url)
+        except ValueError as error:
+            raise ProcurementValidationError(str(error)) from error
+        if url is None:
+            raise ProcurementValidationError("Счёт обязателен")
+        if self.invoice_url is None:
+            raise ProcurementValidationError("Счёта ещё нет — загрузите его на этапе «Жду счет»")
+        if self.status is ProcurementStatus.CANCELLED:
+            raise ProcurementValidationError("Счёт отменённой строки не заменяется")
+        # ОЖИД. ДАТА is not part of the invoice: a backorder line clears it until the resend is confirmed.
+        missing = [name for name in self.pay_missing() if name != "ОЖИД. ДАТА"]
+        if missing:
+            raise ProcurementValidationError("Нельзя загрузить счёт — сначала заполните: " + ", ".join(missing))
+        updated = replace(
+            self,
+            invoice_url=url,
+            invoice_number=_text(invoice_number) or self.invoice_number,
+            invoice_date=invoice_date or self.invoice_date,
+        )
+        if updated == self:
+            return self
+        return replace(updated, version=self.version + 1)
+
     def update_money(
         self,
         entry: MoneyEntry,

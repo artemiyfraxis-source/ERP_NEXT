@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -14,7 +15,7 @@ from app.modules.procurement.domain import (
     is_backorder_id,
     next_backorder_id,
 )
-from app.modules.procurement.money import ExchangeRate, MoneyInput
+from app.modules.procurement.money import EMPTY_MONEY, ExchangeRate, MoneyInput
 from app.shared.events import OutboxMessage
 from tests.factories import Actor
 
@@ -518,3 +519,84 @@ def test_offline_moves_are_refused_after_payment_for_foreign_lines_and_on_backor
     for move in (backorder.put_on_approval, backorder.resume_from_approval, backorder.cancel):
         with pytest.raises(ProcurementValidationError, match="У дозавоза свои действия"):
             move(buyer)
+
+
+# PR-5 — Invoices.gs:104-140: a second upload on a line with an invoice is a correction.
+def test_invoice_replacement_keeps_payment_status_and_dates():
+    buyer = Actor(name="Петров", department="Закупки")
+    original = paid_line(buyer)
+
+    replaced = original.replace_invoice(
+        "https://files.test/invoice-v2.pdf", buyer, invoice_number=" СЧ-18 ", invoice_date=date(2026, 9, 25),
+    )
+
+    assert replaced.invoice_url == "https://files.test/invoice-v2.pdf"
+    assert (replaced.invoice_number, replaced.invoice_date) == ("СЧ-18", date(2026, 9, 25))
+    assert (replaced.status, replaced.paid_at, replaced.expected_arrival) == (
+        original.status, original.paid_at, original.expected_arrival,
+    )
+    assert replaced.money == original.money
+    assert replaced.version == original.version + 1
+
+
+def test_invoice_replacement_leaves_number_and_date_when_the_file_gives_none():
+    buyer = Actor(name="Петров", department="Закупки")
+    original = paid_line(buyer)
+
+    replaced = original.replace_invoice("https://files.test/invoice-v2.pdf", buyer, invoice_number="  ")
+
+    assert (replaced.invoice_number, replaced.invoice_date) == (original.invoice_number, original.invoice_date)
+    assert replaced.replace_invoice("https://files.test/invoice-v2.pdf", buyer) is replaced
+
+
+def test_invoice_replacement_on_unpaid_line_does_not_advance_it():
+    buyer = Actor(name="Петров", department="Закупки")
+    to_pay = awaiting_invoice(buyer).update_money(RUB_ENTRY, None, buyer).record_invoice(
+        "https://files.test/invoice.pdf", date(2026, 9, 30), buyer,
+    )
+
+    replaced = to_pay.replace_invoice("https://files.test/invoice-v2.pdf", buyer)
+
+    assert (replaced.status, replaced.paid_at) == (ProcurementStatus.TO_PAY, None)
+
+
+def test_backorder_invoice_is_replaced_without_an_expected_date():
+    buyer = Actor(name="Петров", department="Закупки")
+    original = paid_line(buyer)
+    backorder = create_backorder_line(original, backorder_message(original, "0.5"), "X-Д")
+
+    replaced = backorder.replace_invoice("https://files.test/invoice-v2.pdf", buyer)
+
+    assert (replaced.status, replaced.invoice_url) == (ProcurementStatus.APPROVAL, "https://files.test/invoice-v2.pdf")
+
+
+def test_invoice_replacement_is_refused_without_an_invoice_owner_money_or_url():
+    buyer = Actor(name="Петров", department="Закупки")
+    other = Actor(name="Сидоров", department="Закупки")
+    line = paid_line(buyer)
+
+    with pytest.raises(ProcurementValidationError, match="Счёта ещё нет"):
+        awaiting_invoice(buyer).update_money(RUB_ENTRY, None, buyer).replace_invoice(
+            "https://files.test/invoice-v2.pdf", buyer,
+        )
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        line.replace_invoice("https://files.test/invoice-v2.pdf", other)
+    with pytest.raises(ProcurementValidationError, match="Счёт обязателен"):
+        line.replace_invoice("   ", buyer)
+    with pytest.raises(ProcurementValidationError, match="сначала заполните: ВАЛЮТА"):
+        _strip_money(line).replace_invoice("https://files.test/invoice-v2.pdf", buyer)
+
+
+def test_cancelled_line_keeps_its_invoice():
+    buyer = Actor(name="Петров", department="Закупки")
+    original = paid_line(buyer)
+    backorder = create_backorder_line(original, backorder_message(original, "0.5"), "X-Д")
+    cancelled = backorder.cancel_backorder(buyer)
+
+    with pytest.raises(ProcurementValidationError, match="отменённой строки"):
+        cancelled.replace_invoice("https://files.test/invoice-v2.pdf", buyer)
+
+
+def _strip_money(line):
+    # A line that got its invoice before the money gate existed.
+    return dataclasses.replace(line, money=EMPTY_MONEY)

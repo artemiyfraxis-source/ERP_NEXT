@@ -336,3 +336,39 @@ it("forms supplier requests for ready lines in one batch and shows the letters",
   expect(await screen.findByText("Заказ PO-001 от 2026-09-16")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Сформировать запросы поставщикам" })).toBeDisabled();
 });
+
+it("replaces the invoice of a paid line without touching its payment", async () => {
+  const shipped: ProcurementLine = {
+    ...line,
+    id: "30000000-0000-0000-0000-00000000000e",
+    status: "В пути",
+    invoice_url: "https://files.test/invoice.pdf",
+    invoice_number: "17",
+    expected_arrival: "2026-10-01",
+    paid_at: "2026-09-22T12:00:00+03:00",
+    pay_missing: [],
+  };
+  const calls: Array<[string, Record<string, unknown>]> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [shipped], next_cursor: null });
+    if (path.endsWith("/invoice/replace") && init?.method === "POST") {
+      calls.push([path, JSON.parse(String(init.body))]);
+      return json({ line: { ...shipped, invoice_url: "https://files.test/invoice-v2.pdf", version: 4 } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.click(await screen.findByText("Заменить счёт"));
+  fireEvent.change(screen.getByLabelText("Ссылка на новый счёт"), { target: { value: "https://files.test/invoice-v2.pdf" } });
+  fireEvent.change(screen.getByLabelText("№ счёта"), { target: { value: " 18 " } });
+  fireEvent.click(screen.getByRole("button", { name: "Заменить" }));
+
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]).toEqual([
+    `/api/procurement/${shipped.id}/invoice/replace`,
+    { version: 3, invoice_url: "https://files.test/invoice-v2.pdf", invoice_number: "18", invoice_date: null },
+  ]);
+});

@@ -840,6 +840,22 @@ export const procurementApi = {
         expected_arrival: expectedArrival,
       }),
     }),
+  replaceInvoice: (
+    lineId: string,
+    version: number,
+    invoiceUrl: string,
+    invoiceNumber: string,
+    invoiceDate: string,
+  ) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/invoice/replace`, {
+      method: "POST",
+      body: JSON.stringify({
+        version,
+        invoice_url: invoiceUrl,
+        invoice_number: invoiceNumber.trim() || null,
+        invoice_date: invoiceDate || null,
+      }),
+    }),
   saveMoney: (lineId: string, version: number, money: ProcurementMoneyInput) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/money`, {
       method: "PATCH",

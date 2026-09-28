@@ -419,3 +419,56 @@ def test_foreign_buyer_cannot_cancel_claimed_line(procurement_api):
 
     assert refused.status_code == 422
     assert "только свои строки" in refused.json()["detail"]
+
+
+def test_invoice_replacement_keeps_status_and_audits_the_old_invoice(procurement_api, rates):
+    client, line, sessions = procurement_api
+    version = awaiting_invoice(client, line)
+    saved = client.patch(
+        f"/api/procurement/{line.id}/money",
+        json={
+            "version": version, "currency": "RUB", "price": "100", "vat_rate": "22",
+            "invoice_item_name": "Разъём SMA", "invoice_number": "17", "invoice_date": "2026-09-14",
+        },
+    ).json()["line"]
+    invoiced = client.post(
+        f"/api/procurement/{line.id}/invoice",
+        json={"version": saved["version"], "invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25"},
+    ).json()["line"]
+
+    replaced = client.post(
+        f"/api/procurement/{line.id}/invoice/replace",
+        json={"version": invoiced["version"], "invoice_url": "https://files.test/invoice-v2.pdf", "invoice_number": "18"},
+    )
+
+    assert replaced.status_code == 200
+    body = replaced.json()["line"]
+    assert (body["status"], body["invoice_url"], body["invoice_number"], body["invoice_date"]) == (
+        "В оплату", "https://files.test/invoice-v2.pdf", "18", "2026-09-14",
+    )
+    with sessions() as session:
+        event = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "procurement.invoice_replaced")
+        ).one()
+    assert (event.details["previous_invoice_url"], event.details["previous_invoice_number"]) == (
+        "https://files.test/invoice.pdf", "17",
+    )
+
+    stale = client.post(
+        f"/api/procurement/{line.id}/invoice/replace",
+        json={"version": invoiced["version"], "invoice_url": "https://files.test/invoice-v3.pdf"},
+    )
+    assert stale.status_code == 409
+
+
+def test_invoice_replacement_needs_an_existing_invoice(procurement_api, rates):
+    client, line, _ = procurement_api
+    version = awaiting_invoice(client, line)
+
+    refused = client.post(
+        f"/api/procurement/{line.id}/invoice/replace",
+        json={"version": version, "invoice_url": "https://files.test/invoice-v2.pdf"},
+    )
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"].startswith("Счёта ещё нет")

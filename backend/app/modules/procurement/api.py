@@ -27,6 +27,7 @@ from .application import (
     BuildSupplierRequestsCommand,
     SupplierOrder,
     RecordInvoiceCommand,
+    ReplaceInvoiceCommand,
     MarkProcurementPaidCommand,
     OfflineAction,
     ProcurementOfflineCommand,
@@ -41,6 +42,7 @@ from .application import (
     build_supplier_requests,
     supplier_order,
     record_invoice,
+    replace_invoice,
     mark_procurement_paid,
     reconcile_procurement_rate,
     set_procurement_offline_status,
@@ -115,6 +117,21 @@ class InvoiceInput(BaseModel):
     version: int = Field(ge=1)
     invoice_url: str = Field(min_length=1, max_length=4096)
     expected_arrival: date
+
+    @field_validator("invoice_url")
+    @classmethod
+    def validate_invoice_url(cls, value: str) -> str:
+        normalized = normalize_document_url(value)
+        if normalized is None:
+            raise ValueError("Счёт обязателен")
+        return normalized
+
+
+class InvoiceReplaceInput(BaseModel):
+    version: int = Field(ge=1)
+    invoice_url: str = Field(min_length=1, max_length=4096)
+    invoice_number: str | None = Field(default=None, max_length=128)
+    invoice_date: date | None = None
 
     @field_validator("invoice_url")
     @classmethod
@@ -495,6 +512,30 @@ def invoice(
                 expected_arrival=payload.expected_arrival,
                 actor=principal.actor,
                 now=now,
+            ),
+            uow_factory(),
+        )
+    )
+
+
+@router.post("/{line_id}/invoice/replace")
+def invoice_replace(
+    line_id: UUID,
+    payload: InvoiceReplaceInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    return _transition(
+        lambda: replace_invoice(
+            ReplaceInvoiceCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                invoice_url=payload.invoice_url,
+                actor=principal.actor,
+                now=now,
+                invoice_number=payload.invoice_number,
+                invoice_date=payload.invoice_date,
             ),
             uow_factory(),
         )

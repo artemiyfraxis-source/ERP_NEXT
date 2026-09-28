@@ -163,6 +163,17 @@ class RecordInvoiceCommand:
 
 
 @dataclass(frozen=True)
+class ReplaceInvoiceCommand:
+    line_id: UUID
+    expected_version: int
+    invoice_url: str
+    actor: Actor
+    now: datetime
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+
+
+@dataclass(frozen=True)
 class MarkProcurementPaidCommand:
     line_id: UUID
     expected_version: int
@@ -580,6 +591,34 @@ def record_invoice(command: RecordInvoiceCommand, uow: UnitOfWork) -> Procuremen
             uow=uow,
         )
         uow.commit()
+        return result
+
+
+def replace_invoice(command: ReplaceInvoiceCommand, uow: UnitOfWork) -> ProcurementLine:
+    """Invoice correction: the audit event keeps the replaced invoice and marks the line «счёт заменён»."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.replace_invoice(
+            command.invoice_url,
+            command.actor,
+            invoice_number=command.invoice_number,
+            invoice_date=command.invoice_date,
+        )
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.invoice_replaced",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={
+                "previous_invoice_url": current.invoice_url or "",
+                "previous_invoice_number": current.invoice_number or "",
+                "previous_invoice_date": current.invoice_date.isoformat() if current.invoice_date else "",
+            },
+        )
+        if result != current:
+            uow.commit()
         return result
 
 

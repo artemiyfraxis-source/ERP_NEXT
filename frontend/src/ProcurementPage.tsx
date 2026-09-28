@@ -359,7 +359,39 @@ function ProcurementCard({
           )}
         </>
       )}
+      {line.invoice_url && line.status !== "Жду счет" && line.status !== "Отменено" && (
+        <InvoiceReplaceForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
+      )}
     </article>
+  );
+}
+
+// Invoices.gs uploadInvoice on a line that already has one: a correction — payment and status stay.
+function InvoiceReplaceForm({ line, busy, disabled, onAdvance }: {
+  line: ProcurementLine;
+  busy: boolean;
+  disabled: boolean;
+  onAdvance: Advance;
+}) {
+  const [url, setUrl] = useState("");
+  const [number, setNumber] = useState("");
+  const [date, setDate] = useState("");
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void onAdvance(line, () => procurementApi.replaceInvoice(line.id, line.version, url, number, date), `${line.legacy_id}: счёт заменён, оплата и статус не менялись`).catch(() => undefined);
+  }
+
+  return (
+    <details>
+      <summary>Заменить счёт</summary>
+      <form className="inline-action" onSubmit={submit}>
+        <label>Ссылка на новый счёт<input type="url" required value={url} onChange={(event) => setUrl(event.target.value)} /></label>
+        <label>№ счёта<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder={line.invoice_number ?? ""} /></label>
+        <label>Дата счёта<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+        <button className="secondary small" disabled={disabled}>{busy ? "Сохраняем…" : "Заменить"}</button>
+      </form>
+    </details>
   );
 }
 
