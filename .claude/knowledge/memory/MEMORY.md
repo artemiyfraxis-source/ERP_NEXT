@@ -1,0 +1,1 @@
+- [SUPPLYMAP domain decisions](supplymap-domain-decisions.md) — owner decisions that bind the port live in SUPPLYMAP memory; which note to read per area

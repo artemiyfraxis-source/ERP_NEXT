@@ -42,6 +42,12 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 - **One slice per session.** Once the slice is green and committed, say so and suggest a fresh session
   instead of starting the next module in the same context.
 
+## Project memory
+`.claude/knowledge/memory/` is THE project memory (in git; `MEMORY.md` is the index — read only the
+relevant note). `autoMemoryDirectory` in the gitignored `.claude/settings.local.json` points there; set
+it on a new machine. The brain vault mounts it next to SUPPLYMAP's memory, so `[[links]]` to SUPPLYMAP
+notes resolve. Save here only what the repo doesn't already say.
+
 ## Git — owner rule (2026-09-24)
 - Every commit is authored by the owner only. **No `Co-Authored-By: Claude`, no "Generated with Claude
   Code"** in commits or PRs — Claude is not a collaborator on this repo. `.claude/settings.json` turns
