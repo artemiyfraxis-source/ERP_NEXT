@@ -25,6 +25,16 @@ One batch per run, then stop: a fresh session per run keeps quality high.
 - If the queue has open `IMPORT-AUDIT` / `DISCOVER` tasks and nothing above them is open, those
   become the batch.
 
+## 1b. Merge finished cloud branches (before picking the batch)
+The cloud Routine (skill `migrate-cloud`) fixes audit C2/C3 rows on branches `cloud/<ID>-<stamp>`.
+- `git fetch origin '+refs/heads/cloud/*:refs/remotes/origin/cloud/*'`
+- For each `origin/cloud/*` that has commits not yet in `main`, do this in a temporary worktree: rebase
+  onto `main`, run `npm run check` via `erp-verifier` (red only from known drift = ok), then
+  fast-forward `main`. Record `[x] <ID> · <commit> · ☁` under «Сделано» in BACKLOG. On conflict or a
+  real red: skip it and add `[!] <ID> · ☁ <reason>` to BACKLOG. Never push, and never delete remote
+  branches; the owner cleans them up when pushing.
+- Merged cloud tasks count toward this run's work but not toward the batch limit of 3.
+
 ## 2. Pick the batch
 Discovery tasks (`*-DISCOVER`, `IMPORT-AUDIT`) that sit at the top run first, in the main session
 (scout + writing tasks into BACKLOG). The tasks they create fill this same batch.

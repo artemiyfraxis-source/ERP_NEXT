@@ -56,6 +56,9 @@ The remaining port runs unattended: a Desktop Routine calls `/migrate-next` (ski
 does them in worktree agents, merges into `main`, and logs to `docs/migration/RUNLOG.md`. The queue
 order is the priority; the owner edits it by hand. Outside a run, don't take BACKLOG tasks silently.
 If you do one on request, mark it there the same way.
+A cloud Routine (Opus, skill `.claude/skills/migrate-cloud`) fixes non-warehouse audit C2/C3 rows in
+parallel, each on a branch `cloud/<ID>-<stamp>` that it pushes. The local run merges those branches (step 1b).
+The cloud never pushes `main`.
 
 ## Git — owner rule (2026-09-24)
 - Every commit is authored by the owner only. **No `Co-Authored-By: Claude`, no "Generated with Claude

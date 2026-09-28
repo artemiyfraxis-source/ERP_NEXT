@@ -57,7 +57,7 @@ try {
     if (!base && existsSync(cfg)) {
       base = readFileSync(cfg, "utf8").match(/^executable\s*=\s*(.+)$/m)?.[1]?.trim();
     }
-    run(base || "python", ["-m", "venv", join(root, "backend", ".venv")], root);
+    run(base || (win ? "python" : "python3"), ["-m", "venv", join(root, "backend", ".venv")], root);
     run(venvPython, ["-m", "pip", "install", "-q", "--disable-pip-version-check", "-r", "requirements.lock.txt"], join(root, "backend"));
     done.push("backend/.venv");
   }
