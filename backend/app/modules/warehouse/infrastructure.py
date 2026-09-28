@@ -122,6 +122,20 @@ class SqlAlchemyWarehouseRepository:
         row.value += count
         return first
 
+    def ensure_manual_number(self, year: int, number: int) -> int:
+        """Move the manual sequence past an imported OLD number; never moves it back."""
+        name = f"manual:{year}"
+        row = self.session.scalar(
+            select(WarehouseSequenceRow)
+            .where(WarehouseSequenceRow.name == name)
+            .with_for_update()
+        )
+        if row is None:
+            self.session.add(WarehouseSequenceRow(name=name, value=number))
+            return number
+        row.value = max(row.value, number)
+        return row.value
+
     def list(
         self,
         limit: int = 200,
