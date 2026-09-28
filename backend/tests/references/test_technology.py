@@ -26,6 +26,7 @@ def test_wire_section_uses_explicit_awg_gost_map_and_owner_override():
 def test_folded_wire_uses_doubled_cross_section_for_crimp_selection():
     folded = fold_wire_section(WireSection(26, Decimal("0.12")))
     assert folded == WireSection(24, Decimal("0.240"))
+    assert folded.label == "0,24 мм² (24 AWG)"
 
 
 def test_crimp_profile_prefers_exact_awg_over_range_and_keeps_pull_force():

@@ -217,3 +217,26 @@ def test_issue_rejects_cut_operations_without_wire_length():
     ).rebuild(document, now)
     with pytest.raises(TechcardValidationError, match="Не указана длина резки"):
         card.issue(now)
+
+
+def test_folded_wire_resolves_crimp_norm_for_doubled_section():
+    records = (TerminalRecord(
+        article="TEST-24", applicator="A-24", crimp_height="0,80 - 0,90",
+        awg_from="24", awg_to="24",
+    ),)
+
+    def norm(fold: bool) -> dict:
+        config = {"ops": [{
+            "type": "prsTerm",
+            "ep": {"termArt": "TEST-24", "fold": fold},
+            "wires": [{"art": "МГТФ 0,12 мм²"}],
+        }]}
+        return enrich_terminal_norms(config, records)["ops"][0]["terminalNorm"]
+
+    folded = norm(True)
+    assert folded["bySection"][0]["section"] == "0,24 мм² (24 AWG)"
+    assert folded["bySection"][0]["found"] is True
+    assert folded["crimpHeight"] == "0,80 - 0,90"
+    plain = norm(False)
+    assert plain["bySection"][0]["section"] == "0,12 мм² (26 AWG)"
+    assert plain["bySection"][0]["found"] is False

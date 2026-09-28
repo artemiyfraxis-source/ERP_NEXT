@@ -55,11 +55,12 @@ class WireSection:
         if not self.awg and not self.mm2:
             return ""
         physical = WIRE_AWG_MM2.get(self.awg)
+        mm2 = format(self.mm2.normalize(), "f").replace(".", ",")
         if self.awg and self.mm2 and physical is not None and abs(self.mm2 - physical) > Decimal("0.005"):
-            return f"{str(self.mm2).replace('.', ',')} мм² ({self.awg} AWG)"
+            return f"{mm2} мм² ({self.awg} AWG)"
         if self.awg:
             return f"{self.awg} AWG"
-        return f"{str(self.mm2).replace('.', ',')} мм²"
+        return f"{mm2} мм²"
 
 
 def wire_section(value: str, gost_awg: Mapping[str, int] | None = None) -> WireSection:

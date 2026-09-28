@@ -5,7 +5,9 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Iterable, Mapping
 
-from app.modules.references.technology import TerminalRecord, resolve_terminal, wire_section
+from app.modules.references.technology import (
+    TerminalRecord, fold_wire_section, resolve_terminal, wire_section,
+)
 
 
 def enrich_terminal_norms(
@@ -32,6 +34,9 @@ def enrich_terminal_norms(
             wire_section(str(wire.get("art") or wire.get("name") or ""))
             for wire in wires if isinstance(wire, Mapping)
         )
+        if endpoint.get("fold"):
+            # A core folded under the contact is crimped as a doubled cross-section.
+            sections = tuple(fold_wire_section(section) for section in sections)
         resolution = resolve_terminal(terminal_records, article, sections)
         operation["terminalNorm"] = {
             "applicator": resolution.applicator,
