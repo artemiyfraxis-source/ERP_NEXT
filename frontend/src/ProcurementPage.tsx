@@ -308,6 +308,9 @@ function ProcurementCard({
           </form>
         </>
       )}
+      {!line.is_backorder && OFFLINE_FROM.includes(line.status) && (
+        <OfflineActions line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
+      )}
       {line.status === "В пути" && (
         <>
           <div className="success-banner">Позиция передана в приёмку · ожидается {line.expected_arrival}</div>
@@ -325,6 +328,35 @@ function ProcurementCard({
 }
 
 type Advance = (line: ProcurementLine, operation: () => Promise<unknown>, message: string) => Promise<void>;
+
+// «Согласование» / «Отменено» stand outside the linear order (SUPPLYMAP `PUR_STATUS_OFFLINE`): any stage before payment.
+const OFFLINE_FROM = ["В работе", "Готов к запросу", "Жду счет", "В оплату", "Согласование"];
+
+function OfflineActions({ line, busy, disabled, onAdvance }: {
+  line: ProcurementLine;
+  busy: boolean;
+  disabled: boolean;
+  onAdvance: Advance;
+}) {
+  const parked = line.status === "Согласование";
+
+  function cancel() {
+    if (!window.confirm(`Отменить ${line.legacy_id}? Отмена окончательная.`)) return;
+    void onAdvance(line, () => procurementApi.cancelLine(line.id, line.version), `${line.legacy_id}: строка отменена`).catch(() => undefined);
+  }
+
+  return (
+    <div className="card-footer">
+      <small>{parked ? "Ждёт одобрения — заказ не формируется" : "Нужно одобрение или позиция больше не нужна?"}</small>
+      {parked ? (
+        <button className="primary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.resumeFromApproval(line.id, line.version), `${line.legacy_id}: одобрено, строка вернулась в работу`).catch(() => undefined)}>{busy ? "Проводим…" : "Одобрено — продолжить"}</button>
+      ) : (
+        <button className="secondary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.putOnApproval(line.id, line.version), `${line.legacy_id}: на согласовании`).catch(() => undefined)}>На согласование</button>
+      )}
+      <button type="button" className="secondary small" disabled={disabled} onClick={cancel}>Отменить строку</button>
+    </div>
+  );
+}
 
 type MoneyDraft = {
   currency: string;

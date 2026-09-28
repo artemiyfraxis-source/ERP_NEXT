@@ -248,3 +248,51 @@ it("confirms a paid backorder with a new date or cancels it", async () => {
   expect(calls[0]).toEqual([`/api/procurement/${backorder.id}/backorder/confirm`, { version: 3, expected_arrival: "2026-10-12" }]);
   expect(calls[1]).toEqual([`/api/procurement/${backorder.id}/backorder/cancel`, { version: 3 }]);
 });
+
+it("parks a line on approval, resumes it and cancels only after confirmation", async () => {
+  const working: ProcurementLine = { ...line, buyer: "Закупщик" };
+  let current = working;
+  const calls: Array<[string, Record<string, unknown>]> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [current], next_cursor: null });
+    if (init?.method === "POST") {
+      calls.push([path, JSON.parse(String(init.body))]);
+      const status = path.endsWith("/approval") ? "Согласование" : path.endsWith("/resume") ? "В работе" : "Отменено";
+      current = { ...current, status, version: current.version + 1 };
+      return json({ line: current });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+  render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "На согласование" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Одобрено — продолжить" }));
+  fireEvent.click(await screen.findByRole("button", { name: "На согласование" }));
+  await waitFor(() => expect(calls).toHaveLength(3));
+  fireEvent.click(await screen.findByRole("button", { name: "Отменить строку" }));
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(calls).toHaveLength(3);
+  fireEvent.click(screen.getByRole("button", { name: "Отменить строку" }));
+
+  await waitFor(() => expect(calls).toHaveLength(4));
+  expect(calls.map(([path, body]) => [path.replace(`/api/procurement/${line.id}`, ""), body.version])).toEqual([
+    ["/approval", 3], ["/approval/resume", 4], ["/approval", 5], ["/cancel", 6],
+  ]);
+});
+
+it("does not offer generic approval or cancel on a backorder", async () => {
+  const backorder: ProcurementLine = { ...line, status: "Согласование", is_backorder: true, legacy_id: "REQ-1-Д" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [backorder], next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  expect(await screen.findByRole("button", { name: "Отменить дозавоз" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Отменить строку" })).not.toBeInTheDocument();
+});

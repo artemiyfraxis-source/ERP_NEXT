@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -163,6 +164,23 @@ class ConfirmBackorderCommand:
 class CancelBackorderCommand:
     line_id: UUID
     expected_version: int
+    actor: Actor
+    now: datetime
+
+
+class OfflineAction(str, Enum):
+    """`PUR_STATUS_OFFLINE` moves: into «Согласование», back out of it, or to «Отменено»."""
+
+    APPROVAL = "approval"
+    RESUME = "resume"
+    CANCEL = "cancel"
+
+
+@dataclass(frozen=True)
+class ProcurementOfflineCommand:
+    line_id: UUID
+    expected_version: int
+    action: OfflineAction
     actor: Actor
     now: datetime
 
@@ -713,6 +731,35 @@ def cancel_procurement_backorder(command: CancelBackorderCommand, uow: UnitOfWor
                     },
                 )
             )
+            uow.commit()
+        return result
+
+
+_OFFLINE_EVENTS = {
+    OfflineAction.APPROVAL: "procurement.approval_requested",
+    OfflineAction.RESUME: "procurement.approved",
+    OfflineAction.CANCEL: "procurement.cancelled",
+}
+
+
+def set_procurement_offline_status(command: ProcurementOfflineCommand, uow: UnitOfWork) -> ProcurementLine:
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        if command.action is OfflineAction.APPROVAL:
+            updated = current.put_on_approval(command.actor)
+        elif command.action is OfflineAction.RESUME:
+            updated = current.resume_from_approval(command.actor)
+        else:
+            updated = current.cancel(command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type=_OFFLINE_EVENTS[command.action],
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+        )
+        if result != current:
             uow.commit()
         return result
 

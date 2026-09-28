@@ -381,3 +381,45 @@ def test_backorder_is_confirmed_through_api_with_version_check(procurement_api, 
     assert stale.status_code == 409
     assert confirmed.status_code == 200
     assert (confirmed.json()["line"]["status"], confirmed.json()["line"]["expected_arrival"]) == ("В пути", "2026-10-01")
+
+
+def test_line_is_parked_approved_and_cancelled_through_api_with_audit(procurement_api):
+    client, line, sessions = procurement_api
+    version = awaiting_invoice(client, line)
+
+    parked = client.post(f"/api/procurement/{line.id}/approval", json={"version": version})
+    stale = client.post(f"/api/procurement/{line.id}/approval/resume", json={"version": version})
+    resumed = client.post(
+        f"/api/procurement/{line.id}/approval/resume", json={"version": parked.json()["line"]["version"]},
+    )
+    cancelled = client.post(f"/api/procurement/{line.id}/cancel", json={"version": resumed.json()["line"]["version"]})
+    again = client.post(f"/api/procurement/{line.id}/approval", json={"version": cancelled.json()["line"]["version"]})
+
+    assert parked.status_code == 200, parked.text
+    assert parked.json()["line"]["status"] == "Согласование"
+    assert stale.status_code == 409
+    assert resumed.json()["line"]["status"] == "Жду счет"
+    assert cancelled.json()["line"]["status"] == "Отменено"
+    assert again.status_code == 422
+    assert all(item["id"] != str(line.id) for item in client.get("/api/procurement/mine").json()["lines"])
+    with sessions() as session:
+        events = session.scalars(
+            select(AuditEventRow.event_type).where(AuditEventRow.aggregate_id == line.id)
+        ).all()
+    assert events[-3:] == ["procurement.approval_requested", "procurement.approved", "procurement.cancelled"]
+
+
+def test_foreign_buyer_cannot_cancel_claimed_line(procurement_api):
+    client, line, _ = procurement_api
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id)]}).json()["lines"][0]
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Сидоров", department="Закупки"),
+        email="sidorov@example.test",
+        roles=frozenset({"buyer"}),
+        permissions={"procurement": "edit"},
+    )
+
+    refused = client.post(f"/api/procurement/{line.id}/cancel", json={"version": taken["version"]})
+
+    assert refused.status_code == 422
+    assert "только свои строки" in refused.json()["detail"]

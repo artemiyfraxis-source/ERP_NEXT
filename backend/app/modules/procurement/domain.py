@@ -76,6 +76,10 @@ class MoneyEntry:
 MONEY_EDITABLE = frozenset({ProcurementStatus.AWAITING_INVOICE, ProcurementStatus.TO_PAY})
 
 
+_PAID_STATUSES = frozenset({ProcurementStatus.IN_TRANSIT, ProcurementStatus.QUARANTINE, ProcurementStatus.DONE})
+_BACKORDER_OFFLINE = "У дозавоза свои действия: подтвердить досыл или отменить дозавоз"
+
+
 @dataclass(frozen=True)
 class ProcurementLine:
     id: UUID
@@ -307,6 +311,55 @@ class ProcurementLine:
         if self.status is not ProcurementStatus.APPROVAL:
             raise ProcurementValidationError("Дозавоз отменяется только из «Согласование»")
         return replace(self, status=ProcurementStatus.CANCELLED, version=self.version + 1)
+
+    def put_on_approval(self, actor: Actor) -> ProcurementLine:
+        """`PUR_STATUS_OFFLINE`: «Согласование» stands outside the linear order, set at any stage before payment."""
+        self._require_offline_allowed(actor)
+        if self.status is ProcurementStatus.APPROVAL:
+            return self
+        if self.status is ProcurementStatus.CANCELLED:
+            raise ProcurementValidationError("Строка отменена — отмена окончательная")
+        return replace(self, buyer=self.buyer or actor, status=ProcurementStatus.APPROVAL, version=self.version + 1)
+
+    def resume_from_approval(self, actor: Actor) -> ProcurementLine:
+        """Approved: the line returns to the stage its own data has reached (`statusRegressed_` skips offline)."""
+        if self.is_backorder:
+            raise ProcurementValidationError(_BACKORDER_OFFLINE)
+        self._require_owner(actor)
+        if self.status is not ProcurementStatus.APPROVAL:
+            raise ProcurementValidationError("Строка не на согласовании")
+        return replace(self, status=self._stage_from_data(), version=self.version + 1)
+
+    def cancel(self, actor: Actor) -> ProcurementLine:
+        """«Отменено» is terminal and reachable from any stage before payment."""
+        self._require_offline_allowed(actor)
+        if self.status is ProcurementStatus.CANCELLED:
+            return self
+        return replace(self, buyer=self.buyer or actor, status=ProcurementStatus.CANCELLED, version=self.version + 1)
+
+    def _require_offline_allowed(self, actor: Actor) -> None:
+        if self.is_backorder:
+            raise ProcurementValidationError(_BACKORDER_OFFLINE)
+        _validate_actor(actor)
+        # An unclaimed «Новый» line has no owner yet: whoever parks or cancels it takes it.
+        if self.buyer is not None:
+            self._require_owner(actor)
+        if self.status in _PAID_STATUSES:
+            raise ProcurementValidationError(
+                "Строка оплачена и передана в приёмку — согласование и отмена уже невозможны"
+            )
+
+    def _stage_from_data(self) -> ProcurementStatus:
+        if self.invoice_url:
+            return ProcurementStatus.TO_PAY
+        if self.supplier_request_reference:
+            return ProcurementStatus.AWAITING_INVOICE
+        if self.buyer is None:
+            return ProcurementStatus.NEW
+        facts = ProcurementFacts(
+            supplier=self.supplier, actual_quantity=self.actual_quantity, actual_unit=self.actual_unit
+        )
+        return ProcurementStatus.READY if _facts_ready(facts, self.delivery_point) else ProcurementStatus.IN_WORK
 
     def reconcile_rate(self, rate: ExchangeRate, actor: Actor) -> ProcurementLine:
         """Replace a manually typed rate with the CBR one for the same day and replay the amounts."""

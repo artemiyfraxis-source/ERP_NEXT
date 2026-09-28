@@ -428,3 +428,93 @@ def test_backorder_is_confirmed_to_transit_or_cancelled_only_from_approval():
         original.confirm_backorder(date(2026, 10, 10), buyer)
     with pytest.raises(ProcurementValidationError, match="только свои строки"):
         backorder.cancel_backorder(Actor(name="Сидоров", department="Закупки"))
+
+
+def test_approval_parks_any_unpaid_stage_and_resume_returns_to_the_stage_the_data_reached():
+    buyer = Actor(name="Петров", department="Закупки")
+    taken = create_line_from_requested(requested_message()).take_in_work(buyer)
+    ready = taken.update_facts(
+        ProcurementFacts(supplier="ООО Поставка", actual_quantity=Decimal("2"), actual_unit="шт"), buyer,
+    )
+    awaiting = awaiting_invoice(buyer)
+    to_pay = awaiting.update_money(RUB_ENTRY, None, buyer).record_invoice(
+        "https://files.test/invoice.pdf", date(2026, 9, 30), buyer,
+    )
+
+    for line, stage in (
+        (taken, ProcurementStatus.IN_WORK),
+        (ready, ProcurementStatus.READY),
+        (awaiting, ProcurementStatus.AWAITING_INVOICE),
+        (to_pay, ProcurementStatus.TO_PAY),
+    ):
+        parked = line.put_on_approval(buyer)
+        assert (parked.status, parked.version) == (ProcurementStatus.APPROVAL, line.version + 1)
+        assert parked.put_on_approval(buyer) is parked
+        resumed = parked.resume_from_approval(buyer)
+        assert (resumed.status, resumed.version) == (stage, line.version + 2)
+        assert resumed.supplier_request_reference == line.supplier_request_reference
+        assert resumed.money == line.money
+
+
+def test_parked_line_is_frozen_until_approved():
+    buyer = Actor(name="Петров", department="Закупки")
+    parked = awaiting_invoice(buyer).put_on_approval(buyer)
+
+    with pytest.raises(ProcurementValidationError, match="только на этапах"):
+        parked.update_money(RUB_ENTRY, None, buyer)
+    with pytest.raises(ProcurementValidationError, match="«Жду счет»"):
+        parked.record_invoice("https://files.test/invoice.pdf", date(2026, 9, 30), buyer)
+    with pytest.raises(ProcurementValidationError, match="только новую"):
+        parked.take_in_work(buyer)
+    with pytest.raises(ProcurementValidationError, match="не на согласовании"):
+        awaiting_invoice(buyer).resume_from_approval(buyer)
+
+
+def test_unclaimed_new_line_is_claimed_by_whoever_parks_or_cancels_it():
+    buyer = Actor(name="Петров", department="Закупки")
+    new = create_line_from_requested(requested_message())
+
+    parked = new.put_on_approval(buyer)
+    assert (parked.status, parked.buyer) == (ProcurementStatus.APPROVAL, buyer)
+    assert parked.resume_from_approval(buyer).status is ProcurementStatus.IN_WORK
+
+    cancelled = new.cancel(buyer)
+    assert (cancelled.status, cancelled.buyer, cancelled.version) == (ProcurementStatus.CANCELLED, buyer, 2)
+
+
+def test_cancel_is_terminal_and_reachable_from_any_unpaid_stage_including_approval():
+    buyer = Actor(name="Петров", department="Закупки")
+    awaiting = awaiting_invoice(buyer)
+
+    cancelled = awaiting.cancel(buyer)
+    assert cancelled.status is ProcurementStatus.CANCELLED
+    assert cancelled.cancel(buyer) is cancelled
+    assert awaiting.put_on_approval(buyer).cancel(buyer).status is ProcurementStatus.CANCELLED
+    with pytest.raises(ProcurementValidationError, match="не на согласовании"):
+        cancelled.resume_from_approval(buyer)
+    with pytest.raises(ProcurementValidationError, match="только новую"):
+        cancelled.take_in_work(buyer)
+    with pytest.raises(ProcurementValidationError, match="отмена окончательная"):
+        cancelled.put_on_approval(buyer)
+
+
+def test_offline_moves_are_refused_after_payment_for_foreign_lines_and_on_backorders():
+    buyer = Actor(name="Петров", department="Закупки")
+    stranger = Actor(name="Сидоров", department="Закупки")
+    paid = paid_line(buyer)
+
+    with pytest.raises(ProcurementValidationError, match="передана в приёмку"):
+        paid.put_on_approval(buyer)
+    with pytest.raises(ProcurementValidationError, match="передана в приёмку"):
+        paid.cancel(buyer)
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        awaiting_invoice(buyer).put_on_approval(stranger)
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        awaiting_invoice(buyer).cancel(stranger)
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        awaiting_invoice(buyer).put_on_approval(buyer).resume_from_approval(stranger)
+
+    backorder = create_backorder_line(paid, backorder_message(paid, "1"), "SM-20260915-01-Д")
+    for move in (backorder.put_on_approval, backorder.resume_from_approval, backorder.cancel):
+        with pytest.raises(ProcurementValidationError, match="У дозавоза свои действия"):
+            move(buyer)

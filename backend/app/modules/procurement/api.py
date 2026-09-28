@@ -27,6 +27,8 @@ from .application import (
     SendSupplierRequestCommand,
     RecordInvoiceCommand,
     MarkProcurementPaidCommand,
+    OfflineAction,
+    ProcurementOfflineCommand,
     TakeProcurementInWorkCommand,
     UnitOfWork,
     ConcurrentProcurementUpdate,
@@ -39,6 +41,7 @@ from .application import (
     record_invoice,
     mark_procurement_paid,
     reconcile_procurement_rate,
+    set_procurement_offline_status,
     save_procurement_money,
     take_procurement_in_work,
 )
@@ -538,3 +541,33 @@ def cancel_backorder(
             uow_factory(),
         )
     )
+
+
+def _offline(action: OfflineAction):
+    def endpoint(
+        line_id: UUID,
+        payload: VersionInput,
+        principal: Annotated[Principal, Depends(procurement_edit_principal)],
+        now: Annotated[datetime, Depends(moscow_now)],
+        uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    ) -> dict:
+        return _transition(
+            lambda: set_procurement_offline_status(
+                ProcurementOfflineCommand(
+                    line_id=line_id,
+                    expected_version=payload.version,
+                    action=action,
+                    actor=principal.actor,
+                    now=now,
+                ),
+                uow_factory(),
+            )
+        )
+
+    return endpoint
+
+
+# «Согласование» / «Отменено» (`PUR_STATUS_OFFLINE`): outside the linear order, any stage before payment.
+router.post("/{line_id}/approval")(_offline(OfflineAction.APPROVAL))
+router.post("/{line_id}/approval/resume")(_offline(OfflineAction.RESUME))
+router.post("/{line_id}/cancel")(_offline(OfflineAction.CANCEL))

@@ -845,6 +845,21 @@ export const procurementApi = {
       method: "POST",
       body: JSON.stringify({ version, expected_arrival: expectedArrival }),
     }),
+  putOnApproval: (lineId: string, version: number) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/approval`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  resumeFromApproval: (lineId: string, version: number) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/approval/resume`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  cancelLine: (lineId: string, version: number) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
   cancelBackorder: (lineId: string, version: number) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/backorder/cancel`, {
       method: "POST",
