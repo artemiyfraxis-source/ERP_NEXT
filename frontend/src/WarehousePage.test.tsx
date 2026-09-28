@@ -63,6 +63,54 @@ it("writes off stock with its optimistic version and stated reason", async () =>
   }));
 });
 
+it("returns a write-off to the lot with where it comes back from", async () => {
+  const written = { ...lot, written_off: "4", balance: "6", available: "6" };
+  let returned: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock") return json({ lots: [returned ? { ...written, version: 5, written_off: "1", balance: "9", available: "9" } : written], total: 1, truncated: 0, next_cursor: null });
+    if (path === `/api/stock/batches/${lot.id}/return` && init?.method === "POST") {
+      returned = JSON.parse(String(init.body));
+      return json({ lot: { ...written, version: 5, written_off: "1", balance: "9", available: "9" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть на склад" }));
+  expect(screen.getByLabelText("Количество возврата")).toHaveAttribute("max", "4");
+  expect(screen.getByLabelText("Откуда возврат")).toBeRequired();
+  fireEvent.change(screen.getByLabelText("Количество возврата"), { target: { value: "3" } });
+  fireEvent.change(screen.getByLabelText("Откуда возврат"), { target: { value: " FRX.001 " } });
+  fireEvent.change(screen.getByLabelText("Основание возврата"), { target: { value: "не израсходовано" } });
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть" }));
+
+  await waitFor(() => expect(returned).toEqual({
+    version: 4,
+    quantity: "3",
+    source: "FRX.001",
+    reason: "не израсходовано",
+  }));
+  await waitFor(() => expect(screen.queryByLabelText("Откуда возврат")).not.toBeInTheDocument());
+});
+
+it("offers no return on a lot that was never written off", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+
+  expect(screen.getByRole("button", { name: "Списать" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Вернуть на склад" })).not.toBeInTheDocument();
+});
+
 it("edits article, description, and manufacturer series without changing the lot number", async () => {
   let payload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {

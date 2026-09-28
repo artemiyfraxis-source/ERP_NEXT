@@ -89,6 +89,17 @@ class WriteOffCommand:
 
 
 @dataclass(frozen=True)
+class ReturnWriteOffCommand:
+    lot_id: UUID
+    expected_version: int
+    quantity: Decimal
+    source: str  # «откуда»: project number or the responsible person's surname
+    reason: str
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
 class MoveLotCommand:
     lot_id: UUID
     expected_version: int
@@ -414,6 +425,47 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
                 id=uuid4(), aggregate_id=updated.id, event_type="warehouse.written_off",
                 actor=command.actor, occurred_at=command.now,
                 details={"quantity": str(command.quantity), "reason": command.reason.strip()},
+            )
+        )
+        uow.commit()
+        return updated
+
+
+_RETURN_REASON = re.compile(r"^\s*возврат", re.IGNORECASE)
+
+
+def return_reason(reason: str) -> str:
+    """SUPPLYMAP writeoffIsReturn_ / stock05Return_: a return is told apart by a basis starting with «Возврат»,
+    so a basis without it is prefixed rather than stored as a plain write-off text."""
+    text = str(reason or "").strip()
+    if _RETURN_REASON.match(text):
+        return text
+    return f"Возврат: {text}" if text else "Возврат"
+
+
+def return_writeoff(command: ReturnWriteOffCommand, uow: UnitOfWork) -> StockLot:
+    """SUPPLYMAP stock05Return_ + writeoffAppend_: the unused part comes back to the lot it left from."""
+    source = str(command.source or "").strip()
+    if not source:
+        raise WarehouseValidationError("Укажи, откуда возврат: номер проекта или фамилия ответственного.")
+    reason = return_reason(command.reason)
+    with uow:
+        current = _versioned(command.lot_id, command.expected_version, uow)
+        if command.quantity > 0 and command.quantity > current.written_off:
+            label = current.grn + (f" (пакет {current.package})" if current.package else "")
+            unit = f" {current.unit}" if current.unit else ""
+            raise WarehouseValidationError(
+                f"Больше списанного: по {label} списано {format(current.written_off.normalize(), 'f')}{unit}"
+                " — вернуть можно только их. Если это НЕ возврат, а новый приход, заведи позицию через"
+                " «Внести позиции»."
+            )
+        updated = current.return_writeoff(command.quantity)
+        uow.warehouse.add(updated)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(), aggregate_id=updated.id, event_type="warehouse.writeoff_returned",
+                actor=command.actor, occurred_at=command.now,
+                details={"quantity": str(command.quantity), "reason": reason, "purpose": source},
             )
         )
         uow.commit()

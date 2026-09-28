@@ -409,10 +409,21 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
   const [name, setName] = useState(lot.name);
   const [series, setSeries] = useState(lot.series);
   const [place, setPlace] = useState(lot.storage_location);
+  const [returning, setReturning] = useState(false);
+  const [returnQuantity, setReturnQuantity] = useState("");
+  const [returnSource, setReturnSource] = useState("");
+  const [returnReason, setReturnReason] = useState("");
+  const writtenOff = Number(lot.written_off) > 0;
 
   function writeoff(event: FormEvent) {
     event.preventDefault();
     void mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, reason)).catch(() => undefined);
+  }
+
+  function returnToStock(event: FormEvent) {
+    event.preventDefault();
+    void mutate(lot.id, () => warehouseApi.returnWriteOff(lot.id, lot.version, returnQuantity, returnSource.trim(), returnReason.trim()))
+      .then(() => setReturning(false), () => undefined);
   }
 
   return (
@@ -438,6 +449,14 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
         <form className="inline-action" onSubmit={writeoff}>
           <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Основание<input required value={reason} onChange={(event) => setReason(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>
         </form>
+        {writtenOff && !returning && <button className="secondary small" disabled={disabled} onClick={() => setReturning(true)}>Вернуть на склад</button>}
+        {writtenOff && returning && <form className="inline-action" aria-label="Возврат на склад" onSubmit={returnToStock}>
+          <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={lot.written_off} step="any" required title={`Списано ${lot.written_off} ${lot.unit}`} value={returnQuantity} onChange={(event) => setReturnQuantity(event.target.value)} /></label>
+          <label>Откуда<input aria-label="Откуда возврат" placeholder="проект или фамилия" required pattern=".*\S.*" value={returnSource} onChange={(event) => setReturnSource(event.target.value)} /></label>
+          <label>Основание возврата<input aria-label="Основание возврата" placeholder="Возврат" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label>
+          <button className="primary small" disabled={disabled}>Вернуть</button>
+          <button type="button" className="link-button" onClick={() => setReturning(false)}>Отмена</button>
+        </form>}
       </div></td></tr>}
     </>
   );

@@ -12,12 +12,15 @@ from app.modules.warehouse.application import (
     MoveLocationCommand,
     MoveLotCommand,
     PoisonWarehouseMessage,
+    ReturnWriteOffCommand,
     WriteOffCommand,
     add_manual_stock,
     correct_lot_location,
     dispatch_next_warehouse_received,
     move_location,
     move_lot,
+    return_reason,
+    return_writeoff,
     write_off,
 )
 from app.modules.warehouse.domain import StockLot, WarehouseValidationError
@@ -401,3 +404,79 @@ def test_manual_stock_still_needs_a_full_rack_address(location):
             now=datetime(2026, 9, 22, 12, 0),
         ), uow)
     assert uow.commits == 0
+
+
+def _written_lot(uow, quantity="4"):
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    return write_off(WriteOffCommand(
+        lot_id=lot.id, expected_version=lot.version, quantity=Decimal(quantity), reason="Выдача",
+        actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
+    ), uow)
+
+
+def _return(uow, lot, quantity, source="FRX.001", reason=""):
+    return return_writeoff(ReturnWriteOffCommand(
+        lot_id=lot.id, expected_version=lot.version, quantity=Decimal(quantity), source=source, reason=reason,
+        actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 23, 12, 0),
+    ), uow)
+
+
+@pytest.mark.parametrize(("reason", "stored"), [
+    ("", "Возврат"),
+    ("  ", "Возврат"),
+    ("из производства", "Возврат: из производства"),
+    ("возврат остатка", "возврат остатка"),
+    ("  Возврат из цеха ", "Возврат из цеха"),
+])
+def test_return_reason_always_starts_with_the_supplymap_marker(reason, stored):
+    assert return_reason(reason) == stored
+
+
+def test_writeoff_return_restores_the_balance_and_is_audited_with_its_source():
+    uow = Uow(message())
+    written = _written_lot(uow)
+
+    returned = _return(uow, written, "3", source="  Иванов ", reason="из производства")
+
+    assert (returned.written_off, returned.balance, returned.version) == (Decimal("1"), Decimal("9"), written.version + 1)
+    assert uow.audit.items[-1].event_type == "warehouse.writeoff_returned"
+    assert uow.audit.items[-1].aggregate_id == written.id
+    assert uow.audit.items[-1].details == {
+        "quantity": "3", "reason": "Возврат: из производства", "purpose": "Иванов",
+    }
+
+
+def test_writeoff_return_of_everything_written_off_is_allowed():
+    uow = Uow(message())
+    written = _written_lot(uow)
+
+    returned = _return(uow, written, "4")
+
+    assert (returned.written_off, returned.balance) == (Decimal("0"), Decimal("10"))
+
+
+@pytest.mark.parametrize(("quantity", "source", "error"), [
+    ("5", "FRX.001", "Больше списанного: по FRX.26.0000001 списано 4 шт — вернуть можно только их."),
+    ("0", "FRX.001", "больше нуля"),
+    ("-1", "FRX.001", "больше нуля"),
+    ("1", "   ", "Укажи, откуда возврат: номер проекта или фамилия ответственного."),
+])
+def test_writeoff_return_refuses_over_return_non_positive_quantity_and_missing_source(quantity, source, error):
+    uow = Uow(message())
+    written = _written_lot(uow)
+    commits = uow.commits
+
+    with pytest.raises(WarehouseValidationError, match=error):
+        _return(uow, written, quantity, source=source)
+
+    assert uow.commits == commits
+    assert uow.warehouse.get(written.id).written_off == Decimal("4")
+    assert uow.audit.items[-1].event_type == "warehouse.written_off"
+
+
+def test_nothing_to_return_on_a_lot_that_was_never_written_off():
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+
+    with pytest.raises(WarehouseValidationError, match="списано 0 шт"):
+        _return(uow, lot, "1")

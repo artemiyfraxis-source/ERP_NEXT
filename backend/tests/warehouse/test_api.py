@@ -421,3 +421,57 @@ def test_manual_stock_drops_leading_zeros_of_the_rack_address(warehouse_api):
 
     assert response.status_code == 200, response.text
     assert response.json()["lots"][0]["storage_location"] == "1A1"
+
+
+def test_receiver_returns_a_writeoff_to_the_lot_with_its_source(warehouse_api):
+    client, lot = warehouse_api
+    written = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
+        "version": lot.version, "quantity": "4", "reason": "Выдача в производство",
+    }).json()["lot"]
+
+    returned = client.post(f"/api/stock/batches/{lot.id}/return", json={
+        "version": written["version"], "quantity": "3", "source": "FRX.001", "reason": "не израсходовано",
+    })
+    over = client.post(f"/api/stock/batches/{lot.id}/return", json={
+        "version": returned.json()["lot"]["version"], "quantity": "2", "source": "FRX.001",
+    })
+
+    assert returned.status_code == 200, returned.text
+    assert (returned.json()["lot"]["written_off"], returned.json()["lot"]["balance"]) == ("1", "9")
+    assert over.status_code == 422
+    assert over.json()["detail"].startswith("Больше списанного: по FRX.26.0000001 списано 1 шт")
+
+
+@pytest.mark.parametrize("body", [
+    {"quantity": "0", "source": "FRX.001"},
+    {"quantity": "-1", "source": "FRX.001"},
+    {"quantity": "1", "source": ""},
+    {"quantity": "1", "source": "   "},
+    {"quantity": "1"},
+])
+def test_writeoff_return_needs_a_positive_quantity_and_where_it_comes_from(warehouse_api, body):
+    client, lot = warehouse_api
+    written = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
+        "version": lot.version, "quantity": "4", "reason": "Выдача",
+    }).json()["lot"]
+
+    response = client.post(f"/api/stock/batches/{lot.id}/return", json={"version": written["version"], **body})
+
+    assert response.status_code == 422
+    assert client.get("/api/stock").json()["lots"][0]["written_off"] == "4"
+
+
+def test_writeoff_return_needs_the_warehouse_receiver_or_admin(warehouse_api):
+    client, lot = warehouse_api
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Мастер", department="Производство"),
+        email="master@example.test",
+        roles=frozenset({"master"}),
+        permissions={"warehouse": "edit"},
+    )
+
+    response = client.post(f"/api/stock/batches/{lot.id}/return", json={
+        "version": lot.version, "quantity": "1", "source": "FRX.001",
+    })
+
+    assert response.status_code == 403

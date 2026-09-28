@@ -1,4 +1,4 @@
-"""Warehouse HTTP contract for stock, movement, and writeoff."""
+"""Warehouse HTTP contract for stock, movement, writeoff and its return."""
 
 from collections.abc import Callable
 from datetime import datetime
@@ -25,6 +25,7 @@ from .application import (
     ManualStockItem,
     MoveLocationCommand,
     MoveLotCommand,
+    ReturnWriteOffCommand,
     UnitOfWork,
     WriteOffCommand,
     add_manual_stock,
@@ -32,6 +33,7 @@ from .application import (
     edit_lot_identity,
     move_location,
     move_lot,
+    return_writeoff,
     warehouse_lots,
     write_off,
 )
@@ -46,6 +48,13 @@ class WriteOffPayload(BaseModel):
     version: int = Field(ge=1)
     quantity: Quantity
     reason: str = Field(min_length=1, max_length=1024)
+
+
+class ReturnWriteOffPayload(BaseModel):
+    version: int = Field(ge=1)
+    quantity: Quantity
+    source: str = Field(min_length=1, max_length=255)
+    reason: str = Field(default="", max_length=1024)
 
 
 class MovePayload(BaseModel):
@@ -237,6 +246,30 @@ def writeoff(
                 lot_id=lot_id,
                 expected_version=payload.version,
                 quantity=payload.quantity,
+                reason=payload.reason,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
+
+
+@router.post("/batches/{lot_id}/return")
+def return_to_stock(
+    lot_id: UUID,
+    payload: ReturnWriteOffPayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    return _run(
+        lambda: return_writeoff(
+            ReturnWriteOffCommand(
+                lot_id=lot_id,
+                expected_version=payload.version,
+                quantity=payload.quantity,
+                source=payload.source,
                 reason=payload.reason,
                 actor=principal.actor,
                 now=now,
