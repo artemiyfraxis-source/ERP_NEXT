@@ -1,6 +1,6 @@
 ---
 name: migrate-next
-description: One unattended run of the SUPPLYMAP → ERP_NEXT migration conveyor — take the next 1–2 non-overlapping tasks from docs/migration/BACKLOG.md, do each in its own worktree agent, verify, merge to main, record, stop. Use when invoked as /migrate-next (a scheduled Routine calls it) or when the owner says "продолжай перенос", "следующий шаг переноса", "migrate next".
+description: One unattended run of the SUPPLYMAP → ERP_NEXT migration conveyor — take the next 1–3 non-overlapping tasks from docs/migration/BACKLOG.md, do each in its own worktree agent, verify, merge to main, record, stop. Use when invoked as /migrate-next (a scheduled Routine calls it) or when the owner says "продолжай перенос", "следующий шаг переноса", "migrate next".
 ---
 
 # migrate-next — one conveyor run
@@ -26,7 +26,9 @@ One batch per run, then stop: a fresh session per run keeps quality high.
   become the batch.
 
 ## 2. Pick the batch
-Top-down, `[ ]` only, skipping `[?]` and `[!]`. Take at most 2 tasks, with different zones, and at
+Discovery tasks (`*-DISCOVER`, `IMPORT-AUDIT`) that sit at the top run first, in the main session
+(scout + writing tasks into BACKLOG). The tasks they create fill this same batch.
+Then top-down, `[ ]` only, skipping `[?]` and `[!]`. Take at most 3 tasks, with different zones, and at
 most one that adds an Alembic migration. Skip any task whose zone overlaps a `[~]` task: someone is in
 there. A zone of «все модули» overlaps everything. C1 or drift of a C1 area comes first. Mark them
 `[~] <run id>` and commit BACKLOG.md alone.

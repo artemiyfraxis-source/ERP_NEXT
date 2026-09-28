@@ -12,3 +12,4 @@ frontend/vite.config.d.ts
 .claude/settings.local.json
 .claude/worktrees/
 .claude/migrate.lock
+data/import/
