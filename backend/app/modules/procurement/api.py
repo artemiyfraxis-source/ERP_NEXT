@@ -16,6 +16,8 @@ from app.shared.document_url import normalize_document_url
 from app.shared.http_auth import Principal, procurement_edit_principal
 
 from .application import (
+    CancelBackorderCommand,
+    ConfirmBackorderCommand,
     ExchangeRates,
     ManualRateRequired,
     RateUnavailable,
@@ -30,6 +32,8 @@ from .application import (
     ConcurrentProcurementUpdate,
     available_procurement,
     buyer_procurement,
+    cancel_procurement_backorder,
+    confirm_procurement_backorder,
     save_procurement_facts,
     send_supplier_request,
     record_invoice,
@@ -127,6 +131,10 @@ class VersionInput(BaseModel):
 
 class PaidInput(VersionInput):
     manual_exchange_rate: Rate = None
+
+
+class BackorderConfirmInput(VersionInput):
+    expected_arrival: date
 
 
 class MoneyPayload(BaseModel):
@@ -228,6 +236,7 @@ def _line_result(line: ProcurementLine) -> dict:
         "invoice_number": line.invoice_number,
         "invoice_date": line.invoice_date.isoformat() if line.invoice_date else None,
         "pay_missing": line.pay_missing(),
+        "is_backorder": line.is_backorder,
     }
 
 
@@ -484,5 +493,48 @@ def paid(
             ),
             uow_factory(),
             rates,
+        )
+    )
+
+
+@router.post("/{line_id}/backorder/confirm")
+def confirm_backorder(
+    line_id: UUID,
+    payload: BackorderConfirmInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    return _transition(
+        lambda: confirm_procurement_backorder(
+            ConfirmBackorderCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                expected_arrival=payload.expected_arrival,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
+
+
+@router.post("/{line_id}/backorder/cancel")
+def cancel_backorder(
+    line_id: UUID,
+    payload: VersionInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    return _transition(
+        lambda: cancel_procurement_backorder(
+            CancelBackorderCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
         )
     )

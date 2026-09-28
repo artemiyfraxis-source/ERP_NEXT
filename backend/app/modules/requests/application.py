@@ -6,12 +6,14 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
 
 from .domain import (
+    UNITS,
     Actor,
     ProcurementRequestedSnapshot,
     Request,
@@ -48,6 +50,22 @@ class UnitOfWork(Protocol):
     def __enter__(self) -> UnitOfWork: ...
     def __exit__(self, exc_type, exc, traceback) -> bool | None: ...
     def commit(self) -> None: ...
+
+
+class DispatchOutboxRepository(OutboxRepository, Protocol):
+    def next_unpublished(self, topic: str, now: datetime) -> OutboxMessage | None: ...
+    def mark_published(self, message_id: UUID, published_at: datetime) -> None: ...
+    def mark_failed(self, message_id: UUID, failed_at: datetime, error: str) -> None: ...
+
+
+class DispatchUnitOfWork(UnitOfWork, Protocol):
+    outbox: DispatchOutboxRepository
+
+
+class PoisonRequestMessage(RuntimeError):
+    def __init__(self, message_id: UUID, reason: str):
+        super().__init__(reason)
+        self.message_id = message_id
 
 
 @dataclass(frozen=True)
@@ -211,3 +229,111 @@ def handoff_requests(
 def recent_requests(limit: int, uow: UnitOfWork) -> list[Request]:
     with uow:
         return list(uow.requests.recent(limit))
+
+
+def _reorder_draft(original: Request, payload: dict[str, str | None]) -> RequestDraft:
+    try:
+        quantity = Decimal(str(payload.get("quantity") or ""))
+    except DecimalException as error:
+        raise ValidationError("requests.reorder_requested: invalid quantity") from error
+    if not quantity.is_finite():
+        raise ValidationError("requests.reorder_requested: invalid quantity")
+    unit = str(payload.get("unit") or "").strip()
+    return RequestDraft(
+        purpose=original.purpose,
+        delivery_point=original.delivery_point,
+        name=original.name,
+        item_type=original.item_type,
+        quantity=quantity,
+        unit=unit if unit.casefold() in {item.casefold() for item in UNITS} else original.unit,
+        quality_document=original.quality_document,
+        procurement_deadline=original.procurement_deadline,
+        planned_date=original.planned_date,
+        project_reference=original.project_reference,
+        category=original.category,
+        design_article=original.design_article,
+        link=None,  # a new supplier is looked for: SUPPLYMAP clears ССЫЛКА
+        price=original.price,
+        price_with_vat=original.price_with_vat,
+        comment=f"Отмена дозавоза {payload.get('legacy_id') or ''}: новый поставщик".strip(),
+    )
+
+
+def dispatch_next_reorder_requested(now: datetime, uow: DispatchUnitOfWork) -> Request | None:
+    """`applyBackorderCancellations_`: a cancelled backorder becomes a new request already in Procurement.
+
+    Same initiator and item, the remaining quantity, a new System ID; SUPPLYMAP puts the row straight into
+    Закупка «Новый», so the request is handed off in the same transaction.
+    """
+    with uow:
+        message = uow.outbox.next_unpublished("requests.reorder_requested", now)
+        if message is None:
+            return None
+
+        def poison(reason: str) -> PoisonRequestMessage:
+            uow.outbox.mark_failed(message.id, now, reason)
+            uow.commit()
+            return PoisonRequestMessage(message.id, reason)
+
+        payload = message.payload
+        try:
+            original = uow.requests.get(UUID(str(payload.get("source_request_id"))))
+            buyer = Actor(
+                id=UUID(str(payload.get("buyer_id"))),
+                name=str(payload.get("buyer_name") or ""),
+                department=str(payload.get("buyer_department") or ""),
+            )
+        except ValueError:
+            original = None
+        if original is None:
+            raise poison("Исходная заявка для отменённого дозавоза не найдена")
+        existing = uow.requests.by_creation_key(original.actor.id, message.idempotency_key)
+        if existing:
+            uow.outbox.mark_published(message.id, now)
+            uow.commit()
+            return existing[0]
+        try:
+            (request,) = create_request_batch(
+                [_reorder_draft(original, payload)],
+                actor=original.actor,
+                now=now,
+                existing_legacy_ids=uow.requests.all_legacy_ids(),
+                existing_designations=uow.requests.all_designations(),
+                creation_key=message.idempotency_key,
+                creation_fingerprint=message.idempotency_key,
+            )
+            handed_off = request.start_procurement(buyer)
+            snapshot = build_procurement_requested_snapshot(handed_off, today=now.date())
+        except ValidationError as error:
+            raise poison(str(error)) from error
+        uow.requests.add(handed_off)
+        for event_type, actor, details in (
+            ("request.created", original.actor, {
+                "legacy_id": handed_off.legacy_id,
+                "designation": handed_off.designation,
+                "reorder_of": str(payload.get("legacy_id") or ""),
+            }),
+            ("request.sent_to_procurement", buyer, {"legacy_id": handed_off.legacy_id}),
+        ):
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=handed_off.id,
+                    event_type=event_type,
+                    actor=actor,
+                    occurred_at=now,
+                    details=details,
+                )
+            )
+        uow.outbox.add(
+            OutboxMessage(
+                id=uuid4(),
+                topic="procurement.requested",
+                idempotency_key=snapshot.idempotency_key,
+                created_at=now,
+                payload=_procurement_requested_payload(snapshot),
+            )
+        )
+        uow.outbox.mark_published(message.id, now)
+        uow.commit()
+        return handed_off

@@ -295,6 +295,19 @@ function ProcurementCard({
           <PaymentAction line={line} busy={busy} disabled={disabled || line.pay_missing.length > 0} onAdvance={onAdvance} />
         </>
       )}
+      {line.status === "Согласование" && line.is_backorder && (
+        <>
+          <p className="money-summary">
+            <small>Дозавоз по {line.legacy_id.replace(/-Д\d*$/, "")}: недовоз уже оплачен по счёту {line.invoice_number ? `№ ${line.invoice_number}` : line.invoice_url}. Поставщик подтвердил досыл — укажите новую дату; вернул деньги — отмените, остаток уйдёт новой заявкой.</small>
+          </p>
+          <MoneySummary line={line} />
+          <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.confirmBackorder(line.id, line.version, expectedArrival), `${line.legacy_id}: досыл подтверждён, передано в приёмку`).catch(() => undefined); }}>
+            <label>Новая ожидаемая дата<input type="date" required value={expectedArrival} onChange={(event) => setExpectedArrival(event.target.value)} /></label>
+            <button className="primary small" disabled={disabled}>{busy ? "Проводим…" : "Досыл подтверждён → в пути"}</button>
+            <button type="button" className="secondary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.cancelBackorder(line.id, line.version), `${line.legacy_id}: дозавоз отменён, остаток ушёл новой заявкой`).catch(() => undefined)}>Отменить дозавоз</button>
+          </form>
+        </>
+      )}
       {line.status === "В пути" && (
         <>
           <div className="success-banner">Позиция передана в приёмку · ожидается {line.expected_arrival}</div>

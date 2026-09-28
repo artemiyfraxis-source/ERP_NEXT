@@ -12,9 +12,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.database import build_engine
 from app.modules.procurement.application import (
     PoisonOutboxMessage,
+    dispatch_next_backorder_requested,
     dispatch_next_procurement_requested,
 )
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
+from app.modules.requests.application import PoisonRequestMessage, dispatch_next_reorder_requested
+from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork as SqlAlchemyRequestsUnitOfWork
 from app.modules.receiving.application import (
     PoisonReceivingMessage,
     dispatch_next_receiving_expected,
@@ -77,6 +80,34 @@ def dispatch_available(
             dispatched += 1
             continue
         if warehouse is not None:
+            dispatched += 1
+            progressed = True
+        if dispatched >= limit:
+            break
+        try:
+            backorder = dispatch_next_backorder_requested(
+                moscow_now(),
+                SqlAlchemyProcurementUnitOfWork(sessions),
+            )
+        except PoisonOutboxMessage as error:
+            logging.warning("Quarantined invalid backorder message %s", error.message_id)
+            dispatched += 1
+            continue
+        if backorder is not None:
+            dispatched += 1
+            progressed = True
+        if dispatched >= limit:
+            break
+        try:
+            reorder = dispatch_next_reorder_requested(
+                moscow_now(),
+                SqlAlchemyRequestsUnitOfWork(sessions),
+            )
+        except PoisonRequestMessage as error:
+            logging.warning("Quarantined invalid reorder message %s", error.message_id)
+            dispatched += 1
+            continue
+        if reorder is not None:
             dispatched += 1
             progressed = True
         if dispatched >= limit:

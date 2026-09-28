@@ -87,6 +87,7 @@ export interface ProcurementLine {
   invoice_number: string | null;
   invoice_date: string | null;
   pay_missing: string[];
+  is_backorder: boolean;
 }
 
 export type MoneyDriver = "net" | "gross" | "vat" | "qty" | "sum";
@@ -816,6 +817,16 @@ export const procurementApi = {
     }),
   reconcileRate: (lineId: string, version: number) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/exchange-rate/reconcile`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  confirmBackorder: (lineId: string, version: number, expectedArrival: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/backorder/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ version, expected_arrival: expectedArrival }),
+    }),
+  cancelBackorder: (lineId: string, version: number) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/backorder/cancel`, {
       method: "POST",
       body: JSON.stringify({ version }),
     }),

@@ -18,7 +18,9 @@ from .domain import (
     ProcurementLine,
     ProcurementStatus,
     ProcurementValidationError,
+    create_backorder_line,
     create_line_from_requested,
+    next_backorder_id,
 )
 from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
 
@@ -36,6 +38,7 @@ class ProcurementRepository(Protocol):
         self, actor: Actor, limit: int, after_id: UUID | None = None
     ) -> Sequence[ProcurementLine]: ...
     def list(self, limit: int = 10_000) -> Sequence[ProcurementLine]: ...
+    def legacy_ids_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def add(self, line: ProcurementLine) -> None: ...
 
 
@@ -148,6 +151,23 @@ class SaveProcurementMoneyCommand:
 
 
 @dataclass(frozen=True)
+class ConfirmBackorderCommand:
+    line_id: UUID
+    expected_version: int
+    expected_arrival: date
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class CancelBackorderCommand:
+    line_id: UUID
+    expected_version: int
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
 class ReconcileProcurementRateCommand:
     line_id: UUID
     expected_version: int
@@ -221,6 +241,62 @@ def dispatch_next_procurement_requested(
                     details={
                         "legacy_id": line.legacy_id,
                         "source_event_id": str(message.id),
+                    },
+                )
+            )
+        uow.outbox.mark_published(message.id, now)
+        uow.commit()
+        return line
+
+
+def dispatch_next_backorder_requested(
+    now: datetime,
+    uow: DispatchUnitOfWork,
+) -> ProcurementLine | None:
+    """`applyBackorders_`: a short first inspection of a paid line becomes a `-Д` line in «Согласование»."""
+    with uow:
+        message = uow.outbox.next_unpublished("procurement.backorder_requested", now)
+        if message is None:
+            return None
+
+        def poison(reason: str) -> PoisonOutboxMessage:
+            uow.outbox.mark_failed(message.id, now, reason)
+            uow.commit()
+            return PoisonOutboxMessage(message.id, reason)
+
+        existing = uow.procurement.by_source_idempotency_key(message.idempotency_key)
+        if existing is not None:
+            if existing.source_event_id != message.id:
+                raise poison("Ключ дозавоза уже использован другим событием")
+            line = existing
+        else:
+            try:
+                original = uow.procurement.get(UUID(str(message.payload.get("procurement_line_id"))))
+            except ValueError:
+                original = None
+            if original is None:
+                raise poison("Исходная строка закупки для дозавоза не найдена")
+            legacy_id = next_backorder_id(
+                original.legacy_id,
+                uow.procurement.legacy_ids_with_prefix(original.legacy_id + "-Д"),
+            )
+            try:
+                line = create_backorder_line(original, message, legacy_id)
+            except ProcurementValidationError as error:
+                raise poison(str(error)) from error
+            uow.procurement.add(line)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=line.id,
+                    event_type="procurement.backorder_created",
+                    actor=SYSTEM_ACTOR,
+                    occurred_at=message.created_at,
+                    details={
+                        "legacy_id": line.legacy_id,
+                        "from_legacy_id": original.legacy_id,
+                        "quantity": str(line.actual_quantity),
+                        "receiving_line_id": str(message.payload.get("receiving_line_id") or ""),
                     },
                 )
             )
@@ -556,26 +632,84 @@ def mark_procurement_paid(
             details=_money_details(current.money, updated.money),
         )
         if result != current:
+            uow.outbox.add(_receiving_expected(updated, command.now))
+            uow.commit()
+        return result
+
+
+def _receiving_expected(line: ProcurementLine, now: datetime) -> OutboxMessage:
+    """Self-contained snapshot for Receiving: it never reads Procurement tables."""
+    return OutboxMessage(
+        id=uuid4(),
+        topic="receiving.expected",
+        idempotency_key=f"procurement:{line.id}:receiving",
+        created_at=now,
+        payload={
+            "procurement_line_id": str(line.id),
+            "legacy_id": line.legacy_id,
+            "warehouse": warehouse_for_delivery_point(line.delivery_point),
+            "article": line.design_article or line.calculated_name,
+            "name": line.calculated_name,
+            "item_type": line.item_type,
+            "purpose": line.designation,
+            "goal": line.project_reference,
+            "source_link": line.link,
+            "supplier": line.supplier,
+            "ordered_quantity": str(line.actual_quantity),
+            "unit": line.actual_unit,
+            "quality_document_required": line.quality_document == "Да",
+        },
+    )
+
+
+def confirm_procurement_backorder(command: ConfirmBackorderCommand, uow: UnitOfWork) -> ProcurementLine:
+    """Resend confirmed: the paid remainder is expected by Receiving like any delivery."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.confirm_backorder(command.expected_arrival, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.backorder_confirmed",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+        )
+        if result != current:
+            uow.outbox.add(_receiving_expected(updated, command.now))
+            uow.commit()
+        return result
+
+
+def cancel_procurement_backorder(command: CancelBackorderCommand, uow: UnitOfWork) -> ProcurementLine:
+    """`applyBackorderCancellations_`: the remainder goes back to Requests as a new request."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.cancel_backorder(command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.backorder_cancelled",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+        )
+        if result != current:
             uow.outbox.add(
                 OutboxMessage(
                     id=uuid4(),
-                    topic="receiving.expected",
-                    idempotency_key=f"procurement:{updated.id}:receiving",
+                    topic="requests.reorder_requested",
+                    idempotency_key=f"procurement:{updated.id}:reorder",
                     created_at=command.now,
                     payload={
+                        "source_request_id": str(updated.source_request_id),
                         "procurement_line_id": str(updated.id),
                         "legacy_id": updated.legacy_id,
-                        "warehouse": warehouse_for_delivery_point(updated.delivery_point),
-                        "article": updated.design_article or updated.calculated_name,
-                        "name": updated.calculated_name,
-                        "item_type": updated.item_type,
-                        "purpose": updated.designation,
-                        "goal": updated.project_reference,
-                        "source_link": updated.link,
-                        "supplier": updated.supplier,
-                        "ordered_quantity": str(updated.actual_quantity),
+                        "quantity": str(updated.actual_quantity),
                         "unit": updated.actual_unit,
-                        "quality_document_required": updated.quality_document == "Да",
+                        "buyer_id": str(command.actor.id),
+                        "buyer_name": command.actor.name,
+                        "buyer_department": command.actor.department,
                     },
                 )
             )

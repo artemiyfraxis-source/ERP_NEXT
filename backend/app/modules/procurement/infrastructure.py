@@ -312,6 +312,13 @@ class SqlAlchemyProcurementRepository:
         )
         return [_line_domain(row) for row in rows]
 
+    def legacy_ids_with_prefix(self, prefix: str) -> list[str]:
+        # startswith() escapes LIKE wildcards, so an ID with "_" or "%" matches only itself.
+        statement = select(ProcurementLineRow.legacy_id).where(
+            ProcurementLineRow.legacy_id.startswith(prefix, autoescape=True)
+        )
+        return list(self.session.scalars(statement))
+
     def add(self, line: ProcurementLine) -> None:
         incoming = _line_row(line)
         stored = self.session.get(ProcurementLineRow, line.id)

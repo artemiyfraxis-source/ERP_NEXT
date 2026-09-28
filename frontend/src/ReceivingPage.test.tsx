@@ -111,3 +111,16 @@ it("keeps persisted documents and manual defects during repeated control", async
     manual_nonconformities: ["Механическое повреждение / брак"],
   })));
 });
+
+it("shows that a paid shortfall went back to procurement as a backorder", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/receiving") {
+      return json({ lines: [{ ...line, status: "Ожидание", backorder_quantity: "2.5", nonconformities: ["Недовоз (УПД < заказ)"] }] });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(<ReceivingPage />);
+
+  expect(await screen.findByText("Недовоз 2.5 шт — оплаченный остаток ушёл в закупку дозавозом")).toBeInTheDocument();
+});

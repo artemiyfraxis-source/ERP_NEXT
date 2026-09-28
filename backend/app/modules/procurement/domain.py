@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal, DecimalException
@@ -21,6 +23,8 @@ from .money import (
     apply_currency_and_fact,
     pay_gate_missing,
     reconvert,
+    rescale_to_quantity,
+    round_kopecks,
 )
 
 
@@ -269,6 +273,41 @@ class ProcurementLine:
             version=self.version + 1,
         )
 
+    @property
+    def is_backorder(self) -> bool:
+        return is_backorder_id(self.legacy_id)
+
+    def confirm_backorder(self, expected_arrival: date, actor: Actor) -> ProcurementLine:
+        """`promoteBackordersToShipped_`: supplier confirmed the resend — paid remainder goes «В пути»."""
+        self._require_owner(actor)
+        if not self.is_backorder:
+            raise ProcurementValidationError("Подтвердить досыл можно только у строки дозавоза")
+        if self.status is ProcurementStatus.IN_TRANSIT and self.expected_arrival == expected_arrival:
+            return self
+        if self.status is not ProcurementStatus.APPROVAL:
+            raise ProcurementValidationError("Досыл подтверждается только из «Согласование»")
+        if self.paid_at is None:
+            raise ProcurementValidationError("Дозавоз не оплачен — досыл подтверждать нечем")
+        if expected_arrival < self.created_at.date():
+            raise ProcurementValidationError("Ожидаемая дата поступления не может быть раньше дозавоза")
+        return replace(
+            self,
+            status=ProcurementStatus.IN_TRANSIT,
+            expected_arrival=expected_arrival,
+            version=self.version + 1,
+        )
+
+    def cancel_backorder(self, actor: Actor) -> ProcurementLine:
+        """Supplier will not resend (money refunded): the backorder closes, a new request replaces it."""
+        self._require_owner(actor)
+        if not self.is_backorder:
+            raise ProcurementValidationError("Отменить так можно только строку дозавоза")
+        if self.status is ProcurementStatus.CANCELLED:
+            return self
+        if self.status is not ProcurementStatus.APPROVAL:
+            raise ProcurementValidationError("Дозавоз отменяется только из «Согласование»")
+        return replace(self, status=ProcurementStatus.CANCELLED, version=self.version + 1)
+
     def reconcile_rate(self, rate: ExchangeRate, actor: Actor) -> ProcurementLine:
         """Replace a manually typed rate with the CBR one for the same day and replay the amounts."""
         self._require_owner(actor)
@@ -395,3 +434,61 @@ def create_line_from_requested(message: OutboxMessage) -> ProcurementLine:
         if isinstance(error, ProcurementValidationError):
             raise
         raise ProcurementValidationError(f"Invalid procurement.requested payload: {error}") from error
+
+
+BACKORDER_SUFFIX = "-Д"
+_BACKORDER_ID = re.compile(r"-Д\d*$")
+
+
+def is_backorder_id(legacy_id: str) -> bool:
+    """`isBackorderId_` (Schema.gs:470): ID ends with -Д, -Д2, -Д3…"""
+    return bool(_BACKORDER_ID.search(str(legacy_id or "")))
+
+
+def next_backorder_id(base: str, existing: Iterable[str]) -> str:
+    """`applyBackorders_`: <ID>-Д, then -Д2, -Д3; a backorder of a backorder becomes <ID>-Д-Д."""
+    taken = set(existing)
+    candidate, number = f"{base}{BACKORDER_SUFFIX}", 1
+    while candidate in taken:
+        number += 1
+        candidate = f"{base}{BACKORDER_SUFFIX}{number}"
+    return candidate
+
+
+def create_backorder_line(original: ProcurementLine, message: OutboxMessage, legacy_id: str) -> ProcurementLine:
+    """Copy of a paid line for the undelivered remainder: same price, payment and invoice, «Согласование».
+
+    SUPPLYMAP copies the row whole; ERP keeps the exact (fractional) remainder and reprices the sum for it.
+    """
+    if message.topic != "procurement.backorder_requested":
+        raise ProcurementValidationError(f"Unexpected topic: {message.topic}")
+    if str(message.payload.get("procurement_line_id") or "") != str(original.id):
+        raise ProcurementValidationError("procurement.backorder_requested: чужая строка закупки")
+    try:
+        quantity = Decimal(str(message.payload.get("backorder_quantity") or ""))
+    except DecimalException as error:
+        raise ProcurementValidationError("procurement.backorder_requested: invalid backorder_quantity") from error
+    if not quantity.is_finite() or quantity <= 0:
+        raise ProcurementValidationError("Недовоз должен быть больше нуля")
+    if original.paid_at is None:
+        raise ProcurementValidationError("Дозавоз ставится только по оплаченной строке")
+    calculated_sum = (
+        round_kopecks(original.calculated_price_with_vat * quantity)
+        if original.calculated_price_with_vat is not None
+        else None
+    )
+    return replace(
+        original,
+        id=uuid4(),
+        source_event_id=message.id,
+        source_idempotency_key=message.idempotency_key,
+        legacy_id=legacy_id,
+        status=ProcurementStatus.APPROVAL,
+        version=1,
+        created_at=message.created_at,
+        calculated_quantity=quantity,
+        calculated_sum=calculated_sum,
+        actual_quantity=quantity,
+        expected_arrival=None,
+        money=rescale_to_quantity(original.money, original.actual_quantity or quantity, quantity),
+    )

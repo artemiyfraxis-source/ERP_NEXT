@@ -50,6 +50,7 @@ const line: ProcurementLine = {
   invoice_number: null,
   invoice_date: null,
   pay_missing: ["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)", "НАИМЕНОВАНИЕ (Счет)", "ОЖИД. ДАТА"],
+  is_backorder: false,
 };
 
 function json(body: unknown) {
@@ -211,4 +212,39 @@ it("asks for a manual rate when the CBR is down and resends the money with it", 
 
   await waitFor(() => expect(bodies).toHaveLength(2));
   expect(bodies[1]).toEqual(expect.objectContaining({ currency: "USD", manual_exchange_rate: "95,5" }));
+});
+
+it("confirms a paid backorder with a new date or cancels it", async () => {
+  const backorder: ProcurementLine = {
+    ...awaitingInvoice,
+    id: "30000000-0000-0000-0000-00000000000d",
+    legacy_id: "REQ-1-Д",
+    status: "Согласование",
+    is_backorder: true,
+    invoice_number: "17",
+    actual_sum: "305",
+    pay_missing: [],
+  };
+  const calls: Array<[string, Record<string, unknown>]> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [backorder], next_cursor: null });
+    if (path.includes("/backorder/") && init?.method === "POST") {
+      calls.push([path, JSON.parse(String(init.body))]);
+      return json({ line: backorder });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  expect(await screen.findByText(/Дозавоз по REQ-1: недовоз уже оплачен по счёту № 17/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Новая ожидаемая дата"), { target: { value: "2026-10-12" } });
+  fireEvent.click(screen.getByRole("button", { name: "Досыл подтверждён → в пути" }));
+  await waitFor(() => expect(calls).toHaveLength(1));
+  fireEvent.click(await screen.findByRole("button", { name: "Отменить дозавоз" }));
+
+  await waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls[0]).toEqual([`/api/procurement/${backorder.id}/backorder/confirm`, { version: 3, expected_arrival: "2026-10-12" }]);
+  expect(calls[1]).toEqual([`/api/procurement/${backorder.id}/backorder/cancel`, { version: 3 }]);
 });

@@ -10,7 +10,13 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
 
-from .domain import InspectionInput, ReceivingLine, ReceivingValidationError, create_line_from_expected
+from .domain import (
+    InspectionInput,
+    ReceivingLine,
+    ReceivingStatus,
+    ReceivingValidationError,
+    create_line_from_expected,
+)
 
 
 SYSTEM_ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
@@ -227,9 +233,35 @@ def inspect_receiving(command: InspectReceivingCommand, uow: UnitOfWork) -> Rece
                 },
             )
         )
+        if current.status is ReceivingStatus.IN_TRANSIT:
+            _request_backorder(inspected, uow, command.now)
         result = _emit_warehouse_if_ready(inspected, uow, command.actor, command.now)
         uow.commit()
         return result
+
+
+def _request_backorder(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> None:
+    # Receiving.gs:761 — only the first inspection (no act yet) records a backorder for УПД < заказ;
+    # re-inspections of «Ожидание»/«Карантин» never do. Procurement turns it into the paid `-Д` line.
+    if line.backorder_quantity <= 0:
+        return
+    key = f"receiving:{line.id}:backorder"
+    if uow.outbox.by_idempotency_key(key) is not None:
+        return
+    uow.outbox.add(
+        OutboxMessage(
+            id=uuid4(),
+            topic="procurement.backorder_requested",
+            idempotency_key=key,
+            created_at=now,
+            payload={
+                "procurement_line_id": str(line.procurement_line_id),
+                "receiving_line_id": str(line.id),
+                "legacy_id": line.legacy_id,
+                "backorder_quantity": str(line.backorder_quantity),
+            },
+        )
+    )
 
 
 def place_receiving(command: PlaceReceivingCommand, uow: UnitOfWork) -> ReceivingLine:

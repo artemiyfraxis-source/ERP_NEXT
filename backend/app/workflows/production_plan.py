@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Iterable
+from uuid import UUID
 
 from app.modules.fulfillment.domain import FulfillmentRequest, FulfillmentStatus
 from app.modules.procurement.domain import ProcurementLine
@@ -73,19 +74,23 @@ def _date_text(value: date | None) -> str:
 def _supply(
     requests: Iterable[Request], procurement: Iterable[ProcurementLine],
 ) -> dict[str, SupplySummary]:
-    procurement_by_request = {line.source_request_id: line for line in procurement}
+    # A request has one procurement line plus a `-Д` line per paid shortfall; each is its own position.
+    procurement_by_request: dict[UUID, list[ProcurementLine]] = {}
+    for line in procurement:
+        procurement_by_request.setdefault(line.source_request_id, []).append(line)
     positions = []
     for request in requests:
         project = _project_for_request(request)
-        line = procurement_by_request.get(request.id)
-        status = line.status.value if line else request.status.value
-        eta = line.expected_arrival if line and line.expected_arrival else request.planned_date
-        positions.append(SupplyPosition(
-            project=project,
-            bucket=supply_bucket(status, line is not None),
-            eta=_date_text(eta),
-            customer_supplied=bool(request.link and "давальческ" in request.link.casefold()),
-        ))
+        customer_supplied = bool(request.link and "давальческ" in request.link.casefold())
+        for line in procurement_by_request.get(request.id) or [None]:
+            status = line.status.value if line else request.status.value
+            eta = line.expected_arrival if line and line.expected_arrival else request.planned_date
+            positions.append(SupplyPosition(
+                project=project,
+                bucket=supply_bucket(status, line is not None),
+                eta=_date_text(eta),
+                customer_supplied=customer_supplied,
+            ))
     return summarize_supply(positions)
 
 

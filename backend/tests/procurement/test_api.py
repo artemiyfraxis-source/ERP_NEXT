@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
-from app.modules.procurement.application import consume_procurement_requested
+from app.modules.procurement.application import consume_procurement_requested, dispatch_next_backorder_requested
 from app.modules.procurement.infrastructure import (
     ProcurementLineRow,
     SqlAlchemyProcurementUnitOfWork,
@@ -330,3 +330,54 @@ def test_cbr_outage_returns_manual_rate_prompt_then_marks_manual_rate(procuremen
     assert (reconciled.json()["line"]["exchange_rate_manual"], reconciled.json()["line"]["actual_price"]) == (
         False, "958.5",
     )
+
+
+def test_backorder_is_confirmed_through_api_with_version_check(procurement_api, rates):
+    client, line, sessions = procurement_api
+    with sessions() as session:  # payment needs a delivery point with a receiving warehouse
+        session.get(ProcurementLineRow, line.id).delivery_point = "г. Москва, ул. 6-я Радиальная, д. 17"
+        session.commit()
+    version = awaiting_invoice(client, line)
+    saved = client.patch(
+        f"/api/procurement/{line.id}/money",
+        json={"version": version, "currency": "RUB", "price": "100", "vat_rate": "22", "invoice_item_name": "SMA"},
+    ).json()["line"]
+    invoiced = client.post(
+        f"/api/procurement/{line.id}/invoice",
+        json={"version": saved["version"], "invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25"},
+    ).json()["line"]
+    paid = client.post(f"/api/procurement/{line.id}/paid", json={"version": invoiced["version"]}).json()["line"]
+    assert paid["is_backorder"] is False
+    refused = client.post(
+        f"/api/procurement/{line.id}/backorder/confirm", json={"version": paid["version"], "expected_arrival": "2026-10-01"},
+    )
+    assert refused.status_code == 422
+
+    uow = SqlAlchemyProcurementUnitOfWork(sessions)
+    with uow:
+        uow.outbox.add(
+            OutboxMessage(
+                id=UUID("00000000-0000-0000-0000-00000000b001"),
+                topic="procurement.backorder_requested",
+                idempotency_key="receiving:api:backorder",
+                created_at=datetime(2026, 9, 20, 10, 0),
+                payload={"procurement_line_id": str(line.id), "backorder_quantity": "1"},
+            )
+        )
+        uow.commit()
+    backorder = dispatch_next_backorder_requested(datetime(2026, 9, 20, 10, 1), SqlAlchemyProcurementUnitOfWork(sessions))
+    mine = client.get("/api/procurement/mine").json()["lines"]
+    listed = next(item for item in mine if item["id"] == str(backorder.id))
+    assert (listed["legacy_id"], listed["status"], listed["is_backorder"], listed["actual_sum"]) == (
+        "SM-20260915-01-Д", "Согласование", True, "122",
+    )
+
+    stale = client.post(
+        f"/api/procurement/{backorder.id}/backorder/confirm", json={"version": 9, "expected_arrival": "2026-10-01"},
+    )
+    confirmed = client.post(
+        f"/api/procurement/{backorder.id}/backorder/confirm", json={"version": 1, "expected_arrival": "2026-10-01"},
+    )
+    assert stale.status_code == 409
+    assert confirmed.status_code == 200
+    assert (confirmed.json()["line"]["status"], confirmed.json()["line"]["expected_arrival"]) == ("В пути", "2026-10-01")

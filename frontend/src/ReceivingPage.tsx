@@ -141,6 +141,7 @@ function ReceivingCard({
         <span className="status">{line.status}</span>
       </div>
       {line.nonconformities.length > 0 && <p className="nonconformity">{line.nonconformities.join(" · ")}</p>}
+      {Number(line.backorder_quantity) > 0 && <p className="nonconformity">Недовоз {line.backorder_quantity} {line.unit} — оплаченный остаток ушёл в закупку дозавозом</p>}
       {inspectable && (
         <form onSubmit={submitInspection}>
           <div className="facts-grid">

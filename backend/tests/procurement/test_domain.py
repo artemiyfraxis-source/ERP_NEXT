@@ -9,7 +9,10 @@ from app.modules.procurement.domain import (
     ProcurementFacts,
     ProcurementStatus,
     ProcurementValidationError,
+    create_backorder_line,
     create_line_from_requested,
+    is_backorder_id,
+    next_backorder_id,
 )
 from app.modules.procurement.money import ExchangeRate, MoneyInput
 from app.shared.events import OutboxMessage
@@ -326,3 +329,102 @@ def test_manual_rate_is_reconciled_with_cbr_rate_once():
     assert reconciled.version == manual.version + 1
     with pytest.raises(ProcurementValidationError, match="сверять нечего"):
         reconciled.reconcile_rate(ExchangeRate(Decimal("90"), date(2026, 9, 18)), buyer)
+
+
+def paid_line(buyer: Actor, *, entry: MoneyEntry = RUB_ENTRY, rate=None):
+    return (
+        awaiting_invoice(buyer)
+        .update_money(entry, rate, buyer)
+        .record_invoice("https://files.test/invoice.pdf", date(2026, 9, 30), buyer)
+        .mark_paid(buyer, datetime(2026, 9, 22, 12, 0), rate)
+    )
+
+
+def backorder_message(line, quantity: str) -> OutboxMessage:
+    return OutboxMessage(
+        id=UUID("00000000-0000-0000-0000-000000000901"),
+        topic="procurement.backorder_requested",
+        idempotency_key="receiving:rl-1:backorder",
+        created_at=datetime(2026, 10, 1, 9, 0),
+        payload={"procurement_line_id": str(line.id), "receiving_line_id": "rl-1", "backorder_quantity": quantity},
+    )
+
+
+def test_backorder_ids_follow_supplymap_suffix_rules():
+    assert next_backorder_id("SM-20260915-01", []) == "SM-20260915-01-Д"
+    assert next_backorder_id("SM-20260915-01", ["SM-20260915-01-Д"]) == "SM-20260915-01-Д2"
+    assert next_backorder_id("SM-20260915-01", ["SM-20260915-01-Д", "SM-20260915-01-Д2"]) == "SM-20260915-01-Д3"
+    assert next_backorder_id("SM-20260915-01-Д", []) == "SM-20260915-01-Д-Д"
+    assert [is_backorder_id(value) for value in ("X-Д", "X-Д2", "X-Д-Д", "X", "X-Д-1")] == [
+        True, True, True, False, False,
+    ]
+
+
+def test_backorder_line_keeps_price_payment_and_invoice_and_prices_the_remainder():
+    buyer = Actor(name="Петров", department="Закупки")
+    original = paid_line(buyer)
+
+    backorder = create_backorder_line(original, backorder_message(original, "0.5"), "SM-20260915-01-Д")
+
+    assert backorder.id != original.id
+    assert (backorder.legacy_id, backorder.status, backorder.version) == (
+        "SM-20260915-01-Д", ProcurementStatus.APPROVAL, 1,
+    )
+    assert (backorder.actual_quantity, backorder.calculated_quantity) == (Decimal("0.5"), Decimal("0.5"))
+    assert backorder.calculated_sum == Decimal("500.00")
+    assert backorder.expected_arrival is None
+    assert (backorder.buyer, backorder.supplier, backorder.invoice_url, backorder.paid_at) == (
+        original.buyer, original.supplier, original.invoice_url, original.paid_at,
+    )
+    assert (backorder.invoice_number, backorder.invoice_item_name) == ("СЧ-17", "Разъём SMA-001")
+    assert (backorder.money.price, backorder.money.price_with_vat) == (Decimal("800"), Decimal("976.00"))
+    assert backorder.money.sum == Decimal("488.00")
+    assert original.money.sum == Decimal("1952.00")
+
+
+def test_foreign_backorder_keeps_rate_and_reprices_source_sum():
+    buyer = Actor(name="Петров", department="Закупки")
+    usd = MoneyEntry(
+        amounts=MoneyInput(currency="USD", vat_rate=Decimal("22"), sum=Decimal("20"), driver="sum"),
+        invoice_item_name="SMA",
+    )
+    original = paid_line(buyer, entry=usd, rate=ExchangeRate(Decimal("90"), date(2026, 9, 22)))
+
+    backorder = create_backorder_line(original, backorder_message(original, "1"), "X-Д")
+
+    assert (backorder.money.exchange_rate, backorder.money.source_currency) == (Decimal("90"), "USD")
+    assert (backorder.money.source_price_with_vat, backorder.money.source_sum) == (Decimal("10.00"), Decimal("10.00"))
+    assert backorder.money.sum == Decimal("958.50")
+
+
+@pytest.mark.parametrize("quantity", ["0", "-1", "abc", "NaN"])
+def test_backorder_rejects_non_positive_or_garbage_remainder(quantity):
+    buyer = Actor(name="Петров", department="Закупки")
+    original = paid_line(buyer)
+
+    with pytest.raises(ProcurementValidationError):
+        create_backorder_line(original, backorder_message(original, quantity), "X-Д")
+
+
+def test_backorder_is_confirmed_to_transit_or_cancelled_only_from_approval():
+    buyer = Actor(name="Петров", department="Закупки")
+    original = paid_line(buyer)
+    backorder = create_backorder_line(original, backorder_message(original, "1"), "SM-20260915-01-Д")
+
+    with pytest.raises(ProcurementValidationError, match="раньше дозавоза"):
+        backorder.confirm_backorder(date(2026, 9, 30), buyer)
+    shipped = backorder.confirm_backorder(date(2026, 10, 10), buyer)
+    assert (shipped.status, shipped.expected_arrival, shipped.version) == (
+        ProcurementStatus.IN_TRANSIT, date(2026, 10, 10), 2,
+    )
+    assert shipped.confirm_backorder(date(2026, 10, 10), buyer) is shipped
+    with pytest.raises(ProcurementValidationError, match="только из «Согласование»"):
+        shipped.cancel_backorder(buyer)
+
+    cancelled = backorder.cancel_backorder(buyer)
+    assert cancelled.status is ProcurementStatus.CANCELLED
+    assert cancelled.cancel_backorder(buyer) is cancelled
+    with pytest.raises(ProcurementValidationError, match="только у строки дозавоза"):
+        original.confirm_backorder(date(2026, 10, 10), buyer)
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        backorder.cancel_backorder(Actor(name="Сидоров", department="Закупки"))
