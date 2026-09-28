@@ -113,3 +113,31 @@ it("edits a technology row with the old value and hides editing for non-admins",
   expect((await screen.findAllByText("МГТФ")).length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
 });
+
+it("offers the create form on an empty tab from the known column schema", async () => {
+  let created: unknown;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/tech-operations" && init?.method === "POST") {
+      created = JSON.parse(String(init.body));
+      return json({ id: "1", tab: "mat", display_text: "Трубка", source_sheet: "", fields: {} });
+    }
+    if (path.startsWith("/api/references/tech-operations?")) return json({
+      metadata: null, columns: ["Наименование", "Группа"], records: [],
+    });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={admin} />);
+  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Материалы" }));
+  const add = await screen.findByRole("button", { name: "+ Запись" });
+  await waitFor(() => expect(add).toBeEnabled());
+  fireEvent.click(add);
+  fireEvent.change(screen.getByLabelText("Поле Наименование"), { target: { value: "Трубка" } });
+  expect(screen.getByLabelText("Поле Группа")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
+
+  await waitFor(() => expect(created).toEqual({ tab: "mat", fields: { Наименование: "Трубка", Группа: "" } }));
+});

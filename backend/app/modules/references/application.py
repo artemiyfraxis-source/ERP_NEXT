@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-from .domain import MAX_ROW_EDITS, _clean_cell, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
+from .domain import MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
 from .technology import TECH_SNAPSHOT_SCHEMA_VERSION
 
 
@@ -72,6 +72,7 @@ class ReplaceSnapshotCommand:
     records: tuple[TechRecordInput, ...]
     actor: Actor
     now: datetime
+    declared_tabs: tuple[TechOperationTab, ...] = ()
 
 
 def _audit(event_type: str, actor: Actor, now: datetime, details: dict, uow: UnitOfWork) -> None:
@@ -111,9 +112,12 @@ def replace_snapshot(command: ReplaceSnapshotCommand, uow: UnitOfWork) -> int:
         tab=item.tab, display_text=item.display_text, search_text=item.search_text,
         source_sheet=item.source_sheet, sort_key=item.sort_key, fields=item.fields,
     ) for item in command.records)
+    # БД.ПРОВ / БД.МАТ are replaced only when the snapshot carries them (rows or an explicit table).
+    present = {item.tab for item in command.records} | set(command.declared_tabs)
+    keep_tabs = tuple(tab for tab in SHEET_TABLE_TABS if tab not in present)
     with uow:
         uow.tech_operations.replace(
-            records, schema_version=command.schema_version,
+            records, keep_tabs=keep_tabs, schema_version=command.schema_version,
             source_updated_at=command.source_updated_at, imported_at=command.now,
         )
         _audit("references.tech_snapshot_replaced", command.actor, command.now, {

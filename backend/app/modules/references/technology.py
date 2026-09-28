@@ -431,6 +431,60 @@ class ImportedTechnologySnapshot:
     schema_version: int
     source_updated_at: datetime | None
     records: tuple[ImportedTechnologyRecord, ...]
+    declared_tabs: tuple[str, ...] = ()
+
+
+SHEET_TABLES = {"prov": "БД.ПРОВ", "mat": "БД.МАТ"}
+
+
+def _column_letter(index: int) -> str:
+    name, number = "", index + 1
+    while number > 0:
+        number, rest = divmod(number - 1, 26)
+        name = chr(65 + rest) + name
+    return name
+
+
+def parse_mirror_tsv(text: str) -> dict[str, object]:
+    """Mirror `_local/db/<sheet>.tsv` (header row 1) → the `tables` entry of the snapshot payload."""
+    lines = str(text or "").lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    rows = [line.split("\t") for line in lines]
+    return {"header": rows[0] if rows and rows[0] != [""] else [], "formulaCols": [], "rows": rows[1:]}
+
+
+def import_sheet_table(tab: str, table: object) -> tuple[ImportedTechnologyRecord, ...]:
+    """SUPPLYMAP PortalRef `refTable_` shape → records keyed by the sheet header (БД.ПРОВ / БД.МАТ).
+
+    Formula columns are left out like in the other bases; empty cells stay as empty strings; rows with no
+    non-formula cell are sheet filler, not records."""
+    if tab not in SHEET_TABLES:
+        raise ValueError(f"Таблица «{tab}» не поддерживается: только {', '.join(SHEET_TABLES)}")
+    sheet = SHEET_TABLES[tab]
+    if not isinstance(table, Mapping) or not isinstance(table.get("header"), list) or not isinstance(table.get("rows"), list):
+        raise ValueError(f"Некорректная таблица {sheet}: нужны header и rows")
+    header = [re.sub(r"\s+", " ", str(item or "")).strip() or f"Колонка {_column_letter(index)}"
+              for index, item in enumerate(table["header"])]
+    if len(set(header)) != len(header):
+        raise ValueError(f"В шапке {sheet} повторяются колонки")
+    formula_cols = {int(item) for item in table.get("formulaCols") or []}
+    records = []
+    for number, raw in enumerate(table["rows"], start=1):
+        if isinstance(raw, Mapping):
+            raw = raw.get("v")
+        if not isinstance(raw, list):
+            raise ValueError(f"Строка {number} таблицы {sheet} должна быть списком ячеек")
+        cells = [str(value if value is not None else "").strip() for value in raw]
+        if any(cells[len(header):]):
+            raise ValueError(f"Строка {number} таблицы {sheet}: ячеек больше, чем колонок в шапке")
+        cells = (cells + [""] * len(header))[:len(header)]
+        if not any(value for index, value in enumerate(cells) if index not in formula_cols):
+            continue
+        fields = {name: cells[index] for index, name in enumerate(header) if index not in formula_cols}
+        display = next(value for value in cells if value)
+        records.append(ImportedTechnologyRecord(
+            tab=tab, display_text=display, search_text="", source_sheet=sheet, sort_key=display, fields=fields,
+        ))
+    return tuple(records)
 
 
 def _range_indexes(headers: Iterable[object]) -> dict[str, int]:
@@ -494,4 +548,11 @@ def import_supplymap_snapshot(payload: Mapping[str, object]) -> ImportedTechnolo
             sort_key=str(raw.get("sortKey") or "").strip(),
             fields=fields,
         ))
-    return ImportedTechnologySnapshot(schema_version, source_updated_at, tuple(records))
+    tables = payload.get("tables")
+    if tables is not None and not isinstance(tables, Mapping):
+        raise ValueError("tables снимка БД.Технология должен быть объектом")
+    for tab, table in (tables or {}).items():
+        records.extend(import_sheet_table(str(tab), table))
+    return ImportedTechnologySnapshot(
+        schema_version, source_updated_at, tuple(records), tuple(str(tab) for tab in (tables or {})),
+    )

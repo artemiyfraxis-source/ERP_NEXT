@@ -600,6 +600,7 @@ export interface TechOperationResult {
     imported_at: string;
     record_count: number;
   };
+  columns?: string[];
   records: TechOperationRecord[];
 }
 

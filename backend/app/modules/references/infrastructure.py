@@ -83,8 +83,10 @@ class SqlAlchemyTechOperationRepository:
         row.tab = record.tab.value; row.display_text = record.display_text
         row.normalized_search = record.normalized_search; row.source_sheet = record.source_sheet
         row.sort_key = record.sort_key; row.fields = dict(record.fields)
-    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime) -> None:
-        self.session.execute(delete(TechOperationRecordRow))
+    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = ()) -> None:
+        statement = delete(TechOperationRecordRow)
+        if keep_tabs: statement = statement.where(TechOperationRecordRow.tab.not_in([tab.value for tab in keep_tabs]))
+        self.session.execute(statement)
         self.session.add_all(TechOperationRecordRow(
             id=record.id, tab=record.tab.value, display_text=record.display_text,
             normalized_search=record.normalized_search, source_sheet=record.source_sheet,
@@ -93,7 +95,11 @@ class SqlAlchemyTechOperationRepository:
         meta = self.session.get(TechOperationSnapshotRow, "current")
         if meta is None: meta = TechOperationSnapshotRow(name="current"); self.session.add(meta)
         meta.schema_version = schema_version; meta.source_updated_at = source_updated_at
-        meta.imported_at = imported_at; meta.record_count = len(records)
+        meta.imported_at = imported_at
+        meta.record_count = len(records)
+        self.session.flush()
+        if keep_tabs:  # rows of БД.ПРОВ / БД.МАТ that this snapshot did not touch still count
+            meta.record_count = self.session.scalar(select(func.count()).select_from(TechOperationRecordRow)) or 0
     def metadata(self) -> dict | None:
         row = self.session.get(TechOperationSnapshotRow, "current")
         if row is None: return None

@@ -91,9 +91,10 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
     }
   }
 
+  const createColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
+
   function startCreate() {
-    const template = tech.records[0]?.fields ?? {};
-    setEditing({ id: null, values: Object.fromEntries(Object.keys(template).map((key) => [key, ""])) });
+    setEditing({ id: null, values: Object.fromEntries(createColumns.map((key) => [key, ""])) });
   }
 
   function startEdit(record: TechOperationRecord) {
@@ -127,7 +128,7 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
       <div className="table-wrap"><table><thead><tr><th>Наименование</th><th>Источник</th><th>Поля</th>{canEdit && <th />}</tr></thead><tbody>{tech.records.map((record) => <tr key={record.id}><td className="text"><strong>{record.display_text}</strong></td><td>{record.source_sheet || "—"}</td><td className="text">{editing?.id === record.id ? <RowForm values={editing.values} onChange={(values) => setEditing({ id: record.id, values })} /> : <div className="reference-fields">{Object.entries(record.fields).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div>}</td>{canEdit && <td>{editing?.id === record.id ? <><button className="primary small" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary small" onClick={() => setEditing(null)}>Отмена</button></> : <button className="secondary small" onClick={() => startEdit(record)}>Править</button>}</td>}</tr>)}{!tech.records.length && <tr><td className="empty" colSpan={canEdit ? 4 : 3}>Записей по выбранному фильтру нет.</td></tr>}</tbody></table></div>
       {canEdit && (editing?.id === null
         ? <div className="panel"><RowForm values={editing.values} onChange={(values) => setEditing({ id: null, values })} /><div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div></div>
-        : <div className="form-actions"><button className="secondary" disabled={!tech.records.length} onClick={startCreate}>+ Запись</button></div>)}
+        : <div className="form-actions"><button className="secondary" disabled={!createColumns.length} onClick={startCreate}>+ Запись</button></div>)}
       <p className="page-sub">СПР.КАБ (карта «ГОСТ-сечение → AWG» на вкладке карт) и шаблоны ТК доступны только для просмотра. Правки строк живут до следующего импорта снимка.</p>
     </>}
   </section>;

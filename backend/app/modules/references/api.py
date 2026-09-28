@@ -17,7 +17,7 @@ from .application import (
     CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
     StaleRecordError, UnitOfWork, create_record, edit_record, replace_maps, replace_snapshot,
 )
-from .domain import MAX_ROW_EDITS, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationTab
+from .domain import BASE_COLUMNS, MAX_ROW_EDITS, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationTab
 from .technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION,
     TerminalRecord,
@@ -82,6 +82,9 @@ class TerminalResolutionPayload(BaseModel):
 class SupplymapSnapshotPayload(BaseModel):
     meta: dict[str, Any]
     records: list[dict[str, Any]] = Field(max_length=10_000)
+    # БД.ПРОВ / БД.МАТ as sheet tables: {"prov": {"header": [...], "formulaCols": [], "rows": [[...]]}}. The GAS
+    # snapshot builder does not emit them; build one from the mirror TSV with `parse_mirror_tsv`.
+    tables: dict[str, Any] | None = None
 
 
 def references_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -138,6 +141,8 @@ def tech_operations(
             "source_updated_at": metadata["source_updated_at"].isoformat() if metadata["source_updated_at"] else None,
             "imported_at": metadata["imported_at"].isoformat(),
         },
+        # Known sheet schema first (so an empty tab still has a create form), else the first row's keys.
+        "columns": list(BASE_COLUMNS[tab]) if tab in BASE_COLUMNS else (list(records[0].fields) if tab and records else []),
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet, "fields": item.fields,
@@ -211,6 +216,7 @@ def import_supplymap_technology_snapshot(
     count = _run(lambda: replace_snapshot(ReplaceSnapshotCommand(
         schema_version=snapshot.schema_version,
         source_updated_at=snapshot.source_updated_at,
+        declared_tabs=tuple(TechOperationTab(tab) for tab in snapshot.declared_tabs),
         records=tuple(TechRecordInput(
             tab=TechOperationTab(item.tab),
             display_text=item.display_text,

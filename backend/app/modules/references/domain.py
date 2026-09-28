@@ -135,6 +135,24 @@ EDITABLE_TABS = frozenset(TechOperationTab)
 VIEW_ONLY_BASES = ("spr_kab", "tk_templates")
 MAX_ROW_EDITS = 200
 
+# Column schema of the sheet-header bases (SUPPLYMAP DbMirror.gs DB_MIRROR_NEW_). Fields of these bases are keyed by
+# the sheet header, so an empty tab can still offer a «+ Запись» form. op/ob/ter/coax fields are internal keys.
+BASE_COLUMNS = {
+    TechOperationTab.WIRE: (
+        "Марка", "Тип провода", "Стандарт / производитель", "Сечение, мм2", "AWG", "Жила: проволок × диаметр, мм",
+        "Число жил", "Цвета", "Наружный диаметр, мм", "Изоляция", "Экран", "Волновое сопротивление, Ом", "Темп. от, °C",
+        "Темп. до, °C", "Напряжение, В", "Ток, А", "Масса, г/м", "Закупок", "Цена посл., ₽/м без НДС", "Поставщик",
+        "Ссылка на datasheet", "Источник данных",
+    ),
+    TechOperationTab.MATERIAL: (
+        "Наименование", "Группа", "Производитель", "Серия", "Размер до, мм", "Размер после, мм", "Коэф. усадки",
+        "Цвет", "Клеевой слой", "Материал", "Темп. от, °C", "Темп. до, °C", "Ед. изм.", "Закупок", "Цена посл., ₽ без НДС",
+        "Поставщик", "Ссылка на datasheet", "Источник данных",
+    ),
+}
+# The v14 GAS snapshot never carries these two; a snapshot without them must not wipe portal-edited rows.
+SHEET_TABLE_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL)
+
 
 def _clean_cell(value: str) -> str:
     text = str(value or "").strip()
