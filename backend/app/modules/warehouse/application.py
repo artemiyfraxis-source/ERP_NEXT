@@ -194,6 +194,8 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
                 incoming.source_receiving_ids[0],
                 article=incoming.article,
                 series=incoming.series,
+                purpose=incoming.purpose,
+                storage_location=incoming.storage_location,
             )
         except WarehouseValidationError as error:
             uow.outbox.mark_failed(message.id, now, str(error))
@@ -201,6 +203,12 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
             raise PoisonWarehouseMessage(message.id, str(error)) from error
         uow.warehouse.add(lot)
         if existing is None or lot != existing:
+            details = {"grn": lot.grn, "package": lot.package, "quantity": str(incoming.inbound)}
+            if existing is not None:
+                for field_name in ("storage_location", "purpose"):
+                    old, new = getattr(existing, field_name), getattr(lot, field_name)
+                    if old != new:
+                        details[f"{field_name}_from"], details[f"{field_name}_to"] = old, new
             uow.audit.add(
                 AuditEvent(
                     id=uuid4(),
@@ -208,7 +216,7 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
                     event_type="warehouse.received",
                     actor=SYSTEM_ACTOR,
                     occurred_at=now,
-                    details={"grn": lot.grn, "package": lot.package, "quantity": str(incoming.inbound)},
+                    details=details,
                 )
             )
         uow.outbox.mark_published(message.id, now)

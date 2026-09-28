@@ -1,18 +1,21 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
+from app.modules.warehouse.application import PoisonWarehouseMessage, dispatch_next_warehouse_received
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
 from app.shared.clock import moscow_now
+from app.shared.events import OutboxMessage
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import create_schema
+from app.shared.persistence import AuditEventRow, create_schema
 from tests.factories import Actor
 
 
@@ -499,3 +502,47 @@ def test_writeoff_without_a_basis_is_an_issue(warehouse_api):
 
     assert response.status_code == 200, response.text
     assert response.json()["lot"]["written_off"] == "1"
+
+
+def _repeated_receipt(factory, lot, *, purpose, storage_location):
+    with factory() as uow:
+        uow.outbox.add(OutboxMessage(
+            id=uuid4(), topic="warehouse.received", idempotency_key=f"receiving:{uuid4()}:warehouse",
+            created_at=datetime(2026, 9, 22, 10, 0),
+            payload={
+                "receiving_line_id": str(uuid4()), "legacy_id": "SM-2", "warehouse": lot.warehouse,
+                "grn": lot.grn, "package": lot.package, "article": "", "series": "", "name": lot.name,
+                "item_type": lot.item_type, "purpose": purpose, "unit": lot.unit, "quantity": "5",
+                "storage_location": storage_location,
+            },
+        ))
+        uow.commit()
+    return dispatch_next_warehouse_received(datetime(2026, 9, 22, 10, 1), factory())
+
+
+def test_repeated_receipt_moves_the_lot_to_the_new_place_and_purpose(warehouse_api):
+    client, lot = warehouse_api
+    factory = app.state.warehouse_uow_factory
+
+    _repeated_receipt(factory, lot, purpose="FRX.002", storage_location="02b07")
+    found = client.get("/api/stock").json()["lots"]
+
+    assert [(item["id"], item["inbound"], item["purpose"], item["storage_location"]) for item in found] == [
+        (str(lot.id), "15", "FRX.002", "2B7"),
+    ]
+    with factory() as uow:
+        details = uow.session.scalars(
+            select(AuditEventRow.details).where(AuditEventRow.event_type == "warehouse.received")
+        ).one()
+    assert (details["storage_location_from"], details["storage_location_to"]) == ("1F4", "2B7")
+    assert (details["purpose_from"], details["purpose_to"]) == ("FRX.001", "FRX.002")
+
+
+def test_repeated_receipt_with_an_old_address_is_quarantined_and_leaves_the_lot(warehouse_api):
+    client, lot = warehouse_api
+
+    with pytest.raises(PoisonWarehouseMessage):
+        _repeated_receipt(app.state.warehouse_uow_factory, lot, purpose="FRX.002", storage_location="A-01")
+
+    found = client.get("/api/stock").json()["lots"][0]
+    assert (found["inbound"], found["purpose"], found["storage_location"]) == ("10", "FRX.001", "1F4")

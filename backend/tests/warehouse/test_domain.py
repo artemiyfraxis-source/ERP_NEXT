@@ -294,3 +294,41 @@ def test_repeated_receipt_keeps_a_lot_without_a_place():
 
     assert received.storage_location == ""
     assert received.inbound == Decimal("10")
+
+
+def test_repeated_receipt_takes_the_incoming_place_and_purpose():
+    # SUPPLYMAP Warehouse.gs:500-501: НАЗНАЧЕНИЕ and a non-empty МЕСТО ХРАНЕНИЯ replace the row's.
+    initial = lot()
+    received = initial.receive(Decimal("2"), "receiving:two", purpose=" FRX.002 ", storage_location="02b07")
+
+    assert (received.purpose, received.storage_location) == ("FRX.002", "2B7")
+    assert (received.inbound, received.version) == (Decimal("12"), initial.version + 1)
+
+
+def test_repeated_receipt_without_place_or_purpose_keeps_the_lot_ones():
+    received = lot().receive(Decimal("2"), "receiving:two", purpose="  ", storage_location=" ")
+
+    assert (received.purpose, received.storage_location) == ("RND", "1F4")
+    assert old_lot("A-01").receive(Decimal("1"), "receiving:two").storage_location == "A-01"
+
+
+def test_repeated_receipt_checks_the_place_like_the_first_receipt():
+    with pytest.raises(WarehouseValidationError):
+        lot().receive(Decimal("2"), "receiving:two", storage_location="A-01")
+
+    assert old_lot("A-01").receive(Decimal("1"), "receiving:two", storage_location="3C2").storage_location == "3C2"
+
+
+def test_repeated_receipt_of_a_reserved_lot_keeps_the_reserve():
+    reserved = lot().reserve(Decimal("4"))
+
+    received = reserved.receive(Decimal("2"), "receiving:two", purpose="FRX.002", storage_location="2B7")
+
+    assert (received.reserved, received.available) == (Decimal("4"), Decimal("8"))
+    assert (received.purpose, received.storage_location) == ("FRX.002", "2B7")
+
+
+def test_replayed_receipt_changes_nothing_even_with_a_new_place():
+    initial = lot()
+
+    assert initial.receive(Decimal("2"), initial.source_receiving_ids[0], storage_location="2B7") is initial

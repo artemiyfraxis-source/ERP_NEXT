@@ -218,17 +218,25 @@ class StockLot:
         *,
         article: str = "",
         series: str = "",
+        purpose: str = "",
+        storage_location: str = "",
     ) -> StockLot:
+        """Repeated receipt of the same ГРН+ПАКЕТ (SUPPLYMAP Warehouse.gs applyWarehouseAdds_ 492-515): the
+        incoming НАЗНАЧЕНИЕ and МЕСТО ХРАНЕНИЯ replace the lot's; an empty one keeps what the lot has.
+        The place goes through the same strict check as the first receipt."""
         source = str(source_receiving_id or "").strip()
         if not source:
             raise WarehouseValidationError("Источник приёмки обязателен")
         if source in self.source_receiving_ids:
             return self
         amount = _quantity(quantity, "Приход")
+        place = str(storage_location or "").strip()
         return replace(
             self,
             article=self.article or str(article or "").strip(),
             series=str(series or "").strip() or self.series,
+            purpose=str(purpose or "").strip() or self.purpose,
+            storage_location=normalize_location(place) if place else self.storage_location,
             inbound=self.inbound + amount,
             source_receiving_ids=(*self.source_receiving_ids, source),
             version=self.version + 1,

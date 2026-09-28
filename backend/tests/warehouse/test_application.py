@@ -388,6 +388,66 @@ def test_repeated_receipt_reaches_a_lot_without_a_place():
 
     assert received.id == imported.id
     assert received.inbound == Decimal("14")
+    assert received.storage_location == "1F4"
+
+
+def _repeat(**payload):
+    return replace(message(), id=UUID("30000000-0000-0000-0000-000000000002"),
+                   payload={**message().payload, "receiving_line_id": "receiving:two", **payload})
+
+
+def _first_lot(uow, **changes):
+    first = replace(dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), Uow(message())), **changes)
+    uow.warehouse.add(first)
+    return first
+
+
+def test_repeated_receipt_updates_place_and_purpose_and_audits_old_and_new():
+    uow = Uow(_repeat(purpose="FRX.002", storage_location="02b07"))
+    first = _first_lot(uow)
+
+    received = dispatch_next_warehouse_received(datetime(2026, 9, 22, 12, 0), uow)
+
+    assert (received.id, received.inbound) == (first.id, Decimal("20"))
+    assert (received.purpose, received.storage_location) == ("FRX.002", "2B7")
+    assert uow.audit.items[-1].event_type == "warehouse.received"
+    assert uow.audit.items[-1].details == {
+        "grn": "FRX.26.0000001", "package": "", "quantity": "10",
+        "storage_location_from": "1F4", "storage_location_to": "2B7",
+        "purpose_from": "FRX.001", "purpose_to": "FRX.002",
+    }
+
+
+def test_repeated_receipt_with_the_same_place_and_purpose_audits_only_the_quantity():
+    uow = Uow(_repeat())
+    _first_lot(uow)
+
+    dispatch_next_warehouse_received(datetime(2026, 9, 22, 12, 0), uow)
+
+    assert uow.audit.items[-1].details == {"grn": "FRX.26.0000001", "package": "", "quantity": "10"}
+
+
+def test_repeated_receipt_keeps_the_reserve_of_a_reserved_lot():
+    uow = Uow(_repeat(storage_location="2B7"))
+    first = _first_lot(uow, reserved=Decimal("6"))
+
+    received = dispatch_next_warehouse_received(datetime(2026, 9, 22, 12, 0), uow)
+
+    assert (received.id, received.reserved, received.available) == (first.id, Decimal("6"), Decimal("14"))
+    assert received.storage_location == "2B7"
+
+
+def test_receipt_of_a_grn_that_sits_in_the_other_warehouse_opens_its_own_lot():
+    # SUPPLYMAP looks the ГРН+ПАКЕТ up only on the receiving warehouse sheet (applyWarehouseAdds_).
+    uow = Uow(_repeat(storage_location="2B7", purpose="FRX.002"))
+    other = _first_lot(uow, warehouse="ЖУК")
+
+    received = dispatch_next_warehouse_received(datetime(2026, 9, 22, 12, 0), uow)
+
+    assert received.id != other.id
+    assert (received.warehouse, received.storage_location, received.inbound) == ("ЦАР", "2B7", Decimal("10"))
+    assert uow.warehouse.get(other.id) == other
+    assert "storage_location_from" not in uow.audit.items[-1].details
 
 
 @pytest.mark.parametrize("location", ["", "A-01"])
