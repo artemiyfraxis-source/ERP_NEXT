@@ -15,11 +15,12 @@
     "sourceRepository": "../SUPPLYMAP",
     "sourceRef": "main",
     "sourceCommit": "d2df8b80a89a9cd68dd7536f3fc844855045df74",
-    "sourcePath": "_local/tooling/test/fixtures/tc-library.json",
-    "sourceSha256": "dc400f917ec96ca11957bb62e751655423cb97abd56f9a554259efd6daa55380",
-    "templateCount": 115,
+    "sourcePath": "_local/db/БД.ТК",
+    "sourceSha256": "ddab961d2adbd4b39bf9fa9118e68a5f64f7f16dcd38f6505dcad500661456f9",
+    "templateCount": 118,
     "buildFixtureRoot": "_local/tooling/test/fixtures/etk",
-    "buildFixtureCount": 8
+    "buildFixtureCount": 8,
+    "categorySourcePath": "_local/tooling/test/fixtures/tc-library.json"
   },
   "files": [
     {

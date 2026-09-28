@@ -79,28 +79,81 @@ def test_bundled_current_supplymap_library_is_fully_parseable():
     cards = parse_operation_library(payload["templates"])
 
     assert payload["sourceCommit"] == metadata["operationLibrary"]["sourceCommit"]
-    assert len(cards) == 115
-    assert len({card.code for card in cards}) == 104
-    assert sum(len(card.steps) for card in cards) == 768
-    assert sum(len(card.tooling) for card in cards) == 334
+    assert len(cards) == 118
+    assert len({card.code for card in cards}) == 107
+    assert sum(len(card.steps) for card in cards) == 795
+    assert sum(len(card.tooling) for card in cards) == 344
 
 
-def test_bundled_library_predates_two_machine_equipment_rows():
-    """DRIFT-tc-bfef60d. SUPPLYMAP bfef60d gave CUT_COAX/STRIP_WIRE/PRS_ТМЛ two «Оборудование» rows
-    (machine by cable size) in the БД.ТК mirror (_local/db/БД.ТК/*.tsv), but the bundled library comes
-    from the older fixture tc-library.json, which still has one row. Pins that gap: when the library
-    is re-imported from the TSV mirror this test must flip to two rows (ОБ.094/ОБ.095 for CUT_COAX)."""
+def _bundled_equipment():
     backend = Path(__file__).resolve().parents[2]
     payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
     by_id = {item["id"]: item for item in payload["templates"]}
 
     def equipment(template_id):
-        return [row[2].split(" | ")[0] for row in by_id[template_id]["rows"] if row and row[0] == "Оборудование"]
+        return [
+            (row[2].split(" | ")[0], row[5] if len(row) > 5 else "")
+            for row in by_id[template_id]["rows"] if row and row[0] == "Оборудование" and len(row) > 2
+        ]
 
-    assert equipment("cut-coax-1strip-резка-с-разделкой") == ["AUTO_CUT_STRIP_COAX_BIG"]
-    assert equipment("cut-coax-2strip-резка-с-разделкой") == ["AUTO_CUT_STRIP_COAX_BIG"]
-    assert equipment("strip-wire-разделка") == ["EW-1165"]
-    assert equipment("prs-тмл-опрессовка-наконечников") == ["YQK-70"]
+    return by_id, equipment
+
+
+def test_bundled_library_has_two_machine_equipment_rows():
+    """DRIFT-tc-bfef60d + TC-TSV-IMPORT. The library is built from the БД.ТК mirror
+    (_local/db/БД.ТК/*.tsv), where CUT_COAX/STRIP_WIRE/PRS_ТМЛ carry two «Оборудование» rows (machine
+    by cable size, chosen by the operator) and CUT_NEYLON one."""
+    _, equipment = _bundled_equipment()
+
+    assert equipment("cut-coax-1strip-резка-с-разделкой") == [("BZW-886+Q2", "ОБ.094"), ("BZW-50X", "ОБ.095")]
+    assert equipment("cut-coax-2strip-резка-с-разделкой") == [("BZW-886+Q2", "ОБ.094"), ("BZW-50X", "ОБ.095")]
+    assert equipment("strip-wire-разделка") == [("EW-1090", "ОБ.007"), ("BZW-D2.0S(R)", "ОБ.100.X")]
+    assert equipment("prs-тмл-опрессовка-наконечников") == [("YQK-70", "ОБ.056"), ("BZW-20TS", "ОБ.093")]
+    assert equipment("cut-neylon-резка-линейных-материалов") == [("BZW-200+H", "ОБ.096")]
+
+
+def test_bundled_library_two_machine_rows_reach_parsed_tooling():
+    backend = Path(__file__).resolve().parents[2]
+    payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
+    cards = {card.source_id: card for card in parse_operation_library(payload["templates"])}
+
+    for template_id in ("cut-coax-1strip-резка-с-разделкой", "prs-тмл-опрессовка-наконечников"):
+        machines = [tool for tool in cards[template_id].tooling if tool.section == "Оборудование"]
+        assert len(machines) == 2
+        assert [tool.number for tool in machines] == ["1", "2"]
+
+
+def test_bundled_library_has_the_three_new_solder_templates():
+    """TC-TSV-IMPORT: sdr-banana / sdr-pcb / sdr-нк exist only in the mirror, not in the old fixture."""
+    backend = Path(__file__).resolve().parents[2]
+    payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
+    cards = {card.source_id: card for card in parse_operation_library(payload["templates"])}
+
+    assert {(cards[i].code, cards[i].category, cards[i].side) for i in (
+        "sdr-banana-пайка", "sdr-pcb-пайка-на-плату", "sdr-нк-пайка",
+    )} == {("SDR_BANANA", "Пайка", ""), ("SDR_PCB", "Пайка на плату", ""), ("SDR_НК", "Пайка", "")}
+    assert all(cards[i].steps and cards[i].tooling for i in cards if i.startswith(("sdr-banana", "sdr-pcb", "sdr-нк")))
+
+
+def test_bundled_library_strip_templates_without_equipment_keep_the_mirror_state():
+    """TC-TSV-IMPORT: 12 strip templates have a bare «Оборудование» header in the mirror (the fixture's
+    EW-1165 coax stripper was dropped there; the task text said 11). Kept as the mirror has it — no
+    tooling row, no error."""
+    backend = Path(__file__).resolve().parents[2]
+    payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
+    cards = {card.source_id: card for card in parse_operation_library(payload["templates"])}
+    _, equipment = _bundled_equipment()
+
+    bare = [
+        "strip-coax-hand-разделка", "strip-cable-sheld-разделка", "strip-cable-usb-2-0-разделка",
+        "strip-cable-usb-3-2-разделка",
+    ] + [f"strip-{kind}-ethernet-разделка" for kind in (
+        "u-utp", "f-utp", "s-utp", "sf-utp", "u-ftp", "f-ftp", "s-ftp", "sf-ftp",
+    )]
+    assert len(bare) == 12
+    for template_id in bare:
+        assert equipment(template_id) == []
+        assert not [tool for tool in cards[template_id].tooling if tool.section == "Оборудование"]
 
 
 def test_bundled_library_resolves_to_one_record_per_code_without_error():
@@ -113,7 +166,7 @@ def test_bundled_library_resolves_to_one_record_per_code_without_error():
 
     records = build_operation_records(cards)
 
-    assert len(records) == 104
+    assert len(records) == 107
     paired = {record.code: record.sides for record in records if len(record.sides) == 2}
     assert paired == {
         "INS_housing_COAX": ("A", "B"), "INS_terminal_1.00": ("A", "B"), "INS_terminal_1.25": ("A", "B"),

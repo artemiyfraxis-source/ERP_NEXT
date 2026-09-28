@@ -127,7 +127,7 @@ test("techcards import records the exact source commit", async () => {
   ).trim();
   const operationSource = execFileSync(
     "git",
-    ["-C", resolve(repositoryRoot, metadata.operationLibrary.sourceRepository || "."), "show", `${operationSourceCommit}:${metadata.operationLibrary.sourcePath}`],
+    ["-C", resolve(repositoryRoot, metadata.operationLibrary.sourceRepository || "."), "ls-tree", "-r", "-z", operationSourceCommit, "--", metadata.operationLibrary.sourcePath, metadata.operationLibrary.categorySourcePath],
     { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
   );
   assert.equal(metadata.operationLibrary.sourceCommit, operationSourceCommit);
