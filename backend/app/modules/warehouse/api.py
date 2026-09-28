@@ -47,7 +47,8 @@ Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 class WriteOffPayload(BaseModel):
     version: int = Field(ge=1)
     quantity: Quantity
-    reason: str = Field(min_length=1, max_length=1024)
+    purpose: str = Field(default="", max_length=255)  # НАЗНАЧЕНИЕ; emptiness is refused with the SUPPLYMAP text
+    reason: str = Field(default="", max_length=1024)  # ОСНОВАНИЕ; empty means «Выдача»
 
 
 class ReturnWriteOffPayload(BaseModel):
@@ -246,6 +247,7 @@ def writeoff(
                 lot_id=lot_id,
                 expected_version=payload.version,
                 quantity=payload.quantity,
+                purpose=payload.purpose,
                 reason=payload.reason,
                 actor=principal.actor,
                 now=now,

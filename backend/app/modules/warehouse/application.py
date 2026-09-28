@@ -83,7 +83,8 @@ class WriteOffCommand:
     lot_id: UUID
     expected_version: int
     quantity: Decimal
-    reason: str
+    purpose: str  # НАЗНАЧЕНИЕ: project number or the responsible person's surname
+    reason: str  # ОСНОВАНИЕ: the class of the expense; empty means «Выдача»
     actor: Actor
     now: datetime
 
@@ -413,9 +414,15 @@ def _versioned(lot_id: UUID, expected_version: int, uow: UnitOfWork) -> StockLot
     return lot
 
 
+WRITEOFF_DEFAULT_REASON = "Выдача"
+
+
 def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
-    if not str(command.reason or "").strip():
-        raise WarehouseValidationError("Основание списания обязательно")
+    """SUPPLYMAP stock05Writeoff_: НАЗНАЧЕНИЕ is required on the server, an empty ОСНОВАНИЕ is «Выдача»."""
+    purpose = str(command.purpose or "").strip()
+    if not purpose:
+        raise WarehouseValidationError("Укажи назначение: номер проекта или фамилию ответственного.")
+    reason = str(command.reason or "").strip() or WRITEOFF_DEFAULT_REASON
     with uow:
         current = _versioned(command.lot_id, command.expected_version, uow)
         updated = current.write_off(command.quantity)
@@ -424,7 +431,7 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
             AuditEvent(
                 id=uuid4(), aggregate_id=updated.id, event_type="warehouse.written_off",
                 actor=command.actor, occurred_at=command.now,
-                details={"quantity": str(command.quantity), "reason": command.reason.strip()},
+                details={"quantity": str(command.quantity), "reason": reason, "purpose": purpose},
             )
         )
         uow.commit()

@@ -404,7 +404,8 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
 }) {
   const [open, setOpen] = useState(false);
   const [quantity, setQuantity] = useState("");
-  const [reason, setReason] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [reason, setReason] = useState("Выдача");
   const [article, setArticle] = useState(lot.article);
   const [name, setName] = useState(lot.name);
   const [series, setSeries] = useState(lot.series);
@@ -417,7 +418,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
 
   function writeoff(event: FormEvent) {
     event.preventDefault();
-    void mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, reason)).catch(() => undefined);
+    void mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, purpose.trim(), reason.trim())).catch(() => undefined);
   }
 
   function returnToStock(event: FormEvent) {
@@ -447,7 +448,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
           <label>Место как есть<input aria-label="Место как есть" title="Ручная правка: любой текст (12C7, 12C7B, A-01…), пусто — без места" placeholder="без места" value={place} onChange={(event) => setPlace(event.target.value)} /></label><button className="secondary small" disabled={disabled}>Записать место</button>
         </form>
         <form className="inline-action" onSubmit={writeoff}>
-          <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Основание<input required value={reason} onChange={(event) => setReason(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>
+          <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Назначение<input aria-label="Назначение списания" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label><label>Основание<input placeholder="Выдача" value={reason} onChange={(event) => setReason(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>
         </form>
         {writtenOff && !returning && <button className="secondary small" disabled={disabled} onClick={() => setReturning(true)}>Вернуть на склад</button>}
         {writtenOff && returning && <form className="inline-action" aria-label="Возврат на склад" onSubmit={returnToStock}>

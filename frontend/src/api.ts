@@ -933,10 +933,10 @@ export const warehouseApi = {
     method: "POST",
     body: JSON.stringify({ items }),
   }),
-  writeOff: (lotId: string, version: number, quantity: string, reason: string) =>
+  writeOff: (lotId: string, version: number, quantity: string, purpose: string, reason: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/writeoff`, {
       method: "POST",
-      body: JSON.stringify({ version, quantity, reason }),
+      body: JSON.stringify({ version, quantity, purpose, reason }),
     }),
   returnWriteOff: (lotId: string, version: number, quantity: string, source: string, reason: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/return`, {

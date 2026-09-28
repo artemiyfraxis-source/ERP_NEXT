@@ -51,6 +51,10 @@ it("writes off stock with its optimistic version and stated reason", async () =>
   fireEvent.change(await screen.findByLabelText("Количество"), {
     target: { value: "2" },
   });
+  expect(screen.getByLabelText("Назначение списания")).toBeRequired();
+  fireEvent.change(screen.getByLabelText("Назначение списания"), {
+    target: { value: " FRX.001 " },
+  });
   fireEvent.change(screen.getByLabelText("Основание"), {
     target: { value: "Выдача в производство" },
   });
@@ -59,8 +63,35 @@ it("writes off stock with its optimistic version and stated reason", async () =>
   await waitFor(() => expect(writeoff).toEqual({
     version: 4,
     quantity: "2",
+    purpose: "FRX.001",
     reason: "Выдача в производство",
   }));
+});
+
+it("offers «Выдача» as the write-off basis and needs a purpose before writing off", async () => {
+  let writeoff: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.endsWith("/writeoff") && init?.method === "POST") {
+      writeoff = JSON.parse(String(init.body));
+      return json({ lot: { ...lot, version: 5, written_off: "1", balance: "9" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  expect(screen.getByLabelText("Основание")).toHaveValue("Выдача");
+  fireEvent.change(screen.getByLabelText("Количество"), { target: { value: "1" } });
+  fireEvent.change(screen.getByLabelText("Назначение списания"), { target: { value: "   " } });
+  expect(screen.getByLabelText("Назначение списания")).toBeInvalid();
+  fireEvent.change(screen.getByLabelText("Назначение списания"), { target: { value: "Иванов" } });
+  expect(screen.getByLabelText("Назначение списания")).toBeValid();
+  fireEvent.click(screen.getByRole("button", { name: "Списать" }));
+
+  await waitFor(() => expect(writeoff).toEqual({ version: 4, quantity: "1", purpose: "Иванов", reason: "Выдача" }));
 });
 
 it("returns a write-off to the lot with where it comes back from", async () => {

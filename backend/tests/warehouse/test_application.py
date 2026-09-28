@@ -161,7 +161,7 @@ def test_received_event_creates_lot_then_move_and_writeoff_are_audited():
             lot_id=lot.id,
             expected_version=moved.version,
             quantity=Decimal("2"),
-            reason="Выдача в производство",
+            purpose="FRX.001", reason="Выдача в производство",
             actor=actor,
             now=datetime(2026, 9, 21, 12, 3),
         ),
@@ -293,7 +293,7 @@ def test_lot_transfer_to_the_other_warehouse_keeps_balance_history_and_is_audite
     uow = Uow(message())
     lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
     written = write_off(WriteOffCommand(
-        lot_id=lot.id, expected_version=lot.version, quantity=Decimal("3"), reason="Выдача",
+        lot_id=lot.id, expected_version=lot.version, quantity=Decimal("3"), purpose="FRX.001", reason="Выдача",
         actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
     ), uow)
 
@@ -409,7 +409,7 @@ def test_manual_stock_still_needs_a_full_rack_address(location):
 def _written_lot(uow, quantity="4"):
     lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
     return write_off(WriteOffCommand(
-        lot_id=lot.id, expected_version=lot.version, quantity=Decimal(quantity), reason="Выдача",
+        lot_id=lot.id, expected_version=lot.version, quantity=Decimal(quantity), purpose="FRX.001", reason="Выдача",
         actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
     ), uow)
 
@@ -480,3 +480,41 @@ def test_nothing_to_return_on_a_lot_that_was_never_written_off():
 
     with pytest.raises(WarehouseValidationError, match="списано 0 шт"):
         _return(uow, lot, "1")
+
+
+def _write_off(uow, lot, purpose, reason):
+    return write_off(WriteOffCommand(
+        lot_id=lot.id, expected_version=lot.version, quantity=Decimal("2"), purpose=purpose, reason=reason,
+        actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
+    ), uow)
+
+
+@pytest.mark.parametrize(("purpose", "reason", "stored"), [
+    ("FRX.001", "", {"purpose": "FRX.001", "reason": "Выдача"}),
+    ("  Иванов ", "   ", {"purpose": "Иванов", "reason": "Выдача"}),
+    ("FRX.001", " Брак ", {"purpose": "FRX.001", "reason": "Брак"}),
+])
+def test_writeoff_keeps_its_purpose_and_defaults_the_basis_to_issue(purpose, reason, stored):
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+
+    written = _write_off(uow, lot, purpose, reason)
+
+    assert written.written_off == Decimal("2")
+    event = uow.audit.items[-1]
+    assert event.event_type == "warehouse.written_off"
+    assert event.details == {"quantity": "2", **stored}
+
+
+@pytest.mark.parametrize("purpose", ["", "   ", None])
+def test_writeoff_without_a_purpose_is_refused_with_the_supplymap_text(purpose):
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    commits = uow.commits
+
+    with pytest.raises(WarehouseValidationError, match="^Укажи назначение: номер проекта или фамилию ответственного.$"):
+        _write_off(uow, lot, purpose, "Выдача")
+
+    assert uow.commits == commits
+    assert uow.warehouse.get(lot.id).written_off == Decimal("0")
+    assert uow.audit.items[-1].event_type == "warehouse.received"

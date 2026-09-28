@@ -112,7 +112,7 @@ def test_lot_can_move_and_writeoff_but_stale_update_is_rejected(warehouse_api):
         json={
             "version": moved.json()["lot"]["version"],
             "quantity": "2",
-            "reason": "Выдача в производство",
+            "purpose": "FRX.001", "reason": "Выдача в производство",
         },
     )
     stale = client.post(
@@ -120,7 +120,7 @@ def test_lot_can_move_and_writeoff_but_stale_update_is_rejected(warehouse_api):
         json={
             "version": moved.json()["lot"]["version"],
             "quantity": "1",
-            "reason": "Устаревшая форма",
+            "purpose": "FRX.001", "reason": "Устаревшая форма",
         },
     )
 
@@ -335,7 +335,7 @@ def test_receiver_writes_an_old_address_as_is_then_clears_it_and_moves_to_a_rack
 def test_receiver_transfers_a_whole_lot_between_warehouses(warehouse_api):
     client, lot = warehouse_api
     written = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
-        "version": lot.version, "quantity": "4", "reason": "Выдача",
+        "version": lot.version, "quantity": "4", "purpose": "FRX.001", "reason": "Выдача",
     }).json()["lot"]
 
     moved = client.post(f"/api/stock/batches/{lot.id}/move", json={
@@ -356,7 +356,7 @@ def test_receiver_transfers_a_whole_lot_between_warehouses(warehouse_api):
 def test_transfer_of_an_empty_lot_is_rejected_with_the_supplymap_text(warehouse_api):
     client, lot = warehouse_api
     written = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
-        "version": lot.version, "quantity": "10", "reason": "Выдача",
+        "version": lot.version, "quantity": "10", "purpose": "FRX.001", "reason": "Выдача",
     }).json()["lot"]
 
     empty = client.post(f"/api/stock/batches/{lot.id}/move", json={
@@ -426,7 +426,7 @@ def test_manual_stock_drops_leading_zeros_of_the_rack_address(warehouse_api):
 def test_receiver_returns_a_writeoff_to_the_lot_with_its_source(warehouse_api):
     client, lot = warehouse_api
     written = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
-        "version": lot.version, "quantity": "4", "reason": "Выдача в производство",
+        "version": lot.version, "quantity": "4", "purpose": "FRX.001", "reason": "Выдача в производство",
     }).json()["lot"]
 
     returned = client.post(f"/api/stock/batches/{lot.id}/return", json={
@@ -452,7 +452,7 @@ def test_receiver_returns_a_writeoff_to_the_lot_with_its_source(warehouse_api):
 def test_writeoff_return_needs_a_positive_quantity_and_where_it_comes_from(warehouse_api, body):
     client, lot = warehouse_api
     written = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
-        "version": lot.version, "quantity": "4", "reason": "Выдача",
+        "version": lot.version, "quantity": "4", "purpose": "FRX.001", "reason": "Выдача",
     }).json()["lot"]
 
     response = client.post(f"/api/stock/batches/{lot.id}/return", json={"version": written["version"], **body})
@@ -475,3 +475,27 @@ def test_writeoff_return_needs_the_warehouse_receiver_or_admin(warehouse_api):
     })
 
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize("body", [{}, {"purpose": ""}, {"purpose": "   "}])
+def test_writeoff_needs_a_purpose(warehouse_api, body):
+    client, lot = warehouse_api
+
+    response = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
+        "version": lot.version, "quantity": "1", "reason": "Выдача", **body,
+    })
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Укажи назначение: номер проекта или фамилию ответственного."
+    assert client.get("/api/stock").json()["lots"][0]["written_off"] == "0"
+
+
+def test_writeoff_without_a_basis_is_an_issue(warehouse_api):
+    client, lot = warehouse_api
+
+    response = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
+        "version": lot.version, "quantity": "1", "purpose": "Иванов",
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json()["lot"]["written_off"] == "1"
