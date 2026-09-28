@@ -22,6 +22,7 @@ from .domain import (
     ValidationError,
     create_request_batch,
     build_procurement_requested_snapshot,
+    ensure_projects_registered,
 )
 
 
@@ -32,6 +33,15 @@ class RequestRepository(Protocol):
     def add(self, request: Request) -> None: ...
     def get(self, request_id: UUID) -> Request | None: ...
     def recent(self, limit: int) -> Sequence[Request]: ...
+
+
+class ProjectRegistry(Protocol):
+    """Port to the Projects module: open (non-terminal, not «Закрыт») project numbers.
+
+    ``None`` means the registry is not available yet; the format check still applies.
+    """
+
+    def open_projects(self) -> Sequence[str] | None: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -131,7 +141,11 @@ def _procurement_requested_payload(
     }
 
 
-def create_requests(command: CreateRequestsCommand, uow: UnitOfWork) -> list[Request]:
+def create_requests(
+    command: CreateRequestsCommand,
+    uow: UnitOfWork,
+    projects: ProjectRegistry | None = None,
+) -> list[Request]:
     creation_key = command.creation_key.strip()
     if not creation_key:
         raise ValidationError("Не задан ключ идемпотентности создания")
@@ -155,6 +169,10 @@ def create_requests(command: CreateRequestsCommand, uow: UnitOfWork) -> list[Req
             creation_key=creation_key,
             creation_fingerprint=fingerprint,
             designation_base=command.designation_base,
+        )
+        ensure_projects_registered(
+            [request.project_reference for request in requests],
+            projects.open_projects() if projects is not None else None,
         )
         for request in requests:
             uow.requests.add(request)

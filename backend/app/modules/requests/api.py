@@ -23,6 +23,7 @@ from app.shared.clock import moscow_now, moscow_today
 from .application import (
     CreateRequestsCommand,
     HandoffRequestsCommand,
+    ProjectRegistry,
     UnitOfWork,
     create_requests as create_requests_use_case,
     handoff_requests as handoff_requests_use_case,
@@ -134,6 +135,10 @@ def unit_of_work_factory(request: WebRequest) -> Callable[[], UnitOfWork]:
     if not callable(factory):
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     return factory
+
+
+def project_registry(request: WebRequest) -> ProjectRegistry | None:
+    return getattr(request.app.state, "project_registry", None)
 
 
 @router.get("/schema")
@@ -251,6 +256,7 @@ def create_requests(
     principal: Annotated[Principal, Depends(requests_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
+    projects: Annotated[ProjectRegistry | None, Depends(project_registry)],
 ) -> dict:
     try:
         command = CreateRequestsCommand(
@@ -260,7 +266,7 @@ def create_requests(
             now=now,
         )
         requests = _retry_transaction(
-            lambda: create_requests_use_case(command, uow_factory()),
+            lambda: create_requests_use_case(command, uow_factory(), projects),
         )
     except ValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

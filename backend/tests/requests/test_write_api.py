@@ -163,3 +163,38 @@ def test_retransfer_is_an_explicit_flag_and_refused_for_a_new_request(write_api)
     assert again.json() != first.json()
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(OutboxMessageRow)) == 2
+
+
+def test_create_rejects_project_outside_open_registry_and_stores_canonical_number(write_api):
+    client, _, _ = write_api
+
+    class Registry:
+        def open_projects(self):
+            return ["591К.3", "2000К.1"]
+
+    app.state.project_registry = Registry()
+    try:
+        rejected = client.post(
+            "/api/requests",
+            headers={"Idempotency-Key": "create:project:closed"},
+            json={"requests": [{**request_payload(), "project_reference": "48К.13"}]},
+        )
+        latin = client.post(
+            "/api/requests",
+            headers={"Idempotency-Key": "create:project:latin"},
+            json={"requests": [{**request_payload(), "project_reference": "591K.3"}]},
+        )
+        accepted = client.post(
+            "/api/requests",
+            headers={"Idempotency-Key": "create:project:open"},
+            json={"requests": [{**request_payload(), "project_reference": "2000к"}]},
+        )
+    finally:
+        del app.state.project_registry
+
+    assert rejected.status_code == 422
+    assert "48К.13" in rejected.json()["detail"]
+    assert latin.status_code == 422
+    assert "№ ПРОЕКТА" in latin.json()["detail"]
+    assert accepted.status_code == 201
+    assert accepted.json()["requests"][0]["project_reference"] == "2000К.1"

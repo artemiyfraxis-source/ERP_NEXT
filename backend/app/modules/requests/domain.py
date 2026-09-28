@@ -48,6 +48,44 @@ class ValidationError(ValueError):
     """A request violates a business invariant."""
 
 
+# № ПРОЕКТА (SUPPLYMAP Schema.gs projNoNorm_/projNoValid_): <цифры>К[буква] или <цифры>МФ, необязательные
+# серия «.<1–3 буквы>» и подномера «.<цифры≥1>»; старая схема П<гг><мм>-<n>[.<n>]. «К» кириллическая:
+# формат проверяется по СЫРОЙ строке, поэтому латинская K отклоняется, чтобы номер ввели верно.
+_PROJECT_HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
+_PROJECT_NUMBER = re.compile(
+    r"(?:[1-9]\d*(?:К[А-Я]?|МФ)(?:\.(?:[А-Я]{1,3}|[1-9]\d*))*\.?|П\d{4}-[1-9]\d*(?:\.[1-9]\d*)?)"
+)
+_PROJECT_WITHOUT_VERSION = re.compile(r"([1-9]\d*(?:К[А-Я]?|МФ)(?:\.[А-Я]{1,3})?)\.?")
+
+
+def project_reference_valid(value: str | None) -> bool:
+    return bool(_PROJECT_NUMBER.fullmatch(re.sub(r"\s+", "", _text(value).upper())))
+
+
+def normalize_project_reference(value: str | None) -> str:
+    """Canonical form: upper case, no spaces, Latin homoglyphs folded, «2000К» → «2000К.1»."""
+    normalized = re.sub(r"\s+", "", _text(value).upper()).translate(_PROJECT_HOMOGLYPHS)
+    match = _PROJECT_WITHOUT_VERSION.fullmatch(normalized)
+    return f"{match.group(1)}.1" if match else normalized
+
+
+def ensure_projects_registered(
+    references: Sequence[str | None], registered: Iterable[str] | None
+) -> None:
+    """Every project reference must be an open registry project; ``None`` = registry unavailable."""
+    if registered is None:
+        return
+    known = {normalize_project_reference(item) for item in registered}
+    for index, reference in enumerate(references, start=1):
+        if not _text(reference):
+            continue
+        project = normalize_project_reference(reference)
+        if project not in known:
+            raise ValidationError(
+                f"Позиция {index}: проект «{project}» не найден в реестре открытых проектов"
+            )
+
+
 class RequestStatus(str, Enum):
     NEW = "Новый"
     IN_WORK = "В работе"
@@ -198,10 +236,16 @@ def validate_draft(draft: RequestDraft) -> RequestDraft:
     if unit is None:
         raise ValidationError("Недопустимая ЕД.ИЗМ: выерите значение из справочника")
     quality_document = apply_quality_document_rule(category, draft.quality_document)
+    project_reference = _text(draft.project_reference)
+    if project_reference and not project_reference_valid(project_reference):
+        raise ValidationError(
+            f"Недопустимый № ПРОЕКТА «{project_reference}»: нужен формат 591К.3 (кириллическая «К»), "
+            "51МФ.1 или П2510-1.2"
+        )
     normalized = replace(
         draft,
         purpose=purpose,
-        project_reference=_text(draft.project_reference) or None,
+        project_reference=normalize_project_reference(project_reference) or None,
         delivery_point=delivery_point,
         name=_text(draft.name),
         item_type=_text(draft.item_type),
