@@ -50,6 +50,13 @@ relevant note). `autoMemoryDirectory` in the gitignored `.claude/settings.local.
 it on a new machine. The brain vault mounts it next to SUPPLYMAP's memory, so `[[links]]` to SUPPLYMAP
 notes resolve. Save here only what the repo doesn't already say.
 
+## Autonomous migration conveyor
+The remaining port runs unattended: a Desktop Routine calls `/migrate-next` (skill
+`.claude/skills/migrate-next`) on a schedule. Each run takes 1–2 tasks from `docs/migration/BACKLOG.md`,
+does them in worktree agents, merges into `main`, and logs to `docs/migration/RUNLOG.md`. The queue
+order is the priority; the owner edits it by hand. Outside a run, don't take BACKLOG tasks silently.
+If you do one on request, mark it there the same way.
+
 ## Git — owner rule (2026-09-24)
 - Every commit is authored by the owner only. **No `Co-Authored-By: Claude`, no "Generated with Claude
   Code"** in commits or PRs — Claude is not a collaborator on this repo. `.claude/settings.json` turns
