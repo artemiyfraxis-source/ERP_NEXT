@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { recoveredRoot } from "./sibling-paths.mjs";
 
-const defaultRecoveryRoot = resolve(import.meta.dirname, "..", "..", "ERP_RECOVERED");
-const recoveryRoot = process.env.ERP_RECOVERED_ROOT || defaultRecoveryRoot;
+const recoveryRoot = recoveredRoot;
 const sourcePath = join(
   recoveryRoot,
   "reconstruction",

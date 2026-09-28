@@ -2,9 +2,10 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { supplymapRoot } from "./sibling-paths.mjs";
 
 const root = join(import.meta.dirname, "..");
-const repositoryRoot = process.env.SUPPLYMAP_SOURCE_REPOSITORY || join(root, "..", "SUPPLYMAP");
+const repositoryRoot = supplymapRoot;
 const sourceRef = process.env.TECHCARDS_SOURCE_REF || "feat/techmap-web-generator";
 
 function git(...args) {

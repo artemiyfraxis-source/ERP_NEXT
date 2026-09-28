@@ -4,9 +4,9 @@ import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { supplymapRoot } from "../scripts/sibling-paths.mjs";
 
 const root = join(import.meta.dirname, "..");
-const supplymapRoot = process.env.SUPPLYMAP_SOURCE_REPOSITORY || join(root, "..", "SUPPLYMAP");
 const moduleMap = JSON.parse(await readFile(join(root, "module-map.json"), "utf8"));
 const legacyContract = JSON.parse(
   await readFile(join(root, "contracts", "legacy-projects.openapi.json"), "utf8"),

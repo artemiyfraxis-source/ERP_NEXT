@@ -5,9 +5,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { supplymapRoot } from "../../scripts/sibling-paths.mjs";
 
 const root = join(import.meta.dirname, "..", "..");
-const supplymap = process.env.SUPPLYMAP_SOURCE_REPOSITORY || join(root, "..", "SUPPLYMAP");
+const supplymap = supplymapRoot;
 const modulesDir = join(root, "backend", "app", "modules");
 
 // Environment check: runs after scripts/setup-env.mjs, so anything missing here means setup failed.

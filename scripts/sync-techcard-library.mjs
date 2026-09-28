@@ -2,9 +2,10 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { supplymapRoot } from "./sibling-paths.mjs";
 
 const root = join(import.meta.dirname, "..");
-const repositoryRoot = join(root, "..", "SUPPLYMAP");
+const repositoryRoot = supplymapRoot;
 const sourceRepository = process.env.SUPPLYMAP_SOURCE_REPOSITORY || repositoryRoot;
 const sourceRef = process.env.SUPPLYMAP_SOURCE_REF || "origin/main";
 const sourcePath = "_local/tooling/test/fixtures/tc-library.json";

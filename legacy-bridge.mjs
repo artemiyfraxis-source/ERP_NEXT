@@ -6,6 +6,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { recoveredRoot } from "./scripts/sibling-paths.mjs";
 
 const allowedScopes = new Set(["projects", "calculation"]);
 const sectionByScope = { projects: "projects", calculation: "calc" };
@@ -497,7 +498,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const port = Number(process.env.ERP_LEGACY_BRIDGE_PORT || 5177);
   const publicDir = resolve(
     process.env.ERP_LEGACY_PUBLIC_DIR ||
-      join(import.meta.dirname, "..", "ERP_RECOVERED", "public"),
+      join(recoveredRoot, "public"),
   );
   const upstream = new URL(process.env.ERP_LEGACY_UPSTREAM || "http://127.0.0.1:5175");
   const secret = process.env.ERP_LEGACY_BRIDGE_SECRET || "";
