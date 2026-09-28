@@ -139,8 +139,10 @@ def production_plan(
             "opened_on": row.opened_on.isoformat() if row.opened_on else None,
             "deadline": row.deadline.isoformat() if row.deadline else None,
             "days_left": row.days_left, "stage": row.stage.status,
+            "stage_manual": row.stage.manual,
             "kits": [{
                 "item_index": item.item_index, "status": item.status, "manual": item.manual,
+                "tc": item.tc, "kit": item.kit,
                 "review": None if item.review is None else {
                     "value": item.review.value, "text": item.review.text,
                     "who": item.review.who,

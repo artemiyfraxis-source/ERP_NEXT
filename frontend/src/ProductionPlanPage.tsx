@@ -77,7 +77,7 @@ export function ProductionPlanPage({ principal }: { principal: Principal }) {
     </div>
     <div className="production-plan-layout">
       <div className="production-plan-list">
-        {rows.map((row) => <PlanRow key={row.project} row={row} selected={row.project === selectedProject} onClick={() => setSelectedProject(row.project)} />)}
+        {rows.map((row) => <PlanRow key={row.project} row={row} closed={!data.stages.includes(row.stage)} selected={row.project === selectedProject} onClick={() => setSelectedProject(row.project)} />)}
         {loaded && !rows.length && <div className="empty">Проектов в этом фильтре нет.</div>}
       </div>
       {selected && <PlanDetails row={selected} blockers={data.blockers} stages={data.stages} reviewValues={data.review_values} canEdit={canEdit} busy={busy} addEvent={addEvent} />}
@@ -85,7 +85,16 @@ export function ProductionPlanPage({ principal }: { principal: Principal }) {
   </section>;
 }
 
-function PlanRow({ row, selected, onClick }: { row: ProductionPlanRow; selected: boolean; onClick: () => void }) {
+// Facts under the stage (SUPPLYMAP 28.09): a manual stage jumps the ladder, so show what is really issued and picked.
+function kitFacts(kits: ProductionPlanRow["kits"]) {
+  const total = kits.length;
+  const count = (test: (item: ProductionPlanRow["kits"][number]) => boolean) => kits.filter(test).length;
+  const share = (done: number) => done === total ? "✓" : `${done}/${total}`;
+  const unreviewed = count((item) => item.tc && (!item.review || item.review.value === "не проверена"));
+  return `ТК ${share(count((item) => item.tc))}${unreviewed ? ` · не проверено ${unreviewed}` : ""} · набрано ${share(count((item) => item.kit))}`;
+}
+
+function PlanRow({ row, closed, selected, onClick }: { row: ProductionPlanRow; closed: boolean; selected: boolean; onClick: () => void }) {
   const supply = row.supply;
   const urgent = row.days_left !== null && row.days_left < 0 ? " overdue" : row.days_left !== null && row.days_left <= 3 ? " urgent" : "";
   return <button className={`panel production-plan-row${selected ? " selected" : ""}${row.blocker ? " blocked" : ""}`} onClick={onClick}>
@@ -94,6 +103,7 @@ function PlanRow({ row, selected, onClick }: { row: ProductionPlanRow; selected:
     <div className="plan-row-metrics">
       <span className={urgent}>Дедлайн: {shortDate(row.deadline)}{row.days_left !== null ? ` · ${row.days_left} дн.` : ""}</span>
       <span>КБ: {row.kits.map((item) => item.item_index).join(", ")}</span>
+      {row.kits.length > 0 && !closed && <span>{kitFacts(row.kits)}</span>}
       <span>Снабжение: {supply ? `${supply.stock}/${supply.total} на складе` : "нет позиций"}</span>
       <span>План: {row.plan ? `${row.plan.assigned}/${row.plan.total} этапов` : "нет заданий"}</span>
     </div>
@@ -129,7 +139,16 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
     <div className="plan-kit-stages">{row.kits.map((item) => <KitMarkEditor
       key={item.item_index} project={row.project} item={item} stages={stages}
       reviewValues={reviewValues} canEdit={canEdit} busy={busy} addEvent={addEvent}
-    />)}</div>
+    />)}
+      {/* A project without KBs takes its stage from a journal stage mark with an empty KB. */}
+      {!row.kits.length && canEdit && stages.includes(row.stage) && <div className="plan-kit-mark">
+        <strong>Без КБ</strong>
+        <label>Этап проекта<select aria-label="Этап проекта" value={row.stage_manual ? row.stage : "авто"} disabled={busy}
+          onChange={(event) => void addEvent({ project: row.project, kind: "stage", blocker: "", text: "", deadline: null, item_index: "", value: event.target.value })}>
+          <option value="авто">Авто · {row.stage}</option>{stages.map((stage) => <option key={stage}>{stage}</option>)}
+        </select></label>
+      </div>}
+    </div>
     {row.supply && <section><h3>Снабжение</h3><p>Всего {row.supply.total}: склад {row.supply.stock}, в пути {row.supply.transit}, в закупке {row.supply.buying}, в заявках {row.supply.request}.</p>{row.supply.eta && <small>Всё ожидается к {row.supply.eta}</small>}</section>}
     {row.plan && <section><h3>Загрузка цеха</h3><p>{row.plan.tasks} заданий · назначено {row.plan.assigned} из {row.plan.total} этапов.</p>{row.plan.start && <small>{moment(row.plan.start)} — {moment(row.plan.finish)}</small>}</section>}
     {canEdit && <section className="plan-note-form"><h3>Журнал проекта</h3><div className="plan-note-grid">
@@ -166,6 +185,7 @@ function KitMarkEditor({ project, item, stages, reviewValues, canEdit, busy, add
 
   return <div className="plan-kit-mark">
     <strong>{item.item_index}</strong>
+    <span>{item.tc ? "ТК выдана" : "ТК нет"} · {item.kit ? "набрано" : "не набрано"}</span>
     {canEdit ? <>
       <label>Этап<select aria-label={`Этап ${item.item_index}`} value={item.manual ? item.status : "авто"} disabled={busy}
         onChange={(event) => void addEvent(payload("stage", event.target.value))}>

@@ -119,6 +119,61 @@ def test_newer_techcard_invalidates_aware_review_when_card_time_is_naive():
     )
 
 
+def test_kit_stage_carries_techcard_and_kit_facts_under_a_manual_stage():
+    first = kit_stage_key("708К.4", "КБ1")
+    marks = summarize_kit_marks((
+        PlanEvent("708К.4", datetime(2026, 9, 28, 9), "Мастер", PLAN_KINDS["stage"], item_index="КБ2", value="В работе"),
+    ))
+    stage = project_stage("708К.4", ("КБ1", "КБ2"), {"tc": {first}, "kit": {first}}, marks=marks)
+
+    assert [(item.status, item.manual, item.tc, item.kit) for item in stage.kits] == [
+        ("КБ набрана", False, True, True),
+        ("В работе", True, False, False),
+    ]
+    # A manual-techcard project counts «ТК выдана» for every KB without a card.
+    manual_tc = project_stage("714К.", ("КБ1",), {"tc_project": {normalize_project_number("714К.")}})
+    assert (manual_tc.kits[0].status, manual_tc.kits[0].tc, manual_tc.kits[0].kit) == ("ТК готова", True, False)
+
+
+def test_stage_mark_without_kb_is_the_stage_of_a_project_without_kits():
+    def marks(*values):
+        return summarize_kit_marks(tuple(
+            PlanEvent("70К.26.13", datetime(2026, 9, 28, 9, index), "план цеха", PLAN_KINDS["stage"], value=value)
+            for index, value in enumerate(values)
+        ))
+
+    shipped = project_stage("70К.26.13", (), {}, marks=marks("Отгружено"))
+    assert (shipped.status, shipped.manual, shipped.kits) == ("Отгружено", True, ())
+    # «авто» removes the project-level mark; the project falls back to the derived stage.
+    assert project_stage("70К.26.13", (), {}, marks=marks("В работе", "авто")) == project_stage("70К.26.13", (), {})
+    # A terminal registry status wins over the mark, as over any derived stage.
+    assert project_stage("70К.26.13", (), {}, "Отменён", marks("В работе")).status == "Отменён"
+    # A project with KBs ignores a project-level mark: its stage stays the slowest KB.
+    with_kits = project_stage("70К.26.13", ("КБ1",), {}, marks=marks("Отгружено"))
+    assert (with_kits.status, with_kits.manual) == ("Новый", False)
+    # A manual-techcard project without cards also takes the mark over its «ТК готова» start.
+    manual_tc = project_stage(
+        "714К.", (), {"tc_project": {normalize_project_number("714К.")}},
+        marks=summarize_kit_marks((PlanEvent("714К.", datetime(2026, 9, 28), "", PLAN_KINDS["stage"], value="В работе"),)),
+    )
+    assert manual_tc.status == "В работе"
+
+
+def test_plan_shows_registry_project_without_kits_by_its_journal_stage_and_blocker():
+    events = (
+        PlanEvent("70К.26.13", datetime(2026, 9, 28, 9), "план цеха", PLAN_KINDS["stage"], value="КБ на складе"),
+        PlanEvent("70К.26.13", datetime(2026, 9, 28, 10), "план цеха", PLAN_KINDS["block"], "ХОЛД", "ждём оплату"),
+    )
+    rows = build_production_plan(
+        cards=(), tasks=(), fulfillment=(), goods=(), requests=(), procurement=(),
+        projects=(PlanProjectSnapshot("70К.26.13", customer="Заказчик"),), events=events,
+        today=date(2026, 9, 28),
+    )
+
+    assert [(row.project, row.stage.status, row.stage.manual) for row in rows] == [("70К.26.13", "КБ на складе", True)]
+    assert rows[0].journal.blocker and rows[0].journal.blocker.type == "ХОЛД"
+
+
 def test_manual_techcard_project_starts_at_ready_without_fake_card_rows():
     assert project_stage(
         "714К.", (), {"tc_project": {normalize_project_number("714К.")}},
@@ -131,12 +186,18 @@ def test_deadline_and_note_validation_match_current_supplymap():
     assert days_left("", date(2026, 9, 22)) is None
     validate_plan_note({"project": "708К.4", "kind": "unblock"}, ["708К.4"])
     validate_plan_note({"project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "авто"}, ["708К.4"])
+    # A stage mark with an empty KB is the stage of the whole project.
+    validate_plan_note({"project": "708К.4", "kind": "stage", "item_index": " ", "value": "Отгружено"}, ["708К.4"])
+    validate_plan_note({"project": "708К.4", "kind": "stage", "value": "авто"}, ["708К.4"])
 
     cases = (
         ({"project": "708К.4", "kind": "block", "text": "x"}, "Выбери"),
         ({"project": "1К.1", "kind": "note", "text": "x"}, "Проект не найден"),
         ({"project": "708К.4", "kind": "deadline"}, "Укажи дату"),
         ({"project": "708К.4", "kind": "tcReview", "item_index": "КБ1", "value": "с погрешностями"}, "Напиши"),
+        ({"project": "708К.4", "kind": "stage", "item_index": "корпус", "value": "В работе"}, "Укажи КБ"),
+        ({"project": "708К.4", "kind": "stage", "value": "Готово"}, "Неизвестный этап"),
+        ({"project": "708К.4", "kind": "tcReview", "value": "проверена"}, "Укажи КБ"),
     )
     for payload, message in cases:
         with pytest.raises(ProductionValidationError, match=message):

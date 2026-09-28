@@ -4,7 +4,7 @@
   "strategy": "native-rewrite",
   "sourceRepository": "../SUPPLYMAP",
   "sourceRef": "main",
-  "sourceCommit": "6a636fc78b555b0611ed6af430797aa787e06954",
+  "sourceCommit": "73f4ad88306f8fc218b2cf9a909dfe0291980d8b",
   "sources": [
     "ProdTasks.gs",
     "ProdPlan.gs",
@@ -44,6 +44,8 @@
     "production-plan-project-registry-is-an-atomic-legacy-projects-projection",
     "manual-techcard-projects-714K-and-35K-M-34-start-at-techcard-ready-without-fake-card-rows",
     "manual-kit-stage-overrides-derived-facts-until-auto-is-selected",
+    "kit-stage-carries-issued-techcard-and-picked-kit-facts-under-a-manual-stage",
+    "stage-mark-without-kb-sets-the-stage-of-a-non-terminal-project-without-kits",
     "techcard-review-state-is-append-only-and-invalidated-by-a-newer-techcard-revision"
   ]
 }

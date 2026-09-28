@@ -63,6 +63,9 @@ class KitStage:
     status: str
     manual: bool = False
     review: KitReview | None = None
+    # Facts next to the stage: a manual stage jumps the ladder and would hide them otherwise.
+    tc: bool = False
+    kit: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,8 @@ class KitMark:
 class ProjectStage:
     status: str
     kits: tuple[KitStage, ...]
+    # True when a journal stage mark with an empty KB set the stage of a project without KBs.
+    manual: bool = False
 
 
 def project_stage(
@@ -92,7 +97,7 @@ def project_stage(
     terminal_status: str = "",
     marks: Mapping[str, KitMark] | None = None,
 ) -> ProjectStage:
-    stages: list[tuple[str, int, bool, KitReview | None]] = []
+    stages: list[KitStage] = []
     marks = marks or {}
     manual_tc = normalize_project_number(project) in facts.get("tc_project", ())
     for item_index in item_indexes:
@@ -105,20 +110,26 @@ def project_stage(
             stage_index -= 1
         mark = marks.get(key, KitMark())
         manual_index = KIT_STAGES.index(mark.stage) if mark.stage in KIT_STAGES else -1
-        stages.append((
+        stages.append(KitStage(
             str(item_index).strip().upper(),
-            manual_index if manual_index >= 0 else stage_index,
+            KIT_STAGES[manual_index if manual_index >= 0 else stage_index],
             manual_index >= 0,
             mark.review,
+            tc=key in facts.get("tc", ()) or manual_tc,
+            kit=key in facts.get("kit", ()),
         ))
     project_index = min(
-        (stage_index for _, stage_index, _, _ in stages),
+        (KIT_STAGES.index(stage.status) for stage in stages),
         default=1 if manual_tc else 0,
     )
-    return ProjectStage(
-        terminal_status or KIT_STAGES[project_index],
-        tuple(KitStage(item_index, KIT_STAGES[index], manual, review) for item_index, index, manual, review in stages),
-    )
+    if terminal_status:
+        return ProjectStage(terminal_status, tuple(stages))
+    # A project without KBs (a shop row with no calculation, or already shipped) takes its stage
+    # from a journal stage mark with an empty KB; a project with KBs ignores such a mark.
+    project_mark = marks.get(kit_stage_key(project, ""), KitMark())
+    if not stages and project_mark.stage in KIT_STAGES:
+        return ProjectStage(project_mark.stage, (), manual=True)
+    return ProjectStage(KIT_STAGES[project_index], tuple(stages))
 
 
 def supply_bucket(status: object, in_purchase: bool) -> str:
@@ -301,7 +312,9 @@ def validate_plan_note(payload: Mapping[str, object], known_projects: Iterable[s
         raise ProductionValidationError("Напиши, что происходит.")
     if kind == "deadline" and _date(payload.get("deadline")) is None:
         raise ProductionValidationError("Укажи дату дедлайна.")
-    if kind in {"stage", "tcReview"} and not re.match(r"^КБ\d+", str(payload.get("item_index") or "").strip(), flags=re.I):
+    # A stage mark with an empty KB is the stage of the whole project; a techcard review always needs a KB.
+    item_index = str(payload.get("item_index") or "").strip()
+    if (kind == "tcReview" or (kind == "stage" and item_index)) and not re.match(r"^КБ\d+", item_index, flags=re.I):
         raise ProductionValidationError("Укажи КБ.")
     if kind == "stage" and payload.get("value") not in (*KIT_STAGES, PLAN_STAGE_AUTO):
         raise ProductionValidationError("Неизвестный этап.")

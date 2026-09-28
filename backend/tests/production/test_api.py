@@ -217,8 +217,10 @@ def test_native_production_plan_combines_project_snapshot_techcard_task_and_jour
     assert row["project"] == "708К.4"
     assert row["customer"] == "Заказчик"
     assert row["stage"] == "В работе"
+    assert row["stage_manual"] is False
     assert row["kits"] == [{
         "item_index": "КБ1", "status": "В работе", "manual": False,
+        "tc": True, "kit": False,
         "review": {
             "value": "не проверена", "text": "ТК выдана", "who": "генератор",
             "occurred_at": "2026-09-22T09:00:00",
@@ -276,6 +278,7 @@ def test_manual_techcard_project_appears_from_snapshot_without_fake_card(product
         "deadline": None,
         "days_left": None,
         "stage": "ТК готова",
+        "stage_manual": False,
         "kits": [],
         "supply": None,
         "plan": None,
@@ -283,6 +286,38 @@ def test_manual_techcard_project_appears_from_snapshot_without_fake_card(product
         "last": None,
         "events": [],
     }]
+
+
+def test_stage_mark_without_kb_sets_stage_of_project_without_kits(production_api):
+    client, _operator_id = production_api
+    client.put("/api/production/plan/projects-snapshot", json={"projects": [{
+        "project": "70К.26.13", "customer": "Заказчик", "status": "Новый", "terminal": False,
+    }]})
+    stage = client.post("/api/production/plan/events", json={
+        "project": "70К.26.13", "kind": "stage", "item_index": "", "value": "Отгружено",
+        "text": "по листу цеха",
+    })
+    blocked = client.post("/api/production/plan/events", json={
+        "project": "70К.26.13", "kind": "block", "blocker": "ОЖИД ИНФ", "text": "ждём ответ",
+    })
+    review = client.post("/api/production/plan/events", json={
+        "project": "70К.26.13", "kind": "tcReview", "item_index": "", "value": "проверена",
+    })
+    bad_kb = client.post("/api/production/plan/events", json={
+        "project": "70К.26.13", "kind": "stage", "item_index": "корпус", "value": "В работе",
+    })
+    loaded = client.get("/api/production/plan")
+
+    assert stage.status_code == 201, stage.text
+    assert stage.json()["event"]["item_index"] == ""
+    assert blocked.status_code == 201, blocked.text
+    assert review.status_code == 422
+    assert review.json()["detail"] == "Укажи КБ."
+    assert bad_kb.status_code == 422
+    assert bad_kb.json()["detail"] == "Укажи КБ."
+    row = loaded.json()["rows"][0]
+    assert (row["project"], row["stage"], row["stage_manual"], row["kits"]) == ("70К.26.13", "Отгружено", True, [])
+    assert row["blocker"]["type"] == "ОЖИД ИНФ"
 
 
 def test_operator_starts_and_cancels_work_from_confirmed_previous_box(production_api):

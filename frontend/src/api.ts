@@ -281,10 +281,13 @@ export interface ProductionPlanRow {
   deadline: string | null;
   days_left: number | null;
   stage: string;
+  stage_manual: boolean;
   kits: Array<{
     item_index: string;
     status: string;
     manual: boolean;
+    tc: boolean;
+    kit: boolean;
     review: null | { value: string; text: string; who: string; occurred_at: string | null };
   }>;
   supply: null | {
