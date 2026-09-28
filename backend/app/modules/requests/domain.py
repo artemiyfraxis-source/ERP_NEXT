@@ -121,6 +121,16 @@ class Request:
             procurement_actor=actor,
         )
 
+    def retransfer(self, actor: Actor) -> Request:
+        """Repeated «В закупку» (Pipeline.gs:98-112): a new aggregate version, so a new handoff event.
+
+        Procurement turns it into a new revision line; the earlier line stays as history.
+        """
+        if self.status is not RequestStatus.IN_WORK:
+            raise ValidationError("Повторно перенести можно только заявку «В работе»")
+        _validate_actor(actor)
+        return replace(self, version=self.version + 1, procurement_actor=actor)
+
 
 @dataclass(frozen=True)
 class ProcurementRequestedSnapshot:

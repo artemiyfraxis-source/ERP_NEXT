@@ -14,6 +14,10 @@ from app.modules.procurement.domain import (
     create_line_from_requested,
     is_backorder_id,
     next_backorder_id,
+    next_retransfer_revision,
+    next_system_id,
+    number_to_revision,
+    revision_to_number,
 )
 from app.modules.procurement.money import EMPTY_MONEY, ExchangeRate, MoneyInput
 from app.shared.events import OutboxMessage
@@ -600,3 +604,46 @@ def test_cancelled_line_keeps_its_invoice():
 def _strip_money(line):
     # A line that got its invoice before the money gate existed.
     return dataclasses.replace(line, money=EMPTY_MONEY)
+@pytest.mark.parametrize(
+    ("revisions", "expected"),
+    [
+        ([], "A"),
+        (["A"], "B"),
+        (["A", "B"], "C"),
+        (["B", "A"], "C"),
+        (["Z"], "AA"),
+        (["AZ"], "BA"),
+        ([" b ", "", "рев", "1"], "C"),
+    ],
+)
+def test_retransfer_revision_is_max_letter_plus_one(revisions, expected):
+    assert next_retransfer_revision(revisions) == expected
+
+
+def test_revision_letters_round_trip_like_supplymap():
+    assert [number_to_revision(n) for n in (0, 1, 26, 27, 52, 53, 702, 703)] == [
+        "", "A", "Z", "AA", "AZ", "BA", "ZZ", "AAA",
+    ]
+    assert all(revision_to_number(number_to_revision(n)) == n for n in range(1, 800))
+    assert revision_to_number("Б") == 0
+
+
+def test_retransfer_legacy_id_takes_next_number_of_the_day():
+    day = date(2026, 9, 15)
+    assert next_system_id([], day) == "SM-20260915-01"
+    assert (
+        next_system_id(
+            ["SM-20260915-01", "SM-20260915-03-Д", "SM-20260914-09", "SM-20260915-x"], day
+        )
+        == "SM-20260915-04"
+    )
+    assert next_system_id(["SM-20260915-99"], day) == "SM-20260915-100"
+
+
+def test_retransfer_line_keeps_payload_but_takes_given_id_and_revision():
+    line = create_line_from_requested(requested_message(), legacy_id="SM-20260915-07", revision="C")
+
+    assert line.legacy_id == "SM-20260915-07"
+    assert line.revision == "C"
+    assert line.status is ProcurementStatus.NEW
+    assert line.designation == "RND.001"

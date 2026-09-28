@@ -80,6 +80,15 @@ class FakeProcurementRepository:
     def get(self, line_id):
         return self.items.get(line_id)
 
+    def legacy_ids_with_prefix(self, prefix):
+        return [item.legacy_id for item in self.items.values() if item.legacy_id.startswith(prefix)]
+
+    def has_lines_for_request(self, source_request_id):
+        return any(item.source_request_id == source_request_id for item in self.items.values())
+
+    def revisions_for_designation(self, designation):
+        return [item.revision for item in self.items.values() if item.designation == designation]
+
     def add(self, line):
         self.items[line.id] = line
 

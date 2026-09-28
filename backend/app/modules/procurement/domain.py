@@ -495,7 +495,13 @@ def _decimal(payload: dict[str, str | None], key: str, *, required: bool = False
     return Decimal(str(raw))
 
 
-def create_line_from_requested(message: OutboxMessage) -> ProcurementLine:
+def create_line_from_requested(
+    message: OutboxMessage,
+    *,
+    legacy_id: str | None = None,
+    revision: str = "A",
+) -> ProcurementLine:
+    """First transfer → «Новый», Рев.A; a re-transfer passes its new System ID and revision letter."""
     if message.topic != "procurement.requested":
         raise ProcurementValidationError(f"Unexpected topic: {message.topic}")
     payload = message.payload
@@ -505,8 +511,8 @@ def create_line_from_requested(message: OutboxMessage) -> ProcurementLine:
             source_event_id=message.id,
             source_idempotency_key=message.idempotency_key,
             source_request_id=UUID(_required(payload, "source_request_id")),
-            legacy_id=_required(payload, "legacy_id"),
-            revision="A",
+            legacy_id=legacy_id or _required(payload, "legacy_id"),
+            revision=revision,
             status=ProcurementStatus.NEW,
             version=1,
             created_at=message.created_at,
@@ -535,6 +541,31 @@ def create_line_from_requested(message: OutboxMessage) -> ProcurementLine:
         if isinstance(error, ProcurementValidationError):
             raise
         raise ProcurementValidationError(f"Invalid procurement.requested payload: {error}") from error
+
+
+def revision_to_number(revision: str) -> int:
+    """`letterToNum_` (Schema.gs:114): 'A'→1, 'Z'→26, 'AA'→27; anything but Latin letters → 0."""
+    text = str(revision or "").strip().upper()
+    if not re.fullmatch(r"[A-Z]+", text):
+        return 0
+    number = 0
+    for char in text:
+        number = number * 26 + (ord(char) - 64)
+    return number
+
+
+def number_to_revision(number: int) -> str:
+    """`numToLetter_` (Schema.gs:123): 1→'A', 26→'Z', 27→'AA'; below 1 → ''."""
+    letters = ""
+    while number > 0:
+        number, rest = divmod(number - 1, 26)
+        letters = chr(65 + rest) + letters
+    return letters
+
+
+def next_retransfer_revision(revisions: Iterable[str]) -> str:
+    """`nextRetransferRevision_` (Schema.gs:134): max letter among the designation's lines + 1; none → 'A'."""
+    return number_to_revision(max((revision_to_number(item) for item in revisions), default=0) + 1)
 
 
 BACKORDER_SUFFIX = "-Д"

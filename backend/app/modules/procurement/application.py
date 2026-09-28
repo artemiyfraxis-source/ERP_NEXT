@@ -25,6 +25,8 @@ from .domain import (
     group_supplier_requests,
     next_backorder_id,
     next_order_number,
+    next_retransfer_revision,
+    next_system_id,
     supplier_reference,
     supplier_request_blockers,
     supplier_request_letter,
@@ -49,6 +51,8 @@ class ProcurementRepository(Protocol):
     def legacy_ids_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def ready_for_request(self) -> Sequence[ProcurementLine]: ...
     def order_numbers_with_prefix(self, prefix: str) -> Sequence[str]: ...
+    def has_lines_for_request(self, source_request_id: UUID) -> bool: ...
+    def revisions_for_designation(self, designation: str) -> Sequence[str]: ...
     def add(self, line: ProcurementLine) -> None: ...
     def add_order(self, order: SupplierOrder) -> None: ...
     def get_order(self, order_number: str) -> SupplierOrder | None: ...
@@ -244,6 +248,20 @@ class ReconcileProcurementRateCommand:
     now: datetime
 
 
+def _line_from_requested(message: OutboxMessage, lines: ProcurementRepository) -> ProcurementLine:
+    """`requestRowsToPurchaseLocked_` (Pipeline.gs:98-112): the first transfer of a request is Рев.A under
+    the request's System ID; a repeated transfer appends a NEW line — fresh System ID, revision = max letter
+    among lines of the same НАЗНАЧЕНИЕ + 1, «Новый» — and leaves the earlier line and its buyer data intact.
+    """
+    line = create_line_from_requested(message)
+    if not lines.has_lines_for_request(line.source_request_id):
+        return line
+    day = line.created_at.date()
+    legacy_id = next_system_id(lines.legacy_ids_with_prefix(f"SM-{day:%Y%m%d}-"), day)
+    revision = next_retransfer_revision(lines.revisions_for_designation(line.designation))
+    return create_line_from_requested(message, legacy_id=legacy_id, revision=revision)
+
+
 def consume_procurement_requested(
     message: OutboxMessage,
     uow: UnitOfWork,
@@ -257,7 +275,7 @@ def consume_procurement_requested(
                 )
             return existing
 
-        line = create_line_from_requested(message)
+        line = _line_from_requested(message, uow.procurement)
         uow.procurement.add(line)
         uow.audit.add(
             AuditEvent(
@@ -294,7 +312,7 @@ def dispatch_next_procurement_requested(
             line = existing
         else:
             try:
-                line = create_line_from_requested(message)
+                line = _line_from_requested(message, uow.procurement)
             except ProcurementValidationError as error:
                 uow.outbox.mark_failed(message.id, now, str(error))
                 uow.commit()

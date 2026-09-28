@@ -396,6 +396,20 @@ class SqlAlchemyProcurementRepository:
             line_ids=tuple(line_ids),
         )
 
+    def has_lines_for_request(self, source_request_id: UUID) -> bool:
+        statement = (
+            select(ProcurementLineRow.id)
+            .where(ProcurementLineRow.source_request_id == source_request_id)
+            .limit(1)
+        )
+        return self.session.scalar(statement) is not None
+
+    def revisions_for_designation(self, designation: str) -> list[str]:
+        statement = select(ProcurementLineRow.revision).where(
+            ProcurementLineRow.designation == designation.strip()
+        )
+        return list(self.session.scalars(statement))
+
     def add(self, line: ProcurementLine) -> None:
         incoming = _line_row(line)
         stored = self.session.get(ProcurementLineRow, line.id)

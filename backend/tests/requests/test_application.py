@@ -208,3 +208,48 @@ def test_handoff_rejects_missing_request_without_partial_commit():
     assert uow.commits == 0
     assert not uow.audit.items
     assert not uow.outbox.items
+
+
+def test_retransfer_emits_a_new_event_per_call_and_needs_request_in_work():
+    uow = FakeUnitOfWork()
+    request = create_requests(
+        CreateRequestsCommand(
+            creation_key="web-form:retransfer",
+            drafts=(draft(),),
+            actor=Actor(name="Иванов", department="РНД"),
+            now=datetime(2026, 9, 15, 10, 30),
+        ),
+        uow,
+    )[0]
+    buyer = Actor(name="Петров", department="Закупки")
+
+    with pytest.raises(ValidationError, match="«В работе»"):
+        handoff_requests(
+            HandoffRequestsCommand(
+                request_ids=(request.id,), actor=buyer, now=datetime(2026, 9, 15, 11, 0), retransfer=True
+            ),
+            uow,
+        )
+    assert uow.outbox.items == []
+
+    first = handoff_requests(
+        HandoffRequestsCommand(request_ids=(request.id,), actor=buyer, now=datetime(2026, 9, 15, 11, 0)),
+        uow,
+    )
+    resend = HandoffRequestsCommand(
+        request_ids=(request.id,), actor=buyer, now=datetime(2026, 9, 16, 9, 0), retransfer=True
+    )
+    second = handoff_requests(resend, uow)
+    third = handoff_requests(resend, uow)
+
+    keys = [message[0].idempotency_key for message in (first, second, third)]
+    assert len(set(keys)) == 3, "every repeated transfer is a new revision, as in SUPPLYMAP"
+    assert uow.requests.get(request.id).status is RequestStatus.IN_WORK
+    assert uow.requests.get(request.id).version == 4
+    assert [event.event_type for event in uow.audit.items] == [
+        "request.created",
+        "request.sent_to_procurement",
+        "request.resent_to_procurement",
+        "request.resent_to_procurement",
+    ]
+    assert second[0].payload["legacy_id"] == request.legacy_id

@@ -251,3 +251,77 @@ def test_poison_outbox_is_dead_lettered_after_five_attempts():
         assert poison.attempt_count == 5
         assert poison.dead_lettered_at == datetime(2026, 9, 15, 11, 4)
     engine.dispose()
+
+
+def test_repeated_transfer_appends_next_revision_with_new_system_id_and_keeps_old_line():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_schema(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    request_uow = lambda: SqlAlchemyUnitOfWork(sessions)
+    procurement_uow = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    requests = create_requests(
+        CreateRequestsCommand(
+            creation_key="retransfer:create",
+            drafts=tuple(
+                RequestDraft(
+                    purpose="RND",
+                    delivery_point="г. Москва, ул. 6-я Радиальная, д. 17",
+                    name=name,
+                    item_type="Комплектующие",
+                    quantity=Decimal("2"),
+                    unit="шт",
+                    quality_document="Нет",
+                    procurement_deadline=datetime(2026, 9, 18).date(),
+                    planned_date=datetime(2026, 9, 25).date(),
+                )
+                for name in ("Разъём", "Кабель")
+            ),
+            actor=Actor(name="Иванов", department="РНД"),
+            now=datetime(2026, 9, 15, 10, 30),
+        ),
+        request_uow(),
+    )
+    first_request, second_request = requests
+    assert first_request.designation == second_request.designation
+    buyer = Actor(name="Петров", department="Закупки")
+
+    def handoff(request_ids, now, retransfer=False):
+        handoff_requests(
+            HandoffRequestsCommand(request_ids=request_ids, actor=buyer, now=now, retransfer=retransfer),
+            request_uow(),
+        )
+        lines = []
+        while (line := dispatch_next_procurement_requested(now, procurement_uow())) is not None:
+            lines.append(line)
+        return lines
+
+    originals = handoff((first_request.id, second_request.id), datetime(2026, 9, 15, 11, 0))
+    taken = take_procurement_in_work(
+        TakeProcurementInWorkCommand(line_ids=(originals[0].id,), actor=buyer, now=datetime(2026, 9, 15, 11, 30)),
+        procurement_uow(),
+    )[0]
+    retransferred = handoff(
+        (first_request.id, second_request.id), datetime(2026, 9, 16, 9, 0), retransfer=True
+    )
+
+    # The outbox dispatches messages of one moment in id order, so compare in dispatch order.
+    assert sorted((line.legacy_id, line.revision) for line in originals) == [
+        ("SM-20260915-01", "A"),
+        ("SM-20260915-02", "A"),
+    ]
+    assert [(line.legacy_id, line.revision, line.status) for line in retransferred] == [
+        ("SM-20260916-01", "B", ProcurementStatus.NEW),
+        ("SM-20260916-02", "C", ProcurementStatus.NEW),
+    ], "same НАЗНАЧЕНИЕ: max letter + 1, the next line in the batch sees the previous one"
+    assert {line.source_request_id for line in retransferred} == {first_request.id, second_request.id}
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(ProcurementLineRow)) == 4
+        kept = session.get(ProcurementLineRow, taken.id)
+        assert kept.status == ProcurementStatus.IN_WORK.value
+        assert kept.buyer_id == buyer.id
+        assert kept.revision == "A"
+    engine.dispose()

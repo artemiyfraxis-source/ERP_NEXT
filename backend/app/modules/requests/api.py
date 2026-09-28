@@ -126,6 +126,7 @@ class CalcImportInput(BaseModel):
 
 class HandoffRequestsInput(BaseModel):
     request_ids: list[UUID] = Field(min_length=1, max_length=100)
+    retransfer: bool = False
 
 
 def unit_of_work_factory(request: WebRequest) -> Callable[[], UnitOfWork]:
@@ -341,6 +342,7 @@ def handoff_requests(
             request_ids=tuple(payload.request_ids),
             actor=principal.actor,
             now=now,
+            retransfer=payload.retransfer,
         )
         messages = _retry_transaction(
             lambda: handoff_requests_use_case(command, uow_factory()),

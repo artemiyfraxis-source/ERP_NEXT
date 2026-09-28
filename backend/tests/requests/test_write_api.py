@@ -136,3 +136,30 @@ def test_handoff_requires_buyer_and_retry_does_not_duplicate_outbox(write_api):
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(OutboxMessageRow)) == 1
         assert session.get(RequestRow, UUID(request_id)).procurement_actor_name == "Петров"
+
+
+def test_retransfer_is_an_explicit_flag_and_refused_for_a_new_request(write_api):
+    client, engine, sessions = write_api
+    created = client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:retransfer:1"},
+        json={"requests": [request_payload()]},
+    ).json()
+    request_id = created["requests"][0]["id"]
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Петров", department="Закупки"),
+        email="petrov@example.test",
+        roles=frozenset({"buyer"}),
+        permissions={"procurement": "edit"},
+    )
+
+    too_early = client.post("/api/requests/handoff", json={"request_ids": [request_id], "retransfer": True})
+    first = client.post("/api/requests/handoff", json={"request_ids": [request_id]})
+    again = client.post("/api/requests/handoff", json={"request_ids": [request_id], "retransfer": True})
+
+    assert too_early.status_code == 422, too_early.text
+    assert first.status_code == 202, first.text
+    assert again.status_code == 202, again.text
+    assert again.json() != first.json()
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(OutboxMessageRow)) == 2

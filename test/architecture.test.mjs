@@ -204,7 +204,8 @@ test("procurement owns its status machine and records its SUPPLYMAP baseline", a
       `procurement domain imports ${forbidden}`,
     );
   assert.equal(procurementDomain.includes("class ProcurementStatus"), true);
-  assert.equal(procurementDomain.includes('revision="A"'), true);
+  // Rule: a line's default revision is A (a retransfer passes the next letter, RQ-3).
+  assert.match(procurementDomain, /revision(?:\s*:\s*str)?\s*=\s*"A"/);
 });
 
 test("identity records its SUPPLYMAP baseline and avoids legacy token storage", async () => {

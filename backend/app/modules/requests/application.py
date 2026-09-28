@@ -83,6 +83,7 @@ class HandoffRequestsCommand:
     request_ids: Sequence[UUID]
     actor: Actor
     now: datetime
+    retransfer: bool = False
 
 
 def _creation_fingerprint(command: CreateRequestsCommand) -> str:
@@ -195,7 +196,9 @@ def handoff_requests(
         pending: list[tuple[Request, ProcurementRequestedSnapshot, OutboxMessage]] = []
         for request_id in request_ids:
             request = requests[request_id]
-            if request.status is RequestStatus.NEW:
+            if command.retransfer:
+                request = request.retransfer(command.actor)
+            elif request.status is RequestStatus.NEW:
                 request = request.start_procurement(command.actor)
             line = build_procurement_requested_snapshot(request, today=command.now.date())
             existing_message = uow.outbox.by_idempotency_key(line.idempotency_key)
@@ -220,7 +223,11 @@ def handoff_requests(
                 AuditEvent(
                     id=uuid4(),
                     aggregate_id=request.id,
-                    event_type="request.sent_to_procurement",
+                    event_type=(
+                        "request.resent_to_procurement"
+                        if command.retransfer
+                        else "request.sent_to_procurement"
+                    ),
                     actor=command.actor,
                     occurred_at=command.now,
                     details={"legacy_id": request.legacy_id},

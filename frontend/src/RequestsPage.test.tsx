@@ -113,6 +113,36 @@ describe("RequestsPage", () => {
     expect(await screen.findByText("Заявка передана в очередь закупки")).toBeInTheDocument();
   });
 
+  it("re-transfers a request in work as a new revision after confirmation", async () => {
+    const inWork = { ...row, status: "В работе" };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests" && (init?.method ?? "GET") === "GET") {
+        return json({ requests: [inWork] });
+      }
+      if (path === "/api/requests/handoff" && init?.method === "POST") {
+        return json({ accepted: [row.id] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    render(<RequestsPage principal={principal} />);
+    expect(screen.queryByRole("button", { name: "В закупку" })).not.toBeInTheDocument();
+    const button = await screen.findByRole("button", { name: "Повторно в закупку" });
+    fireEvent.click(button);
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/requests/handoff", expect.anything());
+    fireEvent.click(button);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/requests/handoff",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ request_ids: [row.id], retransfer: true }) }),
+    ));
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText("Заявка перенесена повторно: в закупке новая ревизия")).toBeInTheDocument();
+  });
+
   it("keeps view-only users read-only and hides buyer actions", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input) === "/api/requests/schema") return json(schema);

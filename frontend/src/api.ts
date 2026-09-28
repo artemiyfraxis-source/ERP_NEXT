@@ -909,10 +909,10 @@ export const requestsApi = {
       headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ requests: [request] }),
     }),
-  handoff: (requestIds: string[]) =>
+  handoff: (requestIds: string[], retransfer = false) =>
     api<{ accepted: unknown[] }>("/api/requests/handoff", {
       method: "POST",
-      body: JSON.stringify({ request_ids: requestIds }),
+      body: JSON.stringify({ request_ids: requestIds, retransfer }),
     }),
 };
 

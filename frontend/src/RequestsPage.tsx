@@ -108,12 +108,13 @@ export function RequestsPage({ principal }: { principal: Principal }) {
     }
   }
 
-  async function handoff(id: string) {
+  async function handoff(id: string, retransfer = false) {
+    if (retransfer && !window.confirm("Перенести заявку в закупку повторно? Появится новая строка со следующей ревизией, прежняя останется.")) return;
     setBusy(true);
     setError("");
     try {
-      await requestsApi.handoff([id]);
-      setNotice("Заявка передана в очередь закупки");
+      await requestsApi.handoff([id], retransfer);
+      setNotice(retransfer ? "Заявка перенесена повторно: в закупке новая ревизия" : "Заявка передана в очередь закупки");
       await reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось передать заявку");
@@ -153,7 +154,7 @@ export function RequestsPage({ principal }: { principal: Principal }) {
           <div className="panel-heading"><h2>Последние заявки</h2><span>До 200 строк</span></div>
           <div className="table-scroll">
             <table><thead><tr><th>ID</th><th>Наименование</th><th>Назначение</th><th>Кол-во</th><th>Приоритет</th><th>Статус</th><th /></tr></thead>
-              <tbody>{rows.map((row) => <tr key={row.id}><td><strong>{row.legacy_id}</strong><small>{row.designation}</small></td><td>{row.name}<small>{row.item_type}</small></td><td>{row.project_reference || row.purpose}</td><td>{row.quantity} {row.unit}</td><td>{row.priority}</td><td><span className="status">{row.status}</span></td><td>{row.status === "Новый" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => handoff(row.id)}>В закупку</button>}</td></tr>)}</tbody>
+              <tbody>{rows.map((row) => <tr key={row.id}><td><strong>{row.legacy_id}</strong><small>{row.designation}</small></td><td>{row.name}<small>{row.item_type}</small></td><td>{row.project_reference || row.purpose}</td><td>{row.quantity} {row.unit}</td><td>{row.priority}</td><td><span className="status">{row.status}</span></td><td>{row.status === "Новый" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => handoff(row.id)}>В закупку</button>}{row.status === "В работе" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => handoff(row.id, true)}>Повторно в закупку</button>}</td></tr>)}</tbody>
             </table>
           </div>
         </div>
