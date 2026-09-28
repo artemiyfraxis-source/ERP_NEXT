@@ -911,6 +911,11 @@ export const warehouseApi = {
       method: "PUT",
       body: JSON.stringify({ version, article, name, series }),
     }),
+  correctLocation: (lotId: string, version: number, storageLocation: string) =>
+    api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/location`, {
+      method: "PUT",
+      body: JSON.stringify({ version, storage_location: storageLocation }),
+    }),
   move: (lotId: string, version: number, storageLocation: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/move`, {
       method: "POST",

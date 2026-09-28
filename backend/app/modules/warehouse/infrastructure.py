@@ -32,7 +32,7 @@ class StockLotRow(Base):
     item_type: Mapped[str] = mapped_column(String(255), nullable=False)
     purpose: Mapped[str] = mapped_column(String(128), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
-    storage_location: Mapped[str] = mapped_column(String(16), nullable=False)
+    storage_location: Mapped[str] = mapped_column(String(255), nullable=False)
     inbound: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     written_off: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     reserved: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)

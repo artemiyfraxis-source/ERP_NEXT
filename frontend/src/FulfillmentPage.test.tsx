@@ -75,7 +75,7 @@ it("binds the lot selected by the warehouse worker with the current request vers
         package: "",
         name: "Разъём",
         unit: "шт",
-        storage_location: "1F5",
+        storage_location: "",
         available: "7",
       },
     ] });
@@ -89,6 +89,7 @@ it("binds the lot selected by the warehouse worker with the current request vers
   render(<FulfillmentPage principal={principal} />);
 
   const select = await screen.findByLabelText("Партия для Разъём");
+  expect(screen.getByRole("option", { name: /FRX\.26\.0000002 .* ЦАР \/ без места/ })).toBeInTheDocument();
   fireEvent.change(select, { target: { value: "40000000-0000-0000-0000-000000000002" } });
   fireEvent.click(screen.getByRole("button", { name: "Привязать" }));
 

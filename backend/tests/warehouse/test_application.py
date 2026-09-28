@@ -7,17 +7,20 @@ import pytest
 
 from app.modules.warehouse.application import (
     AddManualStockCommand,
+    CorrectLotLocationCommand,
     ManualStockItem,
     MoveLocationCommand,
     MoveLotCommand,
     PoisonWarehouseMessage,
     WriteOffCommand,
     add_manual_stock,
+    correct_lot_location,
     dispatch_next_warehouse_received,
     move_location,
     move_lot,
     write_off,
 )
+from app.modules.warehouse.domain import StockLot, WarehouseValidationError
 from app.shared.events import OutboxMessage
 from app.shared.warehouse_location import remap_storage_location
 from tests.factories import Actor
@@ -251,3 +254,79 @@ def test_whole_location_move_preserves_slots_and_skips_empty_lots():
     assert [event.event_type for event in uow.audit.items[-2:]] == [
         "warehouse.location_moved", "warehouse.location_moved",
     ]
+
+
+def test_whole_location_move_leaves_old_addresses_and_lots_without_a_place():
+    uow = Uow(message())
+    first = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    first = replace(first, storage_location="18C3")
+    others = [
+        replace(first, id=UUID(f"30000000-0000-0000-0000-00000000002{index}"),
+                grn=f"OLD.25.000002{index}", storage_location=location)
+        for index, location in enumerate(("", "A-01", "18C3Д"))
+    ]
+    for item in (first, *others):
+        uow.warehouse.add(item)
+
+    moved = move_location(MoveLocationCommand(
+        warehouse="ЦАР", source_location="18C3", target_location="20B5",
+        actor=Actor(name="Кладовщик", department="Склад"),
+        now=datetime(2026, 9, 22, 12, 0),
+    ), uow)
+
+    assert [item.storage_location for item in moved] == ["20B5"]
+    assert [uow.warehouse.get(item.id).storage_location for item in others] == ["", "A-01", "18C3Д"]
+
+
+def test_manual_location_correction_is_audited_and_unchanged_place_is_not_written():
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    actor = Actor(name="Кладовщик", department="Склад")
+
+    corrected = correct_lot_location(CorrectLotLocationCommand(
+        lot_id=lot.id, expected_version=lot.version, storage_location="A-01",
+        actor=actor, now=datetime(2026, 9, 22, 12, 0),
+    ), uow)
+    commits = uow.commits
+    unchanged = correct_lot_location(CorrectLotLocationCommand(
+        lot_id=lot.id, expected_version=corrected.version, storage_location=" A-01 ",
+        actor=actor, now=datetime(2026, 9, 22, 12, 1),
+    ), uow)
+
+    assert corrected.storage_location == "A-01"
+    assert unchanged == corrected
+    assert uow.commits == commits
+    assert uow.audit.items[-1].event_type == "warehouse.location_corrected"
+    assert uow.audit.items[-1].details == {"from": "1F4", "to": "A-01"}
+
+
+def test_repeated_receipt_reaches_a_lot_without_a_place():
+    uow = Uow(replace(message(), id=UUID("30000000-0000-0000-0000-000000000002"),
+                      payload={**message().payload, "receiving_line_id": "receiving:two"}))
+    imported = StockLot.create(
+        warehouse="ЦАР", grn="FRX.26.0000001", package="", name="Разъём",
+        item_type="Комплектующие", purpose="FRX.001", unit="шт", quantity=Decimal("4"),
+        storage_location="", source_receiving_ids=("import:ЦАР:7",), location_as_is=True,
+    )
+    uow.warehouse.add(imported)
+
+    received = dispatch_next_warehouse_received(datetime(2026, 9, 22, 12, 0), uow)
+
+    assert received.id == imported.id
+    assert received.inbound == Decimal("14")
+
+
+@pytest.mark.parametrize("location", ["", "A-01"])
+def test_manual_stock_still_needs_a_full_rack_address(location):
+    uow = Uow(message())
+
+    with pytest.raises(WarehouseValidationError, match="Место хранения"):
+        add_manual_stock(AddManualStockCommand(
+            items=(ManualStockItem(
+                warehouse="ЦАР", name="Разъём", item_type="", purpose="Склад", unit="шт",
+                quantity=Decimal("1"), storage_location=location,
+            ),),
+            actor=Actor(name="Кладовщик", department="Склад"),
+            now=datetime(2026, 9, 22, 12, 0),
+        ), uow)
+    assert uow.commits == 0

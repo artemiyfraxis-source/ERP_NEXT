@@ -90,6 +90,15 @@ class MoveLotCommand:
 
 
 @dataclass(frozen=True)
+class CorrectLotLocationCommand:
+    lot_id: UUID
+    expected_version: int
+    storage_location: str
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
 class EditLotIdentityCommand:
     lot_id: UUID
     expected_version: int
@@ -268,6 +277,24 @@ def move_lot(command: MoveLotCommand, uow: UnitOfWork) -> StockLot:
         uow.audit.add(
             AuditEvent(
                 id=uuid4(), aggregate_id=updated.id, event_type="warehouse.moved",
+                actor=command.actor, occurred_at=command.now,
+                details={"from": current.storage_location, "to": updated.storage_location},
+            )
+        )
+        uow.commit()
+        return updated
+
+
+def correct_lot_location(command: CorrectLotLocationCommand, uow: UnitOfWork) -> StockLot:
+    with uow:
+        current = _versioned(command.lot_id, command.expected_version, uow)
+        updated = current.correct_location(command.storage_location)
+        if updated == current:
+            return current
+        uow.warehouse.add(updated)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(), aggregate_id=updated.id, event_type="warehouse.location_corrected",
                 actor=command.actor, occurred_at=command.now,
                 details={"from": current.storage_location, "to": updated.storage_location},
             )

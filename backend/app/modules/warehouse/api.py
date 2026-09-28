@@ -13,12 +13,14 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, warehouse_edit_principal
+from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH
 from app.modules.references.domain import TechOperationTab
 from app.workflows.warehouse_article import infer_article_identity
 
 from .application import (
     AddManualStockCommand,
     ConcurrentWarehouseUpdate,
+    CorrectLotLocationCommand,
     EditLotIdentityCommand,
     ManualStockItem,
     MoveLocationCommand,
@@ -26,6 +28,7 @@ from .application import (
     UnitOfWork,
     WriteOffCommand,
     add_manual_stock,
+    correct_lot_location,
     edit_lot_identity,
     move_location,
     move_lot,
@@ -48,6 +51,11 @@ class WriteOffPayload(BaseModel):
 class MovePayload(BaseModel):
     version: int = Field(ge=1)
     storage_location: str = Field(min_length=3, max_length=16)
+
+
+class CorrectLocationPayload(BaseModel):
+    version: int = Field(ge=1)
+    storage_location: str = Field(default="", max_length=STORAGE_LOCATION_MAX_LENGTH)
 
 
 class EditIdentityPayload(BaseModel):
@@ -248,6 +256,28 @@ def move(
     return _run(
         lambda: move_lot(
             MoveLotCommand(
+                lot_id=lot_id,
+                expected_version=payload.version,
+                storage_location=payload.storage_location,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
+
+
+@router.put("/batches/{lot_id}/location")
+def correct_location(
+    lot_id: UUID,
+    payload: CorrectLocationPayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    return _run(
+        lambda: correct_lot_location(
+            CorrectLotLocationCommand(
                 lot_id=lot_id,
                 expected_version=payload.version,
                 storage_location=payload.storage_location,

@@ -236,3 +236,28 @@ it("moves a whole storage location from the unified movement form", async () => 
     warehouse: "ЦАР", source_location: "18C3", target_location: "20B5",
   }));
 });
+
+it("writes an old address as is from the lot operations and shows a lot without a place", async () => {
+  let payload: unknown;
+  const unplaced = { ...lot, storage_location: "" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) return json({ lots: [unplaced], total: 1, truncated: 0, next_cursor: null });
+    if (path.endsWith("/location") && init?.method === "PUT") {
+      payload = JSON.parse(String(init.body));
+      return json({ lot: { ...lot, version: 5, storage_location: "A-01" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.change(await screen.findByLabelText("Группировка склада"), { target: { value: "place" } });
+  expect(await screen.findByText("Без места · 1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Показать партии (1)" }));
+  expect(screen.getByText("без места")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.change(screen.getByLabelText("Место как есть"), { target: { value: " A-01 " } });
+  fireEvent.click(screen.getByRole("button", { name: "Записать место" }));
+
+  await waitFor(() => expect(payload).toEqual({ version: 4, storage_location: "A-01" }));
+});

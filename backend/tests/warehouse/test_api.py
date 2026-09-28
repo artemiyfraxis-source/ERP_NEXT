@@ -276,3 +276,105 @@ def test_receiver_moves_a_whole_location_and_preserves_each_slot(warehouse_api):
 
     assert response.status_code == 200, response.text
     assert [item["storage_location"] for item in response.json()["lots"]] == ["20B5A", "20B5B"]
+
+
+def test_whole_location_move_leaves_old_addresses_and_lots_without_a_place(warehouse_api):
+    client, first = warehouse_api
+    factory = app.state.warehouse_uow_factory
+    first = first.move("18C3")
+    others = [
+        StockLot.create(
+            warehouse="ЦАР", grn=f"OLD.25.000000{index}", package="", article="CON-OLD", name="",
+            item_type="", purpose="Склад", unit="шт", quantity=Decimal("2"),
+            storage_location=location, source_receiving_ids=(f"import:ЦАР:{index}",),
+            location_as_is=True,
+        )
+        for index, location in enumerate(("", "A-01", "18C3Д", "18C3 угол"))
+    ]
+    with factory() as uow:
+        for lot in (first, *others):
+            uow.warehouse.add(lot)
+        uow.commit()
+
+    response = client.post("/api/stock/locations/move", json={
+        "warehouse": "ЦАР", "source_location": "18C3", "target_location": "20B5",
+    })
+
+    assert response.status_code == 200, response.text
+    assert [item["storage_location"] for item in response.json()["lots"]] == ["20B5"]
+    with factory() as uow:
+        assert [uow.warehouse.get(lot.id).storage_location for lot in others] == [
+            "", "A-01", "18C3Д", "18C3 угол",
+        ]
+
+
+def test_receiver_writes_an_old_address_as_is_then_clears_it_and_moves_to_a_rack(warehouse_api):
+    client, lot = warehouse_api
+
+    legacy = client.put(f"/api/stock/batches/{lot.id}/location", json={
+        "version": lot.version, "storage_location": "  A-01 ",
+    })
+    found = client.get("/api/stock?q=a-01")
+    cleared = client.put(f"/api/stock/batches/{lot.id}/location", json={
+        "version": legacy.json()["lot"]["version"], "storage_location": "",
+    })
+    moved = client.post(f"/api/stock/batches/{lot.id}/move", json={
+        "version": cleared.json()["lot"]["version"], "storage_location": "01f05",
+    })
+
+    assert legacy.status_code == 200, legacy.text
+    assert legacy.json()["lot"]["storage_location"] == "A-01"
+    assert [item["id"] for item in found.json()["lots"]] == [str(lot.id)]
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["lot"]["storage_location"] == ""
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["lot"]["storage_location"] == "1F5"
+    assert moved.json()["lot"]["balance"] == "10"
+
+
+def test_long_old_address_is_kept_but_regular_move_rejects_it(warehouse_api):
+    client, lot = warehouse_api
+    long_place = "стеллаж у окна, верхняя полка"
+
+    kept = client.put(f"/api/stock/batches/{lot.id}/location", json={
+        "version": lot.version, "storage_location": long_place,
+    })
+    too_long = client.put(f"/api/stock/batches/{lot.id}/location", json={
+        "version": kept.json()["lot"]["version"], "storage_location": "я" * 256,
+    })
+    moved = client.post(f"/api/stock/batches/{lot.id}/move", json={
+        "version": kept.json()["lot"]["version"], "storage_location": "A-02",
+    })
+
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["lot"]["storage_location"] == long_place
+    assert too_long.status_code == 422
+    assert moved.status_code == 422
+    assert "Место хранения" in moved.json()["detail"]
+
+
+def test_location_correction_needs_the_warehouse_receiver_or_admin(warehouse_api):
+    client, lot = warehouse_api
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Закупщик", department="Закупки"),
+        email="buyer@example.test",
+        roles=frozenset({"buyer"}),
+        permissions={"warehouse": "edit"},
+    )
+
+    response = client.put(f"/api/stock/batches/{lot.id}/location", json={
+        "version": lot.version, "storage_location": "A-01",
+    })
+
+    assert response.status_code == 403
+
+
+def test_manual_stock_drops_leading_zeros_of_the_rack_address(warehouse_api):
+    client, _ = warehouse_api
+
+    response = client.post("/api/stock/batches", json={"items": [{
+        "warehouse": "ЦАР", "article": "CON-001", "quantity": "1", "storage_location": "01a01",
+    }]})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["lots"][0]["storage_location"] == "1A1"

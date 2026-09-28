@@ -110,8 +110,8 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
   return <tr>
     <td className="text"><strong>{line.article || "—"}</strong><small>{line.name}</small></td>
     <td className="num">{line.requirement} {line.unit}</td><td className="num">{line.reserved}</td><td className="num">{line.issued}</td>
-    <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}` : canEdit ? <select aria-label={`Партия для ${line.name}`} value={lotId} onChange={(event) => setLotId(event.target.value)}><option value="">Выберите партию</option>{candidates.map((lot) => <option key={lot.id} value={lot.id}>{lot.article || lot.name} · {lot.grn} · {lot.available} {lot.unit} · {lot.warehouse} / {lot.storage_location}</option>)}</select> : "Ждём поставки"}</td>
-    <td>{line.lot?.storage_location ?? "—"}</td>
+    <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}` : canEdit ? <select aria-label={`Партия для ${line.name}`} value={lotId} onChange={(event) => setLotId(event.target.value)}><option value="">Выберите партию</option>{candidates.map((lot) => <option key={lot.id} value={lot.id}>{lot.article || lot.name} · {lot.grn} · {lot.available} {lot.unit} · {lot.warehouse} / {lot.storage_location || "без места"}</option>)}</select> : "Ждём поставки"}</td>
+    <td>{line.lot ? line.lot.storage_location || "без места" : "—"}</td>
     <td>{canEdit && (line.lot ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.unbind(request.id, line.id, request.version))}>Снять резерв</button> : <button className="secondary small" disabled={busy || !lotId} onClick={() => void mutate(request.id, () => fulfillmentApi.bind(request.id, line.id, request.version, lotId))}>Привязать</button>)}</td>
   </tr>;
 }

@@ -63,7 +63,7 @@ class FulfillmentLineRow(Base):
     lot_warehouse: Mapped[str | None] = mapped_column(String(8), nullable=True)
     lot_grn: Mapped[str | None] = mapped_column(String(32), nullable=True)
     lot_package: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    lot_storage_location: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    lot_storage_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 def _line(row: FulfillmentLineRow) -> FulfillmentLine:

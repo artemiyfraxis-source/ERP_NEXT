@@ -404,6 +404,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
   const [article, setArticle] = useState(lot.article);
   const [name, setName] = useState(lot.name);
   const [series, setSeries] = useState(lot.series);
+  const [place, setPlace] = useState(lot.storage_location);
 
   function writeoff(event: FormEvent) {
     event.preventDefault();
@@ -413,7 +414,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
   return (
     <>
       <tr>
-        <td>{lot.item_type || "—"}</td><td><strong>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</strong></td><td className="num">{lot.balance}</td><td className="num">{lot.available}</td><td>{lot.unit}</td><td>{lot.storage_location || "—"}</td><td>{lot.series || "—"}</td><td className="text"><strong>{lot.article || "—"}</strong></td><td className="text">{lot.name || "—"}</td><td>{lot.purpose || "—"}</td><td>{lot.warehouse}</td>
+        <td>{lot.item_type || "—"}</td><td><strong>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</strong></td><td className="num">{lot.balance}</td><td className="num">{lot.available}</td><td>{lot.unit}</td><td>{lot.storage_location || "без места"}</td><td>{lot.series || "—"}</td><td className="text"><strong>{lot.article || "—"}</strong></td><td className="text">{lot.name || "—"}</td><td>{lot.purpose || "—"}</td><td>{lot.warehouse}</td>
         <td><button className="link-button table-link" onClick={() => setOpen((value) => !value)}>Операции</button></td>
       </tr>
       {open && <tr className="stock-actions-row"><td colSpan={12}><div className="stock-actions">
@@ -423,6 +424,12 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
           void mutate(lot.id, () => warehouseApi.editIdentity(lot.id, lot.version, article.trim(), name.trim(), series.trim())).catch(() => undefined);
         }}>
           <label>Артикул<input required value={article} onChange={(event) => setArticle(event.target.value)} /></label><label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label><button className="secondary small" disabled={disabled}>Сохранить карточку</button>
+        </form>
+        <form className="inline-action" onSubmit={(event) => {
+          event.preventDefault();
+          void mutate(lot.id, () => warehouseApi.correctLocation(lot.id, lot.version, place.trim())).catch(() => undefined);
+        }}>
+          <label>Место как есть<input aria-label="Место как есть" title="Ручная правка: любой текст (12C7, 12C7B, A-01…), пусто — без места" placeholder="без места" value={place} onChange={(event) => setPlace(event.target.value)} /></label><button className="secondary small" disabled={disabled}>Записать место</button>
         </form>
         <form className="inline-action" onSubmit={writeoff}>
           <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Основание<input required value={reason} onChange={(event) => setReason(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>

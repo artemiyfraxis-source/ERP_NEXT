@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from app.shared.warehouse_location import normalize_storage_location
+from app.shared.warehouse_location import normalize_storage_location, storage_location_as_is
 
 
 class WarehouseValidationError(ValueError):
@@ -16,6 +16,13 @@ class WarehouseValidationError(ValueError):
 def normalize_location(value: str) -> str:
     try:
         return normalize_storage_location(value)
+    except ValueError as error:
+        raise WarehouseValidationError(str(error)) from error
+
+
+def normalize_location_as_is(value: str) -> str:
+    try:
+        return storage_location_as_is(value)
     except ValueError as error:
         raise WarehouseValidationError(str(error)) from error
 
@@ -62,7 +69,9 @@ class StockLot:
         source_receiving_ids: tuple[str, ...],
         article: str = "",
         series: str = "",
+        location_as_is: bool = False,
     ) -> StockLot:
+        """location_as_is — old data: an empty place or an old address is kept as it was."""
         if str(warehouse).strip() not in {"ЦАР", "ЖУК"}:
             raise WarehouseValidationError("Неизвестный склад")
         if not str(grn).strip():
@@ -91,7 +100,9 @@ class StockLot:
             item_type=str(item_type).strip(),
             purpose=normalized_purpose,
             unit=normalized_unit,
-            storage_location=normalize_location(storage_location),
+            storage_location=(
+                normalize_location_as_is(storage_location) if location_as_is else normalize_location(storage_location)
+            ),
             inbound=_quantity(quantity, "Приход"),
             written_off=Decimal("0"),
             reserved=Decimal("0"),
@@ -150,10 +161,20 @@ class StockLot:
         return replace(self, written_off=self.written_off - amount, version=self.version + 1)
 
     def move(self, storage_location: str) -> StockLot:
+        # Keeping the current place is not a move, even when it is an old address.
+        if self.storage_location and str(storage_location or "").strip() == self.storage_location:
+            return self
         normalized = normalize_location(storage_location)
         if normalized == self.storage_location:
             return self
         return replace(self, storage_location=normalized, version=self.version + 1)
+
+    def correct_location(self, storage_location: str) -> StockLot:
+        """Manual correction «as it really is»: any text, an old address or no place at all."""
+        corrected = normalize_location_as_is(storage_location)
+        if corrected == self.storage_location:
+            return self
+        return replace(self, storage_location=corrected, version=self.version + 1)
 
     def edit_identity(self, *, article: str, name: str, series: str) -> StockLot:
         normalized_article = str(article or "").strip()

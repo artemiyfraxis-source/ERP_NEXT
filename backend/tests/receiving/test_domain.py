@@ -170,6 +170,18 @@ def test_expected_line_is_inspected_numbered_and_placed_before_warehouse():
     assert placed.mark_warehouse_event_emitted().warehouse_event_emitted is True
 
 
+@pytest.mark.parametrize("location", ["", "   ", "A-01"])
+def test_receiving_places_only_on_a_rack_address_never_as_is(location):
+    inspected = create_line_from_expected(expected_message()).inspect(
+        inspection(), Actor(name="Приёмщик", department="ОТК"), existing_grns=(),
+    )
+
+    with pytest.raises(ReceivingValidationError, match="Место хранения"):
+        inspected.place(location)
+    assert inspected.ready_for_warehouse is False
+    assert inspected.place("01f04").storage_location == "1F4"
+
+
 def test_manufacturer_series_is_recorded_during_inspection():
     line = create_line_from_expected(expected_message())
 
