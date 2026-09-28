@@ -76,6 +76,20 @@ def test_imports_lists_and_reads_lossless_operation_cards(operation_library_api)
     assert detail.json()["raw_rows"][8][2] == "Инструмент"
 
 
+def test_template_images_round_trip_through_import_and_detail(operation_library_api):
+    template = _template("cut-wire", "CUT_WIRE")
+    template["images"] = [{"row": 0, "col": 1, "driveFileId": "1AbCdEf", "width": 100, "height": 50}]
+    operation_library_api.put(
+        "/api/techcards/templates/supplymap-library",
+        json={"sourceCommit": SOURCE_COMMIT, "templates": [template]},
+    )
+    detail = operation_library_api.get("/api/techcards/templates/cut-wire")
+
+    assert detail.json()["document"]["images"] == [
+        {"row": 0, "col": 1, "drive_file_id": "1AbCdEf", "width": 100, "height": 50},
+    ]
+
+
 def test_engineer_imports_grapher_snapshot_without_mutating_card(operation_library_api):
     snapshot = {
         "project": {"designation": "708К.2", "name": "Контроллер"},

@@ -71,6 +71,7 @@ class OperationCardTemplateRow(Base):
     category: Mapped[str] = mapped_column(String(255), nullable=False)
     document: Mapped[dict] = mapped_column(JSON, nullable=False)
     raw_rows: Mapped[list] = mapped_column(JSON, nullable=False)
+    images: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_commit: Mapped[str] = mapped_column(String(40), nullable=False)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -197,6 +198,7 @@ class SqlAlchemyOperationCardRepository:
             title=row.title,
             category=row.category,
             rows=row.raw_rows,
+            images=row.images,
         )
 
     def list(self) -> list[OperationCardTemplate]:
@@ -227,6 +229,13 @@ class SqlAlchemyOperationCardRepository:
             category=card.category,
             document=card.document(),
             raw_rows=[list(row) for row in card.raw_rows],
+            images=[
+                {
+                    "row": image.row, "col": image.col, "driveFileId": image.drive_file_id,
+                    "width": image.width, "height": image.height,
+                }
+                for image in card.images
+            ],
             source_commit=source_commit,
             imported_at=imported_at,
         ) for card in cards)
