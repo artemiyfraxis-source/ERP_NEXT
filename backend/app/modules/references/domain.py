@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from enum import Enum
+from typing import Iterable
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
@@ -15,6 +17,7 @@ class ReferenceValidationError(ValueError):
 class ReferenceKind(str, Enum):
     SUPPLIER = "supplier"
     COUNTRY = "country"
+    GOST_AWG = "gost_awg"
 
 
 class TechOperationTab(str, Enum):
@@ -42,6 +45,31 @@ def normalized_manufacturer_key(value: str) -> str:
     return key
 
 
+def normalized_section_key(value: str) -> str:
+    raw = str(value or "").strip().replace(",", ".")
+    try:
+        section = Decimal(raw)
+    except InvalidOperation:
+        section = Decimal(0)
+    if not section.is_finite() or section <= 0:
+        raise ReferenceValidationError("Сечение ГОСТ укажите числом в мм², например 0,35")
+    return format(section.normalize(), "f")
+
+
+def _awg_value(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw.isdigit() or not 1 <= int(raw) <= 40:
+        raise ReferenceValidationError("AWG укажите целым числом от 1 до 40")
+    return str(int(raw))
+
+
+_KEY_NORMALIZERS = {
+    ReferenceKind.SUPPLIER: normalized_supplier_key,
+    ReferenceKind.COUNTRY: normalized_manufacturer_key,
+    ReferenceKind.GOST_AWG: normalized_section_key,
+}
+
+
 @dataclass(frozen=True)
 class ReferenceEntry:
     id: UUID
@@ -57,8 +85,15 @@ class ReferenceEntry:
         clean_value = str(value or "").strip()
         if not clean_value:
             raise ReferenceValidationError("Значение справочника обязательно")
-        normalized = normalized_supplier_key(clean_key) if kind == ReferenceKind.SUPPLIER else normalized_manufacturer_key(clean_key)
+        if kind == ReferenceKind.GOST_AWG:
+            clean_value = _awg_value(clean_value)
+        normalized = _KEY_NORMALIZERS[kind](clean_key)
         return cls(uuid4(), kind, clean_key, normalized, clean_value, position)
+
+
+def gost_awg_map(entries: Iterable[ReferenceEntry]) -> dict[str, int]:
+    """Workshop ГОСТ section → AWG (SUPPLYMAP СПР.КАБ) for wire-section lookup."""
+    return {entry.normalized_key: int(entry.value) for entry in entries if entry.kind == ReferenceKind.GOST_AWG}
 
 
 @dataclass(frozen=True)

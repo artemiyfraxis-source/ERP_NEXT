@@ -37,6 +37,7 @@ class PairPayload(BaseModel):
 class MapsPayload(BaseModel):
     suppliers: list[PairPayload] = Field(max_length=5000)
     countries: list[PairPayload] = Field(max_length=5000)
+    gost_awg: list[PairPayload] = Field(max_length=500)
 
 
 class TechRecordPayload(BaseModel):
@@ -82,6 +83,7 @@ def _maps(entries) -> dict:
     return {
         "suppliers": [{"key": item.key, "value": item.value} for item in entries if item.kind == ReferenceKind.SUPPLIER],
         "countries": [{"key": item.key, "value": item.value} for item in entries if item.kind == ReferenceKind.COUNTRY],
+        "gost_awg": [{"key": item.key, "value": item.value} for item in entries if item.kind == ReferenceKind.GOST_AWG],
     }
 
 
@@ -96,6 +98,7 @@ def save_maps(payload: MapsPayload, principal: Annotated[Principal, Depends(refe
     entries = _run(lambda: replace_maps(ReplaceMapsCommand(
         suppliers=tuple(ReferencePair(item.key, item.value) for item in payload.suppliers),
         countries=tuple(ReferencePair(item.key, item.value) for item in payload.countries),
+        gost_awg=tuple(ReferencePair(item.key, item.value) for item in payload.gost_awg),
         actor=principal.actor, now=now,
     ), uow_factory()))
     return _maps(entries)

@@ -9,7 +9,7 @@ import {
 } from "./api";
 
 type PageTab = "maps" | "operations";
-const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [] };
+const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
 const TECH_TABS: Array<{ id: TechOperationTab; label: string }> = [
   { id: "op", label: "Операции" },
   { id: "ob", label: "Оборудование" },
@@ -65,7 +65,7 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
   }
 
   return <section className="page references-page">
-    <header className="page-head"><h1>Справочники</h1><span className="page-count">{pageTab === "maps" ? maps.suppliers.length + maps.countries.length : tech.records.length}</span></header>
+    <header className="page-head"><h1>Справочники</h1><span className="page-count">{pageTab === "maps" ? maps.suppliers.length + maps.countries.length + maps.gost_awg.length : tech.records.length}</span></header>
     <p className="page-sub">Редактируемые соответствия отдельно от версионированной базы технологических операций.</p>
     <div className="shipping-tabs">
       <button className={pageTab === "maps" ? "secondary active" : "secondary"} onClick={() => setPageTab("maps")}>Карты соответствий</button>
@@ -77,9 +77,10 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
       <div className="reference-columns">
         <MapEditor title="Домен поставщика → поставщик" keyLabel="Домен или ссылка" valueLabel="Поставщик" rows={maps.suppliers} disabled={!canEdit} onChange={(suppliers) => setMaps({ ...maps, suppliers })} />
         <MapEditor title="Изготовитель → страна" keyLabel="Изготовитель" valueLabel="Страна" rows={maps.countries} disabled={!canEdit} onChange={(countries) => setMaps({ ...maps, countries })} />
+        <MapEditor title="ГОСТ-сечение → AWG (СПР.КАБ)" keyLabel="Сечение ГОСТ, мм²" valueLabel="AWG" rows={maps.gost_awg} disabled={!canEdit} onChange={(gost_awg) => setMaps({ ...maps, gost_awg })} />
       </div>
       {canEdit && <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveMaps()}>Сохранить справочники</button></div>}
-      {loaded && !maps.suppliers.length && !maps.countries.length && !canEdit && <div className="empty">Карты соответствий пока не заполнены.</div>}
+      {loaded && !maps.suppliers.length && !maps.countries.length && !maps.gost_awg.length && !canEdit && <div className="empty">Карты соответствий пока не заполнены.</div>}
     </> : <>
       <div className="filters reference-filters">
         <div className="shipping-tabs">{TECH_TABS.map((tab) => <button key={tab.id} className={techTab === tab.id ? "secondary active" : "secondary"} onClick={() => setTechTab(tab.id)}>{tab.label}</button>)}</div>

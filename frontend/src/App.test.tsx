@@ -171,7 +171,7 @@ it("opens native references at the references route", async () => {
       ...principal,
       permissions: { references: "view" },
     });
-    if (path === "/api/references/maps") return json({ suppliers: [], countries: [] });
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 

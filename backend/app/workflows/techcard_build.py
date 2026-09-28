@@ -12,8 +12,12 @@ from app.modules.references.technology import (
 
 def enrich_terminal_norms(
     config: Mapping[str, Any], records: Iterable[TerminalRecord],
+    gost_awg: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Return a copied generator config with terminal norms resolved per wire section."""
+    """Return a copied generator config with terminal norms resolved per wire section.
+
+    `gost_awg` is the workshop ГОСТ section → AWG map (SUPPLYMAP СПР.КАБ).
+    """
     enriched = deepcopy(dict(config))
     terminal_records = tuple(records)
     operations = enriched.get("ops")
@@ -31,7 +35,7 @@ def enrich_terminal_norms(
         if not article or not isinstance(wires, list):
             continue
         sections = tuple(
-            wire_section(str(wire.get("art") or wire.get("name") or ""))
+            wire_section(str(wire.get("art") or wire.get("name") or ""), gost_awg)
             for wire in wires if isinstance(wire, Mapping)
         )
         if endpoint.get("fold"):

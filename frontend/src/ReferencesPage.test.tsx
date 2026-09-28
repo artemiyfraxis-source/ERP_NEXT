@@ -23,7 +23,7 @@ function json(body: unknown) {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("edits and atomically saves both reference maps", async () => {
+it("edits and atomically saves all reference maps", async () => {
   let payload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -34,17 +34,20 @@ it("edits and atomically saves both reference maps", async () => {
     if (path === "/api/references/maps") return json({
       suppliers: [{ key: "example.ru", value: "Поставщик" }],
       countries: [{ key: "Fraxis", value: "Россия" }],
+      gost_awg: [{ key: "0,35", value: "22" }],
     });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ReferencesPage principal={admin} />);
   fireEvent.change(await screen.findByLabelText("Поставщик 1"), { target: { value: "Новый поставщик" } });
+  fireEvent.change(screen.getByLabelText("AWG 1"), { target: { value: "23" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить справочники" }));
 
   await waitFor(() => expect(payload).toEqual({
     suppliers: [{ key: "example.ru", value: "Новый поставщик" }],
     countries: [{ key: "Fraxis", value: "Россия" }],
+    gost_awg: [{ key: "0,35", value: "23" }],
   }));
   expect(await screen.findByText("Справочники сохранены целиком")).toBeInTheDocument();
 });
@@ -52,7 +55,7 @@ it("edits and atomically saves both reference maps", async () => {
 it("searches the versioned technology snapshot", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/references/maps") return json({ suppliers: [], countries: [] });
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path.startsWith("/api/references/tech-operations?")) return json({
       metadata: {
         schema_version: 14,

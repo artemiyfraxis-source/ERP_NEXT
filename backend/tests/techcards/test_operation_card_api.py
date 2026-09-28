@@ -206,3 +206,42 @@ def test_auto_build_enriches_crimp_from_current_reference_snapshot(operation_lib
     assert document["operations"][0]["fields"]["crimpHeight"] == "1,14 - 1,24"
     assert document["source"]["technology_snapshot"]["schema_version"] == 14
     assert document["source"]["technology_snapshot"]["source_updated_at"].startswith("2026-09-23")
+
+
+def test_auto_build_uses_workshop_gost_awg_map_from_references(operation_library_api):
+    operation_library_api.put(
+        "/api/techcards/templates/supplymap-library",
+        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("prs", "PRS_TERMINAL_auto")]},
+    )
+    operation_library_api.put("/api/references/tech-operations/snapshot", json={
+        "schema_version": 14,
+        "records": [{
+            "tab": "ter", "display_text": "TEST-22", "source_sheet": "БД.ТЕР",
+            "fields": {
+                "terArticle": "TEST-22", "terCrimpHeight": "0,84 - 0,89",
+                "awgFrom": "22", "awgTo": "22",
+            },
+        }],
+    })
+    maps = operation_library_api.put("/api/references/maps", json={
+        "suppliers": [], "countries": [], "gost_awg": [{"key": "0,5", "value": "22"}],
+    })
+    created = operation_library_api.post(
+        "/api/techcards/projects",
+        json={"project": "P-202", "item_index": "КБ1", "product_name": "Жгут"},
+    ).json()
+    built = operation_library_api.post(
+        f"/api/techcards/projects/{created['id']}/build",
+        json={"version": created["version"], "config": {
+            "assemblyName": "Жгут", "partQty": 1,
+            "ops": [{
+                "type": "prsTerm", "templateId": "prs", "opNum": "PRS_TERMINAL_auto",
+                "side": "A", "ep": {"termArt": "TEST-22"},
+                "wires": [{"name": "ПВАМ 0,5", "art": "ПВАМ 0,5", "qty": 1}],
+            }],
+        }},
+    )
+
+    assert maps.status_code == 200
+    assert built.status_code == 200
+    assert built.json()["document"]["operations"][0]["fields"]["crimpHeight"] == "0,84 - 0,89"

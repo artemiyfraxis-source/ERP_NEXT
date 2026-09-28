@@ -240,3 +240,22 @@ def test_folded_wire_resolves_crimp_norm_for_doubled_section():
     plain = norm(False)
     assert plain["bySection"][0]["section"] == "0,12 мм² (26 AWG)"
     assert plain["bySection"][0]["found"] is False
+
+
+def test_workshop_gost_awg_map_picks_crimp_row_but_1mm2_crimp_override_wins():
+    records = (
+        TerminalRecord(article="TEST-22", crimp_height="0,84 - 0,89", awg_from="22", awg_to="22"),
+        TerminalRecord(article="TEST-18", crimp_height="1,10 - 1,20", awg_from="18", awg_to="18"),
+    )
+
+    def section(article: str, wire: str, gost_awg: dict[str, int] | None) -> dict:
+        config = {"ops": [{"type": "prsTerm", "ep": {"termArt": article}, "wires": [{"art": wire}]}]}
+        return enrich_terminal_norms(config, records, gost_awg)["ops"][0]["terminalNorm"]["bySection"][0]
+
+    assert section("TEST-22", "ПВАМ 0,5", None)["found"] is False
+    mapped = section("TEST-22", "ПВАМ 0,5", {"0.5": 22})
+    assert mapped["section"] == "0,5 мм² (22 AWG)"
+    assert mapped["crimpHeight"] == "0,84 - 0,89"
+    overridden = section("TEST-18", "ПВ-3 1,0 мм²", {"1": 17})
+    assert overridden["section"] == "1 мм² (18 AWG)"
+    assert overridden["found"] is True

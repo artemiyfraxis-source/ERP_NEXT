@@ -48,6 +48,7 @@ class ReferencePair:
 class ReplaceMapsCommand:
     suppliers: tuple[ReferencePair, ...]
     countries: tuple[ReferencePair, ...]
+    gost_awg: tuple[ReferencePair, ...]
     actor: Actor
     now: datetime
 
@@ -81,7 +82,11 @@ def _audit(event_type: str, actor: Actor, now: datetime, details: dict, uow: Uni
 def replace_maps(command: ReplaceMapsCommand, uow: UnitOfWork) -> tuple[ReferenceEntry, ...]:
     entries = tuple(
         ReferenceEntry.create(kind, pair.key, pair.value, position)
-        for kind, pairs in ((ReferenceKind.SUPPLIER, command.suppliers), (ReferenceKind.COUNTRY, command.countries))
+        for kind, pairs in (
+            (ReferenceKind.SUPPLIER, command.suppliers),
+            (ReferenceKind.COUNTRY, command.countries),
+            (ReferenceKind.GOST_AWG, command.gost_awg),
+        )
         for position, pair in enumerate(pairs)
     )
     validate_entries(entries)
@@ -89,6 +94,7 @@ def replace_maps(command: ReplaceMapsCommand, uow: UnitOfWork) -> tuple[Referenc
         uow.references.replace(entries)
         _audit("references.maps_replaced", command.actor, command.now, {
             "suppliers": len(command.suppliers), "countries": len(command.countries),
+            "gost_awg": len(command.gost_awg),
         }, uow)
         uow.commit()
     return entries

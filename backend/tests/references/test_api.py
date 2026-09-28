@@ -48,6 +48,7 @@ def test_replaces_both_editable_maps_atomically(references_api):
     response = references_api.put("/api/references/maps", json={
         "suppliers": [{"key": "https://www.Example.ru/catalog", "value": "ООО Поставщик"}],
         "countries": [{"key": "  Fraxis  ", "value": "Россия"}],
+        "gost_awg": [{"key": "0,35", "value": "22"}],
     })
     fetched = references_api.get("/api/references/maps")
     duplicate = references_api.put("/api/references/maps", json={
@@ -56,12 +57,14 @@ def test_replaces_both_editable_maps_atomically(references_api):
             {"key": "www.example.ru/path", "value": "Второй"},
         ],
         "countries": [],
+        "gost_awg": [],
     })
 
     assert response.status_code == 200
     assert fetched.json() == {
         "suppliers": [{"key": "https://www.Example.ru/catalog", "value": "ООО Поставщик"}],
         "countries": [{"key": "Fraxis", "value": "Россия"}],
+        "gost_awg": [{"key": "0,35", "value": "22"}],
     }
     assert duplicate.status_code == 422
     assert references_api.get("/api/references/maps").json() == fetched.json()
@@ -182,6 +185,29 @@ def test_viewer_cannot_replace_maps(references_api):
     )
     response = references_api.put(
         "/api/references/maps",
-        json={"suppliers": [], "countries": []},
+        json={"suppliers": [], "countries": [], "gost_awg": []},
     )
     assert response.status_code == 403
+
+
+def test_gost_awg_map_is_validated_and_cannot_be_dropped_by_omission(references_api):
+    saved = references_api.put("/api/references/maps", json={
+        "suppliers": [], "countries": [],
+        "gost_awg": [{"key": "0,35", "value": "22"}, {"key": "1,0", "value": "17"}],
+    })
+    omitted = references_api.put("/api/references/maps", json={"suppliers": [], "countries": []})
+    duplicate = references_api.put("/api/references/maps", json={
+        "suppliers": [], "countries": [],
+        "gost_awg": [{"key": "0,35", "value": "22"}, {"key": "0.35", "value": "20"}],
+    })
+    not_awg = references_api.put("/api/references/maps", json={
+        "suppliers": [], "countries": [], "gost_awg": [{"key": "0,35", "value": "двадцать"}],
+    })
+
+    assert saved.status_code == 200
+    assert omitted.status_code == 422
+    assert duplicate.status_code == 422
+    assert not_awg.status_code == 422
+    assert references_api.get("/api/references/maps").json()["gost_awg"] == [
+        {"key": "0,35", "value": "22"}, {"key": "1,0", "value": "17"},
+    ]

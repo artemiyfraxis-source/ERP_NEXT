@@ -23,7 +23,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, techcards_admin_principal, techcards_edit_principal
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
-from app.modules.references.domain import TechOperationTab
+from app.modules.references.domain import TechOperationTab, gost_awg_map
 from app.modules.references.technology import TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord
 from app.workflows.techcard_build import enrich_terminal_norms
 
@@ -308,10 +308,12 @@ def auto_build_project_etk(
             records = references_uow.tech_operations.list(
                 tab=TechOperationTab.TERMINAL, query="", limit=500,
             ) if metadata and metadata["schema_version"] == TECH_SNAPSHOT_SCHEMA_VERSION else ()
+            gost_awg = gost_awg_map(references_uow.references.list())
         if metadata and metadata["schema_version"] == TECH_SNAPSHOT_SCHEMA_VERSION:
             config = enrich_terminal_norms(
                 config,
                 (TerminalRecord.from_fields(record.fields) for record in records),
+                gost_awg,
             )
             technology_source = {
                 "schema_version": metadata["schema_version"],

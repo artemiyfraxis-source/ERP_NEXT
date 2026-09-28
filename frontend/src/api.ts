@@ -501,6 +501,7 @@ export interface ReferencePair {
 export interface ReferenceMaps {
   suppliers: ReferencePair[];
   countries: ReferencePair[];
+  gost_awg: ReferencePair[];
 }
 
 export type TechOperationTab = "ob" | "op" | "ter" | "coax";
