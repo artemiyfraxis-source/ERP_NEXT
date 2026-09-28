@@ -13,7 +13,8 @@ and never commit.
    `npm test` (architecture), `npm run test:backend`, `npm run test:frontend`.
 2. Classify every failure:
    - **drift** — an architecture test comparing a module's `SOURCE.json` commit with the current
-     SUPPLYMAP ref. The fix is `npm run sync:*`, not code. Name the module.
+     SUPPLYMAP ref. Not a code bug. Name the module and the fix: `npm run sync:*` for techcards,
+     the library and legacy contracts; a reviewed manual re-baseline of `SOURCE.json` for the rest.
    - **real** — anything else. Include the test name, the assertion and the relevant lines of output.
 
 ## Report

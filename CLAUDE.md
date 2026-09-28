@@ -23,8 +23,10 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 - `npm run check` (repo root) — THE gate: architecture tests + backend pytest + frontend tests + build.
   Run it after every slice. Backend alone: `npm run test:backend`; frontend: `npm run test:frontend`.
 - Known red: architecture tests pin each module's `SOURCE.json` to a SUPPLYMAP commit, so they fail
-  whenever SUPPLYMAP `main` moves on. Fix by re-running the matching `npm run sync:*`, never by editing
-  hashes in `SOURCE.json` by hand.
+  whenever SUPPLYMAP `main` moves on. Only techcards, the operation library and the legacy contracts
+  have a `npm run sync:*` script; run it for those. For every other module, re-baseline by hand, and
+  only after reviewing the SUPPLYMAP commits since the pin: port any rule change first, then move
+  `sourceCommit`/`sourceRef` in its `SOURCE.json`. Never edit file hashes in `SOURCE.json` by hand.
 - Local preview: `.claude/launch.json` (`erp-api` on 8021 over `backend/preview.db`, `erp-web` on 5176).
   Preview login: `preview` / `Preview-2026!` (local SQLite only).
 - Python 3.12 venv in `backend/.venv` (`pip install -r requirements.lock.txt`); schema changes only via
