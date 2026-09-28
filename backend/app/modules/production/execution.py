@@ -29,6 +29,8 @@ from .traceability import (
     WorkInput,
     WorkSession,
     WorkStatus,
+    give_back_inputs,
+    pick_inputs,
 )
 
 
@@ -52,12 +54,17 @@ class WorkRepository(Protocol):
 
 class OutputRepository(Protocol):
     def add(self, output: ProductionOutput) -> None: ...
+    def get(self, output_id: UUID) -> ProductionOutput | None: ...
+    def is_superseded(self, output_id: UUID) -> bool: ...
+    def lineage(self, output_id: UUID) -> tuple[UUID, ...]: ...
+    def active_for_box(self, box_id: UUID) -> Sequence[ProductionOutput]: ...
     def list_for_task(self, task_id: UUID) -> Sequence[ProductionOutput]: ...
     def total_for_operation(self, operation_id: UUID) -> Decimal: ...
 
 
 class ConsumptionRepository(Protocol):
     def add(self, edge: ConsumptionEdge) -> None: ...
+    def net_into(self, target_box_id: UUID, output_ids: tuple[UUID, ...]) -> Sequence[WorkInput]: ...
 
 
 class MaterialRepository(Protocol):
@@ -88,6 +95,7 @@ class SerialHandoffRepository(Protocol):
 
 class DefectRepository(Protocol):
     def get(self, defect_id: UUID) -> DefectRecord | None: ...
+    def active_for_outputs(self, output_ids: tuple[UUID, ...]) -> DefectRecord | None: ...
     def list(self, limit: int = 500) -> Sequence[DefectRecord]: ...
     def reserve_number(self) -> str: ...
     def save(self, defect: DefectRecord) -> None: ...
@@ -137,7 +145,6 @@ class SessionCommand:
 class SubmitWorkCommand(SessionCommand):
     good_quantity: Decimal
     defect_quantity: Decimal
-    correction_of_id: UUID | None = None
     defect_character: str = ""
     defect_description: str = ""
 
@@ -158,6 +165,15 @@ class ReturnBoxCommand(BoxCommand):
 @dataclass(frozen=True)
 class HandoffBoxCommand(BoxCommand):
     finished_good_id: UUID
+
+
+@dataclass(frozen=True)
+class CorrectBoxCommand(BoxCommand):
+    output_id: UUID
+    good_quantity: Decimal
+    defect_quantity: Decimal
+    defect_character: str = ""
+    defect_description: str = ""
 
 
 @dataclass(frozen=True)
@@ -320,7 +336,6 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
             started_at=session.started_at, finished_at=command.now,
             pause_seconds=completed.pause_seconds, good_quantity=good,
             defect_quantity=defect, output_box_id=output_box.id,
-            correction_of_id=command.correction_of_id,
         )
         defect_record = None
         if defect > 0:
@@ -404,6 +419,92 @@ def reopen_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
         _audit(box.id, "production.box_reopened", command.actor, command.now, {}, uow)
         uow.commit()
         return updated
+
+
+def correct_box(command: CorrectBoxCommand, uow: ExecutionUnitOfWork) -> tuple[ProductionBox, ProductionOutput, DefectRecord | None]:
+    """SUPPLYMAP `prodWorkFix_`: a new output replaces one output of a returned box.
+
+    The box quantity is replaced, not topped up; the difference in pieces is taken from or given back to
+    the same input boxes; the replaced output stays on record but drops out of every sum.
+    """
+    with uow:
+        box = _box(command, uow)
+        replaced = uow.outputs.get(command.output_id)
+        if replaced is None or replaced.output_box_id != box.id:
+            raise ProductionValidationError("Запись выработки не относится к этой коробке")
+        if uow.outputs.is_superseded(replaced.id):
+            raise ProductionValidationError("Запись выработки уже исправлена — исправляйте последнюю")
+        good = Decimal(command.good_quantity)
+        defect = Decimal(command.defect_quantity)
+        if not good.is_finite() or not defect.is_finite() or good < 0 or defect < 0 or good + defect <= 0:
+            raise ProductionValidationError("Сумма годных и брака должна быть положительной")
+        corrected_box = box.correct(
+            replaced_good=replaced.good_quantity, good=good,
+            operator_id=command.actor.id, actor=command.actor.name, now=command.now,
+        )
+        task, operation = _task_operation(box.task_id, box.operation_id, command.actor, uow)
+        replaced_total = replaced.good_quantity + replaced.defect_quantity
+        done = uow.outputs.total_for_operation(operation.id) - replaced_total
+        if done + good + defect > Decimal(task.quantity):
+            raise ProductionValidationError("Выработка превышает количество производственного задания")
+        output = ProductionOutput(
+            id=uuid4(), session_id=None, task_id=task.id,
+            operation_id=operation.id, operator_id=command.actor.id,
+            started_at=command.now, finished_at=command.now, pause_seconds=0,
+            good_quantity=good, defect_quantity=defect, output_box_id=box.id,
+            correction_of_id=replaced.id,
+        )
+        # Added first so every row below that references it flushes after it.
+        uow.outputs.add(output)
+        lineage = uow.outputs.lineage(replaced.id)
+        delta = good + defect - replaced_total
+        moves: tuple[WorkInput, ...] = ()
+        if operation.position > 1 and delta != 0:
+            taken = tuple(uow.consumption.net_into(box.id, lineage))
+            if delta > 0:
+                sources = tuple(source for item in taken if (source := uow.boxes.get(item.box_id)) is not None)
+                moves = pick_inputs(sources, delta)
+            else:
+                moves = give_back_inputs(taken, -delta)
+            for item in moves:
+                source = uow.boxes.get(item.box_id)
+                if source is None:
+                    raise ProductionValidationError("Входная коробка исчезла")
+                if delta > 0:
+                    moved = source.reserve(
+                        item.quantity, item=task.item, previous_position=operation.position - 1,
+                    ).consume(item.quantity)
+                else:
+                    moved = source.give_back(item.quantity)
+                uow.boxes.save(moved)
+                uow.consumption.add(ConsumptionEdge(
+                    id=uuid4(), source_box_id=item.box_id, target_box_id=box.id,
+                    quantity=item.quantity if delta > 0 else -item.quantity, output_id=output.id,
+                ))
+        defect_record = None
+        if defect != replaced.defect_quantity:
+            previous_defect = uow.defects.active_for_outputs(lineage)
+            if defect > 0:
+                defect_record = DefectRecord.create(
+                    number=uow.defects.reserve_number(), output_id=output.id,
+                    source_box_id=box.id, task_id=task.id,
+                    operation_id=operation.id, operator_id=command.actor.id,
+                    quantity=defect, character=command.defect_character,
+                    description=command.defect_description, created_at=command.now,
+                )
+                uow.defects.save(defect_record)
+            if previous_defect is not None:
+                uow.defects.save(previous_defect.mark_replaced(output.id))
+        uow.boxes.save(corrected_box)
+        _audit(box.id, "production.box_corrected", command.actor, command.now, {
+            "number": box.number, "replaced_output_id": str(replaced.id), "output_id": str(output.id),
+            "good": [str(replaced.good_quantity), str(good)],
+            "defect": [str(replaced.defect_quantity), str(defect)],
+            "inputs": {str(item.box_id): str(item.quantity if delta > 0 else -item.quantity) for item in moves},
+            "defect_number": defect_record.number if defect_record else None,
+        }, uow)
+        uow.commit()
+        return corrected_box, output, defect_record
 
 
 def _box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:

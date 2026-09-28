@@ -36,6 +36,7 @@ from .domain import OperatorSkill, ProductionOperation, ProductionTask, Producti
 from .scheduling import ScheduleVariant
 from .execution import (
     BoxCommand,
+    CorrectBoxCommand,
     DecideDefectCommand,
     HandoffBoxCommand,
     ReturnBoxCommand,
@@ -45,6 +46,7 @@ from .execution import (
     close_box,
     cancel_work,
     confirm_box,
+    correct_box,
     decide_defect,
     handoff_box,
     pause_work,
@@ -54,7 +56,7 @@ from .execution import (
     start_work,
     submit_work,
 )
-from .traceability import BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, WorkInput, WorkSession
+from .traceability import BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkInput, WorkSession
 from .quality import (
     DecideQcRejectionCommand,
     InspectBoxCommand,
@@ -159,13 +161,20 @@ class MaterialInputPayload(BaseModel):
 class SubmitWorkPayload(BaseModel):
     good_quantity: NonnegativeDecimal = Decimal("0")
     defect_quantity: NonnegativeDecimal = Decimal("0")
-    correction_of_id: UUID | None = None
     defect_character: str = Field(default="", max_length=255)
     defect_description: str = Field(default="", max_length=5000)
 
 
 class BoxVersionPayload(BaseModel):
     version: int = Field(ge=1)
+
+
+class CorrectBoxPayload(BoxVersionPayload):
+    output_id: UUID
+    good_quantity: NonnegativeDecimal = Decimal("0")
+    defect_quantity: NonnegativeDecimal = Decimal("0")
+    defect_character: str = Field(default="", max_length=255)
+    defect_description: str = Field(default="", max_length=5000)
 
 
 class ReturnBoxPayload(BoxVersionPayload):
@@ -320,6 +329,16 @@ def _defect_result(defect: DefectRecord) -> dict:
         "operation_id": str(defect.operation_id), "operator_id": str(defect.operator_id),
         "quantity": _number(defect.quantity), "character": defect.character,
         "description": defect.description, "status": defect.status.value,
+        "replaced_by_output_id": str(defect.replaced_by_output_id) if defect.replaced_by_output_id else None,
+    }
+
+
+def _output_result(output: ProductionOutput) -> dict:
+    return {
+        "id": str(output.id), "good_quantity": _number(output.good_quantity),
+        "defect_quantity": _number(output.defect_quantity),
+        "finished_at": output.finished_at.isoformat(),
+        "correction_of_id": str(output.correction_of_id) if output.correction_of_id else None,
     }
 
 
@@ -512,7 +531,6 @@ def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: An
     session, box, output, defect = _execution(lambda: submit_work(SubmitWorkCommand(
         session_id=session_id, actor=principal.actor, now=now,
         good_quantity=payload.good_quantity, defect_quantity=payload.defect_quantity,
-        correction_of_id=payload.correction_of_id,
         defect_character=payload.defect_character,
         defect_description=payload.defect_description,
     ), uow_factory()))
@@ -532,6 +550,32 @@ def close_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Ann
 def reopen_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
     box = _execution(lambda: reopen_box(BoxCommand(box_id, payload.version, principal.actor, now), uow_factory()))
     return {"box": _box_result(box)}
+
+
+@router.get("/boxes/{box_id}/outputs")
+def box_outputs(
+    box_id: UUID,
+    _principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        rows = uow.outputs.active_for_box(box_id)
+    return {"outputs": [_output_result(item) for item in rows]}
+
+
+@router.post("/boxes/{box_id}/correct")
+def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+    box, output, defect = _execution(lambda: correct_box(CorrectBoxCommand(
+        box_id=box_id, expected_version=payload.version, actor=principal.actor, now=now,
+        output_id=payload.output_id, good_quantity=payload.good_quantity,
+        defect_quantity=payload.defect_quantity,
+        defect_character=payload.defect_character,
+        defect_description=payload.defect_description,
+    ), uow_factory()))
+    return {
+        "box": _box_result(box), "output": _output_result(output),
+        "defect": _defect_result(defect) if defect else None,
+    }
 
 
 @router.post("/boxes/{box_id}/confirm")

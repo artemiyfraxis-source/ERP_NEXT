@@ -424,6 +424,23 @@ export interface ProductionDefect {
   character: string;
   description: string;
   status: string;
+  replaced_by_output_id: string | null;
+}
+
+export interface ProductionOutput {
+  id: string;
+  good_quantity: string;
+  defect_quantity: string;
+  finished_at: string;
+  correction_of_id: string | null;
+}
+
+export interface CorrectBoxInput {
+  output_id: string;
+  good_quantity: string;
+  defect_quantity: string;
+  defect_character: string;
+  defect_description: string;
 }
 
 export interface ProductionInstrument {
@@ -1022,6 +1039,11 @@ export const productionApi = {
   boxAction: (boxId: string, action: "close" | "reopen" | "confirm", version: number) =>
     api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/${action}`, {
       method: "POST", body: JSON.stringify({ version }),
+    }),
+  boxOutputs: (boxId: string) => api<{ outputs: ProductionOutput[] }>(`/api/production/boxes/${boxId}/outputs`),
+  correctBox: (boxId: string, version: number, input: CorrectBoxInput) =>
+    api<{ box: ProductionBox; output: ProductionOutput; defect: ProductionDefect | null }>(`/api/production/boxes/${boxId}/correct`, {
+      method: "POST", body: JSON.stringify({ version, ...input }),
     }),
   returnBox: (boxId: string, version: number, reason: string) =>
     api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/return`, {

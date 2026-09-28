@@ -7,6 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 import re
+from typing import Sequence
 from uuid import UUID, uuid4
 
 from .domain import ProductionValidationError
@@ -248,6 +249,81 @@ class ProductionBox:
             raise ProductionValidationError("В работу возвращается только отклонённая коробка")
         return replace(self, status=BoxStatus.OPEN, version=self.version + 1)
 
+    def correct(
+        self, *, replaced_good: Decimal, good: Decimal, operator_id: UUID, actor: str, now: datetime,
+    ) -> ProductionBox:
+        """Replace one output's good quantity in a returned box and hand it back to the master (`prodWorkFix_`)."""
+        label = self.number or "без номера"
+        if self.status is not BoxStatus.RETURNED:
+            raise ProductionValidationError(f"Коробка {label} не возвращена мастером — исправлять нечего")
+        if self.operator_id != operator_id:
+            raise ProductionValidationError(f"Коробку {label} сдавал другой оператор")
+        quantity = (
+            self.quantity
+            - _quantity(replaced_good, "Исправляемое количество годных", allow_zero=True)
+            + _quantity(good, "Количество годных", allow_zero=True)
+        )
+        if quantity < 0:
+            raise ProductionValidationError("Исправление уводит количество коробки ниже нуля")
+        return replace(
+            self, quantity=quantity, status=BoxStatus.OPERATOR_CLOSED,
+            closed_at=now, closed_by=str(actor).strip(), return_reason="",
+            version=self.version + 1,
+        )
+
+    def give_back(self, quantity: Decimal) -> ProductionBox:
+        """Return pieces a corrected output no longer takes; an emptied box becomes usable again."""
+        amount = _quantity(quantity, "Возврат во входную коробку")
+        if self.status not in (BoxStatus.CONFIRMED, BoxStatus.CONSUMED):
+            raise ProductionValidationError("Вернуть можно только в подтверждённую или израсходованную коробку")
+        if amount > self.consumed:
+            raise ProductionValidationError("Возврат больше расхода коробки")
+        return replace(
+            self, consumed=self.consumed - amount, status=BoxStatus.CONFIRMED,
+            version=self.version + 1,
+        )
+
+
+def _count(value: Decimal) -> str:
+    return format(Decimal(value).normalize(), "f")
+
+
+def pick_inputs(sources: Sequence[ProductionBox], quantity: Decimal) -> tuple[WorkInput, ...]:
+    """Take `quantity` from confirmed boxes in the given order, as SUPPLYMAP `prodPick_`."""
+    usable = [box for box in sources if box.status is BoxStatus.CONFIRMED and box.available > 0]
+    left = Decimal(quantity)
+    taken: list[WorkInput] = []
+    for box in usable:
+        if left <= 0:
+            break
+        amount = min(box.available, left)
+        taken.append(WorkInput(box.id, amount))
+        left -= amount
+    if left > 0:
+        have = sum((box.available for box in usable), Decimal("0"))
+        raise ProductionValidationError(
+            f"Добрать {_count(quantity)} шт не из чего: во входных коробках {_count(have)} шт",
+        )
+    return tuple(taken)
+
+
+def give_back_inputs(taken: Sequence[WorkInput], quantity: Decimal) -> tuple[WorkInput, ...]:
+    """Return `quantity` to the boxes it was taken from, latest first, as SUPPLYMAP `prodGiveBack_`."""
+    left = Decimal(quantity)
+    returned: list[WorkInput] = []
+    for item in reversed(taken):
+        if left <= 0:
+            break
+        amount = min(item.quantity, left)
+        if amount > 0:
+            returned.append(WorkInput(item.box_id, amount))
+            left -= amount
+    if left > 0:
+        raise ProductionValidationError(
+            f"Вернуть {_count(quantity)} шт некуда: из входных коробок взято меньше",
+        )
+    return tuple(returned)
+
 
 @dataclass(frozen=True)
 class WorkSession:
@@ -327,7 +403,7 @@ class MaterialSource:
 @dataclass(frozen=True)
 class ProductionOutput:
     id: UUID
-    session_id: UUID
+    session_id: UUID | None
     task_id: UUID
     operation_id: UUID
     operator_id: UUID
@@ -385,6 +461,7 @@ class DefectRecord:
     character: str
     description: str
     status: DefectStatus = DefectStatus.PENDING
+    replaced_by_output_id: UUID | None = None
 
     @classmethod
     def create(
@@ -405,9 +482,19 @@ class DefectRecord:
         )
 
     def decide(self) -> DefectRecord:
+        if self.replaced_by_output_id is not None:
+            raise ProductionValidationError(
+                f"Запись брака {self.number} заменена исправлением — решение по новой записи",
+            )
         if self.status is not DefectStatus.PENDING:
             raise ProductionValidationError("Решение по браку уже принято")
         return replace(self, status=DefectStatus.DECIDED, version=self.version + 1)
+
+    def mark_replaced(self, output_id: UUID) -> DefectRecord:
+        """Quantity, status and decision stay as recorded; only the replacement is noted."""
+        if self.replaced_by_output_id is not None:
+            raise ProductionValidationError(f"Запись брака {self.number} уже заменена")
+        return replace(self, replaced_by_output_id=output_id, version=self.version + 1)
 
 
 @dataclass(frozen=True)

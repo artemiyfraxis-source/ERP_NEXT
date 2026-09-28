@@ -223,3 +223,53 @@ it("records the master's append-only decision for a QC rejection", async () => {
 
   await waitFor(() => expect(payload).toEqual({ disposition: "Доработка", act_reference: "Акт НС-12" }));
 });
+
+it("corrects one output of a returned box and keeps reopening as a separate action", async () => {
+  const requests: Array<{ path: string; body: unknown }> = [];
+  const operatorPrincipal: Principal = {
+    user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+    roles: ["staff"], permissions: { production: "view" },
+  };
+  const returned = {
+    id: "74000000-0000-0000-0000-000000000002", number: "000002-6", version: 4,
+    task_id: task.id, operation_id: task.operations[0].id, item: task.item, operation_position: 2,
+    operator_id: operatorPrincipal.user.id, quantity: "10", consumed: "0", reserved: "0", rejected: "0",
+    available: "10", status: "Возвращена", created_at: "2026-09-22T09:00:00+03:00",
+    closed_at: null, closed_by: null, confirmed_at: null, confirmed_by: null, return_reason: "Пересчитать",
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [task] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [returned] });
+    if (path.endsWith("/inputs")) return json({ boxes: [], materials: [] });
+    if (path === `/api/production/boxes/${returned.id}/outputs`) return json({ outputs: [{
+      id: "75000000-0000-0000-0000-000000000001", good_quantity: "10", defect_quantity: "0",
+      finished_at: "2026-09-22T10:00:00+03:00", correction_of_id: null,
+    }] });
+    if (init?.method === "POST") {
+      requests.push({ path, body: JSON.parse(String(init.body)) });
+      return json({ box: returned });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProductionPage principal={operatorPrincipal} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "Исправить" }));
+  const good = await screen.findByLabelText("Годные в коробке 000002-6");
+  await waitFor(() => expect(good).toHaveValue(10));
+  fireEvent.change(good, { target: { value: "8" } });
+  fireEvent.click(screen.getByRole("button", { name: "Записать исправление" }));
+  await waitFor(() => expect(requests).toHaveLength(1));
+  fireEvent.click(await screen.findByRole("button", { name: "Доложить" }));
+
+  await waitFor(() => expect(requests).toEqual([
+    {
+      path: `/api/production/boxes/${returned.id}/correct`,
+      body: {
+        version: 4, output_id: "75000000-0000-0000-0000-000000000001",
+        good_quantity: "8", defect_quantity: "0", defect_character: "", defect_description: "",
+      },
+    },
+    { path: `/api/production/boxes/${returned.id}/reopen`, body: { version: 4 } },
+  ]));
+});

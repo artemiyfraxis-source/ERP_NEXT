@@ -9,7 +9,7 @@ import json
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, and_, delete, func, or_, select, text
-from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker
 
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.fulfillment.domain import FulfillmentStatus
@@ -248,8 +248,10 @@ class ProductionWorkMaterialInputRow(Base):
 
 class ProductionOutputRow(Base):
     __tablename__ = "production_outputs"
+    # An output is replaced at most once: a correction always targets the head of its chain.
+    __table_args__ = (Index("ux_production_outputs_correction_of_id", "correction_of_id", unique=True),)
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
-    session_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_work_sessions.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    session_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_work_sessions.id", ondelete="RESTRICT"), nullable=True, unique=True)
     task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
     operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False, index=True)
     operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -294,6 +296,7 @@ class ProductionFinishedGoodsReceiptRow(Base):
 
 class ProductionDefectRow(Base):
     __tablename__ = "production_defects"
+    __table_args__ = (Index("ux_production_defects_replaced_by_output_id", "replaced_by_output_id", unique=True),)
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     number: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
     version: Mapped[int] = mapped_column(Integer(), nullable=False)
@@ -307,6 +310,7 @@ class ProductionDefectRow(Base):
     character: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text(), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    replaced_by_output_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_outputs.id", ondelete="RESTRICT"), nullable=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -759,18 +763,53 @@ class SqlAlchemyOutputRepository:
     def add(self, output: ProductionOutput) -> None:
         self.session.add(ProductionOutputRow(**output.__dict__))
 
+    @staticmethod
+    def _domain(row: ProductionOutputRow) -> ProductionOutput:
+        return ProductionOutput(**{
+            name: getattr(row, name) for name in ProductionOutput.__dataclass_fields__
+        })
+
+    @staticmethod
+    def _active():
+        # SUPPLYMAP `prodWorkFacts_`: an output named by another output's correction_of_id drops out of every sum.
+        replacement = aliased(ProductionOutputRow)
+        return ~select(replacement.id).where(replacement.correction_of_id == ProductionOutputRow.id).exists()
+
+    def get(self, output_id: UUID) -> ProductionOutput | None:
+        row = self.session.get(ProductionOutputRow, output_id)
+        return self._domain(row) if row is not None else None
+
+    def is_superseded(self, output_id: UUID) -> bool:
+        return self.session.scalar(select(ProductionOutputRow.id).where(
+            ProductionOutputRow.correction_of_id == output_id,
+        ).limit(1)) is not None
+
+    def lineage(self, output_id: UUID) -> tuple[UUID, ...]:
+        chain: list[UUID] = []
+        current: UUID | None = output_id
+        while current is not None and current not in chain:
+            chain.append(current)
+            current = self.session.scalar(select(ProductionOutputRow.correction_of_id).where(
+                ProductionOutputRow.id == current,
+            ))
+        return tuple(chain)
+
+    def active_for_box(self, box_id: UUID) -> list[ProductionOutput]:
+        rows = self.session.scalars(select(ProductionOutputRow).where(
+            ProductionOutputRow.output_box_id == box_id, self._active(),
+        ).order_by(ProductionOutputRow.finished_at, ProductionOutputRow.id))
+        return [self._domain(row) for row in rows]
+
     def list_for_task(self, task_id: UUID) -> list[ProductionOutput]:
         rows = self.session.scalars(select(ProductionOutputRow).where(
             ProductionOutputRow.task_id == task_id,
         ).order_by(ProductionOutputRow.finished_at, ProductionOutputRow.id))
-        return [ProductionOutput(**{
-            name: getattr(row, name) for name in ProductionOutput.__dataclass_fields__
-        }) for row in rows]
+        return [self._domain(row) for row in rows]
 
     def total_for_operation(self, operation_id: UUID) -> Decimal:
         value = self.session.scalar(select(func.coalesce(
             func.sum(ProductionOutputRow.good_quantity + ProductionOutputRow.defect_quantity), 0,
-        )).where(ProductionOutputRow.operation_id == operation_id))
+        )).where(ProductionOutputRow.operation_id == operation_id, self._active()))
         return Decimal(value or 0)
 
 
@@ -780,6 +819,25 @@ class SqlAlchemyConsumptionRepository:
 
     def add(self, edge: ConsumptionEdge) -> None:
         self.session.add(ProductionConsumptionRow(**edge.__dict__))
+
+    def net_into(self, target_box_id: UUID, output_ids: tuple[UUID, ...]) -> list[WorkInput]:
+        """Net pieces the given outputs took into a box, per source box, oldest source first.
+
+        A source everything was given back to stays in the list with 0: SUPPLYMAP still tops up from it.
+        """
+        if not output_ids:
+            return []
+        rows = self.session.execute(select(
+            ProductionConsumptionRow.source_box_id, func.sum(ProductionConsumptionRow.quantity),
+        ).join(
+            ProductionBoxRow, ProductionBoxRow.id == ProductionConsumptionRow.source_box_id,
+        ).where(
+            ProductionConsumptionRow.target_box_id == target_box_id,
+            ProductionConsumptionRow.output_id.in_(output_ids),
+        ).group_by(
+            ProductionConsumptionRow.source_box_id, ProductionBoxRow.created_at, ProductionBoxRow.id,
+        ).order_by(ProductionBoxRow.created_at, ProductionBoxRow.id))
+        return [WorkInput(source_box_id, Decimal(quantity)) for source_box_id, quantity in rows]
 
 
 class SqlAlchemyMaterialRepository:
@@ -856,10 +914,20 @@ class SqlAlchemyDefectRepository:
             operation_id=row.operation_id, operator_id=row.operator_id,
             quantity=row.quantity, character=row.character,
             description=row.description, status=DefectStatus(row.status),
+            replaced_by_output_id=row.replaced_by_output_id,
         )
 
     def get(self, defect_id: UUID) -> DefectRecord | None:
         row = self.session.get(ProductionDefectRow, defect_id)
+        return self._domain(row) if row is not None else None
+
+    def active_for_outputs(self, output_ids: tuple[UUID, ...]) -> DefectRecord | None:
+        if not output_ids:
+            return None
+        row = self.session.scalar(select(ProductionDefectRow).where(
+            ProductionDefectRow.output_id.in_(output_ids),
+            ProductionDefectRow.replaced_by_output_id.is_(None),
+        ).limit(1))
         return self._domain(row) if row is not None else None
 
     def list(self, limit: int = 500) -> list[DefectRecord]:
@@ -887,6 +955,7 @@ class SqlAlchemyDefectRepository:
         for field in (
             "number", "version", "created_at", "output_id", "source_box_id",
             "task_id", "operation_id", "operator_id", "quantity", "character", "description",
+            "replaced_by_output_id",
         ):
             setattr(row, field, getattr(defect, field))
         row.status = defect.status.value

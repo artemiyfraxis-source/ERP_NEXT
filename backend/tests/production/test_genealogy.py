@@ -58,3 +58,28 @@ def test_box_number_typed_by_hand_finds_the_box_chain():
         material_consumption=(), finished_receipts=(), serials=(),
     )
     assert {node.label for node in nodes} == {"000001-8", "000002-6"}
+
+
+def test_corrected_transfer_shows_net_quantity_and_hides_fully_returned_pair():
+    first = UUID("10000000-0000-0000-0000-000000000001")
+    second = UUID("10000000-0000-0000-0000-000000000003")
+    last = UUID("10000000-0000-0000-0000-000000000002")
+    _, edges = build_genealogy(
+        "000002-6",
+        boxes=(
+            BoxSnapshot(first, "000001-8", "КБ1", 1, "Подтверждена"),
+            BoxSnapshot(second, "000003-4", "КБ1", 1, "Подтверждена"),
+            BoxSnapshot(last, "000002-6", "КБ1", 2, "Закрыта оператором"),
+        ),
+        box_consumption=(
+            BoxConsumptionSnapshot(first, last, Decimal("10")),
+            BoxConsumptionSnapshot(second, last, Decimal("2")),
+            BoxConsumptionSnapshot(first, last, Decimal("-2")),
+            BoxConsumptionSnapshot(second, last, Decimal("-2")),
+        ),
+        material_consumption=(), finished_receipts=(), serials=(),
+    )
+
+    assert [(edge.source, edge.target, edge.quantity) for edge in edges] == [
+        (f"box:{first}", f"box:{last}", Decimal("8")),
+    ]

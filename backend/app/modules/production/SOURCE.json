@@ -27,6 +27,7 @@
     "only-confirmed-previous-stage-boxes-can-be-consumed",
     "output-and-consumption-are-append-only",
     "returned-box-keeps-its-checked-number",
+    "returned-box-correction-replaces-output-and-moves-delta-through-same-inputs",
     "first-operation-consumes-issued-grn-package",
     "last-operation-box-handoff-creates-finished-goods-lineage",
     "defects-are-isolated-and-numbered",

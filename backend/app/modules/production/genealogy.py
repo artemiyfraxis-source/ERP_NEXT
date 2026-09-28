@@ -106,11 +106,17 @@ def build_genealogy(
             details=f"Пакет {item.package or '—'} · позиция выдачи {item.fulfillment_line_id}",
         ), item.package, str(item.fulfillment_line_id))
         edges.append(GenealogyEdge(source, f"box:{item.target_box_id}", item.quantity, "Материал в производство"))
+    # A corrected output gives pieces back with a negative row; the lineage shows what stayed transferred.
+    transferred: dict[tuple[UUID, UUID], Decimal] = {}
     for item in box_consumption:
-        edges.append(GenealogyEdge(
-            f"box:{item.source_box_id}", f"box:{item.target_box_id}",
-            item.quantity, "Передано на следующий этап",
-        ))
+        pair = (item.source_box_id, item.target_box_id)
+        transferred[pair] = transferred.get(pair, Decimal("0")) + item.quantity
+    for (source_box_id, target_box_id), quantity in transferred.items():
+        if quantity > 0:
+            edges.append(GenealogyEdge(
+                f"box:{source_box_id}", f"box:{target_box_id}",
+                quantity, "Передано на следующий этап",
+            ))
     for item in finished_receipts:
         target = f"finished:{item.finished_good_id}:{item.grn}"
         add_node(GenealogyNode(

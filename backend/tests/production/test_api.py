@@ -333,3 +333,66 @@ def test_operator_starts_and_cancels_work_from_confirmed_previous_box(production
     assert started.status_code == 200, started.text
     assert cancelled.status_code == 200, cancelled.text
     assert cancelled.json()["session"]["status"] == "Отменена"
+
+
+def test_operator_corrects_returned_box_down_through_api(production_api):
+    client, operator_id = production_api
+    master = app.dependency_overrides[authenticated_principal]
+    operator = lambda: Principal(
+        actor=Actor(id=operator_id, name="Оператор", department="Производство"),
+        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+    )
+    task = client.post(
+        "/api/production/tasks", headers={"Idempotency-Key": "correction-api-v1"},
+        json={
+            "project": "591K.3", "item": "КБ-1", "quantity": 10,
+            "operations": [{"position": 1, "stage": "Подготовка"}, {"position": 2, "stage": "Сборка"}],
+        },
+    ).json()["task"]
+    for operation in list(task["operations"]):
+        task = client.post(
+            f"/api/production/tasks/{task['id']}/operations/{operation['id']}/assign",
+            json={"version": task["version"], "operator_ids": [str(operator_id)]},
+        ).json()["task"]
+    now = datetime(2026, 9, 22, 9, 0)
+    source = ProductionBox.create(
+        task_id=UUID(task["id"]), operation_id=UUID(task["operations"][0]["id"]),
+        item="КБ-1", operation_position=1, operator_id=operator_id, created_at=now,
+    ).add_output(Decimal("10")).close(format_box_number(104233), "Оператор", now).confirm("Мастер", now)
+    with app.state.production_uow_factory() as uow:
+        uow.boxes.save(source)
+        uow.commit()
+
+    app.dependency_overrides[authenticated_principal] = operator
+    started = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][1]['id']}/work/start",
+        json={"inputs": [{"box_id": str(source.id), "quantity": "10"}]},
+    ).json()["session"]
+    box = client.post(f"/api/production/work/{started['id']}/submit", json={"good_quantity": "10"}).json()["box"]
+    box = client.post(f"/api/production/boxes/{box['id']}/close", json={"version": box["version"]}).json()["box"]
+    app.dependency_overrides[authenticated_principal] = master
+    box = client.post(
+        f"/api/production/boxes/{box['id']}/return", json={"version": box["version"], "reason": "Пересчитать"},
+    ).json()["box"]
+    app.dependency_overrides[authenticated_principal] = operator
+
+    outputs = client.get(f"/api/production/boxes/{box['id']}/outputs")
+    corrected = client.post(f"/api/production/boxes/{box['id']}/correct", json={
+        "version": box["version"], "output_id": outputs.json()["outputs"][0]["id"],
+        "good_quantity": "8", "defect_quantity": "0",
+    })
+    again = client.post(f"/api/production/boxes/{box['id']}/correct", json={
+        "version": corrected.json()["box"]["version"], "output_id": corrected.json()["output"]["id"],
+        "good_quantity": "7", "defect_quantity": "0",
+    })
+    after = client.get(f"/api/production/boxes/{box['id']}/outputs")
+
+    assert outputs.status_code == 200, outputs.text
+    assert [item["good_quantity"] for item in outputs.json()["outputs"]] == ["10"]
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["box"]["quantity"] == "8"
+    assert corrected.json()["box"]["status"] == "Закрыта оператором"
+    assert corrected.json()["output"]["correction_of_id"] == outputs.json()["outputs"][0]["id"]
+    assert again.status_code == 422
+    assert "не возвращена мастером" in again.json()["detail"]
+    assert [item["id"] for item in after.json()["outputs"]] == [corrected.json()["output"]["id"]]

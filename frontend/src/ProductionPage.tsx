@@ -12,6 +12,7 @@ import {
   type ProductionQcRejection,
   type ProductionOperation,
   type ProductionOperator,
+  type ProductionOutput,
   type ProductionScheduleVariant,
   type ProductionShift,
   type ProductionSkill,
@@ -446,6 +447,7 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
   const [defect, setDefect] = useState("0");
   const [defectCharacter, setDefectCharacter] = useState("");
   const [defectDescription, setDefectDescription] = useState("");
+  const [correcting, setCorrecting] = useState("");
   const session = execution.session;
   const task = session ? tasks.find((item) => item.id === session.task_id) : null;
   const operation = task?.operations.find((item) => item.id === session?.operation_id);
@@ -471,10 +473,56 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
         <span className="status">{box.status}</span>
         {box.return_reason && <small className="danger-text">{box.return_reason}</small>}
         {box.status === "Открыта" && <button className="secondary small" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "close", box.version))}>Закрыть коробку</button>}
-        {box.status === "Возвращена" && <button className="secondary small" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "reopen", box.version))}>Исправить</button>}
+        {box.status === "Возвращена" && <>
+          <button className="secondary small" disabled={busy} onClick={() => setCorrecting(correcting === box.id ? "" : box.id)}>Исправить</button>
+          <button className="link-button" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "reopen", box.version))}>Доложить</button>
+        </>}
+        {box.status === "Возвращена" && correcting === box.id && <BoxCorrection box={box} busy={busy} mutate={mutate} />}
       </div>)}</div>
     </div>}
   </>;
+}
+
+// Correction replaces one output of a returned box (SUPPLYMAP `prodWorkFix_`); the box goes back to the master.
+function BoxCorrection({ box, busy, mutate }: {
+  box: ProductionBox;
+  busy: boolean;
+  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [outputs, setOutputs] = useState<ProductionOutput[]>([]);
+  const [outputId, setOutputId] = useState("");
+  const [good, setGood] = useState("");
+  const [defect, setDefect] = useState("0");
+  const [defectCharacter, setDefectCharacter] = useState("");
+  const [defectDescription, setDefectDescription] = useState("");
+  const [error, setError] = useState("");
+  function pick(output: ProductionOutput | undefined) {
+    setOutputId(output?.id ?? "");
+    setGood(output?.good_quantity ?? "");
+    setDefect(output?.defect_quantity ?? "0");
+  }
+  useEffect(() => {
+    productionApi.boxOutputs(box.id)
+      .then((result) => { setOutputs(result.outputs); pick(result.outputs[0]); })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Записи коробки не загружены"));
+  }, [box.id]);
+  const selected = outputs.find((output) => output.id === outputId);
+  const newDefect = Boolean(selected) && Number(defect) > 0 && Number(defect) !== Number(selected?.defect_quantity);
+  const invalid = !selected || good === "" || Number(good) + Number(defect || 0) <= 0
+    || (newDefect && (!defectCharacter.trim() || !defectDescription.trim()));
+  return <div className="start-work">
+    {error && <small className="danger-text">{error}</small>}
+    {outputs.length > 1 && <label>Запись выработки<select aria-label="Запись выработки" value={outputId} onChange={(event) => pick(outputs.find((output) => output.id === event.target.value))}>
+      {outputs.map((output) => <option key={output.id} value={output.id}>{new Date(output.finished_at).toLocaleString("ru-RU")} · {output.good_quantity} годных · {output.defect_quantity} брак</option>)}
+    </select></label>}
+    <label>Годные<input aria-label={`Годные в коробке ${box.number}`} type="number" min="0" step="any" value={good} onChange={(event) => setGood(event.target.value)} /></label>
+    <label>Брак<input aria-label={`Брак в коробке ${box.number}`} type="number" min="0" step="any" value={defect} onChange={(event) => setDefect(event.target.value)} /></label>
+    {newDefect && <><label>Характер брака<input aria-label={`Характер брака в коробке ${box.number}`} value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label>Описание брака<textarea aria-label={`Описание брака в коробке ${box.number}`} value={defectDescription} onChange={(event) => setDefectDescription(event.target.value)} /></label></>}
+    <button className="primary small" disabled={busy || invalid} onClick={() => void mutate(box.id, () => productionApi.correctBox(box.id, box.version, {
+      output_id: outputId, good_quantity: good, defect_quantity: defect || "0",
+      defect_character: defectCharacter, defect_description: defectDescription,
+    }))}>Записать исправление</button>
+  </div>;
 }
 
 function StartWorkForm({ task, operation, busy, mutate }: {
@@ -539,7 +587,8 @@ function DefectReview({ defects, operators, busy, mutate }: {
 }) {
   const [dispositions, setDispositions] = useState<Record<string, "Доработка" | "Списание" | "Использовать как есть">>({});
   const [acts, setActs] = useState<Record<string, string>>({});
-  const pending = defects.filter((defect) => defect.status === "Ожидает решения");
+  // A defect record replaced by a box correction stays on record but is decided through its replacement.
+  const pending = defects.filter((defect) => defect.status === "Ожидает решения" && !defect.replaced_by_output_id);
   if (!pending.length) return null;
   return <div className="panel box-review defect-review"><div className="manual-stock-head"><h2>Брак цеха</h2><span className="page-count">{pending.length}</span></div>
     <div className="box-grid">{pending.map((defect) => {
