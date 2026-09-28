@@ -85,6 +85,24 @@ def test_bundled_current_supplymap_library_is_fully_parseable():
     assert sum(len(card.tooling) for card in cards) == 334
 
 
+def test_bundled_library_predates_two_machine_equipment_rows():
+    """DRIFT-tc-bfef60d. SUPPLYMAP bfef60d gave CUT_COAX/STRIP_WIRE/PRS_ТМЛ two «Оборудование» rows
+    (machine by cable size) in the БД.ТК mirror (_local/db/БД.ТК/*.tsv), but the bundled library comes
+    from the older fixture tc-library.json, which still has one row. Pins that gap: when the library
+    is re-imported from the TSV mirror this test must flip to two rows (ОБ.094/ОБ.095 for CUT_COAX)."""
+    backend = Path(__file__).resolve().parents[2]
+    payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
+    by_id = {item["id"]: item for item in payload["templates"]}
+
+    def equipment(template_id):
+        return [row[2].split(" | ")[0] for row in by_id[template_id]["rows"] if row and row[0] == "Оборудование"]
+
+    assert equipment("cut-coax-1strip-резка-с-разделкой") == ["AUTO_CUT_STRIP_COAX_BIG"]
+    assert equipment("cut-coax-2strip-резка-с-разделкой") == ["AUTO_CUT_STRIP_COAX_BIG"]
+    assert equipment("strip-wire-разделка") == ["EW-1165"]
+    assert equipment("prs-тмл-опрессовка-наконечников") == ["YQK-70"]
+
+
 def test_bundled_library_resolves_to_one_record_per_code_without_error():
     """SUPPLYMAP TcRecord.gs tcRecordsByCode_ — the same grouping the bundled library must
     already satisfy: 11 codes come as an (A)/(B) pair, the rest are singles, and every pair
