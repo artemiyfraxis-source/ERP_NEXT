@@ -81,3 +81,35 @@ it("searches the versioned technology snapshot", async () => {
   expect(screen.getByText(/Схема v14/)).toBeInTheDocument();
   expect(screen.getByText("ОП-01")).toBeInTheDocument();
 });
+
+
+it("edits a technology row with the old value and hides editing for non-admins", async () => {
+  let patched: unknown;
+  const record = { id: "20000000-0000-0000-0000-000000000002", tab: "prov", display_text: "МГТФ", source_sheet: "БД.ПРОВ", fields: { Марка: "МГТФ", Сечение: "0,35" } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path.startsWith("/api/references/tech-operations/") && init?.method === "PATCH") {
+      patched = JSON.parse(String(init.body));
+      return json(record);
+    }
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [record] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  const { unmount } = render(<ReferencesPage principal={admin} />);
+  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Провода" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Править" }));
+  fireEvent.change(screen.getByLabelText("Поле Сечение"), { target: { value: "0,5" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
+
+  await waitFor(() => expect(patched).toEqual({ edits: [{ field: "Сечение", old: "0,35", value: "0,5" }] }));
+  expect(await screen.findByText("Запись сохранена")).toBeInTheDocument();
+  unmount();
+
+  render(<ReferencesPage principal={{ ...admin, roles: ["receiver"], permissions: { references: "view" } }} />);
+  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
+  expect((await screen.findAllByText("МГТФ")).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
+});

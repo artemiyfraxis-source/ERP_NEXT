@@ -5,7 +5,7 @@
   "sourceRef": "main",
   "sourceCommit": "d2df8b80a89a9cd68dd7536f3fc844855045df74",
   "implementedStage": "technology-schema-v14-operation-and-terminal-norm-kernel",
-  "sources": ["References.gs", "TcOpsDb.gs", "TcConfig.gs"],
+  "sources": ["References.gs", "TcOpsDb.gs", "TcConfig.gs", "PortalRef.gs"],
   "invariants": [
     "supplier-domain-is-normalized",
     "manufacturer-key-is-case-insensitive",

@@ -4,6 +4,8 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated, Any
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
@@ -12,10 +14,10 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, references_edit_principal, references_view_principal
 
 from .application import (
-    ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
-    UnitOfWork, replace_maps, replace_snapshot,
+    CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
+    StaleRecordError, UnitOfWork, create_record, edit_record, replace_maps, replace_snapshot,
 )
-from .domain import ReferenceKind, ReferenceValidationError, TechOperationTab
+from .domain import MAX_ROW_EDITS, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationTab
 from .technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION,
     TerminalRecord,
@@ -53,6 +55,21 @@ class SnapshotPayload(BaseModel):
     schema_version: int = Field(ge=1)
     source_updated_at: datetime | None = None
     records: list[TechRecordPayload] = Field(max_length=10_000)
+
+
+class FieldEditPayload(BaseModel):
+    field: str = Field(min_length=1, max_length=255)
+    old: str = Field(default="", max_length=5000)
+    value: str = Field(default="", max_length=5000)
+
+
+class RecordEditPayload(BaseModel):
+    edits: list[FieldEditPayload] = Field(min_length=1, max_length=MAX_ROW_EDITS)
+
+
+class RecordCreatePayload(BaseModel):
+    tab: str = Field(min_length=1, max_length=32)
+    fields: dict[str, str] = Field(max_length=100)
 
 
 class TerminalResolutionPayload(BaseModel):
@@ -206,3 +223,63 @@ def import_supplymap_technology_snapshot(
         now=now,
     ), uow_factory()))
     return {"records": count, "schema_version": snapshot.schema_version}
+
+
+_BASE_LABELS = {
+    "op": "БД.ОП — операции", "ob": "БД.ОБ — станки и оборудование", "ter": "БД.ТЕР — терминалы",
+    "coax": "БД.КОАКС — коаксиал", "prov": "БД.ПРОВ — провода", "mat": "БД.МАТ — материалы",
+    "spr_kab": "СПР.КАБ — сечения и диаметры кабеля", "tk_templates": "БД.ТК — шаблоны ТК",
+}
+
+
+def _record_json(item) -> dict:
+    return {"id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
+            "source_sheet": item.source_sheet, "fields": item.fields}
+
+
+def _run_edit(operation):
+    try: return _run(operation)
+    except StaleRecordError as error: raise HTTPException(status_code=409, detail=str(error)) from error
+    except LookupError as error: raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/bases")
+def bases(_principal: Annotated[Principal, Depends(references_view_principal)]) -> dict:
+    """Portal «Справочник» catalogue: editable snapshot bases and view-only ones."""
+    return {"bases": [
+        {"id": key, "label": label, "editable": key not in VIEW_ONLY_BASES}
+        for key, label in _BASE_LABELS.items()
+    ]}
+
+
+@router.patch("/tech-operations/{record_id}")
+def edit_tech_record(
+    record_id: UUID,
+    payload: RecordEditPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    record = _run_edit(lambda: edit_record(EditRecordCommand(
+        record_id=record_id,
+        edits=tuple(FieldEdit(item.field, item.old, item.value) for item in payload.edits),
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+    return _record_json(record)
+
+
+@router.post("/tech-operations", status_code=201)
+def create_tech_record(
+    payload: RecordCreatePayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    if payload.tab in VIEW_ONLY_BASES:
+        raise HTTPException(status_code=422, detail="База только для просмотра")
+    try: tab = TechOperationTab(payload.tab)
+    except ValueError as error: raise HTTPException(status_code=422, detail="Неизвестная база") from error
+    record = _run_edit(lambda: create_record(CreateRecordCommand(
+        tab=tab, fields=payload.fields, actor=principal.actor, now=now,
+    ), uow_factory()))
+    return _record_json(record)

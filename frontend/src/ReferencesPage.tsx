@@ -4,6 +4,7 @@ import {
   type Principal,
   type ReferenceMaps,
   type ReferencePair,
+  type TechOperationRecord,
   type TechOperationResult,
   type TechOperationTab,
 } from "./api";
@@ -13,8 +14,10 @@ const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] }
 const TECH_TABS: Array<{ id: TechOperationTab; label: string }> = [
   { id: "op", label: "Операции" },
   { id: "ob", label: "Оборудование" },
-  { id: "ter", label: "Термоусадка" },
+  { id: "ter", label: "Терминалы" },
   { id: "coax", label: "Коаксиал" },
+  { id: "prov", label: "Провода" },
+  { id: "mat", label: "Материалы" },
 ];
 
 export function ReferencesPage({ principal }: { principal: Principal }) {
@@ -27,6 +30,7 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
   const canEdit = principal.permissions.references === "edit" && principal.roles.includes("admin");
 
   async function loadMaps() {
@@ -64,6 +68,38 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
     }
   }
 
+  async function saveRow() {
+    if (!editing || busy) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      if (editing.id === null) {
+        await referencesApi.createRecord(techTab, editing.values);
+      } else {
+        const original = tech.records.find((record) => record.id === editing.id);
+        const edits = Object.entries(editing.values)
+          .filter(([field, value]) => original && original.fields[field] !== value)
+          .map(([field, value]) => ({ field, old: original?.fields[field] ?? "", value }));
+        if (edits.length) await referencesApi.editRecord(editing.id, edits);
+      }
+      setEditing(null);
+      setNotice("Запись сохранена");
+      await loadTech();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Запись не сохранена");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startCreate() {
+    const template = tech.records[0]?.fields ?? {};
+    setEditing({ id: null, values: Object.fromEntries(Object.keys(template).map((key) => [key, ""])) });
+  }
+
+  function startEdit(record: TechOperationRecord) {
+    setEditing({ id: record.id, values: { ...record.fields } });
+  }
+
   return <section className="page references-page">
     <header className="page-head"><h1>Справочники</h1><span className="page-count">{pageTab === "maps" ? maps.suppliers.length + maps.countries.length + maps.gost_awg.length : tech.records.length}</span></header>
     <p className="page-sub">Редактируемые соответствия отдельно от версионированной базы технологических операций.</p>
@@ -88,7 +124,11 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
         <button className="secondary" onClick={() => void loadTech()}>Найти</button>
       </div>
       {tech.metadata && <div className="snapshot-meta">Схема v{tech.metadata.schema_version} · {tech.metadata.record_count} записей · импорт {new Date(tech.metadata.imported_at).toLocaleString("ru-RU")}</div>}
-      <div className="table-wrap"><table><thead><tr><th>Наименование</th><th>Источник</th><th>Поля</th></tr></thead><tbody>{tech.records.map((record) => <tr key={record.id}><td className="text"><strong>{record.display_text}</strong></td><td>{record.source_sheet || "—"}</td><td className="text"><div className="reference-fields">{Object.entries(record.fields).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div></td></tr>)}{!tech.records.length && <tr><td className="empty" colSpan={3}>Записей по выбранному фильтру нет.</td></tr>}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr><th>Наименование</th><th>Источник</th><th>Поля</th>{canEdit && <th />}</tr></thead><tbody>{tech.records.map((record) => <tr key={record.id}><td className="text"><strong>{record.display_text}</strong></td><td>{record.source_sheet || "—"}</td><td className="text">{editing?.id === record.id ? <RowForm values={editing.values} onChange={(values) => setEditing({ id: record.id, values })} /> : <div className="reference-fields">{Object.entries(record.fields).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div>}</td>{canEdit && <td>{editing?.id === record.id ? <><button className="primary small" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary small" onClick={() => setEditing(null)}>Отмена</button></> : <button className="secondary small" onClick={() => startEdit(record)}>Править</button>}</td>}</tr>)}{!tech.records.length && <tr><td className="empty" colSpan={canEdit ? 4 : 3}>Записей по выбранному фильтру нет.</td></tr>}</tbody></table></div>
+      {canEdit && (editing?.id === null
+        ? <div className="panel"><RowForm values={editing.values} onChange={(values) => setEditing({ id: null, values })} /><div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div></div>
+        : <div className="form-actions"><button className="secondary" disabled={!tech.records.length} onClick={startCreate}>+ Запись</button></div>)}
+      <p className="page-sub">СПР.КАБ (карта «ГОСТ-сечение → AWG» на вкладке карт) и шаблоны ТК доступны только для просмотра. Правки строк живут до следующего импорта снимка.</p>
     </>}
   </section>;
 }
@@ -114,4 +154,10 @@ function MapEditor({ title, keyLabel, valueLabel, rows, disabled, onChange }: {
     </div>)}
     {!rows.length && <div className="empty">Нет записей</div>}
   </article>;
+}
+
+function RowForm({ values, onChange }: { values: Record<string, string>; onChange: (values: Record<string, string>) => void }) {
+  return <div className="reference-fields">{Object.entries(values).map(([key, value]) => <label key={key}><small>{key}</small>
+    <input aria-label={`Поле ${key}`} value={value} onChange={(event) => onChange({ ...values, [key]: event.target.value })} />
+  </label>)}</div>;
 }

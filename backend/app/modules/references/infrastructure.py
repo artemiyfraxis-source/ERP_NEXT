@@ -74,6 +74,15 @@ class SqlAlchemyTechOperationRepository:
         if normalized: statement = statement.where(func.lower(TechOperationRecordRow.normalized_search).contains(normalized))
         rows = self.session.scalars(statement.order_by(TechOperationRecordRow.tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id).limit(limit))
         return [self._domain(row) for row in rows]
+    def get(self, record_id: UUID) -> TechOperationRecord | None:
+        row = self.session.get(TechOperationRecordRow, record_id)
+        return None if row is None else self._domain(row)
+    def save(self, record: TechOperationRecord) -> None:
+        row = self.session.get(TechOperationRecordRow, record.id)
+        if row is None: row = TechOperationRecordRow(id=record.id); self.session.add(row)
+        row.tab = record.tab.value; row.display_text = record.display_text
+        row.normalized_search = record.normalized_search; row.source_sheet = record.source_sheet
+        row.sort_key = record.sort_key; row.fields = dict(record.fields)
     def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime) -> None:
         self.session.execute(delete(TechOperationRecordRow))
         self.session.add_all(TechOperationRecordRow(

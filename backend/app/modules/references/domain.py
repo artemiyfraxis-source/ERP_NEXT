@@ -25,6 +25,8 @@ class TechOperationTab(str, Enum):
     OPERATION = "op"
     TERMINAL = "ter"
     COAX = "coax"
+    WIRE = "prov"
+    MATERIAL = "mat"
 
 
 def normalized_supplier_key(value: str) -> str:
@@ -126,3 +128,16 @@ def validate_entries(entries: tuple[ReferenceEntry, ...]) -> None:
     keys = [(entry.kind, entry.normalized_key) for entry in entries]
     if len(keys) != len(set(keys)):
         raise ReferenceValidationError("В справочнике есть повторяющийся ключ")
+
+
+# SUPPLYMAP PortalRef: editable bases; СПР.КАБ and БД.ТК templates are view-only.
+EDITABLE_TABS = frozenset(TechOperationTab)
+VIEW_ONLY_BASES = ("spr_kab", "tk_templates")
+MAX_ROW_EDITS = 200
+
+
+def _clean_cell(value: str) -> str:
+    text = str(value or "").strip()
+    if text.startswith("="):
+        raise ReferenceValidationError("Формулы вводить нельзя")
+    return text

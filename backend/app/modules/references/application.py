@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-from .domain import ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
+from .domain import MAX_ROW_EDITS, _clean_cell, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
 from .technology import TECH_SNAPSHOT_SCHEMA_VERSION
 
 
@@ -21,6 +21,8 @@ class ReferenceRepository(Protocol):
 
 class TechOperationRepository(Protocol):
     def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> Sequence[TechOperationRecord]: ...
+    def get(self, record_id: UUID) -> TechOperationRecord | None: ...
+    def save(self, record: TechOperationRecord) -> None: ...
     def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime) -> None: ...
     def metadata(self) -> dict | None: ...
 
@@ -119,3 +121,90 @@ def replace_snapshot(command: ReplaceSnapshotCommand, uow: UnitOfWork) -> int:
         }, uow)
         uow.commit()
     return len(records)
+
+
+@dataclass(frozen=True)
+class FieldEdit:
+    field: str
+    old: str
+    value: str
+
+
+@dataclass(frozen=True)
+class EditRecordCommand:
+    record_id: UUID
+    edits: tuple[FieldEdit, ...]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class CreateRecordCommand:
+    tab: TechOperationTab
+    fields: dict[str, str]
+    actor: Actor
+    now: datetime
+
+
+class StaleRecordError(Exception):
+    pass
+
+
+def _search_text(record: TechOperationRecord) -> str:
+    return " ".join(f"{record.display_text} {' '.join(record.fields.values())}".casefold().split())
+
+
+def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
+    if not command.edits or len(command.edits) > MAX_ROW_EDITS:
+        raise ReferenceValidationError(f"Правок за раз: от 1 до {MAX_ROW_EDITS}")
+    with uow:
+        record = uow.tech_operations.get(command.record_id)
+        if record is None:
+            raise LookupError("Запись справочника не найдена")
+        fields = dict(record.fields)
+        display = record.display_text
+        refused: list[str] = []
+        for edit in command.edits:
+            if edit.field not in record.fields:
+                refused.append(f"{edit.field}: поля нет в записи")
+                continue
+            try:
+                value = _clean_cell(edit.value)
+            except ReferenceValidationError as error:
+                refused.append(f"{edit.field}: {error}")
+                continue
+            if fields[edit.field] != str(edit.old or "").strip():
+                refused.append(f"{edit.field}: запись уже поменяли — откройте её заново")
+                continue
+            if display == fields[edit.field] and value:
+                display = value
+            fields[edit.field] = value
+        if refused:
+            raise StaleRecordError("Не записано ничего — отклонено полей: " + str(len(refused)) + "; " + "; ".join(refused))
+        updated = replace(record, fields=fields, display_text=display)
+        updated = replace(updated, normalized_search=_search_text(updated))
+        uow.tech_operations.save(updated)
+        _audit("references.tech_record_edited", command.actor, command.now, {
+            "record_id": str(record.id), "tab": record.tab.value,
+            "fields": [edit.field for edit in command.edits],
+        }, uow)
+        uow.commit()
+    return updated
+
+
+def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
+    fields = {str(key).strip(): _clean_cell(value) for key, value in command.fields.items() if str(key).strip()}
+    filled = [value for value in fields.values() if value]
+    if not filled:
+        raise ReferenceValidationError("Заполни хотя бы одно поле")
+    record = TechOperationRecord.create(
+        tab=command.tab, display_text=filled[0], search_text="", source_sheet="",
+        sort_key=filled[0], fields=fields,
+    )
+    with uow:
+        uow.tech_operations.save(record)
+        _audit("references.tech_record_created", command.actor, command.now, {
+            "record_id": str(record.id), "tab": record.tab.value,
+        }, uow)
+        uow.commit()
+    return record

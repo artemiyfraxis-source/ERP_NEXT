@@ -583,7 +583,7 @@ export interface ReferenceMaps {
   gost_awg: ReferencePair[];
 }
 
-export type TechOperationTab = "ob" | "op" | "ter" | "coax";
+export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat";
 
 export interface TechOperationRecord {
   id: string;
@@ -1173,6 +1173,10 @@ export const referencesApi = {
     if (query.trim()) params.set("q", query.trim());
     return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
+  editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
+    api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
+  createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
+    api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
 };
 
 export const techcardsApi = {
