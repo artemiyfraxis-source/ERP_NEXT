@@ -1,1 +1,2 @@
 - [SUPPLYMAP domain decisions](supplymap-domain-decisions.md) — owner decisions that bind the port live in SUPPLYMAP memory; which note to read per area
+- [Gate red without failures](gate-red-without-failures.md) — pytest-current symlink exit 1 (fixed by conftest basetemp); drift tests blind for 9 of 11 modules
