@@ -282,8 +282,16 @@ def resolve_terminal(
     found = [item for item in resolved if item.found]
     heights = list(dict.fromkeys(item.crimp_height for item in found))
     pulls = [item.pull_force for item in found if item.pull_force]
-    record = terminal_record_for_section(candidates, unique_sections[0]) if unique_sections else (candidates[0] if candidates else None)
+    # No row fits the section → the terminal's first row gives its plain height, applicator and pull force
+    # (`buildTerData_`: `terRecordForSection_(…) || recs[0]`); bySection keeps found=False for the warning.
+    record = (terminal_record_for_section(candidates, unique_sections[0]) if unique_sections else None) or (
+        candidates[0] if candidates else None
+    )
     plain_height = record.crimp_height if record and not parse_crimp_profiles(record.crimp_height) else ""
+    plain_pull = (
+        " - ".join(dict.fromkeys(value for value in (record.pull_force_min, record.pull_force_max) if value))
+        if record and not parse_crimp_profiles(record.pull_force_min) else ""
+    )
     return TerminalResolution(
         applicator=record.applicator if record and record.applicator else NO_DATA_MARK,
         crimp_height=(
@@ -291,7 +299,7 @@ def resolve_terminal(
             if len(heights) > 1 else heights[0] if heights else plain_height
         ),
         pull_force=(
-            "" if not pulls else pulls[0] if all(value == pulls[0] for value in pulls)
+            plain_pull if not pulls else pulls[0] if all(value == pulls[0] for value in pulls)
             else "; ".join(f"{item.section}: {item.pull_force}" for item in found if item.pull_force)
         ),
         by_section=tuple(resolved),

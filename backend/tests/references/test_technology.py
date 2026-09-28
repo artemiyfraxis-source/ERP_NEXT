@@ -48,6 +48,24 @@ def test_terminal_row_prefers_exact_section_over_compatible_range():
     assert terminal_record_for_section(rows, WireSection(24, Decimal("0.2"))) == rows[1]
 
 
+def test_section_missing_from_terminal_rows_falls_back_to_first_row_plain_values():
+    plain = TerminalRecord(
+        article="T-1", applicator="AP-1", awg_from="26", awg_to="22",
+        crimp_height="0,85", pull_force_min="50", pull_force_max="70",
+    )
+    result = resolve_terminal((plain,), "T-1", (WireSection(18, Decimal("0.75")),))
+    assert (result.crimp_height, result.applicator, result.pull_force) == ("0,85", "AP-1", "50 - 70")
+    assert result.by_section[0].found is False
+
+    listed = TerminalRecord(
+        article="T-2", applicator="AP-2", awg_from="26", awg_to="22",
+        crimp_height="24 AWG: 0,76 - 0,81; 22 AWG: 0,84 - 0,89", pull_force_min="24 AWG: 29,3; 22 AWG: 44,1",
+    )
+    result = resolve_terminal((listed,), "T-2", (WireSection(18, Decimal("0.75")),))
+    assert (result.crimp_height, result.applicator, result.pull_force) == ("", "AP-2", "")
+    assert result.by_section[0].found is False
+
+
 def test_terminal_resolution_matches_manufacturer_prefix_and_reports_each_section():
     rows = (
         TerminalRecord(
