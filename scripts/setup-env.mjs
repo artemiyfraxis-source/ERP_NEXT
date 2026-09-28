@@ -20,6 +20,22 @@ try {
   mainRoot = dirname(common);
 } catch {}
 
+// Desktop creates a worktree from origin/main, which lags local main until the owner pushes. A fresh
+// worktree (clean, no own commits) is moved onto local main; one with work in it only gets a warning.
+if (mainRoot !== root) {
+  const g = (...a) => spawnSync("git", ["-C", root, ...a], { encoding: "utf8" });
+  if (g("merge-base", "--is-ancestor", "main", "HEAD").status !== 0) {
+    const clean = !g("status", "--porcelain").stdout.trim();
+    const ownCommits = Number(g("rev-list", "--count", "main..HEAD").stdout.trim() || 0);
+    if (clean && ownCommits === 0 && g("rebase", "main").status === 0) {
+      console.log("⚙ Worktree was based on origin/main (behind local main) — moved onto local main.");
+    } else {
+      g("rebase", "--abort");
+      console.log("⚙ Worktree is based on an older commit than local main — run `git rebase main` before working.");
+    }
+  }
+}
+
 const run = (cmd, args, cwd) => {
   // npm is a .cmd shim on Windows and needs a shell; pass one command string (fixed args, no user input).
   const r = cmd === "npm"

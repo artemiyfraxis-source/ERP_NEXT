@@ -17,6 +17,9 @@ One batch per run, then stop: a fresh session per run keeps quality high.
 3. `node scripts/setup-env.mjs`, then `node .claude/hooks/supplymap-drift.mjs` (the drift report).
 
 ## 1. Keep the queue current (cheap, every run)
+- Stale `[~]`: a task marked in progress by an earlier run or a manual session. If `git log main`
+  holds its commits, mark it `[x] <commit>`. If a worktree branch for it still exists under
+  `.claude/worktrees/`, leave it alone: someone is working. Otherwise, after 12 h, reset it to `[ ]`.
 - Drift: for SUPPLYMAP code commits after `supplymapSeen`, use `supplymap-scout` to classify each one.
   If it changes a rule of an already-ported module, add a `DRIFT-<sha>` task. Then move `supplymapSeen`.
 - If the queue has open `IMPORT-AUDIT` / `DISCOVER` tasks and nothing above them is open, those
@@ -24,13 +27,15 @@ One batch per run, then stop: a fresh session per run keeps quality high.
 
 ## 2. Pick the batch
 Top-down, `[ ]` only, skipping `[?]` and `[!]`. Take at most 2 tasks, with different zones, and at
-most one that adds an Alembic migration. C1 or drift of a C1 area comes first. Mark them
+most one that adds an Alembic migration. Skip any task whose zone overlaps a `[~]` task: someone is in
+there. A zone of «все модули» overlaps everything. C1 or drift of a C1 area comes first. Mark them
 `[~] <run id>` and commit BACKLOG.md alone.
 
 ## 3. Execute — one Agent per task, `isolation: "worktree"`
 Model: opus for C1, migrations, money, stock, status machines; sonnet for C2/C3 and routine porting.
 The brief to each agent must say:
-- first `node scripts/setup-env.mjs`;
+- first `git rebase main` (a worktree may start from the unpushed-behind origin/main), then
+  `node scripts/setup-env.mjs`;
 - read the task's audit row + the SUPPLYMAP rules via `supplymap-scout`;
 - implement, add tests for the rule and edge cases, run `npm run check`
   (red only from the known drift tests = acceptable, say which);
