@@ -12,27 +12,48 @@ from uuid import UUID, uuid4
 from .domain import ProductionValidationError
 
 
-BOX_NUMBER = re.compile(r"^(\d{6})-(\d)$")
+BOX_NUMBER = re.compile(r"^(\d{6})-?(\d)$")
+# SUPPLYMAP issues 100000 + seq; ERP stays below it so both systems never hand out the same number.
+ERP_BOX_SEQUENCE_LIMIT = 99_999
 
 
 def box_check_digit(sequence: int) -> int:
+    """Luhn check digit over the six-digit body, as SUPPLYMAP `prodLuhn_`."""
     if sequence < 0 or sequence > 999_999:
         raise ProductionValidationError("Номер коробки вышел за пределы шестизначной серии")
-    digits = [int(value) for value in f"{sequence:06d}"]
-    weighted = sum(digit * (3 if offset % 2 == 0 else 1) for offset, digit in enumerate(reversed(digits)))
-    return (10 - weighted % 10) % 10
+    total = 0
+    for offset, char in enumerate(reversed(f"{sequence:06d}")):
+        digit = int(char)
+        if offset % 2 == 0:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return (10 - total % 10) % 10
 
 
 def format_box_number(sequence: int) -> str:
     return f"{sequence:06d}-{box_check_digit(sequence)}"
 
 
+def issue_box_number(sequence: int) -> str:
+    if sequence < 1 or sequence > ERP_BOX_SEQUENCE_LIMIT:
+        raise ProductionValidationError("Серия номеров коробок ERP 000001–099999 исчерпана")
+    return format_box_number(sequence)
+
+
 def validate_box_number(number: str) -> str:
-    clean = str(number or "").strip()
+    """Accept a hand-typed number (spaces, long dash, no hyphen) and return it as `dddddd-d`."""
+    clean = re.sub(r"\s", "", str(number or "")).replace("–", "-").replace("—", "-")
     match = BOX_NUMBER.fullmatch(clean)
-    if match is None or int(match.group(2)) != box_check_digit(int(match.group(1))):
+    if match is None:
+        raise ProductionValidationError(
+            f"«{str(number or '').strip()}» — не номер коробки: 6 цифр, дефис, контрольная цифра",
+        )
+    body, check = match.groups()
+    if int(check) != box_check_digit(int(body)):
         raise ProductionValidationError("Номер коробки не прошёл проверку контрольной цифры")
-    return clean
+    return f"{body}-{check}"
 
 
 class BoxStatus(str, Enum):

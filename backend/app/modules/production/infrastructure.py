@@ -51,6 +51,7 @@ from .traceability import (
     WorkSession,
     WorkStatus,
     format_box_number,
+    issue_box_number,
 )
 
 
@@ -672,7 +673,7 @@ class SqlAlchemyBoxRepository:
             self.session.add(row)
             self.session.flush()
         row.value += 1
-        return format_box_number(row.value)
+        return issue_box_number(row.value)
 
     def save(self, box: ProductionBox) -> None:
         row = self.session.get(ProductionBoxRow, box.id)

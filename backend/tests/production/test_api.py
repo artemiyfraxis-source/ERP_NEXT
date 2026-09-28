@@ -329,7 +329,7 @@ def test_operator_starts_and_cancels_work_from_confirmed_previous_box(production
     cancelled = client.post(f"/api/production/work/{started.json()['session']['id']}/cancel")
 
     assert inputs.status_code == 200, inputs.text
-    assert inputs.json()["boxes"][0]["number"] == "104233-7"
+    assert inputs.json()["boxes"][0]["number"] == "104233-2"
     assert started.status_code == 200, started.text
     assert cancelled.status_code == 200, cancelled.text
     assert cancelled.json()["session"]["status"] == "Отменена"

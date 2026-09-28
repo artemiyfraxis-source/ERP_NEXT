@@ -41,7 +41,7 @@ def test_qc_assigns_serials_and_isolates_rejected_units_with_checked_number():
     assert updated.status is BoxStatus.CONFIRMED
     assert updated.rejected == Decimal("1")
     assert updated.available == Decimal("4")
-    assert inspection.defect_number == "Б-000001-7"
+    assert inspection.defect_number == "Б-000001-8"
     assert [item.status for item in serials].count(SerialStatus.QC_ACCEPTED) == 4
     assert [item.status for item in serials].count(SerialStatus.DEFECT) == 1
     engine.dispose()

@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
 
+from .domain import ProductionValidationError
+from .traceability import validate_box_number
+
 
 @dataclass(frozen=True)
 class GenealogyNode:
@@ -73,16 +76,21 @@ def build_genealogy(
     finished_receipts: tuple[FinishedReceiptSnapshot, ...],
     serials: tuple[SerialSnapshot, ...],
 ) -> tuple[tuple[GenealogyNode, ...], tuple[GenealogyEdge, ...]]:
-    needle = str(query or "").strip().casefold()
-    if not needle:
+    raw = str(query or "").strip()
+    if not raw:
         return (), ()
+    needles = {raw.casefold()}
+    try:
+        needles.add(validate_box_number(raw).casefold())
+    except ProductionValidationError:
+        pass
     nodes: dict[str, GenealogyNode] = {}
     edges: list[GenealogyEdge] = []
     seeds: set[str] = set()
 
     def add_node(node: GenealogyNode, *searchable: str) -> None:
         nodes[node.key] = node
-        if any(needle in str(value or "").casefold() for value in (node.label, *searchable)):
+        if any(needle in str(value or "").casefold() for needle in needles for value in (node.label, *searchable)):
             seeds.add(node.key)
 
     for box in boxes:

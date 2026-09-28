@@ -644,7 +644,7 @@ function TraceabilitySearch() {
   const labels = new Map(result?.nodes.map((node) => [node.key, node.label]) ?? []);
   return <div className="panel traceability-search">
     <div className="manual-stock-head"><div><h2>Прослеживаемость</h2><small>Серийный номер, коробка, входной ГРН или ГРН готовой продукции</small></div></div>
-    <div className="search-row"><input aria-label="Поиск родословной" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} placeholder="Например, 104233-7" /><button className="secondary" disabled={busy || !query.trim()} onClick={() => void search()}>Найти цепочку</button></div>
+    <div className="search-row"><input aria-label="Поиск родословной" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} placeholder="Например, 104233-2" /><button className="secondary" disabled={busy || !query.trim()} onClick={() => void search()}>Найти цепочку</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {result && !result.nodes.length && <div className="empty">Связей по этому номеру не найдено.</div>}
     {result && result.nodes.length > 0 && <div className="genealogy-result">
