@@ -332,6 +332,49 @@ def test_receiver_writes_an_old_address_as_is_then_clears_it_and_moves_to_a_rack
     assert moved.json()["lot"]["balance"] == "10"
 
 
+def test_receiver_transfers_a_whole_lot_between_warehouses(warehouse_api):
+    client, lot = warehouse_api
+    written = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
+        "version": lot.version, "quantity": "4", "reason": "Выдача",
+    }).json()["lot"]
+
+    moved = client.post(f"/api/stock/batches/{lot.id}/move", json={
+        "version": written["version"], "warehouse": "ЖУК",
+    })
+    in_zhuk = client.get("/api/stock?warehouse=ЖУК").json()["lots"]
+    in_car = client.get("/api/stock?warehouse=ЦАР&zero=true").json()["lots"]
+
+    assert moved.status_code == 200, moved.text
+    assert {key: moved.json()["lot"][key] for key in ("id", "warehouse", "storage_location", "inbound", "written_off", "balance")} == {
+        "id": str(lot.id), "warehouse": "ЖУК", "storage_location": "1F4",
+        "inbound": "10", "written_off": "4", "balance": "6",
+    }
+    assert [item["id"] for item in in_zhuk] == [str(lot.id)]
+    assert in_car == []
+
+
+def test_transfer_of_an_empty_lot_is_rejected_with_the_supplymap_text(warehouse_api):
+    client, lot = warehouse_api
+    written = client.post(f"/api/stock/batches/{lot.id}/writeoff", json={
+        "version": lot.version, "quantity": "10", "reason": "Выдача",
+    }).json()["lot"]
+
+    empty = client.post(f"/api/stock/batches/{lot.id}/move", json={
+        "version": written["version"], "warehouse": "ЖУК", "storage_location": "2A1",
+    })
+    nothing = client.post(f"/api/stock/batches/{lot.id}/move", json={"version": written["version"]})
+    unknown = client.post(f"/api/stock/batches/{lot.id}/move", json={
+        "version": written["version"], "warehouse": "СПБ",
+    })
+
+    assert empty.status_code == 422
+    assert empty.json()["detail"] == "Нечего перемещать: остаток по FRX.26.0000001 пуст."
+    assert nothing.status_code == 422
+    assert nothing.json()["detail"] == "Укажи новое место или склад."
+    assert unknown.status_code == 422
+    assert unknown.json()["detail"] == "Неизвестный склад «СПБ»."
+
+
 def test_long_old_address_is_kept_but_regular_move_rejects_it(warehouse_api):
     client, lot = warehouse_api
     long_place = "стеллаж у окна, верхняя полка"

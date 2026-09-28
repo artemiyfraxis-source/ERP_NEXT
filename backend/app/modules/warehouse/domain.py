@@ -9,6 +9,9 @@ from uuid import UUID, uuid4
 from app.shared.warehouse_location import normalize_storage_location, storage_location_as_is
 
 
+WAREHOUSES = ("ЦАР", "ЖУК")
+
+
 class WarehouseValidationError(ValueError):
     """A warehouse operation would violate physical stock accounting."""
 
@@ -72,7 +75,7 @@ class StockLot:
         location_as_is: bool = False,
     ) -> StockLot:
         """location_as_is — old data: an empty place or an old address is kept as it was."""
-        if str(warehouse).strip() not in {"ЦАР", "ЖУК"}:
+        if str(warehouse).strip() not in WAREHOUSES:
             raise WarehouseValidationError("Неизвестный склад")
         if not str(grn).strip():
             raise WarehouseValidationError("ГРН обязателен")
@@ -168,6 +171,25 @@ class StockLot:
         if normalized == self.storage_location:
             return self
         return replace(self, storage_location=normalized, version=self.version + 1)
+
+    def transfer(self, warehouse: str, storage_location: str = "") -> StockLot:
+        """Whole lot to the other warehouse (SUPPLYMAP Stock05.gs stock05Move_): same aggregate, same
+        ПРИХОД/СПИСАНО, so the balance and the write-off history travel with it. No place given → the lot
+        keeps its current one, as `place || МЕСТО ХРАНЕНИЯ` in SUPPLYMAP. The caller checks the target key."""
+        target = str(warehouse or "").strip()
+        if target not in WAREHOUSES:
+            raise WarehouseValidationError(f"Неизвестный склад «{target}».")
+        if target == self.warehouse:
+            return self.move(storage_location) if str(storage_location or "").strip() else self
+        if self.balance <= 0:
+            raise WarehouseValidationError(f"Нечего перемещать: остаток по {self.grn} пуст.")
+        if self.reserved > 0:
+            raise WarehouseValidationError(
+                f"Партия {self.grn} в резерве ({format(self.reserved.normalize(), 'f')}): "
+                "сначала сними резерв, потом перемещай на другой склад."
+            )
+        place = self.move(storage_location).storage_location if str(storage_location or "").strip() else self.storage_location
+        return replace(self, warehouse=target, storage_location=place, version=self.version + 1)
 
     def correct_location(self, storage_location: str) -> StockLot:
         """Manual correction «as it really is»: any text, an old address or no place at all."""

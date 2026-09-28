@@ -50,7 +50,8 @@ class WriteOffPayload(BaseModel):
 
 class MovePayload(BaseModel):
     version: int = Field(ge=1)
-    storage_location: str = Field(min_length=3, max_length=16)
+    storage_location: str = Field(default="", max_length=16)
+    warehouse: str = Field(default="", max_length=8)
 
 
 class CorrectLocationPayload(BaseModel):
@@ -261,6 +262,7 @@ def move(
                 storage_location=payload.storage_location,
                 actor=principal.actor,
                 now=now,
+                warehouse=payload.warehouse,
             ),
             uow_factory(),
         )

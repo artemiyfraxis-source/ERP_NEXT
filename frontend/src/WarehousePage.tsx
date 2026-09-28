@@ -350,7 +350,9 @@ function MoveStockForm({ preset, busy, mutate, onClose }: {
   const [source, setSource] = useState(preset?.grn ?? "");
   const [packageNumber, setPackageNumber] = useState(preset?.package ?? "");
   const [target, setTarget] = useState("");
+  const [targetWarehouse, setTargetWarehouse] = useState("");
   const [error, setError] = useState("");
+  const transfer = mode === "lot" && Boolean(targetWarehouse) && targetWarehouse !== warehouse;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -365,7 +367,7 @@ function MoveStockForm({ preset, busy, mutate, onClose }: {
           selected = result.lots.find((item) => item.grn === source.trim() && item.package === packageNumber.trim()) ?? null;
         }
         if (!selected) throw new Error("Партия с таким ГРН и пакетом не найдена");
-        await mutate(selected.id, () => warehouseApi.move(selected.id, selected.version, target));
+        await mutate(selected.id, () => warehouseApi.move(selected.id, selected.version, target.trim(), transfer ? targetWarehouse : ""));
       }
       onClose();
     } catch (reason) {
@@ -382,11 +384,13 @@ function MoveStockForm({ preset, busy, mutate, onClose }: {
         setMode(next);
         setSource(next === "lot" ? preset?.grn ?? "" : preset?.storage_location ?? "");
       }}><option value="lot">Одну партию по ГРН</option><option value="location">Всё место целиком</option></select></label>
-      <label>Склад<select aria-label="Склад перемещения" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
+      <label>Склад<select aria-label="Склад перемещения" value={warehouse} onChange={(event) => { setWarehouse(event.target.value); setTargetWarehouse(""); }}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
       <label>{mode === "lot" ? "ГРН" : "Откуда"}<input aria-label={mode === "lot" ? "ГРН для перемещения" : "Исходное место"} required value={source} onChange={(event) => setSource(event.target.value)} /></label>
       {mode === "lot" && <label>Пакет<input aria-label="Пакет для перемещения" value={packageNumber} onChange={(event) => setPackageNumber(event.target.value)} /></label>}
-      <label>Куда<input aria-label="Новое место" placeholder="20B5" required value={target} onChange={(event) => setTarget(event.target.value)} /></label>
+      {mode === "lot" && <label>На склад<select aria-label="Склад назначения" value={targetWarehouse} onChange={(event) => setTargetWarehouse(event.target.value)}><option value="">Тот же склад</option>{["ЦАР", "ЖУК"].filter((item) => item !== warehouse).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
+      <label>Куда<input aria-label="Новое место" placeholder={transfer ? "прежнее место" : "20B5"} required={!transfer} value={target} onChange={(event) => setTarget(event.target.value)} /></label>
     </div>
+    {transfer && <p className="page-sub">Партия уедет на {targetWarehouse} целиком: с остатком и историей списаний. Пустое место — останется прежнее.</p>}
     <button className="primary" disabled={busy}>{busy ? "Перемещаем…" : "Переместить"}</button>
   </form>;
 }

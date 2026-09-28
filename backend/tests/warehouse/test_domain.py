@@ -48,6 +48,43 @@ def test_return_cannot_exceed_previously_written_off_quantity():
         returned.return_writeoff(Decimal("3"))
 
 
+def test_transfer_carries_the_whole_lot_with_its_writeoff_history():
+    written = lot().write_off(Decimal("4"))
+
+    moved = written.transfer("ЖУК", "2A1")
+
+    assert (moved.id, moved.warehouse, moved.storage_location) == (written.id, "ЖУК", "2A1")
+    assert (moved.inbound, moved.written_off, moved.balance) == (Decimal("10"), Decimal("4"), Decimal("6"))
+    assert moved.version == written.version + 1
+
+
+def test_transfer_without_a_place_keeps_the_current_one_even_an_old_address():
+    assert lot().transfer("ЖУК").storage_location == "1F4"
+    assert lot().correct_location("A-01").transfer("ЖУК").storage_location == "A-01"
+
+
+def test_transfer_of_an_empty_lot_has_nothing_to_move():
+    empty = lot().write_off(Decimal("10"))
+
+    with pytest.raises(WarehouseValidationError, match="^Нечего перемещать: остаток по FRX.26.0000001 пуст.$"):
+        empty.transfer("ЖУК", "2A1")
+
+
+def test_transfer_refuses_a_reserved_lot_and_an_unknown_warehouse():
+    with pytest.raises(WarehouseValidationError, match="в резерве \\(3\\)"):
+        lot().reserve(Decimal("3")).transfer("ЖУК")
+    with pytest.raises(WarehouseValidationError, match="^Неизвестный склад «СПБ».$"):
+        lot().transfer("СПБ")
+
+
+def test_transfer_to_the_same_warehouse_only_moves_the_place():
+    initial = lot()
+
+    assert initial.transfer("ЦАР") == initial
+    assert initial.transfer("ЦАР", "1F5") == initial.move("1F5")
+    assert lot().write_off(Decimal("10")).transfer("ЦАР", "1F5").storage_location == "1F5"
+
+
 def test_reserved_issue_reduces_reserve_and_physical_balance_atomically():
     reserved = lot().reserve(Decimal("4"))
     issued = reserved.issue_reserved(Decimal("4"))

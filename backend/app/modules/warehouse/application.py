@@ -95,6 +95,7 @@ class MoveLotCommand:
     storage_location: str
     actor: Actor
     now: datetime
+    warehouse: str = ""  # target warehouse; empty or the lot's own → only the place changes
 
 
 @dataclass(frozen=True)
@@ -420,17 +421,43 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
 
 
 def move_lot(command: MoveLotCommand, uow: UnitOfWork) -> StockLot:
+    """SUPPLYMAP stock05Move_: a new place and/or the whole lot to the other warehouse."""
+    target = str(command.warehouse or "").strip()
+    place = str(command.storage_location or "").strip()
+    if not place and not target:
+        raise WarehouseValidationError("Укажи новое место или склад.")
     with uow:
         current = _versioned(command.lot_id, command.expected_version, uow)
-        updated = current.move(command.storage_location)
-        if updated == current:
-            return current
+        if not target or target == current.warehouse:
+            if not place:
+                return current
+            updated = current.move(place)
+            if updated == current:
+                return current
+            event_type = "warehouse.moved"
+            details = {"from": current.storage_location, "to": updated.storage_location}
+        else:
+            updated = current.transfer(target, place)
+            occupied = uow.warehouse.by_key(updated.warehouse, updated.grn, updated.package)
+            if occupied is not None and occupied.id != updated.id:
+                label = updated.grn + (f"/{updated.package}" if updated.package else "")
+                raise WarehouseValidationError(
+                    f"На складе {updated.warehouse} уже есть партия {label}: перемещение слило бы "
+                    "две партии. Проверь оба склада."
+                )
+            event_type = "warehouse.transferred"
+            details = {
+                "from_warehouse": current.warehouse, "to_warehouse": updated.warehouse,
+                "from": current.storage_location, "to": updated.storage_location,
+                "grn": updated.grn, "package": updated.package,
+                "inbound": str(updated.inbound), "written_off": str(updated.written_off),
+                "balance": str(updated.balance),
+            }
         uow.warehouse.add(updated)
         uow.audit.add(
             AuditEvent(
-                id=uuid4(), aggregate_id=updated.id, event_type="warehouse.moved",
-                actor=command.actor, occurred_at=command.now,
-                details={"from": current.storage_location, "to": updated.storage_location},
+                id=uuid4(), aggregate_id=updated.id, event_type=event_type,
+                actor=command.actor, occurred_at=command.now, details=details,
             )
         )
         uow.commit()

@@ -916,10 +916,10 @@ export const warehouseApi = {
       method: "PUT",
       body: JSON.stringify({ version, storage_location: storageLocation }),
     }),
-  move: (lotId: string, version: number, storageLocation: string) =>
+  move: (lotId: string, version: number, storageLocation: string, warehouse = "") =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/move`, {
       method: "POST",
-      body: JSON.stringify({ version, storage_location: storageLocation }),
+      body: JSON.stringify({ version, storage_location: storageLocation, warehouse }),
     }),
   moveLocation: (warehouse: string, sourceLocation: string, targetLocation: string) =>
     api<{ lots: WarehouseLot[] }>("/api/stock/locations/move", {

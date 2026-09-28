@@ -278,6 +278,77 @@ def test_whole_location_move_leaves_old_addresses_and_lots_without_a_place():
     assert [uow.warehouse.get(item.id).storage_location for item in others] == ["", "A-01", "18C3Д"]
 
 
+def _transfer(uow, lot, warehouse, place=""):
+    return move_lot(MoveLotCommand(
+        lot_id=lot.id, expected_version=lot.version, storage_location=place,
+        actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 28, 12, 0),
+        warehouse=warehouse,
+    ), uow)
+
+
+def test_lot_transfer_to_the_other_warehouse_keeps_balance_history_and_is_audited():
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    written = write_off(WriteOffCommand(
+        lot_id=lot.id, expected_version=lot.version, quantity=Decimal("3"), reason="Выдача",
+        actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
+    ), uow)
+
+    moved = _transfer(uow, written, "ЖУК", "2A1")
+
+    assert uow.warehouse.by_key("ЦАР", lot.grn, "") is None
+    assert uow.warehouse.by_key("ЖУК", lot.grn, "") == moved
+    assert len(uow.warehouse.items) == 1
+    assert (moved.inbound, moved.written_off, moved.balance) == (Decimal("10"), Decimal("3"), Decimal("7"))
+    assert [event.aggregate_id for event in uow.audit.items] == [lot.id] * 3
+    assert uow.audit.items[-1].event_type == "warehouse.transferred"
+    assert uow.audit.items[-1].details == {
+        "from_warehouse": "ЦАР", "to_warehouse": "ЖУК", "from": "1F4", "to": "2A1",
+        "grn": lot.grn, "package": "", "inbound": "10", "written_off": "3", "balance": "7",
+    }
+
+
+def test_lot_transfer_refuses_empty_reserved_and_occupied_target_without_writing():
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    commits = uow.commits
+
+    with pytest.raises(WarehouseValidationError, match="Укажи новое место или склад."):
+        _transfer(uow, lot, "")
+    with pytest.raises(WarehouseValidationError, match="Неизвестный склад «СПБ»."):
+        _transfer(uow, lot, "СПБ")
+    reserved = lot.reserve(Decimal("1"))
+    uow.warehouse.add(reserved)
+    with pytest.raises(WarehouseValidationError, match="в резерве"):
+        _transfer(uow, reserved, "ЖУК")
+    empty = replace(reserved, reserved=Decimal("0"), written_off=Decimal("10"))
+    uow.warehouse.add(empty)
+    with pytest.raises(WarehouseValidationError, match="Нечего перемещать: остаток по FRX.26.0000001 пуст."):
+        _transfer(uow, empty, "ЖУК")
+    full = replace(empty, written_off=Decimal("0"))
+    uow.warehouse.add(full)
+    twin = replace(full, id=UUID("40000000-0000-0000-0000-000000000001"), warehouse="ЖУК")
+    uow.warehouse.add(twin)
+    with pytest.raises(WarehouseValidationError, match="На складе ЖУК уже есть партия FRX.26.0000001"):
+        _transfer(uow, full, "ЖУК")
+
+    assert uow.commits == commits
+    assert uow.warehouse.get(lot.id).warehouse == "ЦАР"
+    assert [event.event_type for event in uow.audit.items] == ["warehouse.received"]
+
+
+def test_lot_move_within_its_own_warehouse_stays_a_place_move():
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+
+    same = _transfer(uow, lot, "ЦАР")
+    moved = _transfer(uow, lot, "ЦАР", "1F5")
+
+    assert same == lot
+    assert (moved.warehouse, moved.storage_location) == ("ЦАР", "1F5")
+    assert uow.audit.items[-1].event_type == "warehouse.moved"
+
+
 def test_manual_location_correction_is_audited_and_unchanged_place_is_not_written():
     uow = Uow(message())
     lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
