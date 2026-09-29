@@ -28,7 +28,6 @@ from app.shared.http_auth import Principal, projects_edit_principal, projects_vi
 from app.workflows import project_kitset as flow
 
 from .application import CreateProjectTechcardCommand, create_project_techcard
-from .kitset_calc import parse_calc
 from .kitsets import (
     Kitset,
     KitsetNotFound,
@@ -165,11 +164,9 @@ class ShipPayload(BaseModel):
 
 
 class LoadPayload(BaseModel):
-    """Расчёт — ссылкой на Google Таблицу (как в SUPPLYMAP) или файлом .xlsx (запасной путь без доступа)."""
+    """Расчёт — ссылкой на Google Таблицу, как в SUPPLYMAP (`portalKitsetLoad(token, url, ship, opts)`)."""
 
-    url: str = Field(default="", max_length=2048)
-    file_name: str = Field(default="", max_length=512)
-    content_b64: str = Field(default="")
+    url: str = Field(min_length=1, max_length=2048)
     number: str = Field(default="", max_length=255)
     deadline: date | None = None
     ship: ShipPayload | None = None
@@ -186,14 +183,10 @@ _CALC_SHEET_STATUS = {"config": 503, "access": 422, "unsupported": 422, "upstrea
 
 
 def _calc(payload: LoadPayload, request: Request):
-    if payload.url.strip():
-        try:
-            return flow.read_calc_by_link(payload.url, lambda: flow.calc_sheets_reader(request.app.state))
-        except CalcSheetError as error:
-            raise HTTPException(status_code=_CALC_SHEET_STATUS.get(error.kind, 502), detail=str(error)) from error
-    if not payload.content_b64 or not payload.file_name:
-        raise KitsetValidationError("Вставь ссылку на расчёт или выбери файл .xlsx")
-    return parse_calc(_decode(payload.content_b64), payload.file_name)
+    try:
+        return flow.read_calc_by_link(payload.url, lambda: flow.calc_sheets_reader(request.app.state))
+    except CalcSheetError as error:
+        raise HTTPException(status_code=_CALC_SHEET_STATUS.get(error.kind, 502), detail=str(error)) from error
 
 
 @router.post("/load")

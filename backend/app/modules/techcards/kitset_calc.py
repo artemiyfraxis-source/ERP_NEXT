@@ -1,18 +1,14 @@
 """Reading a calculation into a kitset — SUPPLYMAP `tcReadCalcKitset_` (TcKitset.gs).
 
-SUPPLYMAP opens the Google calculation by link; ERP does too (workflows/project_kitset.read_calc_by_link). The
-fallback is the same workbook as an .xlsx file (Google «Файл → Скачать → Microsoft Excel»), read here with the
-standard library only. The rules are
+SUPPLYMAP opens the Google calculation by link; ERP does too (workflows/project_kitset.read_calc_by_link reads the
+sheets as display values, this module applies the rules). The rules are
 the portal's: ЗКЗ!B2 = номер проекта, B3 = заказчик, rows under the ЗКЗ header = сборки (индекс, наименование,
 тираж, «Вкл. в расчет?»), СПЯ = состав по колонке «Сборка».
 """
 
 from __future__ import annotations
 
-from io import BytesIO
 import re
-from xml.etree import ElementTree
-import zipfile
 
 from .kitsets import (
     SCRAP_DEFAULT,
@@ -29,90 +25,6 @@ PROJECT_SHEET = "ЗКЗ"
 SPEC_SHEET = "СПЯ"
 SPA_ARTICLE = ("Обозначение", "Артикул КД")
 SPA_NAME = ("Наименование", "Наименование ЗКЗ")
-_NS = {
-    "m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
-    "rel": "http://schemas.openxmlformats.org/package/2006/relationships",
-}
-MAX_CALC_BYTES = 20 * 1024 * 1024
-
-
-def _column_index(reference: str) -> int:
-    letters = re.match(r"[A-Z]+", reference.upper())
-    index = 0
-    for char in letters[0] if letters else "A":
-        index = index * 26 + ord(char) - 64
-    return index - 1
-
-
-def _row_index(reference: str) -> int:
-    digits = re.search(r"\d+", reference)
-    return int(digits[0]) - 1 if digits else 0
-
-
-def _display(value: str) -> str:
-    """A number cell as the sheet shows it: «1.0» → «1», «1.5600000000000001» → «1.56»."""
-    try:
-        number = float(value)
-    except ValueError:
-        return value
-    if number.is_integer():
-        return str(int(number))
-    return f"{number:.10f}".rstrip("0").rstrip(".")
-
-
-def read_xlsx(content: bytes) -> dict[str, list[list[str]]]:
-    """{sheet name: grid of display strings}. Only what the calculation rules read: values, not formulas."""
-    if len(content) > MAX_CALC_BYTES:
-        raise KitsetValidationError("Файл расчёта больше 20 МБ")
-    try:
-        archive = zipfile.ZipFile(BytesIO(content))
-        workbook = ElementTree.fromstring(archive.read("xl/workbook.xml"))
-        relations = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
-    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError) as error:
-        raise KitsetValidationError("Не похоже на файл расчёта .xlsx") from error
-    targets = {
-        item.get("Id"): item.get("Target", "") for item in relations.findall("rel:Relationship", _NS)
-    }
-    shared: list[str] = []
-    if "xl/sharedStrings.xml" in archive.namelist():
-        strings = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
-        for item in strings.findall("m:si", _NS):
-            shared.append("".join(text.text or "" for text in item.iter(f"{{{_NS['m']}}}t")))
-    sheets: dict[str, list[list[str]]] = {}
-    for sheet in workbook.findall("m:sheets/m:sheet", _NS):
-        name = sheet.get("name", "")
-        target = targets.get(sheet.get(f"{{{_NS['r']}}}id"), "")
-        path = target.lstrip("/") if target.startswith("/") else f"xl/{target}"
-        if path not in archive.namelist():
-            continue
-        grid: dict[int, dict[int, str]] = {}
-        root = ElementTree.fromstring(archive.read(path))
-        for cell in root.iter(f"{{{_NS['m']}}}c"):
-            reference = cell.get("r", "")
-            kind = cell.get("t", "")
-            value_node = cell.find("m:v", _NS)
-            raw = value_node.text if value_node is not None and value_node.text is not None else ""
-            if kind == "s":
-                value = shared[int(raw)] if raw.isdigit() and int(raw) < len(shared) else ""
-            elif kind == "inlineStr":
-                value = "".join(text.text or "" for text in cell.iter(f"{{{_NS['m']}}}t"))
-            elif kind == "b":
-                value = "TRUE" if raw == "1" else "FALSE"
-            elif kind in ("str", "e"):
-                value = raw
-            else:
-                value = _display(raw) if raw else ""
-            grid.setdefault(_row_index(reference), {})[_column_index(reference)] = value
-        if not grid:
-            sheets[name] = []
-            continue
-        width = max(max(row) for row in grid.values() if row) + 1
-        sheets[name] = [
-            [grid.get(row, {}).get(column, "") for column in range(width)]
-            for row in range(max(grid) + 1)
-        ]
-    return sheets
 
 
 def _find(header: list[str], label: str) -> int:
@@ -143,12 +55,6 @@ def calc_project_number(cell: object, title: object) -> str:
     if base and project_number_valid(head) and head.startswith(base) and len(head.rstrip(".")) > len(base):
         return head
     return value
-
-
-def parse_calc(content: bytes, file_name: str) -> CalcKitset:
-    """Расчёт файлом .xlsx (запасной путь без Google)."""
-    title = re.sub(r"\.xlsx$", "", str(file_name or "").strip(), flags=re.I)
-    return parse_calc_sheets(read_xlsx(content), title, str(file_name or "").strip())
 
 
 def parse_calc_sheets(sheets: dict[str, list[list[str]]], title: str, source: str) -> CalcKitset:
