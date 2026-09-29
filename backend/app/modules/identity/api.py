@@ -375,10 +375,11 @@ def create_employee_route(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
     try:
-        user = create_employee(NewEmployee(**payload.model_dump()), principal.actor, now, uow_factory())
+        created = create_employee(NewEmployee(**payload.model_dump()), principal.actor, now, uow_factory())
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
-    return {"user": _employee(user, bool(payload.pin.strip()))}
+    # The PIN is shown once so the administrator can hand it over (owner: «все пины мне … заводить новых сам»).
+    return {"user": _employee(created.user, pin_set=True), "pin": created.pin}
 
 
 @router.put("/staff/{user_id}")

@@ -213,13 +213,15 @@ it("opens native references at the references route", async () => {
       permissions: { erpref: "view" },
     });
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Справочники", level: 1 })).toBeInTheDocument();
-  expect(await screen.findByText("Карты соответствий пока не заполнены.")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "База данных", level: 1 })).toBeInTheDocument();
+  expect(await screen.findByText("Записей нет.")).toBeInTheDocument();
 });
 
 it("opens the personal notification inbox for every authenticated user", async () => {
