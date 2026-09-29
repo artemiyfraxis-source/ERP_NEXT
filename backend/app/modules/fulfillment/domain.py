@@ -344,6 +344,12 @@ class FulfillmentRequest:
                 updated.append(line)
         if not released:
             raise FulfillmentValidationError("Позиция заявки не найдена")
+        # FF-6, Issue.gs issueMergeFreePlan_: after a lot is removed, every FREE row (no lot, no reserve, no issue) of
+        # one article + name + unit folds into the first such row — also rows that came from different positions of
+        # the composition; the need is summed. A row with a lot, reserve or issue keeps its own quantity.
+        def free_key(line: FulfillmentLine) -> tuple[str, str, str]:
+            return tuple(str(value or "").strip().casefold() for value in (line.article, line.name, line.unit))
+
         merged: list[FulfillmentLine] = []
         for line in updated:
             if line.lot is not None or line.reserved > 0 or line.issued > 0:
@@ -353,9 +359,10 @@ class FulfillmentRequest:
                 (
                     index
                     for index, candidate in enumerate(merged)
-                    if candidate.requirement_id == line.requirement_id
-                    and candidate.lot is None
+                    if candidate.lot is None
+                    and candidate.reserved == 0
                     and candidate.issued == 0
+                    and free_key(candidate) == free_key(line)
                 ),
                 None,
             )

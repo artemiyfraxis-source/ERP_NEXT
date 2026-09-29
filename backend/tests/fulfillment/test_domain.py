@@ -187,3 +187,17 @@ def test_close_without_return_only_from_issued():
     original = request(line("3"))
     with pytest.raises(FulfillmentValidationError, match="выданный"):
         original.close_issued()
+
+
+def test_unbinding_merges_free_rows_of_one_article_from_different_positions():
+    """FF-6, issueMergeFreePlan_: rows of one article + name + unit fold together whatever position they came from."""
+    first, second = line("3"), line("2")
+    other = replace(line("4"), name="Провод")
+    original = request(first, second, other)
+    bound = original.bind_line(first.id, lot(1), Decimal("3"))
+    released = bound.unbind_line(bound.lines[0].id)
+
+    assert [(item.name, item.requirement) for item in released.lines] == [
+        ("Разъём", Decimal("5")), ("Провод", Decimal("4")),
+    ]
+    assert released.lines[0].requirement_id == first.requirement_id
