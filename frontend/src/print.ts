@@ -100,6 +100,7 @@ export function buildPrintDocumentHtml(title: string, pages: PrintPage[]): strin
 
 export function openPrintDocument(title: string, pages: PrintPage[]): void {
   openPrintHtml(buildPrintDocumentHtml(title, pages));
+}
 
 /** Several sheets in one print job, each on its own page (packing list per box — `shipBuildDocs_`). */
 export function buildPrintSheetsHtml(sheets: PrintSheet[]): string {
@@ -116,11 +117,5 @@ export function buildPrintSheetsHtml(sheets: PrintSheet[]): string {
 
 export function openPrintSheets(sheets: PrintSheet[]): void {
   if (sheets.length === 1) { openPrintSheet(sheets[0]); return; }
-  const win = window.open("", "_blank", "noopener,noreferrer,width=900,height=1150");
-  if (!win) return;
-  win.document.open();
-  win.document.write(buildPrintSheetsHtml(sheets));
-  win.document.close();
-  win.focus();
-  win.print();
+  openPrintHtml(buildPrintSheetsHtml(sheets));
 }
