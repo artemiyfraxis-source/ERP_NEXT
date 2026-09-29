@@ -10,7 +10,7 @@ const principal = {
 const good = {
   id: "g1", version: 1, project: "591К.3", item_index: "КБ1", customer: "Заказчик",
   article: "A-1", name: "Жгут", ordered: "40", unit: "шт", accepted: "6", shipped: "0",
-  remaining: "6", received_at: "2026-09-22", grn: "ГП.26.0000001", note: "",
+  remaining: "6", sent: "0", before_erp: "0", received_at: "2026-09-22", grn: "ГП.26.0000001", note: "",
 };
 const other = { ...good, id: "g2", project: "600К.1", item_index: "КБ7", customer: "Другой", grn: "ГП.26.0000002", name: "Кабель" };
 

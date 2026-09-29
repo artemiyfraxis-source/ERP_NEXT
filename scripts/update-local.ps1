@@ -2,8 +2,9 @@
 # Запуск из корня копии: powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1
 # Порядок безопасный: сначала новый код, зависимости и сборка сайта в frontend\dist-next — старая ERP в это
 # время работает. Ошибка на этом шаге → код возвращается на прежнюю версию, ERP не останавливалась.
-# Потом остановка API, копия базы в backend\<база>.bak, миграции, сотрудники (без --reset-pins), отгруженные
-# проекты по снимку data\import\projects.json, подмена сайта, запуск API и фонового outbox_worker. Ошибка миграций → база из копии,
+# Потом остановка API, копия базы в backend\<база>.bak, миграции, сотрудники (без --reset-pins), отгруженное по
+# листу цеха «ЗАГРУЗ» (полностью отгруженные проекты прочь, частичные отгрузки — в готовую продукцию; с ключом лист
+# перечитывается из Google, иначе снимок data\import\projects.json), подмена сайта, запуск API и фонового outbox_worker. Ошибка миграций → база из копии,
 # прежний код, прежний сайт, API снова запущен. В конце — версия и «Что нового» (влитые PR с прошлого
 # обновления; коммит прошлого обновления в backend\<база>.version), то же уходит в version.json для плашки в ERP.
 # Техкарты (владелец 29.09: «отгенерировать ТК по проектам»): выданные в SUPPLYMAP переносятся из листа «Техкарты»,
@@ -111,10 +112,6 @@ else {
   else { Write-Host 'Новых сотрудников нет.' }
 }
 
-Write-Host '== Отгруженные по листу цеха — из базы (владелец 29.09: отгруженное не нужно)'
-& $py -X utf8 ..\scripts\projects_import.py drop-shipped (Join-Path $root 'data\import\projects.json')
-if ($LASTEXITCODE -ne 0) { Write-Warning "Отгруженные не убраны (ошибка выше)" }
-
 # Ключ Google: только чтение таблиц; запоминается путь, не сам ключ.
 $keyPath = Join-Path $backend 'google-key.path'
 if ($Key) { $Key = (Resolve-Path $Key).Path }
@@ -128,6 +125,13 @@ else {
   if ($found) { $Key = $found.FullName; Write-Host "Ключ Google найден: $Key" }
 }
 if ($Key) { Set-Content $keyPath $Key; $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = $Key }
+
+Write-Host '== Отгруженное по листу цеха «ЗАГРУЗ» (владелец 29.09: отгруженное не нужно, отгруженное из Google — «отгружено»)'
+# С ключом лист перечитывается из Google (только чтение) в снимок data\import\projects.json, без ключа — берётся снимок.
+$shipped = @('-X', 'utf8', '..\scripts\projects_import.py', 'drop-shipped', (Join-Path $root 'data\import\projects.json'))
+if ($Key -and (Test-Path $Key)) { $shipped += @('--key', $Key) }
+& $py @shipped
+if ($LASTEXITCODE -ne 0) { Write-Warning "Отгруженное не перенесено (причина выше)" }
 
 Write-Host '== Техкарты: выданные в SUPPLYMAP (Google только читается) и ЭТК генератором'
 $report = Join-Path $backend 'techcards-report.txt'

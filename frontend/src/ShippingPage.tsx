@@ -112,19 +112,17 @@ const STAGES: Array<[string, string]> = [
   ["packed", "Упакованы — отправить"], ["sent", "Отправлены"],
 ];
 
-/** `shipProjLines_`: по КБ — сколько в неуехавших отправках и сколько уехало; отменённые не считаем. */
+/** `shipProjLines_`: по КБ — сколько в неуехавших отправках и сколько уехало (регистр ГП, с отгруженным до ERP). */
 function projectLines(project: string, goods: FinishedGood[], shipments: Shipment[]): ProjectLine[] {
-  const agg: Record<string, { packed: number; sent: number }> = {};
+  const packed: Record<string, number> = {};
   for (const shipment of shipments) {
-    if (shipment.status === "Отменена") continue;
+    if (["Отменена", "Отгружена", "Закрыта"].includes(shipment.status)) continue;
     for (const line of shipment.lines) {
-      if (line.project !== project) continue;
-      const slot = agg[line.good_id] ??= { packed: 0, sent: 0 };
-      if (["Отгружена", "Закрыта"].includes(shipment.status)) slot.sent += num(line.picked); else slot.packed += num(line.picked);
+      if (line.project === project) packed[line.good_id] = (packed[line.good_id] ?? 0) + num(line.picked);
     }
   }
   return goods.filter((good) => good.project === project).map((good) => ({
-    good, packed: round2(agg[good.id]?.packed ?? 0), sent: round2(agg[good.id]?.sent ?? 0),
+    good, packed: round2(packed[good.id] ?? 0), sent: round2(num(good.sent)),
   }));
 }
 
@@ -425,6 +423,8 @@ function GoodsTab({ goods, readyBoxes, canManage, canWarehouse, busy, mutate }: 
     { key: "ordered", title: "В заказе", value: (good) => good.ordered, numeric: true },
     { key: "accepted", title: "Принято", value: (good) => good.accepted, numeric: true },
     { key: "shipped", title: "Отобрано", value: (good) => good.shipped, numeric: true, hidden: true },
+    { key: "sent", title: "Уехало", value: (good) => good.sent, numeric: true, hidden: true },
+    { key: "before_erp", title: "Отгружено до ERP", value: (good) => good.before_erp, numeric: true, hidden: true },
     { key: "remaining", title: "На складе", value: (good) => good.remaining, numeric: true, render: (good) => <strong>{good.remaining}</strong> },
     { key: "grn", title: "ГРН", value: (good) => good.grn ?? "", render: (good) => good.grn || <span className="muted">цех не сдавал</span> },
     { key: "received_at", title: "Дата приёмки", value: (good) => good.received_at ?? "", hidden: true },
