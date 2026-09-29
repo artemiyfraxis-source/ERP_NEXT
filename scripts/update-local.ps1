@@ -1,6 +1,7 @@
 ﻿# Обновить локальную ERP (копия ERP_NEXT на ПК, база real.db) до свежего main, не трогая данные.
 # Запуск из корня копии: powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1
 # Шаги: копия базы в backend\<база>.bak, main, зависимости, миграции, сотрудники (без --reset-pins),
+# отгруженные проекты по снимку data\import\projects.json,
 # сборка сайта, перезапуск API на порту.
 param([string]$DbFile = 'real.db', [int]$Port = 8022)
 $ErrorActionPreference = 'Stop'
@@ -40,6 +41,10 @@ else {
   if ($new.Count) { Write-Host "Новые сотрудники, раздайте им PIN:"; $new | ForEach-Object { Write-Host "  $_" } }
   else { Write-Host 'Новых сотрудников нет.' }
 }
+
+Write-Host '== Отгруженные по листу цеха — из базы (владелец 29.09: отгруженное не нужно)'
+& $py -X utf8 ..\scripts\projects_import.py drop-shipped (Join-Path $root 'data\import\projects.json')
+if ($LASTEXITCODE -ne 0) { Write-Warning "Отгруженные не убраны (ошибка выше)" }
 
 Write-Host '== Сборка сайта'
 Set-Location (Join-Path $root 'frontend')
