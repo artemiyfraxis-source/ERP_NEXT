@@ -368,3 +368,23 @@ it("filters the queue by status preset and searches by words", async () => {
   expect(screen.queryByText("SM-20260921-01")).toBeNull();
   expect(screen.getByText("SM-20260921-02")).toBeInTheDocument();
 });
+
+it("RC-9: prints an issued act from the line card", async () => {
+  const accepted: ReceivingLine = { ...line, status: "Принято", verdict: "Годен", grn: "FRX.26.0000001", acts: [{ kind: "incoming", title: "Акт входного контроля", number: "ВК-20260921-01", date: "2026-09-21" }] };
+  const requested: string[] = [];
+  vi.spyOn(window, "open").mockReturnValue(null);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [accepted] });
+    if (path.includes("/acts/")) {
+      requested.push(path);
+      return json({ sheet: { title: "АКТ", subtitle: "", columns: [], rows: [], sign: "", note: "" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  await openRow();
+  fireEvent.click(await screen.findByRole("button", { name: "Акт входного контроля № ВК-20260921-01" }));
+  await waitFor(() => expect(requested).toEqual([`/api/receiving/${line.id}/acts/incoming`]));
+});

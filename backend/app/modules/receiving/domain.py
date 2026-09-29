@@ -145,6 +145,32 @@ class InspectionInput:
     nonconformity_description: str = ""
 
 
+# RC-9: акты приёмки (Config.gs DOC_TYPES): вид → (префикс номера, заголовок).
+ACT_KINDS: dict[str, tuple[str, str]] = {
+    "incoming": ("ВК", "Акт входного контроля"),
+    "nonconformity": ("АН", "Акт о несоответствии"),
+    "complaint": ("РК", "Акт рекламации"),
+    "usepermit": ("РИ", "Разрешение на использование"),
+}
+
+
+def act_number_prefix(kind: str, day: date) -> str:
+    return f"{ACT_KINDS[kind][0]}-{day.strftime('%Y%m%d')}-"
+
+
+def next_act_number(kind: str, day: date, existing: Iterable[str]) -> str:
+    """SystemId.gs nextSystemId_: ПРЕФИКС-ГГГГММДД-NN, NN — следующий за наибольшим за этот день."""
+    prefix = act_number_prefix(kind, day)
+    top = 0
+    for value in existing:
+        text = str(value or "")
+        if text.startswith(prefix):
+            tail = text[len(prefix):]
+            if tail.isdigit():
+                top = max(top, int(tail))
+    return f"{prefix}{top + 1:02d}"
+
+
 def verdict_reference_date(
     *,
     today: date,
@@ -328,6 +354,23 @@ class ReceivingLine:
     manufacture_date: date | None = None
     # A batch (RC-13) or package (RC-8) line `-ПN` split off this line; the order stays one procurement line.
     split_of_id: UUID | None = None
+    # RC-9: № и дата актов строки (№ АКТ ВК/АКТ ВК ДАТА, № АКТ НС, № АКТ РЕКЛ., № РАЗРЕШ. ИСПОЛЬЗ.).
+    vk_act_number: str = ""
+    vk_act_date: date | None = None
+    nc_act_number: str = ""
+    nc_act_date: date | None = None
+    complaint_act_number: str = ""
+    complaint_act_date: date | None = None
+    use_permit_number: str = ""
+    use_permit_date: date | None = None
+
+    def act(self, kind: str) -> tuple[str, date | None]:
+        return {
+            "incoming": (self.vk_act_number, self.vk_act_date),
+            "nonconformity": (self.nc_act_number, self.nc_act_date),
+            "complaint": (self.complaint_act_number, self.complaint_act_date),
+            "usepermit": (self.use_permit_number, self.use_permit_date),
+        }[kind]
 
     @property
     def lineage_root_id(self) -> UUID:
@@ -344,6 +387,7 @@ class ReceivingLine:
         *,
         existing_grns: Iterable[str],
         manual_grn_prefix: str | None = None,
+        existing_act_numbers: Iterable[str] = (),
     ) -> ReceivingLine:
         if not str(actor.name or "").strip():
             raise ReceivingValidationError("Не определён приёмщик")
@@ -380,6 +424,40 @@ class ReceivingLine:
                     )
                 prefix = candidate
             grn = next_grn(prefix, data.inspection_date.year, existing_grns)
+        # RC-9 (Receiving.gs:704-761): акт ВК — при первом контроле; АН и РК — когда вердикт их требует и
+        # их ещё нет (догенерация); РИ — вывод из «Ожидания»/«Карантина» в «Принято» после акта ВК.
+        # Дата актов ВК/АН/РК — дата УПД у исторической приёмки (dateFromCol + useDocDate), иначе сегодня.
+        taken = [str(value) for value in existing_act_numbers]
+        act_day = data.verdict_date or data.inspection_date
+
+        def issue(kind: str, current: str, current_day: date | None, day: date) -> tuple[str, date | None]:
+            if current:
+                return current, current_day
+            number = next_act_number(kind, day, taken)
+            taken.append(number)
+            return number, day
+
+        vk = issue("incoming", self.vk_act_number, self.vk_act_date, act_day)
+        nc = (
+            issue("nonconformity", self.nc_act_number, self.nc_act_date, act_day)
+            if result.nonconformity_act_required
+            else (self.nc_act_number, self.nc_act_date)
+        )
+        complaint = (
+            issue("complaint", self.complaint_act_number, self.complaint_act_date, act_day)
+            if result.complaint_required
+            else (self.complaint_act_number, self.complaint_act_date)
+        )
+        released = (
+            bool(self.vk_act_number)
+            and self.status in {ReceivingStatus.WAITING, ReceivingStatus.QUARANTINE}
+            and result.status is ReceivingStatus.ACCEPTED
+        )
+        permit = (
+            issue("usepermit", self.use_permit_number, self.use_permit_date, data.inspection_date)
+            if released
+            else (self.use_permit_number, self.use_permit_date)
+        )
         return replace(
             self,
             status=result.status,
@@ -408,6 +486,14 @@ class ReceivingLine:
             nonconformity_description=(
                 str(data.nonconformity_description or "").strip() or self.nonconformity_description
             ),
+            vk_act_number=vk[0],
+            vk_act_date=vk[1],
+            nc_act_number=nc[0],
+            nc_act_date=nc[1],
+            complaint_act_number=complaint[0],
+            complaint_act_date=complaint[1],
+            use_permit_number=permit[0],
+            use_permit_date=permit[1],
         )
 
     def waiting_overdue(self, today: date) -> bool:

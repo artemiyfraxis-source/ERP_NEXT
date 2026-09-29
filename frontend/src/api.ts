@@ -209,6 +209,8 @@ export interface ReceivingLine {
   inspection_note?: string;
   manufacture_date?: string | null;
   split_of_id?: string | null;
+  /** RC-9: выпущенные акты строки — печатаются бланком. */
+  acts?: { kind: string; title: string; number: string; date: string | null }[];
 }
 
 /** RC-6: принятая позиция в форме возврата поставщику и что по её ГРН лежит на складе. */
@@ -1283,6 +1285,8 @@ export const receivingApi = {
       method: "POST",
       body: JSON.stringify({ version, quantities }),
     }),
+  actSheet: (lineId: string, kind: string) =>
+    api<{ sheet: PrintSheet }>(`/api/receiving/${lineId}/acts/${kind}`),
   openVkRevision: (lineId: string, version: number) =>
     api<{ archived: ReceivingLine; line: ReceivingLine }>(`/api/receiving/${lineId}/vk-revision`, {
       method: "POST",

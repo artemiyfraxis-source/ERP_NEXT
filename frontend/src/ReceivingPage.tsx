@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { receivingApi, type ReceivingLine } from "./api";
 import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
+import { openPrintSheet } from "./print";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
 
 const MANUAL_CHECKS = [
@@ -369,6 +370,15 @@ function ReceivingCard({
       ))}
       {revisable && (
         <button className="secondary small" disabled={disabled} onClick={() => void onOpenVkRevision(line)}>Провести новый ВК</button>
+      )}
+      {Boolean(line.acts?.length) && (
+        <div className="header-actions acts">
+          {line.acts!.map((act) => (
+            <button key={act.kind} type="button" className="secondary small" onClick={() => void receivingApi.actSheet(line.id, act.kind).then(({ sheet }) => openPrintSheet(sheet)).catch(() => undefined)}>
+              {act.title} № {act.number}
+            </button>
+          ))}
+        </div>
       )}
       {line.status === "Архив ВК" && <p className="hint">Архив ВК: акты этой строки — история, приёмка идёт по ревизии.</p>}
       {line.warehouse_event_emitted && <div className="success-banner">Передано на склад: {line.grn} · {line.storage_location}</div>}

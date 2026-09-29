@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Protocol, Sequence
+from typing import Iterable, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
@@ -19,12 +19,16 @@ from app.shared.notifications import (
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
+    ACT_KINDS,
     InspectionInput,
     ReceivingLine,
     ReceivingStatus,
     QUARANTINE_WORKDAYS,
     ReceivingValidationError,
+    QUALITY_FAULTS,
+    QUANTITY_FAULTS,
     SupplierReturnMode,
+    act_number_prefix,
     create_line_from_expected,
     supplier_return_basis,
     latest_overdue_inspection_date,
@@ -81,6 +85,8 @@ class ReceivingRepository(Protocol):
     def by_status(self, status: ReceivingStatus, limit: int = 500) -> Sequence[ReceivingLine]: ...
     def all_grns(self) -> Sequence[str]: ...
     def legacy_ids_starting_with(self, prefix: str) -> Sequence[str]: ...
+
+    def act_numbers_with_prefixes(self, prefixes: Iterable[str]) -> Sequence[str]: ...
     def add(self, line: ReceivingLine) -> None: ...
 
 
@@ -442,6 +448,7 @@ def inspect_receiving(command: InspectReceivingCommand, uow: UnitOfWork) -> Rece
             inspection,
             command.actor,
             existing_grns=uow.receiving.all_grns(),
+            existing_act_numbers=_act_numbers_for(inspection, uow),
             manual_grn_prefix=command.manual_grn_prefix,
         )
         uow.receiving.add(inspected)
@@ -505,6 +512,14 @@ class InspectBatchesCommand:
     manual_grn_prefix: str | None = None
 
 
+def _act_numbers_for(data: InspectionInput, uow: UnitOfWork) -> Sequence[str]:
+    """Номера актов, уже занятые в дни, которыми датируются акты этой приёмки."""
+    days = {data.inspection_date, data.verdict_date or data.inspection_date}
+    return uow.receiving.act_numbers_with_prefixes(
+        act_number_prefix(kind, day) for kind in ACT_KINDS for day in days
+    )
+
+
 def batch_quantity(data: InspectionInput) -> Decimal:
     """Receiving.gs batchQty_: кол-во партии — по УПД, иначе по факту."""
     if data.document_quantity is not None and data.document_quantity > 0:
@@ -531,6 +546,7 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
             now=command.now,
         )
         grns = list(uow.receiving.all_grns())
+        acts = list(_act_numbers_for(command.batches[0], uow))
         inspected: list[ReceivingLine] = []
         for part, data in zip(parts, command.batches):
             inspection = replace(
@@ -541,9 +557,14 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
                 quality_document_present=bool(str(data.quality_document_url or "").strip()),
             )
             line = part.inspect(
-                inspection, command.actor, existing_grns=grns, manual_grn_prefix=command.manual_grn_prefix
+                inspection,
+                command.actor,
+                existing_grns=grns,
+                manual_grn_prefix=command.manual_grn_prefix,
+                existing_act_numbers=acts,
             )
             grns.append(line.grn)
+            acts.extend(line.act(kind)[0] for kind in ACT_KINDS)
             uow.receiving.add(line)
             uow.audit.add(
                 AuditEvent(
@@ -793,3 +814,193 @@ def build_putaway_print_sheet(uow: UnitOfWork, now: datetime, *, limit: int = 50
         rows=rows,
         sign="Разложил: ______________________        Дата: ______________",
     )
+
+
+# RC-9: акты приёмки печатным бланком (DocGen.gs docTemplateSpec_: incoming / nonconformity / complaint /
+# usepermit). Поля те же, что в шаблонах SUPPLYMAP; чего в ERP нет (изготовитель, страна, № док. качества) —
+# прочерк, как незаполненный плейсхолдер в DocGen.
+_OK = "Соответствует"
+_BAD = "Не соответствует"
+
+
+def _dash(value: object) -> str:
+    text = "" if value is None else str(value).strip()
+    return text or "—"
+
+
+def _day(value: date | None) -> str:
+    return value.strftime("%d.%m.%Y") if value else "—"
+
+
+def _qty(value: Decimal | None, unit: str) -> str:
+    return f"{_display_number(value)} {unit}" if value is not None else "—"
+
+
+def _incoming_results(line: ReceivingLine) -> tuple[tuple[str, str, str], ...]:
+    """DocGen.gs icrResultMarks_: пункт «не соответствует» ровно тогда, когда его причина в характере НС."""
+    nature = set(line.nonconformities)
+    mark = lambda *items: _BAD if nature & set(items) else _OK  # noqa: E731
+    quality = (
+        mark("Отсутствие / несоответствие документа по качеству")
+        if line.quality_document_required
+        else "Не требуется"
+    )
+    return (
+        ("1", "Внешний вид, целостность тары и упаковки", mark("Механическое повреждение / брак")),
+        ("2", "УПД/М-15", mark("Отсутствие / несоответствие УПД/М-15")),
+        ("3", "Идентификация (тот ли товар, соответствие счёту)", mark("Не тот товар (несоответствие счету)")),
+        ("4", "Документ по качеству", quality),
+        ("5", "Срок годности / дата изготовления", mark("Истёк срок годности")),
+        ("6", "Количество УПД — соответствие счёту", mark("Недовоз (УПД < заказ)")),
+        ("7", "Количество фактическое — соответствие УПД/М-15", mark("Недостача (факт < УПД)", "Излишек (факт > УПД)")),
+    )
+
+
+def build_act_print_sheet(line: ReceivingLine, kind: str) -> PrintSheet:
+    if kind not in ACT_KINDS:
+        raise KeyError(f"Неизвестный вид акта: {kind}")
+    number, act_date = line.act(kind)
+    title = ACT_KINDS[kind][1]
+    if not number:
+        raise ReceivingValidationError(f"{title} по строке {line.legacy_id} не выпускался")
+    upd = f"{_dash(line.document_number)} от {_day(line.document_date)}"
+    name = line.document_name or line.name
+    basis = f"Акт входного контроля № {_dash(line.vk_act_number)} от {_day(line.vk_act_date)}"
+    inspector = line.inspector.name if line.inspector else "______________"
+    rows: list[tuple[str, str, str]] = [
+        ("", "Заказ №", _dash(line.order_number)),
+        ("", "Тип", _dash(line.item_type)),
+        ("", "Наименование", _dash(name if kind != "incoming" else line.name)),
+        ("", "ГРН", _dash(f"{line.grn} / {line.package}" if line.grn and line.package else line.grn)),
+        ("", "Назначение", _dash(line.purpose)),
+    ]
+    if kind in {"incoming", "nonconformity"}:
+        rows += [
+            ("", "Дата изготовления", _day(line.manufacture_date)),
+            ("", "Срок годности", _day(line.expiry_date)),
+        ]
+    if kind == "incoming":
+        rows.append(("", "Кол-во по заказу", _qty(line.ordered_quantity, line.unit)))
+    if kind == "usepermit":
+        rows.append(("", "Кол-во", _qty(line.fact_quantity, line.unit)))
+    else:
+        rows += [
+            ("", "Кол-во по УПД/М-15", _qty(line.document_quantity, line.unit)),
+            ("", "Кол-во фактически", _qty(line.fact_quantity, line.unit)),
+        ]
+    rows.append(("", "Поставщик", _dash(line.supplier)))
+    if kind == "incoming":
+        rows += [
+            ("", "Производитель", "—"),
+            ("", "Страна", "—"),
+            ("", "УПД/М-15 №", upd),
+            ("", "№ партии", _dash(line.series)),
+            ("", "Дата приезда", _day(line.inspected_on)),
+            ("", "Документ по качеству", _dash(line.quality_document_url)),
+        ]
+        rows += list(_incoming_results(line))
+        rows += [
+            ("", "Примечание", _dash(line.inspection_note)),
+            (
+                "",
+                "Заключение",
+                "Продукция по результатам входного контроля признана: "
+                + ("годной к применению" if line.verdict == "Годен" else "не соответствующей требованиям")
+                + f". Результат: {_dash(line.verdict)}.",
+            ),
+        ]
+        sign = f"ВХОДНОЙ КОНТРОЛЬ ПРОВЁЛ: {inspector}        ПРЕДСТАВИТЕЛЬ ОТК: ______________"
+    elif kind == "usepermit":
+        rows += [
+            ("", "№ партии", _dash(line.series)),
+            ("", "Основание", basis),
+            (
+                "",
+                "Основание вывода из карантина",
+                "Сопроводительная документация (УПД/М-15, документ по качеству) предоставлена в полном объёме. "
+                "Продукция соответствует требованиям и разрешена к использованию.",
+            ),
+        ]
+        sign = f"РАЗРЕШИЛ (входной контроль): {inspector}        ПРЕДСТАВИТЕЛЬ ОТК: ______________"
+    elif kind == "complaint":
+        claimed = [item for item in line.nonconformities if item in QUANTITY_FAULTS | QUALITY_FAULTS]
+        rows += [
+            ("", "УПД/М-15 №", upd),
+            ("", "№ партии", _dash(line.series)),
+            ("", "Основание", basis),
+            ("", "Существо претензии (вина поставщика)", _dash(", ".join(claimed))),
+            ("", "Описание несоответствия", _dash(line.nonconformity_description)),
+            (
+                "",
+                "Требование к поставщику",
+                "☐ Замена несоответствующей продукции  ☐ Допоставка недостающего количества  "
+                "☐ Возврат продукции и денежных средств  ☐ Возмещение убытков",
+            ),
+        ]
+        sign = f"ПРЕТЕНЗИЮ ВЫСТАВИЛ: {inspector}        ПРЕДСТАВИТЕЛЬ ПОСТАВЩИКА: ______________"
+    else:
+        rows += [
+            ("", "УПД/М-15 №", upd),
+            ("", "№ партии", _dash(line.series)),
+            ("", "Основание", basis),
+            ("", "Характер несоответствия", _dash(", ".join(line.nonconformities))),
+            ("", "Описание несоответствия", _dash(line.nonconformity_description)),
+            ("", "Классификация", "☐ Критическое  ☐ Значительное  ☐ Малозначительное"),
+            ("", "Решение по продукции", _dash(line.disposition)),
+        ]
+        sign = f"НЕСООТВЕТСТВИЕ ВЫЯВИЛ: {inspector}        ПРЕДСТАВИТЕЛЬ ЗАКАЗЧИКА (ВП): ______________"
+    return PrintSheet(
+        title=f"{title.upper()} № {number}",
+        subtitle=f"Дата {_day(act_date)} · строка {line.legacy_id}",
+        columns=("№", "Показатель", "Значение"),
+        rows=tuple(rows),
+        sign=sign,
+    )
+
+
+def receiving_act_sheet(line_id: UUID, kind: str, uow: UnitOfWork) -> PrintSheet:
+    with uow:
+        line = uow.receiving.get(line_id)
+    if line is None:
+        raise KeyError(f"Receiving line not found: {line_id}")
+    return build_act_print_sheet(line, kind)
+
+
+# RC-11 (OwnerTick.gs quarantineEscalations_, Config.gs QUAR_DAYS_DISPOSAL): «Карантин» 90+ дней от даты
+# акта ВК (нет — от даты контроля) → разовое уведомление о решении об утилизации. Разовость — ключ outbox
+# на строку и дату отсчёта: вышла из карантина и вернулась с новым ВК — отсчёт и письмо заново.
+QUARANTINE_DISPOSAL_DAYS = 90
+# QUAR_DISPOSAL_EMAILS — два конкретных адреса; в ERP адресаты — роли (решено агентом — проверить).
+QUARANTINE_DISPOSAL_ROLES = ("management", "prodhead")
+
+
+def quarantine_disposal_escalations(now: datetime, uow: UnitOfWork, *, limit: int = 500) -> int:
+    today = now.date()
+    sent = 0
+    with uow:
+        for line in uow.receiving.by_status(ReceivingStatus.QUARANTINE, limit):
+            since = line.vk_act_date or line.inspected_on
+            if since is None:
+                continue
+            days = (today - since).days
+            if days < QUARANTINE_DISPOSAL_DAYS:
+                continue
+            label = f"{round(QUARANTINE_DISPOSAL_DAYS / 30)} мес"
+            if publish_notification(uow.outbox, notification_requested(
+                key=f"receiving:{line.id}:disposal:{since.isoformat()}",
+                now=now,
+                title=f"Карантин ≥{label} — нужно решение об утилизации — {line.legacy_id}",
+                body=(
+                    f"{line.legacy_id} · {line.name or '—'} ({line.warehouse})\n"
+                    f"В Карантине {days} дн. (с {since.strftime('%d.%m.%Y')})."
+                    + (f"\nХарактер несоответствия: {', '.join(line.nonconformities)}" if line.nonconformities else "")
+                    + f"\n\nРешение о выводе из карантина за {label} не получено — "
+                    "по регламенту требуется решение об утилизации."
+                ),
+                kind="disposal",
+                reference=line.legacy_id,
+                roles=QUARANTINE_DISPOSAL_ROLES,
+            )):
+                sent += 1
+        uow.commit()
+    return sent

@@ -24,6 +24,7 @@ from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork as SqlAlche
 from app.modules.receiving.application import (
     PoisonReceivingMessage,
     dispatch_next_receiving_expected,
+    quarantine_disposal_escalations,
     quarantine_overdue_waiting,
 )
 from app.modules.receiving.infrastructure import SqlAlchemyReceivingUnitOfWork
@@ -159,6 +160,11 @@ def run_timers(sessions: sessionmaker[Session]) -> int:
         done += len(quarantine_overdue_waiting(moscow_now(), SqlAlchemyReceivingUnitOfWork(sessions)))
     except (IntegrityError, StaleDataError):
         logging.warning("Receiving line changed during the quarantine timer; retrying next tick")
+    # OwnerTick.gs quarantineEscalations_: «Карантин» 90+ дней → решение об утилизации.
+    try:
+        done += quarantine_disposal_escalations(moscow_now(), SqlAlchemyReceivingUnitOfWork(sessions))
+    except IntegrityError:
+        logging.warning("Quarantine disposal notice raced; retrying next tick")
     # OwnerTick.gs notifyInitiators_: status changes of procurement lines → their initiators.
     try:
         done += notify_initiators(moscow_now(), SqlAlchemyProcurementUnitOfWork(sessions))

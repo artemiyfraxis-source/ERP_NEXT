@@ -32,12 +32,14 @@ from .application import (
     build_putaway_print_sheet,
     open_vk_revision,
     place_receiving,
+    receiving_act_sheet,
     receiving_queue,
     return_to_supplier,
     supplier_return_candidates,
     unpack_receiving,
 )
 from .domain import (
+    ACT_KINDS,
     InspectionInput,
     ReceivingLine,
     ReceivingValidationError,
@@ -196,6 +198,12 @@ def _result(line: ReceivingLine) -> dict:
         "inspection_note": line.inspection_note,
         "manufacture_date": line.manufacture_date.isoformat() if line.manufacture_date else None,
         "split_of_id": str(line.split_of_id) if line.split_of_id else None,
+        "acts": [
+            {"kind": kind, "title": ACT_KINDS[kind][1], "number": number, "date": day.isoformat() if day else None}
+            for kind in ACT_KINDS
+            for number, day in [line.act(kind)]
+            if number
+        ],
     }
 
 
@@ -409,6 +417,18 @@ def unpack(
         )
     )
     return {"lines": [_result(line) for line in lines]}
+
+
+@router.get("/{line_id}/acts/{kind}")
+def act_sheet(
+    line_id: UUID,
+    kind: str,
+    _principal: Annotated[Principal, Depends(receiving_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> dict:
+    if kind not in ACT_KINDS:
+        raise HTTPException(status_code=404, detail="Неизвестный вид акта")
+    return {"sheet": _run(lambda: receiving_act_sheet(line_id, kind, uow_factory())).to_dict()}
 
 
 @router.post("/{line_id}/place")

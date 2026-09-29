@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
@@ -90,6 +91,14 @@ class ReceivingLineRow(Base):
     split_of_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("receiving_lines.id", ondelete="RESTRICT"), index=True
     )
+    vk_act_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    vk_act_date: Mapped[date | None] = mapped_column(Date)
+    nc_act_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    nc_act_date: Mapped[date | None] = mapped_column(Date)
+    complaint_act_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    complaint_act_date: Mapped[date | None] = mapped_column(Date)
+    use_permit_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    use_permit_date: Mapped[date | None] = mapped_column(Date)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -147,6 +156,14 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         inspection_note=line.inspection_note,
         manufacture_date=line.manufacture_date,
         split_of_id=line.split_of_id,
+        vk_act_number=line.vk_act_number,
+        vk_act_date=line.vk_act_date,
+        nc_act_number=line.nc_act_number,
+        nc_act_date=line.nc_act_date,
+        complaint_act_number=line.complaint_act_number,
+        complaint_act_date=line.complaint_act_date,
+        use_permit_number=line.use_permit_number,
+        use_permit_date=line.use_permit_date,
     )
 
 
@@ -208,6 +225,14 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         inspection_note=row.inspection_note or "",
         manufacture_date=row.manufacture_date,
         split_of_id=row.split_of_id,
+        vk_act_number=row.vk_act_number or "",
+        vk_act_date=row.vk_act_date,
+        nc_act_number=row.nc_act_number or "",
+        nc_act_date=row.nc_act_date,
+        complaint_act_number=row.complaint_act_number or "",
+        complaint_act_date=row.complaint_act_date,
+        use_permit_number=row.use_permit_number or "",
+        use_permit_date=row.use_permit_date,
     )
 
 
@@ -300,6 +325,19 @@ class SqlAlchemyReceivingRepository:
                 )
             )
         )
+
+    def act_numbers_with_prefixes(self, prefixes: Iterable[str]) -> list[str]:
+        columns = (
+            ReceivingLineRow.vk_act_number,
+            ReceivingLineRow.nc_act_number,
+            ReceivingLineRow.complaint_act_number,
+            ReceivingLineRow.use_permit_number,
+        )
+        found: list[str] = []
+        for prefix in set(prefixes):
+            for column in columns:
+                found.extend(self.session.scalars(select(column).where(column.startswith(prefix, autoescape=True))))
+        return found
 
     def add(self, line: ReceivingLine) -> None:
         incoming = _row(line)

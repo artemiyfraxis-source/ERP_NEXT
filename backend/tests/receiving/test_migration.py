@@ -165,3 +165,24 @@ def test_document_details_migration_adds_columns_and_lets_batches_share_the_proc
     command.downgrade(config, "0043_receiving_supplier_returns")
     with sqlite3.connect(database_path) as connection:
         assert "split_of_id" not in _columns(connection)
+
+
+def test_acts_migration_adds_numbers_and_dates(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "receiving.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+
+    command.upgrade(config, "0044_receiving_document_details")
+    with sqlite3.connect(database_path) as connection:
+        _insert(connection, "1", "Принято")
+
+    command.upgrade(config, "0045_receiving_acts")
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT vk_act_number, vk_act_date, use_permit_number FROM receiving_lines"
+        ).fetchall() == [("", None, "")]
+
+    command.downgrade(config, "0044_receiving_document_details")
+    with sqlite3.connect(database_path) as connection:
+        assert "vk_act_number" not in _columns(connection)
