@@ -55,6 +55,17 @@ from .project_cards import ProjectTechcard, TechcardRevision, TechcardValidation
 from .operation_cards import OperationCardTemplate
 from .grapher_import import GrapherComponent, GrapherImportError, read_export
 from .connector_housings import attach_housings
+from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
+from .template_sheet_service import (
+    delete_template_sheet,
+    draft_result,
+    drop_template_draft,
+    edit_template_draft,
+    get_template_draft,
+    open_template_draft,
+    save_template_draft,
+    template_sheet_catalog,
+)
 
 router = APIRouter(prefix="/api", tags=["Генератор"])
 
@@ -138,6 +149,23 @@ class OperationRecordPayload(BaseModel):
 class OperationLibraryPayload(BaseModel):
     sourceCommit: str = Field(min_length=40, max_length=40)
     templates: list[dict[str, Any]] = Field(min_length=1, max_length=500)
+
+
+class TemplateDraftOpenPayload(BaseModel):
+    """portalTcTplDraft(templateId, title): templateId задан → черновик правки, иначе новый."""
+
+    template_id: str = Field(default="", max_length=255)
+    title: str = Field(default="", max_length=400)
+
+
+class TemplateDraftRowsPayload(BaseModel):
+    rows: list[list[str | None]] = Field(max_length=400)
+
+
+class TemplateDraftSavePayload(BaseModel):
+    title: str = Field(default="", max_length=400)
+    category: str = Field(default="", max_length=255)
+    description: str = Field(default="", max_length=5_000)
 
 
 class GrapherComponentPayload(BaseModel):
@@ -301,6 +329,90 @@ def operation_card_template(
     if card is None:
         raise HTTPException(status_code=404, detail="Карточка операции не найдена")
     return _operation_card_result(card, detail=True, norms=_operation_norms(references_factory))
+
+
+def _sheet_run(operation):
+    try:
+        return _run(operation)
+    except TemplateSheetNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except TemplateDraftConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+# ── Шаблоны-листы БД.ТК (SUPPLYMAP portalTcTplList/Draft/Save/DropDraft/Delete) ──
+
+@router.get("/techcards/template-sheets")
+def template_sheets(
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    return template_sheet_catalog(uow_factory())
+
+
+@router.post("/techcards/template-sheets/drafts", status_code=201)
+def open_template_sheet_draft(
+    payload: TemplateDraftOpenPayload,
+    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    draft = _sheet_run(lambda: open_template_draft(
+        uow_factory(), template_id=payload.template_id, title=payload.title, actor=principal.actor, now=now,
+    ))
+    return draft_result(draft, with_rows=True)
+
+
+@router.get("/techcards/template-sheets/drafts/{draft_id}")
+def template_sheet_draft(
+    draft_id: UUID,
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    return draft_result(_sheet_run(lambda: get_template_draft(uow_factory(), draft_id)), with_rows=True)
+
+
+@router.put("/techcards/template-sheets/drafts/{draft_id}")
+def edit_template_sheet_draft(
+    draft_id: UUID,
+    payload: TemplateDraftRowsPayload,
+    _principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    draft = _sheet_run(lambda: edit_template_draft(uow_factory(), draft_id, rows=payload.rows, now=now))
+    return draft_result(draft, with_rows=True)
+
+
+@router.post("/techcards/template-sheets/drafts/{draft_id}/save")
+def save_template_sheet_draft(
+    draft_id: UUID,
+    payload: TemplateDraftSavePayload,
+    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    return _sheet_run(lambda: save_template_draft(
+        uow_factory(), draft_id, title=payload.title, category=payload.category,
+        description=payload.description, actor=principal.actor, now=now,
+    ))
+
+
+@router.delete("/techcards/template-sheets/drafts/{draft_id}")
+def drop_template_sheet_draft(
+    draft_id: UUID,
+    _principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    return _sheet_run(lambda: drop_template_draft(uow_factory(), draft_id))
+
+
+@router.delete("/techcards/template-sheets/{template_id}")
+def delete_template_sheet_endpoint(
+    template_id: str,
+    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    return _sheet_run(lambda: delete_template_sheet(uow_factory(), template_id, actor=principal.actor, now=now))
 
 
 @router.put("/techcards/templates/supplymap-library")

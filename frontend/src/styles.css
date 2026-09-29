@@ -603,3 +603,10 @@ td small { margin-top: 4px; color: #7b857e; }
 .tcgen .op-match.found, .tcgen .ok-text { color: #065f46; } .tcgen .op-match.not-found { color: #b45309; }
 .tcgen .f-ok { border-color: #34d399; } .tcgen .f-warn { border-color: #f59e0b; background: #fffbeb; } .tcgen .f-empty { border-color: #f87171; }
 .tcgen .muted { color: var(--muted-foreground); }
+
+/* Шаблоны-листы БД.ТК: каталог и сетка черновика */
+.nowrap { white-space: nowrap; }
+.template-sheets .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sheet-grid th { width: 32px; color: var(--muted-foreground); font-weight: 400; text-align: right; }
+.sheet-grid td { padding: 0; }
+.sheet-grid td input { width: 100%; min-width: 90px; border: 0; border-radius: 0; padding: 4px 6px; font: inherit; background: transparent; }
