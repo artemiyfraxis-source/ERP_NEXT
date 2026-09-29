@@ -443,6 +443,7 @@ export interface ProductionLaunchable {
   index: string;
   item: string;
   name: string;
+  customer: string;
   run: string;
   deadline: string | null;
   launched: number;

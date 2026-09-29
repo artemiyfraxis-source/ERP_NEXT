@@ -308,7 +308,7 @@ function LaunchForm({ tasks, busy, mutate, close }: {
   const doneOf = (item: ProductionLaunchable) => tasks.filter((task) => task.status !== "Отменено"
     && task.project.toLowerCase() === item.project.toLowerCase() && task.item.toUpperCase() === item.index.toUpperCase());
   const needle = query.trim().toLowerCase();
-  const visible = items.filter((item) => !needle || `${item.project} ${item.index} ${item.name}`.toLowerCase().includes(needle));
+  const visible = items.filter((item) => !needle || `${item.project} ${item.index} ${item.customer} ${item.name}`.toLowerCase().includes(needle));
   const projects = Array.from(new Set(visible.map((item) => item.project)));
 
   function pick(item: ProductionLaunchable) {
@@ -334,9 +334,9 @@ function LaunchForm({ tasks, busy, mutate, close }: {
     <div className="manual-stock-head"><div><h2>Запустить задание</h2><small>Выбери сборку — маршрут задания скопируется из её выданной техкарты.</small></div><button className="link-button" onClick={close}>Отмена</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!picked && <>
-      {items.length > 0 && <input className="pl-search" aria-label="Поиск сборки" placeholder="Поиск: проект, КБ, наименование" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus />}
+      {items.length > 0 && <input className="pl-search" aria-label="Поиск сборки" placeholder="Поиск: проект, КБ, заказчик, наименование" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus />}
       {projects.map((project) => <div className="pl-proj" key={project}>
-        <div className="pl-ph"><b>{project}</b></div>
+        <div className="pl-ph"><b>{project}</b>{visible.find((item) => item.project === project)?.customer ? ` · ${visible.find((item) => item.project === project)?.customer}` : ""}</div>
         <div className="pl-grid">{visible.filter((item) => item.project === project).map((item) => {
           const launched = doneOf(item).reduce((sum, task) => sum + task.quantity, 0) || item.launched;
           return <button key={item.techcard_id} className="pl-card" onClick={() => pick(item)}>
@@ -351,7 +351,7 @@ function LaunchForm({ tasks, busy, mutate, close }: {
     </>}
     {picked && <>
       <button className="secondary small" onClick={() => setPicked(null)}>← все сборки</button>
-      <div className="pl-sel"><span className="pl-kb">{picked.index}</span><div><b>{picked.project}</b><div>{picked.name}</div><small>тираж {picked.run || "—"} · этапов {picked.operations}</small></div></div>
+      <div className="pl-sel"><span className="pl-kb">{picked.index}</span><div><b>{picked.project}</b>{picked.customer ? ` · ${picked.customer}` : ""}<div>{picked.name}</div><small>тираж {picked.run || "—"} · этапов {picked.operations}</small></div></div>
       {doneOf(picked).length > 0 && <div className="pl-warn">Уже запущено: {doneOf(picked).map((task) => `${task.number} × ${task.quantity}`).join(", ")}</div>}
       <div className="production-launch-grid">
         <label>Кол-во<input aria-label="Кол-во" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} autoFocus /></label>

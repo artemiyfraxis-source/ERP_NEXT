@@ -82,10 +82,10 @@ it("launches a task only from an issued techcard picked in the launchable list",
   masterFetch((path, init) => {
     if (path === "/api/production/launchable") return json({ items: [{
       techcard_id: "80000000-0000-0000-0000-000000000001", project: "591K.3", index: "КБ1", item: "591K.3КБ1",
-      name: "Жгут", run: "25", deadline: null, launched: 10, operations: 3,
+      name: "Жгут", customer: "", run: "25", deadline: null, launched: 10, operations: 3,
     }, {
       techcard_id: "80000000-0000-0000-0000-000000000002", project: "708К.4", index: "КБ2", item: "708К.4КБ2",
-      name: "Кабель", run: "5", deadline: null, launched: 0, operations: 1,
+      name: "Кабель", customer: "", run: "5", deadline: null, launched: 0, operations: 1,
     }] });
     if (path === "/api/production/tasks" && init?.method === "POST") {
       payload = JSON.parse(String(init.body));

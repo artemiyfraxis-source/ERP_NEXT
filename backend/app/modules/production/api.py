@@ -824,6 +824,12 @@ def launchable(
         return {"items": []}
     with techcards_factory() as techcards:
         cards = [card for card in techcards.techcards.list() if card.status is TechcardStatus.ISSUED]
+        kitsets = tuple(techcards.kitsets.list()) if hasattr(techcards, "kitsets") else ()
+    # Тираж и заказчик — из карточки набора (prodLaunchable_ читает «Наборы»); нет набора — партия ЭТК.
+    kit_rows = {
+        kit_stage_key(kitset.project, assembly.index): (kitset.customer, assembly.run)
+        for kitset in kitsets for assembly in kitset.assemblies
+    }
     with uow_factory() as uow:
         launched = launched_quantity(uow.production.list(limit=10_000))
     items = []
@@ -833,10 +839,11 @@ def launchable(
             continue
         item = item_id(card.project, card.item_index)
         kit = (card.document or {}).get("kit") if isinstance(card.document, dict) else None
+        customer, run = kit_rows.get(kit_stage_key(card.project, card.item_index), ("", None))
         items.append({
             "techcard_id": str(card.id), "project": card.project, "index": card.item_index,
-            "item": item, "name": card.product_name,
-            "run": str((kit or {}).get("part_quantity") or ""),
+            "item": item, "name": card.product_name, "customer": customer,
+            "run": _number(run) if run else str((kit or {}).get("part_quantity") or ""),
             "deadline": card.deadline.isoformat() if card.deadline else None,
             "launched": launched.get(kit_stage_key(card.project, card.item_index), 0), "operations": len(route),
         })

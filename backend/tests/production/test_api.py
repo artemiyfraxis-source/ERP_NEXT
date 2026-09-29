@@ -466,7 +466,7 @@ def test_launch_only_from_issued_techcard_and_launchable_counts_launched(product
     assert launched.status_code == 200, launched.text
     assert launchable.json()["items"] == [{
         "techcard_id": launchable.json()["items"][0]["techcard_id"], "project": "800К.1", "index": "кб1",
-        "item": "800К.1КБ1", "name": "Жгут", "run": "10", "deadline": None, "launched": 7, "operations": 1,
+        "item": "800К.1КБ1", "name": "Жгут", "customer": "", "run": "10", "deadline": None, "launched": 7, "operations": 1,
     }]
 
 
