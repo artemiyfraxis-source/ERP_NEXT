@@ -31,9 +31,11 @@ for (const r of repos) {
 }
 
 // SOURCE.json pins may name a SUPPLYMAP branch (feat/techmap-web-generator); architecture tests rev-parse it
-// by its bare name, so every remote branch gets a local one.
+// by its bare name, so every remote branch gets a local one. A project thread gets a shallow single-branch
+// clone from the platform, where the pinned commits do not exist — unshallow it.
 function localBranches(dir) {
-  git(["fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*"], dir);
+  const shallow = git(["rev-parse", "--is-shallow-repository"], dir).stdout.trim() === "true";
+  git(["fetch", "-q", ...(shallow ? ["--unshallow"] : []), "origin", "+refs/heads/*:refs/remotes/origin/*"], dir);
   const current = git(["branch", "--show-current"], dir).stdout.trim();
   const remote = git(["for-each-ref", "--format=%(refname:strip=3)", "refs/remotes/origin"], dir).stdout;
   for (const b of remote.split("\n").filter((b) => b && b !== "HEAD" && b !== current)) {
