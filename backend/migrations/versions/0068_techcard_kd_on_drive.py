@@ -4,8 +4,8 @@
 загрузил. Байты файла (`content`), тип и размер из ERP уходят. Строки, загруженные до переноса, остаются в
 реестре без ссылки (`file_id`/`url` пустые) — их файл нужно вложить заново.
 
-Revision ID: 0067_techcard_kd_on_drive
-Revises: 0066_identity_pin_admin_mode
+Revision ID: 0068_techcard_kd_on_drive
+Revises: 0067_procurement_invoice_files
 """
 
 from typing import Sequence
@@ -14,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0067_techcard_kd_on_drive"
-down_revision: str | None = "0066_identity_pin_admin_mode"
+revision: str = "0068_techcard_kd_on_drive"
+down_revision: str | None = "0067_procurement_invoice_files"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
