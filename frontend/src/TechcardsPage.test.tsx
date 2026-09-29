@@ -161,3 +161,185 @@ it("NAV-1: «Шаблоны техкарт» shows only the operation library", 
   expect(screen.queryByText("Новая карточка изделия")).not.toBeInTheDocument();
   expect(paths).toEqual(["/api/techcards/templates"]);
 });
+
+const issuedEtk: ProjectTechcard = { ...card, version: 4, status: "Выдана", revision: 1, document: {
+  kit: { project: "P-100", index: "01", name: "Жгут" },
+  operations: [
+    {
+      position: 1, code: "CUT_WIRE_auto", side: "", connector: "1", type: "cutWire",
+      card: { name: "Резка", safety: "ВАЖНО! ТРЕБОВАНИЕ БЕЗОПАСНОСТИ:\nОчки", defects: "", steps: [{ number: "1", kind: "Операция", text: "Отрезать провод", tolerance: "" }],
+        tooling: [{ section: "Оборудование", number: "1", name: "Автомат резки", inventory_number: "ОБ.001", program: "5", parameters: "", norm: "", unit: "" }] },
+      times: { operation_seconds: "3,5", setup_seconds: "180" },
+      result: [{ name: "Провод", norm: "1", unit: "Шт." }], time: [{ name: "Провод", norm: "0,5" }],
+    },
+    {
+      position: 2, code: "PRS_TERMINAL_auto", side: "A", connector: "XS1", type: "prsTerm",
+      card: { name: "Опрессовка", steps: [{ number: "1", kind: "Контроль", text: "Проверить высоту обжима", tolerance: "1,2 мм" }], tooling: [] },
+    },
+  ],
+  warnings: [],
+} };
+
+it("walks the ETK route with ← → like SUPPLYMAP renderEtk_", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/projects") return json({ items: [issuedEtk] });
+    if (path.endsWith("/revisions")) return json({ items: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="projects" />);
+  expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
+  expect(screen.getByText(/Операция 1 из 2/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "← Назад" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Далее: Опрессовка →" }));
+  expect(await screen.findByText("Проверить высоту обжима")).toBeInTheDocument();
+  expect(screen.queryByText("Отрезать провод")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Далее: — →" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "← Назад" }));
+  expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
+});
+
+it("edits an issued ETK operation from the UI and shows the new revision (portalEtkSaveOp)", async () => {
+  let sent: { path: string; body: { version: number; operation: Record<string, unknown> } } | null = null;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/projects") return json({ items: [issuedEtk] });
+    if (path.endsWith("/revisions")) return json({ items: [] });
+    if (path.includes("/operations/") && init?.method === "PUT") {
+      sent = { path, body: JSON.parse(String(init.body)) };
+      const document = issuedEtk.document as { operations: Array<Record<string, unknown>> };
+      return json({ ...issuedEtk, version: 5, revision: 2, document: { ...document, operations: [
+        { ...sent.body.operation, edited: { at: "29.09.2026 10:00", by: "Инженер" } }, document.operations[1],
+      ] } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="projects" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Править" }));
+  expect(screen.getByText(/поднимет ревизию до 2/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод по КД" } });
+  fireEvent.click(screen.getByRole("button", { name: "＋ Контроль" }));
+  fireEvent.change(screen.getByLabelText("Шаг 2"), { target: { value: "Измерить длину" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+
+  expect(await screen.findByText("Операция сохранена · ревизия 2")).toBeInTheDocument();
+  expect(sent!.path).toBe(`/api/techcards/projects/${card.id}/operations/${encodeURIComponent("CUT_WIRE_auto::1::")}`);
+  expect(sent!.body.version).toBe(4);
+  const sentCard = sent!.body.operation.card as { safety: string; steps: Array<{ kind: string; text: string }>; tooling: Array<{ inventory_number: string }> };
+  expect(sentCard.steps).toEqual([
+    { kind: "Операция", text: "Отрезать провод по КД", tolerance: "" },
+    { kind: "Контроль", text: "Измерить длину", tolerance: "" },
+  ]);
+  expect(sentCard.safety).toBe("Очки");
+  expect(sentCard.tooling[0].inventory_number).toBe("ОБ.001");
+  expect(await screen.findByText(/правлена 29.09.2026 10:00 · Инженер/)).toBeInTheDocument();
+});
+
+it("prints the ETK through the shared print contract (etkPrint_)", async () => {
+  const written: string[] = [];
+  const win = { document: { open: vi.fn(), write: (html: string) => written.push(html), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
+  vi.spyOn(window, "open").mockReturnValue(win as unknown as Window);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/projects") return json({ items: [issuedEtk] });
+    if (path.endsWith("/revisions")) return json({ items: [{ id: "r1", revision: 1, reason: "Первая выдача", actor_name: "Инженер", occurred_at: "2026-09-29T10:00:00+03:00", document: {} }] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="projects" />);
+  await screen.findByText("Отрезать провод");
+  await waitFor(() => expect(screen.getByText(/Первая выдача/)).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Печать / PDF" }));
+
+  expect(win.print).toHaveBeenCalled();
+  const html = written.join("");
+  expect(html).toContain("Технологическая карта сборки");
+  expect(html).toContain("ТК.P-100.CUT_WIRE_auto");
+  expect(html).toContain("Операция 2. Опрессовка — XS1");
+  expect(html).toContain("Автомат резки");
+  expect(html).toContain("Первая выдача");
+  expect(html).toContain("ГОСТ 3.1407-86");
+});
+
+const libraryItems = [
+  { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Сборка", steps: 2, controls: 1, tooling: 1,
+    first_step: "Отрезать провод", step_text: "Отрезать провод Проверить длину", norms: { operation_seconds: "3,50", setup_seconds: "180" }, norms_known: true,
+    changed_at: "2026-09-28T10:00:00+03:00", changed_by: "Технолог" },
+  { id: "sdr-a", code: "SDR_TIN", side: "A", title: "SDR_TIN | Лужение (A)", name: "Лужение", category: "Сборка", steps: 1, controls: 0, tooling: 0,
+    first_step: "Облудить жилу флюсом", step_text: "Облудить жилу флюсом", norms: null, norms_known: true, changed_at: null, changed_by: "" },
+  { id: "sdr-b", code: "SDR_TIN", side: "B", title: "SDR_TIN | Лужение (B)", name: "Лужение", category: "Сборка", steps: 1, controls: 0, tooling: 0,
+    first_step: "Облудить жилу флюсом", step_text: "Облудить жилу флюсом", norms: null, norms_known: true, changed_at: null, changed_by: "" },
+];
+
+it("groups the library by category chips with counts, catalog meta and step-text search (openTcRecords)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="templates" />);
+  expect(await screen.findByRole("button", { name: "Все · 2" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Резка · 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Пайка и лужение · 1" })).toBeInTheDocument();
+  expect(screen.getByText(/2 шаг\. · 1 контр\. · 1 оснастки · 3,50 с/)).toBeInTheDocument();
+  expect(screen.getByText("правлена 28.09")).toBeInTheDocument();
+  expect(screen.getByText("нет норм")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Поиск шаблона"), { target: { value: "флюсом" } });
+  expect(screen.queryByText("CUT_WIRE_auto")).not.toBeInTheDocument();
+  expect(screen.getByText("SDR_TIN")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Поиск шаблона"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Резка · 1" }));
+  expect(screen.queryByText("SDR_TIN")).not.toBeInTheDocument();
+});
+
+it("shows a template as a techcard sheet and saves an edit with who/when (portalTcRecordSave)", async () => {
+  let sent: Record<string, unknown> | null = null;
+  const detail = {
+    ...libraryItems[0], changed_at: null, changed_by: "",
+    document: {
+      safety: "ВАЖНО! ТРЕБОВАНИЕ БЕЗОПАСНОСТИ:\nРаботать в очках", defects: "ТИПОВЫЕ ДЕФЕКТЫ: заусенец", revision: "",
+      steps: [{ number: "1", kind: "Операция", text: "Отрезать провод", tolerance: "-" }, { number: "2", kind: "Контроль", text: "Проверить длину", tolerance: "±2 мм" }],
+      tooling: [{ section: "Оборудование", number: "1", name: "Автомат резки", inventory_number: "ОБ.001", program: "5", parameters: "", norm: "", unit: "" }],
+    },
+    raw_rows: [],
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path === "/api/techcards/templates/cut" && init?.method === "PUT") {
+      sent = JSON.parse(String(init.body));
+      return json({ ...detail, changed_at: "2026-09-29T10:00:00+03:00", changed_by: "Инженер",
+        document: { ...detail.document, steps: [{ number: "1", kind: "Операция", text: "Отрезать провод в размер", tolerance: "-" }, detail.document.steps[1]] } });
+    }
+    if (path === "/api/techcards/templates/cut") return json(detail);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="templates" />);
+  fireEvent.click(await screen.findByText("CUT_WIRE_auto"));
+  expect(await screen.findByText("Автомат резки")).toBeInTheDocument();
+  expect(screen.getByText("ОБ.001")).toBeInTheDocument();
+  expect(screen.getByText("прогр. 5")).toBeInTheDocument();
+  expect(screen.getByText("3,50 с")).toBeInTheDocument();
+  expect(screen.getByText("180 с")).toBeInTheDocument();
+  expect(screen.getByText("Перенесено из шаблона БД.ТК, в ERP не правилась")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Править" }));
+  expect(screen.getByLabelText("Требование безопасности")).toHaveValue("Работать в очках");
+  fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод в размер" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+
+  expect(await screen.findByText("Карточка CUT_WIRE_auto сохранена")).toBeInTheDocument();
+  expect(sent).toMatchObject({
+    name: "Резка",
+    safety: "Работать в очках",
+    steps: [{ kind: "Операция", text: "Отрезать провод в размер", tolerance: "-" }, { kind: "Контроль", text: "Проверить длину", tolerance: "±2 мм" }],
+    tooling: [{ section: "Оборудование", name: "Автомат резки", inventory_number: "ОБ.001", program: "5" }],
+  });
+  expect(await screen.findByText(/Изменено .* · Инженер/)).toBeInTheDocument();
+  expect(screen.getByText("Отрезать провод в размер")).toBeInTheDocument();
+});
