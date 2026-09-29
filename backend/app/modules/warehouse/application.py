@@ -482,6 +482,13 @@ def _legacy_differences(lot: StockLot, row: LegacyStockRow) -> list[str]:
         "ТИП": (lot.item_type, row.item_type),
         "НАЗНАЧЕНИЕ": (lot.purpose, row.purpose),
         "ЕД.ИЗМ": (lot.unit, row.unit),
+        "МАССА 1 ШТ, Г": (lot.unit_mass_g, row.unit_mass_g),
+        "СРОК ГОДНОСТИ": (lot.expiry_date, row.expiry_date),
+        "ПРОИЗВОДИТЕЛЬ": (lot.manufacturer, row.manufacturer),
+        "DATASHEET": (lot.datasheet, row.datasheet),
+        "СЕРТИФИКАТ": (lot.certificate, row.certificate),
+        "ОПИСАНИЕ": (lot.description, row.description),
+        "УСЛОВИЯ ХРАНЕНИЯ": (lot.storage_conditions, row.storage_conditions),
     }
     return [label for label, (erp, sheet) in expected.items() if erp != sheet]
 
@@ -492,6 +499,9 @@ def _legacy_lot(row: LegacyStockRow) -> StockLot:
         item_type=row.item_type, purpose=row.purpose, unit=row.unit, quantity=row.inbound,
         storage_location=row.storage_location, source_receiving_ids=(legacy_import_source_id(row.key),),
         article=row.article, series=row.series, location_as_is=True,
+        unit_mass_g=row.unit_mass_g, expiry_date=row.expiry_date, manufacturer=row.manufacturer,
+        description=row.description, storage_conditions=row.storage_conditions, datasheet=row.datasheet,
+        certificate=row.certificate,
     )
     # СПИСАНО goes through the domain write-off, so the lot obeys the same balance rules as any other.
     return lot.write_off(row.written_off) if row.written_off > 0 else lot

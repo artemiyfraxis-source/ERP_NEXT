@@ -20,7 +20,14 @@ from pathlib import Path
 from app.database import build_engine, build_warehouse_uow_factory
 
 from .application import ImportLegacyStockCommand, LegacyStockImportResult, UnitOfWork, import_legacy_stock
-from .stock_export import STOCK_SHEETS, WRITEOFF_SHEET, StockExport, StockExportError, read_stock_export
+from .stock_export import (
+    PASSPORT_TEXT_FIELDS,
+    STOCK_SHEETS,
+    WRITEOFF_SHEET,
+    StockExport,
+    StockExportError,
+    read_stock_export,
+)
 
 DEFAULT_DIRECTORY = Path(__file__).resolve().parents[4] / "data" / "import"
 
@@ -47,13 +54,26 @@ class GrnLine:
     erp_balance: Decimal
 
 
+@dataclass(frozen=True)
+class JournalMismatch:
+    """A lot whose СПИСАНИЕ journal (posted rows, returns negative) does not add up to the sheet СПИСАНО. The import
+    keeps the sheet quantities and the journal rows as they are; the lot is to be recounted on the shelf."""
+
+    warehouse: str
+    grn: str
+    package: str
+    journal_net: Decimal
+    written_off: Decimal
+    balance: Decimal
+
+
 @dataclass
 class Reconciliation:
     totals: list[TotalLine] = field(default_factory=list)
     grn_count: int = 0
     grn_mismatches: list[GrnLine] = field(default_factory=list)
     journal_checked: int = 0
-    journal_mismatches: list[tuple[str, Decimal, Decimal]] = field(default_factory=list)  # ГРН, журнал, СПИСАНО
+    journal_mismatches: list[JournalMismatch] = field(default_factory=list)
     stock_rejected: int = 0
     conflicts: int = 0
 
@@ -98,7 +118,9 @@ def reconcile(export: StockExport, result: LegacyStockImportResult) -> Reconcili
         if lot.key in net or lot.written_off:
             report.journal_checked += 1
             if net.get(lot.key, Decimal("0")) != lot.written_off:
-                report.journal_mismatches.append((lot.grn, net.get(lot.key, Decimal("0")), lot.written_off))
+                report.journal_mismatches.append(JournalMismatch(
+                    lot.warehouse, lot.grn, lot.package, net.get(lot.key, Decimal("0")), lot.written_off, lot.balance,
+                ))
     return report
 
 
@@ -148,10 +170,27 @@ def format_report(export: StockExport, result: LegacyStockImportResult, check: R
         lines.append(f"  отклонено {WRITEOFF_SHEET}:{row.row_number} {row.grn}: {row.reason}")
     lines.append(f"  сверка с СПИСАНО (проведённые, возврат со знаком минус): совпало "
                  f"{check.journal_checked - len(check.journal_mismatches)} из {check.journal_checked}")
-    for grn, journal_net, written_off in check.journal_mismatches:
-        lines.append(f"  журнал {_n(journal_net)} ≠ СПИСАНО {_n(written_off)}: {grn}")
+    if check.journal_mismatches:
+        lines.append("  остатки взяты из листа (ПРИХОД, СПИСАНО), строки журнала — как есть; эти партии пересчитать физически:")
+    for item in check.journal_mismatches:
+        label = item.grn + (f" / {item.package}" if item.package else "")
+        lines.append(f"  пересчитать физически: {item.warehouse} {label} — журнал {_n(item.journal_net)} ≠ "
+                     f"СПИСАНО {_n(item.written_off)}, БАЛАНС листа {_n(item.balance)}")
 
-    lines += ["", "Не перенесённые колонки (поля партии ждут SK-6):"]
+    lines += ["", "Паспорт партии (заполнено в строках листа):"]
+    counts = {
+        "МАССА 1 ШТ, Г": sum(lot.unit_mass_g is not None for lot in export.lots),
+        "СРОК ГОДНОСТИ": sum(lot.expiry_date is not None for lot in export.lots),
+        **{label: sum(bool(getattr(lot, key)) for lot in export.lots) for key, label in zip(
+            PASSPORT_TEXT_FIELDS, ("ПРОИЗВОДИТЕЛЬ", "ОПИСАНИЕ", "УСЛОВИЯ ХРАНЕНИЯ", "DATASHEET", "СЕРТИФИКАТ"))},
+    }
+    lines.append("  " + ", ".join(f"{label} {count}" for label, count in counts.items()))
+    for warning in export.passport_warnings:
+        label = warning.grn + (f" / {warning.package}" if warning.package else "")
+        lines.append(f"  не прочитано {warning.sheet}:{warning.row_number} {label}: {warning.column} «{warning.text}» "
+                     f"({warning.reason}) — партия заведена, поле пустое")
+
+    lines += ["", "Не перенесённые колонки:"]
     for name, sheet in export.sheets.items():
         if sheet.skipped_columns:
             listed = ", ".join(f"{header} ({filled} заполнено)" for header, filled in sheet.skipped_columns.items())
@@ -159,7 +198,9 @@ def format_report(export: StockExport, result: LegacyStockImportResult, check: R
     if result.manual_numbers:
         lines += ["", "Ручная нумерация OLD продолжится после импортированных: " + ", ".join(
             f"{year} → с {number + 1:07d}" for year, number in sorted(result.manual_numbers.items()))]
-    lines += ["", "ИТОГ: " + ("всё сошлось" if check.ok else "есть расхождения — см. выше")]
+    recount = f"; пересчитать физически партий: {len(check.journal_mismatches)}" if check.journal_mismatches else ""
+    unread = f"; нечитаемых значений паспорта: {len(export.passport_warnings)}" if export.passport_warnings else ""
+    lines += ["", "ИТОГ: " + ("всё сошлось" if check.ok else "есть расхождения — см. выше") + recount + unread]
     return "\n".join(lines)
 
 

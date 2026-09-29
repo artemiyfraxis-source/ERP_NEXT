@@ -12,8 +12,13 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+
+from app.shared.unit_mass import mass_per_unit
+
+from .domain import LOT_DETAIL_LIMITS
 
 STOCK_SHEETS = ("ЦАР", "ЖУК")
 WRITEOFF_SHEET = "СПИСАНИЕ"
@@ -27,7 +32,12 @@ _STOCK_REQUIRED = {
 _STOCK_OPTIONAL = {
     "ТИП": "item_type", "АРТИКУЛ": "article", "НАИМЕНОВАНИЕ": "name", "СЕРИЯ": "series",
     "ПАКЕТ": "package", "МЕСТО ХРАНЕНИЯ": "storage_location", "РЕЗЕРВ": "reserved",
+    # Lot passport (SK-6-IMPORT): text as typed; mass and expiry are parsed, an unreadable one is left empty.
+    "ПРОИЗВОДИТЕЛЬ": "manufacturer", "DATASHEET": "datasheet", "СЕРТИФИКАТ": "certificate",
+    "ОПИСАНИЕ": "description", "УСЛОВИЯ ХРАНЕНИЯ": "storage_conditions",
+    "СРОК ГОДНОСТИ": "expiry", "МАССА 1 ШТ, Г": "unit_mass",
 }
+PASSPORT_TEXT_FIELDS = ("manufacturer", "description", "storage_conditions", "datasheet", "certificate")
 _WRITEOFF_REQUIRED = {"ДАТА": "date", "СКЛАД": "warehouse", "ГРН": "grn", "КОЛ-ВО": "quantity", "ОСНОВАНИЕ": "reason"}
 _WRITEOFF_OPTIONAL = {
     "ПАКЕТ": "package", "НАИМЕНОВАНИЕ": "name", "ЕД.ИЗМ": "unit", "НАЗНАЧЕНИЕ": "purpose",
@@ -35,8 +45,10 @@ _WRITEOFF_OPTIONAL = {
 }
 # Column widths of warehouse_lots: longer text would fail on PostgreSQL, so it is a rejection, not a crash.
 _MAX_LENGTH = {"grn": 32, "package": 32, "purpose": 128, "unit": 32, "item_type": 255, "series": 255,
-               "article": 1024, "name": 1024, "storage_location": 255}
+               "article": 1024, "name": 1024, "storage_location": 255, **LOT_DETAIL_LIMITS}
 _NUMBER = re.compile(r"^\d+(?:\.\d+)?$")
+_SHEET_DATE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
 
 class StockExportError(ValueError):
@@ -64,6 +76,35 @@ def parse_quantity(text: str) -> Decimal:
     return value
 
 
+def parse_expiry(text: str) -> date | None:
+    """СРОК ГОДНОСТИ as the sheet shows it: «31.12.2027» (dd.MM.yyyy, getDisplayValues) or «2027-12-31»; empty = None.
+    Anything else — «до 2027», «31/12/2027», 31.02.2027 — raises ValueError."""
+    value = str(text or "").strip()
+    if not value:
+        return None
+    sheet, iso = _SHEET_DATE.fullmatch(value), _ISO_DATE.fullmatch(value)
+    try:
+        if sheet:
+            return date(int(sheet[3]), int(sheet[2]), int(sheet[1]))
+        if iso:
+            return date(int(iso[1]), int(iso[2]), int(iso[3]))
+    except ValueError as error:
+        raise ValueError(f"нет такой даты: «{value}»") from error
+    raise ValueError(f"не дата ДД.ММ.ГГГГ: «{value}»")
+
+
+def parse_unit_mass(text: str) -> Decimal | None:
+    """МАССА 1 ШТ, Г by the SUPPLYMAP rule (icrNum_ + massPerUnit_ of one piece): comma or dot decimals, the leading
+    number is taken («12г» → 12), 5 decimals. Empty = None; no positive number raises ValueError."""
+    value = str(text or "").strip()
+    if not value:
+        return None
+    mass = mass_per_unit(value)  # may itself raise ValueError: too large for the column
+    if mass is None or mass <= 0:
+        raise ValueError(f"не масса: «{value}»")
+    return mass
+
+
 @dataclass(frozen=True)
 class LegacyStockRow:
     sheet: str
@@ -82,10 +123,31 @@ class LegacyStockRow:
     written_off: Decimal
     balance: Decimal
     reserved: Decimal
+    # Lot passport (SK-6-IMPORT)
+    unit_mass_g: Decimal | None = None
+    expiry_date: date | None = None
+    manufacturer: str = ""
+    description: str = ""
+    storage_conditions: str = ""
+    datasheet: str = ""
+    certificate: str = ""
 
     @property
     def key(self) -> tuple[str, str, str]:
         return self.warehouse, self.grn, self.package
+
+
+@dataclass(frozen=True)
+class PassportWarning:
+    """A passport value the importer could not read: the lot is imported, this field is left empty."""
+
+    sheet: str
+    row_number: int
+    grn: str
+    package: str
+    column: str
+    text: str
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -143,6 +205,7 @@ class StockExport:
     writeoffs: list[LegacyWriteOffRow]
     rejected: list[RejectedRow]
     sheets: dict[str, SheetSummary]
+    passport_warnings: list[PassportWarning] = field(default_factory=list)
 
 
 def _read_csv(path: Path) -> list[list[str]]:
@@ -229,11 +292,21 @@ def _parse_stock_sheet(name: str, rows: list[list[str]], export: StockExport) ->
         if too_long:
             reject(f"слишком длинное значение: {', '.join(too_long)}", numbers["balance"])
             continue
+        passport: dict[str, object] = {key: cells.get(key, "") for key in PASSPORT_TEXT_FIELDS}
+        for key, target, column, parse in (("expiry", "expiry_date", "СРОК ГОДНОСТИ", parse_expiry),
+                                           ("unit_mass", "unit_mass_g", "МАССА 1 ШТ, Г", parse_unit_mass)):
+            try:
+                passport[target] = parse(cells.get(key, ""))
+            except ValueError as error:
+                passport[target] = None
+                export.passport_warnings.append(PassportWarning(
+                    name, offset, grn, cells.get("package", ""), column, cells.get(key, ""), str(error),
+                ))
         export.lots.append(LegacyStockRow(
             sheet=name, row_number=offset, warehouse=name, grn=grn,
             package=cells.get("package", ""), article=cells.get("article", ""), name=cells.get("name", ""),
             series=cells.get("series", ""), item_type=cells.get("item_type", ""), purpose=cells["purpose"],
-            unit=cells["unit"], storage_location=cells.get("storage_location", ""), **numbers,
+            unit=cells["unit"], storage_location=cells.get("storage_location", ""), **numbers, **passport,
         ))
 
 

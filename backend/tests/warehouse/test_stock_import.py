@@ -2,7 +2,7 @@
 
 import csv
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -15,7 +15,13 @@ from app.database import build_engine, build_warehouse_uow_factory
 from app.modules.warehouse import import_stock
 from app.modules.warehouse.import_stock import format_report, reconcile, run_import
 from app.modules.warehouse.infrastructure import StockLotRow, WarehouseSequenceRow, WriteOffEntryRow
-from app.modules.warehouse.stock_export import StockExportError, parse_quantity, read_stock_export
+from app.modules.warehouse.stock_export import (
+    StockExportError,
+    parse_expiry,
+    parse_quantity,
+    parse_unit_mass,
+    read_stock_export,
+)
 from app.shared.persistence import AuditEventRow
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
@@ -142,8 +148,8 @@ def test_both_column_orders_map_by_header_name(tmp_path):
     assert (zhuk.warehouse, zhuk.article, zhuk.series, zhuk.name) == ("ЖУК", "TEST-Z9", "S-77", "Тестовый терминал")
     assert (zhuk.balance, zhuk.reserved, zhuk.storage_location) == (Decimal("4"), Decimal("1"), "01A1")
     assert export.sheets["ЖУК"].skipped_columns["Столбец 17"] == 1
-    assert export.sheets["ЦАР"].skipped_columns["МАССА 1 ШТ, Г"] == 1
-    assert "СРОК ГОДНОСТИ" in export.sheets["ЦАР"].skipped_columns
+    assert set(export.sheets["ЦАР"].skipped_columns) == {"SYSTEM ID"}  # the passport is read since SK-6-IMPORT
+    assert lots["OLD.26.0000002"].unit_mass_g == Decimal("0.125")
     assert len(export.writeoffs) == 6 and not export.rejected
 
 
@@ -299,3 +305,109 @@ def test_dry_run_reports_the_same_reconciliation_and_writes_nothing(tmp_path, da
     assert "ПРОБНЫЙ ПРОГОН" in output and "ИТОГ: всё сошлось" in output
     assert "Тестовый Кладовщик" not in output
     assert snapshot(database_url) == empty
+
+
+# SK-6-IMPORT: the lot passport columns of the export.
+
+def test_expiry_is_read_as_the_sheet_shows_it():
+    assert parse_expiry("31.12.2027") == date(2027, 12, 31)
+    assert parse_expiry("1.2.2028") == date(2028, 2, 1)
+    assert parse_expiry("2027-12-31") == date(2027, 12, 31)
+    assert parse_expiry("  ") is None
+    for bad in ("31.02.2027", "до 2027", "31/12/2027", "12.2027", "31.12.27"):
+        with pytest.raises(ValueError):
+            parse_expiry(bad)
+
+
+def test_unit_mass_is_read_by_the_supplymap_number_rule():
+    assert parse_unit_mass("1,81") == Decimal("1.81")
+    assert parse_unit_mass("0.27") == Decimal("0.27")
+    assert parse_unit_mass("2,16084") == Decimal("2.16084")
+    assert parse_unit_mass("12 г") == Decimal("12")
+    assert parse_unit_mass("") is None
+    for bad in ("—", "0", "-1", "abc"):
+        with pytest.raises(ValueError):
+            parse_unit_mass(bad)
+
+
+PASSPORT_CAR = [
+    car_row(АРТИКУЛ="TEST-P1", ГРН="OLD.26.0000011", ПРИХОД="3", БАЛАНС="3", ПРОИЗВОДИТЕЛЬ="Тест-Завод",
+            DATASHEET="https://example.test/p1.pdf", СЕРТИФИКАТ="RU C-TEST.001", ОПИСАНИЕ="Тестовое описание",
+            **{"СРОК ГОДНОСТИ": "31.12.2027", "УСЛОВИЯ ХРАНЕНИЯ": "Сухо, +5…+25 °C", "МАССА 1 ШТ, Г": "1,81"}),
+    car_row(АРТИКУЛ="TEST-P2", ГРН="OLD.26.0000012", ПРИХОД="2", БАЛАНС="2",
+            **{"СРОК ГОДНОСТИ": "до конца 2027", "МАССА 1 ШТ, Г": "нет"}),
+]
+PASSPORT_ZHUK = [
+    zhuk_row(АРТИКУЛ="TEST-P3", ГРН="OLD.25.0000013", ПРИХОД="1", БАЛАНС="1", ПРОИЗВОДИТЕЛЬ="Тест-Два",
+             **{"СРОК ГОДНОСТИ": "01.06.2026"}),
+]
+
+
+def test_passport_columns_map_to_the_lot_by_header_in_both_orders(tmp_path):
+    export = read_stock_export(write_export(tmp_path / "export", car=PASSPORT_CAR, zhuk=PASSPORT_ZHUK, journal=[]))
+    lots = {lot.grn: lot for lot in export.lots}
+
+    first = lots["OLD.26.0000011"]
+    assert (first.unit_mass_g, first.expiry_date, first.manufacturer) == (Decimal("1.81"), date(2027, 12, 31), "Тест-Завод")
+    assert (first.datasheet, first.certificate) == ("https://example.test/p1.pdf", "RU C-TEST.001")
+    assert (first.description, first.storage_conditions) == ("Тестовое описание", "Сухо, +5…+25 °C")
+    assert (lots["OLD.25.0000013"].expiry_date, lots["OLD.25.0000013"].manufacturer) == (date(2026, 6, 1), "Тест-Два")
+
+
+def test_unreadable_expiry_keeps_the_lot_with_an_empty_field_and_is_listed(tmp_path):
+    export = read_stock_export(write_export(tmp_path / "export", car=PASSPORT_CAR, zhuk=[], journal=[]))
+    second = {lot.grn: lot for lot in export.lots}["OLD.26.0000012"]
+
+    assert (second.expiry_date, second.unit_mass_g) == (None, None)
+    assert not export.rejected
+    assert [(w.row_number, w.grn, w.column, w.text) for w in export.passport_warnings] == [
+        (3, "OLD.26.0000012", "СРОК ГОДНОСТИ", "до конца 2027"),
+        (3, "OLD.26.0000012", "МАССА 1 ШТ, Г", "нет"),
+    ]
+
+
+def test_too_long_passport_text_rejects_the_row_like_any_long_field(tmp_path):
+    car = [car_row(АРТИКУЛ="TEST-L", ГРН="OLD.26.0000014", ПРИХОД="1", БАЛАНС="1", ПРОИЗВОДИТЕЛЬ="Я" * 256)]
+    export = read_stock_export(write_export(tmp_path / "export", car=car, zhuk=[], journal=[]))
+
+    assert [(r.grn, r.reason) for r in export.rejected] == [("OLD.26.0000014", "слишком длинное значение: manufacturer")]
+
+
+def test_import_writes_the_passport_to_the_lot_and_a_rerun_sees_it_unchanged(tmp_path, database_url):
+    directory = write_export(tmp_path / "export", car=PASSPORT_CAR, zhuk=PASSPORT_ZHUK, journal=[])
+    export, result, check = run(directory, database_url, dry_run=True)
+    report = format_report(export, result, check)
+    assert "не прочитано ЦАР:3 OLD.26.0000012: СРОК ГОДНОСТИ «до конца 2027»" in report
+    assert "партия заведена, поле пустое" in report
+    assert "СРОК ГОДНОСТИ 2" in report and "нечитаемых значений паспорта: 2" in report
+
+    _, result, check = run(directory, database_url)
+    lots = {lot.grn: lot for lot in result.erp_lots.values()}
+    first = lots["OLD.26.0000011"]
+    assert (first.unit_mass_g, first.expiry_date, first.certificate) == (Decimal("1.81"), date(2027, 12, 31), "RU C-TEST.001")
+    assert (first.storage_conditions, first.datasheet) == ("Сухо, +5…+25 °C", "https://example.test/p1.pdf")
+    assert lots["OLD.26.0000012"].expiry_date is None and check.ok
+
+    _, again, _ = run(directory, database_url)
+    assert not again.conflicts and len(again.unchanged) == 3
+
+
+def test_journal_that_disagrees_with_the_sheet_keeps_sheet_balances_and_asks_for_a_recount(tmp_path, database_url):
+    """Decided rule (lot OLD.26.0000095 live: sheet СПИСАНО 2387, БАЛАНС 0, journal net 2231): the sheet wins, the
+    journal rows go in as they are, and the report asks to recount the lot on the shelf."""
+    car = [car_row(АРТИКУЛ="TEST-J", ГРН="OLD.26.0000095", ПРИХОД="2387", СПИСАНО="2387", БАЛАНС="0")]
+    journal = [journal_row("OLD.26.0000095", "2000"), journal_row("OLD.26.0000095", "231"),
+               journal_row("OLD.26.0000095", "156", posted="")]
+
+    export, result, check = run(write_export(tmp_path / "export", car=car, zhuk=[], journal=journal), database_url)
+
+    lot = {lot.grn: lot for lot in result.erp_lots.values()}["OLD.26.0000095"]
+    assert (lot.inbound, lot.written_off, lot.balance) == (Decimal("2387"), Decimal("2387"), Decimal("0"))
+    assert result.history_imported == 3 and len(journal_rows(database_url)) == 3
+    assert [(m.grn, m.journal_net, m.written_off) for m in check.journal_mismatches] == [
+        ("OLD.26.0000095", Decimal("2231"), Decimal("2387")),
+    ]
+    assert check.ok  # the journal is history: a recount is a task, not a failed import
+    report = format_report(export, result, check)
+    assert ("пересчитать физически: ЦАР OLD.26.0000095 — журнал 2231 ≠ СПИСАНО 2387, БАЛАНС листа 0") in report
+    assert report.endswith("ИТОГ: всё сошлось; пересчитать физически партий: 1")
