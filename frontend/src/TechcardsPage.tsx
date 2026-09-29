@@ -11,6 +11,7 @@ import {
   type ProjectTechcard,
   type TechcardRevision,
 } from "./api";
+import { etkChips, etkFigure } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
@@ -124,8 +125,13 @@ function Rows({ title, rows }: { title: string; rows?: EtkRow[] }) {
 }
 
 function EtkOperationCard({ operation }: { operation: EtkOperation }) {
+  const raw = operation as Record<string, unknown>;
+  // Корпус при монтаже в разъём рисует HousingView ниже; остальные эскизы — SVG-строки etkDraw (как в печати).
+  const figure = operation.housing && operation.type === "insTerm" ? "" : etkFigure(raw);
   return <article className="etk-operation">
     <header><span className="operation-number">{operation.position || "—"}</span><div><strong>{operation.code || "Без кода"}</strong><small>{operation.card?.name || operation.title || operation.connector || ""}</small></div></header>
+    <div className="etk-chips" aria-label="Параметры операции">{etkChips(raw).map(([label, value]) =>
+      <span key={label}><small>{label}</small>{value}</span>)}</div>
     <div className="etk-flow">
       <Rows title="Комплектующие" rows={operation.components} />
       <Rows title="Вход" rows={operation.semis} />
@@ -135,6 +141,7 @@ function EtkOperationCard({ operation }: { operation: EtkOperation }) {
     {operation.card?.steps?.length ? <ol className="etk-steps">{operation.card.steps.map((step, index) =>
       <li key={`${step.number}:${index}`}><span>{step.kind || "Операция"}</span>{step.text}{step.tolerance && <small>Допуск: {step.tolerance}</small>}</li>
     )}</ol> : <div className="warning-inline">Карточка операции отсутствует в библиотеке.</div>}
+    {figure && <div className="etk-block etk-figure"><strong>Эскиз</strong><div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} /></div>}
     {operation.housing && operation.type === "insTerm" && <HousingView housing={operation.housing} wires={operation.fields?.wires} />}
   </article>;
 }

@@ -32,6 +32,8 @@ const PAGE_CSS = `
   .page h2 { font-size: 14px; margin: 14px 0 6px; }
   .page table { margin-bottom: 10px; }
   .text { font-size: 12px; white-space: pre-wrap; margin: 8px 0; }
+  .fig { margin: 8px 0 10px; page-break-inside: avoid; }
+  .fig svg { max-width: 100%; height: auto; }
 `;
 
 export function buildPrintSheetHtml(sheet: PrintSheet): string {
@@ -69,7 +71,8 @@ export function openPrintSheet(sheet: PrintSheet): void {
  * each page is a title/subtitle, a run of text paragraphs and plain tables, and a sign line. A table with no
  * rows is left out, as SUPPLYMAP does. */
 export interface PrintTable { columns: string[]; rows: string[][] }
-export type PrintBlock = { heading: string } | { text: string } | { table: PrintTable };
+/** `figure` is ready SVG markup built by our own code (etkDraw.ts escapes every value) — never user HTML. */
+export type PrintBlock = { heading: string } | { text: string } | { table: PrintTable } | { figure: string };
 export interface PrintPage { title: string; subtitle: string; blocks: PrintBlock[]; sign: string }
 
 function tableHtml(table: PrintTable): string {
@@ -84,6 +87,7 @@ function tableHtml(table: PrintTable): string {
 function blockHtml(block: PrintBlock): string {
   if ("heading" in block) return `<h2>${escapeHtml(block.heading)}</h2>`;
   if ("text" in block) return block.text ? `<p class="text">${escapeHtml(block.text)}</p>` : "";
+  if ("figure" in block) return block.figure ? `<div class="fig">${block.figure}</div>` : "";
   return tableHtml(block.table);
 }
 

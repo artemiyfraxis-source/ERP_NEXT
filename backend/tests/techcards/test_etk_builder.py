@@ -259,3 +259,18 @@ def test_workshop_gost_awg_map_picks_crimp_row_but_1mm2_crimp_override_wins():
     overridden = section("TEST-18", "ПВ-3 1,0 мм²", {"1": 17})
     assert overridden["section"] == "1 мм² (18 AWG)"
     assert overridden["found"] is True
+
+
+def test_coax_strip_carries_side_dimensions_for_the_sketch():
+    # SUPPLYMAP TcBuild.gs etkFields_ f.coax — the data etkDrawCoax_ draws the strip steps from.
+    config = {"mode": "coax", "coax": {
+        "cableArt": "RG-174", "sideA": {"article": "SMA-M", "l1": "3", "l2": "5", "l3": "9", "d1": "0,5"},
+        "sideB": {"article": "BNC-F", "l1": "4"},
+    }, "ops": [{"type": "coaxStrip", "side": "A"}, {"type": "coaxStrip", "side": "B"}]}
+    operations = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+
+    assert operations[0]["fields"]["coax"] == {
+        "cable": "RG-174", "connector": "SMA-M", "d1": "0,5", "d2": "", "d3": "",
+        "l1": "3", "l2": "5", "l3": "9", "lPlus": "", "lMinus": "",
+    }
+    assert operations[1]["fields"]["coax"]["connector"] == "BNC-F"
