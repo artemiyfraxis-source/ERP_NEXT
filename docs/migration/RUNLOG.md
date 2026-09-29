@@ -17,6 +17,8 @@
 - Задачи: проверка доступа `google_check`, вход владельца `google_oauth_login`, workflow `google-access`, папка КД «!Проекты» `1cPlM5X6ZSdiPpSajOw1YvBYfOdqGdzfA` в preview и README (PR #43)
 - Проверка: npm run check — зелёный. Ключ `erp-reader@techmap-498119` проверен вживую: «Запросы», «Закупки», «Ожидание» читаются, «!Проекты» видна (80 папок). Ключ лежит в загрузках проекта, не в git.
 - Решено агентом — проверить: запись КД в «!Проекты» (Мой диск, не общий) только через OAuth владельца; общий диск невозможен — аккаунт gmail без Workspace.
+- Google Cloud techmap-498119 (владелец проекта tit1963yt@gmail.com, erp-reader — Editor с 29.09): Sheets API и Drive API включены, больше ERP ничего не нужно. `fraxis-erp@evident-league-462513-r4` в IAM нигде в ERP_NEXT/SUPPLYMAP/claude-brain не используется — не трогали.
+- OAuth для КД: consent screen (External, In production) и OAuth-клиент «Desktop app» создаются только в консоли под tit1963yt@gmail.com — Google не даёт API для внешнего consent screen и desktop-клиента. «Разрешить» при `google_oauth_login` жмёт artemiyfraxis@gmail.com — владелец «!Проекты» (Drive, проверено 29.09).
 - Осталось для сервера (сделать вместе с деплоем, у владельца не спрашивать заранее): секреты GitHub `ERP_GOOGLE_SERVICE_ACCOUNT_JSON` (ключ из загрузок) и `ERP_KD_DRIVE_OAUTH_JSON` (`google_oauth_login`, consent screen In production); затем Actions → google-access → Run workflow. Секреты агент записать не может (нет gh, API 403).
 
 ## 2026-09-29 17:10 · Проекты: файл счёта с распознаванием № и даты
