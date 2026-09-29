@@ -191,13 +191,16 @@ it("opens native finished-goods and shipping at the shipping route", async () =>
     });
     if (path === "/api/shipping/goods") return json({ goods: [] });
     if (path === "/api/shipping/shipments") return json({ shipments: [] });
+    if (path === "/api/shipping/project-addressees") return json({ addressees: [] });
+    if (path === "/api/production/finished-goods-ready") return json({ boxes: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Готовая продукция и отгрузка", level: 1 })).toBeInTheDocument();
-  expect(await screen.findByText("Заявок на отгрузку пока нет.")).toBeInTheDocument();
+  // Кладовщику первой открывается «Готовая продукция» (SUPPLYMAP SHIP_ROLE_VIEWS_).
+  expect(await screen.findByText("Строк готовой продукции пока нет.")).toBeInTheDocument();
 });
 
 it("opens native references at the references route", async () => {
