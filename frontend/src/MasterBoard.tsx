@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  kitsetsApi,
   productionApi,
+  type KitsetTile,
   type ProductionAbsence,
   type ProductionLaunchable,
   type ProductionOperation,
@@ -8,10 +10,15 @@ import {
   type ProductionSkill,
   type ProductionTask,
 } from "./api";
+import { KitTile } from "./ProjectsPage";
 
 // Экран мастера (владелец, 29.09): после выдачи техкарты проект приходит мастеру, разбитый на операции маршрута,
 // и мастер раздаёт их монтажникам. Слева проекты → задания → операции, справа монтажники с загрузкой.
 // Назначение идёт тем же assign, что и карточка с Гантом: время считает сервер (первое свободное окно).
+
+// Открытый проект переживает переход в Гант задания и обратно (доска при этом монтируется заново).
+let lastProject = "";
+export function forgetOpenProject() { lastProject = ""; }
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
@@ -75,7 +82,20 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, can
   const [ready, setReady] = useState<ProductionLaunchable[]>([]);
   const [selected, setSelected] = useState<{ taskId: string; operationId: string } | null>(null);
   const [onlyFree, setOnlyFree] = useState(false);
+  const [tiles, setTiles] = useState<{ items: KitsetTile[]; statuses: string[] }>({ items: [], statuses: [] });
+  const [openProject, setOpenProjectState] = useState(lastProject);
   const keys = useRef(new Map<string, string>());
+
+  function setOpenProject(project: string) {
+    lastProject = project;
+    setOpenProjectState(project);
+    setSelected(null);
+  }
+
+  // Плитки как в «Проектах» (владелец, 29.09: «примерный вид проектов»): статус, ТК, заказчик, сборки.
+  useEffect(() => {
+    kitsetsApi.list("upd").then(setTiles).catch(() => setTiles({ items: [], statuses: [] }));
+  }, []);
 
   useEffect(() => {
     if (!canEdit) return;
@@ -89,6 +109,21 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, can
   const deadlineOf = (project: string) => [...live.filter((task) => task.project === project).map((task) => task.deadline),
     ...waiting.filter((item) => item.project === project).map((item) => item.deadline)].filter(Boolean).sort()[0] ?? "";
   projects.sort((a, b) => (deadlineOf(a) || "9999").localeCompare(deadlineOf(b) || "9999") || a.localeCompare(b, "ru"));
+
+  const shown = projects.find((project) => project === openProject) ?? "";
+  const freeOf = (project: string) => live.filter((item) => item.project === project)
+    .reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
+  function tileFacts(project: string) {
+    const deadline = deadlineOf(project);
+    const free = freeOf(project);
+    const total = live.filter((item) => item.project === project).reduce((sum, item) => sum + item.operations.length, 0);
+    const toLaunch = waiting.filter((item) => item.project === project).length;
+    return <>
+      {deadline && <span className="mb-deadline">ДЛ {formatDay(deadline)}</span>}
+      {total > 0 && <span className={free ? "mb-free" : "mb-done"}>{free ? `без исполнителя ${free} из ${total}` : `распределено ${total}`}</span>}
+      {toLaunch > 0 && <span className="mb-launch">к запуску {toLaunch}</span>}
+    </>;
+  }
 
   // Мастер площадки (Степан в Жуковском) видит и ставит только своих монтажников; без площадки — всех.
   const people = installers(operators).filter((person) => !site || person.site === site);
@@ -118,12 +153,22 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, can
         <label className="mb-toggle"><input type="checkbox" checked={onlyFree} onChange={(event) => setOnlyFree(event.target.checked)} />только нераспределённые</label>
       </div>
       {!projects.length && <div className="empty">Проектов с выданной техкартой пока нет.</div>}
-      {projects.map((project) => {
+      {!shown && projects.length > 0 && <div className="tiles kit-tiles mb-tiles">{projects.map((project) => {
+        if (onlyFree && !freeOf(project)) return null;
+        const tile = tiles.items.find((item) => item.project.toLowerCase() === project.toLowerCase());
+        const extra = <div className="mb-tile-extra">{tileFacts(project)}</div>;
+        return tile
+          ? <KitTile key={project} item={tile} statuses={tiles.statuses} canEdit={false} open={() => setOpenProject(project)} extra={extra} />
+          : <div key={project} className="tile kit-tile" role="button" tabIndex={0} onClick={() => setOpenProject(project)} onKeyDown={(event) => { if (event.key === "Enter") setOpenProject(project); }}>
+            <div className="tile-body"><div className="kit-tile-head"><strong className="t-h">{project}</strong></div>{extra}</div>
+          </div>;
+      })}</div>}
+      {shown && [shown].map((project) => {
         const projectTasks = live.filter((item) => item.project === project);
         const projectReady = waiting.filter((item) => item.project === project);
         const deadline = deadlineOf(project);
         return <div className="mb-project" key={project}>
-          <div className="mb-project-head"><b>{project}</b>{deadline && <span className="mb-deadline">ДЛ {formatDay(deadline)}</span>}</div>
+          <div className="mb-project-head"><button className="secondary small" onClick={() => setOpenProject("")}>← Все проекты</button><b>{project}</b>{deadline && <span className="mb-deadline">ДЛ {formatDay(deadline)}</span>}</div>
           {projectTasks.map((item) => {
             const operations = item.operations.filter((op) => !onlyFree || (!done(op) && !op.operator_ids.length));
             if (onlyFree && !operations.length) return null;

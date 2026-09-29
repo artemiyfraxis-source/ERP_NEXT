@@ -81,6 +81,8 @@ techcards_view_principal = require_section("techcards", "view", detail="Разд
 # отправка на комплектацию, КД) — только с правом правки раздела (portalSectionEditGuard_).
 projects_view_principal = require_section("projects", "view", detail="Раздел «Проекты» вам не открыт.")
 projects_edit_principal = require_section("projects", "edit", detail="Раздел «Проекты» открыт только на просмотр.")
+# Плитки проектов читает и экран мастера («Ресурсное планирование», владелец 29.09): проекты по операциям.
+kitset_tiles_principal = require_section(("projects", "production"), "view", detail="Раздел «Проекты» вам не открыт.")
 techcards_edit_principal = require_section(
     "techcards", "edit", detail="Раздел «Техкарты проектов» открыт вам только на просмотр.",
 )

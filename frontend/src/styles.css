@@ -883,3 +883,10 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .lot-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .lot-card .stock-actions { grid-template-columns: 1fr; gap: 10px; }
 .lot-card:has(.stock-actions) { grid-column: 1 / -1; }
+.mb-tiles { margin-top: 4px; }
+.mb-tile-extra { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 12px; }
+.mb-tile-extra .mb-free, .mb-tile-extra .mb-done, .mb-launch { padding: 1px 7px; border-radius: 6px; background: var(--accent); }
+.mb-tile-extra .mb-free { background: #fffaeb; }
+.mb-tile-extra .mb-done { background: #e6f7f5; }
+.mb-launch { color: #175cd3; background: #eff8ff; }
+.mb-project-head .secondary { margin-right: 4px; }

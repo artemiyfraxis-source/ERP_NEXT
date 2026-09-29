@@ -24,7 +24,7 @@ from app.modules.requests.google_drive import DriveError
 from app.modules.production.plan import KIT_STAGES, TC_REVIEW_VALUES
 from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, projects_edit_principal, projects_view_principal
+from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
 from app.workflows import project_kitset as flow
 
 from .application import CreateProjectTechcardCommand, create_project_techcard
@@ -139,7 +139,7 @@ def _kb_stage(stage) -> dict[str, Any]:
 @router.get("")
 def kitsets(
     request: Request,
-    _principal: Annotated[Principal, Depends(projects_view_principal)],
+    _principal: Annotated[Principal, Depends(kitset_tiles_principal)],
     sort: Annotated[str, Query(max_length=16)] = "upd",
 ) -> dict:
     """`portalKitsetList`: one tile per project with the computed status, КБ stages and the active blocker."""

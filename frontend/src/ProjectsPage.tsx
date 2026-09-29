@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ApiError,
   kitsetsApi,
@@ -180,8 +180,9 @@ function toneOf(status: string, statuses: string[]) {
   return "prep";
 }
 
-function KitTile({ item, statuses, canEdit, open, remove }: {
-  item: KitsetTile; statuses: string[]; canEdit: boolean; open: () => void; remove: () => void;
+// Плитка проекта; её же показывает экран мастера (`extra` — строка про операции и дедлайн).
+export function KitTile({ item, statuses, canEdit, open, remove, extra, active }: {
+  item: KitsetTile; statuses: string[]; canEdit: boolean; open: () => void; remove?: () => void; extra?: ReactNode; active?: boolean;
 }) {
   const kbs = item.kb_stages;
   const mixed = kbs.some((kb) => kb.status !== kbs[0].status);
@@ -204,11 +205,11 @@ function KitTile({ item, statuses, canEdit, open, remove }: {
     else if (kit) facts.push([`набрано ${kit}/${total}`, "warn", "Комплектация набрана не на все КБ"]);
     else if (late) facts.push(["не набрано", "neutral", "Заявки на комплектацию не набраны"]);
   }
-  return <div className="tile kit-tile" role="button" tabIndex={0} onClick={open} onKeyDown={(event) => { if (event.key === "Enter") open(); }}>
+  return <div className={`tile kit-tile${active ? " active" : ""}`} role="button" tabIndex={0} onClick={open} onKeyDown={(event) => { if (event.key === "Enter") open(); }}>
     <div className="tile-body">
       <div className="kit-tile-head">
         <strong className="t-h">{item.project}</strong>
-        {canEdit && <button className="link-button danger-link" title="Удалить карточку проекта" aria-label={`Удалить ${item.project}`} onClick={(event) => { event.stopPropagation(); remove(); }}>🗑</button>}
+        {canEdit && remove && <button className="link-button danger-link" title="Удалить карточку проекта" aria-label={`Удалить ${item.project}`} onClick={(event) => { event.stopPropagation(); remove(); }}>🗑</button>}
       </div>
       <div className="kit-chips">
         <span className={`kit-status tone-${toneOf(item.status, statuses)}`}>{item.status || "—"}</span>
@@ -222,6 +223,7 @@ function KitTile({ item, statuses, canEdit, open, remove }: {
       <div className="t-sub">{item.customer || "—"}</div>
       <div className="t-in">сборок {item.assemblies} · позиций {item.lines}</div>
       <div className="t-sub">обновлено {new Date(item.updated_at).toLocaleString("ru-RU")}</div>
+      {extra}
     </div>
   </div>;
 }
