@@ -40,7 +40,7 @@ function json(body: unknown) {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("gives the same config as opening the generator and pressing «Создать техкарты»", async () => {
+it("gives the same config as opening the generator and pressing «Создать»", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/techcards/templates") return json({ metadata: null, items: refs.templates });
@@ -56,7 +56,7 @@ it("gives the same config as opening the generator and pressing «Создать
   render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kit} />);
   expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать техкарты" }));
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
 
   const [batch] = runBatch({ refs, items: [{ key: "1", bom: kit }] }).items;

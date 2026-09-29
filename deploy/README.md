@@ -44,7 +44,7 @@ Let's Encrypt), ночные копии базы. Файлы (УПД, счета
 ./restore.sh /opt/erp/backups/daily/erp_<дата>.dump   # восстановить (сначала сама делает свежую копию)
 ./load-real-data.sh base            # admin, сотрудники с PIN, справочники, библиотека техкарт, проекты, КД
 ./load-real-data.sh kd              # КД проектов с Google Диска в базу (Диск только читается)
-./load-real-data.sh techcards       # ТК: выданные в SUPPLYMAP → ERP, остальным сборкам черновики генератора
+./load-real-data.sh techcards       # ТК: выданные в SUPPLYMAP → ERP, остальным сборкам ЭТК генератором
 ./load-real-data.sh projects        # перечитать проекты из Google (повтор ничего не дублирует)
 ./load-real-data.sh stock           # сверка склада без записи; `stock --yes` — записать (один раз, в день перехода)
 ./erp.sh cli python -m app.identity_admin create-user --login ... --role admin   # ещё пользователь

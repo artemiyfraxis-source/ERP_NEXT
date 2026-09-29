@@ -151,7 +151,7 @@ def test_a_draft_gives_way_to_the_supplymap_issue_and_dry_run_writes_nothing(sta
     assert _cards(state)[("708К.4", "КБ1")].status is TechcardStatus.ISSUED
 
 
-def test_generate_builds_drafts_only_where_a_techcard_is_missing_and_skips_shipped_and_hold(state):
+def test_generate_builds_and_issues_only_where_a_techcard_is_missing_and_skips_shipped_and_hold(state):
     import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True)
     _plan(state, "709К.1", kind="block", blocker="ХОЛД", text="ждём заказчика")
     _plan(state, "710К.1", kind="stage", item_index="КБ2", value="Отгружено")
@@ -160,11 +160,7 @@ def test_generate_builds_drafts_only_where_a_techcard_is_missing_and_skips_shipp
     def generator(payload):
         asked.extend(item["bom"]["index"] for item in payload["items"])
         assert {"templates", "op", "ter", "coax", "kab_awg", "kab_coax"} <= set(payload["refs"])
-        return {"items": [
-            {"key": item["key"], "config": CONFIG, "error": "", "warnings": []} if item["bom"]["components"]
-            else {"key": item["key"], "config": None, "error": "Выберите шаблон хотя бы для одной операции.", "warnings": []}
-            for item in payload["items"]
-        ]}
+        return {"items": [{"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]]}
 
     report = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)
     assert asked == ["КБ2", "КБ1"]  # 708К.4 КБ1 выдана из SUPPLYMAP, 709К.1 на ХОЛДе, 710К.1 КБ2 отгружена
@@ -172,21 +168,46 @@ def test_generate_builds_drafts_only_where_a_techcard_is_missing_and_skips_shipp
     assert report.skipped == {
         "ЭТК уже выдана": ["708К.4 КБ1"], "проект на ХОЛДе": ["709К.1"], "КБ отгружена": ["710К.1 КБ2"],
     }
-    cards = _cards(state)
-    built = cards[("710К.1", "КБ1")]
-    assert built.status is TechcardStatus.DRAFT and built.document["operations"]
-    assert built.product_name == "Жгут питания"
+    # Как кнопка «Создать» (SUPPLYMAP «Создать техкарты»): собранная ЭТК сразу выдана — её правят по операциям.
+    built = _cards(state)[("710К.1", "КБ1")]
+    assert (built.status, built.revision) == (TechcardStatus.ISSUED, 1)
+    assert built.document["operations"] and built.product_name == "Жгут питания"
 
     again = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)
-    assert again.done == []
-    assert again.skipped["черновик ЭТК уже собран"] == ["708К.4 КБ2", "710К.1 КБ1"]
+    assert again.done == [] and asked == ["КБ2", "КБ1"]
+    assert again.skipped["ЭТК уже выдана"] == ["708К.4 КБ1", "708К.4 КБ2", "710К.1 КБ1"]
+
+
+def test_a_build_that_cannot_be_issued_stays_a_draft_and_is_rebuilt_next_time(state):
+    no_length = {**CONFIG, "wires": [{**wire, "length": 0} for wire in CONFIG["wires"]]}
+
+    def generator(payload):
+        return {"items": [{"key": item["key"], "config": no_length, "error": "", "warnings": []} for item in payload["items"]]}
+
+    report = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)
+    assert report.done == []
+    assert any(line.startswith("708К.4 КБ1: собран черновик (операций ") and "не выдан — Не указана длина резки" in line
+               for line in report.failed)
+    draft = _cards(state)[("708К.4", "КБ1")]
+    assert draft.status is TechcardStatus.DRAFT and draft.document
+
+    rerun = generate(state, lambda payload: {"items": [
+        {"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]
+    ]}, None, actor=ACTOR, now=NOW, apply=True)
+    assert "708К.4 КБ1" in [line.split(" — ")[0] for line in rerun.done]
+    assert _cards(state)[("708К.4", "КБ1")].status is TechcardStatus.ISSUED
 
 
 def test_generator_errors_are_reported_and_leave_no_card(state):
     def generator(payload):
-        return {"items": [{"key": item["key"], "config": None, "error": "Укажите длину кабелей.", "warnings": []}
-                          for item in payload["items"]]}
+        return {"items": [{"key": item["key"], "config": None, "error": error, "warnings": []}
+                          for item, error in zip(payload["items"], ("Укажите длину кабелей.", "Выберите шаблон хотя бы для одной операции."))]
+                + [{"key": item["key"], "config": None, "error": "", "warnings": []} for item in payload["items"][2:]]}
 
     report = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)
-    assert "708К.4 КБ1: Укажите длину кабелей." in report.failed
+    assert report.failed[:2] == [
+        "708К.4 КБ1: Укажите длину кабелей.",
+        "708К.4 КБ2: генератору не из чего собрать операции — в составе нет проводов, разъёмов или контактов",
+    ]
+    assert report.failed[2] == "709К.1 КБ1: генератор не вернул конфигурацию"
     assert _cards(state) == {}

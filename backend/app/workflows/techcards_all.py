@@ -9,14 +9,16 @@
 `tcSplitItem_`) становится выданной ЭТК сборки: этапы, коды операций, времена и ссылка на файл ТК. Сборка, у
 которой ЭТК уже выдана в ERP, не трогается; несобранный черновик уступает место выданной ТК.
 
-``generate`` — то, что человек делал бы кнопкой: открыть «Генератор» сборки и нажать «Создать техкарты». Форму
-генератора исполняет её же код (frontend/src/tcGenBatch.ts, собранный ``npm run build:tcgen``) в Node.js; сюда
-приходит готовый config, и ЭТК собирается тем же `auto_build_project_techcard`, что за кнопкой, как черновик —
-смотреть и править его человеку. Пропускаются отгруженные проекты и КБ, проекты с блокером ХОЛД и со статусом
-Отказ / Слился / Отменён, проекты с ручными ТК и сборки, у которых ЭТК уже собрана или выдана. Длины резки и
-лужение генератор берёт из листа КБn расчёта, если ключ Google задан; без ключа — только из состава.
+``generate`` — то, что человек делал бы кнопкой: открыть «Генератор» сборки и нажать «Создать». Форму генератора
+исполняет её же код (frontend/src/tcGenBatch.ts, собранный ``npm run build:tcgen``) в Node.js; сюда приходит готовый
+config, ЭТК собирается тем же `auto_build_project_techcard` и сразу выдаётся, как кнопкой (SUPPLYMAP «Создать
+техкарты»): выданную технолог смотрит и правит по операциям, проверку отмечает в плане. Не выдаётся (остаётся
+черновиком, в итоге — почему) ЭТК, которой не хватает длины резки. Пропускаются отгруженные проекты и КБ, проекты с
+блокером ХОЛД и со статусом Отказ / Слился / Отменён, проекты с ручными ТК и сборки с выданной ЭТК; черновик
+пересобирается. Длины резки и лужение генератор берёт из листа КБn расчёта, если ключ Google задан; без ключа —
+только из состава.
 
-В конце печатается итог по-русски. Код выхода: 0 — всё сделано; 1 — часть сборок не собрана (список в итоге);
+В конце печатается итог по-русски. Код выхода: 0 — всё сделано; 1 — часть сборок не сделана (список в итоге);
 2 — нет базы, ключа (для supplymap) или собранного генератора/Node.js.
 """
 
@@ -43,11 +45,13 @@ from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import spreadsheet_id_from_url
 from app.modules.techcards.application import (
     AutoBuildProjectTechcardCommand,
+    ChangeProjectTechcardCommand,
     CreateProjectTechcardCommand,
     ImportIssuedTechcardCommand,
     auto_build_project_techcard,
     create_project_techcard,
     import_issued_techcard,
+    issue_project_techcard,
 )
 from app.modules.techcards.kitsets import KitAssembly, Kitset, item_id, project_key
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus, TechcardValidationError
@@ -137,9 +141,6 @@ def generation_scope(
             card = by_key.get(_card_key(kitset.project, assembly.index))
             if card is not None and card.status is TechcardStatus.ISSUED:
                 report.skip("ЭТК уже выдана", label)
-                continue
-            if card is not None and card.document is not None:
-                report.skip("черновик ЭТК уже собран", label)
                 continue
             targets.append((kitset, assembly, card))
     return targets
@@ -398,10 +399,16 @@ def generate(
             continue
         document = built.document or {}
         warnings = len(document.get("warnings") or [])
-        report.done.append(
-            f"{label} — операций {len(document.get('operations') or [])}"
-            + (f", предупреждений {warnings}" if warnings else "")
-        )
+        summary = (f"операций {len(document.get('operations') or [])}"
+                   + (f", предупреждений {warnings}" if warnings else ""))
+        try:
+            issue_project_techcard(ChangeProjectTechcardCommand(
+                card_id=built.id, expected_version=built.version, actor=actor, now=now,
+            ), techcards())
+        except TechcardValidationError as error:
+            report.failed.append(f"{label}: собран черновик ({summary}), не выдан — {error}")
+            continue
+        report.done.append(f"{label} — {summary}")
     return report
 
 
@@ -413,7 +420,7 @@ def format_report(title: str, report: Report, *, apply: bool, done_title: str) -
     lines.append(f"{done_title}: {len(report.done)}" + ("" if apply else " (пробный прогон, в базу не записано)"))
     lines += [f"  {item}" for item in report.done]
     if report.failed:
-        lines.append(f"Не собрано — не хватило данных: {len(report.failed)}")
+        lines.append(f"Не сделано — не хватило данных: {len(report.failed)}")
         lines += [f"  {item}" for item in report.failed]
     skipped = sum(len(items) for items in report.skipped.values())
     if skipped:
@@ -465,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
             report = generate(holder.state, node_generator(), _google_reader(),
                               actor=actor, now=moscow_now(), apply=not args.dry_run)
             print(format_report("Генерация ТК по проектам", report, apply=not args.dry_run,
-                                done_title="Собрано черновиков ЭТК"))
+                                done_title="Собрано и выдано ЭТК"))
     except (GeneratorUnavailable, CalcSheetError) as error:
         print(str(error), file=sys.stderr)
         return 2

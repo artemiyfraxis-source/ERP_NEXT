@@ -7,7 +7,8 @@
 # прежний код, прежний сайт, API снова запущен. В конце — версия и «Что нового» (влитые PR с прошлого
 # обновления; коммит прошлого обновления в backend\<база>.version), то же уходит в version.json для плашки в ERP.
 # Техкарты (владелец 29.09: «отгенерировать ТК по проектам»): выданные в SUPPLYMAP переносятся из листа «Техкарты»,
-# остальным сборкам генератор собирает черновики ЭТК; отгруженные и ХОЛД не трогаются, готовые ТК не пересобираются.
+# остальным сборкам генератор собирает и выдаёт ЭТК, как кнопка «Создать»; отгруженные и ХОЛД не трогаются, выданные
+# ТК не пересобираются.
 # Ключ Google erp-reader (только чтение): -Key путь (запоминается), иначе ERP_GOOGLE_SERVICE_ACCOUNT_JSON, иначе
 # запомненный путь (backend\google-key.path, его пишет и load-real-data.ps1), иначе поиск в Загрузках/Документах/Рабочем столе.
 param([string]$DbFile = 'real.db', [int]$Port = 8022, [string]$Key = '')
@@ -128,7 +129,7 @@ else {
 }
 if ($Key) { Set-Content $keyPath $Key; $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = $Key }
 
-Write-Host '== Техкарты: выданные в SUPPLYMAP (Google только читается) и черновики генератора'
+Write-Host '== Техкарты: выданные в SUPPLYMAP (Google только читается) и ЭТК генератором'
 $report = Join-Path $backend 'techcards-report.txt'
 if ($Key) {
   & $py -X utf8 -m app.workflows.techcards_all supplymap | Tee-Object -FilePath $report

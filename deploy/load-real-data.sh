@@ -5,7 +5,7 @@
 #       new lots are created, lots ERP never moved follow Google («догрузка из Google»), moved lots are reported
 #   deploy/load-real-data.sh kd        # КД проектов с Google Диска в базу (Диск только читается)
 #   deploy/load-real-data.sh projects  # re-read projects (idempotent: nothing is duplicated)
-#   deploy/load-real-data.sh techcards # ТК: выданные в SUPPLYMAP → ERP, остальным сборкам — черновики генератора
+#   deploy/load-real-data.sh techcards # ТК: выданные в SUPPLYMAP → ERP, остальным сборкам — ЭТК генератором
 #       (отгруженные и ХОЛД не трогаются; повтор собирает только то, чего ещё нет)
 # Secrets the owner reads afterwards: $ERP_HOME/config/admin.txt, $ERP_HOME/config/staff-pins.txt (chmod 600).
 set -euo pipefail

@@ -1,6 +1,6 @@
 /*
  * Генератор техкарт без формы — для пакетной генерации по всем проектам (backend `app.workflows.techcards_all`).
- * Делает то же, что TcGenerator при открытии сборки и нажатии «Создать техкарты»: справочники как loadRefs,
+ * Делает то же, что TcGenerator при открытии сборки и нажатии «Создать» (SUPPLYMAP «Создать техкарты»): справочники как loadRefs,
  * состав как GET /api/techcards/kitsets/{project}/bom/{index}, засев формы initState, «залипание» шаблонов
  * (stickTemplates, как эффект renderOpsCard) и validate. Выход — тот же config, что форма отдаёт в
  * POST /api/techcards/projects/{id}/build. Отдельной логики здесь нет: правила живут в tcGenLogic.ts.
