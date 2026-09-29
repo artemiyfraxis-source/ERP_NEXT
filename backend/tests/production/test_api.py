@@ -98,6 +98,21 @@ def test_operators_carry_department_for_the_master_board(production_api):
     assert listed.status_code == 200, listed.text
     assert {"id": str(operator_id), "name": "Оператор", "site": "ЦАР", "department": "Производство"} in listed.json()["operators"]
     assert listed.json()["viewer_site"] == "ЦАР"
+    # Только монтажники: мастер (и директора, админ-учётки) в загрузку и назначение не попадают.
+    assert [item["name"] for item in listed.json()["operators"]] == ["Оператор"]
+
+
+def test_work_goes_only_to_installers(production_api):
+    client, _operator_id = production_api
+    task = launch_from_card(client, "installers-only", "591K.3", "КБ1", 10, [("OP-01", "Разделка", 60, 120)]).json()["task"]
+
+    refused = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign",
+        json={"version": task["version"], "operator_ids": ["10000000-0000-0000-0000-000000000001"]},
+    )
+
+    assert refused.status_code == 422, refused.text
+    assert "Мастер не монтажник" in refused.json()["detail"]
 
 
 def test_site_master_assigns_only_staff_of_the_own_site(production_api):
@@ -486,7 +501,12 @@ def test_launch_only_from_issued_techcard_and_launchable_counts_launched(product
 
 def test_assign_preview_warns_about_admission_and_applies_speed_coefficient(production_api):
     client, operator_id = production_api
-    master_id = UUID("10000000-0000-0000-0000-000000000001")
+    # Второй монтажник без допуска (мастер работу не получает — он не монтажник).
+    master_id = UUID("10000000-0000-0000-0000-000000000003")
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(IdentityUserRow(id=master_id, login="novice", email="novice@example.test", name="Мастер",
+                                        department="Монтаж", role="staff", site="ЦАР", active=True))
+        uow.commit()
     client.put(f"/api/production/skills/{operator_id}", json={"skills": [
         {"operation_code": "OP-1", "allowed": True, "stars": 5, "coefficient": "2"},
     ]})
