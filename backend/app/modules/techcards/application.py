@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-from .project_cards import ProjectTechcard, TechcardRevision, TechcardValidationError
+from .project_cards import ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, normalize_record_edit, parse_operation_library
 from .etk_builder import build_etk
 
@@ -82,6 +82,20 @@ class AutoBuildProjectTechcardCommand(ChangeProjectTechcardCommand):
 class EditTechcardOperationCommand(ChangeProjectTechcardCommand):
     operation_key: str
     operation: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ImportIssuedTechcardCommand:
+    """A techcard issued outside ERP (SUPPLYMAP «Техкарты»): its route becomes the issued ETK of the product."""
+
+    project: str
+    item_index: str
+    product_name: str
+    source_calculation: str
+    document: dict[str, Any]
+    reason: str
+    actor: Actor
+    now: datetime
 
 
 @dataclass(frozen=True)
@@ -210,6 +224,29 @@ def issue_project_techcard(command: ChangeProjectTechcardCommand, uow: UnitOfWor
         ))
         uow.commit()
         return updated
+
+
+def import_issued_techcard(command: ImportIssuedTechcardCommand, uow: UnitOfWork) -> ProjectTechcard | None:
+    """Create or take the product's card and issue it with the imported document. A card already issued in ERP
+    is left as is (None): ERP issues and edits are never overwritten by an import. A draft gives way."""
+    with uow:
+        current = uow.techcards.by_key(command.project.strip(), command.item_index.strip())
+        if current is not None and current.status is TechcardStatus.ISSUED:
+            return None
+        card = current or ProjectTechcard.create(
+            project=command.project, item_index=command.item_index, product_name=command.product_name,
+            source_calculation=command.source_calculation, deadline=None, now=command.now,
+        )
+        issued = card.rebuild(command.document, command.now).issue(command.now)
+        uow.techcards.save(issued)
+        uow.techcards.add_revision(_revision(issued, command.reason, command.actor, command.now))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=issued.id, event_type="techcards.project_imported",
+            actor=command.actor, occurred_at=command.now,
+            details={"project": issued.project, "item_index": issued.item_index, "reason": command.reason},
+        ))
+        uow.commit()
+        return issued
 
 
 def _edited_operation(operation: dict[str, Any], actor: Actor, now: datetime) -> dict[str, Any]:

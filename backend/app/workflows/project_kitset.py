@@ -60,9 +60,11 @@ from app.modules.shipping.application import (
 )
 from app.modules.shipping.domain import FinishedGood, ProjectAssembly
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
+from app.modules.techcards.etk_parts import use_article
 from app.modules.techcards.kitset_calc import PROJECT_SHEET, SPEC_SHEET, parse_calc_sheets
 from app.modules.techcards.kitsets import (
     CalcKitset,
+    KitAssembly,
     KitDocument,
     Kitset,
     KitsetNotFound,
@@ -151,7 +153,11 @@ def calc_ops_by_link(calc_source: str, index: str, reader: Callable[[], CalcShee
     except Exception as error:  # noqa: BLE001 — SUPPLYMAP logs a WARN and returns []
         _log.warning("tcCalcOps_: %s", error)
         return []
-    grid = sheets.get(name) or []
+    return calc_ops_from_grid(sheets.get(name) or [])
+
+
+def calc_ops_from_grid(grid: list[list[str]]) -> list[dict[str, str]]:
+    """The КБn sheet grid → generator rows (see `calc_ops_by_link`)."""
     if len(grid) < 5:
         return []
 
@@ -161,6 +167,26 @@ def calc_ops_by_link(calc_source: str, index: str, reader: Callable[[], CalcShee
     rows = [{"code": clean(row, 1), "comp": clean(row, 2), "n": clean(row, 3), "l": clean(row, 4), "req": clean(row, 7)}
             for row in grid[4:]]
     return [row for row in rows if row["code"]]
+
+
+def generator_bom(kitset: Kitset, assembly: KitAssembly, calc_ops: list[dict[str, str]]) -> dict[str, Any]:
+    """`tcLoadBomFromKit`: состав сборки для генератора — из сохранённой карточки, с правками оператора.
+    Аналог по КД → оригинал к применению (kitUseArt_): генератор ищет контакт по артикулу к применению.
+    `calc_ops` — строки листа КБn расчёта (`calc_ops_by_link`). Тот же ответ читает пакетная генерация."""
+    components = []
+    for position, component in enumerate(assembly.components):
+        use = use_article(component.article, component.name)
+        components.append({
+            "id": f"kit-{position}", "type": component.type,
+            "name": use["art"] if use["kd"] else (component.name or component.article),
+            "art": use["art"], "kd": use["kd"], "qty": kit_number_payload(component.per_unit or Decimal("1")),
+            "scrap": kit_number_payload(component.scrap_pct / 100),
+        })
+    return {
+        "project": kitset.project, "index": assembly.index, "name": assembly.name,
+        "run": kit_number_payload(assembly.run), "part_qty": kit_number_payload(assembly.run or Decimal("1")),
+        "calc_source": kitset.calc_source, "components": components, "calc_ops": calc_ops,
+    }
 
 
 def calc_sheets_reader(state: Any) -> CalcSheetsReader:
@@ -285,6 +311,27 @@ class KitsetFacts:
     goods: tuple[FinishedGood, ...] = ()
     events: tuple[PlanEvent, ...] = ()
     projects: tuple[PlanProjectSnapshot, ...] = ()
+
+
+def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) -> KitsetFacts:
+    """Facts for `kitset_stages` from the modules' unit-of-work factories; a missing optional module reads empty."""
+    def read(factory, reader, default=()):
+        if factory is None:
+            return default
+        with factory() as uow:
+            return reader(uow)
+
+    tasks, events, projects = read(production, lambda uow: (
+        tuple(uow.production.list(limit=10_000)), tuple(uow.plan_events.list()), tuple(uow.plan_projects.list()),
+    ), ((), (), ()))
+    return KitsetFacts(
+        cards=read(techcards, lambda uow: tuple(uow.techcards.list())),
+        tasks=tasks,
+        fulfillment=read(fulfillment, lambda uow: tuple(uow.fulfillment.list(limit=10_000))),
+        goods=read(shipping, lambda uow: tuple(uow.goods.list(limit=10_000))),
+        events=events,
+        projects=projects,
+    )
 
 
 def kitset_stages(kitsets: Iterable[Kitset], facts: KitsetFacts) -> dict[str, tuple[ProjectStage, str]]:
@@ -569,7 +616,7 @@ def kit_number_payload(value: Decimal) -> str:
 
 __all__ = [
     "LoadKitsetCommand", "LoadKitsetResult", "KitsetFacts", "IssueFromKitsetResult", "PLAN_KINDS",
-    "TC_REVIEW_VALUES", "attach_document", "cards_state", "delete_kitset", "detach_document",
-    "issue_from_kitset", "kit_number_payload", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
+    "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
+    "generator_bom", "issue_from_kitset", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
     "supply_rows",
 ]

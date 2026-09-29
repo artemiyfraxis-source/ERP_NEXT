@@ -2,12 +2,40 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from typing import Any, Iterable, Mapping
 
+from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
+from app.modules.references.domain import TechOperationTab, gost_awg_map
 from app.modules.references.technology import (
-    TerminalRecord, fold_wire_section, resolve_terminal, wire_section,
+    TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, gost_awg_from_wire_table, resolve_terminal,
+    wire_section,
 )
+
+
+def with_technology(
+    config: Mapping[str, Any], references_factory: Callable[[], ReferencesUnitOfWork] | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The config «Создать техкарты» builds from, with terminal norms from the references snapshot, and the
+    snapshot stamp for the ETK. Without a current snapshot the config goes as is and the stamp is None."""
+    if references_factory is None:
+        return dict(config), None
+    with references_factory() as references_uow:
+        metadata = references_uow.tech_operations.metadata()
+        if not metadata or metadata["schema_version"] != TECH_SNAPSHOT_SCHEMA_VERSION:
+            return dict(config), None
+        records = references_uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)
+        # SUPPLYMAP gostAwgMap_: the map comes from the СПР.КАБ AWG table; the stored map only when it is not loaded.
+        gost_awg = gost_awg_from_wire_table(record.fields for record in references_uow.tech_operations.list(
+            tab=TechOperationTab.KAB_AWG, query="", limit=1_000,
+        )) or gost_awg_map(references_uow.references.list())
+    enriched = enrich_terminal_norms(config, (TerminalRecord.from_fields(record.fields) for record in records), gost_awg)
+    return enriched, {
+        "schema_version": metadata["schema_version"],
+        "source_updated_at": metadata["source_updated_at"].isoformat() if metadata["source_updated_at"] else None,
+        "imported_at": metadata["imported_at"].isoformat(),
+    }
 
 
 def enrich_terminal_norms(
