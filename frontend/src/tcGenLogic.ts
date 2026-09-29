@@ -732,6 +732,16 @@ export function makeGen(D: GenData, S: GenState) {
     const t = (D.coaxCableDia && D.coaxCableDia.byCable) || {};
     return t[String(coaxBomCable_()).toLowerCase().replace(/[\s-]/g, "")] || null;
   }
+  // Диаметры принадлежат кабелю (владелец 29.09.2026, БД.КОАКС D1–D3 = формула по СПР.КАБ): разделка берёт
+  // D1–D3 из СПР.КАБ по кабелю из BOM, D1–D3 записи разъёма — только запасной вариант. L1–L3, L± — у разъёма.
+  function coaxDia_(rec: CoaxRec | null) {
+    const dia = coaxCableDiaLookup_();
+    return {
+      d1: (dia && dia.d1) || (rec ? rec.d1 : "") || "",
+      d2: (dia && dia.d2) || (rec ? rec.d2 : "") || "",
+      d3: (dia && dia.d3) || (rec ? rec.d3 : "") || "",
+    };
+  }
   function matchCoaxRec_(art: string, pin: string, shield: string) {
     if (!art) return null;
     const a = coaxNorm_(art);
@@ -789,7 +799,8 @@ export function makeGen(D: GenData, S: GenState) {
     const rec = s ? coaxRecForSide_(side) : null;
     if (!s) return { text: "", rec, missing: false };
     if (rec) {
-      const dims = ["D1:" + (rec.d1 || "—"), "D2:" + (rec.d2 || "—"), "D3:" + (rec.d3 || "—"), "L1:" + (rec.l1 || "—"), "L2:" + (rec.l2 || "—"), "L3:" + (rec.l3 || "—")];
+      const dia = coaxDia_(rec);
+      const dims = ["D1:" + (dia.d1 || "—"), "D2:" + (dia.d2 || "—"), "D3:" + (dia.d3 || "—"), "L1:" + (rec.l1 || "—"), "L2:" + (rec.l2 || "—"), "L3:" + (rec.l3 || "—")];
       return { text: `✓ ${rec.type || ""} · ${rec.wire || ""} · ${dims.join(" ")}`, rec, missing: false };
     }
     return { text: `⚠ «${s.art}» нет в БД.КОАКС — добавьте ниже`, rec, missing: true };
@@ -1168,7 +1179,7 @@ export function makeGen(D: GenData, S: GenState) {
     const mkSide = (rec: CoaxRec | null, art: string, pinType: string, connName: string) => (art ? {
       article: art, connName: connName || "",
       type: rec ? rec.type : "", wire: rec ? rec.wire : "", mfr: rec ? rec.mfr : "", program: rec ? rec.program : "",
-      d1: rec ? rec.d1 : "", d2: rec ? rec.d2 : "", d3: rec ? rec.d3 : "", l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
+      ...coaxDia_(rec), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
       lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType,
     } : null);
     const ops = getActiveOpsCoax_().map((spec) => {
