@@ -615,3 +615,7 @@
 - Платформа клонирует SUPPLYMAP мелко (shallow, одна ветка) — пины SOURCE.json не находятся, drift-отчёт был пустым. `cloud-siblings.mjs` теперь делает `--unshallow`; порядок запуска вручную записан в CLAUDE.md.
 - Решено агентом — проверить: копировать скиллы плагинов claude-code-skills в `.claude/skills` не стали (автопроверка запретила вносить сторонний код). Плагины для тредов включает владелец в настройках проекта → Plugins.
 - В список владельцу при настройке сервера: включить в настройках проекта (Plugins) karpathy-coder, write-a-skill, caveman, grill-me, handoff-engineering, reflect-skill, self-improving-agent из маркетплейса alirezarezvani/claude-skills — по желанию, работе не мешает.
+## 2026-09-29 · запуск сервера · сервер в цеху вместо VPS
+- Владелец 29.09: сервер — свой компьютер на производстве с Ubuntu, Timeweb не берём. `bootstrap.sh lan` (по умолчанию): сайт `http://<IP>` в сети цеха, `ERP_COOKIE_SECURE=0`, 443 отдан Tailscale
+- Решено агентом — проверить: доступ снаружи через Tailscale (`tailscale serve`, https *.ts.net) — без белого IP и проброса портов, только устройства владельца. Cloudflare Tunnel не взят: нужен домен в Cloudflare и сайт становится публичным
+- Решено агентом — проверить: выкладка под пользователем `erp` с sudo без пароля (одна строка на консоли сервера), ключ `erp_server` через Import SSH identity с GitHub владельца
