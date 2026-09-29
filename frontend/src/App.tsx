@@ -91,10 +91,10 @@ export function App() {
     setPlace(next);
   }
   const navigate = (section: Section) => go({ section, block: null });
-  // «Карточка проекта» from the production plan (SUPPLYMAP planAct_ 'card' → openKitsetCard): the
-  // native project card is the techcards section narrowed to that project.
+  // «Карточка проекта» from the production plan (SUPPLYMAP planAct_ 'card' → openKitsetCard): the kitset card
+  // in «Проекты».
   function openProjectCard(project: string) {
-    go({ section: "techcards", block: null });
+    go({ section: "projects", block: null });
     const url = new URL(window.location.href);
     url.searchParams.set("project", project);
     window.history.replaceState({}, "", url);
@@ -146,6 +146,7 @@ export function App() {
   if (!principal) return <LoginPage onLogin={setPrincipal} />;
   // A section or block the principal cannot open falls back to the home screen.
   const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
+  const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
 
   return (
@@ -161,7 +162,7 @@ export function App() {
           {blocks.map((block) => (
             <div className="nav-group" key={block.id}>
               <h4>{block.title}</h4>
-              {block.items.map((item) => <NavButton key={item.id} item={item} active={activeSection === item.id} navigate={navigate} />)}
+              {block.items.map((item) => <NavButton key={item.id} item={item} active={activeSection === item.id || activeWithin === item.id} navigate={navigate} />)}
             </div>
           ))}
         </nav>
@@ -203,7 +204,7 @@ export function App() {
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
-        {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "techcards") ? openProjectCard : undefined} />}
+        {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "projects") ? openProjectCard : undefined} />}
         {activeSection === "production" && <ProductionPage principal={principal} />}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "references" && <ReferencesPage principal={principal} />}
