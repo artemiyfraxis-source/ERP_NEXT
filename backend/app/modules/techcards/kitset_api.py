@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -20,11 +20,11 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.modules.fulfillment.domain import FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
-from app.modules.requests.google_drive import DriveError
 from app.modules.production.plan import KIT_STAGES, TC_REVIEW_VALUES
 from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
+from app.shared.stored_files import file_response
 from app.workflows import project_kitset as flow
 
 from .application import CreateProjectTechcardCommand, create_project_techcard
@@ -423,18 +423,13 @@ class DocumentPayload(BaseModel):
 
 
 def _document_json(document) -> dict:
-    """A row of the «КД» register as `tcKdByAssembly_` hands it to the card: the link opens the file on Drive."""
+    """A row of the «КД» register as `tcKdByAssembly_` hands it to the card. `stored` — the bytes are in ERP (the
+    card links the download); otherwise `url` is the archived Drive link of a row from before the move, read-only."""
     return {
-        "id": str(document.id), "index": document.item_index, "name": document.file_name, "url": document.url,
-        "file_id": document.file_id, "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
+        "id": str(document.id), "index": document.item_index, "name": document.file_name,
+        "size": document.size, "stored": document.stored, "url": document.url or None,
+        "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
     }
-
-
-def _drive_run(operation):
-    try:
-        return _run(operation)
-    except DriveError as error:
-        raise HTTPException(status_code=503 if error.kind == "config" else 502, detail=str(error)) from error
 
 
 @router.post("/{project}/documents", status_code=201)
@@ -445,13 +440,30 @@ def add_document(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKdAdd`: вложить файл к сборке — файл ложится на Диск в папку «КД» проекта, строка — в реестр."""
+    """`portalKdAdd`: вложить файл к сборке — файл хранится в базе ERP, строка — в реестре КД."""
     content = _decode(payload.content_b64)
-    document = _drive_run(lambda: flow.attach_document(
+    document = _run(lambda: flow.attach_document(
         project, payload.index, payload.file_name, payload.content_type, content,
-        principal.actor, now, techcards_factory(request), lambda: flow.kd_drive(request.app.state),
+        principal.actor, now, techcards_factory(request),
     ))
     return {"res": _document_json(document)}
+
+
+@router.get("/{project}/documents/{document_id}")
+def document(
+    project: str,
+    document_id: UUID,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> Response:
+    """Файл КД из базы ERP. У строки из времён Диска байтов нет — 404, карточка ведёт на архивную ссылку."""
+    kitset = _kitset(request, project)
+    with techcards_factory(request)() as uow:
+        found = uow.kitsets.document_content(kitset.project, document_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Файл КД не найден")
+    meta, content = found
+    return file_response(content, meta.content_type or "application/octet-stream", meta.file_name)
 
 
 @router.delete("/{project}/documents/{document_id}")
@@ -462,10 +474,9 @@ def delete_document(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKdDelete`: отвязать вложение — строка реестра прочь, файл в корзину Диска."""
-    deleted = _drive_run(lambda: flow.detach_document(
+    """`portalKdDelete`: отвязать вложение — строка реестра и файл уходят из ERP."""
+    deleted = _run(lambda: flow.detach_document(
         project, document_id, principal.actor, now, techcards_factory(request),
-        lambda: flow.kd_drive(request.app.state),
     ))
     return {"res": {"deleted": deleted}}
 

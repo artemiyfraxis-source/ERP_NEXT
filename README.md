@@ -177,45 +177,38 @@ Google Sheets API). Каждую таблицу расчёта нужно отк
 $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = 'C:\secrets\erp-calc-reader.json'
 ```
 
-КД проекта («Проекты» → карточка → Состав → «＋ файл», как SUPPLYMAP `TcKd.gs`) хранится на Google Диске, а не
-в базе ERP: файл ложится в «Проекты/<головной номер>/<полный номер>/КД» (`tcKdFolder_`: головная папка ищется
-без учёта хвостовых точек, новая создаётся с точкой — «708К.»), имя — «708К.4КБ1 — <имя файла>». В ERP остаётся
-только реестр (проект, КБ, имя, ссылка, ID файла на Диске, кто и когда); ссылка в карточке открывает файл на
-Диске. «Отвязать» удаляет строку реестра и отправляет файл в корзину Диска (30 дней можно вернуть). Удаление
-проекта КД не трогает — как `tcKitsetDelete`. Запись идёт от того же сервисного аккаунта
-(`ERP_GOOGLE_SERVICE_ACCOUNT_JSON`, в проекте Google Cloud включить Google Drive API), корень — ID папки
-«Проекты» в `ERP_KD_DRIVE_FOLDER_ID` (из ссылки `drive.google.com/drive/folders/<ID>`). У сервисного аккаунта
-нет своего места на Диске, поэтому в общий диск он пишет только как «Менеджер контента».
-
-Папка «Проекты» SUPPLYMAP лежит в обычном «Моём диске» владельца — туда сервисный аккаунт файл не запишет. Для
-неё задаётся `ERP_KD_DRIVE_OAUTH_JSON` — JSON `authorized_user` (`client_id`, `client_secret`, `refresh_token`,
-по желанию `account`) аккаунта-владельца с доступом `https://www.googleapis.com/auth/drive`: ERP пишет от его
-имени, как GAS-приложение. Существующие папки ERP находит по имени (`tcFolderKey_`) и дублей не создаёт. Без
-ключа или папки вложение и отвязка отвечают `503` с подсказкой.
+КД проекта («Проекты» → карточка → Состав → «＋ файл», реестр как SUPPLYMAP `TcKd.gs`) хранится в базе ERP, как
+УПД и счета: до 20 МБ на файл, имя — «708К.4КБ1 — <имя файла>», в реестре — проект, КБ, тип, размер, кто и когда.
+Ссылка в карточке открывает файл из ERP (`GET /api/techcards/kitsets/{проект}/documents/{id}`, во вкладке браузера).
+«Отвязать» удаляет строку реестра вместе с файлом. Удаление проекта КД не трогает — как `tcKitsetDelete`: вложения
+возвращаются, когда проект снова заводится из расчёта. На Google Диск ERP не пишет (решение владельца 29.09.2026 —
+уходим от Диска). Строки, вложенные, пока КД лежал на Диске, хранят ссылку на Диск: карточка показывает её с
+пометкой «на Диске (архив)», только для чтения, пока байты не перенесены разовым импортом:
 
 ```powershell
-$env:ERP_KD_DRIVE_FOLDER_ID = '1cPlM5X6ZSdiPpSajOw1YvBYfOdqGdzfA'   # «!Проекты» SUPPLYMAP
+# из backend; Диск только читается: ключ erp-reader, доступ https://www.googleapis.com/auth/drive.readonly
+$env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = 'C:\secrets\erp-reader.json'   # ERP_DATABASE_URL — та же база, что у приложения
+.\.venv\Scripts\python.exe -m app.modules.techcards.import_kd_from_drive           # пробный прогон: список строк, Диск не читается
+.\.venv\Scripts\python.exe -m app.modules.techcards.import_kd_from_drive --apply   # скачать и записать байты в базу
 ```
+
+Импорт берёт строки реестра с ID файла на Диске и без байтов, скачивает каждый файл (Drive API v3, только `GET`:
+метаданные и `alt=media`, `supportsAllDrives=true`) и кладёт байты в ту же строку — по коммиту на файл, повтор
+досылает только недостающее. Ссылка на Диск остаётся на строке как архив. Файл, который ключ не видит, выводится
+списком (код выхода 1), остальные переносятся. Ключу нужен доступ «Читатель» к папке КД на Диске и включённый в
+проекте Google Cloud Google Drive API. На Диске ничего не создаётся, не меняется и не удаляется.
 
 #### Google: где лежат ключи и как проверить
 
-- Ключи — только в секретах GitHub репозитория (Settings → Secrets and variables → Actions), не в git:
-  `ERP_GOOGLE_SERVICE_ACCOUNT_JSON` (JSON-ключ `erp-reader@techmap-498119.iam.gserviceaccount.com`) и
-  `ERP_KD_DRIVE_OAUTH_JSON`. Деплой на сервер передаёт их backend как переменные окружения — так, как это делает
-  `.github/workflows/google-access.yml`. `ERP_KD_DRIVE_FOLDER_ID` не секрет: по умолчанию «!Проекты», переменная
-  репозитория с тем же именем его переопределяет.
+- Ключ — только в секретах GitHub репозитория (Settings → Secrets and variables → Actions), не в git:
+  `ERP_GOOGLE_SERVICE_ACCOUNT_JSON` (JSON-ключ `erp-reader@techmap-498119.iam.gserviceaccount.com`). Деплой на
+  сервер передаёт его backend как переменную окружения — так, как это делает `.github/workflows/google-access.yml`.
+  ERP им только читает Google: расчёты, импорты, разовый перенос КД.
 - Проверка без записи в Google: `python -m app.modules.requests.google_check` (из `backend`) — вход сервисного
-  аккаунта, чтение таблиц SUPPLYMAP (`--sheet <ID>` — ещё любая, например расчёт), список папок в «!Проекты».
+  аккаунта, чтение таблиц SUPPLYMAP (`--sheet <ID>` — ещё любая, например расчёт).
   В GitHub она же — Actions → google-access → Run workflow.
-- `ERP_KD_DRIVE_OAUTH_JSON` получает владелец папки один раз на своём компьютере: в Google Cloud (проект
-  techmap-498119) «APIs & Services → OAuth consent screen» — тип External, статус **In production** (в статусе
-  Testing Google отзывает ключ через 7 дней); «Credentials → Create credentials → OAuth client ID → Desktop app»,
-  скачать JSON. Затем из `backend`:
-  `.\.venv\Scripts\python.exe -m app.modules.requests.google_oauth_login --client <client_secret….json>` — браузер,
-  вход `artemiyfraxis@gmail.com`, «Разрешить» (предупреждение «приложение не проверено» → «Дополнительно» →
-  «Перейти»). Появится `erp-kd-oauth.json`: его содержимое — в секрет `ERP_KD_DRIVE_OAUTH_JSON`, файл удалить.
-- Локальный preview (`.claude/launch.json`) берёт папку из конфигурации, а оба ключа — из переменных окружения
-  Windows пользователя (путь к файлу ключа), как `$env:` выше.
+- Локальный preview (`.claude/launch.json`) берёт ключ из переменных окружения Windows пользователя (путь к
+  файлу ключа), как `$env:` выше.
 
 ### Импорт живых остатков из SUPPLYMAP (WH-IMPORT)
 

@@ -17,9 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ERP_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.ERP_GOOGLE_SERVICE_ACCOUNT_JSON }}
-      ERP_KD_DRIVE_OAUTH_JSON: ${{ secrets.ERP_KD_DRIVE_OAUTH_JSON }}
-      # «!Проекты» (SUPPLYMAP КД root, owner artemiyfraxis@gmail.com). Not a secret; a repository variable overrides it.
-      ERP_KD_DRIVE_FOLDER_ID: ${{ vars.ERP_KD_DRIVE_FOLDER_ID || '1cPlM5X6ZSdiPpSajOw1YvBYfOdqGdzfA' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
