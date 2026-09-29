@@ -58,7 +58,7 @@ it("seeds the form from the kit and sends the SUPPLYMAP config to the build", as
   expect(screen.getByText("Опрессовка терминалов А1")).toBeInTheDocument();
   expect(await screen.findAllByText(/Подбор по сечению: 0,12 мм² → S12/)).toHaveLength(2);
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать техкарты" }));
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
 
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   const config = onBuild.mock.calls[0][0];
@@ -103,7 +103,7 @@ it("takes cut lengths and tinning from the КБn sheet of the calculation (tcCal
   await waitFor(() => expect(screen.getByLabelText("Длина по чертежу")).toHaveValue(150));
   expect(screen.queryByLabelText("Строки расчёта КБn")).not.toBeInTheDocument();
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать техкарты" }));
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0].wires[0].length).toBe(160);
 });
@@ -112,7 +112,7 @@ it("shows the kit error instead of a hand-made composition", async () => {
   mockApi();
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kitError="Карточка набора «P-100» не найдена" />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Карточка набора «P-100» не найдена");
-  expect(screen.queryByRole("button", { name: "Создать техкарты" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Создать" })).not.toBeInTheDocument();
 });
 
 it("resets hand-typed times to БД.ОП on the next form change, as renderOpsCard does", async () => {
@@ -128,4 +128,15 @@ it("resets hand-typed times to БД.ОП on the next form change, as renderOpsCa
   expect(prep()).toHaveValue(45);
   fireEvent.change(screen.getByLabelText("Длина по чертежу"), { target: { value: "200" } });
   expect(prep()).toHaveValue(30);
+});
+
+it("has one main button: «Создать» before the first issue, «Пересобрать» after", async () => {
+  mockApi();
+  const { unmount } = render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+  expect(await screen.findByRole("button", { name: "Создать" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Удалить созданные" })).not.toBeInTheDocument();
+  unmount();
+  render(<TcGenerator card={{ ...card, status: "Выдана", revision: 1 }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+  expect(await screen.findByRole("button", { name: "Пересобрать" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Создать" })).not.toBeInTheDocument();
 });
