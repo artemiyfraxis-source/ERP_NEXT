@@ -26,7 +26,7 @@ def main() -> None:
     if metadata and metadata["source_commit"] == payload["sourceCommit"] and metadata["template_count"] == len(payload["templates"]):
         print(f"Operation-card library already current: {metadata['template_count']} templates")
         return
-    count = replace_operation_library(ReplaceOperationLibraryCommand(
+    result = replace_operation_library(ReplaceOperationLibraryCommand(
         source_commit=payload["sourceCommit"],
         templates=tuple(payload["templates"]),
         actor=Actor(
@@ -36,7 +36,8 @@ def main() -> None:
         ),
         now=datetime.now(timezone.utc),
     ), factory())
-    print(f"Imported {count} operation-card templates from {payload['sourceCommit'][:8]}")
+    print(f"Imported {result.templates} operation-card templates from {payload['sourceCommit'][:8]}"
+          + (f"; kept ERP edits: {', '.join(result.kept_edited)}" if result.kept_edited else ""))
 
 
 if __name__ == "__main__":
