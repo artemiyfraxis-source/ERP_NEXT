@@ -495,6 +495,30 @@ export interface ProductionOperation {
   planned_start: string | null;
   planned_finish: string | null;
   assigned_by: string | null;
+  fact?: { good: string; defect: string; processed: string };
+  state?: "не начата" | "в работе" | "выполнена";
+  wip?: { ok: string; closed: string };
+  first?: boolean;
+  mates?: string[];
+}
+
+export interface ProductionLaunchable {
+  techcard_id: string;
+  project: string;
+  index: string;
+  item: string;
+  name: string;
+  customer: string;
+  run: string;
+  deadline: string | null;
+  launched: number;
+  operations: number;
+}
+
+export interface ProductionAssignPlan {
+  start: string | null;
+  finish: string | null;
+  warnings: string[];
 }
 
 export interface ProductionTask {
@@ -536,6 +560,8 @@ export interface ProductionPlanRow {
   deadline: string | null;
   days_left: number | null;
   stage: string;
+  /** Registry status is terminal (closed/cancelled): the row is dimmed and out of «В работе». */
+  terminal: boolean;
   stage_manual: boolean;
   kits: Array<{
     item_index: string;
@@ -1642,34 +1668,25 @@ export const productionApi = {
     method: "PUT",
     body: JSON.stringify({ holidays, shift, absences: absences.map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
   }),
-  skills: () => api<{ skills: ProductionSkill[] }>("/api/production/skills"),
+  skills: () => api<{ skills: ProductionSkill[]; operation_codes?: Array<{ code: string; name: string }> }>("/api/production/skills"),
+  launchable: () => api<{ items: ProductionLaunchable[] }>("/api/production/launchable"),
   saveSkills: (operatorId: string, skills: Omit<ProductionSkill, "operator_id">[]) => api<void>(`/api/production/skills/${operatorId}`, {
     method: "PUT", body: JSON.stringify({ skills }),
   }),
   launch: (idempotencyKey: string, payload: {
-    project: string;
-    item: string;
-    name: string;
+    techcard_id: string;
     quantity: number;
     deadline: string | null;
     fulfillment_request_id: string | null;
-    operations: Array<{
-      position: number;
-      code: string;
-      stage: string;
-      description: string;
-      seconds_per_unit: string;
-      setup_seconds: string;
-    }>;
   }) => api<{ task: ProductionTask }>("/api/production/tasks", {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify(payload),
   }),
-  assign: (taskId: string, operationId: string, version: number, operatorIds: string[], requestedStart: string | null) =>
-    api<{ task: ProductionTask; warnings: string[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/assign`, {
+  assign: (taskId: string, operationId: string, version: number, operatorIds: string[], requestedStart: string | null, dry = false) =>
+    api<{ task: ProductionTask; warnings: string[]; plan: ProductionAssignPlan; dry: boolean }>(`/api/production/tasks/${taskId}/operations/${operationId}/assign`, {
       method: "POST",
-      body: JSON.stringify({ version, operator_ids: operatorIds, requested_start: requestedStart }),
+      body: JSON.stringify({ version, operator_ids: operatorIds, requested_start: requestedStart, dry }),
     }),
   cancel: (taskId: string, version: number, cancelled: boolean) =>
     api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/cancel`, {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import date, datetime
 from typing import Annotated, Any
@@ -29,6 +30,8 @@ from .plan_application import (
     replace_plan_projects,
 )
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/production/plan", tags=["production-plan"])
 
@@ -96,6 +99,15 @@ def _read(factory, reader, default=()):
         return reader(uow)
 
 
+def _safe_read(name: str, factory, reader, default=()):
+    """ProdPlan.gs prodPlanData_ `safe`: a failing source leaves its column empty, the plan still loads."""
+    try:
+        return _read(factory, reader, default)
+    except Exception:  # noqa: BLE001 - any source failure degrades to an empty column, as in SUPPLYMAP
+        logger.warning("production plan source %s failed", name, exc_info=True)
+        return default
+
+
 def _event_result(event: PlanEvent) -> dict[str, Any]:
     return {
         "id": str(event.id), "project": event.project,
@@ -117,19 +129,21 @@ def production_plan(
     requests_uow_factory: Annotated[Callable[[], RequestsUnitOfWork] | None, Depends(requests_factory)],
     procurement_uow_factory: Annotated[Callable[[], ProcurementUnitOfWork] | None, Depends(procurement_factory)],
 ) -> dict:
+    # The registry is the plan itself (erpProjectsList_ is outside `safe` in SUPPLYMAP); every other
+    # source degrades to an empty column on failure.
     with production_uow_factory() as uow:
-        tasks = tuple(uow.production.list(limit=10_000))
         projects = tuple(uow.plan_projects.list())
-        events = tuple(uow.plan_events.list())
-    cards = _read(techcards_uow_factory, lambda uow: tuple(uow.techcards.list()))
-    kitsets = _read(
-        techcards_uow_factory,
+    tasks = _safe_read("tasks", production_uow_factory, lambda uow: tuple(uow.production.list(limit=10_000)))
+    events = _safe_read("journal", production_uow_factory, lambda uow: tuple(uow.plan_events.list()))
+    cards = _safe_read("techcards", techcards_uow_factory, lambda uow: tuple(uow.techcards.list()))
+    kitsets = _safe_read(
+        "kitsets", techcards_uow_factory,
         lambda uow: tuple(uow.kitsets.list()) if hasattr(uow, "kitsets") else (),
     )
-    fulfillment = _read(fulfillment_uow_factory, lambda uow: tuple(uow.fulfillment.list(limit=10_000)))
-    goods = _read(shipping_uow_factory, lambda uow: tuple(uow.goods.list(limit=10_000)))
-    requests = _read(requests_uow_factory, lambda uow: tuple(uow.requests.recent(10_000)))
-    procurement = _read(procurement_uow_factory, lambda uow: tuple(uow.procurement.list(limit=10_000)))
+    fulfillment = _safe_read("fulfillment", fulfillment_uow_factory, lambda uow: tuple(uow.fulfillment.list(limit=10_000)))
+    goods = _safe_read("goods", shipping_uow_factory, lambda uow: tuple(uow.goods.list(limit=10_000)))
+    requests = _safe_read("requests", requests_uow_factory, lambda uow: tuple(uow.requests.recent(10_000)))
+    procurement = _safe_read("procurement", procurement_uow_factory, lambda uow: tuple(uow.procurement.list(limit=10_000)))
     rows = build_production_plan(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods,
         requests=requests, procurement=procurement, projects=projects,
@@ -142,7 +156,7 @@ def production_plan(
             "project": row.project, "customer": row.customer,
             "opened_on": row.opened_on.isoformat() if row.opened_on else None,
             "deadline": row.deadline.isoformat() if row.deadline else None,
-            "days_left": row.days_left, "stage": row.stage.status,
+            "days_left": row.days_left, "stage": row.stage.status, "terminal": row.terminal,
             "stage_manual": row.stage.manual,
             "kits": [{
                 "item_index": item.item_index, "status": item.status, "manual": item.manual,

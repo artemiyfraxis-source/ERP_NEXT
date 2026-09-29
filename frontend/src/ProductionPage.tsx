@@ -9,6 +9,8 @@ import {
   type ProductionMaterialSource,
   type ProductionDefect,
   type ProductionInstrument,
+  type ProductionLaunchable,
+  type ProductionAssignPlan,
   type ProductionQcRejection,
   type ProductionOperation,
   type ProductionOperator,
@@ -19,24 +21,7 @@ import {
   type ProductionTask,
   type ProductionWorkSession,
 } from "./api";
-
-type RouteDraft = {
-  position: number;
-  code: string;
-  stage: string;
-  description: string;
-  seconds_per_unit: string;
-  setup_seconds: string;
-};
-
-const emptyOperation = (position: number): RouteDraft => ({
-  position,
-  code: "",
-  stage: "",
-  description: "",
-  seconds_per_unit: "0",
-  setup_seconds: "0",
-});
+import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
@@ -53,9 +38,14 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [showLaunch, setShowLaunch] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
+  const [holidays, setHolidays] = useState<string[]>([]);
+  const [skills, setSkills] = useState<ProductionSkill[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [week, setWeek] = useState(0);
   const canEdit = principal.permissions.production === "edit" && principal.roles.some((role) => ["master", "admin"].includes(role));
   const canQuality = principal.permissions.production === "edit" && principal.roles.some((role) => ["qc", "admin"].includes(role));
   const canOverview = principal.roles.some((role) => ["master", "prodhead", "management", "qc", "admin"].includes(role));
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
 
   async function reload() {
     setError("");
@@ -79,6 +69,15 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       setDefects(defectResult.defects);
       setInstruments(instrumentResult.instruments);
       setQcRejections(qcRejectionResult.rejections);
+      if (!mine && canOverview) {
+        // Праздники — для подсветки Ганта, компетенции — для метки допуска в карточке назначения (prodSkillTag_).
+        const [calendarResult, skillResult] = await Promise.all([
+          productionApi.calendar().catch(() => ({ holidays: [] as string[] })),
+          productionApi.skills().catch(() => ({ skills: [] as ProductionSkill[] })),
+        ]);
+        setHolidays(calendarResult.holidays);
+        setSkills(skillResult.skills);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить производственные задания");
     } finally {
@@ -116,8 +115,8 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
-    {showSkills && canEdit && <SkillsForm operators={operators} tasks={tasks} close={() => setShowSkills(false)} />}
-    {showLaunch && canEdit && <LaunchForm busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
+    {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
+    {showLaunch && canEdit && <LaunchForm tasks={tasks} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && <TraceabilitySearch />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
@@ -125,18 +124,23 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && canEdit && <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />}
     {!mine && canQuality && <QualityPanel boxes={boxes} tasks={tasks} instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
     {!mine && canQuality && <InstrumentRegistry instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
-    <div className="work-list production-list">
-      {tasks.map((task) => <TaskCard
-        key={`${task.id}:${task.version}`}
-        task={task}
-        operators={operators}
-        canEdit={canEdit && !mine}
-        mine={mine}
-        busy={busy}
-        mutate={mutate}
-      />)}
-    </div>
-    {loaded && !tasks.length && <div className="empty">{mine ? "Назначенных операций пока нет." : "Производственных заданий пока нет."}</div>}
+    {mine && <MyQueue tasks={tasks} session={execution.session} busy={busy} mutate={mutate} />}
+    {!mine && selectedTask && <TaskDetail
+      key={`${selectedTask.id}:${selectedTask.version}`}
+      task={selectedTask}
+      tasks={tasks}
+      operators={operators}
+      skills={skills}
+      holidays={holidays}
+      week={week}
+      setWeek={setWeek}
+      canEdit={canEdit}
+      busy={busy}
+      mutate={mutate}
+      back={() => setSelectedTaskId("")}
+    />}
+    {!mine && !selectedTask && tasks.length > 0 && <TasksGantt tasks={tasks} holidays={holidays} week={week} setWeek={setWeek} open={setSelectedTaskId} />}
+    {loaded && !tasks.length && <div className="empty">{mine ? "Назначенных операций пока нет." : `Производственных заданий пока нет.${canEdit ? " Запустите первое кнопкой выше." : ""}`}</div>}
   </section>;
 }
 
@@ -210,102 +214,115 @@ function CalendarForm({ operators, close }: { operators: ProductionOperator[]; c
   </div>;
 }
 
-function SkillsForm({ operators, tasks, close }: {
+// Компетенции (prodSkillsModal_): коды операций выданных техкарт; «—» — строки нет, допуск по коду не проверяется.
+function SkillsForm({ operators, close }: {
   operators: ProductionOperator[];
-  tasks: ProductionTask[];
   close: () => void;
 }) {
   const [operatorId, setOperatorId] = useState(operators[0]?.id ?? "");
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
+  const [codes, setCodes] = useState<Array<{ code: string; name: string }>>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
-  const codes = Array.from(new Map(tasks.flatMap((task) => task.operations)
-    .filter((operation) => operation.code)
-    .map((operation) => [operation.code, operation.stage])).entries())
-    .sort(([left], [right]) => left.localeCompare(right));
+  const [saved, setSaved] = useState("");
 
   useEffect(() => {
     productionApi.skills()
-      .then((result) => setSkills(result.skills))
+      .then((result) => { setSkills(result.skills); setCodes(result.operation_codes ?? []); })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Компетенции не загружены"))
       .finally(() => setBusy(false));
   }, []);
 
   function row(code: string) {
-    return skills.find((item) => item.operator_id === operatorId && item.operation_code === code)
-      ?? { operator_id: operatorId, operation_code: code, allowed: false, stars: 0, coefficient: "1" };
+    return skills.find((item) => item.operator_id === operatorId && item.operation_code === code);
   }
 
-  function update(code: string, patch: Partial<ProductionSkill>) {
+  function update(code: string, patch: Partial<ProductionSkill> | null) {
+    setSaved("");
     setSkills((current) => {
-      const next = { ...row(code), ...patch, operator_id: operatorId, operation_code: code };
       const other = current.filter((item) => !(item.operator_id === operatorId && item.operation_code === code));
-      return [...other, next];
+      if (patch === null) return other;
+      const base = row(code) ?? { operator_id: operatorId, operation_code: code, allowed: false, stars: 0, coefficient: "1" };
+      return [...other, { ...base, ...patch, operator_id: operatorId, operation_code: code }];
     });
   }
 
   async function save() {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setSaved("");
     try {
-      await productionApi.saveSkills(operatorId, codes.map(([code]) => {
+      await productionApi.saveSkills(operatorId, codes.flatMap(({ code }) => {
         const item = row(code);
-        return { operation_code: code, allowed: item.allowed, stars: item.stars, coefficient: item.coefficient };
+        return item ? [{ operation_code: code, allowed: item.allowed, stars: item.stars, coefficient: String(item.coefficient).replace(",", ".") }] : [];
       }));
-      close();
+      setSaved("Сохранено.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Компетенции не сохранены");
     } finally { setBusy(false); }
   }
 
   return <div className="panel skills-editor">
-    <div className="manual-stock-head"><div><h2>Компетенции операторов</h2><small>Допуск обязателен для авторасчёта; коэффициент 1 — нормативная скорость.</small></div><button className="link-button" onClick={close}>Закрыть</button></div>
+    <div className="manual-stock-head"><div><h2>Компетенции</h2><small>Допуск, звёзды (мастерство 0–5) и коэффициент скорости по операциям выданных техкарт. «—» — не задано. Пока на операцию не заведён ни один оператор, допуск к ней не проверяется. Коэффициент 1 — норма, 1,2 — на 20% быстрее. Без допуска назначить можно — план предупредит.</small></div><button className="link-button" onClick={close}>Закрыть</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
-    <label>Оператор<select aria-label="Оператор компетенций" value={operatorId} onChange={(event) => setOperatorId(event.target.value)}>{operators.map((operator) => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select></label>
+    <label>Оператор<select aria-label="Оператор компетенций" value={operatorId} onChange={(event) => { setOperatorId(event.target.value); setSaved(""); }}>{operators.map((operator) => <option key={operator.id} value={operator.id}>{operator.name}{operator.site ? ` · ${operator.site}` : ""}</option>)}</select></label>
     <div className="skills-grid">
-      {codes.map(([code, stage]) => { const item = row(code); return <div key={code} className="skill-row">
-        <div><strong>{code}</strong><small>{stage}</small></div>
-        <label><input type="checkbox" checked={item.allowed} onChange={(event) => update(code, { allowed: event.target.checked })} />Допуск</label>
-        <label>Звёзды<input aria-label={`Звёзды ${code}`} type="number" min="0" max="5" step="1" value={item.stars} onChange={(event) => update(code, { stars: Number(event.target.value) })} /></label>
-        <label>Коэффициент<input aria-label={`Коэффициент ${code}`} type="number" min="0.1" max="100" step="0.1" value={item.coefficient} onChange={(event) => update(code, { coefficient: event.target.value })} /></label>
+      {codes.map(({ code, name }) => { const item = row(code); return <div key={code} className="skill-row">
+        <div><strong>{code}</strong><small>{name}</small></div>
+        <label>Допуск<select aria-label={`Допуск ${code}`} value={item ? (item.allowed ? "yes" : "no") : ""} onChange={(event) => update(code, event.target.value ? { allowed: event.target.value === "yes" } : null)}><option value="">—</option><option value="yes">допущен</option><option value="no">не допущен</option></select></label>
+        <label>Звёзды<select aria-label={`Звёзды ${code}`} disabled={!item} value={item?.stars ?? 0} onChange={(event) => update(code, { stars: Number(event.target.value) })}>{[0, 1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <label>Коэф.<input aria-label={`Коэффициент ${code}`} disabled={!item} type="number" min="0.1" max="100" step="0.1" value={item?.coefficient ?? "1"} onChange={(event) => update(code, { coefficient: event.target.value })} /></label>
       </div>; })}
     </div>
-    {!codes.length && <div className="empty">Сначала запустите хотя бы одно задание с кодами операций.</div>}
-    <div className="form-actions"><button className="primary" disabled={busy || !operatorId || !codes.length} onClick={() => void save()}>Сохранить компетенции</button></div>
+    {!codes.length && !busy && <div className="empty">Нет выданных техкарт — операций для матрицы пока нет.</div>}
+    <div className="form-actions">{saved && <span>{saved}</span>}<button className="primary" disabled={busy || !operatorId || !codes.length} onClick={() => void save()}>Сохранить</button></div>
   </div>;
 }
 
-function LaunchForm({ busy, mutate, close }: {
+// Запуск задания (prodLaunchModal_): сборки с выданной техкартой по проектам, поиск, «тираж», «уже запущено».
+function LaunchForm({ tasks, busy, mutate, close }: {
+  tasks: ProductionTask[];
   busy: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   close: () => void;
 }) {
-  const [project, setProject] = useState("");
-  const [item, setItem] = useState("");
-  const [name, setName] = useState("");
-  const [quantity, setQuantity] = useState("1");
+  const [items, setItems] = useState<ProductionLaunchable[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<ProductionLaunchable | null>(null);
+  const [quantity, setQuantity] = useState("");
   const [deadline, setDeadline] = useState("");
   const [fulfillmentRequestId, setFulfillmentRequestId] = useState("");
   const [issuedRequests, setIssuedRequests] = useState<FulfillmentRequest[]>([]);
-  const [operations, setOperations] = useState<RouteDraft[]>([emptyOperation(1)]);
   const key = useRef(crypto.randomUUID());
 
   useEffect(() => {
+    productionApi.launchable()
+      .then((result) => setItems(result.items))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Сборки не загружены"))
+      .finally(() => setLoading(false));
     fulfillmentApi.list()
       .then((result) => setIssuedRequests(result.requests.filter((request) => request.status === "КБ Выдана")))
       .catch(() => setIssuedRequests([]));
   }, []);
 
-  function change(index: number, field: keyof RouteDraft, value: string) {
-    setOperations((current) => current.map((operation, position) => position === index
-      ? { ...operation, [field]: field === "position" ? Number(value) : value }
-      : operation));
+  const doneOf = (item: ProductionLaunchable) => tasks.filter((task) => task.status !== "Отменено"
+    && task.project.toLowerCase() === item.project.toLowerCase() && task.item.toUpperCase() === item.index.toUpperCase());
+  const needle = query.trim().toLowerCase();
+  const visible = items.filter((item) => !needle || `${item.project} ${item.index} ${item.customer} ${item.name}`.toLowerCase().includes(needle));
+  const projects = Array.from(new Set(visible.map((item) => item.project)));
+
+  function pick(item: ProductionLaunchable) {
+    setPicked(item);
+    setQuantity(item.run);
+    setDeadline(item.deadline ?? "");
   }
 
   async function submit() {
+    if (!picked) return;
     await mutate("launch", async () => {
       const result = await productionApi.launch(key.current, {
-        project, item, name, quantity: Number(quantity), deadline: deadline || null,
-        fulfillment_request_id: fulfillmentRequestId || null, operations,
+        techcard_id: picked.techcard_id, quantity: Number(quantity), deadline: deadline || null,
+        fulfillment_request_id: fulfillmentRequestId || null,
       });
       key.current = crypto.randomUUID();
       close();
@@ -314,63 +331,226 @@ function LaunchForm({ busy, mutate, close }: {
   }
 
   return <div className="panel production-launch">
-    <div className="production-launch-grid">
-      <label>Проект<input value={project} onChange={(event) => setProject(event.target.value)} /></label>
-      <label>Изделие<input value={item} onChange={(event) => setItem(event.target.value)} /></label>
-      <label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <label>Количество<input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-      <label>Дедлайн<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
-      <label>Выданный комплект<select aria-label="Выданный комплект" value={fulfillmentRequestId} onChange={(event) => setFulfillmentRequestId(event.target.value)}><option value="">Не связан</option>{issuedRequests.map((request) => <option key={request.id} value={request.id}>{request.number} · {request.purpose}</option>)}</select></label>
-    </div>
-    <h3>Снимок маршрута</h3>
-    {operations.map((operation, index) => <div className="route-draft" key={index}>
-      <label>Этап<input aria-label={`Номер этапа ${index + 1}`} type="number" min="1" value={operation.position} onChange={(event) => change(index, "position", event.target.value)} /></label>
-      <label>Код<input aria-label={`Код этапа ${index + 1}`} value={operation.code} onChange={(event) => change(index, "code", event.target.value)} /></label>
-      <label>Название<input aria-label={`Название этапа ${index + 1}`} value={operation.stage} onChange={(event) => change(index, "stage", event.target.value)} /></label>
-      <label>Описание<input aria-label={`Описание этапа ${index + 1}`} value={operation.description} onChange={(event) => change(index, "description", event.target.value)} /></label>
-      <label>Сек/шт<input aria-label={`Секунд на штуку ${index + 1}`} type="number" min="0" step="any" value={operation.seconds_per_unit} onChange={(event) => change(index, "seconds_per_unit", event.target.value)} /></label>
-      <label>Подготовка, сек<input aria-label={`Подготовка ${index + 1}`} type="number" min="0" step="any" value={operation.setup_seconds} onChange={(event) => change(index, "setup_seconds", event.target.value)} /></label>
-      {operations.length > 1 && <button className="link-button danger-link" onClick={() => setOperations((current) => current.filter((_, position) => position !== index))}>Удалить</button>}
-    </div>)}
-    <div className="form-actions">
-      <button className="secondary" onClick={() => setOperations((current) => [...current, emptyOperation(current.length + 1)])}>+ Этап</button>
-      <button className="primary" disabled={busy || !project.trim() || !item.trim() || !operations.every((operation) => operation.stage.trim())} onClick={() => void submit()}>Запустить</button>
-    </div>
+    <div className="manual-stock-head"><div><h2>Запустить задание</h2><small>Выбери сборку — маршрут задания скопируется из её выданной техкарты.</small></div><button className="link-button" onClick={close}>Отмена</button></div>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {!picked && <>
+      {items.length > 0 && <input className="pl-search" aria-label="Поиск сборки" placeholder="Поиск: проект, КБ, заказчик, наименование" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus />}
+      {projects.map((project) => <div className="pl-proj" key={project}>
+        <div className="pl-ph"><b>{project}</b>{visible.find((item) => item.project === project)?.customer ? ` · ${visible.find((item) => item.project === project)?.customer}` : ""}</div>
+        <div className="pl-grid">{visible.filter((item) => item.project === project).map((item) => {
+          const launched = doneOf(item).reduce((sum, task) => sum + task.quantity, 0) || item.launched;
+          return <button key={item.techcard_id} className="pl-card" onClick={() => pick(item)}>
+            <span className="pl-kb">{item.index}</span>
+            <span className="pl-name">{item.name || "—"}</span>
+            <span className="pl-meta">тираж {item.run || "—"}{launched ? <> · <b>запущено {launched}</b></> : null}</span>
+          </button>;
+        })}</div>
+      </div>)}
+      {!loading && !items.length && <div className="empty">Нет сборок с выданной техкартой — сначала собери техкарту в карточке проекта.</div>}
+      {items.length > 0 && !visible.length && <div className="empty">Ничего не найдено.</div>}
+    </>}
+    {picked && <>
+      <button className="secondary small" onClick={() => setPicked(null)}>← все сборки</button>
+      <div className="pl-sel"><span className="pl-kb">{picked.index}</span><div><b>{picked.project}</b>{picked.customer ? ` · ${picked.customer}` : ""}<div>{picked.name}</div><small>тираж {picked.run || "—"} · этапов {picked.operations}</small></div></div>
+      {doneOf(picked).length > 0 && <div className="pl-warn">Уже запущено: {doneOf(picked).map((task) => `${task.number} × ${task.quantity}`).join(", ")}</div>}
+      <div className="production-launch-grid">
+        <label>Кол-во<input aria-label="Кол-во" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} autoFocus /></label>
+        <label>Дедлайн<input aria-label="Дедлайн" type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
+        <label>Выданный комплект<select aria-label="Выданный комплект" value={fulfillmentRequestId} onChange={(event) => setFulfillmentRequestId(event.target.value)}><option value="">Не связан</option>{issuedRequests.map((request) => <option key={request.id} value={request.id}>{request.number} · {request.purpose}</option>)}</select></label>
+      </div>
+      <div className="form-actions"><button className="primary" disabled={busy || !/^\d+$/.test(quantity.trim()) || Number(quantity) <= 0} onClick={() => void submit()}>Запустить</button></div>
+    </>}
   </div>;
 }
 
-function TaskCard({ task, operators, canEdit, mine, busy, mutate }: {
-  task: ProductionTask;
-  operators: ProductionOperator[];
-  canEdit: boolean;
-  mine: boolean;
-  busy: string;
-  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-}) {
-  const cancelled = task.status === "Отменено";
-  return <article className={`panel production-card${cancelled ? " cancelled" : ""}`}>
-    <div className="procurement-title">
-      <div><strong>{task.number} · {task.item} × {task.quantity}</strong><small>{task.project}{task.name ? ` · ${task.name}` : ""}{task.deadline ? ` · дедлайн ${task.deadline}` : ""}</small></div>
-      <span className="status">{task.status}</span>
-    </div>
-    <div className="production-summary">Назначено {task.assigned} из {task.operations.length}{task.planned_start ? ` · ${formatDate(task.planned_start)} — ${formatDate(task.planned_finish)}` : ""}</div>
-    {canEdit && !cancelled && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-    <div className="production-operations">
-      {task.operations.map((operation) => <OperationRow
-        key={operation.id}
-        task={task}
-        operation={operation}
-        operators={operators}
-        canEdit={canEdit && !cancelled}
-        mine={mine && !cancelled}
-        busy={Boolean(busy)}
-        mutate={mutate}
-      />)}
-    </div>
-    {canEdit && <button className="link-button danger-link" disabled={Boolean(busy)} onClick={() => void mutate(task.id, () => productionApi.cancel(task.id, task.version, !cancelled))}>{cancelled ? "Вернуть в работу" : "Отменить задание"}</button>}
-  </article>;
+function parseDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
+// Гант заданий (prodRenderTasks_): полоса план-старт..финиш, красная метка дедлайна, «позже дедлайна», «частично назначено».
+function TasksGantt({ tasks, holidays, week, setWeek, open }: {
+  tasks: ProductionTask[];
+  holidays: string[];
+  week: number;
+  setWeek: (value: number) => void;
+  open: (taskId: string) => void;
+}) {
+  const rows: GanttRow[] = tasks.map((task) => {
+    const cancelled = task.status === "Отменено";
+    return {
+      key: task.id,
+      dim: cancelled,
+      onClick: () => open(task.id),
+      label: <><b>{task.number}</b> {task.item} <span className="pg-q">× {task.quantity}</span></>,
+      sublabel: `${cancelled ? "отменено" : `назначено ${task.assigned} из ${task.operations.length}`}${task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}`,
+      bars: [{
+        start: task.planned_start, finish: task.planned_finish, text: task.item,
+        tone: task.assigned < task.operations.length ? "partial" : "default",
+        title: `${task.number}: ${formatDate(task.planned_start)} – ${formatDate(task.planned_finish)}`,
+      }],
+      deadline: task.deadline,
+    };
+  });
+  return <div className="panel production-gantt"><Gantt rows={rows} labelHead="Задание" week={week} onWeekChange={setWeek} holidays={holidays} /></div>;
+}
+
+function factText(task: ProductionTask, operation: ProductionOperation) {
+  const fact = operation.fact;
+  const processed = Number(fact?.processed ?? 0);
+  const main = processed ? `сдано ${fact?.good} из ${task.quantity}${Number(fact?.defect) ? `, брак ${fact?.defect}` : ""}` : "факта нет";
+  const ok = Number(operation.wip?.ok ?? 0);
+  const closed = Number(operation.wip?.closed ?? 0);
+  return main + (ok || closed ? ` · в коробках ${ok}${closed ? ` + ${closed} ждут подтверждения` : ""}` : "");
+}
+
+// Задание (prodRenderTask_): Гант операций с фактом, авторасчёт, отмена; клик по операции — карточка назначения.
+function TaskDetail({ task, tasks, operators, skills, holidays, week, setWeek, canEdit, busy, mutate, back }: {
+  task: ProductionTask;
+  tasks: ProductionTask[];
+  operators: ProductionOperator[];
+  skills: ProductionSkill[];
+  holidays: string[];
+  week: number;
+  setWeek: (value: number) => void;
+  canEdit: boolean;
+  busy: string;
+  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+  back: () => void;
+}) {
+  const [operationId, setOperationId] = useState("");
+  const cancelled = task.status === "Отменено";
+  const edit = canEdit && !cancelled;
+  const nameOf = (id: string) => operators.find((operator) => operator.id === id)?.name ?? id;
+  const operation = task.operations.find((item) => item.id === operationId) ?? null;
+  const rows: GanttRow[] = task.operations.map((item) => ({
+    key: item.id,
+    onClick: edit ? () => setOperationId(item.id) : undefined,
+    label: <><b>{item.position}</b> {item.stage}{item.code ? <span className="pg-q"> {item.code}</span> : null}</>,
+    sublabel: <>{item.operator_ids.length ? item.operator_ids.map(nameOf).join(", ") : "не назначено"} · норма {hours(item.norm_seconds)}<div>{factText(task, item)}{item.state ? ` · ${item.state}` : ""}</div></>,
+    bars: [{
+      start: item.planned_start, finish: item.planned_finish,
+      title: `${formatDate(item.planned_start)} – ${formatDate(item.planned_finish)}`,
+      text: item.operator_ids.map((id) => nameOf(id).split(" ")[0]).join(", "),
+    }],
+  }));
+  function toggleCancel() {
+    const question = cancelled ? `Вернуть задание ${task.number} в работу?` : `Отменить задание ${task.number}? Операции и назначения останутся в истории.`;
+    if (!window.confirm(question)) return;
+    void mutate(task.id, () => productionApi.cancel(task.id, task.version, !cancelled));
+  }
+  return <div className="panel production-card">
+    <button className="secondary small" onClick={back}>← Планирование</button>
+    <div className="procurement-title">
+      <div><strong>{task.number} · {task.item}{task.name ? ` · ${task.name}` : ""}</strong><small>{task.project} · кол-во {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · запущено {formatDate(task.created_at)}{cancelled ? " · отменено" : ""}{edit ? " · нажми на операцию, чтобы назначить операторов" : ""}</small></div>
+      <span className="status">{task.status}</span>
+    </div>
+    {canEdit && <div className="page-actions">
+      {edit && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
+      <button className="secondary small" disabled={Boolean(busy)} onClick={toggleCancel}>{cancelled ? "↩ Вернуть в работу" : "⛔ Отменить задание"}</button>
+    </div>}
+    <Gantt rows={rows} labelHead="Операция" week={week} onWeekChange={setWeek} holidays={holidays} />
+    {operation && edit && <AssignCard
+      task={task} operation={operation} tasks={tasks} operators={operators} skills={skills}
+      holidays={holidays} week={week} setWeek={setWeek} busy={Boolean(busy)} mutate={mutate}
+      close={() => setOperationId("")}
+    />}
+  </div>;
+}
+
+// Метка допуска у оператора (prodSkillTag_): кода нет в матрице — ничего; нет допуска — красным; иначе звёзды и коэффициент.
+function SkillTag({ skills, code, operatorId }: { skills: ProductionSkill[]; code: string; operatorId: string }) {
+  const byCode = skills.filter((item) => item.operation_code === code);
+  if (!byCode.length) return null;
+  const skill = byCode.find((item) => item.operator_id === operatorId);
+  if (!skill || !skill.allowed) return <small className="danger-text"> нет допуска</small>;
+  const coefficient = Number(skill.coefficient);
+  return <small> {"★".repeat(skill.stars)}{coefficient !== 1 ? ` ×${String(coefficient).replace(".", ",")}` : ""}</small>;
+}
+
+function toLocalInput(value: string | null) {
+  const date = parseDate(value);
+  if (!date) return "";
+  const pad = (number: number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// Карточка операции (prodAssignCard_): строки Ганта — операторы с их загрузкой, превью плана считает сервер (dry).
+function AssignCard({ task, operation, tasks, operators, skills, holidays, week, setWeek, busy, mutate, close }: {
+  task: ProductionTask;
+  operation: ProductionOperation;
+  tasks: ProductionTask[];
+  operators: ProductionOperator[];
+  skills: ProductionSkill[];
+  holidays: string[];
+  week: number;
+  setWeek: (value: number) => void;
+  busy: boolean;
+  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+  close: () => void;
+}) {
+  const [selected, setSelected] = useState<string[]>(operation.operator_ids);
+  const [start, setStart] = useState(toLocalInput(operation.planned_start));
+  const [preview, setPreview] = useState<ProductionAssignPlan | null>(null);
+  const [planError, setPlanError] = useState("");
+  const sequence = useRef(0);
+
+  useEffect(() => {
+    const current = ++sequence.current;
+    setPlanError("");
+    if (!selected.length) { setPreview(null); return; }
+    const timer = window.setTimeout(() => {
+      productionApi.assign(task.id, operation.id, task.version, selected, start || null, true)
+        .then((result) => { if (current === sequence.current) setPreview(result.plan); })
+        .catch((reason) => { if (current === sequence.current) { setPreview(null); setPlanError(reason instanceof Error ? reason.message : "План не рассчитан"); } });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [selected.join(","), start]);
+
+  const live = tasks.filter((item) => item.status !== "Отменено");
+  const rows: GanttRow[] = [];
+  let site: string | null = null;
+  for (const operator of operators) {
+    if (operator.site !== site) {
+      site = operator.site;
+      rows.push({ key: `site:${site}`, label: <b>{site || "Без площадки"}</b>, bars: [] });
+    }
+    const bars: GanttBar[] = live.flatMap((item) => item.operations
+      .filter((other) => !(item.id === task.id && other.id === operation.id) && other.operator_ids.includes(operator.id))
+      .map((other) => ({
+        start: other.planned_start, finish: other.planned_finish, tone: "busy",
+        text: `${item.number} · ${other.position}`,
+        title: `${item.number} · этап ${other.position} ${other.stage}: ${formatDate(other.planned_start)} – ${formatDate(other.planned_finish)}`,
+      })));
+    if (selected.includes(operator.id) && preview?.start) {
+      bars.push({ start: preview.start, finish: preview.finish, tone: "new", text: "этот этап", title: `${formatDate(preview.start)} – ${formatDate(preview.finish)}` });
+    }
+    rows.push({
+      key: operator.id,
+      label: <label className="pa-who"><input type="checkbox" aria-label={`Назначить ${operator.name}`} checked={selected.includes(operator.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, operator.id] : current.filter((id) => id !== operator.id))} />{operator.name}<SkillTag skills={skills} code={operation.code} operatorId={operator.id} /></label>,
+      bars,
+    });
+  }
+
+  return <div className="panel assign-card">
+    <div className="manual-stock-head"><div><h2>{task.number} · этап {operation.position} · {operation.stage}</h2><small>{task.item} × {task.quantity} · норма {hours(operation.norm_seconds)} на одного{operation.description ? ` · ${operation.description}` : ""}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
+    <div className="pa-ctl"><label>Плановый старт<input aria-label={`Старт этапа ${operation.position}`} type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label><small>пусто — первое свободное время выбранных операторов</small></div>
+    <Gantt rows={rows} labelHead="Оператор" week={week} onWeekChange={setWeek} holidays={holidays} />
+    <div className={`pa-plan${planError ? " err" : ""}`} role="status">
+      {planError || (!selected.length
+        ? `Операторы не выбраны${operation.operator_ids.length ? " — «Назначить» снимет назначение." : "."}`
+        : preview ? <><b>План:</b> {formatDate(preview.start)} → {formatDate(preview.finish)}{preview.warnings.length > 0 && <ul>{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</> : "Считаю план…")}
+    </div>
+    <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void mutate(operation.id, async () => {
+      const result = await productionApi.assign(task.id, operation.id, task.version, selected, start || null);
+      close();
+      return result;
+    })}>Назначить</button></div>
+  </div>;
+}
+
+// Авторасчёт (prodAutoPlanModal_): бригада до 3, варианты по передаточной партии, по умолчанию — самый ранний финиш.
 function SchedulePlanner({ task, operators, busy, mutate }: {
   task: ProductionTask;
   operators: ProductionOperator[];
@@ -381,60 +561,108 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
   const [replan, setReplan] = useState(false);
   const [maxCrew, setMaxCrew] = useState(1);
   const [variants, setVariants] = useState<ProductionScheduleVariant[]>([]);
+  const [pick, setPick] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const names = new Map(operators.map((operator) => [operator.id, operator.name]));
+  const stages = new Map(task.operations.map((operation) => [operation.position, operation.stage]));
 
-  async function calculate() {
-    setLoading(true); setError("");
-    try { setVariants((await productionApi.schedule(task.id, task.version, replan, maxCrew)).variants); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Автоплан не рассчитан"); }
-    finally { setLoading(false); }
-  }
+  useEffect(() => {
+    if (!show) return;
+    let active = true;
+    setLoading(true); setError(""); setVariants([]);
+    productionApi.schedule(task.id, task.version, replan, maxCrew)
+      .then((result) => {
+        if (!active) return;
+        let best = 0;
+        result.variants.forEach((variant, index) => { if (new Date(variant.finish) < new Date(result.variants[best].finish)) best = index; });
+        setVariants(result.variants); setPick(best);
+      })
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Автоплан не рассчитан"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [show, replan, maxCrew]);
 
+  const variant = variants[pick];
   return <div className="schedule-planner">
     <button className="secondary small" onClick={() => setShow((value) => !value)}>⚙ Авторасчёт плана</button>
     {show && <div className="schedule-panel">
+      <small>{task.item} × {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · этапы идут цепочкой: следующий начинает, как только предыдущий отдал передаточную партию. Операторы — из «Компетенции», по допуску и коэффициенту.</small>
       <div className="schedule-controls">
-        <label>Операторов на операцию<input aria-label={`Максимум операторов ${task.number}`} type="number" min="1" max="5" value={maxCrew} onChange={(event) => setMaxCrew(Number(event.target.value))} /></label>
-        <label><input type="checkbox" checked={replan} onChange={(event) => setReplan(event.target.checked)} />Пересчитать назначенные этапы</label>
-        <button className="primary small" disabled={busy || loading} onClick={() => void calculate()}>{loading ? "Считаю…" : "Показать варианты"}</button>
+        <label>Операторов на операцию, до<select aria-label={`Максимум операторов ${task.number}`} value={maxCrew} onChange={(event) => setMaxCrew(Number(event.target.value))}>{[1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <label><input type="checkbox" checked={replan} onChange={(event) => setReplan(event.target.checked)} />пересчитать и уже назначенные этапы</label>
       </div>
+      {loading && <small>Считаю варианты…</small>}
       {error && <div className="error-banner" role="alert">{error}</div>}
-      <div className="schedule-variants">{variants.map((variant) => <div className="schedule-variant" key={variant.transfer_batch}>
-        <div><strong>Партия {variant.transfer_batch} шт</strong><small>Первые: {formatDate(variant.first_ready)} · всё: {formatDate(variant.finish)} · простой {duration(variant.idle_seconds)}</small></div>
-        <div className="schedule-route">{variant.operations.map((operation) => <span key={operation.operation_id}>{operation.position}. {operation.operator_ids.map((id) => names.get(id) ?? id).join(", ")} · {formatDate(operation.start)}—{formatDate(operation.finish)}</span>)}</div>
-        {variant.warnings.map((warning) => <small className="danger-text" key={warning}>{warning}</small>)}
-        <button className="secondary small" disabled={busy} onClick={() => void mutate(`schedule:${task.id}`, () => productionApi.applySchedule(task.id, task.version, replan, maxCrew, variant.transfer_batch))}>Применить</button>
-      </div>)}</div>
+      {variants.length > 0 && <table className="ap-t"><thead><tr><th></th><th>Передаточная партия</th><th>Первые изделия</th><th>Всё готово</th><th>Простой бригады</th></tr></thead><tbody>
+        {variants.map((item, index) => <tr key={item.transfer_batch} className={index === pick ? "on" : ""} onClick={() => setPick(index)}>
+          <td>{index === pick ? "●" : "○"}</td>
+          <td>{item.transfer_batch >= task.quantity ? `целиком, ${item.transfer_batch} шт` : `${item.transfer_batch} шт`}</td>
+          <td>{formatDate(item.first_ready)}</td><td>{formatDate(item.finish)}</td>
+          <td>{(item.idle_seconds / 3600).toFixed(1).replace(".", ",")} ч</td>
+        </tr>)}
+      </tbody></table>}
+      {variant && <table className="ap-t"><thead><tr><th>Этап</th><th>Операторы</th><th>Старт</th><th>Финиш</th></tr></thead><tbody>
+        {variant.operations.map((operation) => <tr key={operation.operation_id}>
+          <td><b>{operation.position}</b> {stages.get(operation.position) ?? ""}</td>
+          <td>{operation.operator_ids.map((id) => names.get(id) ?? id).join(", ")}{operation.automatic ? "" : <span className="ap-man"> назначено раньше</span>}</td>
+          <td>{formatDate(operation.start)}</td><td>{formatDate(operation.finish)}</td>
+        </tr>)}
+      </tbody></table>}
+      {variant?.warnings.length ? <ul>{variant.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
+      <button className="primary small" disabled={busy || !variant} onClick={() => void mutate(`schedule:${task.id}`, () => productionApi.applySchedule(task.id, task.version, replan, maxCrew, variant.transfer_batch))}>Применить</button>
     </div>}
   </div>;
 }
 
-function OperationRow({ task, operation, operators, canEdit, mine, busy, mutate }: {
-  task: ProductionTask;
-  operation: ProductionOperation;
-  operators: ProductionOperator[];
-  canEdit: boolean;
-  mine: boolean;
-  busy: boolean;
+// Очередь оператора (myOpsRender_): операции по дням плана — «Сегодня / Завтра / Начато ранее», факт «сдано X из N»,
+// «вместе с», «план истёк»; «Начать» нет у выполненных и недоступно, пока есть начатая работа.
+function MyQueue({ tasks, session, busy, mutate }: {
+  tasks: ProductionTask[];
+  session: ProductionWorkSession | null;
+  busy: string;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
-  const [selected, setSelected] = useState(operation.operator_ids);
-  const [start, setStart] = useState(operation.planned_start?.slice(0, 16) ?? "");
-  const names = operation.operator_ids.map((id) => operators.find((operator) => operator.id === id)?.name ?? id);
-  return <div className="production-operation">
-    <div><strong>{operation.position}. {operation.stage}</strong><small>{operation.code}{operation.description ? ` · ${operation.description}` : ""}</small></div>
-    <span>Норма {duration(operation.norm_seconds)}</span>
-    <span>{names.length ? names.join(", ") : "Не назначено"}</span>
-    <span>{operation.planned_start ? `${formatDate(operation.planned_start)} — ${formatDate(operation.planned_finish)}` : "Без плана"}</span>
-    {canEdit && <div className="operation-assign">
-      <label>Операторы<select multiple aria-label={`Операторы этапа ${operation.position}`} value={selected} onChange={(event) => setSelected(Array.from(event.target.selectedOptions, (option) => option.value))}>{operators.map((operator) => <option value={operator.id} key={operator.id}>{operator.name}{operator.site ? ` · ${operator.site}` : ""}</option>)}</select></label>
-      <label>Старт<input aria-label={`Старт этапа ${operation.position}`} type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label>
-      <button className="secondary small" disabled={busy} onClick={() => void mutate(operation.id, () => productionApi.assign(task.id, operation.id, task.version, selected, start || null))}>{selected.length ? "Запланировать" : "Снять назначение"}</button>
-    </div>}
-    {mine && <StartWorkForm task={task} operation={operation} busy={busy} mutate={mutate} />}
-  </div>;
+  const [starting, setStarting] = useState("");
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekdays = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+  const dayTitle = (date: Date | null) => {
+    if (!date) return "Без плана";
+    const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diff = Math.round((day.getTime() - today.getTime()) / 86_400_000);
+    const base = `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}, ${weekdays[date.getDay()]}`;
+    return diff === 0 ? `Сегодня · ${base}` : diff === 1 ? `Завтра · ${base}` : diff < 0 ? `Начато ранее · ${base}` : base;
+  };
+  let last: string | null = null;
+  return <div className="my-queue">{tasks.map((task) => {
+    const operation = task.operations[0];
+    if (!operation) return null;
+    const startAt = parseDate(operation.planned_start);
+    const finishAt = parseDate(operation.planned_finish);
+    const title = dayTitle(startAt);
+    const header = title !== last ? <div className="mo-day">{title}</div> : null;
+    last = title;
+    const running = Boolean(session && session.task_id === task.id && session.operation_id === operation.id);
+    const done = operation.state === "выполнена";
+    const late = Boolean(finishAt && finishAt < now && !done);
+    const key = `${task.id}:${operation.id}`;
+    const processed = Number(operation.fact?.processed ?? 0);
+    return <div key={key}>
+      {header}
+      <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
+        <div className="mo-h"><b>{operation.stage || `Этап ${operation.position}`}</b>{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(operation.planned_start)} → ${formatDate(operation.planned_finish)}` : "время не назначено"}</span></div>
+        <div className="mo-s">{task.number} · этап {operation.position} · <b>{task.item}</b> × {task.quantity}{task.name ? ` · ${task.name}` : ""}</div>
+        {operation.description && <div className="mo-d">{operation.description}</div>}
+        <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {task.quantity}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}</div>
+        {!running && !done && <div className="mo-act">
+          <button className="primary small" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>
+        </div>}
+        {!running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} />}
+      </div>
+    </div>;
+  })}</div>;
 }
 
 function OperatorExecution({ execution, tasks, busy, mutate }: {
@@ -453,7 +681,7 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
   const operation = task?.operations.find((item) => item.id === session?.operation_id);
   return <>
     {session && <div className="panel execution-current">
-      <div className="manual-stock-head"><div><h2>Сейчас в работе</h2><small>{task?.number ?? session.task_id} · {operation?.stage ?? session.operation_id}</small></div><span className="status">{session.status}</span></div>
+      <div className="manual-stock-head"><div><h2>Идёт работа</h2><small>{task?.number ?? session.task_id} · этап {operation?.position ?? "—"} {operation?.stage ?? ""} · с {formatDate(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}{session.status === "Пауза" ? " · на паузе" : ""}</small></div><span className="status">{session.status}</span></div>
       <div className="execution-actions">
         {session.status === "В работе" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "pause"))}>Пауза</button>}
         {session.status === "Пауза" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "resume"))}>Продолжить</button>}
@@ -708,6 +936,16 @@ function duration(seconds: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.ceil((seconds % 3600) / 60);
   return hours ? `${hours} ч ${minutes} мин` : `${minutes} мин`;
+}
+
+function hours(seconds: number) {
+  const value = (Number(seconds) || 0) / 3600;
+  return `${(value < 10 ? value.toFixed(1) : String(Math.round(value))).replace(".", ",")} ч`;
+}
+
+function formatDay(value: string | null) {
+  const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : String(value ?? "");
 }
 
 function formatDate(value: string | null) {

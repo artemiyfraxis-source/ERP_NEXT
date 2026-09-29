@@ -315,6 +315,8 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
   const [templateCategory, setTemplateCategory] = useState("");
   const [editingTemplate, setEditingTemplate] = useState(false);
   const [selectedId, setSelectedId] = useState("");
+  // ?project= — opened as «Карточка проекта» from the production plan: only that project's cards.
+  const [projectFilter, setProjectFilter] = useState(() => new URLSearchParams(window.location.search).get("project") ?? "");
   const [revisions, setRevisions] = useState<TechcardRevision[]>([]);
   const [form, setForm] = useState({ project: "", item_index: "", product_name: "", source_calculation: "", deadline: "" });
   const [configText, setConfigText] = useState("{}");
@@ -324,6 +326,10 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
   const [notice, setNotice] = useState("");
   const canEdit = principal.permissions.techcards === "edit" && principal.roles.some((role) => role === "engineer" || role === "admin");
   const selected = useMemo(() => cards.find((card) => card.id === selectedId) ?? null, [cards, selectedId]);
+  const shownCards = useMemo(() => {
+    const project = projectFilter.trim().toLocaleUpperCase("ru-RU");
+    return project ? cards.filter((card) => card.project.toLocaleUpperCase("ru-RU") === project) : cards;
+  }, [cards, projectFilter]);
   const [bom, setBom] = useState<BomItem[] | undefined>(undefined);
   const cardColumns: DataColumn<ProjectTechcard>[] = [
     { key: "project", title: "Проект", value: (card) => card.project,
@@ -356,9 +362,11 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
         showLibrary ? techcardsApi.templates() : Promise.resolve({ items: [] as OperationCardSummary[], metadata: null }),
       ]);
       setCards((current) => current.length ? current : projectResult.items);
-      // «Проекты» → «Генератор»/«ТК КБn» открывают здесь карточку изделия: ?card=<id>.
+      // «Проекты» → «Генератор»/«ТК КБn» открывают здесь карточку изделия: ?card=<id>; план — ?project=<№>.
       const linked = new URLSearchParams(window.location.search).get("card") || "";
-      setSelectedId((current) => current || (projectResult.items.some((card) => card.id === linked) ? linked : "") || projectResult.items[0]?.id || "");
+      const wanted = projectFilter.trim().toLocaleUpperCase("ru-RU");
+      const first = projectResult.items.find((card) => !wanted || card.project.toLocaleUpperCase("ru-RU") === wanted) ?? projectResult.items[0];
+      setSelectedId((current) => current || (projectResult.items.some((card) => card.id === linked) ? linked : "") || first?.id || "");
       setTemplates(libraryResult.items);
       setLibraryCommit(libraryResult.metadata?.source_commit || "");
     } catch (reason) {
@@ -467,6 +475,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     <p className="page-sub">ЭТК собирается сервером из конфигурации изделия и снимка библиотеки операций; выданные версии остаются неизменяемыми.</p>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+    {projectFilter && <div className="plan-acts"><span>Проект {projectFilter}</span><button className="secondary small" onClick={() => setProjectFilter("")}>Все проекты</button></div>}
     {canEdit && <article className="panel">
       <div className="panel-heading"><strong>Новая карточка изделия</strong></div>
       <div className="form-grid">
@@ -479,7 +488,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
       <div className="form-actions"><button className="primary" disabled={busy || !form.project || !form.item_index || !form.product_name} onClick={() => void createCard()}>Создать карточку</button></div>
     </article>}
     <DataTable
-      rows={cards}
+      rows={shownCards}
       columns={cardColumns}
       rowKey={(card) => card.id}
       storageKey="techcards-projects"
@@ -490,7 +499,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
         { label: "Выданные", test: (card) => card.status === "Выдана" },
       ]}
       rowClassName={(card) => (selectedId === card.id ? "selected" : "")}
-      emptyText={cards.length ? "Ничего не найдено." : "Карточек проектов пока нет."}
+      emptyText={projectFilter ? `Карточек проекта ${projectFilter} нет.` : cards.length ? "Ничего не найдено." : "Карточек проектов пока нет."}
     />
     {selected && <article className="panel project-etk">
       <div className="panel-heading"><strong>{selected.project} · {selected.item_index}</strong><span>{selected.status} · ревизия {selected.revision || "—"}</span></div>

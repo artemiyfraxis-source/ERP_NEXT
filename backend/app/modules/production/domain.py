@@ -263,8 +263,33 @@ def operation_duration_seconds(
     *,
     operator_rate: Decimal | None = None,
 ) -> int:
-    rate = max(Decimal(1), Decimal(operator_rate if operator_rate is not None else operators))
+    # prodOpDurationSec_: rate is the sum of the chosen operators' coefficients; only a non-positive rate falls back to 1.
+    rate = Decimal(operator_rate if operator_rate is not None else operators)
+    rate = rate if rate > 0 else Decimal(1)
     return ceil(operation.setup_seconds + operation.seconds_per_unit * quantity / rate)
+
+
+@dataclass(frozen=True)
+class SkillCheck:
+    checked: bool
+    allowed: bool
+    stars: int
+    coefficient: Decimal
+
+
+def skill_of(
+    skills: dict[str, dict[UUID, OperatorSkill]],
+    operation_code: str,
+    operator_id: UUID,
+) -> SkillCheck:
+    """prodSkillOf_: no row for the code yet — not checked; a row exists — no allowed row means no admission."""
+    by_code = skills.get(str(operation_code or ""))
+    if not by_code:
+        return SkillCheck(False, True, 0, Decimal(1))
+    skill = by_code.get(operator_id)
+    if skill is None or not skill.allowed:
+        return SkillCheck(True, False, skill.stars if skill else 0, Decimal(1))
+    return SkillCheck(True, True, skill.stars, skill.coefficient)
 
 
 def _day_spans(
@@ -350,9 +375,14 @@ def plan_operation(
     holidays: frozenset[date],
     shift: WorkShift = DEFAULT_SHIFT,
     operator_rate: Decimal | None = None,
+    skills: dict[str, dict[UUID, OperatorSkill]] | None = None,
+    names: dict[UUID, str] | None = None,
 ) -> PlanResult:
     if not operator_ids:
         return PlanResult(None, None, ())
+    checks = [skill_of(skills or {}, operation.code, operator_id) for operator_id in operator_ids]
+    if operator_rate is None and skills is not None:
+        operator_rate = sum((item.coefficient for item in checks), Decimal(0))
     duration = operation_duration_seconds(
         operation, quantity, len(operator_ids), operator_rate=operator_rate,
     )
@@ -373,8 +403,14 @@ def plan_operation(
     warnings: list[str] = []
     if start < earliest_start:
         warnings.append("Старт раньше окончания предыдущего этапа")
-    for operator_id in operator_ids:
+    for operator_id, check in zip(operator_ids, checks):
+        name = (names or {}).get(operator_id, "Оператор")
+        if not check.allowed:
+            warnings.append(f"{name}: нет допуска к операции {operation.code}")
         for interval in busy.get(operator_id, ()):
             if interval.start < finish and start < interval.finish:
-                warnings.append(f"Оператор занят: {interval.label}")
+                warnings.append(
+                    f"{name} занят(а): {interval.label}, "
+                    f"{interval.start:%d.%m.%Y %H:%M}–{interval.finish:%d.%m.%Y %H:%M}"
+                )
     return PlanResult(start, finish, tuple(warnings))
