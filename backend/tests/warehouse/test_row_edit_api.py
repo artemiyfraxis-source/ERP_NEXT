@@ -128,9 +128,9 @@ def test_reserve_cannot_go_under_what_kitting_holds(warehouse_api):  # noqa: F81
 def test_row_edit_is_for_the_storekeeper_and_admin_only(warehouse_api):  # noqa: F811
     client, lot = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=Actor(name="Закупщик", department="Закупки"),
-        email="buyer@example.test",
-        roles=frozenset({"buyer"}),
+        actor=Actor(name="Сметчик", department="КБ"),
+        email="estimator@example.test",
+        roles=frozenset({"estimator"}),
         permissions={"warehouse": "edit"},
     )
 
