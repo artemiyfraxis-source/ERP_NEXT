@@ -167,7 +167,8 @@ export function ProcurementBySupplier() {
       ) : (
         <div className="tiles">
           {list.map((group) => {
-            const order = [...stages, ...[...group.statuses.keys()].filter((status) => !stages.includes(status))];
+            // Порядок стадий — как в пайплайне (PUR_STATUS_ORDER с сервера); статусы вне этих пяти чипа не получают, как в SUPPLYMAP.
+            const order = stages.length ? stages : [...group.statuses.keys()];
             return (
               <button type="button" className="tile" key={group.name} title="Показать позиции поставщика" onClick={() => setSupplier(group.name)}>
                 <div className="tile-body">
