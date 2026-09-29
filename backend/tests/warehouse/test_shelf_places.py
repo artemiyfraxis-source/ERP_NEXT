@@ -107,8 +107,8 @@ def test_api_refuses_a_bad_shelf_or_warehouse(warehouse_api, params):  # noqa: F
 def test_api_needs_warehouse_rights(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=Actor(name="Закупщик", department="Закупки"), email="buyer@example.test",
-        roles=frozenset({"buyer"}), permissions={"warehouse": "edit"},
+        actor=Actor(name="Инженер", department="РНД"), email="engineer@example.test",
+        roles=frozenset({"engineer"}), permissions={"warehouse": "edit"},
     )
 
     assert client.get("/api/stock/places", params={"warehouse": "ЦАР", "shelf": "1F"}).status_code == 403

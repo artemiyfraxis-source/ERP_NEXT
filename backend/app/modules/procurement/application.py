@@ -51,6 +51,9 @@ class ProcurementRepository(Protocol):
     def by_buyer(
         self, actor: Actor, limit: int, after_id: UUID | None = None
     ) -> Sequence[ProcurementLine]: ...
+    def in_work(
+        self, limit: int, after_id: UUID | None = None
+    ) -> Sequence[ProcurementLine]: ...
     def list(self, limit: int = 10_000) -> Sequence[ProcurementLine]: ...
     def legacy_ids_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def ready_for_request(self) -> Sequence[ProcurementLine]: ...
@@ -1231,6 +1234,16 @@ def available_procurement(
         if after_id is not None and uow.procurement.get(after_id) is None:
             raise KeyError(f"Procurement cursor not found: {after_id}")
         return list(uow.procurement.available(limit, after_id))
+
+
+def in_work_procurement(
+    uow: UnitOfWork, *, limit: int = 100, after_id: UUID | None = None
+) -> list[ProcurementLine]:
+    """«Лист закупки — просмотр, что едет» (ID-6): every buyer's lines between «В работе» and «Готово»."""
+    with uow:
+        if after_id is not None and uow.procurement.get(after_id) is None:
+            raise KeyError(f"Procurement cursor not found: {after_id}")
+        return list(uow.procurement.in_work(limit, after_id))
 
 
 def buyer_procurement(

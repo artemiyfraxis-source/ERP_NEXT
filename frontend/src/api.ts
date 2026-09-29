@@ -1033,6 +1033,11 @@ export const procurementApi = {
     api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
       `/api/procurement/mine${after ? `?after=${encodeURIComponent(after)}` : ""}`,
     ),
+  // «Режим просмотра» (ID-6): every buyer's lines in work — the read-only «что едет».
+  inWork: (after?: string) =>
+    api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
+      `/api/procurement/in-work${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+    ),
   take: (lineIds: string[]) =>
     api<{ lines: ProcurementLine[] }>("/api/procurement/take", {
       method: "POST",

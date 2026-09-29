@@ -17,6 +17,7 @@ from app.shared.http_auth import (
     warehouse_admin_principal,
     warehouse_edit_principal,
     warehouse_journal_principal,
+    warehouse_view_principal,
 )
 from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH
 from app.modules.references.domain import TechOperationTab
@@ -259,7 +260,7 @@ def _kitting_reserve(request: Request, lot_id: UUID) -> Decimal:
 
 @router.get("")
 def lots(
-    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     after: UUID | None = None,
@@ -309,7 +310,7 @@ def journal(
 
 @router.get("/places")
 def shelf_places(
-    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
     warehouse: Annotated[str, Query(pattern="^(ЦАР|ЖУК)$")],
     shelf: Annotated[str, Query(min_length=1, max_length=8)],

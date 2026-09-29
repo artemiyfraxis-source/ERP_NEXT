@@ -30,8 +30,10 @@ function passportLine(lot: WarehouseLot) {
   ].filter(Boolean).join(" · ");
 }
 
-/** `admin` — the administrator sees «Журнал склада» (SK-16, SUPPLYMAP portalStock05Log is admin only). */
-export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
+/** `admin` — the administrator sees «Журнал склада» (SK-16, SUPPLYMAP portalStock05Log is admin only).
+ *  `readOnly` — «режим просмотра» (ID-6): the stock is read, every entry/move/writeoff/edit control is gone
+ *  (SUPPLYMAP portalApplyAccess_ 'view' drops b.edit, portalStock05Guard_ refuses writes). */
+export function WarehousePage({ admin = false, readOnly = false }: { admin?: boolean; readOnly?: boolean } = {}) {
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
@@ -85,7 +87,8 @@ export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
   }
 
   useEffect(() => {
-    // Suggestions only: a failed load leaves the type field free, as before.
+    // Suggestions only: a failed load leaves the type field free, as before. The dictionary is an edit tool.
+    if (readOnly) return;
     warehouseApi.itemTypes().then((types) => setTypeChoices(Array.isArray(types?.choices) ? types.choices : []), () => undefined);
   }, []);
 
@@ -134,7 +137,9 @@ export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
       <p className="page-sub">Остатки партиями: одна поставка — одна партия со своим номером.</p>
       <p className="page-sub">Остаток считается из движений, поэтому на вопрос «почему столько» отвечает история, а не догадка.</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters">
+        {!readOnly && <>
         <button className="primary compact" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>
         <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => { setMoveLot(null); setMoveOpen(true); }}>↔ Переместить</button>
         <button className="secondary compact" onClick={() => setPanel((value) => value === "types" ? "" : "types")}>Справочник типов</button>
@@ -143,8 +148,9 @@ export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
           downloadStockTable().catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось выгрузить."));
         }}>⬇ Выгрузить</button>
         <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>⬆ Загрузить правки</button>
+        </>}
         {admin && <button className="secondary compact" onClick={() => setPanel((value) => value === "journal" ? "" : "journal")}>Журнал склада</button>}
-        <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>🖨 Лист перемещения</button>
+        {!readOnly && <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>🖨 Лист перемещения</button>}
         <input className="search" aria-label="Поиск по складу" placeholder="Поиск: артикул, серия, место, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
@@ -209,6 +215,7 @@ export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
             disabled={Boolean(busy) || loading}
             mutate={mutate}
             onMove={(item) => { setMoveLot(item); setMoveOpen(true); }}
+            readOnly={readOnly}
           />)}</tbody>
         </table>
       </div>
@@ -277,7 +284,7 @@ function quantity(lots: WarehouseLot[], field: "balance" | "available") {
   return String(Math.round(lots.reduce((sum, lot) => sum + Number(lot[field]), 0) * 1_000_000) / 1_000_000);
 }
 
-function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove }: {
+function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove, readOnly }: {
   group: WarehouseGroup;
   expanded: Set<string>;
   toggle: (key: string) => void;
@@ -285,6 +292,7 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove 
   disabled: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   onMove: (lot: WarehouseLot) => void;
+  readOnly: boolean;
 }) {
   return <>
     {group.label && <tr className="stock-group-row"><td colSpan={12}>{group.label} · {group.articles.length}</td></tr>}
@@ -305,7 +313,7 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove 
           <td>{distinct(item.lots, "warehouse")}</td>
           <td />
         </tr>
-        {open && item.lots.map((lot) => <WarehouseRow key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} />)}
+        {open && item.lots.map((lot) => <WarehouseRow key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} readOnly={readOnly} />)}
       </Fragment>;
     })}
   </>;
@@ -611,12 +619,13 @@ function LotRowEditForm({ lot, disabled, mutate, onClose }: {
   </form>;
 }
 
-function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
+function WarehouseRow({ lot, busy, disabled, mutate, onMove, readOnly }: {
   lot: WarehouseLot;
   busy: boolean;
   disabled: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   onMove: (lot: WarehouseLot) => void;
+  readOnly: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [quantity, setQuantity] = useState("");
@@ -649,9 +658,9 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
     <>
       <tr>
         <td>{lot.item_type || "—"}</td><td><strong>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</strong></td><td className="num">{lot.balance}</td><td className="num">{lot.available}</td><td>{lot.unit}</td><td>{lot.storage_location || "без места"}</td><td>{lot.series || "—"}</td><td className="text"><strong>{lot.article || "—"}</strong></td><td className="text">{lot.name || "—"}</td><td>{lot.purpose || "—"}</td><td>{lot.warehouse}</td>
-        <td><button className="link-button table-link" onClick={() => setOpen((value) => !value)}>Операции</button></td>
+        <td>{(!readOnly || passport) && <button className="link-button table-link" onClick={() => setOpen((value) => !value)}>{readOnly ? "Паспорт" : "Операции"}</button>}</td>
       </tr>
-      {open && <tr className="stock-actions-row"><td colSpan={12}>{passport && <p className="page-sub" aria-label="Паспорт партии">{passport}</p>}<div className="stock-actions">
+      {open && <tr className="stock-actions-row"><td colSpan={12}>{passport && <p className="page-sub" aria-label="Паспорт партии">{passport}</p>}{!readOnly && <div className="stock-actions">
         <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
         {!editingRow && <button className="secondary small" disabled={disabled} onClick={() => setEditingRow(true)}>Править строку</button>}
         {editingRow && <LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} />}
@@ -678,7 +687,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
           <button className="primary small" disabled={disabled}>Вернуть</button>
           <button type="button" className="link-button" onClick={() => setReturning(false)}>Отмена</button>
         </form>}
-      </div></td></tr>}
+      </div>}</td></tr>}
     </>
   );
 }

@@ -528,3 +528,29 @@ it("DOC-1: prints «Разрешение на замену» once the decision i
   await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
   expect(printWindow.document.write.mock.calls[0][0]).toContain("РАЗРЕШЕНИЕ НА ЗАМЕНУ РЗ-20260929-01");
 });
+
+it("ID-6: view mode lists free and in-work lines without any buyer control", async () => {
+  const requested: string[] = [];
+  const free = { ...line, id: "30000000-0000-0000-0000-000000000009", legacy_id: "REQ-9", status: "Новый", buyer: null };
+  const taken = { ...line, buyer: "Петров", supplier: "ООО Поставка", order_number: "PO-001", status: "В пути", expected_arrival: "2026-10-05" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    requested.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/procurement/available") return json({ lines: [free], next_cursor: null });
+    if (path === "/api/procurement/in-work") return json({ lines: [taken], next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage readOnly />);
+
+  expect(await screen.findByRole("heading", { name: "В работе у закупщиков" })).toBeInTheDocument();
+  expect(await screen.findByText("Петров")).toBeInTheDocument();
+  expect(screen.getByText("REQ-9")).toBeInTheDocument();
+  expect(screen.getByText("Лист закупки открыт вам только на просмотр: что свободно и что едет.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Взять" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Сформировать запросы поставщикам" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Мои позиции" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
+  expect(requested.every((call) => call.startsWith("GET "))).toBe(true);
+  expect(requested).not.toContain("GET /api/procurement/mine");
+});

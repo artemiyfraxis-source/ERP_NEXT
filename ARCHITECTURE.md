@@ -1254,6 +1254,31 @@ SUPPLYMAP. Правило «хотя бы один администратор» 
 `identity_role_access` новой роли, существующие не трогает. Оптимистической блокировки нет — как и в
 SUPPLYMAP, последняя правка выигрывает.
 
+Режим просмотра склада, закупки и приёмки (ID-6; SUPPLYMAP Portal.gs `portalApplyAccess_` — 'view' гасит
+`edit/canWork/canReceive`; `portalErpGuard_` пускает читать, `portalStock05Guard_` — писать только при edit).
+Решение владельца 2026-09-28: view-гарды на чтение, все записи — прежние `*_edit_principal`, UI в режиме
+чтения прячет органы правки. Дефолты — `ROLE_DEFAULTS` + миграция 0038 (`ON CONFLICT DO NOTHING`, строку,
+уже выставленную администратором, не трогает; откат удаляет только строки с `mode='view'`): buyer → склад;
+receiver → закупка; prodhead, management → закупка, приёмка, склад; master, staff → приёмка, склад.
+«Решено агентом — проверить»:
+- `*_view_principal` держат набор ролей (роли правки + роли, которым SUPPLYMAP открывает раздел на чтение),
+  как у fulfillment/production/shipping, а не одну матрицу: склад — receiver, buyer, prodhead, management,
+  master, staff, admin; закупка — buyer, receiver, prodhead, management, admin; приёмка — receiver,
+  prodhead, management, master, staff, admin. Роль вне набора не читает раздел даже с выданным view.
+  Навигация фронтенда повторяет эти наборы; режим чтения на экране = нет edit **или** роли правки
+  (ровно когда бэкенд откажет в записи).
+- На view переведены только чтения самого раздела: склад — `GET /api/stock`, `/places`; закупка —
+  `/available`, новый `/in-work`, `/supplier-requests/{№}`, `/{id}/replacement-permission`; приёмка —
+  `GET /api/receiving`. Остались на edit как инструменты работы, не чтение: `/stock/export`,
+  `/stock/item-types` (в SUPPLYMAP `portalStock05FixGuard_`), `/stock/article-info` (подсказка формы
+  ввода, `portalStock05Guard_`), `/procurement/mine` и `GET /kp` (очередь и форма самого закупщика),
+  `/receiving/putaway-sheet` (лист раскладки кладовщика, WH-6).
+- `GET /api/procurement/in-work` — строки всех закупщиков между «В работе» и «Готово» (не «Новый»,
+  «Готово», «Отменено»): это «Лист закупки — просмотр, что едет» у приёмщика и директоров; в режиме чтения
+  экран закупки показывает её вместо «Мои позиции».
+- На складе в режиме чтения кнопка строки — «Паспорт» (только паспорт партии, если он есть) вместо
+  «Операции»; «Журнал склада» по-прежнему у администратора.
+
 Корпуса разъёмов (WH-4, SUPPLYMAP d88150d): DS1069 — аналог JST XH (1 слева, ступенька `ramp`), алиас-правило `BL2018P-nn → SMP-0nV-BC` (`ALIAS_RULES`) применяется после точных алиасов и до поиска семейства, как в `housingOf_`; «решено агентом — проверить».
 
 Лист перемещения на склад (WH-6, SUPPLYMAP Warehouse.gs:349-382 `buildTransferSheet`):

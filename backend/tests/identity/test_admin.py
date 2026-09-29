@@ -72,6 +72,7 @@ def test_operational_roles_include_receiving_and_warehouse_permissions():
         "warehouse": AccessMode.EDIT,
         "fulfillment": AccessMode.EDIT,
         "shipping": AccessMode.EDIT,
+        "procurement": AccessMode.VIEW,
         "references": AccessMode.VIEW,
     }
     assert ROLE_DEFAULTS["admin"]["receiving"] is AccessMode.EDIT

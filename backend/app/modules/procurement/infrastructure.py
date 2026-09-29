@@ -344,6 +344,26 @@ class SqlAlchemyProcurementRepository:
         statement = self._after(statement, after_id)
         return [_line_domain(row) for row in self.session.scalars(statement)]
 
+    def in_work(
+        self, limit: int, after_id: UUID | None = None
+    ) -> list[ProcurementLine]:
+        statement = (
+            select(ProcurementLineRow)
+            .where(
+                ProcurementLineRow.status.not_in(
+                    [
+                        ProcurementStatus.NEW.value,
+                        ProcurementStatus.DONE.value,
+                        ProcurementStatus.CANCELLED.value,
+                    ]
+                ),
+            )
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+            .limit(limit)
+        )
+        statement = self._after(statement, after_id)
+        return [_line_domain(row) for row in self.session.scalars(statement)]
+
     def list(self, limit: int = 10_000) -> list[ProcurementLine]:
         rows = self.session.scalars(
             select(ProcurementLineRow)

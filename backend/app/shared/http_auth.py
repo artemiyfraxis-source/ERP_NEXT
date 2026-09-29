@@ -57,15 +57,33 @@ techcards_admin_principal = require_section(
     "edit",
     roles=frozenset({"admin"}),
 )
+# «Режим просмотра» (ID-6, SUPPLYMAP portalApplyAccess_ 'view' + portalErpGuard_): a section granted as view is
+# readable, every write keeps the *_edit_principal gate. Role sets = the edit roles + the roles SUPPLYMAP opens the
+# section to for reading (Portal.gs portalButtons_), same shape as fulfillment/production/shipping view.
+procurement_view_principal = require_section(
+    "procurement",
+    "view",
+    roles=frozenset({"buyer", "receiver", "prodhead", "management", "admin"}),
+)
 procurement_edit_principal = require_section(
     "procurement",
     "edit",
     roles=frozenset({"buyer", "admin"}),
 )
+receiving_view_principal = require_section(
+    "receiving",
+    "view",
+    roles=frozenset({"receiver", "prodhead", "management", "master", "staff", "admin"}),
+)
 receiving_edit_principal = require_section(
     "receiving",
     "edit",
     roles=frozenset({"receiver", "admin"}),
+)
+warehouse_view_principal = require_section(
+    "warehouse",
+    "view",
+    roles=frozenset({"receiver", "buyer", "prodhead", "management", "master", "staff", "admin"}),
 )
 warehouse_edit_principal = require_section(
     "warehouse",

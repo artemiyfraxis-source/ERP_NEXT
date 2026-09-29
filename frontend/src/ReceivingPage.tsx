@@ -6,7 +6,9 @@ const MANUAL_CHECKS = [
   "Не тот товар (несоответствие счету)",
 ];
 
-export function ReceivingPage() {
+/** `readOnly` — «режим просмотра» (ID-6): the queue is read; no inspection, placement or new ВК
+ *  (SUPPLYMAP: «Приёмка — просмотр» has no canReceive). */
+export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {}) {
   const [lines, setLines] = useState<ReceivingLine[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
@@ -86,7 +88,7 @@ export function ReceivingPage() {
   return (
     <section className="page">
       <header className="page-header">
-        <div><span className="eyebrow">Входной контроль</span><h1>Приёмка</h1><p>Проверка поставки, ГРН и передача на склад.</p></div>
+        <div><span className="eyebrow">Входной контроль</span><h1>Приёмка</h1><p>{readOnly ? "Приёмка открыта вам только на просмотр." : "Проверка поставки, ГРН и передача на склад."}</p></div>
         <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
@@ -101,6 +103,7 @@ export function ReceivingPage() {
             onInspect={inspect}
             onPlace={place}
             onOpenVkRevision={openVkRevision}
+            readOnly={readOnly}
           />
         ))}
         {!lines.length && !loading && <div className="panel empty">Поставок для приёмки пока нет.</div>}
@@ -117,6 +120,7 @@ function ReceivingCard({
   onInspect,
   onPlace,
   onOpenVkRevision,
+  readOnly,
 }: {
   line: ReceivingLine;
   busy: boolean;
@@ -124,6 +128,7 @@ function ReceivingCard({
   onInspect: (line: ReceivingLine, payload: Record<string, unknown>) => Promise<void>;
   onPlace: (line: ReceivingLine, location: string) => Promise<void>;
   onOpenVkRevision: (line: ReceivingLine) => Promise<void>;
+  readOnly: boolean;
 }) {
   const [fact, setFact] = useState(line.fact_quantity ?? line.ordered_quantity);
   const [documentQty, setDocumentQty] = useState(line.document_quantity ?? line.ordered_quantity);
@@ -160,8 +165,9 @@ function ReceivingCard({
     }).catch(() => undefined);
   }
 
-  const inspectable = ["В пути", "Ожидание", "Карантин"].includes(line.status);
-  const revisable = Boolean(line.verdict) && line.status !== "Архив ВК" && !line.warehouse_event_emitted;
+  const inspectable = !readOnly && ["В пути", "Ожидание", "Карантин"].includes(line.status);
+  const placeable = !readOnly && line.status === "Принято" && !line.warehouse_event_emitted;
+  const revisable = !readOnly && Boolean(line.verdict) && line.status !== "Архив ВК" && !line.warehouse_event_emitted;
   return (
     <article className="panel receiving-card">
       <div className="procurement-title">
@@ -191,7 +197,7 @@ function ReceivingCard({
           <button className="primary small" disabled={disabled}>{busy ? "Проводим…" : "Провести входной контроль"}</button>
         </form>
       )}
-      {line.status === "Принято" && !line.warehouse_event_emitted && (
+      {placeable && (
         <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onPlace(line, location).catch(() => undefined); }}>
           <label>Место на складе<input required placeholder="1F4" value={location} onChange={(event) => setLocation(event.target.value)} /></label>
           <button className="primary small" disabled={disabled}>{busy ? "Передаём…" : "Передать на склад"}</button>

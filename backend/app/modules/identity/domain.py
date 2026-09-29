@@ -41,6 +41,9 @@ class AccessMode(str, Enum):
 
 # Default section access per role; seeded into identity_role_access when a role gets its first user
 # (CLI create-user and the «Сотрудники» screen share it).
+# View grants on procurement / receiving / warehouse (ID-6) follow SUPPLYMAP's role sets (Portal.gs portalButtons_):
+# buyer → склад, receiver → закупка, prodhead/management → закупка+приёмка+склад, master/staff → приёмка+склад.
+# Databases that already exist receive them from migration 0038 (ON CONFLICT DO NOTHING).
 ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
     "admin": {
         "identity": AccessMode.EDIT,
@@ -60,6 +63,7 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
     "buyer": {
         "requests": AccessMode.EDIT,
         "procurement": AccessMode.EDIT,
+        "warehouse": AccessMode.VIEW,
         "references": AccessMode.VIEW,
     },
     "receiver": {
@@ -67,14 +71,44 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
         "warehouse": AccessMode.EDIT,
         "fulfillment": AccessMode.EDIT,
         "shipping": AccessMode.EDIT,
+        "procurement": AccessMode.VIEW,
         "references": AccessMode.VIEW,
     },
     "engineer": {"fulfillment": AccessMode.EDIT, "references": AccessMode.VIEW},
-    "prodhead": {"fulfillment": AccessMode.VIEW, "production": AccessMode.VIEW, "shipping": AccessMode.VIEW, "references": AccessMode.VIEW},
-    "master": {"fulfillment": AccessMode.VIEW, "production": AccessMode.EDIT, "shipping": AccessMode.VIEW, "references": AccessMode.VIEW},
-    "management": {"production": AccessMode.VIEW, "shipping": AccessMode.VIEW, "references": AccessMode.VIEW, "operations": AccessMode.VIEW},
+    "prodhead": {
+        "procurement": AccessMode.VIEW,
+        "receiving": AccessMode.VIEW,
+        "warehouse": AccessMode.VIEW,
+        "fulfillment": AccessMode.VIEW,
+        "production": AccessMode.VIEW,
+        "shipping": AccessMode.VIEW,
+        "references": AccessMode.VIEW,
+    },
+    "master": {
+        "receiving": AccessMode.VIEW,
+        "warehouse": AccessMode.VIEW,
+        "fulfillment": AccessMode.VIEW,
+        "production": AccessMode.EDIT,
+        "shipping": AccessMode.VIEW,
+        "references": AccessMode.VIEW,
+    },
+    "management": {
+        "procurement": AccessMode.VIEW,
+        "receiving": AccessMode.VIEW,
+        "warehouse": AccessMode.VIEW,
+        "production": AccessMode.VIEW,
+        "shipping": AccessMode.VIEW,
+        "references": AccessMode.VIEW,
+        "operations": AccessMode.VIEW,
+    },
     "pm": {"shipping": AccessMode.EDIT, "references": AccessMode.VIEW},
-    "staff": {"requests": AccessMode.EDIT, "production": AccessMode.VIEW, "references": AccessMode.VIEW},
+    "staff": {
+        "requests": AccessMode.EDIT,
+        "receiving": AccessMode.VIEW,
+        "warehouse": AccessMode.VIEW,
+        "production": AccessMode.VIEW,
+        "references": AccessMode.VIEW,
+    },
     "estimator": {"references": AccessMode.VIEW},
     "qc": {"production": AccessMode.EDIT, "references": AccessMode.VIEW},
 }

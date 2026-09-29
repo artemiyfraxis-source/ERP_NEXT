@@ -13,7 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.document_url import normalize_document_url
-from app.shared.http_auth import Principal, receiving_edit_principal
+from app.shared.http_auth import Principal, receiving_edit_principal, receiving_view_principal
 from app.shared.unit_mass import mass_fields_from
 
 from .application import (
@@ -139,7 +139,7 @@ def _run(operation):
 
 @router.get("")
 def queue(
-    _principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    _principal: Annotated[Principal, Depends(receiving_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     after: UUID | None = None,

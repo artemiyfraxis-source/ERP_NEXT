@@ -44,28 +44,26 @@ const NAV: Array<{
     group: "projects",
   },
   { id: "requests", label: "Заявки", permission: "requests", group: "supply" },
+  // ID-6: view grants open these sections read-only; the role sets mirror backend *_view_principal.
   {
     id: "procurement",
     label: "Лист закупки",
     permission: "procurement",
-    minimum: "edit",
-    roles: ["buyer", "admin"],
+    roles: ["buyer", "receiver", "prodhead", "management", "admin"],
     group: "supply",
   },
   {
     id: "receiving",
     label: "Приёмка",
     permission: "receiving",
-    minimum: "edit",
-    roles: ["receiver", "admin"],
+    roles: ["receiver", "prodhead", "management", "master", "staff", "admin"],
     group: "stock",
   },
   {
     id: "stock",
     label: "Склад",
     permission: "warehouse",
-    minimum: "edit",
-    roles: ["receiver", "admin"],
+    roles: ["receiver", "buyer", "prodhead", "management", "master", "staff", "admin"],
     group: "stock",
   },
   {
@@ -147,6 +145,11 @@ function hasAccess(
   if (!permission) return true;
   const actual = permissions[permission];
   return actual === "edit" || (minimum === "view" && actual === "view");
+}
+
+// «Режим просмотра» (ID-6): edit controls only when the backend *_edit_principal would pass too.
+function canEdit(principal: Principal, permission: string, roles: string[]) {
+  return principal.permissions[permission] === "edit" && roles.some((role) => principal.roles.includes(role));
 }
 
 function hasNavAccess(
@@ -274,9 +277,9 @@ export function App() {
         {activeSection === "calculation" && <LegacyFrame section="calc" scope="calculation" title="Расчёт и КП" />}
         {activeSection === "techcards" && <TechcardsPage principal={principal} />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
-        {activeSection === "procurement" && <ProcurementPage />}
-        {activeSection === "receiving" && <ReceivingPage />}
-        {activeSection === "stock" && <WarehousePage admin={principal.roles.includes("admin")} />}
+        {activeSection === "procurement" && <ProcurementPage readOnly={!canEdit(principal, "procurement", ["buyer", "admin"])} />}
+        {activeSection === "receiving" && <ReceivingPage readOnly={!canEdit(principal, "receiving", ["receiver", "admin"])} />}
+        {activeSection === "stock" && <WarehousePage admin={principal.roles.includes("admin")} readOnly={!canEdit(principal, "warehouse", ["receiver", "admin"])} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} />}
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} />}

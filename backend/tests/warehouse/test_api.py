@@ -59,8 +59,9 @@ def warehouse_api():
     engine.dispose()
 
 
-def test_warehouse_requires_receiver_role(warehouse_api):
-    client, _ = warehouse_api
+def test_warehouse_writes_require_receiver_role(warehouse_api):
+    """ID-6: a buyer reads the stock (SUPPLYMAP «Склад — просмотр»), but only the storekeeper or admin writes."""
+    client, lot = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Закупщик", department="Закупки"),
         email="buyer@example.test",
@@ -68,6 +69,17 @@ def test_warehouse_requires_receiver_role(warehouse_api):
         permissions={"warehouse": "edit"},
     )
 
+    assert client.get("/api/stock").status_code == 200
+    assert client.put(f"/api/stock/batches/{lot.id}/location", json={
+        "version": lot.version, "storage_location": "A-01",
+    }).status_code == 403
+
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Инженер", department="РНД"),
+        email="engineer@example.test",
+        roles=frozenset({"engineer"}),
+        permissions={"warehouse": "edit"},
+    )
     assert client.get("/api/stock").status_code == 403
 
 

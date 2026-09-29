@@ -644,3 +644,23 @@ it("offers «Журнал склада» to the administrator only", async () =>
   fireEvent.click(await screen.findByRole("button", { name: "Журнал склада" }));
   expect(await screen.findByText("Ничего не нашлось.")).toBeInTheDocument();
 });
+
+it("ID-6: view mode reads the stock with no entry, move, writeoff or edit control", async () => {
+  const requested: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    requested.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage readOnly />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Показать партии/ }));
+  expect(await screen.findAllByText("FRX.26.0000001")).toHaveLength(2);
+  expect(screen.getByText("Склад открыт вам только на просмотр.")).toBeInTheDocument();
+  for (const name of ["+ Внести позиции", "↔ Переместить", "Справочник типов", "⬇ Выгрузить", "⬆ Загрузить правки", "🖨 Лист перемещения", "Операции"]) {
+    expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+  }
+  expect(requested.every((call) => call === "GET /api/stock")).toBe(true);
+});

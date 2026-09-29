@@ -42,13 +42,13 @@ it("returns to login when an active session is rejected", async () => {
   expect(await screen.findByRole("button", { name: "Войти" })).toBeInTheDocument();
 });
 
-it("does not show edit-only procurement to a view-only principal", async () => {
+it("does not show procurement to a role outside its view set, even with a view grant", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json(principal));
 
   render(<App />);
 
   expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Закупка" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Лист закупки" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Заявки" })).toBeInTheDocument();
 });
 
@@ -60,7 +60,44 @@ it("does not show procurement to a non-buyer even with an edit override", async 
   render(<App />);
 
   expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Закупка" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Лист закупки" })).not.toBeInTheDocument();
+});
+
+it("ID-6: a view grant opens procurement, receiving and stock read-only", async () => {
+  window.history.replaceState({}, "", "/login?section=stock");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({
+      ...principal,
+      roles: ["management"],
+      permissions: { procurement: "view", receiving: "view", warehouse: "view" },
+    });
+    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("Склад открыт вам только на просмотр.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ Внести позиции" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Лист закупки" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Приёмка" })).toBeInTheDocument();
+});
+
+it("ID-6: a storekeeper keeps the edit controls", async () => {
+  window.history.replaceState({}, "", "/login?section=stock");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({ ...principal, roles: ["receiver"], permissions: { warehouse: "edit" } });
+    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path === "/api/stock/item-types") return json({ types: [], choices: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByRole("button", { name: "+ Внести позиции" })).toBeInTheDocument();
+  expect(screen.queryByText("Склад открыт вам только на просмотр.")).not.toBeInTheDocument();
 });
 
 it("opens the native warehouse at the live ERP stock route", async () => {

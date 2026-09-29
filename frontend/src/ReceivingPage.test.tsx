@@ -202,3 +202,22 @@ it("opens a new incoming-control revision only for a line with a held act", asyn
   expect(await screen.findByText(/Архив ВК: акты этой строки/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Провести новый ВК" })).toBeNull();
 });
+
+it("ID-6: view mode shows the queue without inspection, placement or a new ВК", async () => {
+  const accepted = { ...line, id: "20000000-0000-0000-0000-000000000002", legacy_id: "SM-20260921-02", status: "Принято", verdict: "Годен", grn: "FRX.26.0000002" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [line, accepted], next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage readOnly />);
+
+  expect(await screen.findByText(/SM-20260921-01/)).toBeInTheDocument();
+  expect(screen.getByText(/SM-20260921-02/)).toBeInTheDocument();
+  expect(screen.getByText("Приёмка открыта вам только на просмотр.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Провести входной контроль" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Передать на склад" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Провести новый ВК" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+});

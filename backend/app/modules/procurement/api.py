@@ -15,7 +15,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.document_url import normalize_document_url
-from app.shared.http_auth import Principal, procurement_edit_principal
+from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
 
 from .application import (
     CancelBackorderCommand,
@@ -42,6 +42,7 @@ from .application import (
     ConcurrentProcurementUpdate,
     available_procurement,
     buyer_procurement,
+    in_work_procurement,
     cancel_procurement_backorder,
     confirm_procurement_backorder,
     kp_order_lines,
@@ -385,7 +386,7 @@ def _page_result(lines: list[ProcurementLine], limit: int) -> dict:
 
 @router.get("/available")
 def available_lines(
-    _principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
@@ -414,6 +415,23 @@ def my_lines(
         lines = buyer_procurement(
             principal.actor, uow_factory(), limit=limit + 1, after_id=after
         )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return _page_result(lines, limit)
+
+
+@router.get("/in-work")
+def in_work_lines(
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[
+        Callable[[], UnitOfWork], Depends(procurement_uow_factory)
+    ],
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    after: UUID | None = None,
+) -> dict:
+    """Read-only queue for «режим просмотра» (ID-6): lines taken by any buyer and not yet done."""
+    try:
+        lines = in_work_procurement(uow_factory(), limit=limit + 1, after_id=after)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return _page_result(lines, limit)
@@ -661,7 +679,7 @@ def supplier_requests(
 @router.get("/supplier-requests/{order_number}")
 def supplier_request_order(
     order_number: str,
-    _principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
     try:
@@ -696,7 +714,7 @@ def replacement(
 @router.get("/{line_id}/replacement-permission")
 def replacement_permission(
     line_id: UUID,
-    _principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
     try:

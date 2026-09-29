@@ -32,7 +32,9 @@ function draftFrom(line: ProcurementLine): FactsDraft {
   };
 }
 
-export function ProcurementPage() {
+/** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
+ *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
+export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {}) {
   const [available, setAvailable] = useState<ProcurementLine[]>([]);
   const [mine, setMine] = useState<ProcurementLine[]>([]);
   const [availableCursor, setAvailableCursor] = useState<string | null>(null);
@@ -46,6 +48,7 @@ export function ProcurementPage() {
   const [kpReference, setKpReference] = useState("");
   const loadingQueue = refreshing || Boolean(loadingMore);
   const interactionLocked = Boolean(busyId) || loadingQueue;
+  const secondQueue = readOnly ? procurementApi.inWork : procurementApi.mine;
 
   async function reload(afterMutation = false) {
     if (loadingQueue || (busyId && !afterMutation)) return;
@@ -54,7 +57,7 @@ export function ProcurementPage() {
     try {
       const [availableResult, mineResult] = await Promise.all([
         procurementApi.available(),
-        procurementApi.mine(),
+        secondQueue(),
       ]);
       setAvailable(availableResult.lines);
       setMine(mineResult.lines);
@@ -72,7 +75,7 @@ export function ProcurementPage() {
     setLoadingMore(queue);
     setError("");
     try {
-      const result = await procurementApi[queue](cursor);
+      const result = queue === "available" ? await procurementApi.available(cursor) : await secondQueue(cursor);
       if (queue === "available") {
         setAvailable((current) => [
           ...current,
@@ -176,9 +179,9 @@ export function ProcurementPage() {
     <section className="page">
       <header className="page-header">
         <div>
-          <span className="eyebrow">Рабочая очередь</span>
+          <span className="eyebrow">{readOnly ? "Просмотр" : "Рабочая очередь"}</span>
           <h1>Закупка</h1>
-          <p>Разберите новые позиции и заполните фактические данные поставки.</p>
+          <p>{readOnly ? "Лист закупки открыт вам только на просмотр: что свободно и что едет." : "Разберите новые позиции и заполните фактические данные поставки."}</p>
         </div>
         <button className="secondary" onClick={() => void reload()} disabled={interactionLocked}>
           {refreshing ? "Обновляем…" : "Обновить"}
@@ -189,14 +192,14 @@ export function ProcurementPage() {
 
       <div className="queue-summary">
         <span><strong>{available.length}</strong> доступно</span>
-        <span><strong>{mine.length}</strong> у меня</span>
+        <span><strong>{mine.length}</strong> {readOnly ? "в работе" : "у меня"}</span>
       </div>
 
       <section className="panel table-panel">
-        <div className="panel-heading"><h2>Неразобранные</h2><span>Берите только то, что будете вести</span></div>
+        <div className="panel-heading"><h2>Неразобранные</h2>{!readOnly && <span>Берите только то, что будете вести</span>}</div>
         <div className="table-scroll">
           <table>
-            <thead><tr><th>ID</th><th>Позиция</th><th>Проект</th><th>Срок</th><th>Кол-во</th><th /></tr></thead>
+            <thead><tr><th>ID</th><th>Позиция</th><th>Проект</th><th>Срок</th><th>Кол-во</th>{!readOnly && <th />}</tr></thead>
             <tbody>
               {available.map((line) => (
                 <tr key={line.id}>
@@ -205,10 +208,10 @@ export function ProcurementPage() {
                   <td>{line.project_reference || "—"}<small>{line.delivery_point}</small></td>
                   <td>{line.planned_date}<small>{line.priority}</small></td>
                   <td>{line.calculated_quantity} {line.calculated_unit}</td>
-                  <td><button className="secondary small" disabled={interactionLocked} onClick={() => take(line)}>{busyId === line.id ? "Берём…" : "Взять"}</button></td>
+                  {!readOnly && <td><button className="secondary small" disabled={interactionLocked} onClick={() => take(line)}>{busyId === line.id ? "Берём…" : "Взять"}</button></td>}
                 </tr>
               ))}
-              {!available.length && <tr><td className="empty" colSpan={6}>Свободных позиций нет</td></tr>}
+              {!available.length && <tr><td className="empty" colSpan={readOnly ? 5 : 6}>Свободных позиций нет</td></tr>}
             </tbody>
           </table>
         </div>
@@ -219,7 +222,36 @@ export function ProcurementPage() {
         )}
       </section>
 
-      <section className="work-list">
+      {readOnly && (
+        <section className="panel table-panel">
+          <div className="panel-heading"><h2>В работе у закупщиков</h2><span>Только просмотр</span></div>
+          <div className="table-scroll">
+            <table>
+              <thead><tr><th>ID</th><th>Позиция</th><th>Закупщик</th><th>Статус</th><th>Поставщик · заказ</th><th>Ожидается</th></tr></thead>
+              <tbody>
+                {mine.map((line) => (
+                  <tr key={line.id}>
+                    <td><strong>{line.legacy_id}</strong><small>{line.project_reference || line.designation}</small></td>
+                    <td>{line.calculated_name}<small>{line.actual_quantity ?? line.calculated_quantity} {line.actual_unit ?? line.calculated_unit}</small></td>
+                    <td>{line.buyer || "—"}</td>
+                    <td>{line.status}</td>
+                    <td>{line.supplier || "—"}<small>{line.order_number || ""}</small></td>
+                    <td>{line.expected_arrival || "—"}</td>
+                  </tr>
+                ))}
+                {!mine.length && <tr><td className="empty" colSpan={6}>В работе ничего нет</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {mineCursor && (
+            <button className="secondary" disabled={interactionLocked} onClick={() => void loadMore("mine", mineCursor)}>
+              {loadingMore === "mine" ? "Загружаем…" : "Ещё в работе"}
+            </button>
+          )}
+        </section>
+      )}
+
+      {!readOnly && <section className="work-list">
         <div className="panel-heading"><h2>Мои позиции</h2><span>Изменения защищены версией строки</span></div>
         <div className="inline-action">
           <small>Готово к запросу: {readyCount}. Запросы группируются по поставщику и типу задачи, № заказа PO-NNN.</small>
@@ -265,7 +297,7 @@ export function ProcurementPage() {
             {loadingMore === "mine" ? "Загружаем…" : "Ещё мои"}
           </button>
         )}
-      </section>
+      </section>}
     </section>
   );
 }
