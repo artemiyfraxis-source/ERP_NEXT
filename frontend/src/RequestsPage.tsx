@@ -340,11 +340,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  function searchServer(event: FormEvent) {
-    event.preventDefault();
+  function searchServer(query: string) {
+    setServerQuery(query);
     setError("");
-    if (view === "mine") void loadMine(0, serverQuery);
-    else reload(serverQuery).catch((reason) => setError(reason instanceof Error ? reason.message : "Ошибка загрузки"));
+    if (view === "mine") void loadMine(0, query);
+    else reload(query).catch((reason) => setError(reason instanceof Error ? reason.message : "Ошибка загрузки"));
   }
 
   /* rcBulkApply_: a common value goes into every position; rcCategoryRule follows the category. */
@@ -657,7 +657,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <>{row.name}<small>{row.item_type}</small></>, wrap: true },
     { key: "item_type", title: "Тип", value: (row) => row.item_type, filter: true, hidden: true },
     { key: "design_article", title: "Артикул КД", value: (row) => row.design_article ?? "", hidden: view === "mine" },
-    { key: "purpose", title: "Назначение (база)", value: (row) => row.purpose, filter: true, hidden: true },
+    { key: "purpose", title: "Назначение (база)", value: (row) => row.purpose, hidden: true },
     { key: "project_reference", title: "Цель", value: (row) => row.project_reference || row.purpose, filter: true },
     { key: "quantity", title: "Кол-во", value: (row) => `${row.quantity} ${row.unit}`, numeric: true },
     { key: "delivery_point", title: "Точка отгрузки", value: (row) => row.delivery_point, filter: true, hidden: true },
@@ -695,18 +695,12 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     },
   ];
 
-  const serverSearch = (
-    <form className="inline-search" onSubmit={searchServer}>
-      <input
-        type="search"
-        aria-label={view === "mine" ? "Искать во всех моих заявках" : "Искать среди всех заявок"}
-        placeholder={view === "mine" ? "Во всех моих заявках…" : "Среди всех заявок…"}
-        value={serverQuery}
-        onChange={(event) => setServerQuery(event.target.value)}
-      />
-      <button type="submit" className="secondary small">Найти</button>
-    </form>
-  );
+  /* One search box: typing filters the rows on screen, «Найти»/Enter searches every request on the server. */
+  const serverSearch = {
+    onSearch: (query: string) => searchServer(query),
+    searchLabel: view === "mine" ? "Искать во всех моих заявках" : "Искать среди всех заявок",
+    searchPlaceholder: view === "mine" ? "Поиск по моим заявкам — «Найти» ищет во всех" : "Поиск по заявкам — «Найти» ищет во всех",
+  };
 
   const shownCount = view === "mine" ? mineTotal : rows.length;
 
@@ -905,7 +899,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               storageKey="requests-mine"
               label="Мои заявки"
               exportName="Мои заявки"
-              toolbar={serverSearch}
+              {...serverSearch}
               emptyText={mineLoading ? "Загружаю…" : "Ваших заявок пока нет."}
             />
           ) : (
@@ -916,7 +910,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               storageKey="requests-all"
               label="Заявки"
               exportName="Заявки"
-              toolbar={serverSearch}
+              {...serverSearch}
               presets={[
                 { label: "Ждут переноса", test: (row) => row.status === "Новый" },
                 { label: "В работе", test: (row) => row.status === "В работе" },

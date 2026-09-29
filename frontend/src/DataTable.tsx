@@ -57,6 +57,10 @@ export interface DataTableProps<T> {
   emptyText?: string;
   pageSize?: number;
   toolbar?: ReactNode;
+  /** Поиск сразу по всем записям на сервере (строки на экране — только страница): «Найти» или Enter в том же поле. */
+  onSearch?: (query: string) => void;
+  searchLabel?: string;
+  searchPlaceholder?: string;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -146,6 +150,9 @@ export function DataTable<T>({
   emptyText = "Ничего не найдено.",
   pageSize = 200,
   toolbar,
+  onSearch,
+  searchLabel,
+  searchPlaceholder,
 }: DataTableProps<T>) {
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
   const [query, setQuery] = useState("");
@@ -159,6 +166,7 @@ export function DataTable<T>({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [limit, setLimit] = useState(pageSize);
   const [choosingColumns, setChoosingColumns] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [running, setRunning] = useState("");
 
   useEffect(() => writeSaved(storageKey, { hidden, sort, preset }), [storageKey, hidden, sort, preset]);
@@ -289,19 +297,45 @@ export function DataTable<T>({
     );
   }
 
+  const filterColumns = columns.filter((column) => column.filter);
+  // A filter is on when a value is chosen; "" means «все».
+  const activeFilters = filterColumns.filter((column) => (filters[column.key] ?? "") !== "");
+
   return (
     <section className="data-table" aria-label={label}>
-      <div className="filters">
-        <input className="search" type="search" aria-label={`Поиск: ${label}`} placeholder="Поиск по всем колонкам" value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
-        {columns.filter((column) => column.filter).map((column) => (
+      <div className="filters table-toolbar">
+        <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
+          <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? "Поиск по всем колонкам"} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
+          {onSearch && <button type="submit" className="secondary small">Найти</button>}
+        </form>
+        {filterColumns.length > 0 && (
+          <button type="button" className={activeFilters.length ? "secondary small filter-toggle active" : "secondary small filter-toggle"} aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>
+            Фильтры{activeFilters.length ? ` · ${activeFilters.length}` : ""}
+          </button>
+        )}
+        <div className="toolbar-end">
+          {toolbar}
+          <button type="button" className="secondary small" onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
+          {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
+        </div>
+      </div>
+      {activeFilters.length > 0 && (
+        <div className="filter-tags" aria-label="Выбранные фильтры">
+          {activeFilters.map((column) => (
+            <button type="button" key={column.key} className="filter-tag" aria-label={`Снять фильтр: ${column.title}`} onClick={() => setFilters((current) => ({ ...current, [column.key]: "" }))}>
+              {column.title}: <b>{filters[column.key] || "—"}</b> <span aria-hidden="true">✕</span>
+            </button>
+          ))}
+          {activeFilters.length > 1 && <button type="button" className="link-button" onClick={() => setFilters({})}>Сбросить все</button>}
+        </div>
+      )}
+      <div className="filter-panel" hidden={!filtersOpen}>
+        {filterColumns.map((column) => (
           <select key={column.key} aria-label={`Фильтр: ${column.title}`} value={filters[column.key] ?? ""} onChange={(event) => setFilters((current) => ({ ...current, [column.key]: event.target.value }))}>
             <option value="">{column.title}: все</option>
             {filterValues(column).map((value) => <option key={value} value={value}>{value || "—"}</option>)}
           </select>
         ))}
-        <button type="button" className="secondary small" onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
-        {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
-        {toolbar}
       </div>
       {choosingColumns && (
         <fieldset className="column-chooser">
