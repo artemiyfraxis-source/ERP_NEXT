@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
+from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .project_cards import ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, parse_operation_template
 
@@ -167,6 +168,17 @@ class SqlAlchemyTechcardRepository:
             )
         )
 
+    def delete_project(self, project: str) -> tuple[int, int]:
+        """`erpProdDropCards_`: the project's cards go together with their revisions. → (cards, revisions)."""
+        ids = list(self.session.scalars(select(ProjectTechcardRow.id).where(ProjectTechcardRow.project == project)))
+        if not ids:
+            return 0, 0
+        revisions = self.session.execute(
+            delete(TechcardRevisionRow).where(TechcardRevisionRow.project_card_id.in_(ids))
+        ).rowcount or 0
+        cards = self.session.execute(delete(ProjectTechcardRow).where(ProjectTechcardRow.id.in_(ids))).rowcount or 0
+        return cards, revisions
+
     def revisions(self, card_id: UUID) -> list[TechcardRevision]:
         rows = self.session.scalars(
             select(TechcardRevisionRow)
@@ -269,6 +281,7 @@ class SqlAlchemyTechcardsUnitOfWork:
         self.session = self.session_factory()
         self.techcards = SqlAlchemyTechcardRepository(self.session)
         self.operation_cards = SqlAlchemyOperationCardRepository(self.session)
+        self.kitsets = SqlAlchemyKitsetRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 
