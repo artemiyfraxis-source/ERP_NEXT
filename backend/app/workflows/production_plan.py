@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Iterable
@@ -37,6 +39,18 @@ from app.modules.techcards.kitsets import Kitset
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
 
 
+logger = logging.getLogger(__name__)
+
+
+def _safe(name: str, compute: Callable[[], dict], default: dict | None = None) -> dict:
+    """ProdPlan.gs prodPlanData_ `safe`: a column that fails to compute is left empty."""
+    try:
+        return compute()
+    except Exception:  # noqa: BLE001 - one broken column must not take the whole plan down
+        logger.warning("production plan column %s failed", name, exc_info=True)
+        return {} if default is None else default
+
+
 def _utc_timestamp(value: datetime) -> float:
     aware = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
     return aware.astimezone(timezone.utc).timestamp()
@@ -62,6 +76,7 @@ class ProductionPlanRow:
     supply: SupplySummary | None
     plan: ProjectTaskPlan | None
     journal: ProjectJournal
+    terminal: bool = False
 
 
 def _project_for_request(request: Request) -> str:
@@ -85,7 +100,9 @@ def _supply(
         customer_supplied = bool(request.link and "давальческ" in request.link.casefold())
         for line in procurement_by_request.get(request.id) or [None]:
             status = line.status.value if line else request.status.value
-            eta = line.expected_arrival if line and line.expected_arrival else request.planned_date
+            # ProdPlan.gs planSupplyPositions_: ОЖИД. or ПЛАН. ДАТА of the Закупки row, else the request's.
+            eta = (line.expected_arrival or line.planned_date) if line else None
+            eta = eta or request.planned_date
             positions.append(SupplyPosition(
                 project=project,
                 bucket=supply_bucket(status, line is not None),
@@ -189,8 +206,8 @@ def build_production_plan(
     project_snapshots = {normalize_project_number(item.project): item for item in projects}
     journal = summarize_journal(events)
     marks = summarize_kit_marks(events)
-    supply = _supply(requests, procurement)
-    task_plan = _task_plan(tasks)
+    supply = _safe("supply", lambda: _supply(requests, procurement))
+    task_plan = _safe("tasks", lambda: _task_plan(tasks))
 
     cards_by_project: dict[str, list[ProjectTechcard]] = {}
     for card in cards:
@@ -240,7 +257,7 @@ def build_production_plan(
             project=project, customer=customer, opened_on=opened_on,
             deadline=deadline, days_left=days_left(deadline, today),
             stage=stage, supply=supply.get(project), plan=task_plan.get(project),
-            journal=project_journal,
+            journal=project_journal, terminal=bool(snapshot and snapshot.terminal),
         ))
     return tuple(sorted(rows, key=lambda row: (
         row.journal.blocker is None,

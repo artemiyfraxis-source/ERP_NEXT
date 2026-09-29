@@ -362,20 +362,51 @@ td small { margin-top: 4px; color: #7b857e; }
 .legacy-page { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .legacy-frame { width: 100%; height: 100%; border: 0; background: #fff; }
 
-.plan-filters { display: flex; gap: 8px; margin: 16px 0; }
+.plan-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0 10px; }
 .plan-filters .active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
-.production-plan-layout { display: grid; grid-template-columns: minmax(360px, .9fr) minmax(460px, 1.1fr); gap: 18px; align-items: start; }
-.production-plan-list { display: grid; gap: 10px; }
-.production-plan-row { width: 100%; padding: 16px; color: inherit; text-align: left; display: grid; gap: 8px; cursor: pointer; }
-.production-plan-row:hover, .production-plan-row.selected { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); box-shadow: 0 8px 24px rgba(0, 80, 72, .09); }
-.production-plan-row.blocked { border-left: 5px solid #c62828; }
-.plan-row-head, .plan-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.plan-customer { color: var(--muted-foreground); font-size: 13px; }
-.plan-row-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px; font-size: 12px; color: var(--muted-foreground); }
-.plan-row-metrics .urgent { color: #a05a00; font-weight: 700; }
-.plan-row-metrics .overdue { color: #b42318; font-weight: 700; }
+.plan-filters button b { margin-left: 6px; }
+.plan-filters input { flex: 1; min-width: 160px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 999px; }
+.production-plan-layout { display: grid; gap: 18px; align-items: start; }
+.plan-row-title { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; overflow: hidden; }
+.plan-customer { color: var(--muted-foreground); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.plan-tags { display: flex; gap: 4px; flex-wrap: wrap; margin: 3px 0 2px; }
+.plan-tag { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); white-space: nowrap; }
+.plan-tag.stage { background: color-mix(in srgb, var(--primary) 12%, white); color: #00766a; }
+.plan-tag.blocker { background: #c62828; color: #fff; }
+.plan-tag.late { background: #fdecea; color: #c62828; }
+.plan-tag.soon { background: #fff4d6; color: #8a5a00; }
+.plan-tag.ok { background: #e6f4ea; color: #1e7e34; }
+.plan-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.gantt-nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+.gantt-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.gantt-grid { display: inline-block; min-width: 100%; }
+.gantt-row { display: flex; border-bottom: 1px solid var(--border); min-height: 40px; }
+.gantt-row:last-child { border-bottom: 0; }
+.gantt-label { position: sticky; left: 0; z-index: 3; flex: 0 0 380px; width: 380px; padding: 6px 10px; background: var(--card); border-right: 1px solid var(--border); font-size: 13px; overflow: hidden; }
+.gantt-sub, .gantt-note { color: var(--muted-foreground); font-size: 11.5px; }
+.gantt-note { font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gantt-late { display: inline-block; margin-top: 2px; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: #fdecea; color: #c62828; }
+.gantt-track { position: relative; flex: 0 0 auto; }
+.gantt-head { min-height: 34px; background: #f6faf9; }
+.gantt-head .gantt-label { background: #f6faf9; font-weight: 600; }
+.gantt-day { position: absolute; top: 3px; text-align: center; font-size: 10.5px; line-height: 1.25; color: var(--muted-foreground); }
+.gantt-bg { position: absolute; top: 0; bottom: 0; }
+.gantt-bg.off { background: #eef1f1; }
+.gantt-bg.today { box-shadow: inset 2px 0 0 var(--primary); }
+.gantt-bar { position: absolute; top: 9px; height: 22px; padding: 0 6px; border-radius: 6px; z-index: 1; background: var(--primary); color: #fff; font-size: 11px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gantt-bar.partial { background: repeating-linear-gradient(135deg, var(--primary), var(--primary) 6px, #5e9f99 6px, #5e9f99 12px); }
+.gantt-bar.late { background: #c62828; }
+.gantt-bar.busy { background: #9aa9a7; }
+.gantt-bar.new { background: repeating-linear-gradient(135deg, #2e7d32, #2e7d32 6px, #43a047 6px, #43a047 12px); z-index: 2; }
+.gantt-mark { position: absolute; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: #c62828; z-index: 2; }
+.gantt-row.clickable { cursor: pointer; }
+.gantt-row.clickable:hover .gantt-label, .gantt-row.selected .gantt-label { background: #edf5f4; }
+.gantt-row.dim { opacity: .55; }
+.production-plan-gantt .gantt-row { min-height: 64px; }
+@media (max-width: 640px) { .gantt-label { flex-basis: 230px; width: 230px; } }
 .plan-blocker { padding: 8px 10px; border-radius: 8px; background: #fff0f0; color: #9e1b1b; font-size: 12px; font-weight: 700; }
-.production-plan-details { position: sticky; top: 20px; padding: 20px; display: grid; gap: 18px; }
+.production-plan-details { padding: 20px; display: grid; gap: 18px; }
 .production-plan-details h2, .production-plan-details h3, .production-plan-details p { margin: 0; }
 .production-plan-details section { display: grid; gap: 7px; padding-top: 14px; border-top: 1px solid var(--border); }
 .plan-kit-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
@@ -491,6 +522,40 @@ td small { margin-top: 4px; color: #7b857e; }
 .column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
 .table-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
+
+/* Ресурсное планирование: Гант (перенос prodGantt_ SUPPLYMAP), запуск из техкарты, карточка назначения, очередь оператора. */
+.pg-s { color: var(--muted-foreground); font-size: 11px; margin-top: 2px; }
+.pg-q { color: var(--muted-foreground); }
+.pa-who { display: flex; gap: 6px; align-items: center; }
+.pa-ctl { display: flex; gap: 12px; align-items: end; margin: 10px 0; flex-wrap: wrap; }
+.pa-plan { margin-top: 10px; font-size: 13px; }
+.pa-plan.err { color: #c62828; }
+.assign-card { margin-top: 16px; padding: 16px; }
+.ap-t { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+.ap-t th, .ap-t td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+.ap-t tr.on { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.ap-t tbody tr { cursor: pointer; }
+.ap-man { color: var(--muted-foreground); font-size: 11px; }
+.pl-search { width: 100%; margin: 10px 0; }
+.pl-proj { margin: 12px 0; }
+.pl-ph { margin-bottom: 6px; }
+.pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.pl-card { display: grid; gap: 4px; text-align: left; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card, #fff); cursor: pointer; }
+.pl-kb { font-weight: 700; font-size: 15px; }
+.pl-name { font-size: 12px; }
+.pl-meta { font-size: 11px; color: var(--muted-foreground); }
+.pl-sel { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+.pl-warn { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: #fff3e0; font-size: 12px; }
+.my-queue { display: grid; gap: 8px; margin-top: 14px; }
+.mo-day { margin: 10px 0 2px; font-weight: 700; }
+.mo-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: grid; gap: 4px; font-size: 12px; }
+.mo-card.late { border-left: 4px solid #c62828; }
+.mo-card.done { opacity: .6; }
+.mo-card.run { border-left: 4px solid #2e7d32; }
+.mo-h { display: flex; gap: 8px; align-items: baseline; }
+.mo-time { margin-left: auto; color: var(--muted-foreground); }
+.mo-s, .mo-d { color: var(--muted-foreground); }
+.mo-fact { font-size: 13px; }
 /* Генератор техкарт (порт SUPPLYMAP TcGenInline.html) */
 .tcgen { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; }
 .tcgen h3 { margin: 12px 0 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
