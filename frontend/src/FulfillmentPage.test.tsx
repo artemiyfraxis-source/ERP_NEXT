@@ -62,7 +62,10 @@ async function expand(number: string) {
   fireEvent.click((await screen.findAllByText(number))[0]);
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.localStorage.removeItem("erp.fulfillment.view");
+});
 
 it("opens the lot search already filtered by the position name and binds the picked lot", async () => {
   let bindPayload: unknown;
@@ -266,7 +269,8 @@ it("searches by number, purpose, requester and status and counts every stage in 
   expect(await screen.findByText("FRX-ISS-26-0003")).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Поиск: Запросы на комплектацию"), { target: { value: "петров КБ1" } });
-  expect(screen.getByText("FRX-ISS-26-0002")).toBeInTheDocument();
+  // A request of a project is found inside its project tile.
+  expect(screen.getByRole("button", { name: /^708К\.4/ })).toBeInTheDocument();
   expect(screen.queryByText("FRX-ISS-26-0001")).not.toBeInTheDocument();
   // issFilterRender_: the chips count what the search left.
   expect(screen.getByRole("button", { name: "Новая · 0" })).toBeInTheDocument();
@@ -286,7 +290,7 @@ it("opens a project with every request of it and a whole-order view", async () =
   });
 
   render(<FulfillmentPage principal={principal} mode="pick" />);
-  fireEvent.click((await screen.findAllByRole("button", { name: "728К.2" }))[0]);
+  fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
 
   const tabs = screen.getByRole("tablist", { name: "Заявки проекта" });
   expect(within(tabs).getByRole("tab", { name: "КБ1 ✓" })).toBeInTheDocument();
@@ -295,6 +299,36 @@ it("opens a project with every request of it and a whole-order view", async () =
   fireEvent.click(screen.getByRole("button", { name: "КБ2 0 / 4" }));
   expect(await screen.findByText("REQ.26.0000002")).toBeInTheDocument();
   expect(screen.queryByText("REQ.26.0000003")).not.toBeInTheDocument();
+});
+
+it("shows a project's requests as one tile and a manual request as its own, as SUPPLYMAP issRender", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [
+      { ...request, id: "k1", number: "REQ.26.0000001", purpose: "728К.2 · КБ1 · Жгут", requester: "Иванов", deadline: "2026-10-12", status: "Недоукомплектован", shortfall: "Провод: −2" },
+      { ...request, id: "k2", number: "REQ.26.0000002", purpose: "728К.2 · КБ2 · Жгут", requester: "Петров", deadline: "2026-10-08" },
+      { ...request, id: "k3", number: "REQ.26.0000003", purpose: "728К.2 · КБ3 · Кабель", requester: "Иванов", deadline: "2026-10-20" },
+      { ...request, id: "k4", number: "REQ.26.0000004", purpose: "Ремонт стенда", requester: "Сидоров" },
+    ], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  const tile = await screen.findByRole("button", { name: /^728К\.2/ });
+  expect(within(tile).getByText("сборок: 3")).toBeInTheDocument();
+  expect(within(tile).getByText("Сборки: КБ1 · КБ2 · КБ3")).toBeInTheDocument();
+  expect(within(tile).getByText("×2")).toBeInTheDocument();
+  expect(within(tile).getByText("с недобором: 1 из 3")).toBeInTheDocument();
+  expect(within(tile).getByText("Иванов, Петров · до 08.10.2026 · позиций 3")).toBeInTheDocument();
+  expect(screen.queryByText("REQ.26.0000001")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("REQ.26.0000004"));
+  expect(await screen.findByRole("button", { name: "Печать заявки" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "← К заявкам" }));
+  fireEvent.click(screen.getByRole("button", { name: "Таблицей" }));
+  expect(screen.getByText("REQ.26.0000001")).toBeInTheDocument();
+  expect(window.localStorage.getItem("erp.fulfillment.view")).toBe("table");
 });
 
 it("marks the kit complete once every line is closed and sends it to handout with a rack address", async () => {
@@ -312,6 +346,7 @@ it("marks the kit complete once every line is closed and sends it to handout wit
     throw new Error(`Unexpected request: ${path}`);
   });
 
+  vi.spyOn(window, "confirm").mockReturnValue(true);
   render(<FulfillmentPage principal={{ ...principal, roles: ["engineer"], permissions: { fulfillment: "edit" } }} />);
   await expand("FRX-ISS-26-0001");
   expect(await screen.findByText("Взята в работу")).toBeInTheDocument();
@@ -342,11 +377,36 @@ it("closes an issued request without return on the handout screen", async () => 
     throw new Error(`Unexpected request: ${path}`);
   });
 
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<FulfillmentPage principal={principal} mode="give" />);
   await expand("FRX-ISS-26-0001");
+  // issMove_: every stage move asks first; «Отмена» in the dialog leaves the request as it is.
   fireEvent.click(await screen.findByRole("button", { name: "Готово" }));
+  expect(confirm).toHaveBeenCalledWith("Заявка FRX-ISS-26-0001 → Готово\n\nЗаявка закроется и уйдёт в архив.");
+  expect(closed).toBe("");
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 
   await waitFor(() => expect(closed).toBe(`/api/issues/${request.id}/close`));
+});
+
+it("warns that handing the kit out writes the stock off before it does", async () => {
+  const posts: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") { posts.push(path); return json({ request }); }
+    if (path === "/api/issues") return json({ requests: [{ ...request, status: "Готов к выдаче", handout_location: "1B3", lines: [boundLine] }], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  await expand("FRX-ISS-26-0001");
+  fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
+
+  expect(confirm.mock.calls[0][0]).toContain("Количество спишется со склада");
+  await waitFor(() => expect(posts).toEqual([`/api/issues/${request.id}/issue`]));
 });
 
 it("lets only the administrator delete a request", async () => {
@@ -425,7 +485,7 @@ it("walks every page of requests, not only the first hundred", async () => {
 
   render(<FulfillmentPage principal={{ ...principal, roles: ["master"], permissions: { fulfillment: "view" } }} />);
 
-  expect(await screen.findByText("FRX-ISS-26-0101")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /^900К\.1/ })).toBeInTheDocument();
   expect(screen.getByText("FRX-ISS-26-0001")).toBeInTheDocument();
   expect(paths).toEqual(["/api/issues", `/api/issues?after=${request.id}`]);
 });
