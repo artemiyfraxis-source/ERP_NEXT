@@ -3,7 +3,7 @@
 // gitignored files) is ready before the agent starts. Silent when everything is in place; never fails
 // the session — it reports and exits 0.
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const root = join(import.meta.dirname, "..");
@@ -50,6 +50,14 @@ try {
     done.push("frontend/node_modules");
   }
 
+  // The backend needs Python 3.12 (PEP 701 f-strings). A cloud container's `python3` is 3.11: prefer an
+  // installed python3.12 and rebuild a venv made from anything older.
+  const py312 = !win && spawnSync("python3.12", ["--version"]).status === 0 ? "python3.12" : null;
+  const venvCfg = join(root, "backend", ".venv", "pyvenv.cfg");
+  if (py312 && existsSync(venvCfg) && !/^version(_info)?\s*=\s*3\.12\./m.test(readFileSync(venvCfg, "utf8"))) {
+    rmSync(join(root, "backend", ".venv"), { recursive: true, force: true });
+  }
+
   if (!existsSync(venvPython)) {
     // Base interpreter: ERP_PYTHON_BASE, else the one the main checkout's venv was built from.
     let base = process.env.ERP_PYTHON_BASE;
@@ -57,7 +65,7 @@ try {
     if (!base && existsSync(cfg)) {
       base = readFileSync(cfg, "utf8").match(/^executable\s*=\s*(.+)$/m)?.[1]?.trim();
     }
-    run(base || (win ? "python" : "python3"), ["-m", "venv", join(root, "backend", ".venv")], root);
+    run(base || py312 || (win ? "python" : "python3"), ["-m", "venv", join(root, "backend", ".venv")], root);
     run(venvPython, ["-m", "pip", "install", "-q", "--disable-pip-version-check", "-r", "requirements.lock.txt"], join(root, "backend"));
     done.push("backend/.venv");
   }
