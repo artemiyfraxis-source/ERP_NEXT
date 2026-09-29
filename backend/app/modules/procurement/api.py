@@ -38,6 +38,9 @@ from .application import (
     OfflineAction,
     ProcurementOfflineCommand,
     TakeProcurementInWorkCommand,
+    MarkPaidBatchCommand,
+    MarkPaidBatchItem,
+    SupplierDirectory,
     UnitOfWork,
     ConcurrentProcurementUpdate,
     available_procurement,
@@ -57,12 +60,19 @@ from .application import (
     record_invoice,
     replace_invoice,
     mark_procurement_paid,
+    mark_procurement_paid_batch,
+    procurement_by_supplier,
+    procurement_lines,
     reconcile_procurement_rate,
     set_procurement_offline_status,
     save_procurement_money,
     take_procurement_in_work,
 )
 from .domain import (
+    ACTUAL_UNITS,
+    BY_SUPPLIER_STAGES,
+    STATUS_ORDER,
+    ProcurementStatus,
     SPLIT_MAX_COPIES,
     KpEntry,
     MoneyEntry,
@@ -114,6 +124,15 @@ Rate = Annotated[
 
 class TakeInWorkInput(BaseModel):
     line_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class PaidBatchItemInput(BaseModel):
+    line_id: UUID
+    version: int = Field(ge=1)
+
+
+class PaidBatchInput(BaseModel):
+    items: list[PaidBatchItemInput] = Field(min_length=1, max_length=100)
 
 
 class ProcurementFactsInput(BaseModel):
@@ -289,6 +308,10 @@ def procurement_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
     return factory
 
 
+def procurement_supplier_directory(request: Request) -> SupplierDirectory | None:
+    return getattr(request.app.state, "procurement_supplier_directory", None)
+
+
 def procurement_exchange_rates(request: Request) -> ExchangeRates:
     rates = getattr(request.app.state, "procurement_exchange_rates", None)
     if rates is None:
@@ -437,6 +460,83 @@ def in_work_lines(
     return _page_result(lines, limit)
 
 
+@router.get("/meta")
+def procurement_meta(
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+) -> dict:
+    """Lists for the sheet's selects: ЕД.ИЗМ (факт) and the statuses in pipeline order."""
+    statuses = [status.value for status in STATUS_ORDER] + [
+        ProcurementStatus.APPROVAL.value,
+        ProcurementStatus.CANCELLED.value,
+    ]
+    return {"units": list(ACTUAL_UNITS), "statuses": statuses}
+
+
+@router.get("/lines")
+def all_lines(
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    q: Annotated[str, Query(max_length=200)] = "",
+    status: Annotated[str | None, Query(max_length=32)] = None,
+    buyer: Annotated[str | None, Query(max_length=255)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    after: UUID | None = None,
+) -> dict:
+    """The whole procurement sheet: every status and buyer, search and filters, paged by cursor."""
+    try:
+        lines, buyers = procurement_lines(
+            uow_factory(), query=q, status=status, buyer=buyer, limit=limit + 1, after_id=after
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {**_page_result(lines, limit), "buyers": buyers}
+
+
+@router.get("/by-supplier")
+def lines_by_supplier(
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """`portalPurchaseBySupplier`: every buyer's open lines for the per-supplier overview."""
+    lines = procurement_by_supplier(uow_factory())
+    return {
+        "lines": [_line_result(line) for line in lines],
+        "stages": [status.value for status in BY_SUPPLIER_STAGES],
+    }
+
+
+@router.post("/paid")
+def paid_batch(
+    payload: PaidBatchInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    rates: Annotated[ExchangeRates, Depends(procurement_exchange_rates)],
+) -> dict:
+    """`portalMarkPaid`: «Оплачено → В пути» for several lines; each line independently."""
+    try:
+        result = _retry_transaction(
+            lambda: mark_procurement_paid_batch(
+                MarkPaidBatchCommand(
+                    items=tuple(MarkPaidBatchItem(item.line_id, item.version) for item in payload.items),
+                    actor=principal.actor,
+                    now=now,
+                ),
+                uow_factory,
+                rates,
+            )
+        )
+    except ProcurementValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {
+        "lines": [_line_result(line) for line in result.lines],
+        "done": len(result.lines),
+        "already": result.already,
+        "no_invoice": result.no_invoice,
+        "failed": [{"legacy_id": legacy_id, "error": error} for legacy_id, error in result.failed],
+    }
+
+
 @router.post("/take")
 def take_lines(
     payload: TakeInWorkInput,
@@ -473,6 +573,7 @@ def update_facts(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    suppliers: Annotated[SupplierDirectory | None, Depends(procurement_supplier_directory)],
 ) -> dict:
     try:
         line = _retry_transaction(
@@ -485,6 +586,7 @@ def update_facts(
                     now=now,
                 ),
                 uow_factory(),
+                suppliers,
             )
         )
     except ProcurementValidationError as error:

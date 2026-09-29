@@ -554,3 +554,47 @@ it("ID-6: view mode lists free and in-work lines without any buyer control", asy
   expect(requested.every((call) => call.startsWith("GET "))).toBe(true);
   expect(requested).not.toContain("GET /api/procurement/mine");
 });
+
+it("takes several free lines in one request and marks invoiced lines paid in one batch", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const first = { ...line, status: "Новый" };
+  const second = { ...line, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", status: "Новый" };
+  const invoiced = { ...line, id: "30000000-0000-0000-0000-000000000005", legacy_id: "REQ-5", status: "В оплату", buyer: "Закупщик", invoice_url: "https://files.test/i.pdf", pay_missing: [], version: 7 };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.body) bodies.push({ path, ...JSON.parse(String(init.body)) });
+    if (path === "/api/procurement/available") return json({ lines: [first, second], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [invoiced], next_cursor: null });
+    if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
+    if (path === "/api/procurement/take") return json({ lines: [first, second] });
+    if (path === "/api/procurement/paid") return json({ lines: [invoiced], done: 1, already: 0, no_invoice: [], failed: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.click(await screen.findByLabelText(`Выбрать ${first.id}`));
+  fireEvent.click(screen.getByLabelText(`Выбрать ${second.id}`));
+  fireEvent.click(screen.getByRole("button", { name: "Взять в работу" }));
+  await waitFor(() => expect(bodies).toContainEqual({ path: "/api/procurement/take", line_ids: [first.id, second.id] }));
+  expect(await screen.findByText("Взято в работу: 2")).toBeInTheDocument();
+
+  fireEvent.click(await screen.findByLabelText(`Выбрать ${invoiced.id}`));
+  fireEvent.click(screen.getByRole("button", { name: "Оплачено → В пути" }));
+  await waitFor(() => expect(bodies).toContainEqual({ path: "/api/procurement/paid", items: [{ line_id: invoiced.id, version: 7 }] }));
+  expect(await screen.findByText("Оплачено → В пути: 1")).toBeInTheDocument();
+});
+
+it("offers the actual unit as a list", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [{ ...line, buyer: "Закупщик" }], next_cursor: null });
+    if (path === "/api/procurement/meta") return json({ units: ["шт", "кг", "компл"], statuses: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const unit = (await screen.findByLabelText(/Единица/)) as HTMLSelectElement;
+  expect(unit.tagName).toBe("SELECT");
+  await waitFor(() => expect(Array.from(unit.options).map((option) => option.value)).toEqual(["", "шт", "кг", "компл"]));
+});
