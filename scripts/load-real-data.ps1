@@ -1,12 +1,12 @@
 ﻿# Чистая база ERP с реальными данными из Google (только чтение Google): справочники из зеркала SUPPLYMAP,
 # библиотека техкарт, склад ЦАР/ЖУК/СПИСАНИЕ, проекты SUPPLYMAP (наборы, реестр, журнал, лист цеха).
 # Запуск из корня копии ERP_NEXT, API этой базы должен быть остановлен:
-#   powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key C:\путь\ключ-erp-reader.json -Db demo.db
-# База -Db (SQLite) пересоздаётся с нуля. Боевая PostgreSQL: -DatabaseUrl postgresql+psycopg://... — пустая база,
+#   powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key C:\путь\ключ-erp-reader.json -DbFile demo.db
+# База -DbFile (не -Db: в PowerShell 5.1 это алиас -Debug) (SQLite) пересоздаётся с нуля. Боевая PostgreSQL: -DatabaseUrl postgresql+psycopg://... — пустая база,
 # скрипт её не удаляет, только накатывает миграции. Живые выгрузки кладутся в data\import (в .gitignore).
 # Догрузка склада в уже загруженную базу (новые партии, нетронутые в ERP партии — к Google, остальное в отчёт):
-#   ... -Key ключ.json -Db demo.db -StockOnly [-DryRun]
-param([Parameter(Mandatory = $true)][string]$Key, [string]$Db = 'real.db', [string]$DatabaseUrl = '',
+#   ... -Key ключ.json -DbFile demo.db -StockOnly [-DryRun]
+param([Parameter(Mandatory = $true)][string]$Key, [string]$DbFile = 'real.db', [string]$DatabaseUrl = '',
       [string]$Login = 'preview', [string]$Password = 'Preview-2026!', [switch]$StockOnly, [switch]$DryRun)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\.."
@@ -16,7 +16,7 @@ $Key = (Resolve-Path $Key).Path
 $data = Join-Path $root 'data\import'
 New-Item -ItemType Directory -Force $data | Out-Null
 Set-Location $backend
-$env:ERP_DATABASE_URL = if ($DatabaseUrl) { $DatabaseUrl } else { "sqlite+pysqlite:///$Db" }
+$env:ERP_DATABASE_URL = if ($DatabaseUrl) { $DatabaseUrl } else { "sqlite+pysqlite:///$DbFile" }
 $env:ERP_COOKIE_SECURE = '0'
 function Run { & $py @args; if ($LASTEXITCODE -gt 1) { throw "Ошибка: $args" } }
 
@@ -33,7 +33,7 @@ Write-Host '== Снимки из Google (только чтение)'
 Run ..\scripts\stock_export_google.py --key $Key --out $data
 Run ..\scripts\projects_import.py snapshot --key $Key --out (Join-Path $data 'projects.json')
 
-if (-not $DatabaseUrl) { Write-Host "== Пересоздаю базу $Db"; Remove-Item -ErrorAction SilentlyContinue $Db }
+if (-not $DatabaseUrl) { Write-Host "== Пересоздаю базу $DbFile"; Remove-Item -ErrorAction SilentlyContinue $DbFile }
 Run -m alembic upgrade head
 $env:ERP_NEW_USER_PASSWORD = $Password
 & $py -m app.identity_admin create-user --login $Login --email "$Login@example.com" --name 'Артемий' --department 'Руководство' --role admin
