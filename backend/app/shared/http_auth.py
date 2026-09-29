@@ -14,6 +14,10 @@ class Principal:
     email: str
     roles: frozenset[str]
     permissions: dict[str, Literal["view", "edit"]]
+    # «Режим админа» (SUPPLYMAP portalSession_): the role is lifted to admin for this session; `roles` already holds
+    # the effective role, `can_admin_mode` says whether the account may switch it at all.
+    admin_mode: bool = False
+    can_admin_mode: bool = False
 
 
 def authenticated_principal(request: Request) -> Principal:

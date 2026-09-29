@@ -107,6 +107,23 @@ export function App() {
     else go({ section: "cabinet", block: id });
   }
 
+  // «Режим админа» (SUPPLYMAP toggleAdmin → portalToggleAdmin): the role and sections change, so back to the home screen.
+  const [switching, setSwitching] = useState(false);
+  async function toggleAdmin() {
+    if (!principal || switching) return;
+    setShellError("");
+    setSwitching(true);
+    try {
+      const next = await identityApi.adminMode(!principal.admin_mode);
+      setPrincipal(next);
+      go({ section: "cabinet", block: null });
+    } catch (error) {
+      setShellError(error instanceof Error ? error.message : "Режим админа не переключён");
+    } finally {
+      setSwitching(false);
+    }
+  }
+
   async function signOut() {
     setShellError("");
     try {
@@ -150,7 +167,17 @@ export function App() {
         </nav>
         <div className="profile side-foot">
           <strong>{principal.user.name}</strong>
+          {principal.role_label && <span className="role-label">{principal.role_label}</span>}
           <span>{principal.user.department}</span>
+          {principal.can_admin_mode && (
+            <button
+              className={principal.admin_mode ? "secondary small admin-mode on" : "secondary small admin-mode"}
+              disabled={switching}
+              onClick={() => void toggleAdmin()}
+            >
+              {switching ? "…" : principal.admin_mode ? "🛡 Выйти из админа" : "🛡 Режим админа"}
+            </button>
+          )}
           <ProfilePanel />
           <button
             className="link-button"

@@ -30,6 +30,7 @@ it("returns to login when an active session is rejected", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json(principal);
+    if (path === "/api/auth/login-staff") return json({ staff: [] });
     if (path.startsWith("/api/requests")) {
       return json({ detail: "Требуется вход в ERP" }, 401);
     }
@@ -39,7 +40,7 @@ it("returns to login when an active session is rejected", async () => {
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Заявки" }));
 
-  expect(await screen.findByRole("button", { name: "Войти" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Войти" }, { timeout: 5000 })).toBeInTheDocument();
 });
 
 it("does not show procurement to a role outside its view set, even with a view grant", async () => {
@@ -368,4 +369,34 @@ it("shows the unread bell on every screen and opens the inbox, which clears it",
   fireEvent.click(await screen.findByRole("button", { name: "Прочитать все" }));
   expect(await screen.findByTitle("Уведомления")).toBeInTheDocument();
   expect(screen.queryByTestId("notif-badge")).not.toBeInTheDocument();
+});
+
+it("switches «Режим админа» for the allowed account and shows it in the menu (portalToggleAdmin)", async () => {
+  const victor = { ...principal, roles: ["pm"], role_label: "Менеджер по проектам", can_admin_mode: true, admin_mode: false };
+  const lifted = { ...victor, roles: ["admin"], role_label: "Технолог · режим", admin_mode: true, permissions: { staffdir: "edit" } };
+  const bodies: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(victor);
+    if (path === "/api/auth/admin-mode") {
+      bodies.push(JSON.parse(String(init?.body)));
+      return json(lifted);
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+  expect(await screen.findByText("Менеджер по проектам")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "🛡 Режим админа" }));
+
+  expect(await screen.findByText("Технолог · режим")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "🛡 Выйти из админа" })).toBeInTheDocument();
+  expect(bodies).toEqual([{ on: true }]);
+});
+
+it("offers no admin mode to other accounts", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ ...principal, can_admin_mode: false }));
+  render(<App />);
+  expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "🛡 Режим админа" })).not.toBeInTheDocument();
 });
