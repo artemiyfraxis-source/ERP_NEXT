@@ -17,6 +17,7 @@ from app.shared.notifications import NotificationOutbox, notification_requested,
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
+    UNSET as UNSET_FACT,
     _PAID_STATUSES,
     KpEntry,
     MoneyEntry,
@@ -573,6 +574,16 @@ def take_procurement_in_work(
     command: TakeProcurementInWorkCommand,
     uow: UnitOfWork,
 ) -> list[ProcurementLine]:
+    return take_procurement_in_work_batch(command, uow)[0]
+
+
+def take_procurement_in_work_batch(
+    command: TakeProcurementInWorkCommand,
+    uow: UnitOfWork,
+) -> tuple[list[ProcurementLine], list[ProcurementLine]]:
+    """`portalTakeInWork` → `takeRowsInWork_`: every selected «Новый» line becomes the buyer's; a line that
+    is already further along (taken by another buyer, or past «В работе») is skipped, not an error.
+    Returns (lines now the buyer's, skipped lines). The buyer's own «В работе» line is a read-only retry."""
     line_ids = list(dict.fromkeys(command.line_ids))
     if not line_ids:
         raise ProcurementValidationError("Не выбрано ни одной строки закупки")
@@ -585,14 +596,20 @@ def take_procurement_in_work(
                 raise KeyError(f"Procurement line not found: {line_id}")
             current.append(line)
 
-        updated = [line.take_in_work(command.actor) for line in current]
-        changed = [
-            (before, after)
-            for before, after in zip(current, updated, strict=True)
-            if before != after
-        ]
+        taken: list[ProcurementLine] = []
+        skipped: list[ProcurementLine] = []
+        changed: list[tuple[ProcurementLine, ProcurementLine]] = []
+        for before in current:
+            try:
+                after = before.take_in_work(command.actor)
+            except ProcurementValidationError:
+                skipped.append(before)
+                continue
+            taken.append(after)
+            if after != before:
+                changed.append((before, after))
         if not changed:
-            return updated
+            return taken, skipped
 
         for before, after in changed:
             uow.procurement.add(after)
@@ -611,7 +628,7 @@ def take_procurement_in_work(
                 )
             )
         uow.commit()
-        return updated
+        return taken, skipped
 
 
 def save_procurement_facts(
@@ -1503,3 +1520,80 @@ def mark_procurement_paid_batch(
         except (ProcurementValidationError, ConcurrentProcurementUpdate, RateUnavailable) as error:
             failed.append((line.legacy_id, str(error)))
     return MarkPaidBatchResult(lines=done, already=already, no_invoice=no_invoice, failed=failed)
+
+
+def buyer_in_work_lines(actor: Actor, uow: UnitOfWork) -> list[ProcurementLine]:
+    """`portalPurchaseInWork`: all of the buyer's own «В работе» lines for the «Заполнить данные» form."""
+    with uow:
+        return [
+            line
+            for line in uow.procurement.by_buyer(actor, 10_000)
+            if line.status is ProcurementStatus.IN_WORK
+        ]
+
+
+@dataclass(frozen=True)
+class FactsBatchRow:
+    line_id: UUID
+    expected_version: int
+    facts: ProcurementFacts
+    legacy_id: str = ""
+
+
+@dataclass(frozen=True)
+class FactsBatchResult:
+    lines: list[ProcurementLine]
+    skipped: list[str]
+    failed: list[tuple[str, str]]
+
+    @property
+    def ready(self) -> int:
+        return sum(1 for line in self.lines if line.status is ProcurementStatus.READY)
+
+
+def save_procurement_facts_batch(
+    rows: Sequence[FactsBatchRow],
+    actor: Actor,
+    now: datetime,
+    uow_factory,
+    suppliers: SupplierDirectory | None = None,
+) -> FactsBatchResult:
+    """`portalSavePurchaseFacts`: the marked rows of «Заполнить данные», row by row. A marked row with an
+    empty ПОСТАВЩИК refuses the whole batch before the first write (it would silently drop out of the
+    supplier request); a row that changed since the form was loaded is skipped (SUPPLYMAP: «строка
+    сдвинулась»); the rest are saved, reach «Готов к запросу» when complete and teach the map."""
+    if not rows:
+        raise ProcurementValidationError("Нет изменений для сохранения")
+    no_supplier = [
+        row.legacy_id or str(row.line_id)
+        for row in rows
+        if row.facts.supplier is UNSET_FACT or not str(row.facts.supplier or "").strip()
+    ]
+    if no_supplier:
+        raise ProcurementValidationError(
+            "Не заполнен «Поставщик»: " + ", ".join(no_supplier) + ". Без него строка не уйдёт в запрос."
+        )
+    saved: list[ProcurementLine] = []
+    skipped: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for row in rows:
+        label = row.legacy_id or str(row.line_id)
+        try:
+            saved.append(
+                save_procurement_facts(
+                    SaveProcurementFactsCommand(
+                        line_id=row.line_id,
+                        facts=row.facts,
+                        expected_version=row.expected_version,
+                        actor=actor,
+                        now=now,
+                    ),
+                    uow_factory(),
+                    suppliers,
+                )
+            )
+        except (ConcurrentProcurementUpdate, KeyError):
+            skipped.append(label)
+        except ProcurementValidationError as error:
+            failed.append((label, str(error)))
+    return FactsBatchResult(lines=saved, skipped=skipped, failed=failed)

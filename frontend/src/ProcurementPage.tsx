@@ -11,6 +11,7 @@ import {
 import { openPrintSheet } from "./print";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
+import { ProcurementFillForm } from "./ProcurementFillForm";
 
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
@@ -91,6 +92,7 @@ export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {
 
 function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   const [units, setUnits] = useState<string[]>(DEFAULT_UNITS);
+  const [filling, setFilling] = useState(false);
   const [available, setAvailable] = useState<ProcurementLine[]>([]);
   const [mine, setMine] = useState<ProcurementLine[]>([]);
   const [availableCursor, setAvailableCursor] = useState<string | null>(null);
@@ -164,7 +166,8 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     setError("");
     try {
       const result = await procurementApi.take(lines.map((line) => line.id));
-      setNotice(`Взято в работу: ${result.lines.length}`);
+      const skipped = result.skipped ?? [];
+      setNotice(`Взято в работу: ${result.lines.length}` + (skipped.length ? `; пропущено (уже в работе или дальше): ${skipped.join(", ")}` : ""));
       await reload(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось взять строки");
@@ -200,8 +203,8 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     setBusyId(line.id);
     setError("");
     try {
-      await procurementApi.take([line.id]);
-      setNotice(`${line.legacy_id} взята в работу`);
+      const result = await procurementApi.take([line.id]);
+      setNotice(result.skipped?.length ? `${line.legacy_id} пропущена: уже в работе или дальше` : `${line.legacy_id} взята в работу`);
       await reload(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось взять строку");
@@ -337,7 +340,18 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
           <button className="primary small" disabled={interactionLocked || readyCount === 0} onClick={() => void buildRequests()}>
             {busyId === "supplier-requests" ? "Формируем…" : "Сформировать запросы поставщикам"}
           </button>
+          <button type="button" className="secondary small" disabled={interactionLocked} onClick={() => setFilling((current) => !current)}>Заполнить данные</button>
         </div>
+        {filling && (
+          <ProcurementFillForm
+            units={units}
+            onClose={() => setFilling(false)}
+            onSaved={(message) => {
+              setNotice(message);
+              void reload(true);
+            }}
+          />
+        )}
         {mine.some(payable) && (
           <section className="panel table-panel">
             <div className="panel-heading"><h2>К оплате</h2><span>Отметьте оплаченные счета — строки уйдут «В пути» в приёмку</span></div>
