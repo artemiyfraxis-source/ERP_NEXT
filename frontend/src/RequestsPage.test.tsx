@@ -296,7 +296,7 @@ describe("RequestsPage", () => {
     expect(await screen.findByText(/Не распознаны \(пропущены\): Цвет/)).toBeInTheDocument();
   });
 
-  it("RQ-IMPORT-UI: «Из расчёта» parses the pasted ЗКП range via RQ-5 and creates the selected positions", async () => {
+  it("RQ-IMPORT-UI: «Из расчёта» reads the calculation by its Google link and creates the selected positions", async () => {
     const preview = {
       project: "591К.3",
       items: [
@@ -318,7 +318,9 @@ describe("RequestsPage", () => {
       const path = String(input);
       if (path === "/api/requests/schema") return json(schema);
       if (path === "/api/requests" && (init?.method ?? "GET") === "GET") return json({ requests: [] });
-      if (path === "/api/requests/import/parse" && init?.method === "POST") return json(preview);
+      if (path === "/api/requests/import/calc" && init?.method === "POST") {
+        return json({ ...preview, warnings: ["Проект «591К.3» не найден в реестре открытых проектов — импорт не заблокирован (переходный период)"] });
+      }
       if (path === "/api/requests/import" && init?.method === "POST") {
         return json({ requests: [row], warnings: [] }, 201);
       }
@@ -329,15 +331,25 @@ describe("RequestsPage", () => {
     await screen.findByRole("button", { name: "Создать заявку" });
     fireEvent.click(screen.getByRole("button", { name: "🧮 Из расчёта" }));
 
-    fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон листа ЗКП/), {
-      target: { value: "Тип\tОбозначение\tНа проект\tБез НДС\nРазъём\tDB-9M\t4\t10" },
+    fireEvent.click(screen.getByRole("button", { name: "Загрузить" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Вставь ссылку");
+    fireEvent.change(screen.getByLabelText("Ссылка на расчёт"), {
+      target: { value: "https://docs.google.com/spreadsheets/d/1AbC/edit" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Распознать" }));
+    fireEvent.click(screen.getByRole("button", { name: "Загрузить" }));
 
     expect(await screen.findByText("DB-9M")).toBeInTheDocument();
+    const [, loadInit] = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === "/api/requests/import/calc")!;
+    expect(JSON.parse(String(loadInit?.body))).toEqual({ url: "https://docs.google.com/spreadsheets/d/1AbC/edit" });
+    expect(screen.getByText(/не найден в реестре открытых проектов/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Ед.изм: DB-9M")).toHaveValue("шт");
+    expect(screen.getByLabelText("Документ качества: DB-9M")).toHaveValue("Нет");
+    fireEvent.change(screen.getByLabelText("Категория: DB-9M"), { target: { value: "ОП" } });
+    expect(screen.getByLabelText("Документ качества: DB-9M")).toHaveValue("Да");
+    expect(screen.getByLabelText("Документ качества: DB-9M")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Ед.изм: DB-9M"), { target: { value: "компл" } });
     fireEvent.change(screen.getByLabelText("Дедлайн (на всю пачку) *"), { target: { value: "2026-10-01" } });
     fireEvent.change(screen.getByLabelText(/Точка отгрузки \(на всю пачку\)/), { target: { value: "Москва" } });
-    fireEvent.change(screen.getByLabelText(/Документ по качеству — всем/), { target: { value: "Нет" } });
     fireEvent.change(screen.getByLabelText(/План. дата — всем/), { target: { value: "2026-10-20" } });
     fireEvent.click(screen.getByRole("button", { name: "Создать заявки" }));
 
@@ -348,8 +360,31 @@ describe("RequestsPage", () => {
     const [, init] = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === "/api/requests/import")!;
     const body = JSON.parse(String(init?.body));
     expect(body).toMatchObject({ project: "591К.3", delivery_point: "Москва", procurement_deadline: "2026-10-01" });
-    expect(body.items[0]).toMatchObject({ name: "DB-9M", quality_document: "Нет", planned_date: "2026-10-20" });
+    expect(body.items[0]).toMatchObject({ name: "DB-9M", unit: "компл", category: "ОП", quality_document: "Да", planned_date: "2026-10-20" });
     expect(await screen.findByText(/Создано заявок из расчёта: 1/)).toBeInTheDocument();
+  });
+
+  it("«Из расчёта» fallback: the pasted ЗКП range still goes through /import/parse", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests/import/parse" && init?.method === "POST") {
+        return json({ project: "", items: [{ item_type: "Кабель", name: "МГТФ", quantity: "2", price: null, price_with_vat: null, link: null, country: null, unit: "м", quality_document: "", planned_date: null }] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<RequestsPage principal={principal} view="create" />);
+    await screen.findByRole("button", { name: "Создать заявку" });
+    fireEvent.click(screen.getByRole("button", { name: "🧮 Из расчёта" }));
+    fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон листа ЗКП/), {
+      target: { value: "Тип\tОбозначение\tНа проект\tБез НДС\nКабель\tМГТФ\t2\t10" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Распознать" }));
+
+    expect(await screen.findByText("МГТФ")).toBeInTheDocument();
+    const [, init] = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === "/api/requests/import/parse")!;
+    expect(JSON.parse(String(init?.body)).grid[1]).toEqual(["Кабель", "МГТФ", "2", "10"]);
   });
   it("manual form: several positions share «Общее для всех позиций» and go in one batch", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {

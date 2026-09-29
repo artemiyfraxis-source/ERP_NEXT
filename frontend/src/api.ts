@@ -84,6 +84,8 @@ export interface CalcImportItem {
 export interface CalcImportPreview {
   project: string;
   items: CalcImportItem[];
+  /** `/import/calc` only: the soft unknown-project warning of `importRequests_`. */
+  warnings?: string[];
 }
 
 export interface SupplierOrder {
@@ -1177,8 +1179,13 @@ export const requestsApi = {
       method: "POST",
       body: JSON.stringify({ request_ids: requestIds, retransfer }),
     }),
-  /** RQ-IMPORT-UI «Из расчёта» (RQ-5): the ЗКП range pasted as a grid — no live Google Sheets access
-   *  here, so the operator pastes the range instead of a URL (решено агентом — проверить). */
+  /** «Из расчёта» as SUPPLYMAP `portalExtractFromCalc`: the server reads the linked calculation sheet. */
+  importFromLink: (url: string) =>
+    api<CalcImportPreview>("/api/requests/import/calc", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+  /** Fallback when the server has no Google key: the ЗКП range pasted as a grid. */
   importParse: (grid: Array<Array<string | null>>) =>
     api<CalcImportPreview>("/api/requests/import/parse", {
       method: "POST",
