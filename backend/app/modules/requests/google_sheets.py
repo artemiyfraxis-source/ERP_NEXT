@@ -294,6 +294,31 @@ class GoogleSheetsCalcReader:
             project_cell = str(blocks[1][0][0])
         return CalcSpreadsheet(title=title, zpk_grid=grid, project_cell=project_cell)
 
+    def read_sheets(self, spreadsheet_id: str, names: tuple[str, ...]) -> tuple[str, dict[str, list[list[str]]]]:
+        """Whole named sheets as display values (GAS ``getDisplayValues`` over ``getDataRange``) plus the file
+        title. Sheets the file lacks are left out — the caller words that refusal. Used by «Проекты»
+        (`tcReadCalcKitset_`: ЗКЗ and СПЯ)."""
+        base = f"{SHEETS_API}/{quote(spreadsheet_id, safe='')}"
+        meta = self._get(base, [("fields", "properties.title,sheets.properties.title")])
+        titles = {
+            str((sheet.get("properties") or {}).get("title") or "") for sheet in meta.get("sheets") or []
+        }
+        title = str((meta.get("properties") or {}).get("title") or "")
+        present = [name for name in names if name in titles]
+        if not present:
+            return title, {}
+        values = self._get(
+            f"{base}/values:batchGet",
+            [("ranges", "'" + name.replace("'", "''") + "'") for name in present]
+            + [("valueRenderOption", "FORMATTED_VALUE"), ("majorDimension", "ROWS")],
+        )
+        blocks = [block.get("values") or [] for block in values.get("valueRanges") or []]
+        sheets: dict[str, list[list[str]]] = {}
+        for name, block in zip(present, blocks):
+            width = max((len(row) for row in block), default=0)
+            sheets[name] = [[str(cell) for cell in row] + [""] * (width - len(row)) for row in block]
+        return title, sheets
+
 
 _readers: dict[str, GoogleSheetsCalcReader] = {}
 _readers_lock = threading.Lock()

@@ -11,7 +11,8 @@ from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, S
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
-from app.shared.warehouse_location import storage_location_has_slot
+from app.shared.events import AuditEvent
+from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_layout_from_config, storage_location_has_slot
 
 from .domain import WAREHOUSES, StockLot, WriteOffEntry
 from .journal import MIRRORED_BY_WRITEOFFS, JournalEvent
@@ -404,3 +405,43 @@ class SqlAlchemyWarehouseUnitOfWork:
             raise RuntimeError("Unit of Work has not been entered")
         self.session.commit()
         self.committed = True
+
+
+class WarehouseRackLayoutRow(Base):
+    """«Раскладка» склада (SUPPLYMAP ScriptProperties stock05_places): одна строка на установку."""
+
+    __tablename__ = "warehouse_rack_layout"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    racks: Mapped[int] = mapped_column(Integer)
+    shelves: Mapped[int] = mapped_column(Integer)
+    per_rack: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_by: Mapped[str] = mapped_column(String(255), default="")
+
+
+class SqlAlchemyRackLayoutStore:
+    def __init__(self, session_factory: sessionmaker[Session]):
+        self.session_factory = session_factory
+
+    def load(self) -> RackLayout | None:
+        with self.session_factory() as session:
+            row = session.get(WarehouseRackLayoutRow, 1)
+            if row is None:
+                return None
+            return rack_layout_from_config({"racks": row.racks, "shelves": row.shelves, "perRack": row.per_rack or {}})
+
+    def save(self, layout: RackLayout, event: AuditEvent) -> None:
+        with self.session_factory() as session:
+            row = session.get(WarehouseRackLayoutRow, 1)
+            if row is None:
+                row = WarehouseRackLayoutRow(id=1)
+                session.add(row)
+            row.racks = layout.racks
+            row.shelves = layout.shelves
+            row.per_rack = {str(rack): count for rack, count in sorted(layout.per_rack.items())}
+            row.updated_at = event.occurred_at
+            row.updated_by = event.actor.name
+            SqlAlchemyAuditRepository(session).add(event)
+            session.commit()
+        forget_rack_layout()

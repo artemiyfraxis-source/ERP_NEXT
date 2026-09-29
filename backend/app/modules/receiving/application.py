@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Protocol, Sequence
+from typing import Iterable, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
@@ -19,12 +19,18 @@ from app.shared.notifications import (
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
+    ACT_KINDS,
     InspectionInput,
     ReceivingLine,
     ReceivingStatus,
     QUARANTINE_WORKDAYS,
     ReceivingValidationError,
+    QUALITY_FAULTS,
+    QUANTITY_FAULTS,
+    SupplierReturnMode,
+    act_number_prefix,
     create_line_from_expected,
+    supplier_return_basis,
     latest_overdue_inspection_date,
     quarantine_notify_targets,
     NOTIFY_SUPPLY,
@@ -76,9 +82,28 @@ class ReceivingRepository(Protocol):
     ) -> Sequence[ReceivingLine]: ...
     def waiting_inspected_by(self, day: date, limit: int = 200) -> Sequence[ReceivingLine]: ...
     def awaiting_placement(self, limit: int = 500) -> Sequence[ReceivingLine]: ...
+    def by_status(self, status: ReceivingStatus, limit: int = 500) -> Sequence[ReceivingLine]: ...
     def all_grns(self) -> Sequence[str]: ...
     def legacy_ids_starting_with(self, prefix: str) -> Sequence[str]: ...
+
+    def act_numbers_with_prefixes(self, prefixes: Iterable[str]) -> Sequence[str]: ...
     def add(self, line: ReceivingLine) -> None: ...
+
+
+@dataclass(frozen=True)
+class StockLotBalance:
+    """What the warehouse holds for one ГРН + ПАКЕТ, as a supplier return sees it."""
+
+    warehouse: str
+    balance: Decimal
+    unit: str = ""
+
+
+class StockBalanceLookup(Protocol):
+    """Read-only port into the Warehouse module (SupplierReturn.gs warehouseGrnInfo_): the lot of a
+    ГРН + ПАКЕТ in either warehouse, None when it is not on stock."""
+
+    def lot_balance(self, grn: str, package: str) -> StockLotBalance | None: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -137,6 +162,153 @@ class OpenVkRevisionCommand:
     expected_version: int
     actor: Actor
     now: datetime
+
+
+@dataclass(frozen=True)
+class SupplierReturnItem:
+    line_id: UUID
+    expected_version: int
+    quantity: Decimal | None = None  # empty → КОЛ-ВО ФАКТ of the line
+
+
+@dataclass(frozen=True)
+class SupplierReturnCommand:
+    items: tuple[SupplierReturnItem, ...]
+    reason: str
+    mode: SupplierReturnMode
+    actor: Actor
+    now: datetime
+    claim: str = ""
+    comment: str = ""
+
+
+@dataclass(frozen=True)
+class SupplierReturnResult:
+    lines: tuple[ReceivingLine, ...]
+    writeoffs: int
+    notes: tuple[str, ...]
+
+    @property
+    def message(self) -> str:
+        """The report SupplierReturn.gs gives back: what went back, what the warehouse will write off, warnings."""
+        if not self.lines:
+            return ""
+        status = self.lines[0].status.value
+        done = ", ".join(
+            f"{line.name or line.legacy_id}" + (f" ({line.grn})" if line.grn else "") for line in self.lines
+        )
+        text = f"Возврат оформлен ({len(self.lines)}): {done}. Статус приёмки → «{status}»"
+        if self.writeoffs:
+            text += f"; списаний со склада: {self.writeoffs}"
+        return text + (f". Внимание: {'; '.join(self.notes)}" if self.notes else ".")
+
+
+def _quantity_text(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def return_to_supplier(
+    command: SupplierReturnCommand,
+    uow: UnitOfWork,
+    stock: StockBalanceLookup,
+) -> SupplierReturnResult:
+    """SupplierReturn.gs supplierReturnApply_: построчный возврат пачкой по одной поставке.
+
+    Each accepted line changes status and gets the basis in ОПИСАНИЕ НЕСООТВ.; when its lot lies on
+    stock with enough balance, the warehouse is asked to write the returned quantity off
+    (`warehouse.supplier_return_requested`, same transaction). A line whose lot is not on stock (not
+    placed yet, no ГРН) is returned in receiving only and the report says so. A line no longer
+    «Принято» is skipped with a note; nothing done at all is an error."""
+    if not command.items:
+        raise ReceivingValidationError("Не выбрано ни одной позиции.")
+    basis = supplier_return_basis(command.reason, command.claim, command.comment)
+    done: list[ReceivingLine] = []
+    notes: list[str] = []
+    writeoffs = 0
+    with uow:
+        for item in command.items:
+            current = uow.receiving.get(item.line_id)
+            if current is None:
+                raise KeyError(f"Receiving line not found: {item.line_id}")
+            if current.version != item.expected_version:
+                raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
+            label = current.name or current.legacy_id
+            if current.status is not ReceivingStatus.ACCEPTED:
+                notes.append(f"{label}: статус уже «{current.status.value}» — пропущена")
+                continue
+            quantity = item.quantity
+            if quantity is None:
+                quantity = current.fact_quantity or current.accepted_quantity
+            if quantity is None or quantity <= 0:
+                notes.append(f"{label}: не удалось определить кол-во — пропущена")
+                continue
+            returned = current.return_to_supplier(
+                reason=command.reason, mode=command.mode, claim=command.claim, comment=command.comment
+            )
+            written_off = False
+            if not current.grn:
+                notes.append(f"{label}: ГРН не присвоен — складской проводки нет, только статус приёмки")
+            else:
+                lot = stock.lot_balance(current.grn, current.package) if current.warehouse_event_emitted else None
+                if lot is None:
+                    notes.append(f"{label}: на складе партии {current.grn} нет (ещё не разложена) — снимать нечего")
+                elif quantity > lot.balance:
+                    notes.append(
+                        f"{label}: склад — больше остатка (есть {_quantity_text(lot.balance)}), списание не поставлено"
+                    )
+                else:
+                    uow.outbox.add(
+                        OutboxMessage(
+                            id=uuid4(),
+                            topic="warehouse.supplier_return_requested",
+                            idempotency_key=f"receiving:{current.id}:supplier-return:{returned.supplier_returns}",
+                            created_at=command.now,
+                            payload={
+                                "receiving_line_id": str(current.id),
+                                "legacy_id": current.legacy_id,
+                                "warehouse": lot.warehouse,
+                                "grn": current.grn,
+                                "package": current.package,
+                                "quantity": str(quantity),
+                                "reason": basis,
+                                "supplier": current.supplier,
+                                "actor_id": str(command.actor.id),
+                                "actor_name": command.actor.name,
+                            },
+                        )
+                    )
+                    written_off = True
+                    writeoffs += 1
+            uow.receiving.add(returned)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=returned.id,
+                    event_type="receiving.returned_to_supplier",
+                    actor=command.actor,
+                    occurred_at=command.now,
+                    details={
+                        "legacy_id": returned.legacy_id,
+                        "from_status": current.status.value,
+                        "to_status": returned.status.value,
+                        "quantity": str(quantity),
+                        "basis": basis,
+                        "grn": current.grn,
+                        "warehouse_writeoff": written_off,
+                    },
+                )
+            )
+            done.append(returned)
+        if not done:
+            raise ReceivingValidationError("Ни одна позиция не оформлена. " + "; ".join(notes))
+        uow.commit()
+    return SupplierReturnResult(lines=tuple(done), writeoffs=writeoffs, notes=tuple(notes))
+
+
+def supplier_return_candidates(uow: UnitOfWork, *, limit: int = 500) -> list[ReceivingLine]:
+    """SupplierReturn.gs supplierReturnRows_: строки «Принято» — товар уже у нас."""
+    with uow:
+        return list(uow.receiving.by_status(ReceivingStatus.ACCEPTED, limit))
 
 
 def consume_receiving_expected(message: OutboxMessage, uow: UnitOfWork) -> ReceivingLine:
@@ -204,6 +376,9 @@ def dispatch_next_receiving_expected(now: datetime, uow: UnitOfWork) -> Receivin
 def _warehouse_payload(line: ReceivingLine) -> dict:
     return {
         "receiving_line_id": str(line.id),
+        # The lot counts each receipt once by this id; a replacement after a «wait» supplier return is a
+        # new receipt of the same line (RC-6), so it gets its own.
+        "receipt_id": f"{line.id}:r{line.supplier_returns}" if line.supplier_returns else str(line.id),
         "legacy_id": line.legacy_id,
         "warehouse": line.warehouse,
         "grn": line.grn,
@@ -225,7 +400,7 @@ def _warehouse_payload(line: ReceivingLine) -> dict:
 def _emit_warehouse_if_ready(line: ReceivingLine, uow: UnitOfWork, actor: Actor, now: datetime) -> ReceivingLine:
     if not line.ready_for_warehouse:
         return line
-    key = f"receiving:{line.id}:warehouse"
+    key = line.warehouse_event_key
     if uow.outbox.by_idempotency_key(key) is None:
         uow.outbox.add(
             OutboxMessage(
@@ -273,6 +448,7 @@ def inspect_receiving(command: InspectReceivingCommand, uow: UnitOfWork) -> Rece
             inspection,
             command.actor,
             existing_grns=uow.receiving.all_grns(),
+            existing_act_numbers=_act_numbers_for(inspection, uow),
             manual_grn_prefix=command.manual_grn_prefix,
         )
         uow.receiving.add(inspected)
@@ -322,6 +498,147 @@ def _request_backorder(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> N
             },
         )
     )
+
+
+@dataclass(frozen=True)
+class InspectBatchesCommand:
+    """RC-13: one delivery, several manufacturer batches — each gets its own line, ВК and ГРН."""
+
+    line_id: UUID
+    expected_version: int
+    batches: tuple[InspectionInput, ...]
+    actor: Actor
+    now: datetime
+    manual_grn_prefix: str | None = None
+
+
+def _act_numbers_for(data: InspectionInput, uow: UnitOfWork) -> Sequence[str]:
+    """Номера актов, уже занятые в дни, которыми датируются акты этой приёмки."""
+    days = {data.inspection_date, data.verdict_date or data.inspection_date}
+    return uow.receiving.act_numbers_with_prefixes(
+        act_number_prefix(kind, day) for kind in ACT_KINDS for day in days
+    )
+
+
+def batch_quantity(data: InspectionInput) -> Decimal:
+    """Receiving.gs batchQty_: кол-во партии — по УПД, иначе по факту."""
+    if data.document_quantity is not None and data.document_quantity > 0:
+        return data.document_quantity
+    return data.fact_quantity
+
+
+def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -> list[ReceivingLine]:
+    """Receiving.gs submitReceiveFormImpl_ (≥ 2 партии) + applyWaitlistBatchSplits_: the line becomes batch 1,
+    the others new lines `-ПN`; each is inspected at once with its own facts and the shared ones. Sum of
+    batches below the order → the remainder goes to the backorder like any shortfall; above → surplus."""
+    if len(command.batches) < 2:
+        raise ReceivingValidationError("Для разбивки нужно минимум 2 партии")
+    with uow:
+        current = uow.receiving.get(command.line_id)
+        if current is None:
+            raise KeyError(f"Receiving line not found: {command.line_id}")
+        if current.version != command.expected_version:
+            raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
+        quantities = [batch_quantity(batch) for batch in command.batches]
+        parts = current.split_into_batches(
+            quantities,
+            existing_legacy_ids=uow.receiving.legacy_ids_starting_with(current.legacy_id),
+            now=command.now,
+        )
+        grns = list(uow.receiving.all_grns())
+        acts = list(_act_numbers_for(command.batches[0], uow))
+        inspected: list[ReceivingLine] = []
+        for part, data in zip(parts, command.batches):
+            inspection = replace(
+                data,
+                ordered_quantity=part.ordered_quantity,
+                quality_document_required=part.quality_document_required,
+                has_shipping_document=bool(str(data.shipping_document_url or "").strip()),
+                quality_document_present=bool(str(data.quality_document_url or "").strip()),
+            )
+            line = part.inspect(
+                inspection,
+                command.actor,
+                existing_grns=grns,
+                manual_grn_prefix=command.manual_grn_prefix,
+                existing_act_numbers=acts,
+            )
+            grns.append(line.grn)
+            acts.extend(line.act(kind)[0] for kind in ACT_KINDS)
+            uow.receiving.add(line)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=line.id,
+                    event_type="receiving.inspected",
+                    actor=command.actor,
+                    occurred_at=command.now,
+                    details={
+                        "legacy_id": line.legacy_id,
+                        "from_status": current.status.value,
+                        "to_status": line.status.value,
+                        "verdict": line.verdict,
+                        "batch_of": current.legacy_id,
+                        "batch_quantity": str(line.ordered_quantity),
+                    },
+                )
+            )
+            _notify_nonconformity(line, uow, command.now)
+            inspected.append(line)
+        remainder = current.ordered_quantity - sum(quantities, Decimal("0"))
+        if remainder > 0:
+            _request_backorder(replace(inspected[0], backorder_quantity=remainder), uow, command.now)
+        uow.commit()
+        return inspected
+
+
+@dataclass(frozen=True)
+class UnpackCommand:
+    line_id: UUID
+    expected_version: int
+    quantities: tuple[Decimal, ...]
+    actor: Actor
+    now: datetime
+
+
+def unpack_receiving(command: UnpackCommand, uow: UnitOfWork) -> list[ReceivingLine]:
+    """RC-8 «Разукомплектовка (пакеты)»: пакеты с общим ГРН до раскладки на склад."""
+    with uow:
+        current = uow.receiving.get(command.line_id)
+        if current is None:
+            raise KeyError(f"Receiving line not found: {command.line_id}")
+        if current.version != command.expected_version:
+            raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
+        packages = current.unpack(
+            list(command.quantities),
+            existing_legacy_ids=uow.receiving.legacy_ids_starting_with(current.legacy_id),
+            now=command.now,
+        )
+        for package in packages:
+            uow.receiving.add(package)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=current.id,
+                event_type="receiving.unpacked",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={
+                    "legacy_id": current.legacy_id,
+                    "grn": current.grn,
+                    "packages": [
+                        {
+                            "legacy_id": package.legacy_id,
+                            "package": package.package,
+                            "quantity": str(package.fact_quantity),
+                        }
+                        for package in packages
+                    ],
+                },
+            )
+        )
+        uow.commit()
+        return packages
 
 
 def open_vk_revision(command: OpenVkRevisionCommand, uow: UnitOfWork) -> tuple[ReceivingLine, ReceivingLine]:
@@ -497,3 +814,154 @@ def build_putaway_print_sheet(uow: UnitOfWork, now: datetime, *, limit: int = 50
         rows=rows,
         sign="Разложил: ______________________        Дата: ______________",
     )
+
+
+# RC-9: акты приёмки печатным бланком (DocGen.gs docTemplateSpec_: incoming / nonconformity / complaint /
+# usepermit). Поля те же, что в шаблонах SUPPLYMAP; чего в ERP нет (изготовитель, страна, № док. качества) —
+# прочерк, как незаполненный плейсхолдер в DocGen.
+_OK = "Соответствует"
+_BAD = "Не соответствует"
+
+
+def _dash(value: object) -> str:
+    text = "" if value is None else str(value).strip()
+    return text or "—"
+
+
+def _day(value: date | None) -> str:
+    return value.strftime("%d.%m.%Y") if value else "—"
+
+
+def _qty(value: Decimal | None, unit: str) -> str:
+    return f"{_display_number(value)} {unit}" if value is not None else "—"
+
+
+def _incoming_results(line: ReceivingLine) -> tuple[tuple[str, str, str], ...]:
+    """DocGen.gs icrResultMarks_: пункт «не соответствует» ровно тогда, когда его причина в характере НС."""
+    nature = set(line.nonconformities)
+    mark = lambda *items: _BAD if nature & set(items) else _OK  # noqa: E731
+    quality = (
+        mark("Отсутствие / несоответствие документа по качеству")
+        if line.quality_document_required
+        else "Не требуется"
+    )
+    return (
+        ("1", "Внешний вид, целостность тары и упаковки", mark("Механическое повреждение / брак")),
+        ("2", "УПД/М-15", mark("Отсутствие / несоответствие УПД/М-15")),
+        ("3", "Идентификация (тот ли товар, соответствие счёту)", mark("Не тот товар (несоответствие счету)")),
+        ("4", "Документ по качеству", quality),
+        ("5", "Срок годности / дата изготовления", mark("Истёк срок годности")),
+        ("6", "Количество УПД — соответствие счёту", mark("Недовоз (УПД < заказ)")),
+        ("7", "Количество фактическое — соответствие УПД/М-15", mark("Недостача (факт < УПД)", "Излишек (факт > УПД)")),
+    )
+
+
+def build_act_print_sheet(line: ReceivingLine, kind: str) -> PrintSheet:
+    if kind not in ACT_KINDS:
+        raise KeyError(f"Неизвестный вид акта: {kind}")
+    number, act_date = line.act(kind)
+    title = ACT_KINDS[kind][1]
+    if not number:
+        raise ReceivingValidationError(f"{title} по строке {line.legacy_id} не выпускался")
+    upd = f"{_dash(line.document_number)} от {_day(line.document_date)}"
+    name = line.document_name or line.name
+    basis = f"Акт входного контроля № {_dash(line.vk_act_number)} от {_day(line.vk_act_date)}"
+    inspector = line.inspector.name if line.inspector else "______________"
+    rows: list[tuple[str, str, str]] = [
+        ("", "Заказ №", _dash(line.order_number)),
+        ("", "Тип", _dash(line.item_type)),
+        ("", "Наименование", _dash(name if kind != "incoming" else line.name)),
+        ("", "ГРН", _dash(f"{line.grn} / {line.package}" if line.grn and line.package else line.grn)),
+        ("", "Назначение", _dash(line.purpose)),
+    ]
+    if kind in {"incoming", "nonconformity"}:
+        rows += [
+            ("", "Дата изготовления", _day(line.manufacture_date)),
+            ("", "Срок годности", _day(line.expiry_date)),
+        ]
+    if kind == "incoming":
+        rows.append(("", "Кол-во по заказу", _qty(line.ordered_quantity, line.unit)))
+    if kind == "usepermit":
+        rows.append(("", "Кол-во", _qty(line.fact_quantity, line.unit)))
+    else:
+        rows += [
+            ("", "Кол-во по УПД/М-15", _qty(line.document_quantity, line.unit)),
+            ("", "Кол-во фактически", _qty(line.fact_quantity, line.unit)),
+        ]
+    rows.append(("", "Поставщик", _dash(line.supplier)))
+    if kind == "incoming":
+        rows += [
+            ("", "Производитель", "—"),
+            ("", "Страна", "—"),
+            ("", "УПД/М-15 №", upd),
+            ("", "№ партии", _dash(line.series)),
+            ("", "Дата приезда", _day(line.inspected_on)),
+            ("", "Документ по качеству", _dash(line.quality_document_url)),
+        ]
+        rows += list(_incoming_results(line))
+        rows += [
+            ("", "Примечание", _dash(line.inspection_note)),
+            (
+                "",
+                "Заключение",
+                "Продукция по результатам входного контроля признана: "
+                + ("годной к применению" if line.verdict == "Годен" else "не соответствующей требованиям")
+                + f". Результат: {_dash(line.verdict)}.",
+            ),
+        ]
+        sign = f"ВХОДНОЙ КОНТРОЛЬ ПРОВЁЛ: {inspector}        ПРЕДСТАВИТЕЛЬ ОТК: ______________"
+    elif kind == "usepermit":
+        rows += [
+            ("", "№ партии", _dash(line.series)),
+            ("", "Основание", basis),
+            (
+                "",
+                "Основание вывода из карантина",
+                "Сопроводительная документация (УПД/М-15, документ по качеству) предоставлена в полном объёме. "
+                "Продукция соответствует требованиям и разрешена к использованию.",
+            ),
+        ]
+        sign = f"РАЗРЕШИЛ (входной контроль): {inspector}        ПРЕДСТАВИТЕЛЬ ОТК: ______________"
+    elif kind == "complaint":
+        claimed = [item for item in line.nonconformities if item in QUANTITY_FAULTS | QUALITY_FAULTS]
+        rows += [
+            ("", "УПД/М-15 №", upd),
+            ("", "№ партии", _dash(line.series)),
+            ("", "Основание", basis),
+            ("", "Существо претензии (вина поставщика)", _dash(", ".join(claimed))),
+            ("", "Описание несоответствия", _dash(line.nonconformity_description)),
+            (
+                "",
+                "Требование к поставщику",
+                "☐ Замена несоответствующей продукции  ☐ Допоставка недостающего количества  "
+                "☐ Возврат продукции и денежных средств  ☐ Возмещение убытков",
+            ),
+        ]
+        sign = f"ПРЕТЕНЗИЮ ВЫСТАВИЛ: {inspector}        ПРЕДСТАВИТЕЛЬ ПОСТАВЩИКА: ______________"
+    else:
+        rows += [
+            ("", "УПД/М-15 №", upd),
+            ("", "№ партии", _dash(line.series)),
+            ("", "Основание", basis),
+            ("", "Характер несоответствия", _dash(", ".join(line.nonconformities))),
+            ("", "Описание несоответствия", _dash(line.nonconformity_description)),
+            ("", "Классификация", "☐ Критическое  ☐ Значительное  ☐ Малозначительное"),
+            ("", "Решение по продукции", _dash(line.disposition)),
+        ]
+        sign = f"НЕСООТВЕТСТВИЕ ВЫЯВИЛ: {inspector}        ПРЕДСТАВИТЕЛЬ ЗАКАЗЧИКА (ВП): ______________"
+    return PrintSheet(
+        title=f"{title.upper()} № {number}",
+        subtitle=f"Дата {_day(act_date)} · строка {line.legacy_id}",
+        columns=("№", "Показатель", "Значение"),
+        rows=tuple(rows),
+        sign=sign,
+    )
+
+
+def receiving_act_sheet(line_id: UUID, kind: str, uow: UnitOfWork) -> PrintSheet:
+    with uow:
+        line = uow.receiving.get(line_id)
+    if line is None:
+        raise KeyError(f"Receiving line not found: {line_id}")
+    return build_act_print_sheet(line, kind)
+

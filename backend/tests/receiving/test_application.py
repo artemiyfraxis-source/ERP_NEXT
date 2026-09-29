@@ -63,6 +63,15 @@ class Repository:
     def legacy_ids_starting_with(self, prefix):
         return [item.legacy_id for item in self.items.values() if item.legacy_id.startswith(prefix)]
 
+    def act_numbers_with_prefixes(self, prefixes):
+        prefixes = tuple(prefixes)
+        return [
+            number
+            for item in self.items.values()
+            for number in (item.vk_act_number, item.nc_act_number, item.complaint_act_number, item.use_permit_number)
+            if number and number.startswith(prefixes)
+        ]
+
     def add(self, line):
         self.items[line.id] = line
 

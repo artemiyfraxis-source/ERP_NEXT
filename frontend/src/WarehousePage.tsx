@@ -10,7 +10,7 @@ import {
 } from "./api";
 import { openPrintSheet } from "./print";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
-import { downloadStockTable, ItemTypesPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
+import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
   mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
@@ -47,7 +47,10 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [moveLot, setMoveLot] = useState<WarehouseLot | null>(null);
   const [groupBy, setGroupBy] = useState<"" | "type" | "place" | "name" | "series">("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [panel, setPanel] = useState<"" | "types" | "import" | "journal">("");
+  const [panel, setPanel] = useState<"" | "types" | "import" | "journal" | "racks">("");
+  const [journalQuery, setJournalQuery] = useState("");
+  const [assigned, setAssigned] = useState<WarehouseAddResult["assigned"]>([]);
+  const [copied, setCopied] = useState("");
   // Type suggestions (SK-14): the dictionary + the canonical types already on the stock.
   const [typeChoices, setTypeChoices] = useState<string[]>([]);
   // WH-6: печатный «Лист перемещения на склад» для принятых партий без места — тот же механизм,
@@ -148,8 +151,9 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           downloadStockTable().catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось выгрузить."));
         }}>⬇ Выгрузить</button>
         <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>⬆ Загрузить правки</button>
+        <button className="secondary compact" onClick={() => setPanel((value) => value === "racks" ? "" : "racks")}>Раскладка</button>
         </>}
-        {admin && <button className="secondary compact" onClick={() => setPanel((value) => value === "journal" ? "" : "journal")}>Журнал склада</button>}
+        {admin && <button className="secondary compact" onClick={() => { setJournalQuery(""); setPanel((value) => value === "journal" ? "" : "journal"); }}>Журнал склада</button>}
         {!readOnly && <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>🖨 Лист перемещения</button>}
         <input className="search" aria-label="Поиск по складу" placeholder="Поиск: артикул, серия, место, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
@@ -170,7 +174,20 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         }}
       />}
       {panel === "import" && <StockImportPanel onClose={() => setPanel("")} onApplied={() => reload()} />}
-      {panel === "journal" && <StockJournalPanel onClose={() => setPanel("")} />}
+      {panel === "racks" && <RackLayoutPanel onClose={() => setPanel("")} />}
+      {panel === "journal" && <StockJournalPanel key={journalQuery} initialQuery={journalQuery} onClose={() => setPanel("")} />}
+      {assigned.length > 0 && <section className="panel" aria-label="Записано на склад">
+        <div className="manual-stock-head"><h2>Записано на склад: {assigned.length}</h2><button type="button" className="link-button" onClick={() => { setAssigned([]); setCopied(""); }}>Закрыть</button></div>
+        <p className="page-sub">Номера партий, присвоенные строкам. Слева — номер строки, как она стояла на экране.</p>
+        <div className="table-wrap"><table className="grid compact"><thead><tr><th>#</th><th>ГРН</th><th>Артикул</th><th>Кол-во</th><th>Место</th><th>Склад</th></tr></thead>
+          <tbody>{assigned.map((row) => <tr key={row.id}><td>{row.i + 1}</td><td><strong>{row.grn}</strong></td><td>{row.article}</td><td className="num">{row.quantity} {row.unit}</td><td>{row.storage_location || "—"}</td><td>{row.warehouse}</td></tr>)}</tbody>
+        </table></div>
+        <div className="header-actions"><button type="button" className="secondary small" onClick={() => {
+          // Копия — табуляцией: вставляется в таблицу/этикетку столбцами (PortalApp.html wa05ShowGrns_).
+          const text = assigned.map((row) => [row.grn, row.article, `${row.quantity} ${row.unit}`, row.storage_location, row.warehouse].join("\t")).join("\n");
+          void navigator.clipboard.writeText(text).then(() => setCopied("Скопировано."), () => setCopied("Браузер не дал скопировать — выдели таблицу мышью."));
+        }}>Скопировать</button><span className="page-sub" role="status">{copied}</span></div>
+      </section>}
       {adding && <ManualStockForm
         busy={Boolean(busy) || loading}
         knownLots={lots}
@@ -181,6 +198,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           setError("");
           try {
             const result = await warehouseApi.add(items);
+            if (result.assigned.length) { setAssigned(result.assigned); setCopied(""); }
             // Rows with an error stay in the form; the rest are entered (SK-10, stock05Add_).
             if (!result.errors.length) setAdding(false);
             if (result.added) await reload();
@@ -215,6 +233,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
             disabled={Boolean(busy) || loading}
             mutate={mutate}
             onMove={(item) => { setMoveLot(item); setMoveOpen(true); }}
+            onHistory={admin ? (grn) => { setJournalQuery(grn); setPanel("journal"); } : undefined}
             readOnly={readOnly}
           />)}</tbody>
         </table>
@@ -284,7 +303,7 @@ function quantity(lots: WarehouseLot[], field: "balance" | "available") {
   return String(Math.round(lots.reduce((sum, lot) => sum + Number(lot[field]), 0) * 1_000_000) / 1_000_000);
 }
 
-function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove, readOnly }: {
+function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove, onHistory, readOnly }: {
   group: WarehouseGroup;
   expanded: Set<string>;
   toggle: (key: string) => void;
@@ -292,6 +311,7 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
   disabled: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   onMove: (lot: WarehouseLot) => void;
+  onHistory?: (grn: string) => void;
   readOnly: boolean;
 }) {
   return <>
@@ -313,7 +333,7 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
           <td>{distinct(item.lots, "warehouse")}</td>
           <td />
         </tr>
-        {open && item.lots.map((lot) => <WarehouseRow key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} readOnly={readOnly} />)}
+        {open && item.lots.map((lot) => <WarehouseRow key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} onHistory={onHistory} readOnly={readOnly} />)}
       </Fragment>;
     })}
   </>;
@@ -619,15 +639,17 @@ function LotRowEditForm({ lot, disabled, mutate, onClose }: {
   </form>;
 }
 
-function WarehouseRow({ lot, busy, disabled, mutate, onMove, readOnly }: {
+function WarehouseRow({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
   lot: WarehouseLot;
   busy: boolean;
   disabled: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   onMove: (lot: WarehouseLot) => void;
+  onHistory?: (grn: string) => void;
   readOnly: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [writeoffDate, setWriteoffDate] = useState(() => new Date().toLocaleDateString("sv-SE"));
   const [quantity, setQuantity] = useState("");
   const [purpose, setPurpose] = useState("");
   const [reason, setReason] = useState("Выдача");
@@ -645,7 +667,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove, readOnly }: {
 
   function writeoff(event: FormEvent) {
     event.preventDefault();
-    void mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, purpose.trim(), reason.trim())).catch(() => undefined);
+    void mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, purpose.trim(), reason.trim(), writeoffDate || undefined)).catch(() => undefined);
   }
 
   function returnToStock(event: FormEvent) {
@@ -662,6 +684,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove, readOnly }: {
       </tr>
       {open && <tr className="stock-actions-row"><td colSpan={12}>{passport && <p className="page-sub" aria-label="Паспорт партии">{passport}</p>}{!readOnly && <div className="stock-actions">
         <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
+        {onHistory && <button className="secondary small" onClick={() => onHistory(lot.grn)}>История</button>}
         {!editingRow && <button className="secondary small" disabled={disabled} onClick={() => setEditingRow(true)}>Править строку</button>}
         {editingRow && <LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} />}
         <form className="inline-action" onSubmit={(event) => {
@@ -677,7 +700,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove, readOnly }: {
           <label>Место как есть<input aria-label="Место как есть" title="Ручная правка: любой текст (12C7, 12C7B, A-01…), пусто — без места" placeholder="без места" value={place} onChange={(event) => setPlace(event.target.value)} /></label><button className="secondary small" disabled={disabled}>Записать место</button>
         </form>
         <form className="inline-action" onSubmit={writeoff}>
-          <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Назначение<input aria-label="Назначение списания" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label><label>Основание<input placeholder="Выдача" value={reason} onChange={(event) => setReason(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>
+          <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Назначение<input aria-label="Назначение списания" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label><label>Основание<input placeholder="Выдача" value={reason} onChange={(event) => setReason(event.target.value)} /></label><label>Дата<input aria-label="Дата списания" type="date" value={writeoffDate} onChange={(event) => setWriteoffDate(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>
         </form>
         {writtenOff && !returning && <button className="secondary small" disabled={disabled} onClick={() => setReturning(true)}>Вернуть на склад</button>}
         {writtenOff && returning && <form className="inline-action" aria-label="Возврат на склад" onSubmit={returnToStock}>

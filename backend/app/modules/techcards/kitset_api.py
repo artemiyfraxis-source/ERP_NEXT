@@ -20,6 +20,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.fulfillment.domain import FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
+from app.modules.requests.application import CalcSheetError
 from app.modules.production.plan import KIT_STAGES, TC_REVIEW_VALUES
 from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
 from app.shared.clock import moscow_now
@@ -164,8 +165,11 @@ class ShipPayload(BaseModel):
 
 
 class LoadPayload(BaseModel):
-    file_name: str = Field(min_length=1, max_length=512)
-    content_b64: str = Field(min_length=1)
+    """Расчёт — ссылкой на Google Таблицу (как в SUPPLYMAP) или файлом .xlsx (запасной путь без доступа)."""
+
+    url: str = Field(default="", max_length=2048)
+    file_name: str = Field(default="", max_length=512)
+    content_b64: str = Field(default="")
     number: str = Field(default="", max_length=255)
     deadline: date | None = None
     ship: ShipPayload | None = None
@@ -178,6 +182,20 @@ def _decode(value: str) -> bytes:
         raise HTTPException(status_code=422, detail="Файл передан не в base64") from error
 
 
+_CALC_SHEET_STATUS = {"config": 503, "access": 422, "unsupported": 422, "upstream": 502}
+
+
+def _calc(payload: LoadPayload, request: Request):
+    if payload.url.strip():
+        try:
+            return flow.read_calc_by_link(payload.url, lambda: flow.calc_sheets_reader(request.app.state))
+        except CalcSheetError as error:
+            raise HTTPException(status_code=_CALC_SHEET_STATUS.get(error.kind, 502), detail=str(error)) from error
+    if not payload.content_b64 or not payload.file_name:
+        raise KitsetValidationError("Вставь ссылку на расчёт или выбери файл .xlsx")
+    return parse_calc(_decode(payload.content_b64), payload.file_name)
+
+
 @router.post("/load")
 def load(
     payload: LoadPayload,
@@ -186,9 +204,9 @@ def load(
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
     """`portalKitsetLoad`: create a project from the calculation, or refresh it («Обновить из расчёта»)."""
-    content = _decode(payload.content_b64)
+    data = _run(lambda: _calc(payload, request))
     result = _run(lambda: flow.load_kitset(flow.LoadKitsetCommand(
-        data=parse_calc(content, payload.file_name),
+        data=data,
         number=payload.number, deadline=payload.deadline,
         ship=payload.ship.model_dump() if payload.ship else {},
         actor=principal.actor, now=now,

@@ -1,9 +1,11 @@
 """Shared physical storage-address value object and the rack layout it must fit."""
 
 import json
+import logging
 import os
 import re
-from collections.abc import Iterable, Mapping
+import time
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import cache
 
@@ -101,6 +103,42 @@ def configured_rack_layout() -> RackLayout:
         raise RuntimeError(f"{RACK_LAYOUT_ENV}: {error}") from error
 
 
+# «Раскладка» (portalStock05PlacesSave): the layout saved from the warehouse screen lives in the database;
+# the app and the worker register a loader at start. Saved layout > ERP_WAREHOUSE_RACK_LAYOUT > 32×26.
+# A short cache: a save in the API reaches the worker process within RACK_LAYOUT_TTL seconds.
+RACK_LAYOUT_TTL = 15.0
+_layout_loader: Callable[[], RackLayout | None] | None = None
+_layout_cache: tuple[float, RackLayout] | None = None
+
+
+def set_rack_layout_loader(loader: Callable[[], RackLayout | None] | None) -> None:
+    global _layout_loader, _layout_cache
+    _layout_loader = loader
+    _layout_cache = None
+
+
+def forget_rack_layout() -> None:
+    global _layout_cache
+    _layout_cache = None
+
+
+def current_rack_layout() -> RackLayout:
+    global _layout_cache
+    if _layout_loader is None:
+        return configured_rack_layout()
+    now = time.monotonic()
+    if _layout_cache is not None and now - _layout_cache[0] < RACK_LAYOUT_TTL:
+        return _layout_cache[1]
+    try:
+        saved = _layout_loader()
+    except Exception:  # the store is unreachable: the configured layout is still a valid answer
+        logging.exception("Rack layout store unavailable; using the configured layout")
+        return configured_rack_layout()
+    layout = saved or configured_rack_layout()
+    _layout_cache = (now, layout)
+    return layout
+
+
 def storage_location_fits(value: str, layout: RackLayout) -> bool:
     """SUPPLYMAP placeFits_: the rack exists, the shelf is in that rack, № on the shelf ≤ 999. A slot is any
     letter A..Z (STOCK05_SLOTS_ = 26). An empty place or an old address is not a rack code: nothing to fit."""
@@ -122,7 +160,7 @@ def existing_storage_location(value: str, layout: RackLayout | None = None) -> s
     if parts is None:
         raise ValueError("Место хранения должно иметь вид 1F4, 17C120 или 12C7B")
     code = "".join(parts)
-    if not storage_location_fits(code, layout or configured_rack_layout()):
+    if not storage_location_fits(code, layout or current_rack_layout()):
         raise ValueError(f"Места {code} нет: проверь номер стеллажа и полку.")
     return code
 
@@ -137,7 +175,7 @@ def existing_shelf(value: str, layout: RackLayout | None = None) -> str:
     if match is None or int(match.group(1)) < 1:
         raise ValueError("Полка должна иметь вид 12C: номер стеллажа и буква полки")
     code = f"{int(match.group(1))}{match.group(2)}"
-    if not storage_location_fits(f"{code}1", layout or configured_rack_layout()):
+    if not storage_location_fits(f"{code}1", layout or current_rack_layout()):
         raise ValueError(f"Полки {code} нет: проверь номер стеллажа и полку.")
     return code
 

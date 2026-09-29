@@ -18,20 +18,33 @@ from app.shared.unit_mass import mass_fields_from
 
 from .application import (
     ConcurrentReceivingUpdate,
+    InspectBatchesCommand,
     InspectReceivingCommand,
     OpenVkRevisionCommand,
     PlaceReceivingCommand,
+    StockBalanceLookup,
+    SupplierReturnCommand,
+    SupplierReturnItem,
     UnitOfWork,
+    UnpackCommand,
     inspect_receiving,
+    inspect_receiving_batches,
     build_putaway_print_sheet,
     open_vk_revision,
     place_receiving,
+    receiving_act_sheet,
     receiving_queue,
+    return_to_supplier,
+    supplier_return_candidates,
+    unpack_receiving,
 )
 from .domain import (
+    ACT_KINDS,
     InspectionInput,
     ReceivingLine,
     ReceivingValidationError,
+    SUPPLIER_RETURN_REASONS,
+    SupplierReturnMode,
     verdict_reference_date,
 )
 
@@ -41,10 +54,30 @@ Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 MassInput = Annotated[str, Field(max_length=64)] | float | None
 
 
+class BatchPayload(BaseModel):
+    """Одна партия изготовителя в поставке (Receiving.gs batchFields_): своё количество и реквизиты партии."""
+
+    fact_quantity: Quantity | None = None
+    document_quantity: Quantity | None = None
+    series: str = Field(default="", max_length=255)
+    expiry_date: date | None = None
+    manufacture_date: date | None = None
+    quality_document_url: str | None = Field(default=None, max_length=4096)
+    mass_1: MassInput = None
+    mass_10: MassInput = None
+    mass_100: MassInput = None
+
+    @field_validator("quality_document_url")
+    @classmethod
+    def validate_document_url(cls, value: str | None) -> str | None:
+        return normalize_document_url(value)
+
+
 class InspectionPayload(BaseModel):
     version: int = Field(ge=1)
-    fact_quantity: Quantity
-    document_quantity: Quantity
+    # RC-1 (Receiving.gs:676-678): одно из двух количеств можно не вводить — берётся другое.
+    fact_quantity: Quantity | None = None
+    document_quantity: Quantity | None = None
     shipping_document_url: str | None = Field(default=None, max_length=4096)
     quality_document_url: str | None = Field(default=None, max_length=4096)
     expiry_date: date | None = None
@@ -59,11 +92,23 @@ class InspectionPayload(BaseModel):
     historical: bool = False
     document_date: date | None = None
     arrival_date: date | None = None
+    document_number: str = Field(default="", max_length=128)
+    document_name: str = Field(default="", max_length=1024)
+    note: str = Field(default="", max_length=2000)
+    manufacture_date: date | None = None
+    nonconformity_description: str = Field(default="", max_length=2000)
+    # RC-13: ≥ 2 партии — строка делится, каждая партия проходит ВК со своим ГРН.
+    batches: list[BatchPayload] = Field(default_factory=list, max_length=20)
 
     @field_validator("shipping_document_url", "quality_document_url")
     @classmethod
     def validate_document_url(cls, value: str | None) -> str | None:
         return normalize_document_url(value)
+
+
+class UnpackPayload(BaseModel):
+    version: int = Field(ge=1)
+    quantities: list[Quantity] = Field(min_length=2, max_length=100)
 
 
 class VersionPayload(BaseModel):
@@ -73,6 +118,28 @@ class VersionPayload(BaseModel):
 class PlacementPayload(BaseModel):
     version: int = Field(ge=1)
     storage_location: str = Field(min_length=3, max_length=16)
+
+
+class SupplierReturnItemPayload(BaseModel):
+    id: UUID
+    version: int = Field(ge=1)
+    # Empty → КОЛ-ВО ФАКТ of the line (SupplierReturn.gs: `it.qty` or the line's own quantity).
+    quantity: Quantity | None = None
+
+
+class SupplierReturnPayload(BaseModel):
+    items: list[SupplierReturnItemPayload] = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=255)
+    mode: SupplierReturnMode
+    claim: str = Field(default="", max_length=255)
+    comment: str = Field(default="", max_length=1000)
+
+
+def receiving_stock_lookup(request: Request) -> StockBalanceLookup:
+    lookup = getattr(request.app.state, "receiving_stock_lookup", None)
+    if lookup is None:
+        raise HTTPException(status_code=503, detail="Склад ERP не подключён")
+    return lookup
 
 
 def receiving_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -121,6 +188,22 @@ def _result(line: ReceivingLine) -> dict:
         "warehouse_event_emitted": line.warehouse_event_emitted,
         "inspected_on": line.inspected_on.isoformat() if line.inspected_on else None,
         "revision_of_id": str(line.revision_of_id) if line.revision_of_id else None,
+        "nonconformity_description": line.nonconformity_description,
+        "supplier_returns": line.supplier_returns,
+        "order_number": line.order_number,
+        "expected_arrival": line.expected_arrival.isoformat() if line.expected_arrival else None,
+        "document_number": line.document_number,
+        "document_date": line.document_date.isoformat() if line.document_date else None,
+        "document_name": line.document_name,
+        "inspection_note": line.inspection_note,
+        "manufacture_date": line.manufacture_date.isoformat() if line.manufacture_date else None,
+        "split_of_id": str(line.split_of_id) if line.split_of_id else None,
+        "acts": [
+            {"kind": kind, "title": ACT_KINDS[kind][1], "number": number, "date": day.isoformat() if day else None}
+            for kind in ACT_KINDS
+            for number, day in [line.act(kind)]
+            if number
+        ],
     }
 
 
@@ -168,6 +251,70 @@ def putaway_sheet_endpoint(
     return {"sheet": sheet.to_dict()}
 
 
+@router.get("/supplier-return")
+def supplier_return_list(
+    _principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+    stock: Annotated[StockBalanceLookup, Depends(receiving_stock_lookup)],
+) -> dict:
+    """RC-6 (SupplierReturn.gs supplierReturnRows_): принятые позиции и что по их ГРН лежит на складе."""
+    lines = _run(lambda: supplier_return_candidates(uow_factory()))
+    candidates = []
+    for line in lines:
+        lot = (
+            stock.lot_balance(line.grn, line.package)
+            if line.grn and line.warehouse_event_emitted
+            else None
+        )
+        candidates.append({
+            **_result(line),
+            "stock_warehouse": lot.warehouse if lot else None,
+            "stock_balance": _decimal(lot.balance) if lot else None,
+        })
+    return {
+        "lines": candidates,
+        "reasons": list(SUPPLIER_RETURN_REASONS),
+        "modes": {mode.value: label for mode, label in (
+            (SupplierReturnMode.WAIT, "Ждём замену — строка снова «В пути»"),
+            (SupplierReturnMode.CLOSE, "Заказ закрыт — «Возврат»"),
+        )},
+    }
+
+
+@router.post("/supplier-return")
+def supplier_return(
+    payload: SupplierReturnPayload,
+    principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+    stock: Annotated[StockBalanceLookup, Depends(receiving_stock_lookup)],
+) -> dict:
+    result = _run(
+        lambda: return_to_supplier(
+            SupplierReturnCommand(
+                items=tuple(
+                    SupplierReturnItem(line_id=item.id, expected_version=item.version, quantity=item.quantity)
+                    for item in payload.items
+                ),
+                reason=payload.reason,
+                mode=payload.mode,
+                claim=payload.claim,
+                comment=payload.comment,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+            stock,
+        )
+    )
+    return {
+        "lines": [_result(line) for line in result.lines],
+        "writeoffs": result.writeoffs,
+        "notes": list(result.notes),
+        "message": result.message,
+    }
+
+
 @router.post("/{line_id}/inspect")
 def inspect(
     line_id: UUID,
@@ -176,30 +323,63 @@ def inspect(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
 ) -> dict:
-    inspection = InspectionInput(
-        fact_quantity=payload.fact_quantity,
-        document_quantity=payload.document_quantity,
-        ordered_quantity=Decimal("1"),  # replaced by the server-owned value in application layer
-        has_shipping_document=False,  # derived from the submitted URL in application layer
-        quality_document_required=False,
-        quality_document_present=False,  # derived from the submitted URL in application layer
-        expiry_date=payload.expiry_date,
-        inspection_date=now.date(),
-        verdict_date=verdict_reference_date(
-            today=now.date(),
-            historical=payload.historical,
+    def quantities(fact: Decimal | None, document: Decimal | None) -> tuple[Decimal, Decimal]:
+        if fact is None and document is None:
+            raise HTTPException(status_code=422, detail="Укажите количество по УПД или фактическое")
+        return (fact if fact is not None else document), (document if document is not None else fact)
+
+    def inspection_for(data: InspectionPayload | BatchPayload) -> InspectionInput:
+        fact, document = quantities(data.fact_quantity, data.document_quantity)
+        return InspectionInput(
+            fact_quantity=fact,
+            document_quantity=document,
+            ordered_quantity=Decimal("1"),  # replaced by the server-owned value in application layer
+            has_shipping_document=False,  # derived from the submitted URL in application layer
+            quality_document_required=False,
+            quality_document_present=False,  # derived from the submitted URL in application layer
+            expiry_date=data.expiry_date,
+            inspection_date=now.date(),
+            verdict_date=verdict_reference_date(
+                today=now.date(),
+                historical=payload.historical,
+                document_date=payload.document_date,
+                arrival_date=payload.arrival_date,
+            ),
+            manual_nonconformities=tuple(payload.manual_nonconformities),
+            disposition=payload.disposition,
+            shipping_document_url=payload.shipping_document_url,
+            quality_document_url=data.quality_document_url or payload.quality_document_url,
+            series=data.series,
+            mass_1=data.mass_1,
+            mass_10=data.mass_10,
+            mass_100=data.mass_100,
+            document_number=payload.document_number.strip(),
             document_date=payload.document_date,
-            arrival_date=payload.arrival_date,
-        ),
-        manual_nonconformities=tuple(payload.manual_nonconformities),
-        disposition=payload.disposition,
-        shipping_document_url=payload.shipping_document_url,
-        quality_document_url=payload.quality_document_url,
-        series=payload.series,
-        mass_1=payload.mass_1,
-        mass_10=payload.mass_10,
-        mass_100=payload.mass_100,
-    )
+            document_name=payload.document_name.strip(),
+            note=payload.note.strip(),
+            manufacture_date=data.manufacture_date,
+            nonconformity_description=payload.nonconformity_description.strip(),
+        )
+
+    if len(payload.batches) == 1:
+        raise HTTPException(status_code=422, detail="Для разбивки нужно минимум 2 партии")
+    if payload.batches:
+        batches = tuple(inspection_for(batch) for batch in payload.batches)
+        lines = _run(
+            lambda: inspect_receiving_batches(
+                InspectBatchesCommand(
+                    line_id=line_id,
+                    expected_version=payload.version,
+                    batches=batches,
+                    actor=principal.actor,
+                    now=now,
+                    manual_grn_prefix=payload.manual_grn_prefix,
+                ),
+                uow_factory(),
+            )
+        )
+        return {"line": _result(lines[0]), "lines": [_result(line) for line in lines]}
+    inspection = inspection_for(payload)
     line = _run(
         lambda: inspect_receiving(
             InspectReceivingCommand(
@@ -214,6 +394,41 @@ def inspect(
         )
     )
     return {"line": _result(line)}
+
+
+@router.post("/{line_id}/unpack")
+def unpack(
+    line_id: UUID,
+    payload: UnpackPayload,
+    principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> dict:
+    lines = _run(
+        lambda: unpack_receiving(
+            UnpackCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                quantities=tuple(payload.quantities),
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
+    return {"lines": [_result(line) for line in lines]}
+
+
+@router.get("/{line_id}/acts/{kind}")
+def act_sheet(
+    line_id: UUID,
+    kind: str,
+    _principal: Annotated[Principal, Depends(receiving_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> dict:
+    if kind not in ACT_KINDS:
+        raise HTTPException(status_code=404, detail="Неизвестный вид акта")
+    return {"sheet": _run(lambda: receiving_act_sheet(line_id, kind, uow_factory())).to_dict()}
 
 
 @router.post("/{line_id}/place")

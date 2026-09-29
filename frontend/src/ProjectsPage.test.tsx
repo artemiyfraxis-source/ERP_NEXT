@@ -72,6 +72,23 @@ describe("ProjectsPage", () => {
     expect(localStorage.getItem("kitFilt")).toBe("В работе");
   });
 
+  it("creates a project from the calculation link, as SUPPLYMAP does", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => String(input) === "/api/techcards/kitsets/load"
+      ? json({ res: { project: "708К.4.1", assemblies: 1, lines: 1, erp: "", erp_error: "", ship: "", ship_error: "", ship_to_error: "", deadline_error: "" } })
+      : base(input, init));
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByRole("button", { name: "➕ Создать проект из расчёта" }));
+    fireEvent.change(screen.getByLabelText("Ссылка на расчёт"), { target: { value: " https://docs.google.com/spreadsheets/d/1AbC/edit " } });
+    fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/techcards/kitsets/load")).toBe(true));
+    const [, init] = fetchMock.mock.calls.find(([url]) => String(url) === "/api/techcards/kitsets/load")!;
+    const body = JSON.parse(String(init?.body));
+    expect(body.url).toBe("https://docs.google.com/spreadsheets/d/1AbC/edit");
+    expect(body.content_b64).toBeUndefined();
+  });
+
   it("hides writing controls for view-only access", async () => {
     render(<ProjectsPage principal={viewer} />);
     await screen.findByText("708К.4");

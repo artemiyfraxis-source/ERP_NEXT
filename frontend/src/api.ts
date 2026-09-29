@@ -186,6 +186,12 @@ export interface ManualRatePrompt {
   message: string;
 }
 
+export interface WarehouseRackLayout {
+  racks: number;
+  shelves: number;
+  perRack: Record<string, number>;
+}
+
 export interface ReceivingLine {
   id: string;
   legacy_id: string;
@@ -220,6 +226,32 @@ export interface ReceivingLine {
   warehouse_event_emitted: boolean;
   inspected_on: string | null;
   revision_of_id?: string | null;
+  nonconformity_description?: string;
+  supplier_returns?: number;
+  order_number?: string;
+  expected_arrival?: string | null;
+  document_number?: string;
+  document_date?: string | null;
+  document_name?: string;
+  inspection_note?: string;
+  manufacture_date?: string | null;
+  split_of_id?: string | null;
+  /** RC-9: выпущенные акты строки — печатаются бланком. */
+  acts?: { kind: string; title: string; number: string; date: string | null }[];
+}
+
+/** RC-6: принятая позиция в форме возврата поставщику и что по её ГРН лежит на складе. */
+export interface SupplierReturnCandidate extends ReceivingLine {
+  stock_warehouse: string | null;
+  stock_balance: string | null;
+}
+
+export interface SupplierReturnPayload {
+  items: { id: string; version: number; quantity?: string }[];
+  reason: string;
+  mode: "wait" | "close";
+  claim?: string;
+  comment?: string;
 }
 
 export interface WarehouseLot {
@@ -1435,7 +1467,7 @@ export const receivingApi = {
   /** WH-6: «Принято» без места на складе — печатный бланк через тот же механизм, что FF-8 (print.ts). */
   putawaySheet: () => api<{ sheet: PrintSheet }>("/api/receiving/putaway-sheet"),
   inspect: (lineId: string, payload: Record<string, unknown>) =>
-    api<{ line: ReceivingLine }>(`/api/receiving/${lineId}/inspect`, {
+    api<{ line: ReceivingLine; lines?: ReceivingLine[] }>(`/api/receiving/${lineId}/inspect`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -1444,11 +1476,28 @@ export const receivingApi = {
       method: "POST",
       body: JSON.stringify({ version, storage_location: storageLocation }),
     }),
+  /** RC-8 «Разукомплектовка (пакеты)»: принятая строка делится на пакеты с общим ГРН до раскладки. */
+  unpack: (lineId: string, version: number, quantities: string[]) =>
+    api<{ lines: ReceivingLine[] }>(`/api/receiving/${lineId}/unpack`, {
+      method: "POST",
+      body: JSON.stringify({ version, quantities }),
+    }),
+  actSheet: (lineId: string, kind: string) =>
+    api<{ sheet: PrintSheet }>(`/api/receiving/${lineId}/acts/${kind}`),
   openVkRevision: (lineId: string, version: number) =>
     api<{ archived: ReceivingLine; line: ReceivingLine }>(`/api/receiving/${lineId}/vk-revision`, {
       method: "POST",
       body: JSON.stringify({ version }),
     }),
+  supplierReturnCandidates: () =>
+    api<{ lines: SupplierReturnCandidate[]; reasons: string[]; modes: Record<string, string> }>(
+      "/api/receiving/supplier-return",
+    ),
+  returnToSupplier: (payload: SupplierReturnPayload) =>
+    api<{ lines: ReceivingLine[]; writeoffs: number; notes: string[]; message: string }>(
+      "/api/receiving/supplier-return",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
 };
 
 export const warehouseApi = {
@@ -1476,10 +1525,10 @@ export const warehouseApi = {
     method: "POST",
     body: JSON.stringify({ items }),
   }),
-  writeOff: (lotId: string, version: number, quantity: string, purpose: string, reason: string) =>
+  writeOff: (lotId: string, version: number, quantity: string, purpose: string, reason: string, date?: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/writeoff`, {
       method: "POST",
-      body: JSON.stringify({ version, quantity, purpose, reason }),
+      body: JSON.stringify({ version, quantity, purpose, reason, ...(date ? { date } : {}) }),
     }),
   returnWriteOff: (lotId: string, version: number, quantity: string, source: string, reason: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/return`, {
@@ -1524,6 +1573,10 @@ export const warehouseApi = {
     }),
   exportRows: () => api<{ rows: WarehouseExportRow[] }>("/api/stock/export"),
   /** The administrator only; the search runs on the server. */
+  /** «Раскладка» (portalStock05PlacesSave): стеллажи, полок по умолчанию, стеллажи со своим числом полок. */
+  rackLayout: () => api<{ layout: WarehouseRackLayout }>("/api/stock/rack-layout"),
+  saveRackLayout: (layout: WarehouseRackLayout) =>
+    api<{ layout: WarehouseRackLayout; message: string }>("/api/stock/rack-layout", { method: "PUT", body: JSON.stringify(layout) }),
   journal: (query = "") => api<WarehouseJournal>(`/api/stock/journal${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`),
   /** apply=false is the preview: the same diff, nothing written. The administrator only. */
   importTable: (edits: WarehouseReferenceEdit[], apply: boolean) => api<WarehouseBulkResult>("/api/stock/import", {
@@ -1996,8 +2049,9 @@ export const kitsetsApi = {
   list: (sort = "upd") => api<{ items: KitsetTile[]; statuses: string[] }>(`/api/techcards/kitsets?sort=${encodeURIComponent(sort)}`),
   get: (project: string) => api<KitsetCard>(kitsetPath(project)),
   load: (payload: {
-    file_name: string;
-    content_b64: string;
+    url?: string;
+    file_name?: string;
+    content_b64?: string;
     number?: string;
     deadline?: string | null;
     ship?: { shipping_point: string; contact: string; phone: string } | null;
