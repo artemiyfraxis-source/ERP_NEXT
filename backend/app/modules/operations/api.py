@@ -58,6 +58,16 @@ def notifications(
     }
 
 
+@router.get("/api/notifications/unread")
+def unread(
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(operations_uow_factory)],
+) -> dict:
+    """The bell on every screen (PortalApp.html paintBell_): only the count, polled once a minute."""
+    with uow_factory() as uow:
+        return {"unread": uow.notifications.unread_count(principal.email)}
+
+
 @router.post("/api/notifications/read")
 def mark_read(
     payload: ReadPayload,

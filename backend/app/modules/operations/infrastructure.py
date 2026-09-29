@@ -27,6 +27,32 @@ class NotificationRow(Base):
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class OperationsJobMarkRow(Base):
+    """ScriptProperties of the SUPPLYMAP owner tick: day gates and dedup marks of the daily jobs."""
+
+    __tablename__ = "operations_job_marks"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text(), nullable=False)
+    marked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SqlAlchemyJobMarks:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get(self, key: str) -> str | None:
+        row = self.session.get(OperationsJobMarkRow, key)
+        return row.value if row is not None else None
+
+    def put(self, key: str, value: str, now: datetime) -> None:
+        row = self.session.get(OperationsJobMarkRow, key)
+        if row is None:
+            self.session.add(OperationsJobMarkRow(key=key, value=value, marked_at=now))
+            return
+        row.value = value
+        row.marked_at = now
+
+
 class SqlAlchemyNotificationRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -63,6 +89,14 @@ class SqlAlchemyNotificationRepository:
         )
         return [self._domain(row) for row in rows]
 
+    def unread_count(self, email: str) -> int:
+        return int(self.session.scalar(
+            select(func.count()).select_from(NotificationRow).where(
+                NotificationRow.recipient_email == email.casefold(),
+                NotificationRow.read_at.is_(None),
+            )
+        ) or 0)
+
     def mark_read(self, email: str, ids: tuple[UUID, ...], now: datetime) -> int:
         statement = select(NotificationRow).where(
             NotificationRow.recipient_email == email.casefold(),
@@ -72,12 +106,7 @@ class SqlAlchemyNotificationRepository:
             statement = statement.where(NotificationRow.id.in_(ids))
         for row in self.session.scalars(statement):
             row.read_at = now
-        return int(self.session.scalar(
-            select(func.count()).select_from(NotificationRow).where(
-                NotificationRow.recipient_email == email.casefold(),
-                NotificationRow.read_at.is_(None),
-            )
-        ) or 0)
+        return self.unread_count(email)
 
 
 class SqlAlchemyRecipientDirectory:
@@ -130,6 +159,16 @@ class SqlAlchemyOperationsRepository:
             "details": row.details,
         } for row in rows]
 
+    def dead_letter_signatures(self) -> list[tuple[str, str, int]]:
+        """Dead-lettered outbox messages grouped by topic and error — the «Ошибки» rows with ×N."""
+        rows = self.session.execute(
+            select(OutboxMessageRow.topic, OutboxMessageRow.last_error, func.count())
+            .where(OutboxMessageRow.dead_lettered_at.is_not(None))
+            .group_by(OutboxMessageRow.topic, OutboxMessageRow.last_error)
+            .order_by(OutboxMessageRow.topic, OutboxMessageRow.last_error)
+        )
+        return [(str(topic), str(error or ""), int(count)) for topic, error, count in rows]
+
     def outbox_health(self) -> dict:
         counts = self.session.execute(select(
             func.count().label("total"),
@@ -173,6 +212,7 @@ class SqlAlchemyOperationsUnitOfWork:
         self.recipients = SqlAlchemyRecipientDirectory(self.session)
         self.operations = SqlAlchemyOperationsRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
+        self.marks = SqlAlchemyJobMarks(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
