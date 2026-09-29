@@ -82,6 +82,8 @@ class CreateFulfillmentCommand:
     # The lot each line is picked from (IssueForm → queueIssueRequest items {wh, grn, pkt, qty}); None — no lot,
     # the line waits for a delivery. Empty — no line has a lot.
     lot_ids: tuple[UUID | None, ...] = ()
+    # shortNote of queueIssueRequest: shortfalls known already while picking («нет на складе» of the calculation form).
+    short_note: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,7 @@ def _creation_fingerprint(command: CreateFulfillmentCommand) -> str:
             }
             for line, lot_id in zip(command.lines, _picked_lots(command))
         ],
+        **({"short_note": list(command.short_note)} if command.short_note else {}),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
@@ -226,12 +229,19 @@ def create_fulfillment(
         # does not cover becomes a row without a lot (waits for a delivery, shows in НЕДОБОР); a lot that is gone or
         # empty leaves the whole line waiting. The request stays «Новая».
         reserved = 0
+        shortfall = [str(note).strip() for note in command.short_note if str(note).strip()]
         for line, lot_id in zip(command.lines, _picked_lots(command)):
             if lot_id is None:
                 continue
             lot = uow.warehouse.get(lot_id)
             give = min(line.requirement, lot.available) if lot is not None else Decimal("0")
-            if lot is None or give <= 0:
+            if lot is None:
+                shortfall.append(f"{line.name}: партия не найдена на складе ({_display_number(line.requirement)})")
+                continue
+            if give < line.requirement:
+                package = f"·пак.{lot.package}" if lot.package else ""
+                shortfall.append(f"{line.name} ({lot.grn}{package}): −{_display_number(line.requirement - give)}")
+            if give <= 0:
                 continue
             snapshot = LotSnapshot(
                 lot_id=lot.id,
@@ -243,7 +253,8 @@ def create_fulfillment(
             request = request.bind_line(line.id, snapshot, give, lot.unit, touch=False)
             uow.warehouse.add(lot.reserve(give))
             reserved += 1
-        request = replace(request, version=1)
+        written = bool(command.lot_ids or command.short_note)
+        request = replace(request, version=1, shortfall_note="; ".join(shortfall) if written else None)
         uow.fulfillment.add(request)
         _audit(request, "fulfillment.created", command.actor, command.now, {
             "number": request.number, "reserved": reserved, "shortfall": request.shortfall,

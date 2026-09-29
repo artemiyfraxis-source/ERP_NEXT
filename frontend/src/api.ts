@@ -477,6 +477,26 @@ export interface FulfillmentPlace {
   slot: string;
 }
 
+/** Issue.gs issueCalcMatch_: one ЗКП position of the calculation matched against the warehouse. */
+export interface FulfillmentCalcLine {
+  name: string;
+  qty: string;
+  unit: string;
+  found: boolean;
+  short: string;
+  picks: Array<{
+    lot_id: string;
+    warehouse: string;
+    grn: string;
+    package: string;
+    article: string;
+    name: string;
+    unit: string;
+    storage_location: string;
+    qty: string;
+  }>;
+}
+
 export interface FulfillmentDraftLine {
   article: string;
   name: string;
@@ -1607,13 +1627,18 @@ export const fulfillmentApi = {
     `/api/issues${after ? `?after=${encodeURIComponent(after)}` : ""}`,
   ),
   create: (
-    payload: { purpose: string; deadline: string; lines: FulfillmentDraftLine[] },
+    payload: { purpose: string; deadline: string; lines: FulfillmentDraftLine[]; short_note?: string[] },
     idempotencyKey: string,
   ) => api<{ request: FulfillmentRequest }>("/api/issues", {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify(payload),
   }),
+  calcPreview: (url: string, warehouse: string) =>
+    api<{ project: string; lines: FulfillmentCalcLine[] }>("/api/issues/calc-preview", {
+      method: "POST",
+      body: JSON.stringify({ url, warehouse }),
+    }),
   complete: (requestId: string, version: number) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/complete`, {
       method: "POST",

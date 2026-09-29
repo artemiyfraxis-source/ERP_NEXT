@@ -35,6 +35,7 @@ class FulfillmentRequestRow(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     handout_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     return_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    shortfall_note: Mapped[str | None] = mapped_column(Text(), nullable=True)  # НЕДОБОР written at creation
     # FF-4: stage dates by the first hit (SUPPLYMAP В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА).
     at_work: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     at_picked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -123,6 +124,7 @@ class SqlAlchemyFulfillmentRepository:
             lines=tuple(_line(line) for line in lines),
             handout_location=row.handout_location,
             return_location=row.return_location,
+            shortfall_note=row.shortfall_note,
             requester_id=row.requester_id,
             at_work=row.at_work,
             at_picked=row.at_picked,
@@ -182,6 +184,7 @@ class SqlAlchemyFulfillmentRepository:
         row.status = request.status.value
         row.handout_location = request.handout_location
         row.return_location = request.return_location
+        row.shortfall_note = request.shortfall_note
         row.at_work = request.at_work
         row.at_picked = request.at_picked
         row.at_issued = request.at_issued
