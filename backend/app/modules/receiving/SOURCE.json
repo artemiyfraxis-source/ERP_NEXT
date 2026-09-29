@@ -1,6 +1,6 @@
 {
-  "sourceRef": "origin/main",
-  "sourceCommit": "5a039db3d63d6bfdd282a71e73dd9c91d620c504",
+  "sourceRef": "main",
+  "sourceCommit": "d0a030b37e6364d241fdb827c20e6af54c532085",
   "sourceFiles": ["Receiving.gs", "Schema.gs", "Config.gs", "DocGen.gs", "SupplierReturn.gs"],
   "portedInvariants": [
     "incoming-control order and deterministic verdict",
