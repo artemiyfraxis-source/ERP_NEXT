@@ -137,7 +137,7 @@ if ($Key) {
 } else {
   $warn = 'Ключ Google не найден: выданные ТК из SUPPLYMAP не перенесены, длины резки из расчёта не читаются. Один раз: scripts\update-local.ps1 -Key путь\к\ключу.json'
   Write-Warning $warn
-  Set-Content $report $warn
+  $warn | Out-File $report  # UTF-16, как Tee-Object ниже
 }
 & $py -X utf8 -m app.workflows.techcards_all generate | Tee-Object -FilePath $report -Append
 if ($LASTEXITCODE -gt 1) { Write-Warning 'Техкарты не сгенерированы (ошибка выше)' }
