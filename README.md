@@ -258,6 +258,9 @@ cd backend
 `powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key <ключ.json> -DbFile real.db`.
 Обновить такую копию до свежего main без потери данных (копия базы в `.bak`, миграции, сборка сайта,
 перезапуск API на 8022): `powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1`.
+Автообновление (задача планировщика Windows при входе, без окон; раз в 150 с смотрит main и вызывает
+`update-local.ps1`, после перезагрузки поднимает ERP): `powershell -ExecutionPolicy Bypass -File scripts\auto-update-local.ps1 -Install`,
+выключить — `-Uninstall`, журнал `backend\auto-update.log`.
 
 ### Загрузка баз «Технологии» из зеркала (REF-MIRROR-LOAD, REF-MIRROR-ALL)
 
