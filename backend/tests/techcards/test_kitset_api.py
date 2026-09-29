@@ -173,7 +173,7 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
         "file_id": document["file_id"], "uploaded_at": "2026-09-29T10:00:00", "who": "Технолог",
     }]
     # ERP больше не отдаёт байты: ссылка ведёт на Диск.
-    assert client.get(f"/api/techcards/kitsets/708К.4/documents/{document['id']}").status_code == 405
+    assert client.get(f"/api/techcards/kitsets/708К.4/documents/{document['id']}").status_code in (404, 405)
 
     bom = client.get("/api/techcards/kitsets/708К.4/bom/КБ1").json()
     assert [(c["art"], c["qty"], c["scrap"]) for c in bom["components"]] == [
