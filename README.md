@@ -233,7 +233,7 @@ $env:ERP_DATABASE_URL = 'postgresql+psycopg://USER:PASSWORD@HOST:5432/erp_next'
 листу: ПРИХОД, СПИСАНО, место, паспорт. В журнале склада это событие «Догрузка из Google». Её новые строки
 СПИСАНИЯ дописываются в историю. Партия, по которой в ERP уже были движения, не трогается: она в отчёте как
 «не изменено… в ERP уже были движения». Партии, которых больше нет в листе, только перечисляются. В конце
-отчёта строка «Изменений в ERP: …». Одной командой на ПК: `scripts\load-real-data.ps1 -Key … -Db … -StockOnly
+отчёта строка «Изменений в ERP: …». Одной командой на ПК: `scripts\load-real-data.ps1 -Key … -DbFile … -StockOnly
 [-DryRun]`, на сервере: `deploy/load-real-data.sh stock` (отчёт), затем `stock --yes`.
 
 Код выхода: 0 — всё сошлось,
@@ -255,7 +255,7 @@ cd backend
 Повторный запуск ничего не дублирует.
 
 Всё вместе на чистой базе (справочники, библиотека техкарт, склад, проекты):
-`powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key <ключ.json> -Db real.db`.
+`powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key <ключ.json> -DbFile real.db`.
 
 ### Загрузка баз «Технологии» из зеркала (REF-MIRROR-LOAD, REF-MIRROR-ALL)
 
