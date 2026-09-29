@@ -172,6 +172,19 @@ $env:ERP_WAREHOUSE_RACK_LAYOUT = '{"racks": 20, "shelves": 26, "perRack": {"5": 
 Битое значение останавливает запуск. Пустое место и старый адрес «как есть» (импорт, ручная правка места)
 раскладкой не проверяются.
 
+«Оформить заявку» → «Из расчёта» (как `openCalc`/`extractFromCalc` в SUPPLYMAP): оператор вставляет ссылку на
+Google-таблицу расчёта, сервер читает лист «ЗКП» (A:T, отображаемые значения) и «ЗКЗ»!B2 через Google Sheets
+API v4 от имени сервисного аккаунта Google. Ключ задаётся в `ERP_GOOGLE_SERVICE_ACCOUNT_JSON` — JSON-ключ
+целиком или путь к файлу ключа (Google Cloud → IAM → Service Accounts → Keys → JSON; в проекте включить
+Google Sheets API). Каждую таблицу расчёта нужно открыть на чтение («Читатель») для e-mail сервисного аккаунта
+(`client_email` из ключа) — иначе ERP так и отвечает, называя этот e-mail. Без переменной `POST
+/api/requests/import/calc` отвечает `503` с подсказкой, а в UI остаётся запасной путь — вставить диапазон листа
+ЗКП вручную (`/api/requests/import/parse`). Новых пакетов не нужно: вход по JWT (RS256) сделан на `httpx`.
+
+```powershell
+$env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = 'C:\secrets\erp-calc-reader.json'
+```
+
 ### Импорт живых остатков из SUPPLYMAP (WH-IMPORT)
 
 Выгрузка склада (`ЦАР.csv`, `ЖУК.csv`, `СПИСАНИЕ.csv`, `_manifest.json` из `whExportRead`) лежит в
