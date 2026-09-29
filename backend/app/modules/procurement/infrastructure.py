@@ -373,6 +373,56 @@ class SqlAlchemyProcurementRepository:
         statement = self._after(statement, after_id)
         return [_line_domain(row) for row in self.session.scalars(statement)]
 
+    def search(
+        self,
+        *,
+        query: str,
+        status: str | None,
+        buyer: str | None,
+        limit: int,
+        after_id: UUID | None = None,
+    ) -> list[ProcurementLine]:
+        statement = select(ProcurementLineRow)
+        if status:
+            statement = statement.where(ProcurementLineRow.status == status)
+        if buyer:
+            statement = statement.where(ProcurementLineRow.buyer_name == buyer)
+        # Every word of the query must occur in one of the line's text columns (SUPPLYMAP search).
+        columns = (
+            ProcurementLineRow.legacy_id,
+            ProcurementLineRow.designation,
+            ProcurementLineRow.project_reference,
+            ProcurementLineRow.calculated_name,
+            ProcurementLineRow.design_article,
+            ProcurementLineRow.site_name,
+            ProcurementLineRow.supplier,
+            ProcurementLineRow.order_number,
+            ProcurementLineRow.initiator,
+            ProcurementLineRow.buyer_name,
+            ProcurementLineRow.link,
+            ProcurementLineRow.invoice_number,
+            ProcurementLineRow.item_type,
+        )
+        for word in query.split():
+            escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            statement = statement.where(or_(*(column.ilike(pattern, escape="\\") for column in columns)))
+        statement = statement.order_by(ProcurementLineRow.created_at, ProcurementLineRow.id).limit(limit)
+        statement = self._after(statement, after_id)
+        return [_line_domain(row) for row in self.session.scalars(statement)]
+
+    def buyer_names(self) -> list[str]:
+        statement = select(ProcurementLineRow.buyer_name).where(ProcurementLineRow.buyer_name.is_not(None)).distinct()
+        return [name for name in self.session.scalars(statement) if name]
+
+    def excluding_statuses(self, statuses) -> list[ProcurementLine]:
+        statement = (
+            select(ProcurementLineRow)
+            .where(ProcurementLineRow.status.not_in(list(statuses)))
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+        )
+        return [_line_domain(row) for row in self.session.scalars(statement)]
+
     def list(self, limit: int = 10_000) -> list[ProcurementLine]:
         rows = self.session.scalars(
             select(ProcurementLineRow)
