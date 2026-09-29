@@ -622,5 +622,5 @@
 - Не было в ERP: 44ad0ca месячные копии за 36 мес. (прослеживаемость ГОСТ РВ хранится 3 года). Добавлено в `deploy/backup-loop.sh`: копия за 1-е число → `backups/monthly`, `KEEP_MONTHLY=36`.
 - Неприменимо (механика Google): `backupWarehouseNow`/`diagBackupStatus` (снимок файла Склад), `dbMirrorDeleteRows`, `diagPortalAccess*`.
 - Пины identity/requests/procurement/operations/shipping/receiving/warehouse/fulfillment → `sourceRef: main`, `sourceCommit: d0a030b` (аудит X1, X3: теперь drift-тест краснеет, когда SUPPLYMAP main уходит вперёд, как у production).
-- Решено агентом — проверить: ядро techcards (`sourceCommit` 83b223a, `feat/techmap-web-generator`) оставлено — каталога `techmap/` в SUPPLYMAP main нет, синхронизировать нечего. Открытым из дрейфа остаётся TC-1 (артикул к применению в ЭТК, d88150d).
+- Решено агентом — проверить: ядро techcards (`sourceCommit` 83b223a, `feat/techmap-web-generator`) оставлено — каталога `techmap/` в SUPPLYMAP main нет, синхронизировать нечего. TC-1 (d88150d, артикул к применению в ЭТК) перенесён тем же тредом: `techcards/etk_parts.py`, применяется при чтении карточки, выданные ЭТК получают его без пересборки; пин карточек техкарт → d0a030b.
 
