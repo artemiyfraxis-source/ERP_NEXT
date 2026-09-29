@@ -947,6 +947,40 @@ export const staffApi = {
     }),
 };
 
+/** NAV-ACCESS «Доступы»: a stored cell; absent / "" = «как задумано ролью» (ROLE_DEFAULTS). */
+export type AccessSetting = "none" | "view" | "edit";
+export type AccessRow = Partial<Record<string, AccessSetting>>;
+
+export interface AccessUser {
+  id: string;
+  login: string;
+  name: string;
+  role: string;
+  active: boolean;
+  access: AccessRow;
+}
+
+export interface AccessOverview {
+  sections: Array<{ key: string; label: string }>;
+  roles: Array<{ key: string; label: string }>;
+  /** What each role has with nothing set — the baseline an empty cell falls back to. */
+  defaults: Record<string, Partial<Record<string, AccessMode>>>;
+  /** Only the administrator's changes on top of the defaults. */
+  matrix: Record<string, AccessRow>;
+  users: AccessUser[];
+}
+
+export const accessApi = {
+  overview: () => api<AccessOverview>("/api/auth/access"),
+  saveRoles: (matrix: Record<string, AccessRow>) =>
+    api<{ matrix: Record<string, AccessRow> }>("/api/auth/access/roles", { method: "PUT", body: JSON.stringify({ matrix }) }),
+  saveUser: (id: string, access: AccessRow) =>
+    api<{ user_id: string; access: AccessRow }>(`/api/auth/access/users/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ access }),
+    }),
+};
+
 export const legacyApi = {
   grant: (scope: "projects" | "calculation") =>
     api<{ grant: string; expires_at: string; scope: string }>("/api/legacy/grant", {

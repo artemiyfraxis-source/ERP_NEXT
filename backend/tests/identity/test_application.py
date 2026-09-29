@@ -91,9 +91,12 @@ def test_login_resolve_logout_and_server_owned_principal(identity_database):
 
     assert resolved is not None
     assert resolved.principal.actor.id == USER_ID
+    # Stored rows sit on top of ROLE_DEFAULTS (NAV-ACCESS): the buyer's default view grants come along.
     assert resolved.principal.permissions == {
         "requests": "edit",
         "procurement": "edit",
+        "warehouse": "view",
+        "references": "view",
     }
     assert result.session_token not in resolved.session.token_hash
 
@@ -190,7 +193,7 @@ def test_user_override_removes_permission_and_deactivation_revokes_session(ident
         uow_factory(),
         client_key="client:test",
     )
-    assert result.principal.permissions == {"requests": "edit"}
+    assert result.principal.permissions == {"requests": "edit", "warehouse": "view", "references": "view"}
 
     with identity_database() as session:
         session.get(IdentityUserRow, USER_ID).active = False

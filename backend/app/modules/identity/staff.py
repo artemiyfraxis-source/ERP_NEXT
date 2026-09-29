@@ -19,7 +19,7 @@ from app.shared.identity import Actor
 
 from .application import UnitOfWork
 from .domain import (
-    ROLE_DEFAULTS,
+    AccessMode,
     IdentityUser,
     IdentityValidationError,
     department_is_role_like,
@@ -31,12 +31,16 @@ from .domain import (
     normalize_name,
     normalize_role,
     normalize_site,
+    effective_permissions,
+    role_permissions,
 )
 
 
 DEPARTMENTS_AGGREGATE = uuid5(NAMESPACE_URL, "fraxis-erp:identity:departments")
 DEPARTMENTS_LIMIT = 500
-LAST_ADMIN = "Нужен хотя бы один администратор — иначе некому будет править справочник."
+LAST_ADMIN = (
+    "Нужен хотя бы один администратор с доступом к «Сотрудникам» и «Доступам» — иначе некому будет вернуть права."
+)
 
 
 class StaffConflict(ValueError):
@@ -110,7 +114,8 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
             id=uuid4(), login=login, email=email, name=name, department=department, role=role, site=site,
             active=True,
         )
-        uow.identity.add_user(user, password_hash, ROLE_DEFAULTS.get(role, {}))
+        # The role's sections come from ROLE_DEFAULTS + the «Доступы» matrix; nothing is seeded (NAV-ACCESS).
+        uow.identity.add_user(user, password_hash, {})
         _audit(uow, user.id, "identity.user_created", actor, now, {
             "login": login, "email": email, "name": name, "department": department, "role": role,
             "site": site or "",
@@ -119,11 +124,39 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
         return user
 
 
-def _keeps_admin(current: IdentityUser, updated: IdentityUser, uow: UnitOfWork) -> None:
-    """portalStaffSave «хотя бы один администратор»: the last active admin cannot lose the role or the login."""
-    was_admin = current.role == "admin" and current.active
-    stays_admin = updated.role == "admin" and updated.active
-    if was_admin and not stays_admin and set(uow.identity.active_admin_ids()) <= {current.id}:
+def access_keepers(
+    users: list[IdentityUser],
+    admin_matrix: dict[str, AccessMode],
+    exceptions: dict[UUID, dict[str, AccessMode]],
+) -> set[UUID]:
+    """Active administrators who can still open «Сотрудники» and «Доступы» (`identity` edit + the admin role, the
+    gate of every identity route) — after the matrix row of the admin role and their own exceptions."""
+    base = role_permissions("admin", admin_matrix)
+    return {
+        user.id
+        for user in users
+        if user.active and user.role == "admin"
+        and effective_permissions(base, exceptions.get(user.id, {})).get("identity") is AccessMode.EDIT
+    }
+
+
+def ensure_access_keeper(
+    uow: UnitOfWork,
+    *,
+    user: IdentityUser | None = None,
+    admin_matrix: dict[str, AccessMode] | None = None,
+    exceptions: tuple[UUID, dict[str, AccessMode]] | None = None,
+) -> None:
+    """portalStaffSave «хотя бы один администратор» + portalAccessSave «себе вход в настройки не закрываем»: after the
+    change (a user row, the admin matrix row or one person's exceptions) someone must still be able to return rights.
+    Call inside an open unit of work; the admin rows are locked, so two admins cannot shut each other out at once."""
+    uow.identity.active_admin_ids()
+    users = [user if user is not None and row.id == user.id else row for row in uow.identity.all_users()]
+    matrix = admin_matrix if admin_matrix is not None else uow.identity.all_role_access().get("admin", {})
+    personal = uow.identity.all_user_access()
+    if exceptions is not None:
+        personal[exceptions[0]] = exceptions[1]
+    if not access_keepers(users, matrix, personal):
         raise StaffConflict(LAST_ADMIN)
 
 
@@ -141,7 +174,8 @@ def update_employee(
         if current is None:
             raise KeyError("Сотрудник не найден.")
         updated = replace(current, name=name, department=department, role=role, site=site, active=bool(change.active))
-        _keeps_admin(current, updated, uow)
+        if current.role == "admin" and current.active and (updated.role != "admin" or not updated.active):
+            ensure_access_keeper(uow, user=updated)
         changes = {
             field: [_shown(getattr(current, field)), _shown(getattr(updated, field))]
             for field in ("name", "department", "role", "site", "active")
@@ -150,8 +184,6 @@ def update_employee(
         if not changes and password_hash is None:
             return current
         uow.identity.update_user(updated)
-        if role != current.role:
-            uow.identity.ensure_role_access(role, ROLE_DEFAULTS.get(role, {}))
         if password_hash is not None:
             uow.identity.set_password(user_id, password_hash)
         # A new password or a lost login ends every open session of the employee.
@@ -168,8 +200,8 @@ def update_employee(
 def ensure_admin_remains(user_id: UUID, uow: UnitOfWork) -> None:
     """The same last-admin rule for the standalone deactivation route; call inside an open unit of work."""
     current = uow.identity.user_for_update(user_id)
-    if current is not None:
-        _keeps_admin(current, replace(current, active=False), uow)
+    if current is not None and current.role == "admin" and current.active:
+        ensure_access_keeper(uow, user=replace(current, active=False))
 
 
 def save_departments(values: list[str], actor: Actor, now: datetime, uow: UnitOfWork) -> list[str]:

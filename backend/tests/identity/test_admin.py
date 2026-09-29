@@ -51,7 +51,8 @@ def test_cli_permission_is_per_user_override(monkeypatch, admin_database):
         role_access = session.get(IdentityRoleAccessRow, ("staff", "requests"))
         override = session.get(IdentityUserAccessRow, (second.id, "requests"))
         assert first.login == "first"
-        assert role_access.mode == AccessMode.EDIT.value
+        # NAV-ACCESS: the role follows ROLE_DEFAULTS, nothing is copied into the matrix table.
+        assert role_access is None
         assert override.mode == AccessMode.VIEW.value
 
 

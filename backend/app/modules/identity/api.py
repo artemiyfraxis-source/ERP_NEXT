@@ -21,7 +21,17 @@ from .application import (
     logout,
     deactivate_user,
 )
-from .domain import ROLE_LABELS, WORK_SITES, IdentityUser, IdentityValidationError, secret_hash
+from .access import access_overview, save_role_matrix, save_user_access
+from .domain import (
+    ROLE_DEFAULTS,
+    ROLE_LABELS,
+    SECTION_LABELS,
+    WORK_SITES,
+    AccessMode,
+    IdentityUser,
+    IdentityValidationError,
+    secret_hash,
+)
 from .staff import (
     EmployeeChange,
     NewEmployee,
@@ -280,3 +290,70 @@ def rename_department_route(
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     return {"departments": departments, "users": moved}
+
+
+# ── «Доступы» (NAV-ACCESS): role × section matrix + per-person exceptions, administrator only, audited ──────
+
+
+def _modes(row: dict[str, AccessMode]) -> dict[str, str]:
+    return {section: mode.value for section, mode in row.items()}
+
+
+class RoleMatrixInput(BaseModel):
+    # {role: {section: "none" | "view" | "edit" | ""}}; a role or a cell left out = «как задумано ролью».
+    matrix: dict[str, dict[str, str]] = Field(max_length=64)
+
+
+class UserAccessInput(BaseModel):
+    access: dict[str, str] = Field(max_length=64)  # {section: mode}; left out / "" = как у роли
+
+
+@router.get("/access")
+def access_route(
+    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    del principal
+    overview = access_overview(uow_factory())
+    return {
+        "sections": [{"key": key, "label": label} for key, label in SECTION_LABELS.items()],
+        "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()],
+        "defaults": {role: _modes(ROLE_DEFAULTS.get(role, {})) for role in ROLE_LABELS},
+        "matrix": {role: _modes(row) for role, row in overview.matrix.items()},
+        "users": [
+            {
+                "id": str(user.id), "login": user.login, "name": user.name, "role": user.role, "active": user.active,
+                "access": _modes(overview.exceptions.get(user.id, {})),
+            }
+            for user in overview.users
+        ],
+    }
+
+
+@router.put("/access/roles")
+def save_role_matrix_route(
+    payload: RoleMatrixInput,
+    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    try:
+        matrix = save_role_matrix(payload.matrix, principal.actor, now, uow_factory())
+    except _STAFF_ERRORS as error:
+        raise _staff_errors(error) from error
+    return {"matrix": {role: _modes(row) for role, row in matrix.items()}}
+
+
+@router.put("/access/users/{user_id}")
+def save_user_access_route(
+    user_id: UUID,
+    payload: UserAccessInput,
+    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    try:
+        access = save_user_access(user_id, payload.access, principal.actor, now, uow_factory())
+    except _STAFF_ERRORS as error:
+        raise _staff_errors(error) from error
+    return {"user_id": str(user_id), "access": _modes(access)}

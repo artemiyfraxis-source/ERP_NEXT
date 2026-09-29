@@ -151,7 +151,8 @@ def test_admin_creates_an_employee_who_can_log_in(staff_api):
     assert event.actor_id == ADMIN_ID and event.details["role"] == "master"
     assert "first-password" not in json.dumps(event.details)
     with staff_api() as session:
-        assert session.get(IdentityRoleAccessRow, ("master", "production")).mode == "edit"
+        # The role's sections come from ROLE_DEFAULTS; nothing is copied into the matrix (NAV-ACCESS).
+        assert session.get(IdentityRoleAccessRow, ("master", "production")) is None
 
 
 @pytest.mark.parametrize(

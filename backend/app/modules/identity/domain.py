@@ -39,11 +39,12 @@ class AccessMode(str, Enum):
     EDIT = "edit"
 
 
-# Default section access per role; seeded into identity_role_access when a role gets its first user
-# (CLI create-user and the «Сотрудники» screen share it).
+# Default section access per role — «как задумано ролью» (NAV-ACCESS). `identity_role_access` holds only what the
+# administrator changed on «Доступы» on top of it (`role_permissions`): a cleared cell falls back here, an explicit
+# `none` closes a section the role has by default. Changing a default therefore reaches every role that follows it,
+# without a migration. Before NAV-ACCESS the defaults were copied into the table (migration 0040 folds them back).
 # View grants on procurement / receiving / warehouse (ID-6) follow SUPPLYMAP's role sets (Portal.gs portalButtons_):
 # buyer → склад, receiver → закупка, prodhead/management → закупка+приёмка+склад, master/staff → приёмка+склад.
-# Databases that already exist receive them from migration 0038 (ON CONFLICT DO NOTHING).
 ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
     "admin": {
         "identity": AccessMode.EDIT,
@@ -127,6 +128,24 @@ ROLES = frozenset(
         "staff",
     }
 )
+# Sections the «Доступы» matrix manages, in portal block order (Производство · Снабжение · Склад · Менеджмент).
+# One ERP key can cover several SUPPLYMAP cards: `requests` = оформить + мои + заявки, `fulfillment` = набор +
+# выдача, `production` = планирование + задания + план (own keys — NAV-SECTIONS).
+SECTION_LABELS: dict[str, str] = {
+    "projects": "Проекты",
+    "calculation": "Расчёт и КП",
+    "techcards": "Техкарты и шаблоны",
+    "references": "Справочник",
+    "production": "Планирование, задания, производственный план",
+    "requests": "Заявки (оформить · мои · все)",
+    "procurement": "Лист закупки",
+    "receiving": "Приёмка",
+    "warehouse": "Склад",
+    "fulfillment": "Комплектация и выдача",
+    "shipping": "Отгрузка",
+    "identity": "Сотрудники и доступы",
+    "operations": "Системный журнал",
+}
 
 
 @dataclass(frozen=True)
@@ -181,17 +200,27 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
-def effective_permissions(
-    role_access: dict[str, AccessMode],
-    user_access: dict[str, AccessMode],
-) -> dict[str, AccessMode]:
-    result = dict(role_access)
-    for section, mode in user_access.items():
+def _overlay(base: dict[str, AccessMode], overrides: dict[str, AccessMode]) -> dict[str, AccessMode]:
+    result = {section: mode for section, mode in base.items() if mode is not AccessMode.NONE}
+    for section, mode in overrides.items():
         if mode is AccessMode.NONE:
             result.pop(section, None)
         else:
             result[section] = mode
     return result
+
+
+def role_permissions(role: str, overrides: dict[str, AccessMode]) -> dict[str, AccessMode]:
+    """The role's sections: ROLE_DEFAULTS with the «Доступы» matrix on top (`none` closes, view/edit set)."""
+    return _overlay(ROLE_DEFAULTS.get(role, {}), overrides)
+
+
+def effective_permissions(
+    role_access: dict[str, AccessMode],
+    user_access: dict[str, AccessMode],
+) -> dict[str, AccessMode]:
+    """portalAccessFor_: the personal exception is stronger than the role (`none` takes a section away)."""
+    return _overlay(role_access, user_access)
 
 
 def secret_hash(value: str) -> str:

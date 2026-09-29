@@ -9,7 +9,7 @@ export type Section =
   | "projects" | "calculation" | "techcards" | "tctemplates" | "references" | "production" | "myops"
   | "newrequest" | "myrequests" | "requests" | "procurement"
   | "receiving" | "stock" | "issues" | "handout" | "shipping"
-  | "prodplan" | "staff" | "notifications" | "operations";
+  | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
 export type BlockId = "prod" | "supply" | "stock" | "mgmt";
 
@@ -29,7 +29,7 @@ export const BLOCKS: Array<{ id: BlockId; icon: string; title: string; sub: stri
   { id: "supply", icon: "🛒", title: "Снабжение", sub: "оформить · заявки · закупка" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
   { id: "stock", icon: "📦", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
-  { id: "mgmt", icon: "📊", title: "Менеджмент", sub: "производственный план · сотрудники · журнал" },
+  { id: "mgmt", icon: "📊", title: "Менеджмент", sub: "производственный план · сотрудники · доступы · журнал" },
 ];
 
 const TECHCARD_ROLES = ["engineer", "master", "prodhead", "management", "admin"];
@@ -65,6 +65,8 @@ export const NAV: NavItem[] = [
   // Менеджмент
   { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", roles: ["master", "prodhead", "management", "admin"], block: "mgmt" },
   { id: "staff", label: "Сотрудники", sub: "справочник, роли, отделы", permission: "identity", minimum: "edit", roles: ["admin"], block: "mgmt" },
+  // NAV-ACCESS: same gate as «Сотрудники» — the backend `identity_edit_principal` (identity edit + admin role).
+  { id: "access", label: "Доступы", sub: "роли × разделы · исключения по сотрудникам", permission: "identity", minimum: "edit", roles: ["admin"], block: "mgmt" },
   { id: "notifications", label: "Уведомления", sub: "мои события", block: "mgmt" },
   { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", roles: ["management", "admin"], block: "mgmt" },
 ];

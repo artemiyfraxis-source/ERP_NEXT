@@ -18,6 +18,7 @@ from .domain import (
     IdentityUser,
     effective_permissions,
     hash_password,
+    role_permissions,
     normalize_login,
     secret_hash,
     verify_password,
@@ -87,11 +88,15 @@ class IdentityRepository(Protocol):
         self, user: IdentityUser, password_hash: str, role_access: dict[str, AccessMode]
     ) -> None: ...
     def update_user(self, user: IdentityUser) -> None: ...
-    def ensure_role_access(self, role: str, defaults: dict[str, AccessMode]) -> None: ...
     def set_password(self, user_id: UUID, password_hash: str) -> None: ...
     def active_admin_ids(self) -> list[UUID]: ...
     def saved_departments(self) -> list[str]: ...
     def replace_departments(self, departments: list[str]) -> None: ...
+    # «Доступы» (NAV-ACCESS, access.py): the role matrix holds only changes on top of ROLE_DEFAULTS
+    def all_role_access(self) -> dict[str, dict[str, AccessMode]]: ...
+    def all_user_access(self) -> dict[UUID, dict[str, AccessMode]]: ...
+    def replace_role_access(self, role: str, overrides: dict[str, AccessMode]) -> None: ...
+    def replace_user_access(self, user_id: UUID, overrides: dict[str, AccessMode]) -> None: ...
 
 
 class UnitOfWork(Protocol):
@@ -134,10 +139,10 @@ def _audit(
 
 def _principal(
     user: IdentityUser,
-    role_access: dict[str, AccessMode],
+    role_access: dict[str, AccessMode],  # the stored matrix row of the role, ROLE_DEFAULTS are added here
     user_access: dict[str, AccessMode],
 ) -> Principal:
-    effective = effective_permissions(role_access, user_access)
+    effective = effective_permissions(role_permissions(user.role, role_access), user_access)
     return Principal(
         actor=Actor(id=user.id, name=user.name or user.email, department=user.department),
         email=user.email,

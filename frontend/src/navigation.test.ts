@@ -26,7 +26,7 @@ it("shows the administrator every block with SUPPLYMAP's cards in order, ERP-onl
     "Производство": ["Проекты", "Расчёт и КП", "Техкарты проектов", "Шаблоны техкарт", "Справочник", "Ресурсное планирование", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
-    "Менеджмент": ["Производственный план", "Сотрудники", "Уведомления", "Системный журнал"],
+    "Менеджмент": ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
   });
 });
 
@@ -88,4 +88,10 @@ it("does not open a section on a grant alone when the role is outside its set", 
   const blocks = layout(as("staff", { procurement: "edit", techcards: "edit" }));
   expect(blocks["Снабжение"]).toBeUndefined();
   expect(blocks["Производство"]).toBeUndefined();
+});
+
+it("opens «Доступы» only to an administrator who can edit identity", () => {
+  expect(layout(as("admin", { ...ALL_EDIT, identity: "view" }))["Менеджмент"]).not.toContain("Доступы");
+  expect(layout(as("buyer", { identity: "edit" }))["Менеджмент"]).toEqual(["Уведомления"]);
+  expect(layout(as("admin", { identity: "edit" }))["Менеджмент"]).toEqual(["Сотрудники", "Доступы", "Уведомления"]);
 });

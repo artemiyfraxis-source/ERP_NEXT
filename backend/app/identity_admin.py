@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import build_engine
-from app.modules.identity.domain import (
+from app.modules.identity.domain import (  # noqa: F401 — ROLE_DEFAULTS is re-exported for callers
     ROLE_DEFAULTS,
     ROLES,
     AccessMode,
@@ -69,7 +69,7 @@ def create_user(args: argparse.Namespace, sessions: sessionmaker[Session]) -> No
             session,
             user,
             hash_password(password),
-            role_access=ROLE_DEFAULTS.get(args.role, {}),
+            # The role's sections = ROLE_DEFAULTS + the «Доступы» matrix; nothing is seeded (NAV-ACCESS).
             user_access=user_access,
         )
         session.commit()

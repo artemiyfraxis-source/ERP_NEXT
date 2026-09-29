@@ -377,3 +377,9 @@ td small { margin-top: 4px; color: #7b857e; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
   .plan-note-text { grid-column: auto; }
 }
+
+/* NAV-ACCESS «Доступы»: a set cell stands out, an empty one («как задумано ролью») is quiet. */
+.access-matrix th { font-size: 12px; white-space: nowrap; }
+.access-matrix select, .access-people select { width: auto; min-width: 128px; font-size: 12.5px; }
+.access-page select.access-set { border-color: var(--primary); font-weight: 600; }
+.access-page select.access-default { color: var(--muted-foreground); }

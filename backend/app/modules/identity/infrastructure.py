@@ -350,9 +350,6 @@ class SqlAlchemyIdentityRepository:
         row.site = user.site
         row.active = user.active
 
-    def ensure_role_access(self, role: str, defaults: dict[str, AccessMode]) -> None:
-        _seed_role_access(self.session, role, defaults)
-
     def set_password(self, user_id: UUID, password_hash: str) -> None:
         row = self.session.get(IdentityCredentialRow, user_id)
         if row is None:
@@ -378,6 +375,34 @@ class SqlAlchemyIdentityRepository:
         self.session.add_all(
             IdentityDepartmentRow(position=position, name=name)
             for position, name in enumerate(departments)
+        )
+
+    # ── «Доступы» (NAV-ACCESS) ──
+
+    def all_role_access(self) -> dict[str, dict[str, AccessMode]]:
+        result: dict[str, dict[str, AccessMode]] = {}
+        for row in self.session.scalars(select(IdentityRoleAccessRow)):
+            result.setdefault(row.role, {})[row.section] = AccessMode(row.mode)
+        return result
+
+    def all_user_access(self) -> dict[UUID, dict[str, AccessMode]]:
+        result: dict[UUID, dict[str, AccessMode]] = {}
+        for row in self.session.scalars(select(IdentityUserAccessRow)):
+            result.setdefault(row.user_id, {})[row.section] = AccessMode(row.mode)
+        return result
+
+    def replace_role_access(self, role: str, overrides: dict[str, AccessMode]) -> None:
+        self.session.execute(delete(IdentityRoleAccessRow).where(IdentityRoleAccessRow.role == role))
+        self.session.add_all(
+            IdentityRoleAccessRow(role=role, section=section, mode=mode.value)
+            for section, mode in overrides.items()
+        )
+
+    def replace_user_access(self, user_id: UUID, overrides: dict[str, AccessMode]) -> None:
+        self.session.execute(delete(IdentityUserAccessRow).where(IdentityUserAccessRow.user_id == user_id))
+        self.session.add_all(
+            IdentityUserAccessRow(user_id=user_id, section=section, mode=mode.value)
+            for section, mode in overrides.items()
         )
 
 
@@ -409,7 +434,7 @@ class SqlAlchemyIdentityUnitOfWork:
 
 
 def _seed_role_access(session: Session, role: str, defaults: dict[str, AccessMode]) -> None:
-    """A role gets its default sections once; rows that already exist (edited by hand) are left alone."""
+    """Explicit matrix rows for tests and fixtures; ROLE_DEFAULTS need no rows (NAV-ACCESS), existing rows stay."""
     for section, mode in defaults.items():
         if session.get(IdentityRoleAccessRow, (role, section)) is None:
             session.add(IdentityRoleAccessRow(role=role, section=section, mode=mode.value))

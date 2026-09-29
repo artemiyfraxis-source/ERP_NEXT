@@ -29,6 +29,7 @@ import { NotificationsPage } from "./NotificationsPage";
 import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
 import { StaffPage } from "./StaffPage";
+import { AccessPage } from "./AccessPage";
 
 // «Режим просмотра» (ID-6): edit controls only when the backend *_edit_principal would pass too.
 function canEdit(principal: Principal, permission: string, roles: string[]) {
@@ -170,6 +171,7 @@ export function App() {
         {activeSection === "notifications" && <NotificationsPage />}
         {activeSection === "operations" && <OperationsPage />}
         {activeSection === "staff" && <StaffPage />}
+        {activeSection === "access" && <AccessPage />}
       </main>
     </div>
   );
