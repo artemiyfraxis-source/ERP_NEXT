@@ -162,6 +162,21 @@ export interface ProcurementLine {
   replacement_open: boolean;
   permission_number: string | null;
   permission_date: string | null;
+  manufacturer?: string | null;
+  country?: string | null;
+  quality_document_type?: string | null;
+  quality_document_number?: string | null;
+  quality_document_date?: string | null;
+  standard?: string | null;
+}
+
+export interface ProcurementTraceabilityInput {
+  manufacturer: string;
+  country: string;
+  quality_document_type: string;
+  quality_document_number: string;
+  quality_document_date: string | null;
+  standard: string;
 }
 
 export type MoneyDriver = "net" | "gross" | "vat" | "qty" | "sum";
@@ -1426,6 +1441,11 @@ export const procurementApi = {
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/replacement`, {
       method: "PATCH",
       body: JSON.stringify({ version, replacement, decision }),
+    }),
+  setTraceability: (lineId: string, version: number, trace: ProcurementTraceabilityInput) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/traceability`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, ...trace }),
     }),
   replacementPermissionSheet: (lineId: string) =>
     api<{ sheet: PrintSheet }>(`/api/procurement/${lineId}/replacement-permission`),

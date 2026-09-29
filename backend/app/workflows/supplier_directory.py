@@ -17,6 +17,7 @@ from app.modules.references.domain import (
     ReferenceEntry,
     ReferenceKind,
     ReferenceValidationError,
+    normalized_manufacturer_key,
     normalized_supplier_key,
 )
 from app.shared.events import AuditEvent
@@ -38,6 +39,19 @@ class ReferencesSupplierDirectory:
             for entry in entries
             if entry.kind == ReferenceKind.SUPPLIER and entry.value.strip()
         }
+
+    def country_for_manufacturer(self, manufacturer: str) -> str:
+        """`countryForManufacturer_` (References.gs:101): СТРАНА by ИЗГОТОВИТЕЛЬ from the map, otherwise ''."""
+        try:
+            key = normalized_manufacturer_key(manufacturer)
+        except ReferenceValidationError:
+            return ""
+        with self.references_uow_factory() as uow:
+            entries = list(uow.references.list())
+        for entry in entries:
+            if entry.kind == ReferenceKind.COUNTRY and entry.normalized_key == key:
+                return entry.value.strip()
+        return ""
 
     def learn(self, link: str | None, supplier: str | None, actor: Actor, now: datetime) -> bool:
         """`learnSupplier_`: remember «домен → поставщик»; no link — nothing to learn; an existing key is

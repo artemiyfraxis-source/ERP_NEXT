@@ -23,6 +23,7 @@ from .domain import (
     MoneyEntry,
     PERMISSION_NUMBER_PREFIX,
     ProcurementFacts,
+    ProcurementTraceability,
     ProcurementLine,
     ProcurementStatus,
     ProcurementValidationError,
@@ -95,6 +96,7 @@ class SupplierDirectory(Protocol):
 
     def supplier_map(self) -> dict[str, str]: ...
     def learn(self, link: str | None, supplier: str | None, actor: Actor, now: datetime) -> bool: ...
+    def country_for_manufacturer(self, manufacturer: str) -> str: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -278,6 +280,15 @@ class SetReplacementCommand:
     expected_version: int
     replacement: bool
     decision: ReplacementDecision | None
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class SetTraceabilityCommand:
+    line_id: UUID
+    expected_version: int
+    trace: ProcurementTraceability
     actor: Actor
     now: datetime
 
@@ -852,6 +863,40 @@ def build_replacement_permission_sheet(line: ProcurementLine) -> PrintSheet:
     )
 
 
+def set_procurement_traceability(
+    command: SetTraceabilityCommand,
+    uow: UnitOfWork,
+    suppliers: SupplierDirectory | None = None,
+) -> ProcurementLine:
+    """ИЗГОТОВИТЕЛЬ … СТАНДАРТ of one line. An edited ИЗГОТОВИТЕЛЬ with an empty СТРАНА takes the country
+    from the «изготовитель → страна» map (Guards.gs:369-371, `countryForManufacturer_`)."""
+    trace = command.trace
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        maker = (trace.manufacturer or "").strip()
+        if (
+            suppliers is not None
+            and maker
+            and maker != (current.trace.manufacturer or "")
+            and not (trace.country or "").strip()
+        ):
+            country = suppliers.country_for_manufacturer(maker)
+            if country:
+                trace = replace(trace, country=country)
+        updated = current.set_traceability(trace, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.traceability_saved",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+        )
+        if result != current:
+            uow.commit()
+        return result
+
+
 def set_procurement_replacement(command: SetReplacementCommand, uow: UnitOfWork) -> ProcurementLine:
     with uow:
         current = _load_versioned(command.line_id, command.expected_version, uow)
@@ -1245,6 +1290,16 @@ def _receiving_expected(line: ProcurementLine, now: datetime) -> OutboxMessage:
             # № ЗАКАЗА and ОЖИД. ДАТА: the receiving queue groups and orders by them (portalReceiveRows).
             "order_number": line.order_number or "",
             "expected_arrival": line.expected_arrival.isoformat() if line.expected_arrival else None,
+            # Traceability typed in procurement (Config.gs:523-525: ПРОИЗВОДИТЕЛЬ, СТРАНА, № ДОКУМЕНТА joined
+            # into the ВК act from Закупка); Receiving fills only what it has empty.
+            "manufacturer": line.trace.manufacturer or "",
+            "country": line.trace.country or "",
+            "quality_document_type": line.trace.quality_document_type or "",
+            "quality_document_number": line.trace.quality_document_number or "",
+            "quality_document_date": (
+                line.trace.quality_document_date.isoformat() if line.trace.quality_document_date else None
+            ),
+            "standard": line.trace.standard or "",
         },
     )
 
