@@ -1,5 +1,4 @@
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   referencesApi,
   techcardsApi,
@@ -623,15 +622,15 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       })}
     </div>
 
-    {/* Одна кнопка, как «Создать техкарты» SUPPLYMAP: создаёт и сразу выдаёт ЭТК; у выданной — «Пересобрать» новой ревизией. */}
+    {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». Остальное — в «Ещё». */}
     <div className="gen-actions">
-      <button className="primary" disabled={busy} onClick={() => void generate()}>{card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>
+      <details className="gen-more"><summary>Ещё</summary>
+        <label className="toggle-row"><input type="checkbox" checked={S.materialsSheet} onChange={(event) => update({ materialsSheet: event.target.checked })} /> Свод материалов отдельным листом в ЭТК</label>
+        {card.document && card.status !== "Выдана" && <button className="secondary small" disabled={busy} onClick={() => void deleteGenerated()}>Удалить черновик ЭТК</button>}
+        {more}
+      </details>
+      <button className="primary" disabled={busy} onClick={() => void generate()}>{busy ? "Собираю…" : card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>
     </div>
-    <details className="gen-more"><summary>Ещё</summary>
-      <label className="toggle-row"><input type="checkbox" checked={S.materialsSheet} onChange={(event) => update({ materialsSheet: event.target.checked })} /> Свод материалов отдельным листом в ЭТК</label>
-      {card.document && card.status !== "Выдана" && <button className="secondary small" disabled={busy} onClick={() => void deleteGenerated()}>Удалить черновик ЭТК</button>}
-      {more}
-    </details>
     {status.text && <div className={status.error ? "error-banner" : "muted"} role={status.error ? "alert" : undefined}>{status.text}</div>}
   </div>;
 }

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   kitsetsApi,
-  techcardsApi,
   type KitsetAssembly,
   type KitsetCard,
   type KitsetComponent,
@@ -12,11 +11,10 @@ import {
   type KitsetSupplyLine,
   type KitsetTile,
   type Principal,
-  type ProjectTechcard,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
-import { ProjectEtk } from "./TechcardsPage";
+import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
    номер, заказчик, сборки с тиражом и состав каждой. Внутри — состав, снабжение, спецификация, генератор и
@@ -80,22 +78,43 @@ export function kitBatch(per: string, run: string, scrap: string) {
   return Math.round(num(per) * num(run) * (1 + num(scrap) / 100) * 100) / 100;
 }
 
-/** ЭТК сборки внутри карточки проекта (вкладки «Генератор» и «ТК КБn»), как в SUPPLYMAP: владелец работает с ТК
-    конкретного проекта из его карточки. Отдельного экрана со всеми техкартами больше нет. */
-function EtkPane({ cardId, principal, changed }: { cardId: string; principal: Principal; changed: () => void }) {
-  const [etk, setEtk] = useState<ProjectTechcard | null>(null);
+/** «Генератор» карточки проекта (SUPPLYMAP renderGen_ / mountGen_): сверху сборки проекта, ниже генератор выбранной.
+    Карточку ТК сборки заводит открытие генератора (kitsetsApi.openTechcard). */
+function GenTab({ card, principal, index, pick, done }: {
+  card: KitsetCard; principal: Principal; index: string; pick: (index: string) => void; done: (index: string) => void;
+}) {
+  const [cardId, setCardId] = useState("");
   const [error, setError] = useState("");
+  const { card: techcard, setCard: setTechcard, error: loadError } = useTechcard(cardId);
   useEffect(() => {
     let live = true;
-    setEtk(null); setError("");
-    void techcardsApi.list()
-      .then((result) => { if (live) { const found = result.items.find((item) => item.id === cardId); found ? setEtk(found) : setError("Техкарта не найдена"); } })
-      .catch((reason) => { if (live) setError(message(reason, "Техкарта не открылась")); });
+    setCardId(""); setError("");
+    if (!index) return;
+    kitsetsApi.openTechcard(card.project, index)
+      .then((result) => { if (live) setCardId(result.card_id); })
+      .catch((reason) => { if (live) setError(message(reason, "Генератор не открылся")); });
     return () => { live = false; };
-  }, [cardId]);
+  }, [card.project, index]);
+  const assembly = card.assemblies.find((item) => item.index === index);
+  return <div className="kit-pane">
+    <div className="seg-tabs sub" role="tablist" aria-label="Сборка">{card.assemblies.map((item) =>
+      <button key={item.index} role="tab" aria-selected={item.index === index} className={item.index === index ? "on" : ""} onClick={() => pick(item.index)}>{item.index}</button>)}</div>
+    {!index && <div className="empty">Выбери сборку — генератор откроется здесь.</div>}
+    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : "нет"}</p>}
+    {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
+    {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
+    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
+  </div>;
+}
+
+/** «ТК КБn»: электронная ТК сборки (SUPPLYMAP renderTc_). «Пересобрать» ведёт в генератор этой сборки. */
+function TcTab({ assembly, principal, rebuild, changed }: { assembly: KitsetAssembly; principal: Principal; rebuild: () => void; changed: () => void }) {
+  const { card, setCard, error } = useTechcard(assembly.techcard?.card_id || "");
   if (error) return <div className="error-banner" role="alert">{error}</div>;
-  if (!etk) return <div className="empty">Загрузка техкарты…</div>;
-  return <ProjectEtk card={etk} principal={principal} onChange={(updated) => { setEtk(updated); changed(); }} />;
+  if (!card) return <div className="empty">Загрузка техкарты…</div>;
+  return <EtkSheet card={card} principal={principal} onRebuild={rebuild}
+    title={<><strong>{assembly.index}</strong> <span>{assembly.name}</span> <span className="muted">кол-во {assembly.run}</span></>}
+    onChange={(updated) => { setCard(updated); changed(); }} />;
 }
 
 function openSection(section: string, extra: Record<string, string> = {}) {
@@ -255,7 +274,7 @@ function CreateFromCalc({ close, done }: {
 type Tab = "sostav" | "supply" | "spec" | "gen" | `tc:${string}`;
 
 function KitsetCardView({ project, principal, canEdit, canRequest, back }: { project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: () => void }) {
-  const [etkId, setEtkId] = useState("");
+  const [genIndex, setGenIndex] = useState("");
   const [card, setCard] = useState<KitsetCard | null>(null);
   const [tab, setTab] = useState<Tab>("sostav");
   const [error, setError] = useState("");
@@ -294,11 +313,7 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
     }
   }
 
-  async function openTechcard(index: string) {
-    setError("");
-    try { setEtkId((await kitsetsApi.openTechcard(project, index)).card_id); setTab("gen"); }
-    catch (reason) { setError(message(reason, "Не удалось открыть техкарту")); }
-  }
+  function openGen(index: string) { setGenIndex(index); setTab("gen"); }
 
   if (!card) return <section className="page projects-page">
     <header className="page-head"><button className="secondary small" onClick={back}>← Назад</button><h1>{project}</h1></header>
@@ -311,49 +326,42 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
     ...tcTabs.map((assembly) => [`tc:${assembly.index}` as Tab, `ТК ${assembly.index}`] as [Tab, string]),
   ];
 
-  return <section className="page projects-page">
-    <header className="page-head"><button className="secondary small" onClick={back}>← Назад</button><h1>📋 {card.project}</h1><span className="kit-status">{card.status}</span></header>
-    <p className="page-sub">{card.customer || "—"} · <a href={card.calc_source} target="_blank" rel="noopener">расчёт</a> · обновлено {new Date(card.updated_at).toLocaleString("ru-RU")} {card.updated_by}</p>
-    <div className="page-actions">
-      {canEdit && <button className="secondary" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
-      {canEdit && <button className="secondary" onClick={() => void remove()}>Удалить карточку</button>}
+  /* Шапка и вкладки — как карточка проекта SUPPLYMAP (kitCardRender_): строка «заказчик · расчёт · обновлено»,
+     небольшие кнопки действий и сегментные вкладки Состав / Снабжение / Спецификация / Генератор / ТК КБn. */
+  return <section className="page projects-page kit-card">
+    <header className="page-head"><button className="secondary small" onClick={back}>← Назад</button><h1>📋 {card.project}</h1></header>
+    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>} · обновлено {new Date(card.updated_at).toLocaleString("ru-RU")} {card.updated_by}</p>
+    <div className="kit-actions">
+      {canEdit && <button className="secondary small" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "🔄 Обновить из расчёта"}</button>}
+      {canEdit && <button className="secondary small" onClick={() => void remove()}>🗑 Удалить карточку</button>}
+      <button className="secondary small" onClick={() => openSection("shipping", { ship_project: card.project })}>🚚 Отгрузить</button>
       {/* Заявка — отдельный шаг, как в SUPPLYMAP: заведение проекта её не создаёт; кнопка открывает «Оформить заявку →
           Из расчёта» с этой ссылкой и номером, оператор проверяет строки и отправляет. */}
-      {canRequest && card.calc_source && <button className="secondary" onClick={() => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project })}>Оформить заявку из расчёта</button>}
-      <button className="secondary" onClick={() => openSection("shipping", { ship_project: card.project })}>Отгрузить</button>
+      {canRequest && card.calc_source && <button className="secondary small" onClick={() => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project })}>📝 Оформить заявку из расчёта</button>}
       {note && <span className="muted">{note}</span>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
-    <div className="shipping-tabs" role="tablist">
-      {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "secondary active" : "secondary"} onClick={() => setTab(key)}>{label}</button>)}
+    <div className="seg-tabs" role="tablist">
+      {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}
     </div>
-    {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openTechcard={(index) => void openTechcard(index)} />}
+    {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} />}
     {tab === "supply" && <SupplyTab project={card.project} />}
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} />}
-    {tab === "gen" && <div className="panel kit-pane">
-      <p className="page-sub">Выбери сборку — ниже откроется её техкарта: сборка ЭТК по составу этой сборки, выдача и ревизии.</p>
-      <div className="shipping-tabs">{card.assemblies.map((assembly) => {
-        const active = Boolean(etkId) && assembly.techcard?.card_id === etkId;
-        return <button key={assembly.index} aria-pressed={active} className={active ? "secondary active" : "secondary"} onClick={() => void openTechcard(assembly.index)}>{assembly.index}</button>;
-      })}</div>
-      {etkId && <EtkPane key={etkId} cardId={etkId} principal={principal} changed={() => void load()} />}
-    </div>}
+    {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex}
+      done={(index) => { void load(); setTab(`tc:${index}`); setNote(`Техкарта ${index} готова — открыта вкладка «ТК ${index}».`); }} />}
     {tab.startsWith("tc:") && (() => {
       const assembly = card.assemblies.find((item) => `tc:${item.index}` === tab);
       if (!assembly?.techcard) return <div className="empty">Сборка не найдена.</div>;
-      return <div className="panel kit-pane">
-        <p><strong>{assembly.index}</strong> {assembly.name} <span className="muted">кол-во {assembly.run} · операций {assembly.techcard.stages} · ревизия {assembly.techcard.revision} · {assembly.techcard.status}</span></p>
-        <EtkPane key={assembly.techcard.card_id} cardId={assembly.techcard.card_id} principal={principal} changed={() => void load()} />
-      </div>;
+      return <div className="kit-pane"><TcTab key={assembly.techcard.card_id} assembly={assembly} principal={principal} rebuild={() => openGen(assembly.index)} changed={() => void load()} /></div>;
     })()}
   </section>;
 }
 
 const REVIEW_TONE: Record<string, string> = { "проверена": "ok", "с погрешностями": "danger", "не проверена": "neutral" };
 
-function SostavTab({ card, canEdit, reload, setNote, setError, openTechcard }: {
+function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }: {
   card: KitsetCard; canEdit: boolean; reload: () => Promise<void>; setNote: (text: string) => void;
-  setError: (text: string) => void; openTechcard: (index: string) => void;
+  setError: (text: string) => void; openGen: (index: string) => void; openTc: (index: string) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kdIndex, setKdIndex] = useState("");
@@ -390,58 +398,59 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openTechcard }: {
     catch (reason) { setError(message(reason, "КД не отвязана")); }
   }
 
-  const columns: DataColumn<KitsetAssembly>[] = [
-    { key: "index", title: "КБ", value: (assembly) => assembly.index, render: (assembly) => <strong>{assembly.index}</strong> },
-    { key: "name", title: "Наименование", value: (assembly) => assembly.name, wrap: true },
-    { key: "run", title: "Кол-во", value: (assembly) => assembly.run, numeric: true },
-    { key: "positions", title: "Позиций", value: (assembly) => assembly.components.length, numeric: true },
-    { key: "kd", title: "КД", value: (assembly) => assembly.kd.map((document) => document.name).join(", "), render: (assembly) => <>
-      {assembly.kd.map((document) => <div key={document.id} className="kit-kd">
-        {document.stored || !document.url
-          ? <a href={kitsetsApi.documentUrl(card.project, document.id)} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
-          : <><a href={document.url} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a> <span className="muted">на Диске (архив)</span></>}
-        {canEdit && <button className="link-button" title="Отвязать" onClick={() => void detach(document.id)}>✕</button>}
-      </div>)}
-      {canEdit && <button className="link-button" onClick={() => { setKdIndex(assembly.index); fileRef.current?.click(); }}>＋ файл</button>}
-    </> },
-    { key: "techcard", title: "Техкарта",
-      value: (assembly) => assembly.techcard ? `${assembly.techcard.issued ? "готова" : "черновик"} · ${assembly.techcard.stages} оп.` : "нет",
-      render: (assembly) => assembly.techcard
-        ? <button className="link-button" onClick={() => openTechcard(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} оп.</button>
-        : <span className="muted">нет</span> },
-    { key: "stage", title: "Этап", filter: true, value: (assembly) => assembly.stage?.status || "", render: (assembly) => canEdit
-      ? <select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => void markKb(assembly, "stage", event.target.value)}>
-        <option value="авто">авто: {assembly.stage?.manual ? "по фактам" : assembly.stage?.status || "—"}</option>
-        {card.stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
-      </select>
-      : <>{assembly.stage?.status || "—"}{assembly.stage?.manual && <span className="muted" title="выставлен вручную"> ✍</span>}</> },
-    { key: "review", title: "Проверка ТК",
-      value: (assembly) => assembly.techcard?.issued ? (assembly.stage?.review?.value || "не проверена") : "",
-      render: (assembly) => {
-        const review = assembly.stage?.review || { value: "не проверена", text: "" };
-        return !assembly.techcard?.issued ? <span className="muted">—</span> : <>
-          {canEdit
-            ? <select aria-label={`Проверка ТК ${assembly.index}`} className={`tone-${REVIEW_TONE[review.value] || "neutral"}`} value={review.value} onChange={(event) => void markKb(assembly, "tcReview", event.target.value)}>
-              {card.review_values.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-            : <span className={`tone-${REVIEW_TONE[review.value] || "neutral"}`}>{review.value}</span>}
-          {review.text && review.value === "с погрешностями" && <div className="t-sub">{review.text}</div>}
-        </>;
-      } },
-  ];
+  const kdCell = (assembly: KitsetAssembly) => <>
+    {assembly.kd.map((document) => <div key={document.id} className="kit-kd">
+      {document.stored || !document.url
+        ? <a href={kitsetsApi.documentUrl(card.project, document.id)} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
+        : <><a href={document.url} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a> <span className="muted">на Диске (архив)</span></>}
+      {canEdit && <button className="link-button" title="Отвязать" onClick={() => void detach(document.id)}>✕</button>}
+    </div>)}
+    {canEdit && <button className="kit-file" onClick={() => { setKdIndex(assembly.index); fileRef.current?.click(); }}>＋ файл</button>}
+  </>;
 
+  const stageCell = (assembly: KitsetAssembly) => canEdit
+    ? <select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => void markKb(assembly, "stage", event.target.value)}>
+      <option value="авто">авто: {assembly.stage?.manual ? "по фактам" : assembly.stage?.status || "—"}</option>
+      {card.stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+    </select>
+    : <>{assembly.stage?.status || "—"}{assembly.stage?.manual && <span className="muted" title="выставлен вручную"> ✍</span>}</>;
+
+  const reviewCell = (assembly: KitsetAssembly) => {
+    const review = assembly.stage?.review || { value: "не проверена", text: "" };
+    return !assembly.techcard?.issued ? <span className="muted">—</span> : <>
+      {canEdit
+        ? <select aria-label={`Проверка ТК ${assembly.index}`} className={`tone-${REVIEW_TONE[review.value] || "neutral"}`} value={review.value} onChange={(event) => void markKb(assembly, "tcReview", event.target.value)}>
+          {card.review_values.map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        : <span className={`tone-${REVIEW_TONE[review.value] || "neutral"}`}>{review.value}</span>}
+      {review.text && review.value === "с погрешностями" && <div className="t-sub">{review.text}</div>}
+    </>;
+  };
+
+  /* SUPPLYMAP renderSostav_: простая таблица без поиска и колонок — сборок в проекте единицы. Клик по строке
+     открывает генератор этой сборки; «готова · N эт.» ведёт на вкладку её ТК. */
   return <div className="kit-pane">
-    <p className="page-sub">Позиции проекта: сборки, их количество и приложенная КД. Состав каждой — на вкладке «Спецификация», техкарта собирается в «Генераторе».</p>
+    <p className="page-sub">Позиции проекта: сборки, их количество и приложенная КД. Клик по строке открывает генератор этой сборки. Состав каждой — на вкладке «Спецификация», техкарта собирается в «Генераторе». КД хранится в ERP.</p>
     <input ref={fileRef} type="file" hidden data-testid="kd-file" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
-    <DataTable
-      rows={card.assemblies}
-      columns={columns}
-      rowKey={(assembly) => assembly.index}
-      storageKey="kit-sostav"
-      label="Состав проекта"
-      exportName={`Состав ${card.project}`}
-      emptyText="В проекте нет сборок."
-    />
+    {!card.assemblies.length ? <div className="empty">В проекте нет сборок.</div> : <div className="table-wrap kit-sostav"><table aria-label="Состав проекта">
+      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th></tr></thead>
+      <tbody>{card.assemblies.map((assembly) => <tr key={assembly.index} title={`Открыть генератор ${assembly.index}`} onClick={(event) => {
+        // Внутри строки свои кликабельные вещи — ссылка на КД, «＋ файл», выпадающие списки.
+        if ((event.target as HTMLElement).closest("a, button, input, select, label")) return;
+        openGen(assembly.index);
+      }}>
+        <td><strong>{assembly.index}</strong></td>
+        <td className="wrap">{assembly.name}</td>
+        <td className="num">{assembly.run}</td>
+        <td className="num">{assembly.components.length}</td>
+        <td>{kdCell(assembly)}</td>
+        <td>{assembly.techcard && assembly.techcard.stages > 0
+          ? <button className="link-button" onClick={() => (assembly.techcard!.issued ? openTc : openGen)(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} эт.</button>
+          : <span className="muted">нет</span>}</td>
+        <td>{stageCell(assembly)}</td>
+        <td>{reviewCell(assembly)}</td>
+      </tr>)}</tbody>
+    </table></div>}
   </div>;
 }
 
