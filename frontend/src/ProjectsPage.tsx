@@ -83,7 +83,6 @@ export function deleteSummary(res: KitsetDeleteResult) {
   const parts = [`спецификация ${res.deleted}`];
   for (const [name, count] of Object.entries(res.erp || {})) parts.push(`${name.toLowerCase()} ${count}`);
   if (res.cards?.cards) parts.push(`техкарты ${res.cards.cards}`);
-  if (res.kd) parts.push(`КД ${res.kd}`);
   if (res.gp?.deleted) parts.push(`склад ГП ${res.gp.deleted}`);
   return `Снесено строк: ${parts.join(", ")}` + (res.gp?.kept ? `. На складе ГП осталось с движением: ${res.gp.kept}` : "");
 }
@@ -405,7 +404,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openTechcard }: {
   }
 
   async function detach(documentId: string) {
-    if (!window.confirm("Отвязать КД? Файл удалится из карточки проекта.")) return;
+    if (!window.confirm("Отвязать КД? Файл уедет в корзину Диска — оттуда его можно вернуть 30 дней. Строка вложения удалится.")) return;
     try { await kitsetsApi.removeDocument(card.project, documentId); setNote("Отвязано."); await reload(); }
     catch (reason) { setError(message(reason, "КД не отвязана")); }
   }
@@ -417,7 +416,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openTechcard }: {
     { key: "positions", title: "Позиций", value: (assembly) => assembly.components.length, numeric: true },
     { key: "kd", title: "КД", value: (assembly) => assembly.kd.map((document) => document.name).join(", "), render: (assembly) => <>
       {assembly.kd.map((document) => <div key={document.id} className="kit-kd">
-        <a href={kitsetsApi.documentUrl(card.project, document.id)} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
+        <a href={document.url} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
         {canEdit && <button className="link-button" title="Отвязать" onClick={() => void detach(document.id)}>✕</button>}
       </div>)}
       {canEdit && <button className="link-button" onClick={() => { setKdIndex(assembly.index); fileRef.current?.click(); }}>＋ файл</button>}

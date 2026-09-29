@@ -163,11 +163,11 @@ class ServiceAccount:
             token_uri=str(info.get("token_uri") or TOKEN_URI),
         )
 
-    def assertion(self, now: int) -> str:
+    def assertion(self, now: int, scope: str = SCOPE) -> str:
         header = {"alg": "RS256", "typ": "JWT"}
         if self.private_key_id:
             header["kid"] = self.private_key_id
-        claims = {"iss": self.client_email, "scope": SCOPE, "aud": self.token_uri, "iat": now, "exp": now + 3600}
+        claims = {"iss": self.client_email, "scope": scope, "aud": self.token_uri, "iat": now, "exp": now + 3600}
         signing_input = ".".join(
             _b64url(json.dumps(part, separators=(",", ":")).encode("utf-8")) for part in (header, claims)
         )
