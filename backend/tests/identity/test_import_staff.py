@@ -1,6 +1,7 @@
 """STAFF-IMPORT: the SUPPLYMAP staff snapshot → ERP employees, each with a fresh PIN printed for the owner
 (owner ask 2026-09-29 «перенести сотрудников из гугла … все пины мне»)."""
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,9 +11,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.modules.identity.application import login_with_pin
+from app.modules.identity.domain import IdentityUser, hash_password, hash_pin, new_pin, normalize_login
 from app.modules.identity.import_staff import (
     ADDITIONAL_STAFF,
     ROLE_MAP,
+    TEST_EMAILS,
     SourceEmployee,
     all_source_staff,
     import_staff,
@@ -67,8 +70,9 @@ def test_read_source_merges_config_names_with_backup_roles(source):
     people = read_source(source)
     by_email = {person.email: person for person in people}
     # Config carries name + department; the access backup's role wins over the seed's (petr: staff seed → receiver).
+    # Names are read as «Фамилия Имя» for the login list (SUPPLYMAP stores «Имя Фамилия»).
     assert by_email["petr@example.test"] == SourceEmployee(
-        email="petr@example.test", name="Пётр Петров", department="Склад", role="receiver",
+        email="petr@example.test", name="Петров Пётр", department="Склад", role="receiver",
     )
     assert by_email["ivan@example.test"].role == "admin"
     assert by_email["sveta@example.test"].role == "master"  # not in the backup → the seed's role
@@ -85,7 +89,7 @@ def test_dry_run_writes_nothing_and_issues_a_pin_each(source, sessions):
 def test_apply_creates_everyone_and_login_works_then_is_idempotent(source, sessions):
     people = read_source(source)
     rows = import_staff(people, _uow(sessions)(), NOW, apply=True, reset_pins=False)
-    ivan = next(row for row in rows if row.name == "Иван Иванов")
+    ivan = next(row for row in rows if row.name == "Иванов Иван")
 
     # Sign in by name (the opaque staff id from /login-staff) + the issued PIN.
     who = str(staff_id("ivan@example.test"))
@@ -103,13 +107,45 @@ def test_reset_pins_reissues_for_existing(source, sessions):
     import_staff(read_source(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
     rows = import_staff(read_source(source), _uow(sessions)(), NOW, apply=True, reset_pins=True)
     assert all(row.action == "PIN перевыдан" and row.pin for row in rows)
-    ivan = next(row for row in rows if row.name == "Иван Иванов")
+    ivan = next(row for row in rows if row.name == "Иванов Иван")
     who = str(staff_id("ivan@example.test"))
     assert login_with_pin(who, ivan.pin, NOW, _uow(sessions)(), client_key="k2").principal.email == "ivan@example.test"
 
 
 def test_role_map_covers_current_supplymap_roles():
     assert set(ROLE_MAP) >= {"admin", "buyer", "receiver", "prodhead", "master", "management", "staff"}
+
+
+def test_names_are_read_surname_first_for_the_login_list(source):
+    # SUPPLYMAP «Имя Фамилия» → «Фамилия Имя» so the login list sorts by surname (owner 2026-09-29).
+    names = {person.email: person.name for person in read_source(source)}
+    assert names["ivan@example.test"] == "Иванов Иван"
+    assert names["sveta@example.test"] == "Светова Света"
+
+
+def test_test_account_is_never_created_and_is_deactivated_if_present(sessions):
+    test_email = next(iter(TEST_EMAILS))
+    person = SourceEmployee(email=test_email, name="Вася Пупкин", department="бог", role="admin")
+    # First run: the test account must not become an employee.
+    first = import_staff([person], _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    assert first[0].action == "тестовый — пропущен" and first[0].pin is None
+    with _uow(sessions)() as uow:
+        assert uow.identity.all_users() == []
+
+    # If an older run had created it (active), the import deactivates it so it leaves the login list.
+    import_staff([replace(person, email=test_email)], _uow(sessions)(), NOW, apply=True, reset_pins=False)  # no-op
+    with _uow(sessions)() as uow:
+        uow.identity.add_user(
+            IdentityUser(id=staff_id(test_email), login=normalize_login(test_email), email=test_email,
+                         name="Артемий", department="Руководство", role="management", site=None, active=True),
+            hash_password("test-password"), {}, hash_pin(new_pin()),
+        )
+        uow.commit()
+    again = import_staff([person], _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    assert again[0].action == "тестовый — отключён"
+    with _uow(sessions)() as uow:
+        stored = next(user for user in uow.identity.all_users() if user.email == test_email)
+    assert stored.active is False
 
 
 def test_installers_are_added_to_the_import(source):
@@ -158,7 +194,7 @@ def test_reimport_updates_department_and_site_but_keeps_pin(source, sessions):
 
     again = import_staff(all_source_staff(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
     olga = next(row for row in again if row.name == "Рыбкина Ольга")
-    assert olga.action == "обновлён (отдел/площадка)" and olga.pin is None
+    assert olga.action == "обновлён (имя/отдел/площадка)" and olga.pin is None
     with _uow(sessions)() as uow:
         stored = next(user for user in uow.identity.all_users() if user.email == "rybkina.olga@fraxis.local")
     assert stored.department == "Монтаж" and stored.site == "ЦАР"

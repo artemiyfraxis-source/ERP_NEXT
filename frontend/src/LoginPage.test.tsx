@@ -37,9 +37,7 @@ it("signs in by picking yourself in the list and typing the PIN", async () => {
   const onLogin = vi.fn();
 
   render(<LoginPage onLogin={onLogin} />);
-  expect(await screen.findByRole("option", { name: "Петров Пётр · Снабжение" })).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Поиск сотрудника"), { target: { value: "петр" } });
-  expect(screen.queryByRole("option", { name: "Иванов Иван · Цех" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: "Петров Пётр" })).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Сотрудник"), { target: { value: "u2" } });
   fireEvent.change(screen.getByLabelText("PIN-код"), { target: { value: "123456" } });
   fireEvent.click(screen.getByRole("button", { name: "Войти" }));
@@ -49,10 +47,23 @@ it("signs in by picking yourself in the list and typing the PIN", async () => {
   expect(window.localStorage.getItem("erp.login.who")).toBe("u2");
 });
 
+it("is just the list, the PIN and the button — no search box, no first-login hint (owner 2026-09-29)", async () => {
+  // Иванов before Петров: the list is sorted by surname, and a <select> searches by typing on its own.
+  const staff = [{ id: "u2", name: "Петров Пётр", department: "Снабжение" }, { id: "u1", name: "Иванов Иван", department: "Цех" }];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ staff }));
+  render(<LoginPage onLogin={vi.fn()} />);
+
+  const list = await screen.findByLabelText("Сотрудник");
+  const names = [...list.querySelectorAll("option")].map((option) => option.textContent);
+  expect(names).toEqual(["— выбери себя —", "Иванов Иван", "Петров Пётр"]);
+  expect(screen.queryByLabelText("Поиск сотрудника")).toBeNull();
+  expect(screen.queryByText(/Первый вход/)).toBeNull();
+});
+
 it("asks to pick yourself before signing in", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ staff: STAFF }));
   render(<LoginPage onLogin={vi.fn()} />);
-  await screen.findByRole("option", { name: "Иванов Иван · Цех" });
+  await screen.findByRole("option", { name: "Иванов Иван" });
   fireEvent.click(screen.getByRole("button", { name: "Войти" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Выбери себя в списке.");
 });
@@ -67,7 +78,7 @@ it("shows the PIN once on the first sign-in with an empty PIN and fills it in (p
   const onLogin = vi.fn();
 
   render(<LoginPage onLogin={onLogin} />);
-  await screen.findByRole("option", { name: "Иванов Иван · Цех" });
+  await screen.findByRole("option", { name: "Иванов Иван" });
   fireEvent.change(screen.getByLabelText("Сотрудник"), { target: { value: "u1" } });
   fireEvent.click(screen.getByRole("button", { name: "Войти" }));
 
@@ -86,7 +97,7 @@ it("shows the server's refusal as is", async () => {
     return json({ detail: "Неверный сотрудник или PIN." }, 401);
   });
   render(<LoginPage onLogin={vi.fn()} />);
-  await screen.findByRole("option", { name: "Иванов Иван · Цех" });
+  await screen.findByRole("option", { name: "Иванов Иван" });
   fireEvent.change(screen.getByLabelText("Сотрудник"), { target: { value: "u1" } });
   fireEvent.change(screen.getByLabelText("PIN-код"), { target: { value: "000000" } });
   fireEvent.click(screen.getByRole("button", { name: "Войти" }));
