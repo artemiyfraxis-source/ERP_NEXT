@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 // shaded, today has a left edge. Used by the production plan; the resource-planning task and
 // operation Gantts reuse it with their own rows.
 
-export type GanttTone = "default" | "late" | "partial" | "busy" | "new";
+export type GanttTone = "default" | "late" | "partial" | "busy" | "new" | "done" | "absent";
 
 export interface GanttBar {
   /** ISO date or date-time; a bar without both ends is not drawn. */

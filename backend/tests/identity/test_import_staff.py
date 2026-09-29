@@ -11,8 +11,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.modules.identity.application import login_with_pin
 from app.modules.identity.import_staff import (
+    ADDITIONAL_STAFF,
     ROLE_MAP,
     SourceEmployee,
+    all_source_staff,
     import_staff,
     read_source,
     staff_id,
@@ -108,3 +110,22 @@ def test_reset_pins_reissues_for_existing(source, sessions):
 
 def test_role_map_covers_current_supplymap_roles():
     assert set(ROLE_MAP) >= {"admin", "buyer", "receiver", "prodhead", "master", "management", "staff"}
+
+
+def test_installers_are_added_to_the_import(source):
+    # Монтажники (owner 2026-09-29) are not in SUPPLYMAP; the import adds them itself as staff in «Производство».
+    everyone = all_source_staff(source)
+    installers = [person for person in everyone if person in ADDITIONAL_STAFF]
+    assert len(installers) == 9
+    assert {"Рыбкина Ольга", "Шилов Артем", "Пузанов Александр"} <= {person.name for person in installers}
+    assert all(person.role == "staff" and person.department == "Производство" for person in installers)
+    # They join the SUPPLYMAP directory rather than replacing it.
+    assert len(everyone) == len(read_source(source)) + 9
+
+
+def test_installers_get_a_pin_and_can_log_in(source, sessions):
+    rows = import_staff(all_source_staff(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    olga = next(row for row in rows if row.name == "Рыбкина Ольга")
+    assert olga.pin and olga.action == "создан"
+    who = str(staff_id("rybkina.olga@fraxis.local"))
+    assert login_with_pin(who, olga.pin, NOW, _uow(sessions)(), client_key="k").principal.email == "rybkina.olga@fraxis.local"
