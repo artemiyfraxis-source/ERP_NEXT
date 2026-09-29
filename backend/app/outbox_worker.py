@@ -31,7 +31,9 @@ from app.modules.warehouse.application import PoisonWarehouseMessage, dispatch_n
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
 from app.modules.operations.application import PoisonNotificationMessage, dispatch_next_notification
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
+from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.shared.clock import moscow_now
+from app.workflows.supplier_directory import ReferencesSupplierDirectory
 from app.shared.warehouse_location import configured_rack_layout
 
 
@@ -43,12 +45,14 @@ def dispatch_available(
     if limit < 1:
         raise ValueError("limit must be positive")
     dispatched = 0
+    suppliers = ReferencesSupplierDirectory(lambda: SqlAlchemyReferencesUnitOfWork(sessions))
     while dispatched < limit:
         progressed = False
         try:
             line = dispatch_next_procurement_requested(
                 moscow_now(),
                 SqlAlchemyProcurementUnitOfWork(sessions),
+                suppliers,
             )
         except PoisonOutboxMessage as error:
             logging.warning("Quarantined invalid outbox message %s", error.message_id)

@@ -73,6 +73,47 @@ REPLACEMENT_EDITABLE = frozenset(
 )
 
 
+# ЕД.ИЗМ (факт): `PURCHASE_INWORK_COLS_` берёт список из валидации листа, фолбэк — `REQUEST_FORM_FIELDS['ЕД.ИЗМ']`
+# (Config.gs:697). Валидации листа в ERP нет, поэтому список — тот же, что в форме заявки.
+ACTUAL_UNITS = ("шт", "кг", "м", "л", "уп", "компл")
+
+# PUR_STATUS_ORDER (Config.gs:56): linear pipeline order; «Согласование»/«Отменено» are outside it.
+STATUS_ORDER = (
+    ProcurementStatus.NEW,
+    ProcurementStatus.IN_WORK,
+    ProcurementStatus.READY,
+    ProcurementStatus.AWAITING_INVOICE,
+    ProcurementStatus.TO_PAY,
+    ProcurementStatus.IN_TRANSIT,
+    ProcurementStatus.QUARANTINE,
+    ProcurementStatus.DONE,
+)
+# `portalPurchaseBySupplier`: the overview stages are PUR_STATUS_ORDER.slice(0, 5); «В пути» lives in
+# receiving, «Готово» is already in stock, «Отменено» is closed — none of them enter the overview.
+BY_SUPPLIER_STAGES = STATUS_ORDER[:5]
+BY_SUPPLIER_CLOSED = frozenset(
+    {ProcurementStatus.IN_TRANSIT, ProcurementStatus.DONE, ProcurementStatus.CANCELLED}
+)
+
+def supplier_key(value: object) -> str:
+    """`supplierKey_` (Schema.gs:220): a URL/host → its host without «www.» (lower case); any other
+    text (Склад, Фраксис, …) → itself in lower case."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    match = re.match(r"^[a-z]+://([^/]+)", text)
+    host = match.group(1) if match else text.split("/")[0]
+    if " " not in host and "." in host:
+        return host[4:] if host.startswith("www.") else host
+    return text
+
+
+def supplier_from_link(link: object, suppliers: dict[str, str]) -> str:
+    """`supplierFromLink_` (Schema.gs:231): the map's supplier for the link's key, otherwise ''."""
+    key = supplier_key(link)
+    return suppliers.get(key, "") if key else ""
+
+
 @dataclass(frozen=True)
 class ProcurementFacts:
     supplier: str | None | _Unset = UNSET
