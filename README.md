@@ -256,6 +256,8 @@ cd backend
 
 Всё вместе на чистой базе (справочники, библиотека техкарт, склад, проекты):
 `powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key <ключ.json> -DbFile real.db`.
+Обновить такую копию до свежего main без потери данных (копия базы в `.bak`, миграции, сборка сайта,
+перезапуск API на 8022): `powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1`.
 
 ### Загрузка баз «Технологии» из зеркала (REF-MIRROR-LOAD, REF-MIRROR-ALL)
 
