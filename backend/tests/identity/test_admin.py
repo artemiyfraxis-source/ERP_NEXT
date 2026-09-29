@@ -77,7 +77,7 @@ def test_operational_roles_include_receiving_and_warehouse_permissions():
         "fulfillment": AccessMode.EDIT,
         "shipping": AccessMode.EDIT,
         "procurement": AccessMode.VIEW,
-        "references": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
     }
     assert ROLE_DEFAULTS["admin"]["receiving"] is AccessMode.EDIT
     assert ROLE_DEFAULTS["admin"]["warehouse"] is AccessMode.EDIT
@@ -89,8 +89,8 @@ def test_operational_roles_include_receiving_and_warehouse_permissions():
     assert ROLE_DEFAULTS["prodhead"]["production"] is AccessMode.VIEW
     assert ROLE_DEFAULTS["pm"]["shipping"] is AccessMode.EDIT
     assert ROLE_DEFAULTS["master"]["shipping"] is AccessMode.VIEW
-    assert ROLE_DEFAULTS["admin"]["references"] is AccessMode.EDIT
-    assert ROLE_DEFAULTS["staff"]["references"] is AccessMode.VIEW
+    assert ROLE_DEFAULTS["admin"]["erpref"] is AccessMode.EDIT
+    assert ROLE_DEFAULTS["staff"]["erpref"] is AccessMode.VIEW
     assert ROLE_DEFAULTS["admin"]["operations"] is AccessMode.EDIT
     assert ROLE_DEFAULTS["management"]["operations"] is AccessMode.VIEW
     assert ROLE_DEFAULTS["qc"]["production"] is AccessMode.EDIT

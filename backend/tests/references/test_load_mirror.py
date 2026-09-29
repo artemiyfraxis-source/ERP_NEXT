@@ -187,7 +187,7 @@ def test_resolve_terminal_works_on_loaded_ter_rows(tmp_path, sessions):
     load_mirror(mirror(tmp_path), SqlAlchemyReferencesUnitOfWork(sessions), dry_run=False, now=NOW)
     app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=ACTOR, email="admin@example.test", roles=frozenset({"admin"}), permissions={"references": "edit"})
+        actor=ACTOR, email="admin@example.test", roles=frozenset({"admin"}), permissions={"erpref": "edit", "procurement": "edit"})
     try:
         response = TestClient(app).post("/api/references/technology/resolve-terminal", json={
             "article": "Molex 430310001", "wires": ["UL1007 22 AWG"]})
@@ -214,7 +214,7 @@ def test_resolve_terminal_reads_every_ter_row_not_the_first_500(sessions):
     ), SqlAlchemyReferencesUnitOfWork(sessions))
     app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=ACTOR, email="admin@example.test", roles=frozenset({"admin"}), permissions={"references": "edit"})
+        actor=ACTOR, email="admin@example.test", roles=frozenset({"admin"}), permissions={"erpref": "edit", "procurement": "edit"})
     try:
         response = TestClient(app).post("/api/references/technology/resolve-terminal", json={
             "article": "TARGET", "wires": ["22 AWG"]})

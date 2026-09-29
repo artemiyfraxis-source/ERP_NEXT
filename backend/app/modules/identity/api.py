@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.http_auth import identity_edit_principal
+from app.shared.http_auth import access_admin_principal, staffdir_principal
 
 from .application import (
     AuthenticationError,
@@ -149,7 +149,7 @@ def logout_route(
 @router.post("/users/{user_id}/deactivate")
 def deactivate_user_route(
     user_id: UUID,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -222,7 +222,7 @@ _STAFF_ERRORS = (KeyError, StaffConflict, IdentityValidationError, IntegrityErro
 
 @router.get("/staff")
 def staff_route(
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
     del principal
@@ -238,7 +238,7 @@ def staff_route(
 @router.post("/staff", status_code=201)
 def create_employee_route(
     payload: EmployeeCreateInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -253,7 +253,7 @@ def create_employee_route(
 def update_employee_route(
     user_id: UUID,
     payload: EmployeeUpdateInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -267,7 +267,7 @@ def update_employee_route(
 @router.put("/departments")
 def save_departments_route(
     payload: DepartmentsInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -281,7 +281,7 @@ def save_departments_route(
 @router.post("/departments/rename")
 def rename_department_route(
     payload: DepartmentRenameInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -310,7 +310,7 @@ class UserAccessInput(BaseModel):
 
 @router.get("/access")
 def access_route(
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(access_admin_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
     del principal
@@ -333,7 +333,7 @@ def access_route(
 @router.put("/access/roles")
 def save_role_matrix_route(
     payload: RoleMatrixInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(access_admin_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -348,7 +348,7 @@ def save_role_matrix_route(
 def save_user_access_route(
     user_id: UUID,
     payload: UserAccessInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(access_admin_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:

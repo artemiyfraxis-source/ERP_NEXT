@@ -74,6 +74,9 @@ class SqlAlchemyTechOperationRepository:
         if normalized: statement = statement.where(func.lower(TechOperationRecordRow.normalized_search).contains(normalized))
         rows = self.session.scalars(statement.order_by(TechOperationRecordRow.tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id).limit(limit))
         return [self._domain(row) for row in rows]
+    def counts(self) -> dict[TechOperationTab, int]:
+        rows = self.session.execute(select(TechOperationRecordRow.tab, func.count()).group_by(TechOperationRecordRow.tab))
+        return {TechOperationTab(tab): count for tab, count in rows}
     def get(self, record_id: UUID) -> TechOperationRecord | None:
         row = self.session.get(TechOperationRecordRow, record_id)
         return None if row is None else self._domain(row)

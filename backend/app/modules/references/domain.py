@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Iterable
-from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 
@@ -31,15 +31,63 @@ class TechOperationTab(str, Enum):
     KAB_AWG = "kab_awg"  # СПР.КАБ, нижняя таблица: AWG → сечение, Ø жилы, Ø изоляции по маркам
 
 
+_URL_HOST = re.compile(r"^[a-z]+://([^/]+)")
+
+
 def normalized_supplier_key(value: str) -> str:
-    raw = str(value or "").strip().lower()
-    if not raw:
+    """SUPPLYMAP Schema.gs supplierKey_ (RF-1): a link or a bare domain → the host without `www.`, lower case; anything
+    without a dot (or with a space) is a literal key kept as typed, lower case — «Склад», «Фраксис», «Вода»,
+    «КабельРФ» are real keys of SUPPLIER_BY_LINK."""
+    text = str(value or "").strip().lower()
+    if not text:
         raise ReferenceValidationError("Ключ поставщика обязателен")
-    candidate = raw if "://" in raw else f"https://{raw}"
-    host = (urlparse(candidate).hostname or "").removeprefix("www.")
-    if not host or "." not in host:
-        raise ReferenceValidationError("Для поставщика укажите домен или ссылку")
-    return host
+    match = _URL_HOST.match(text)
+    host = match.group(1) if match else text.split("/")[0]
+    if " " not in host and "." in host:
+        return host.removeprefix("www.")
+    return text
+
+
+# SUPPLYMAP Config.gs SUPPLIER_BY_LINK: the seed shown while the maps were never saved (References.gs getReferences).
+SUPPLIER_BY_LINK: tuple[tuple[str, str], ...] = (
+    ("kroks.ru", 'ООО "Крокс Плюс"'),
+    ("baltic-signal.ru", 'ООО "Интеллектуальная техника"'),
+    ("arlight.moscow", 'ООО "Лайтверк"'),
+    ("texenergo.ru", 'ООО "МФК Техенерго"'),
+    ("cabeus.ru", 'ООО "Анлан"'),
+    ("chipdip.ru", 'АО "ЧИП И ДИП"'),
+    ("gsm-repiteri.ru", 'ООО "Интеллектуальная техника"'),
+    ("фраксис", "Склад"),
+    ("склад", "Склад"),
+    ("paritet.su", "Паритет"),
+    ("dart.moscow", 'ООО "Дарт Холдинг"'),
+    ("кабельрф", 'ООО "ЭЛЕКТРОПОСТАВЩИК"'),
+    ("cable.ru", 'ООО "ЭЛЕКТРОПОСТАВЩИК"'),
+    ("etm.ru", 'АО "ТД "Электротехмонтаж"'),
+    ("anycubic3d.ru", "ИП Донскова Валентина Ивановна"),
+    ("1001krep.ru", 'ООО "1001 КРЕПЕЖ"'),
+    ("krepcom.ru", 'ООО "Спецкрепеж"'),
+    ("lider-3d.ru", 'ООО "Двигатель Прогресса"'),
+    ("vseinstrumenti.ru", 'ООО "Все Инструменты"'),
+    ("supereyes.ru", "ИП Реснянский Андрей Александрович"),
+    ("vegatel.ru", 'ООО "Вегател"'),
+    ("вода", 'ООО "Польза природы"'),
+    ("ozon.ru", 'ООО "Интернет Решения"'),
+    ("3d-m.ru", "ИП Гусев Максим Николаевич"),
+    ("olmitec.ru", 'ООО "ОЛНАКС"'),
+    ("electro-mpo.ru", 'ЗАО МПО "Электромонтаж"'),
+    ("snabcable.ru", 'ООО "Снабкабель"'),
+    ("promelec.ru", 'ООО ТД "Промэлектроника"'),
+    ("kvt-pro.ru", 'ООО "Немецкие инструменты"'),
+    ("elitan.ru", 'ООО "Элитан Трейд"'),
+    ("prodiel.ru", 'ООО "Продиэл"'),
+    ("dart.com.ru", 'ООО "Дарт Холдинг"'),
+)
+
+
+def pair_is_blank(key: str, value: str) -> bool:
+    """References.gs saveReferences: a row with an empty key or value is dropped, not an error (RF-2)."""
+    return not str(key or "").strip() or not str(value or "").strip()
 
 
 def normalized_manufacturer_key(value: str) -> str:

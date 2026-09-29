@@ -49,7 +49,7 @@ def operation_library_api():
         actor=actor,
         email="admin@example.test",
         roles=frozenset({"admin"}),
-        permissions={"techcards": "edit", "references": "edit"},
+        permissions={"techcards": "edit", "erptctpl": "edit", "tcgen": "edit", "erpref": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: NOW
     yield TestClient(app)
@@ -135,7 +135,7 @@ def test_non_admin_cannot_replace_operation_library(operation_library_api):
         ),
         email="engineer@example.test",
         roles=frozenset({"engineer"}),
-        permissions={"techcards": "edit"},
+        permissions={"techcards": "edit", "erptctpl": "edit", "tcgen": "edit"},
     )
     response = operation_library_api.put(
         "/api/techcards/templates/supplymap-library",

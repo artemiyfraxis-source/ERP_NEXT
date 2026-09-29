@@ -129,14 +129,15 @@ def access_keepers(
     admin_matrix: dict[str, AccessMode],
     exceptions: dict[UUID, dict[str, AccessMode]],
 ) -> set[UUID]:
-    """Active administrators who can still open «Сотрудники» and «Доступы» (`identity` edit + the admin role, the
-    gate of every identity route) — after the matrix row of the admin role and their own exceptions."""
+    """Active administrators who can still open «Сотрудники» (`staffdir` edit + the admin role; «Доступы» is the admin
+    role alone) — after the matrix row of the admin role and their own exceptions. SUPPLYMAP portalAccessSave drops
+    `admin.staffdir = none` for the same reason."""
     base = role_permissions("admin", admin_matrix)
     return {
         user.id
         for user in users
         if user.active and user.role == "admin"
-        and effective_permissions(base, exceptions.get(user.id, {})).get("identity") is AccessMode.EDIT
+        and effective_permissions(base, exceptions.get(user.id, {})).get("staffdir") is AccessMode.EDIT
     }
 
 

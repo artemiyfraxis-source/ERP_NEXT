@@ -98,7 +98,7 @@ def test_login_resolve_logout_and_server_owned_principal(identity_database):
         "requests": "edit",
         "procurement": "edit",
         "warehouse": "view",
-        "references": "view",
+        "erpref": "view",
     }
     assert result.session_token not in resolved.session.token_hash
 
@@ -196,7 +196,7 @@ def test_user_override_removes_permission_and_deactivation_revokes_session(ident
         client_key="client:test",
     )
     assert result.principal.permissions == {
-        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "warehouse": "view", "references": "view",
+        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "warehouse": "view", "erpref": "view",
     }
 
     with identity_database() as session:

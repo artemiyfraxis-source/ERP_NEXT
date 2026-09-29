@@ -11,13 +11,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, references_edit_principal, references_view_principal
+from app.shared.http_auth import (
+    Principal, references_edit_principal, references_import_principal, references_maps_edit_principal,
+    references_maps_view_principal, references_view_principal,
+)
 
 from .application import (
     CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
     StaleRecordError, UnitOfWork, create_record, edit_record, replace_maps, replace_snapshot,
 )
-from .domain import BASE_COLUMNS, MAX_ROW_EDITS, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationTab
+from .domain import (
+    BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError,
+    TechOperationTab,
+)
 from .technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION,
     TerminalRecord,
@@ -32,8 +38,9 @@ router = APIRouter(prefix="/api/references", tags=["references"])
 
 
 class PairPayload(BaseModel):
-    key: str = Field(min_length=1, max_length=2048)
-    value: str = Field(min_length=1, max_length=512)
+    # An empty row is dropped on save (References.gs saveReferences, RF-2), so empty strings are accepted here.
+    key: str = Field(default="", max_length=2048)
+    value: str = Field(default="", max_length=512)
 
 
 class MapsPayload(BaseModel):
@@ -100,28 +107,49 @@ def _run(operation):
 
 
 def _maps(entries) -> dict:
+    suppliers = [{"key": item.key, "value": item.value} for item in entries if item.kind == ReferenceKind.SUPPLIER]
+    countries = [{"key": item.key, "value": item.value} for item in entries if item.kind == ReferenceKind.COUNTRY]
     return {
-        "suppliers": [{"key": item.key, "value": item.value} for item in entries if item.kind == ReferenceKind.SUPPLIER],
-        "countries": [{"key": item.key, "value": item.value} for item in entries if item.kind == ReferenceKind.COUNTRY],
+        "suppliers": suppliers,
+        "countries": countries,
         "gost_awg": [{"key": item.key, "value": item.value} for item in entries if item.kind == ReferenceKind.GOST_AWG],
     }
 
 
+def _map_rights(principal: Principal) -> dict[str, bool]:
+    """Who changes which map: supplier/country — the buyer (portalCanWork_ = `procurement` edit), ГОСТ→AWG — the
+    reference book (`erpref` edit)."""
+    return {
+        "suppliers": principal.permissions.get("procurement") == "edit",
+        "gost_awg": principal.permissions.get("erpref") == "edit",
+    }
+
+
 @router.get("/maps")
-def maps(_principal: Annotated[Principal, Depends(references_view_principal)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)]) -> dict:
+def maps(principal: Annotated[Principal, Depends(references_maps_view_principal)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)]) -> dict:
     with uow_factory() as uow: entries = uow.references.list()
-    return _maps(entries)
+    result = _maps(entries)
+    # getReferences: nothing saved yet → the SUPPLIER_BY_LINK seed (shown, stored on the first save).
+    if not result["suppliers"] and not result["countries"]:
+        result["suppliers"] = [{"key": key, "value": value} for key, value in SUPPLIER_BY_LINK]
+    result["can_edit"] = _map_rights(principal)
+    return result
 
 
 @router.put("/maps")
-def save_maps(payload: MapsPayload, principal: Annotated[Principal, Depends(references_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)]) -> dict:
+def save_maps(payload: MapsPayload, principal: Annotated[Principal, Depends(references_maps_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)]) -> dict:
+    rights = _map_rights(principal)
+    kinds = frozenset(
+        ({ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY} if rights["suppliers"] else set())
+        | ({ReferenceKind.GOST_AWG} if rights["gost_awg"] else set())
+    )
     entries = _run(lambda: replace_maps(ReplaceMapsCommand(
         suppliers=tuple(ReferencePair(item.key, item.value) for item in payload.suppliers),
         countries=tuple(ReferencePair(item.key, item.value) for item in payload.countries),
         gost_awg=tuple(ReferencePair(item.key, item.value) for item in payload.gost_awg),
-        actor=principal.actor, now=now,
+        actor=principal.actor, now=now, kinds=kinds,
     ), uow_factory()))
-    return _maps(entries)
+    return {**_maps(entries), "can_edit": rights}
 
 
 @router.get("/tech-operations")
@@ -191,7 +219,7 @@ def resolve_terminal_norm(
 
 
 @router.put("/tech-operations/snapshot")
-def save_snapshot(payload: SnapshotPayload, principal: Annotated[Principal, Depends(references_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)]) -> dict:
+def save_snapshot(payload: SnapshotPayload, principal: Annotated[Principal, Depends(references_import_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)]) -> dict:
     count = _run(lambda: replace_snapshot(ReplaceSnapshotCommand(
         schema_version=payload.schema_version, source_updated_at=payload.source_updated_at,
         records=tuple(TechRecordInput(
@@ -205,7 +233,7 @@ def save_snapshot(payload: SnapshotPayload, principal: Annotated[Principal, Depe
 @router.put("/tech-operations/supplymap-snapshot")
 def import_supplymap_technology_snapshot(
     payload: SupplymapSnapshotPayload,
-    principal: Annotated[Principal, Depends(references_edit_principal)],
+    principal: Annotated[Principal, Depends(references_import_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
@@ -236,6 +264,22 @@ _BASE_LABELS = {
     "coax": "БД.КОАКС — коаксиал", "prov": "БД.ПРОВ — провода", "mat": "БД.МАТ — материалы",
     "spr_kab": "СПР.КАБ — сечения и диаметры кабеля", "tk_templates": "БД.ТК — шаблоны ТК",
 }
+# PortalRef.gs REF_BASES_: tile icon and the line under it.
+_BASE_TILES = {
+    "op": ("⏱", "нормы времени · станки · подготовка"),
+    "ob": ("🛠", "инструмент · станки · инв. номера"),
+    "ter": ("🔩", "обжим · аппликаторы · зачистка"),
+    "coax": ("📡", "разделка D/L · пин и экран"),
+    "prov": ("🧵", "марки · сечения · диаметры"),
+    "mat": ("🧪", "трубки · оплётки · стяжки"),
+    "spr_kab": ("📏", "Ø изоляции по AWG · слои коакса"),
+    "tk_templates": ("🧩", "шаблоны техкарт · только просмотр"),
+}
+_BASE_TABS = {
+    "op": (TechOperationTab.OPERATION,), "ob": (TechOperationTab.EQUIPMENT,), "ter": (TechOperationTab.TERMINAL,),
+    "coax": (TechOperationTab.COAX,), "prov": (TechOperationTab.WIRE,), "mat": (TechOperationTab.MATERIAL,),
+    "spr_kab": (TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG),
+}
 
 
 def _record_json(item) -> dict:
@@ -250,10 +294,20 @@ def _run_edit(operation):
 
 
 @router.get("/bases")
-def bases(_principal: Annotated[Principal, Depends(references_view_principal)]) -> dict:
-    """Portal «Справочник» catalogue: editable snapshot bases and view-only ones."""
+def bases(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """Portal «Справочник» tiles (portalRefList): each base with its record count; view-only ones marked. БД.ТК
+    templates live in «Шаблоны техкарт», so their count is not known here (null)."""
+    with uow_factory() as uow:
+        counts = uow.tech_operations.counts()
     return {"bases": [
-        {"id": key, "label": label, "editable": key not in VIEW_ONLY_BASES}
+        {
+            "id": key, "label": label, "editable": key not in VIEW_ONLY_BASES,
+            "icon": _BASE_TILES[key][0], "sub": _BASE_TILES[key][1],
+            "count": sum(counts.get(tab, 0) for tab in _BASE_TABS[key]) if key in _BASE_TABS else None,
+        }
         for key, label in _BASE_LABELS.items()
     ]}
 

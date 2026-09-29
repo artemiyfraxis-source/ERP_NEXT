@@ -51,30 +51,17 @@ class AccessMode(str, Enum):
 # the two can go to different people. handout: edit where SUPPLYMAP's role sets have it (receiver, admin), view where
 # the role reads fulfillment today (engineer, prodhead, master) so their «Выдача» card stays (решено агентом — проверить).
 _EVERYONE = {"newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT}
+# ID-5 (SUPPLYMAP portalAdminAccess_, 14.09.2026): the administrator has every section on edit unless the matrix or a
+# personal exception says otherwise, so a new section needs no entry here — the admin row is filled from
+# SECTION_LABELS below.
 ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
-    "admin": {
-        **_EVERYONE,
-        "handout": AccessMode.EDIT,
-        "identity": AccessMode.EDIT,
-        "projects": AccessMode.EDIT,
-        "calculation": AccessMode.EDIT,
-        "techcards": AccessMode.EDIT,
-        "requests": AccessMode.EDIT,
-        "procurement": AccessMode.EDIT,
-        "receiving": AccessMode.EDIT,
-        "warehouse": AccessMode.EDIT,
-        "fulfillment": AccessMode.EDIT,
-        "production": AccessMode.EDIT,
-        "shipping": AccessMode.EDIT,
-        "references": AccessMode.EDIT,
-        "operations": AccessMode.EDIT,
-    },
+    "admin": {},
     "buyer": {
         **_EVERYONE,
         "requests": AccessMode.EDIT,
         "procurement": AccessMode.EDIT,
         "warehouse": AccessMode.VIEW,
-        "references": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
     },
     "receiver": {
         **_EVERYONE,
@@ -84,13 +71,13 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
         "handout": AccessMode.EDIT,
         "shipping": AccessMode.EDIT,
         "procurement": AccessMode.VIEW,
-        "references": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
     },
     "engineer": {
         **_EVERYONE,
         "fulfillment": AccessMode.EDIT,
         "handout": AccessMode.VIEW,
-        "references": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
     },
     "prodhead": {
         **_EVERYONE,
@@ -101,7 +88,7 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
         "handout": AccessMode.VIEW,
         "production": AccessMode.VIEW,
         "shipping": AccessMode.VIEW,
-        "references": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
     },
     "master": {
         **_EVERYONE,
@@ -111,7 +98,7 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
         "handout": AccessMode.VIEW,
         "production": AccessMode.EDIT,
         "shipping": AccessMode.VIEW,
-        "references": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
     },
     "management": {
         **_EVERYONE,
@@ -120,20 +107,20 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
         "warehouse": AccessMode.VIEW,
         "production": AccessMode.VIEW,
         "shipping": AccessMode.VIEW,
-        "references": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
         "operations": AccessMode.VIEW,
     },
-    "pm": {**_EVERYONE, "shipping": AccessMode.EDIT, "references": AccessMode.VIEW},
+    "pm": {**_EVERYONE, "shipping": AccessMode.EDIT, "erpref": AccessMode.VIEW},
     "staff": {
         **_EVERYONE,
         "requests": AccessMode.EDIT,
         "receiving": AccessMode.VIEW,
         "warehouse": AccessMode.VIEW,
         "production": AccessMode.VIEW,
-        "references": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
     },
-    "estimator": {**_EVERYONE, "references": AccessMode.VIEW},
-    "qc": {**_EVERYONE, "production": AccessMode.EDIT, "references": AccessMode.VIEW},
+    "estimator": {**_EVERYONE, "erpref": AccessMode.VIEW},
+    "qc": {**_EVERYONE, "production": AccessMode.EDIT, "erpref": AccessMode.VIEW},
 }
 ROLES = frozenset(
     {
@@ -156,8 +143,12 @@ ROLES = frozenset(
 SECTION_LABELS: dict[str, str] = {
     "projects": "Проекты",
     "calculation": "Расчёт и КП",
-    "techcards": "Техкарты и шаблоны",
-    "references": "Справочник",
+    # ID-3 (SUPPLYMAP PORTAL_SECTIONS_): templates, the generator, the reference book and the staff directory are
+    # keys of their own (erptctpl, tcgen, erpref, staffdir), so e.g. only the generator can go to one technologist.
+    "techcards": "Техкарты проектов",
+    "erptctpl": "Шаблоны техкарт",
+    "tcgen": "Генератор техкарт",
+    "erpref": "Справочник",
     "production": "Планирование, задания, производственный план",
     "newrequest": "Оформить заявку",
     "myrequests": "Мои заявки",
@@ -168,9 +159,12 @@ SECTION_LABELS: dict[str, str] = {
     "fulfillment": "Запросы на комплектацию (набор)",
     "handout": "Выдача со списанием",
     "shipping": "Отгрузка",
-    "identity": "Сотрудники и доступы",
+    # «Доступы» is not a section: it is always the administrator's (SUPPLYMAP portalButtons_ pushes it for role admin
+    # outside the matrix), so nobody can close the settings to themselves.
+    "staffdir": "Сотрудники",
     "operations": "Системный журнал",
 }
+ROLE_DEFAULTS["admin"] = {section: AccessMode.EDIT for section in SECTION_LABELS}
 
 
 @dataclass(frozen=True)
