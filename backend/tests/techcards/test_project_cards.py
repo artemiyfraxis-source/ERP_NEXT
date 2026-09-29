@@ -160,3 +160,47 @@ def test_auto_build_requires_an_imported_operation_library(project_techcards_api
     )
     assert response.status_code == 422
     assert "не загружена" in response.json()["detail"]
+
+
+def test_project_etk_operation_edit_normalizes_card_and_logs_revision(project_techcards_api):
+    """SUPPLYMAP etkApplyOpEdit_: the card goes through tcRecordNormalize_, the operation is stamped edited,
+    revision +1 with «Правка операции N (CODE — разъём)»."""
+    card = project_techcards_api.post("/api/techcards/projects", json={
+        "project": "P-101", "item_index": "01", "product_name": "Жгут", "source_calculation": "",
+    }).json()
+    document = {"operations": [{
+        "position": 1, "code": "10", "connector": "XS1",
+        "card": {"name": "Сборка", "safety": "", "defects": "", "steps": [
+            {"number": "1", "kind": "Операция", "text": "Собрать", "tolerance": ""},
+        ], "tooling": []},
+    }]}
+    built = project_techcards_api.put(
+        f"/api/techcards/projects/{card['id']}/etk", json={"version": card["version"], "document": document},
+    ).json()
+    issued = project_techcards_api.post(
+        f"/api/techcards/projects/{card['id']}/issue", json={"version": built["version"]},
+    ).json()
+    operation = issued["document"]["operations"][0]
+    operation["card"]["steps"] = [
+        {"kind": "Операция", "text": "Собрать аккуратно", "tolerance": ""},
+        {"kind": "Контроль", "text": "", "tolerance": ""},
+        {"kind": "Контроль", "text": "Проверить", "tolerance": "±1"},
+    ]
+    operation["card"]["safety"] = "Очки"
+
+    edited = project_techcards_api.put(
+        f"/api/techcards/projects/{card['id']}/operations/{operation_key(operation)}",
+        json={"version": issued["version"], "operation": operation},
+    )
+    revisions = project_techcards_api.get(f"/api/techcards/projects/{card['id']}/revisions").json()["items"]
+
+    assert edited.status_code == 200, edited.text
+    saved = edited.json()["document"]["operations"][0]
+    assert edited.json()["revision"] == 2
+    assert [(s["number"], s["kind"], s["tolerance"]) for s in saved["card"]["steps"]] == [
+        ("1", "Операция", ""), ("2", "Контроль", "±1"),
+    ]
+    assert saved["card"]["name"] == "Сборка"
+    assert saved["card"]["safety"] == "ВАЖНО! ТРЕБОВАНИЕ БЕЗОПАСНОСТИ:\nОчки"
+    assert saved["edited"] == {"at": "23.09.2026 10:00", "by": "Инженер"}
+    assert revisions[-1]["reason"] == "Правка операции 1 (10 — XS1)"
