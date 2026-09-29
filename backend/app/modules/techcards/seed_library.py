@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
+import sys
 from pathlib import Path
 from uuid import UUID
 
 from app.database import build_engine, build_techcards_uow_factory
 from app.shared.identity import Actor
 
-from .application import ReplaceOperationLibraryCommand, replace_operation_library
+from .application import OperationLibraryEditedError, ReplaceOperationLibraryCommand, replace_operation_library
 
 
 def main() -> None:
@@ -23,21 +24,26 @@ def main() -> None:
     factory = build_techcards_uow_factory(build_engine(database_url))
     with factory() as uow:
         metadata = uow.operation_cards.metadata()
-    if metadata and metadata["source_commit"] == payload["sourceCommit"] and metadata["template_count"] == len(payload["templates"]):
+    force = "--force" in sys.argv[1:]
+    if not force and metadata and metadata["source_commit"] == payload["sourceCommit"] and metadata["template_count"] == len(payload["templates"]):
         print(f"Operation-card library already current: {metadata['template_count']} templates")
         return
-    result = replace_operation_library(ReplaceOperationLibraryCommand(
-        source_commit=payload["sourceCommit"],
-        templates=tuple(payload["templates"]),
-        actor=Actor(
-            id=UUID("00000000-0000-0000-0000-000000000018"),
-            name="ERP migration",
-            department="System",
-        ),
-        now=datetime.now(timezone.utc),
-    ), factory())
+    try:
+        result = replace_operation_library(ReplaceOperationLibraryCommand(
+            source_commit=payload["sourceCommit"],
+            templates=tuple(payload["templates"]),
+            actor=Actor(
+                id=UUID("00000000-0000-0000-0000-000000000018"),
+                name="ERP migration",
+                department="System",
+            ),
+            now=datetime.now(timezone.utc),
+            force=force,
+        ), factory())
+    except OperationLibraryEditedError as error:
+        raise SystemExit(str(error)) from error
     print(f"Imported {result.templates} operation-card templates from {payload['sourceCommit'][:8]}"
-          + (f"; kept ERP edits: {', '.join(result.kept_edited)}" if result.kept_edited else ""))
+          + (f"; overwrote ERP edits (--force): {'; '.join(result.overwritten_edited)}" if result.overwritten_edited else ""))
 
 
 if __name__ == "__main__":
