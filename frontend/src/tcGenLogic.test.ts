@@ -85,6 +85,22 @@ it("coax kit opens the КОАКС tab and orders angled side B before the second
   expect(cfg.coax.sideB).toMatchObject({ article: "MCX-JW R/A", pinType: "внутри корпуса", type: "" });
 });
 
+it("takes coax diameters from СПР.КАБ by the BOM cable, lengths from the connector record", () => {
+  const rec = { article: "SMA-J", connArticle: "SMA-J", type: "SMA", wire: "RG316", mfr: "", program: "",
+    d1: "9", d2: "9", d3: "9", l1: "4", l2: "3", l3: "2", lPlus: "1", lMinus: "0,5", pinType: "", shieldType: "" };
+  const D = { ...data([
+    { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
+    { id: "a", type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+  ], "Сборка RG316 150mm"), coaxRecords: [rec], coaxCableDia: { byCable: { rg316: { d1: "0,51", d2: "1,52", d3: "2,5" } } } };
+  const S = initState(D);
+  const cfg = makeGen(D, S).buildConfig() as Record<string, any>;
+  expect(cfg.coax.sideA).toMatchObject({ d1: "0,51", d2: "1,52", d3: "2,5", l1: "4", l2: "3", l3: "2", lPlus: "1", lMinus: "0,5" });
+  expect(makeGen(D, S).coaxInfo("A").text).toContain("D1:0,51");
+  // Кабеля нет в СПР.КАБ — запасной вариант: D1–D3 записи разъёма.
+  const noCable = { ...D, coaxCableDia: { byCable: {} } };
+  expect((makeGen(noCable, initState(noCable)).buildConfig() as Record<string, any>).coax.sideA).toMatchObject({ d1: "9", d2: "9", d3: "9" });
+});
+
 it("takes cut lengths from the calc sheet rows when the name has none", () => {
   const D = data(interboard, "Жгут XHP");
   const calcOps = [
