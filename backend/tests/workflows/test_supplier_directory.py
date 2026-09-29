@@ -48,9 +48,9 @@ def test_learn_adds_a_new_domain_once_and_keeps_other_maps():
     assert directory.learn("https://elitan.ru/other", "Другой", buyer, NOW) is False  # existing key wins
     assert directory.learn("https://chipdip.ru/x", "Не ЧипДип", buyer, NOW) is False
     assert directory.learn(None, "Элитан", buyer, NOW) is False
-    assert directory.learn("Склад", "Склад", buyer, NOW) is False  # no domain: ERP keys are domains only
+    assert directory.learn("Склад", "Склад", buyer, NOW) is True  # a literal key, as SUPPLYMAP's «склад»
 
-    assert directory.supplier_map() == {"chipdip.ru": "ЧипДип", "elitan.ru": "Элитан"}
+    assert directory.supplier_map() == {"chipdip.ru": "ЧипДип", "elitan.ru": "Элитан", "склад": "Склад"}
     with factory() as uow:
         countries = [entry for entry in uow.references.list() if entry.kind.value == "country"]
     assert [entry.value for entry in countries] == ["США"]
@@ -58,4 +58,4 @@ def test_learn_adds_a_new_domain_once_and_keeps_other_maps():
         learned = session.scalars(
             select(AuditEventRow).where(AuditEventRow.event_type == "references.supplier_learned")
         ).all()
-    assert len(learned) == 1
+    assert len(learned) == 2

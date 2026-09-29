@@ -16,6 +16,11 @@ def test_supplier_key_is_reduced_to_canonical_domain():
     assert normalized_supplier_key(" HTTPS://www.Example.RU/catalog?id=1 ") == "example.ru"
 
 
+def test_supplier_key_without_domain_is_the_literal_text_as_supplymap():
+    assert normalized_supplier_key("  КабельРФ ") == "кабельрф"
+    assert normalized_supplier_key("Склад") == "склад"
+
+
 def test_manufacturer_key_is_case_and_spacing_insensitive():
     assert normalized_manufacturer_key("  АО   Fraxis  ") == "ао fraxis"
 

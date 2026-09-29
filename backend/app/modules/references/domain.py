@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Iterable
-from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 
@@ -32,14 +32,16 @@ class TechOperationTab(str, Enum):
 
 
 def normalized_supplier_key(value: str) -> str:
+    """`supplierKey_` (Schema.gs:220): a URL or host → the host without «www.» in lower case; any other text
+    (Склад, Фраксис, КабельРФ, Вода — literals of SUPPLIER_BY_LINK) → itself in lower case."""
     raw = str(value or "").strip().lower()
     if not raw:
         raise ReferenceValidationError("Ключ поставщика обязателен")
-    candidate = raw if "://" in raw else f"https://{raw}"
-    host = (urlparse(candidate).hostname or "").removeprefix("www.")
-    if not host or "." not in host:
-        raise ReferenceValidationError("Для поставщика укажите домен или ссылку")
-    return host
+    match = re.match(r"^[a-z]+://([^/]+)", raw)
+    host = match.group(1) if match else raw.split("/")[0]
+    if " " not in host and "." in host:
+        return host.removeprefix("www.")
+    return raw
 
 
 def normalized_manufacturer_key(value: str) -> str:
