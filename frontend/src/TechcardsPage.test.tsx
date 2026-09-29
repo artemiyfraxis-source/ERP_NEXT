@@ -367,3 +367,79 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   expect(await screen.findByText(/Изменено .* · Инженер/)).toBeInTheDocument();
   expect(screen.getByText("Отрезать провод в размер")).toBeInTheDocument();
 });
+
+it("edits a template sheet through a draft and saves it (portalTcTplDraft → portalTcTplSave)", async () => {
+  const sheet = { id: "cut-wire", title: "CUT_WIRE | Резка", category: "Резка", description: "Автомат", size: "12×7", updatedAt: "2026-09-23T12:00:00", savedBy: "" };
+  const draft = {
+    id: "d1", draftSheet: "Черновик — CUT_WIRE | Резка", existingTemplateId: "cut-wire", title: "CUT_WIRE | Резка",
+    category: "Резка", description: "Автомат", createdAt: "2026-09-29T10:00:00", createdBy: "Инженер", updatedAt: "2026-09-29T10:00:00",
+    rows: [["CUT_WIRE | Резка"], ["Операция", "1", "Отрезать провод"]],
+  };
+  const calls: Array<{ path: string; method: string; body: unknown }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [] });
+    if (path === "/api/techcards/template-sheets") return json({ list: [sheet], drafts: [] });
+    if (path === "/api/techcards/template-sheets/drafts" && method === "POST") return json(draft, 201);
+    if (path === "/api/techcards/template-sheets/drafts/d1" && method === "PUT") return json(draft);
+    if (path === "/api/techcards/template-sheets/drafts/d1/save") return json({ action: "updated", id: "cut-wire", title: "CUT_WIRE | Резка", sizeLabel: "2 x 3" });
+    throw new Error(`Unexpected request: ${method} ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="templates" />);
+  fireEvent.click(await screen.findByRole("button", { name: "📄 Шаблоны-листы" }));
+  expect(await screen.findByText("Автомат")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Редактировать CUT_WIRE | Резка" }));
+
+  fireEvent.change(await screen.findByLabelText("Ячейка 2:3"), { target: { value: "Отрезать провод в размер" } });
+  fireEvent.click(screen.getByRole("button", { name: "💾 Сохранить шаблон" }));
+  expect(screen.getByText("Пересохранение существующего шаблона «CUT_WIRE | Резка» (контент заменится).")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+
+  expect(await screen.findByText("Шаблон обновлён: CUT_WIRE | Резка")).toBeInTheDocument();
+  expect(calls.find((call) => call.method === "POST" && call.path.endsWith("/drafts"))?.body).toEqual({ template_id: "cut-wire", title: "" });
+  const put = calls.find((call) => call.method === "PUT")?.body as { rows: string[][] };
+  expect(put.rows[1].slice(0, 3)).toEqual(["Операция", "1", "Отрезать провод в размер"]);
+  expect(put.rows[0]).toHaveLength(7);
+  expect(calls.find((call) => call.path.endsWith("/save"))?.body).toEqual({ title: "CUT_WIRE | Резка", category: "Резка", description: "Автомат" });
+});
+
+it("creates a new template draft, drops a draft and deletes a template sheet", async () => {
+  const sheet = { id: "strip", title: "STRIP | Разделка", category: "", description: "", size: "3×7", updatedAt: "2026-09-23T12:00:00", savedBy: "" };
+  const open = { id: "d2", draftSheet: "Черновик — OLD | Черновик", existingTemplateId: "", title: "OLD | Черновик", category: "", description: "", createdAt: "", createdBy: "", updatedAt: "" };
+  let sheets = [sheet];
+  let drafts = [open];
+  const calls: string[] = [];
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    const method = init?.method ?? "GET";
+    calls.push(`${method} ${path}`);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [] });
+    if (path === "/api/techcards/template-sheets") return json({ list: sheets, drafts });
+    if (path === "/api/techcards/template-sheets/drafts/d2" && method === "DELETE") { drafts = []; return json({ dropped: true }); }
+    if (path === "/api/techcards/template-sheets/strip" && method === "DELETE") { sheets = []; return json({ deleted: true, id: "strip", title: sheet.title }); }
+    if (path === "/api/techcards/template-sheets/drafts" && method === "POST") {
+      return json({ ...open, id: "d3", draftSheet: "Черновик — NEW | Новый", title: "NEW | Новый", rows: [] }, 201);
+    }
+    throw new Error(`Unexpected request: ${method} ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="templates" />);
+  fireEvent.click(await screen.findByRole("button", { name: "📄 Шаблоны-листы" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Удалить черновик OLD | Черновик" }));
+  await waitFor(() => expect(screen.queryByText("Открытые черновики:")).not.toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole("button", { name: "Удалить STRIP | Разделка" }));
+  expect(await screen.findByText("Шаблон удалён: STRIP | Разделка")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "➕ Новый шаблон" }));
+  fireEvent.change(screen.getByLabelText("Название нового шаблона"), { target: { value: "NEW | Новый" } });
+  fireEvent.click(screen.getByRole("button", { name: "Создать черновик" }));
+  expect(await screen.findByText("Черновик — NEW | Новый")).toBeInTheDocument();
+  expect(screen.getAllByLabelText(/^Ячейка 12:/)).toHaveLength(7);
+  expect(calls).toContain("DELETE /api/techcards/template-sheets/drafts/d2");
+  expect(calls).toContain("DELETE /api/techcards/template-sheets/strip");
+});

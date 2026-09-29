@@ -15,6 +15,7 @@ import { etkChips, etkFigure } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
+import { TcTemplateSheets } from "./TcTemplateSheets";
 
 type EtkRow = { name?: string; art?: string; norm?: string; unit?: string };
 type EtkStep = { number?: string; kind?: string; text?: string; tolerance?: string };
@@ -321,6 +322,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
   const [templateDetail, setTemplateDetail] = useState<OperationCardDetail | null>(null);
   const [templateCategory, setTemplateCategory] = useState("");
   const [editingTemplate, setEditingTemplate] = useState(false);
+  const [sheetsOpen, setSheetsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   // ?project= — opened as «Карточка проекта» from the production plan: only that project's cards.
   const [projectFilter, setProjectFilter] = useState(() => new URLSearchParams(window.location.search).get("project") ?? "");
@@ -538,14 +540,16 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     {showLibrary && <>
     <header className="page-head library-head"><h2>Библиотека операций</h2><span className="page-count">{records.length}</span></header>
     <p className="page-sub">Снимок SUPPLYMAP {libraryCommit ? libraryCommit.slice(0, 8) : "не загружен"}; карточка сохраняется внутри каждой собранной ЭТК. Карточка операции — то, из чего собирается лист техкарты: шаги, контроль с допусками, оснастка, безопасность, дефекты. Открой карточку, чтобы посмотреть{canEdit ? " или поправить" : ""}.</p>
-    {templateDetail && selectedTemplateId ? (editingTemplate ? <TcCardEditForm
+    {sheetsOpen ? <TcTemplateSheets canEdit={canEditTemplates} onBack={() => setSheetsOpen(false)} onChanged={() => {
+      void techcardsApi.templates().then((library) => setTemplates(library.items)).catch(() => undefined);
+    }} /> : templateDetail && selectedTemplateId ? (editingTemplate ? <TcCardEditForm
       code={templateDetail.code}
       initial={editDraft(templateDetail.name, templateDetail.document)}
       hint="Правки пишутся в библиотеку ERP и попадают в ТК проектов при следующей сборке; при обновлении снимка SUPPLYMAP правленая карточка сохраняется. Пустые шаги и строки оснастки при сохранении отбрасываются, номера проставятся сами."
       onCancel={() => setEditingTemplate(false)}
       onSave={saveTemplate}
     /> : <TemplateDetail template={templateDetail} canEdit={canEditTemplates} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
-    <div className="toolbar"><input aria-label="Поиск шаблона" placeholder="Поиск по коду, названию, тексту шага…" value={templateQuery} onChange={(event) => setTemplateQuery(event.target.value)} /></div>
+    <div className="toolbar"><input aria-label="Поиск шаблона" placeholder="Поиск по коду, названию, тексту шага…" value={templateQuery} onChange={(event) => setTemplateQuery(event.target.value)} /> <button className="secondary" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>📄 Шаблоны-листы</button></div>
     <div className="tr-chips">
       <button className={templateCategory ? "" : "on"} onClick={() => setTemplateCategory("")}>Все · {records.length}</button>
       {categories.map((name) => <button key={name} className={templateCategory === name ? "on" : ""} onClick={() => setTemplateCategory(name)}>{name} · {records.filter((item) => recordCategory(item.code) === name).length}</button>)}
