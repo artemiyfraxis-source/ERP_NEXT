@@ -26,6 +26,7 @@ import { WarehousePage } from "./WarehousePage";
 import { ShippingPage } from "./ShippingPage";
 import { ReferencesPage } from "./ReferencesPage";
 import { NotificationsPage } from "./NotificationsPage";
+import { NotificationBell } from "./NotificationBell";
 import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
 import { StaffPage } from "./StaffPage";
@@ -126,6 +127,7 @@ export function App() {
         <div className="brand">
           <strong className="wordmark">FRAXIS</strong>
           <span className="mod">ERP</span>
+          {visibleNav.some(({ id }) => id === "notifications") && <NotificationBell open={() => navigate("notifications")} />}
         </div>
         <nav aria-label="Основная навигация">
           {visibleNav.filter((item) => !item.block).map((item) => <NavButton key={item.id} item={item} active={activeSection === item.id && !activeBlock} navigate={navigate} />)}
