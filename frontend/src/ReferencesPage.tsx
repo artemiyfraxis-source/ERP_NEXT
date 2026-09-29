@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { hasAccess } from "./navigation";
+import { EquipmentCards } from "./EquipmentCards";
+import { WireLookup } from "./WireLookup";
 import { TechcardsPage } from "./TechcardsPage";
 import {
   referencesApi,
@@ -23,18 +25,25 @@ type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
 const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
-  { title: "Техкарты", tabs: [{ id: "templates", label: "Операции", base: "tk_templates" }] },
-  // Owner 29.09.2026: «выгрузку хранить не нужно… оставляем коаксиальные провода по диаметрам, разъёмы коаксиальные и
-  // терминалы». БД.ОП / БД.ОБ / БД.ПРОВ / БД.МАТ are not tabs any more; their rows stay in the database and the API,
-  // the generator and the templates' norms still read them.
+  // Owner 29.09.2026: «операции… лучше на карточки», «с оборудованием то же самое». БД.ОП lives inside «Операции»
+  // (one card per code, template sheet + the БД.ОП row); БД.ОБ is its own card tab. Only the one-time import line is gone.
+  { title: "Техкарты", tabs: [
+    { id: "templates", label: "Операции", base: "tk_templates" },
+    { id: "ob", label: "Оборудование", base: "ob" },
+  ] },
   { title: "Разделка и обжим", tabs: [
     { id: "ter", label: "Терминалы", base: "ter" },
     { id: "coax", label: "Коаксиал: разъёмы", base: "coax" },
   ] },
   // СПР.КАБ: the AWG table is the whole «ГОСТ → AWG» map plus Ø по маркам — SUPPLYMAP derives the map from it
   // (TcGenData.gs gostAwgMap_), so there is no separate map tab (owner 29.09.2026: «нет диаметров по сечению»).
+  // БД.ПРОВ / БД.МАТ are working bases in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
+  { title: "Провода и материалы", tabs: [
+    { id: "prov", label: "Провода и кабели", base: "prov" },
+    { id: "mat", label: "Материалы", base: "mat" },
+  ] },
   { title: "СПР.КАБ", tabs: [
-    { id: "kab_awg", label: "Провода: AWG · ГОСТ · Ø по маркам" },
+    { id: "kab_awg", label: "AWG: сечение ↔ Ø по типу кабеля" },
     { id: "kab_coax", label: "Коаксиальные кабели: D1 · D2 · D3" },
   ] },
   { title: "Соответствия", tabs: [
@@ -91,6 +100,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [savedMaps, setSavedMaps] = useState("");
   const [tech, setTech] = useState<TechOperationResult>({ metadata: null, records: [] });
   const [cableDia, setCableDia] = useState<CableDia>({});
+  const [obOps, setObOps] = useState<TechOperationRecord[]>([]);
   const [bases, setBases] = useState<ReferenceBase[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -115,6 +125,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     setError("");
     try {
       setTech(await referencesApi.techOperations(next, "", 5000));
+      if (next === "ob") {
+        void referencesApi.techOperations("op", "", 5000).then((ops) => setObOps(ops.records)).catch(() => setObOps([]));
+      }
       if (next === "coax") {
         const cables = await referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] }));
         setCableDia(Object.fromEntries(cables.records.map((record) => [cableKey(Object.values(record.fields)[0] ?? ""), record.fields])));
@@ -222,7 +235,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
 
   return <section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{current && count(current) !== null && <span className="page-count">{count(current)}</span>}</header>
-    <p className="page-sub">Операции и шаблоны техкарт, терминалы, коаксиальные разъёмы и кабели, СПР.КАБ и карты соответствий — одна база, каждая вкладка как лист. Техкарты конкретных проектов открываются из «Проектов».</p>
+    <p className="page-sub">Операции и шаблоны техкарт, оборудование, терминалы, коаксиальные разъёмы, провода и материалы, СПР.КАБ и карты соответствий — одна база, каждая вкладка как лист. Техкарты конкретных проектов открываются из «Проектов».</p>
     <nav className="db-tabs" aria-label="Вкладки базы данных">
       {groups.map((group) => <div className="db-tab-group" key={group.title}>
         <span className="db-tab-group-title">{group.title}</span>
@@ -261,7 +274,14 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
       </div>}
-      <DataTable
+      {techTab === "kab_awg" && <WireLookup records={tech.records} />}
+      {techTab === "ob" ? <EquipmentCards
+        records={tech.records}
+        operations={obOps}
+        canEdit={canEdit}
+        onEdit={(record) => { setEditing({ id: record.id, values: editValues(record) }); window.scrollTo?.({ top: 0, behavior: "smooth" }); }}
+        toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
+      /> : <DataTable
         key={techTab}
         label={current?.label ?? "База"}
         rows={tech.records}
@@ -271,7 +291,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         exportName={current?.label}
         emptyText={viewOnly ? "Таблица СПР.КАБ не загружена из зеркала." : "Записей нет."}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
-      />
+      />}
       <p className="page-sub">{coaxTab ? "D1–D3 — диаметры кабеля из СПР.КАБ · коаксиал по колонке «Провод»; у разъёма хранятся только длины разделки (L1–L3, L+, L−). Правятся диаметры в СПР.КАБ." : viewOnly ? "СПР.КАБ — только просмотр, как в портале SUPPLYMAP; генератор берёт из этой таблицы и «ГОСТ → AWG»." : "Правки строк живут до следующего импорта снимка."}</p>
     </>}
   </section>;

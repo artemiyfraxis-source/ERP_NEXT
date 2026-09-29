@@ -79,11 +79,14 @@ it("shows the versioned technology snapshot as a table of its own columns", asyn
   });
 
   render(<ReferencesPage principal={admin} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^Терминалы/ }));
 
   expect(await screen.findByText("ОП-01")).toBeInTheDocument();
   expect(screen.queryByText(/Схема v14/)).toBeNull(); // the one-time import line is gone (owner 29.09.2026)
   expect(screen.getByRole("columnheader", { name: "Артикул контакта" })).toBeInTheDocument();
-  for (const gone of ["Операции", "Оборудование", "Провода", "Материалы"]) expect(screen.queryByRole("button", { name: gone })).toBeNull();
+  // «Операции» is the erptctpl tab; БД.ОБ / БД.ПРОВ / БД.МАТ are working bases (owner: «с оборудованием то же самое»).
+  expect(screen.queryByRole("button", { name: /^Операции/ })).toBeNull();
+  for (const kept of [/^Оборудование/, /^Провода и кабели/, /^Материалы/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
 });
 
 
@@ -155,7 +158,7 @@ it("shows the СПР.КАБ tables as read-only grids", async () => {
     });
     if (path.startsWith("/api/references/tech-operations?tab=kab_awg")) return json({
       metadata: null, columns: ["AWG", "ГОСТ"],
-      records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "Провода: AWG · ГОСТ · Ø по маркам", fields: { AWG: "22", ГОСТ: "0,35" } }],
+      records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "AWG: сечение ↔ Ø по типу кабеля", fields: { AWG: "22", ГОСТ: "0,35" } }],
     });
     if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
@@ -168,7 +171,7 @@ it("shows the СПР.КАБ tables as read-only grids", async () => {
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
 
-  fireEvent.click(screen.getByRole("button", { name: "Провода: AWG · ГОСТ · Ø по маркам" }));
+  fireEvent.click(screen.getByRole("button", { name: "AWG: сечение ↔ Ø по типу кабеля" }));
   expect(await screen.findByText("0,35")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
 });
@@ -258,4 +261,53 @@ it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them
   fireEvent.click(screen.getAllByRole("button", { name: "Править" })[0]);
   expect(screen.getByLabelText("Поле L1")).toBeInTheDocument();
   expect(screen.queryByLabelText("Поле D1")).toBeNull();
+});
+
+it("shows БД.ОБ as cards by type with every column and the БД.ОП operations that use the unit", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "e1", tab: "ob", display_text: "EW-05F", source_sheet: "БД.ОБ", fields: { baseValue: "EW-05F+M/Автомат", "Тип": "Оборудование", "Инв. номер": "ОБ.015", "Наменование": "Автомат мерной резки", "Производитель": "Eraser", "Для базы": "EW-05F+M/Автомат", "Стоимость": "900 000,00" } },
+      { id: "e2", tab: "ob", display_text: "Линейка", source_sheet: "БД.ОБ", fields: { "Тип": "Инструмент", "Инв. номер": "ОБ.048", "Наменование": "Линейка", "Для базы": "Линейка" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [
+      { id: "o1", tab: "op", display_text: "Резка", source_sheet: "БД.ОП", fields: { opNumber: "CUT_WIRE_auto", "Машина": "EW-05F+M/Автомат" } },
+    ] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  expect(await screen.findByText("ОБ.015")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Все · 2" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Инструмент · 1" })).toBeInTheDocument();
+  expect(await screen.findByText(/в 1 опер\./)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("ОБ.015"));
+  expect(screen.getByText("900 000,00")).toBeInTheDocument();
+  expect(screen.getByText("CUT_WIRE_auto")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Править" })).toBeInTheDocument();
+});
+
+it("matches a wire article to AWG, ГОСТ section and Ø by cable type, as the generator does", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=kab_awg")) return json({ metadata: null, records: [
+      { id: "a1", tab: "kab_awg", display_text: "24", source_sheet: "", fields: { AWG: "24", "ГОСТ": "0,2", "Ø жилы": "0,51", "МГТФ": "1", "UL1061": "1,15", "UL1571": "1,2" } },
+      { id: "a2", tab: "kab_awg", display_text: "22", source_sheet: "", fields: { AWG: "22", "ГОСТ": "0,35", "Ø жилы": "0,64", "МГТФ": "1,2", "UL1061": "1,35", "UL1571": "1,4" } },
+    ] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={admin} initialTab="kab_awg" />);
+  fireEvent.change(await screen.findByLabelText("Артикул провода"), { target: { value: "UL1571 22AWG" } });
+  expect(screen.getByText("Ø по изоляции UL1571, мм").nextSibling).toHaveTextContent("1,4");
+  fireEvent.change(screen.getByLabelText("Артикул провода"), { target: { value: "МГТФ 0,2" } });
+  expect(screen.getByText("Ø по изоляции МГТФ, мм").nextSibling).toHaveTextContent("1");
+  expect(screen.getByText("AWG", { selector: ".wire-result small" }).nextSibling).toHaveTextContent("24");
+  fireEvent.change(screen.getByLabelText("Артикул провода"), { target: { value: "ПуГВ 1,5" } });
+  expect(screen.getByText(/Марка не распознана/)).toBeInTheDocument();
 });

@@ -860,6 +860,12 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .table-toolbar select { width: auto; }
 .panel .filters { background: var(--card); }
 .panel > .data-table { padding: 0 16px 16px; }
+.eq-op { padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; }
+.wire-lookup .form-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.wire-result { display: flex; flex-wrap: wrap; gap: 10px 24px; padding: 10px 0; }
+.wire-result span { display: grid; gap: 2px; }
+.wire-result small { color: var(--muted-foreground); font-size: 11px; }
+.wire-result b { font-size: 16px; }
 
 /* Склад как «Склад 0.5» в SUPPLYMAP: плотная таблица по сериям, партии карточками. */
 .stock-hint { max-width: 900px; margin: 10px 0 12px; }
