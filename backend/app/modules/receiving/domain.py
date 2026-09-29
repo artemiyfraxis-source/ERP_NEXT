@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from datetime import datetime
 from decimal import Decimal, DecimalException
 from enum import Enum
@@ -44,6 +44,44 @@ TERMINAL_NONCONFORMITIES = {WRONG_ITEM, EXPIRED}
 QUANTITY_FAULTS = {SHORT_FACT, SHORT_ORDER}
 QUALITY_FAULTS = {MECHANICAL_DAMAGE, WRONG_ITEM}
 MANUAL_NONCONFORMITIES = QUALITY_FAULTS
+
+# Config.gs:221-233 — «Ожидание» без решения держится не дольше QUAR_WORKDAYS рабочих дней от даты
+# акта ВК; дальше тик сам переводит строку в «Карантин» и зовёт ответственного по характеру несоответствия.
+QUARANTINE_WORKDAYS = 2
+TECHNOLOGIST_NONCONFORMITIES = {MECHANICAL_DAMAGE}
+NOTIFY_TECHNOLOGIST = "Технолог"
+NOTIFY_SUPPLY = "Снабжение"
+
+
+def workdays_between(start: date, end: date) -> int:
+    """Full Mon–Fri days after ``start`` up to and including ``end``; holidays ignored (Schema.gs:564)."""
+    count = 0
+    day = start
+    while day < end:
+        day += timedelta(days=1)
+        if day.weekday() < 5:
+            count += 1
+    return count
+
+
+def latest_overdue_inspection_date(today: date) -> date:
+    """The latest act date whose «Ожидание» is already overdue on ``today``."""
+    day = today
+    while workdays_between(day, today) < QUARANTINE_WORKDAYS:
+        day -= timedelta(days=1)
+    return day
+
+
+def quarantine_notify_targets(nonconformities: Iterable[str]) -> tuple[str, ...]:
+    """OwnerTick.gs quarNotifyTargets_: брак → технолог, остальное или пусто → снабжение, смесь → оба."""
+    items = [str(item).strip() for item in nonconformities if str(item).strip()]
+    technologist = any(item in TECHNOLOGIST_NONCONFORMITIES for item in items)
+    supply = not technologist or any(item not in TECHNOLOGIST_NONCONFORMITIES for item in items)
+    return tuple(
+        target
+        for target, wanted in ((NOTIFY_TECHNOLOGIST, technologist), (NOTIFY_SUPPLY, supply))
+        if wanted
+    )
 
 
 @dataclass(frozen=True)
@@ -217,6 +255,7 @@ class ReceivingLine:
     storage_location: str | None = None
     inspector: Actor | None = None
     warehouse_event_emitted: bool = False
+    inspected_on: date | None = None
 
     def inspect(
         self,
@@ -276,7 +315,25 @@ class ReceivingLine:
             backorder_quantity=result.backorder_quantity,
             grn=grn,
             inspector=actor,
+            inspected_on=data.inspection_date,
         )
+
+    def waiting_overdue(self, today: date) -> bool:
+        # OwnerTick.gs waitingToQuarantineSweep_: отсчёт от даты акта ВК; без даты таймер не идёт.
+        return bool(
+            self.status is ReceivingStatus.WAITING
+            and self.inspected_on is not None
+            and not self.warehouse_event_emitted
+            and workdays_between(self.inspected_on, today) >= QUARANTINE_WORKDAYS
+        )
+
+    def quarantine_overdue(self, today: date) -> ReceivingLine:
+        if not self.waiting_overdue(today):
+            raise ReceivingValidationError(
+                "В «Карантин» по таймеру уходит только «Ожидание» старше "
+                f"{QUARANTINE_WORKDAYS} рабочих дней"
+            )
+        return replace(self, status=ReceivingStatus.QUARANTINE, version=self.version + 1)
 
     def place(self, location: str) -> ReceivingLine:
         if self.warehouse_event_emitted:

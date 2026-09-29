@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -62,6 +63,7 @@ class ReceivingLineRow(Base):
     inspector_name: Mapped[str | None] = mapped_column(String(255))
     inspector_department: Mapped[str | None] = mapped_column(String(255))
     warehouse_event_emitted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    inspected_on: Mapped[Any | None] = mapped_column(Date)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -106,6 +108,7 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         inspector_name=line.inspector.name if line.inspector else None,
         inspector_department=line.inspector.department if line.inspector else None,
         warehouse_event_emitted=line.warehouse_event_emitted,
+        inspected_on=line.inspected_on,
     )
 
 
@@ -154,6 +157,7 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         storage_location=row.storage_location,
         inspector=inspector,
         warehouse_event_emitted=row.warehouse_event_emitted,
+        inspected_on=row.inspected_on,
     )
 
 
@@ -192,6 +196,19 @@ class SqlAlchemyReceivingRepository:
             )
         rows = self.session.scalars(
             statement.order_by(ReceivingLineRow.created_at, ReceivingLineRow.id).limit(limit)
+        )
+        return [_domain(row) for row in rows]
+
+    def waiting_inspected_by(self, day: date, limit: int = 200) -> list[ReceivingLine]:
+        rows = self.session.scalars(
+            select(ReceivingLineRow)
+            .where(
+                ReceivingLineRow.status == ReceivingStatus.WAITING.value,
+                ReceivingLineRow.inspected_on.is_not(None),
+                ReceivingLineRow.inspected_on <= day,
+            )
+            .order_by(ReceivingLineRow.created_at, ReceivingLineRow.id)
+            .limit(limit)
         )
         return [_domain(row) for row in rows]
 

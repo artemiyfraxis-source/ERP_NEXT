@@ -1,9 +1,11 @@
-from datetime import date, datetime
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from app.modules.receiving.domain import (
+    QUARANTINE_WORKDAYS,
     InspectionInput,
     ReceivingStatus,
     ReceivingValidationError,
@@ -11,6 +13,9 @@ from app.modules.receiving.domain import (
     inspect_delivery,
     next_grn,
     create_line_from_expected,
+    latest_overdue_inspection_date,
+    quarantine_notify_targets,
+    workdays_between,
 )
 from app.shared.events import OutboxMessage
 from tests.factories import Actor
@@ -219,3 +224,97 @@ def test_receiving_places_only_where_the_rack_layout_has_a_place():
     with pytest.raises(ReceivingValidationError, match="Места 18A1 нет: проверь номер стеллажа и полку."):
         inspected.place("18A1")
     assert inspected.place("17A1").storage_location == "17A1"
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        (date(2026, 7, 2), date(2026, 7, 6), 2),  # чт → пн: пт, пн
+        (date(2026, 7, 3), date(2026, 7, 6), 1),  # пт → пн
+        (date(2026, 7, 3), date(2026, 7, 5), 0),  # пт → вс: выходные не считаются
+        (date(2026, 7, 6), date(2026, 7, 10), 4),  # пн → пт той же недели
+        (date(2026, 7, 6), date(2026, 7, 6), 0),
+        (date(2026, 7, 10), date(2026, 7, 6), 0),  # обратный порядок
+    ],
+)
+def test_workdays_between_matches_supplymap(start, end, expected):
+    assert workdays_between(start, end) == expected
+
+
+@pytest.mark.parametrize(
+    ("today", "expected"),
+    [
+        (date(2026, 9, 23), date(2026, 9, 21)),  # ср → пн
+        (date(2026, 9, 28), date(2026, 9, 24)),  # пн → чт
+        (date(2026, 9, 27), date(2026, 9, 23)),  # вс → ср: пятница — единственный р.д. после чт
+    ],
+)
+def test_latest_overdue_inspection_date_is_two_workdays_back(today, expected):
+    assert latest_overdue_inspection_date(today) == expected
+    assert workdays_between(expected, today) >= QUARANTINE_WORKDAYS
+    assert workdays_between(expected + timedelta(days=1), today) < QUARANTINE_WORKDAYS
+
+
+@pytest.mark.parametrize(
+    ("nature", "expected"),
+    [
+        (("Механическое повреждение / брак",), ("Технолог",)),
+        (("Недостача (факт < УПД)",), ("Снабжение",)),
+        (("Механическое повреждение / брак", "Недовоз (УПД < заказ)"), ("Технолог", "Снабжение")),
+        ((), ("Снабжение",)),
+    ],
+)
+def test_quarantine_notify_targets_follow_the_nature(nature, expected):
+    assert quarantine_notify_targets(nature) == expected
+
+
+def waiting_line(inspected_on=date(2026, 9, 24)):
+    line = create_line_from_expected(expected_message()).inspect(
+        inspection(has_shipping_document=False, inspection_date=inspected_on),
+        Actor(name="Приёмщик", department="ОТК"),
+        existing_grns=(),
+    )
+    assert line.status is ReceivingStatus.WAITING
+    assert line.inspected_on == inspected_on
+    return line
+
+
+def test_waiting_without_decision_goes_to_quarantine_after_two_workdays():
+    line = waiting_line(date(2026, 9, 24))  # чт
+
+    assert line.waiting_overdue(date(2026, 9, 25)) is False  # пт: 1 р.д.
+    assert line.waiting_overdue(date(2026, 9, 27)) is False  # вс: всё ещё 1 р.д.
+    assert line.waiting_overdue(date(2026, 9, 28)) is True  # пн: 2 р.д.
+    with pytest.raises(ReceivingValidationError, match="Карантин"):
+        line.quarantine_overdue(date(2026, 9, 25))
+    quarantined = line.quarantine_overdue(date(2026, 9, 28))
+    assert quarantined.status is ReceivingStatus.QUARANTINE
+    assert quarantined.version == line.version + 1
+    assert quarantined.grn == line.grn and quarantined.nonconformities == line.nonconformities
+
+
+def test_timer_restarts_on_reinspection_and_ignores_other_statuses():
+    line = waiting_line(date(2026, 9, 21))
+    again = line.inspect(
+        inspection(has_shipping_document=False, inspection_date=date(2026, 9, 24)),
+        Actor(name="Приёмщик", department="ОТК"),
+        existing_grns=(line.grn,),
+    )
+    assert again.waiting_overdue(date(2026, 9, 25)) is False
+    assert again.waiting_overdue(date(2026, 9, 28)) is True
+
+    accepted = create_line_from_expected(expected_message()).inspect(
+        inspection(inspection_date=date(2026, 9, 1)),
+        Actor(name="Приёмщик", department="ОТК"),
+        existing_grns=(),
+    )
+    assert accepted.waiting_overdue(date(2026, 9, 28)) is False
+    in_transit = create_line_from_expected(expected_message())
+    assert in_transit.inspected_on is None
+    assert in_transit.waiting_overdue(date(2026, 9, 28)) is False
+
+
+def test_waiting_line_without_act_date_never_times_out():
+    line = replace(waiting_line(), inspected_on=None)
+
+    assert line.waiting_overdue(date(2027, 1, 1)) is False

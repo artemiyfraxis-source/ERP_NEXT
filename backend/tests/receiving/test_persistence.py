@@ -12,6 +12,7 @@ from app.modules.receiving.application import (
     dispatch_next_receiving_expected,
     inspect_receiving,
     place_receiving,
+    quarantine_overdue_waiting,
 )
 from app.modules.receiving.domain import InspectionInput
 from app.modules.receiving.infrastructure import ReceivingLineRow, SqlAlchemyReceivingUnitOfWork
@@ -107,4 +108,76 @@ def test_receiving_to_warehouse_is_transactional_and_persistent():
                 OutboxMessageRow.published_at.is_not(None)
             )
         ) == 2
+    engine.dispose()
+
+
+def test_quarantine_timer_reads_the_stored_act_date_and_persists_the_move():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_schema(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    with sessions() as session:
+        for number in (1, 2):
+            session.add(
+                OutboxMessageRow(
+                    id=UUID(f"10000000-0000-0000-0000-00000000000{number}"),
+                    topic="receiving.expected",
+                    idempotency_key=f"procurement:{number}:receiving",
+                    created_at=datetime(2026, 9, 21, 10, number),
+                    payload={
+                        "procurement_line_id": f"20000000-0000-0000-0000-00000000000{number}",
+                        "legacy_id": f"SM-{number}",
+                        "warehouse": "ЦАР",
+                        "name": "Разъём",
+                        "item_type": "Комплектующие",
+                        "purpose": "FRX.001",
+                        "supplier": "ООО Поставка",
+                        "ordered_quantity": "10",
+                        "unit": "шт",
+                    },
+                )
+            )
+        session.commit()
+    factory = lambda: SqlAlchemyReceivingUnitOfWork(sessions)
+    actor = Actor(name="Приёмщик", department="ОТК")
+    lines = [
+        dispatch_next_receiving_expected(datetime(2026, 9, 21, 10, 5), factory()) for _ in range(2)
+    ]
+    for line, act_date in zip(lines, (date(2026, 9, 24), date(2026, 9, 25))):
+        inspect_receiving(
+            InspectReceivingCommand(
+                line_id=line.id,
+                expected_version=line.version,
+                inspection=InspectionInput(
+                    fact_quantity=Decimal("10"),
+                    document_quantity=Decimal("10"),
+                    ordered_quantity=Decimal("10"),
+                    has_shipping_document=False,
+                    quality_document_required=False,
+                    quality_document_present=False,
+                    expiry_date=None,
+                    inspection_date=act_date,
+                ),
+                actor=actor,
+                now=datetime.combine(act_date, datetime.min.time()),
+            ),
+            factory(),
+        )
+
+    moved = quarantine_overdue_waiting(datetime(2026, 9, 28, 9, 0), factory())
+
+    assert [line.legacy_id for line in moved] == ["SM-1"]
+    with sessions() as session:
+        rows = {row.legacy_id: row for row in session.scalars(select(ReceivingLineRow))}
+        assert rows["SM-1"].status == "Карантин"
+        assert rows["SM-1"].inspected_on == date(2026, 9, 24)
+        assert rows["SM-2"].status == "Ожидание"
+        assert session.scalar(
+            select(func.count()).select_from(AuditEventRow).where(
+                AuditEventRow.event_type == "receiving.auto_quarantined"
+            )
+        ) == 1
     engine.dispose()

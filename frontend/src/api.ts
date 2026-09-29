@@ -164,6 +164,7 @@ export interface ReceivingLine {
   storage_location: string | null;
   inspector: string | null;
   warehouse_event_emitted: boolean;
+  inspected_on: string | null;
 }
 
 export interface WarehouseLot {

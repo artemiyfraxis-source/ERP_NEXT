@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
@@ -14,8 +14,11 @@ from .domain import (
     InspectionInput,
     ReceivingLine,
     ReceivingStatus,
+    QUARANTINE_WORKDAYS,
     ReceivingValidationError,
     create_line_from_expected,
+    latest_overdue_inspection_date,
+    quarantine_notify_targets,
 )
 
 
@@ -30,6 +33,7 @@ class ReceivingRepository(Protocol):
         limit: int = 200,
         after_id: UUID | None = None,
     ) -> Sequence[ReceivingLine]: ...
+    def waiting_inspected_by(self, day: date, limit: int = 200) -> Sequence[ReceivingLine]: ...
     def all_grns(self) -> Sequence[str]: ...
     def add(self, line: ReceivingLine) -> None: ...
 
@@ -292,6 +296,44 @@ def place_receiving(command: PlaceReceivingCommand, uow: UnitOfWork) -> Receivin
             return result
         uow.commit()
         return result
+
+
+def quarantine_overdue_waiting(now: datetime, uow: UnitOfWork, *, limit: int = 200) -> list[ReceivingLine]:
+    """OwnerTick.gs waitingToQuarantineSweep_: «Ожидание» без решения дольше срока → «Карантин».
+
+    Письмо ответственному — отдельный шаг (уведомления, OP-1/RC-10); кому писать, пишется в аудит.
+    """
+    today: date = now.date()
+    moved: list[ReceivingLine] = []
+    with uow:
+        cutoff = latest_overdue_inspection_date(today)
+        for line in uow.receiving.waiting_inspected_by(cutoff, limit):
+            if not line.waiting_overdue(today):
+                continue
+            quarantined = line.quarantine_overdue(today)
+            uow.receiving.add(quarantined)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=line.id,
+                    event_type="receiving.auto_quarantined",
+                    actor=SYSTEM_ACTOR,
+                    occurred_at=now,
+                    details={
+                        "legacy_id": line.legacy_id,
+                        "from_status": line.status.value,
+                        "to_status": quarantined.status.value,
+                        "reason": f"нет решения {QUARANTINE_WORKDAYS}+ р.д.",
+                        "waiting_since": line.inspected_on.isoformat() if line.inspected_on else None,
+                        "nonconformities": list(line.nonconformities),
+                        "notify": list(quarantine_notify_targets(line.nonconformities)),
+                    },
+                )
+            )
+            moved.append(quarantined)
+        if moved:
+            uow.commit()
+    return moved
 
 
 def receiving_queue(

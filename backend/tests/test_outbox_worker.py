@@ -21,3 +21,23 @@ def test_drain_available_reads_every_batch(monkeypatch):
 def test_dispatch_available_rejects_non_positive_limit():
     with pytest.raises(ValueError, match="positive"):
         outbox_worker.dispatch_available(object(), limit=0)
+
+
+def test_run_timers_moves_overdue_waiting_and_survives_a_concurrent_edit(monkeypatch):
+    from sqlalchemy.orm.exc import StaleDataError
+
+    calls = []
+
+    def sweep(now, uow):
+        calls.append((now, uow))
+        return ["line"]
+
+    monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", sweep)
+    assert outbox_worker.run_timers(object()) == 1
+    assert len(calls) == 1
+
+    def stale(now, uow):
+        raise StaleDataError("changed")
+
+    monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", stale)
+    assert outbox_worker.run_timers(object()) == 0

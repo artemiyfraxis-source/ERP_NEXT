@@ -104,6 +104,7 @@ def _result(line: ReceivingLine) -> dict:
         "storage_location": line.storage_location,
         "inspector": line.inspector.name if line.inspector else None,
         "warehouse_event_emitted": line.warehouse_event_emitted,
+        "inspected_on": line.inspected_on.isoformat() if line.inspected_on else None,
     }
 
 

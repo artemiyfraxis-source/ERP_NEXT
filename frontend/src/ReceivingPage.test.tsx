@@ -33,6 +33,7 @@ const line: ReceivingLine = {
   storage_location: null,
   inspector: null,
   warehouse_event_emitted: false,
+  inspected_on: null,
 };
 
 function json(body: unknown) {

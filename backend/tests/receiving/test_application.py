@@ -12,6 +12,7 @@ from app.modules.receiving.application import (
     dispatch_next_receiving_expected,
     inspect_receiving,
     place_receiving,
+    quarantine_overdue_waiting,
 )
 from app.modules.receiving.domain import InspectionInput, ReceivingStatus
 from app.shared.events import OutboxMessage
@@ -35,6 +36,13 @@ class Repository:
             position = next(index for index, item in enumerate(items) if item.id == after_id)
             items = items[position + 1 :]
         return items[:limit]
+
+    def waiting_inspected_by(self, day, limit=200):
+        return [
+            item
+            for item in self.items.values()
+            if item.status is ReceivingStatus.WAITING and item.inspected_on and item.inspected_on <= day
+        ][:limit]
 
     def all_grns(self):
         return [item.grn for item in self.items.values() if item.grn]
@@ -192,3 +200,45 @@ def test_invalid_decimal_event_is_quarantined_instead_of_blocking_worker():
 
     assert uow.outbox.failures[0][0] == invalid.id
     assert uow.commits == 1
+
+
+def test_overdue_waiting_is_quarantined_by_the_system_with_notify_targets():
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+    actor = Actor(name="Приёмщик", department="ОТК")
+    waiting = inspect_receiving(
+        InspectReceivingCommand(
+            line_id=line.id,
+            expected_version=line.version,
+            inspection=replace(
+                inspection(),
+                inspection_date=date(2026, 9, 24),
+                manual_nonconformities=("Механическое повреждение / брак",),
+                fact_quantity=Decimal("9"),
+            ),
+            actor=actor,
+            now=datetime(2026, 9, 24, 11, 0),
+        ),
+        uow,
+    )
+    assert waiting.status is ReceivingStatus.WAITING
+    commits = uow.commits
+
+    assert quarantine_overdue_waiting(datetime(2026, 9, 25, 23, 0), uow) == []
+    assert uow.commits == commits
+
+    moved = quarantine_overdue_waiting(datetime(2026, 9, 28, 8, 0), uow)
+
+    assert [item.id for item in moved] == [line.id]
+    assert uow.receiving.get(line.id).status is ReceivingStatus.QUARANTINE
+    assert uow.receiving.get(line.id).version == waiting.version + 1
+    event = uow.audit.items[-1]
+    assert event.event_type == "receiving.auto_quarantined"
+    assert event.actor.department == "System"
+    assert event.details["from_status"] == "Ожидание"
+    assert event.details["to_status"] == "Карантин"
+    assert event.details["waiting_since"] == "2026-09-24"
+    assert event.details["notify"] == ["Технолог", "Снабжение"]
+    assert uow.outbox.items == []
+    assert uow.commits == commits + 1
+    assert quarantine_overdue_waiting(datetime(2026, 9, 29, 8, 0), uow) == []

@@ -7,7 +7,9 @@ import logging
 import os
 import time
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.database import build_engine
 from app.modules.procurement.application import (
@@ -21,6 +23,7 @@ from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork as SqlAlche
 from app.modules.receiving.application import (
     PoisonReceivingMessage,
     dispatch_next_receiving_expected,
+    quarantine_overdue_waiting,
 )
 from app.modules.receiving.infrastructure import SqlAlchemyReceivingUnitOfWork
 from app.modules.warehouse.application import PoisonWarehouseMessage, dispatch_next_warehouse_received
@@ -130,6 +133,16 @@ def dispatch_available(
     return dispatched
 
 
+def run_timers(sessions: sessionmaker[Session]) -> int:
+    """Time-driven transitions that SUPPLYMAP ran from its owner tick."""
+    try:
+        moved = quarantine_overdue_waiting(moscow_now(), SqlAlchemyReceivingUnitOfWork(sessions))
+    except (IntegrityError, StaleDataError):
+        logging.warning("Receiving line changed during the quarantine timer; retrying next tick")
+        return 0
+    return len(moved)
+
+
 def drain_available(sessions: sessionmaker[Session], *, limit: int = 100) -> int:
     total = 0
     while True:
@@ -154,9 +167,11 @@ def main() -> None:
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     try:
         if args.once:
+            run_timers(sessions)
             drain_available(sessions, limit=args.limit)
             return
         while True:
+            run_timers(sessions)
             dispatch_available(sessions, limit=args.limit)
             time.sleep(max(args.interval, 0.1))
     finally:
