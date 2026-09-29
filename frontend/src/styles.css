@@ -1019,3 +1019,15 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .gen-more[open] { color: var(--foreground); }
 .gen-more > .secondary { justify-self: start; }
 .gen-more .build-config { margin: 0; padding: 0; border: 0; min-width: min(640px, 70vw); }
+/* Kitting and handout as tiles (SUPPLYMAP issRender): a project is one tile, a manual request its own. */
+.iss-tiles { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.iss-tiles .iss-tile { min-height: 0; padding: 14px 16px; cursor: pointer; }
+.iss-tile .tile-body { gap: 6px; }
+.iss-tile .t-row { display: flex; align-items: baseline; gap: 8px; }
+.iss-tile .t-row .t-sub { margin-left: auto; white-space: nowrap; }
+.iss-tile .t-in { font-size: 13px; }
+.iss-tile .t-warn { color: #b45309; font-size: 12.5px; }
+.iss-chip-wrap { display: inline-flex; align-items: center; gap: 3px; }
+.iss-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
+.fulfillment-open { display: grid; gap: 10px; justify-items: start; }
+.fulfillment-open > .fulfillment-card { justify-self: stretch; }

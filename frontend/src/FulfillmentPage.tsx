@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   fulfillmentApi,
   type FulfillmentCalcLine,
@@ -74,11 +74,122 @@ function day(value?: string | null) {
   return match ? `${match[3]}.${match[2]}.${match[1]}` : value ?? "";
 }
 
+// issChip_: the colour of a stage — grey waits, green went through, red is closed.
+const STAGE_COLORS: Record<string, string> = {
+  "Новая": "#6b7280",
+  "Недоукомплектован": "#b45309",
+  "Укомплектован": "#1d4ed8",
+  "Готов к выдаче": "#0f766e",
+  "КБ Выдана": "#15803d",
+  "КБ Возвращена": "#7c3aed",
+  "Готово": "#15803d",
+  "Отменена": "#b91c1c",
+};
+
+// The screen opens as tiles (SUPPLYMAP issRender); «Таблицей» is remembered per browser, and a blocked storage keeps tiles.
+const VIEW_KEY = "erp.fulfillment.view";
+
+function savedView(): "tiles" | "table" {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === "table" ? "table" : "tiles";
+  } catch {
+    return "tiles";
+  }
+}
+
+function saveView(view: "tiles" | "table") {
+  try {
+    window.localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    // Private window or blocked site data: the choice lives until the page is reloaded.
+  }
+}
+
+/** issMatch_: every word of the search is found in the number, purpose, requester or stage. */
+function issMatch(request: FulfillmentRequest, query: string) {
+  return matchesWords([request.number, request.purpose, request.requester, request.status], query);
+}
+
+function createdDay(value?: string | null) {
+  const date = new Date(value ?? "");
+  return Number.isNaN(date.getTime()) ? day(value) : date.toLocaleDateString("ru-RU");
+}
+
+function StageChips({ counts }: { counts: Map<string, number> }) {
+  return <div className="kit-chips">{[...counts].map(([status, count]) => <span key={status} className="iss-chip-wrap">
+    <span className="iss-chip" style={{ background: STAGE_COLORS[status] ?? "#6b7280" }}>{status}</span>
+    {count > 1 && <small className="t-sub">×{count}</small>}
+  </span>)}</div>;
+}
+
+type TileItem = { project: string; requests: FulfillmentRequest[] } | { project: ""; request: FulfillmentRequest };
+
+/* issRender: tiles, not a table (owner 22.09.2026 «карточки топ»). A request is created per КБ, so the requests of one
+   project are one tile that opens the project card; a manual request without a project keeps its own tile. The order
+   is the sheet's (creation), a project standing where its first request stands. */
+function RequestTiles({ requests, openProject, openRequest }: {
+  requests: FulfillmentRequest[];
+  openProject: (project: string) => void;
+  openRequest: (id: string) => void;
+}) {
+  const items: TileItem[] = [];
+  const byProject = new Map<string, { project: string; requests: FulfillmentRequest[] }>();
+  for (const request of requests) {
+    const project = projectOf(request);
+    if (!project) { items.push({ project: "", request }); continue; }
+    let group = byProject.get(project);
+    if (!group) { group = { project, requests: [] }; byProject.set(project, group); items.push(group); }
+    group.requests.push(request);
+  }
+  const tile = (key: string, title: string, open: () => void, body: ReactNode) =>
+    <div key={key} className="tile iss-tile" role="button" tabIndex={0} title={title} onClick={open}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } }}>
+      <div className="tile-body">{body}</div>
+    </div>;
+
+  return <div className="tiles iss-tiles">{items.map((item) => {
+    if ("request" in item) {
+      const request = item.request;
+      const count = (request.lines ?? []).length;
+      return tile(request.id, `Открыть заявку ${request.number}`, () => openRequest(request.id), <>
+        <div className="t-row"><strong className="t-h">{request.number}</strong><span className="t-sub">{createdDay(request.created_at)}</span></div>
+        <StageChips counts={new Map([[request.status, 1]])} />
+        <div className="t-in">{request.purpose || "—"}</div>
+        {request.shortfall && <div className="t-warn">недобор: {request.shortfall}</div>}
+        <div className="t-sub">{request.requester}{request.deadline ? ` · до ${day(request.deadline)}` : ""}{count ? ` · позиций ${count}` : ""}</div>
+      </>);
+    }
+    const counts = new Map<string, number>();
+    const who = new Set<string>();
+    let count = 0;
+    let deadline = "";
+    for (const request of item.requests) {
+      counts.set(request.status, (counts.get(request.status) ?? 0) + 1);
+      if (request.requester) who.add(request.requester);
+      count += (request.lines ?? []).length;
+      if (request.deadline && (!deadline || request.deadline < deadline)) deadline = request.deadline;
+    }
+    const short = item.requests.filter((request) => request.shortfall).length;
+    // «Сборки:» as a caption: a bare list of КБ read like an error (owner 22.09.2026), though it is the order's make-up.
+    return tile(`project:${item.project}`, `Открыть проект ${item.project}`, () => openProject(item.project), <>
+      <div className="t-row"><strong className="t-h">{item.project}</strong><span className="t-sub">сборок: {item.requests.length}</span></div>
+      <StageChips counts={counts} />
+      <div className="t-in">Сборки: {item.requests.map(kbOf).join(" · ")}</div>
+      {short > 0 && <div className="t-warn">с недобором: {short} из {item.requests.length}</div>}
+      <div className="t-sub">{[...who].join(", ")}{deadline ? ` · до ${day(deadline)}` : ""}{count ? ` · позиций ${count}` : ""}</div>
+    </>);
+  })}</div>;
+}
+
 export function FulfillmentPage({ principal, mode }: { principal: Principal; mode?: keyof typeof MODES }) {
   const [archive, setArchive] = useState(false);
   const [showReady, setShowReady] = useState(false);
   const [byProject, setByProject] = useState(false);
   const [project, setProject] = useState<string | null>(null);
+  const [view, setView] = useState(savedView);
+  const [query, setQuery] = useState("");
+  const [stage, setStage] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [fromCalc, setFromCalc] = useState(false);
   const [requests, setRequests] = useState<FulfillmentRequest[]>([]);
@@ -173,13 +284,31 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
     return archive ? ARCHIVE.includes(request.status) : !ARCHIVE.includes(request.status);
   }
 
+  function switchView(next: "tiles" | "table") {
+    setView(next);
+    saveView(next);
+  }
+
+  // issFilterRender_: the chips count what the search left, not what the chip itself narrows to.
+  const chipStages = presets.map((item) => item.label);
+  const found = shown.filter((request) => issMatch(request, query));
+  const tiled = stage ? found.filter((request) => request.status === stage) : found;
+  const opened = openId ? requests.find((request) => request.id === openId) : undefined;
+  const emptyText = archive ? "В архиве пусто." : screen?.empty ?? "Заявок на выдачу нет. Они появятся из состава производственного комплекта.";
+  const readyToggle = screen && screen.hidden.length > 0 && !archive && <label className="check-inline"><input type="checkbox" checked={showReady} onChange={(event) => {
+    setShowReady(event.target.checked);
+    // A chip pointing at the stage that was just hidden would show an empty screen.
+    if (!event.target.checked && screen.hidden.includes(stage)) setStage("");
+  }} /> показать «{screen.hidden[0]}»</label>;
+
   return (
     <section className="page">
       <header className="page-head">
         <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{shown.length}</span>
-        {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => setArchive((value) => !value)}>{archive ? "Активные" : "Архив"}</button>}
+        {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => { setArchive((value) => !value); setStage(""); setOpenId(null); }}>{archive ? "Активные" : "Архив"}</button>}
         {canEdit && mode !== "give" && !archive && <button className="primary small" onClick={() => { setCreating((value) => !value); setFromCalc(false); }}>+ Заявка</button>}
         {canEdit && mode !== "give" && !archive && <button className="secondary small" onClick={() => { setFromCalc((value) => !value); setCreating(false); }}>Заявка по расчёту</button>}
+        <button className="secondary small" onClick={() => switchView(view === "tiles" ? "table" : "tiles")}>{view === "tiles" ? "Таблицей" : "Плитками"}</button>
       </header>
       <p className="page-sub">{screen?.sub ?? "Партии выбирает человек. Заявка ждёт поставки, а в цех уходит только полностью собранный комплект."}</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
@@ -187,7 +316,25 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
       {fromCalc && <CalcRequestForm onClose={() => setFromCalc(false)} onCreated={async () => { setFromCalc(false); await reload(); }} />}
       {creating && <CreateRequestForm lots={lots} onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await reload(); }} />}
       {project && <ProjectPanel project={project} requests={projectRequests} onClose={() => setProject(null)} busyId={busy} {...cardProps} />}
-      {!project && <DataTable
+      {!project && view === "tiles" && (opened
+        ? <div className="fulfillment-open">
+          <button className="secondary small" onClick={() => setOpenId(null)}>← К заявкам</button>
+          <FulfillmentCard key={`${opened.id}:${opened.version}`} request={opened} busy={busy === opened.id} {...cardProps} />
+        </div>
+        : <>
+          <div className="filters table-toolbar">
+            <div className="table-search"><input className="search" type="search" aria-label={`Поиск: ${screen?.title ?? "Заявки на выдачу"}`} placeholder="поиск: 708К.4 КБ1 …" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+            {readyToggle}
+          </div>
+          <div className="calendar-chips" role="group" aria-label="Стадии">
+            <button type="button" className={`calendar-chip${stage ? "" : " active"}`} aria-pressed={!stage} onClick={() => setStage("")}>Все · {found.length}</button>
+            {chipStages.map((item) => <button type="button" key={item} className={`calendar-chip${stage === item ? " active" : ""}`} aria-pressed={stage === item} onClick={() => setStage(stage === item ? "" : item)}>{item} · {found.filter((request) => request.status === item).length}</button>)}
+          </div>
+          {tiled.length
+            ? <RequestTiles requests={tiled} openProject={setProject} openRequest={setOpenId} />
+            : <div className="empty">{!loaded ? "Загружаю…" : query ? "Ничего не нашлось." : stage ? `На стадии «${stage}» заявок нет.` : emptyText}</div>}
+        </>)}
+      {!project && view === "table" && <DataTable
         rows={shown}
         columns={columns}
         rowKey={(request) => request.id}
@@ -195,11 +342,11 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         presets={presets}
         presetCountsFollowSearch
         groupBy={byProject ? (request) => projectOf(request) || "Без проекта" : undefined}
-        emptyText={loaded ? (archive ? "В архиве пусто." : screen?.empty ?? "Заявок на выдачу нет. Они появятся из состава производственного комплекта.") : "Загружаю…"}
+        emptyText={loaded ? emptyText : "Загружаю…"}
         exportName={mode === "give" ? "vydacha" : "komplektaciya"}
         toolbar={<>
           <label className="check-inline"><input type="checkbox" checked={byProject} onChange={(event) => setByProject(event.target.checked)} /> По проектам</label>
-          {screen && screen.hidden.length > 0 && !archive && <label className="check-inline"><input type="checkbox" checked={showReady} onChange={(event) => setShowReady(event.target.checked)} /> показать «{screen.hidden[0]}»</label>}
+          {readyToggle}
         </>}
         renderDetail={(request) => <FulfillmentCard key={`${request.id}:${request.version}`} request={request} busy={busy === request.id} {...cardProps} />}
       />}
