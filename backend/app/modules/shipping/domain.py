@@ -112,6 +112,102 @@ class FinishedGood:
         return replace(self, shipped=self.shipped - amount, version=self.version + 1)
 
 
+ADDRESSEE_CONTACT_FIELDS = ("shipping_point", "contact", "phone")
+ADDRESSEE_CARD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type")
+
+
+@dataclass(frozen=True)
+class ProjectAddressee:
+    """Project card's shipping defaults (`ОТГРУЗКА.ПРОЕКТЫ`): one row per project."""
+
+    project: str
+    version: int = 0
+    receiver: str = ""
+    shipping_point: str = ""
+    contact: str = ""
+    phone: str = ""
+    terms: DeliveryTerms | None = None
+    carrier: str = ""
+    upd_type: UpdType | None = None
+    updated_by: str = ""
+    updated_at: datetime | None = None
+
+    @classmethod
+    def empty(cls, project: str) -> ProjectAddressee:
+        return cls(project=_text(project, "Проект"))
+
+    def remember(self, *, shipping_point: str, contact: str, phone: str) -> ProjectAddressee:
+        """`shipProjPatch_` without replace: a non-empty value wins, an empty one never erases."""
+        patch = {"shipping_point": shipping_point, "contact": contact, "phone": phone}
+        changes = {}
+        for key in ADDRESSEE_CONTACT_FIELDS:
+            value = str(patch[key] or "").strip()
+            if value and value != getattr(self, key):
+                changes[key] = value
+        return replace(self, **changes) if changes else self
+
+    def edit(self, fields: dict) -> ProjectAddressee:
+        """Card edit (`shipProjectSet_(…, replace)`, `shipProjShipFields_`): a sent field replaces, empty erases."""
+        unknown = set(fields) - set(ADDRESSEE_CARD_FIELDS)
+        if unknown:
+            raise ShippingValidationError("Неизвестное поле адресата: " + ", ".join(sorted(unknown)))
+        changes = {}
+        for key, value in fields.items():
+            if key == "terms":
+                changes[key] = DeliveryTerms(value) if value else None
+            elif key == "upd_type":
+                changes[key] = UpdType(value) if value else None
+            else:
+                changes[key] = str(value or "").strip()
+        return replace(self, **changes)
+
+    def differs(self, other: ProjectAddressee) -> bool:
+        return any(getattr(self, key) != getattr(other, key) for key in ADDRESSEE_CARD_FIELDS)
+
+
+@dataclass(frozen=True)
+class EffectiveAddress:
+    receiver: str
+    shipping_point: str
+    contact: str
+    phone: str
+    terms: DeliveryTerms | None
+    carrier: str
+    upd_type: UpdType | None
+    inherited: frozenset[str]
+
+
+def effective_address(
+    *, receiver: str, shipping_point: str, contact: str, phone: str,
+    terms: DeliveryTerms | None, carrier: str, upd_type: UpdType | None,
+    project: ProjectAddressee | None, customer_fallback: str = "",
+) -> EffectiveAddress:
+    """`shipAddrEff_` + `shipUpdEff_`: the shipment's own non-empty field wins, an empty one inherits.
+
+    The receiver also falls back to the customer, like `shipPackProject_`. Unlike `shipAddrEff_` the
+    project receiver does not override a typed one: ERP never writes the customer as a placeholder.
+    """
+    own = {
+        "receiver": str(receiver or "").strip(), "shipping_point": str(shipping_point or "").strip(),
+        "contact": str(contact or "").strip(), "phone": str(phone or "").strip(),
+        "terms": terms, "carrier": str(carrier or "").strip(), "upd_type": upd_type,
+    }
+    result = {}
+    inherited = set()
+    for key in ADDRESSEE_CARD_FIELDS:
+        theirs = getattr(project, key) if project is not None else None
+        if own[key]:
+            result[key] = own[key]
+        elif theirs:
+            result[key] = theirs
+            inherited.add(key)
+        else:
+            result[key] = own[key]
+    if not result["receiver"]:
+        result["receiver"] = str(customer_fallback or "").strip()
+    return EffectiveAddress(**result, inherited=frozenset(inherited))
+
+
 @dataclass(frozen=True)
 class ProjectAssembly:
     """One КБ of the project card: what the finished-goods queue is built from."""

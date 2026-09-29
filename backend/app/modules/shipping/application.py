@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Protocol, Sequence
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
@@ -18,7 +18,10 @@ from app.shared.notifications import (
     publish_notification,
 )
 
-from .domain import DeliveryTerms, FinishedGood, ProjectAssembly, Shipment, ShipmentLine, ShippingValidationError, UpdType, plan_project_queue
+from .domain import (
+    DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    ShippingValidationError, UpdType, effective_address, plan_project_queue,
+)
 
 
 class ConcurrentShippingUpdate(RuntimeError):
@@ -44,6 +47,11 @@ class ShipmentRepository(Protocol):
     def add(self, shipment: Shipment) -> None: ...
 
 
+class ProjectAddresseeRepository(Protocol):
+    def get(self, project: str) -> ProjectAddressee | None: ...
+    def add(self, addressee: ProjectAddressee) -> None: ...
+
+
 class AppendOnlyRepository(Protocol):
     def add(self, item) -> None: ...
 
@@ -51,6 +59,7 @@ class AppendOnlyRepository(Protocol):
 class UnitOfWork(Protocol):
     goods: FinishedGoodsRepository
     shipments: ShipmentRepository
+    addressees: ProjectAddresseeRepository
     audit: AppendOnlyRepository
     outbox: NotificationOutbox
     def __enter__(self): ...
@@ -119,15 +128,17 @@ class RequestedGood:
 
 @dataclass(frozen=True)
 class CreateShipmentCommand:
+    """Empty address fields inherit the project card (`shipAddrEff_`); see `create_shipment`."""
+
     customer: str
     receiver: str
     shipping_point: str
     contact: str
     phone: str
-    terms: DeliveryTerms
+    terms: DeliveryTerms | None
     carrier: str
     deadline: date | None
-    upd_type: UpdType
+    upd_type: UpdType | None
     upd_number: str
     upd_date: date | None
     upd_url: str
@@ -136,6 +147,17 @@ class CreateShipmentCommand:
     actor: Actor
     now: datetime
     no_docs: bool = False
+
+
+@dataclass(frozen=True)
+class SetProjectAddresseeCommand:
+    """Card edit: only the sent keys change, an empty value erases (`portalShipProjectSet`)."""
+
+    project: str
+    fields: dict
+    expected_version: int | None
+    actor: Actor
+    now: datetime
 
 
 @dataclass(frozen=True)
@@ -265,22 +287,42 @@ def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment
         if len({line.good_id for line in command.lines}) != len(command.lines):
             raise ShippingValidationError("Позиция готовой продукции указана дважды")
         lines = []
+        customers: list[str] = []
         for requested in command.lines:
             good = uow.goods.get(requested.good_id)
             if good is None:
                 raise KeyError(f"Finished good not found: {requested.good_id}")
             lines.append(ShipmentLine.create(good, requested.quantity))
+            customers.append(good.customer)
+        if not lines:
+            raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
+        # The shipment's project is its first line's (`shipHeadEff_`).
+        address = effective_address(
+            receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
+            phone=command.phone, terms=command.terms, carrier=command.carrier, upd_type=command.upd_type,
+            project=uow.addressees.get(lines[0].project),
+            customer_fallback=command.customer or next((name for name in customers if name), ""),
+        )
+        if not address.shipping_point:
+            raise ShippingValidationError("Укажите точку отгрузки в заявке или в карточке проекта")
+        if address.terms is None:
+            raise ShippingValidationError("Укажите условия доставки в заявке или в карточке проекта")
+        if address.upd_type is None:
+            raise ShippingValidationError("Укажите тип УПД в заявке или в карточке проекта")
         shipment = Shipment.create(
             number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
-            customer=command.customer, receiver=command.receiver, shipping_point=command.shipping_point,
-            contact=command.contact, phone=command.phone, terms=command.terms,
-            carrier=command.carrier, deadline=command.deadline, upd_type=command.upd_type,
+            customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
+            contact=address.contact, phone=address.phone, terms=address.terms,
+            carrier=address.carrier, deadline=command.deadline, upd_type=address.upd_type,
             upd_number=command.upd_number, upd_date=command.upd_date, upd_url=command.upd_url,
             manager=command.actor.name, note=command.note, lines=tuple(lines),
             manager_id=command.actor.id,
         )
         uow.shipments.add(shipment)
-        _audit(shipment.id, "shipping.created", command.actor, command.now, {"number": shipment.number}, uow)
+        _remember_addressees(shipment, command, uow)
+        _audit(shipment.id, "shipping.created", command.actor, command.now, {
+            "number": shipment.number, "inherited": sorted(address.inherited),
+        }, uow)
         # Shipment.gs shipRequestCreate_: набор сразу при заведении, затем PL/DN → «Упакована»;
         # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт.
         shipment, taken = _pick(shipment, command.actor, command.now, uow)
@@ -317,6 +359,48 @@ def _pack(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> S
     uow.shipments.add(updated)
     _audit(shipment.id, "shipping.packed", actor, now, {"pl": updated.pl_number, "dn": updated.dn_number}, uow)
     return updated
+
+
+def _addressee_id(project: str) -> UUID:
+    return uuid5(NAMESPACE_URL, "erp-next:shipping:project-addressee:" + project)
+
+
+def _remember_addressees(shipment: Shipment, command: CreateShipmentCommand, uow: UnitOfWork) -> None:
+    """The typed point, contact and phone stay with each project of the shipment; empty never erases."""
+    for project in dict.fromkeys(line.project for line in shipment.lines):
+        current = uow.addressees.get(project) or ProjectAddressee.empty(project)
+        remembered = current.remember(shipping_point=command.shipping_point, contact=command.contact, phone=command.phone)
+        if remembered is current:
+            continue
+        uow.addressees.add(replace(
+            remembered, version=current.version + 1, updated_by=command.actor.name, updated_at=command.now,
+        ))
+        _audit(_addressee_id(project), "shipping.addressee_remembered", command.actor, command.now, {
+            "project": project, "shipment": shipment.number,
+        }, uow)
+
+
+def set_project_addressee(command: SetProjectAddresseeCommand, uow: UnitOfWork) -> ProjectAddressee:
+    project = str(command.project or "").strip()
+    with uow:
+        current = uow.addressees.get(project) or ProjectAddressee.empty(project)
+        if command.expected_version is not None and command.expected_version != current.version:
+            raise ConcurrentShippingUpdate("Адресат проекта изменился после загрузки формы")
+        try:
+            edited = current.edit(command.fields)
+        except ValueError as error:
+            if isinstance(error, ShippingValidationError):
+                raise
+            raise ShippingValidationError("Недопустимое значение поля адресата") from error
+        if not edited.differs(current):
+            return current
+        updated = replace(edited, version=current.version + 1, updated_by=command.actor.name, updated_at=command.now)
+        uow.addressees.add(updated)
+        _audit(_addressee_id(project), "shipping.addressee_set", command.actor, command.now, {
+            "project": project, "fields": sorted(command.fields),
+        }, uow)
+        uow.commit()
+        return updated
 
 
 def pick_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:

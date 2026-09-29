@@ -12,7 +12,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
-from .domain import DeliveryTerms, FinishedGood, Shipment, ShipmentLine, ShipmentStatus, UpdType
+from .domain import DeliveryTerms, FinishedGood, ProjectAddressee, Shipment, ShipmentLine, ShipmentStatus, UpdType
 
 
 class FinishedGoodRow(Base):
@@ -82,6 +82,24 @@ class ShipmentLineRow(Base):
     picked: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     unit: Mapped[str] = mapped_column(String(64), nullable=False)
     grn: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class ProjectAddresseeRow(Base):
+    """Project card's shipping defaults; a shipment copies them at creation."""
+
+    __tablename__ = "shipping_project_addressees"
+    project: Mapped[str] = mapped_column(String(255), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    receiver: Mapped[str] = mapped_column(String(512), nullable=False)
+    shipping_point: Mapped[str] = mapped_column(Text(), nullable=False)
+    contact: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone: Mapped[str] = mapped_column(String(128), nullable=False)
+    terms: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    carrier: Mapped[str] = mapped_column(String(255), nullable=False)
+    upd_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
 class ShippingSequenceRow(Base):
@@ -195,6 +213,29 @@ class SqlAlchemyShipmentRepository:
                 setattr(stored, key, getattr(line, key))
 
 
+class SqlAlchemyProjectAddresseeRepository:
+    def __init__(self, session: Session): self.session = session
+    def get(self, project: str) -> ProjectAddressee | None:
+        row = self.session.get(ProjectAddresseeRow, project)
+        if row is None:
+            return None
+        return ProjectAddressee(
+            project=row.project, version=row.version, receiver=row.receiver,
+            shipping_point=row.shipping_point, contact=row.contact, phone=row.phone,
+            terms=DeliveryTerms(row.terms) if row.terms else None, carrier=row.carrier,
+            upd_type=UpdType(row.upd_type) if row.upd_type else None,
+            updated_by=row.updated_by, updated_at=row.updated_at,
+        )
+    def add(self, addressee: ProjectAddressee) -> None:
+        row = self.session.get(ProjectAddresseeRow, addressee.project)
+        if row is None:
+            row = ProjectAddresseeRow(project=addressee.project); self.session.add(row)
+        for key in ("version", "receiver", "shipping_point", "contact", "phone", "carrier", "updated_by", "updated_at"):
+            setattr(row, key, getattr(addressee, key))
+        row.terms = addressee.terms.value if addressee.terms else None
+        row.upd_type = addressee.upd_type.value if addressee.upd_type else None
+
+
 class SqlAlchemyShippingUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory; self.session: Session | None = None; self.committed = False
@@ -202,6 +243,7 @@ class SqlAlchemyShippingUnitOfWork:
         self.committed = False; self.session = self.session_factory()
         self.goods = SqlAlchemyFinishedGoodsRepository(self.session)
         self.shipments = SqlAlchemyShipmentRepository(self.session)
+        self.addressees = SqlAlchemyProjectAddresseeRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

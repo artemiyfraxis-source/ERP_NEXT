@@ -183,3 +183,59 @@ def test_project_queue_ignores_blank_index_and_reports_kb_without_run():
 def test_goods_with_movement_outlive_the_project_card():
     assert not good().has_movement
     assert good().accept(Decimal("1"), date(2026, 9, 22), "ГП.26.0000001").has_movement
+
+
+def test_project_addressee_remember_keeps_stored_value_when_new_one_is_empty():
+    from app.modules.shipping.domain import ProjectAddressee
+
+    stored = ProjectAddressee(project="591К.3", version=1, shipping_point="Москва", contact="Иванов", phone="+7 900")
+    same = stored.remember(shipping_point="  ", contact="", phone="+7 900")
+    moved = stored.remember(shipping_point="Тверь", contact="", phone="")
+
+    assert same is stored
+    assert (moved.shipping_point, moved.contact, moved.phone) == ("Тверь", "Иванов", "+7 900")
+
+
+def test_project_addressee_card_edit_changes_only_sent_fields_and_empty_erases():
+    from app.modules.shipping.domain import ProjectAddressee
+
+    stored = ProjectAddressee(project="591К.3", version=1, receiver="АО Получатель", shipping_point="Москва",
+                              contact="Иванов", terms=DeliveryTerms.CARRIER, upd_type=UpdType.PAPER)
+    edited = stored.edit({"contact": "", "terms": None, "carrier": " ПЭК "})
+
+    assert edited.contact == ""
+    assert edited.terms is None
+    assert edited.carrier == "ПЭК"
+    assert (edited.receiver, edited.shipping_point, edited.upd_type) == ("АО Получатель", "Москва", UpdType.PAPER)
+    with pytest.raises(ShippingValidationError):
+        stored.edit({"customer": "x"})
+
+
+def test_effective_address_own_non_empty_wins_and_empty_inherits_project_card():
+    from app.modules.shipping.domain import ProjectAddressee, effective_address
+
+    card = ProjectAddressee(project="591К.3", receiver="АО Получатель", shipping_point="Москва", contact="Иванов",
+                            phone="+7 900", terms=DeliveryTerms.CARRIER, carrier="ПЭК", upd_type=UpdType.PAPER)
+    address = effective_address(receiver="", shipping_point="Тверь", contact=" ", phone="", terms=None,
+                                carrier="", upd_type=UpdType.EDO, project=card)
+    typed = effective_address(receiver="ООО Другой", shipping_point="", contact="", phone="", terms=None,
+                              carrier="", upd_type=None, project=card)
+
+    assert address.shipping_point == "Тверь"
+    assert address.upd_type == UpdType.EDO
+    assert (address.receiver, address.contact, address.phone, address.terms, address.carrier) == (
+        "АО Получатель", "Иванов", "+7 900", DeliveryTerms.CARRIER, "ПЭК")
+    assert address.inherited == {"receiver", "contact", "phone", "terms", "carrier"}
+    assert typed.receiver == "ООО Другой"
+
+
+def test_effective_address_without_card_falls_back_to_customer_for_receiver_only():
+    from app.modules.shipping.domain import effective_address
+
+    address = effective_address(receiver="", shipping_point="", contact="", phone="", terms=None, carrier="",
+                                upd_type=None, project=None, customer_fallback="Заказчик")
+
+    assert address.receiver == "Заказчик"
+    assert address.shipping_point == ""
+    assert address.terms is None
+    assert address.inherited == frozenset()

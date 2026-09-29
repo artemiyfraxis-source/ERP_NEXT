@@ -16,12 +16,15 @@ from app.shared.http_auth import Principal, shipping_manager_principal, shipping
 
 from .application import (
     AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand,
-    QueueProjectCommand, RegisterGoodCommand,
-    RequestedGood, ShipmentCommand, UnitOfWork, UnpickCommand, UpdateDocumentsCommand,
-    accept_good, cancel_shipment, close_shipment, create_shipment, drop_project, mark_shipped, queue_project,
-    pack_shipment, pick_shipment, register_good, unpick_line, update_documents,
+    QueueProjectCommand, RegisterGoodCommand, RequestedGood, SetProjectAddresseeCommand,
+    ShipmentCommand, UnitOfWork, UnpickCommand, UpdateDocumentsCommand, accept_good,
+    cancel_shipment, close_shipment, create_shipment, drop_project, mark_shipped, pack_shipment,
+    pick_shipment, queue_project, register_good, set_project_addressee, unpick_line,
+    update_documents,
 )
-from .domain import DeliveryTerms, FinishedGood, ProjectAssembly, Shipment, ShippingValidationError, UpdType
+from .domain import (
+    DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShippingValidationError, UpdType,
+)
 
 
 router = APIRouter(prefix="/api/shipping", tags=["shipping"])
@@ -68,21 +71,37 @@ class ShipmentLinePayload(BaseModel):
 
 
 class ShipmentPayload(BaseModel):
+    """Empty receiver, point, contact, phone, terms, carrier and УПД type inherit the project card."""
+
     customer: str = Field(default="", max_length=512)
-    receiver: str = Field(min_length=1, max_length=512)
-    shipping_point: str = Field(min_length=1, max_length=5000)
+    receiver: str = Field(default="", max_length=512)
+    shipping_point: str = Field(default="", max_length=5000)
     contact: str = Field(default="", max_length=255)
     phone: str = Field(default="", max_length=128)
-    terms: DeliveryTerms
+    terms: DeliveryTerms | None = None
     carrier: str = Field(default="", max_length=255)
     deadline: date | None = None
-    upd_type: UpdType
+    upd_type: UpdType | None = None
     upd_number: str = Field(default="", max_length=255)
     upd_date: date | None = None
     upd_url: str = Field(default="", max_length=5000)
     note: str = Field(default="", max_length=5000)
     no_docs: bool = False
     lines: list[ShipmentLinePayload] = Field(min_length=1, max_length=500)
+
+
+class AddresseePayload(BaseModel):
+    """Card edit: only the sent fields change; an empty value erases the stored one."""
+
+    project: str = Field(min_length=1, max_length=255)
+    version: int | None = Field(default=None, ge=0)
+    receiver: str | None = Field(default=None, max_length=512)
+    shipping_point: str | None = Field(default=None, max_length=5000)
+    contact: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=128)
+    terms: DeliveryTerms | None = None
+    carrier: str | None = Field(default=None, max_length=255)
+    upd_type: UpdType | None = None
 
 
 class VersionPayload(BaseModel):
@@ -121,6 +140,17 @@ def _good_result(good: FinishedGood) -> dict:
         "remaining": _number(good.remaining),
         "received_at": good.received_at.isoformat() if good.received_at else None,
         "grn": good.grn, "note": good.note,
+    }
+
+
+def _addressee_result(addressee: ProjectAddressee) -> dict:
+    return {
+        "project": addressee.project, "version": addressee.version, "receiver": addressee.receiver,
+        "shipping_point": addressee.shipping_point, "contact": addressee.contact, "phone": addressee.phone,
+        "terms": addressee.terms.value if addressee.terms else None, "carrier": addressee.carrier,
+        "upd_type": addressee.upd_type.value if addressee.upd_type else None,
+        "updated_by": addressee.updated_by,
+        "updated_at": addressee.updated_at.isoformat() if addressee.updated_at else None,
     }
 
 
@@ -221,6 +251,35 @@ def receive_good(
         received_at=payload.received_at or now.date(), actor=principal.actor, now=now,
     ), uow_factory()))
     return {"good": _good_result(good)}
+
+
+@router.get("/project-addressee")
+def project_addressee(
+    _principal: Annotated[Principal, Depends(shipping_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+    project: Annotated[str, Query(min_length=1, max_length=255)],
+) -> dict:
+    name = project.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Проект обязателен")
+    with uow_factory() as uow: addressee = uow.addressees.get(name)
+    return {"addressee": _addressee_result(addressee or ProjectAddressee(project=name))}
+
+
+@router.put("/project-addressee")
+def save_project_addressee(
+    payload: AddresseePayload,
+    principal: Annotated[Principal, Depends(shipping_manager_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    fields = payload.model_dump(exclude={"project", "version"}, exclude_unset=True)
+    fields = {key: value.value if hasattr(value, "value") else value for key, value in fields.items()}
+    addressee = _run(lambda: set_project_addressee(SetProjectAddresseeCommand(
+        project=payload.project, fields=fields, expected_version=payload.version,
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {"addressee": _addressee_result(addressee)}
 
 
 @router.get("/shipments")

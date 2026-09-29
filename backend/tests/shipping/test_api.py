@@ -277,3 +277,93 @@ def test_project_queue_is_idempotent_and_drop_keeps_goods_with_movement(shipping
     dropped = client.post("/api/shipping/project-queue/drop", json={"project": "735К.1"})
     assert dropped.json() == {"deleted": 1, "kept": 2}
     assert {item["item_index"] for item in client.get("/api/shipping/goods").json()["goods"]} == {"КБ2", "КБ3"}
+
+
+def _queued_good(client, project="591К.3", item_index="КБ1"):
+    good = client.post("/api/shipping/goods", json={
+        "project": project, "item_index": item_index, "customer": "Заказчик",
+        "name": "Жгут", "ordered": "40", "unit": "шт",
+    }).json()["good"]
+    return good
+
+
+def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api):
+    client = shipping_api
+    good = _queued_good(client)
+    card = client.put("/api/shipping/project-addressee", json={
+        "project": "591К.3", "receiver": "АО Получатель", "shipping_point": "Москва, склад 1",
+        "contact": "Иванов", "phone": "+7 900 000-00-00", "terms": "ДОСТАВКА ТК", "carrier": "ПЭК",
+        "upd_type": "БУМАГА",
+    })
+    made = client.post("/api/shipping/shipments", json={
+        "contact": "Петров", "upd_type": "ЭДО", "lines": [{"good_id": good["id"], "quantity": "5"}],
+    })
+    stored = client.get("/api/shipping/project-addressee", params={"project": "591К.3"}).json()["addressee"]
+
+    assert card.status_code == 200
+    assert card.json()["addressee"]["version"] == 1
+    assert made.status_code == 200
+    shipment = made.json()["shipment"]
+    assert shipment["receiver"] == "АО Получатель"
+    assert shipment["shipping_point"] == "Москва, склад 1"
+    assert shipment["contact"] == "Петров"
+    assert shipment["phone"] == "+7 900 000-00-00"
+    assert shipment["terms"] == "ДОСТАВКА ТК"
+    assert shipment["carrier"] == "ПЭК"
+    assert shipment["upd_type"] == "ЭДО"
+    # The typed contact is remembered; nothing the manager left empty is erased.
+    assert stored["contact"] == "Петров"
+    assert stored["shipping_point"] == "Москва, склад 1"
+    assert stored["upd_type"] == "БУМАГА"
+    assert stored["version"] == 2
+
+
+def test_first_shipment_without_card_requires_point_terms_and_upd_type_then_seeds_card(shipping_api):
+    client = shipping_api
+    good = _queued_good(client)
+    lines = [{"good_id": good["id"], "quantity": "1"}]
+    no_point = client.post("/api/shipping/shipments", json={"terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "lines": lines})
+    no_terms = client.post("/api/shipping/shipments", json={"shipping_point": "Москва", "upd_type": "ЭДО", "lines": lines})
+    made = client.post("/api/shipping/shipments", json={
+        "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "lines": lines,
+    })
+    card = client.get("/api/shipping/project-addressee", params={"project": "591К.3"}).json()["addressee"]
+
+    assert no_point.status_code == 422
+    assert "точку отгрузки" in no_point.json()["detail"]
+    assert no_terms.status_code == 422
+    assert made.status_code == 200
+    assert made.json()["shipment"]["receiver"] == "Заказчик"
+    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("Москва", "+7 900", "", 1)
+    assert card["terms"] is None
+
+
+def test_card_edit_erases_sent_empty_field_keeps_unsent_and_checks_version(shipping_api):
+    client = shipping_api
+    first = client.put("/api/shipping/project-addressee", json={
+        "project": "591К.3", "shipping_point": "Москва", "contact": "Иванов", "terms": "ДОСТАВКА ТК",
+    }).json()["addressee"]
+    erased = client.put("/api/shipping/project-addressee", json={
+        "project": "591К.3", "version": first["version"], "contact": "", "terms": None,
+    })
+    stale = client.put("/api/shipping/project-addressee", json={
+        "project": "591К.3", "version": first["version"], "contact": "Сидоров",
+    })
+    unchanged = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "shipping_point": "Москва"})
+
+    assert erased.status_code == 200
+    body = erased.json()["addressee"]
+    assert (body["shipping_point"], body["contact"], body["terms"], body["version"]) == ("Москва", "", None, 2)
+    assert stale.status_code == 409
+    assert unchanged.json()["addressee"]["version"] == 2
+
+
+def test_other_project_card_is_not_used_and_bad_terms_are_rejected(shipping_api):
+    client = shipping_api
+    good = _queued_good(client, project="600")
+    client.put("/api/shipping/project-addressee", json={"project": "591К.3", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО"})
+    made = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "1"}]})
+    bad = client.put("/api/shipping/project-addressee", json={"project": "600", "terms": "ПОЧТОЙ"})
+
+    assert made.status_code == 422
+    assert bad.status_code == 422
