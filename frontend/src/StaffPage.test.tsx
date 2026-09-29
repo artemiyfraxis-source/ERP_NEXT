@@ -25,7 +25,7 @@ it("lists employees with role labels and creates a new one with a password", asy
     const path = String(input);
     if (path === "/api/auth/staff" && init?.method === "POST") {
       created = JSON.parse(String(init.body));
-      return json({ user: { ...DIRECTORY.users[1], id: "u3", login: "new@example.test", name: "Новиков" } }, 201);
+      return json({ user: { ...DIRECTORY.users[1], id: "u3", login: "new@example.test", name: "Новиков" }, pin: "654321" }, 201);
     }
     if (path === "/api/auth/staff") return json(DIRECTORY);
     throw new Error(`Unexpected request: ${path}`);
@@ -48,7 +48,9 @@ it("lists employees with role labels and creates a new one with a password", asy
     login: "", email: "new@example.test", name: "Новиков", department: "Снабжение", role: "master", site: "ЖУК",
     password: "first-password", pin: "",
   }));
-  expect(await screen.findByText("Сотрудник Новиков заведён, вход — new@example.test")).toBeInTheDocument();
+  expect(await screen.findByText(
+    "Сотрудник Новиков заведён, вход — new@example.test, PIN — 654321 (запишите, больше не покажем)",
+  )).toBeInTheDocument();
 });
 
 it("edits an employee, keeps the password when the field is empty and shows the last-admin refusal", async () => {

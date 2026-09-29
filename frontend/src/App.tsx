@@ -54,6 +54,8 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [place, setPlace] = useState<Place>(placeFromUrl);
   const [shellError, setShellError] = useState("");
+  // On a tablet the sidebar is a drawer behind «☰»; any navigation closes it.
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     identityApi
@@ -89,6 +91,7 @@ export function App() {
     else if (next.block) url.searchParams.set("block", next.block);
     window.history.pushState({}, "", url);
     setPlace(next);
+    setNavOpen(false);
   }
   const navigate = (section: Section) => go({ section, block: null });
   // «Карточка проекта» from the production plan (SUPPLYMAP planAct_ 'card' → openKitsetCard): the kitset card
@@ -150,7 +153,13 @@ export function App() {
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
 
   return (
-    <div className="app-shell shell">
+    <div className={navOpen ? "app-shell shell nav-open" : "app-shell shell"}>
+      <div className="topbar">
+        <button className="nav-toggle" aria-label="Меню" aria-expanded={navOpen} onClick={() => setNavOpen((open) => !open)}>☰</button>
+        <strong className="wordmark">FRAXIS</strong>
+        <span className="mod">ERP</span>
+      </div>
+      {navOpen && <div className="nav-scrim" aria-hidden="true" onClick={() => setNavOpen(false)} />}
       <aside className="sidebar side">
         <div className="brand">
           <strong className="wordmark">FRAXIS</strong>
