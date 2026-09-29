@@ -22,11 +22,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base
-from app.shared.persistence import SqlAlchemyAuditRepository
+from app.shared.persistence import SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.clock import as_utc
 
 from .application import IdentitySession
-from .domain import AccessMode, IdentityUser, normalize_login
+from .domain import ROLE_SEED, AccessMode, IdentityUser, normalize_login
 
 
 class IdentityUserRow(Base):
@@ -350,6 +350,10 @@ class SqlAlchemyIdentityRepository:
         row.site = user.site
         row.active = user.active
 
+    def password_hash(self, user_id: UUID) -> str | None:
+        row = self.session.get(IdentityCredentialRow, user_id, with_for_update=True)
+        return None if row is None else row.password_hash
+
     def set_password(self, user_id: UUID, password_hash: str) -> None:
         row = self.session.get(IdentityCredentialRow, user_id)
         if row is None:
@@ -417,6 +421,7 @@ class SqlAlchemyIdentityUnitOfWork:
         self.session = self.session_factory()
         self.identity = SqlAlchemyIdentityRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
@@ -433,8 +438,15 @@ class SqlAlchemyIdentityUnitOfWork:
         self.committed = True
 
 
+def seed_role_matrix(session: Session) -> None:
+    """Every role's ROLE_SEED as explicit matrix cells, where nothing is stored yet — what migration 0046 did, for a
+    database built without migrations (tests, fixtures). Existing cells stay."""
+    for role, row in ROLE_SEED.items():
+        _seed_role_access(session, role, row)
+
+
 def _seed_role_access(session: Session, role: str, defaults: dict[str, AccessMode]) -> None:
-    """Explicit matrix rows for tests and fixtures; ROLE_DEFAULTS need no rows (NAV-ACCESS), existing rows stay."""
+    """Explicit matrix rows for tests and fixtures; existing rows stay."""
     for section, mode in defaults.items():
         if session.get(IdentityRoleAccessRow, (role, section)) is None:
             session.add(IdentityRoleAccessRow(role=role, section=section, mode=mode.value))

@@ -25,7 +25,7 @@ from .modules.operations import api as operations_api
 from .modules.requests import api as requests_api
 from .modules.techcards import api as techcards_api
 from .modules.techcards import kitset_api as kitsets_api
-from .shared.http_auth import techcards_view_principal
+from .shared.http_auth import techcards_router_principal
 
 app = FastAPI(
     title="Fraxis ERP Next",
@@ -52,7 +52,7 @@ app.add_middleware(
 
 app.include_router(
     techcards_api.router,
-    dependencies=[Depends(techcards_view_principal)],
+    dependencies=[Depends(techcards_router_principal)],
 )
 app.include_router(identity_api.router)
 app.include_router(legacy_access_api.router)

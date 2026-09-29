@@ -17,7 +17,7 @@ def authenticated_techcards_user():
         ),
         email="engineer@example.test",
         roles=frozenset({"engineer"}),
-        permissions={"techcards": "edit"},
+        permissions={"techcards": "edit", "erptctpl": "edit", "tcgen": "edit"},
     )
     yield
     app.dependency_overrides.pop(authenticated_principal, None)

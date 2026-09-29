@@ -36,6 +36,12 @@ nav { display: block; }
 .nav-item.active { color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); box-shadow: inset 2px 0 var(--primary); font-weight: 500; }
 .profile { margin-top: auto; padding: 16px 9px 0; border-top: 1px solid var(--border); display: grid; gap: 4px; font-size: 12.5px; }
 .profile span { color: var(--muted-foreground); font-size: 11.5px; }
+.profile-card { display: grid; gap: 8px; margin: 6px 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.profile-card dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin: 0; font-size: 11.5px; }
+.profile-card dt { color: var(--muted-foreground); }
+.profile-card dd { margin: 0; }
+.profile-card form { display: grid; gap: 6px; }
+.profile-card input { min-width: 0; }
 .link-button { border: 0; padding: 8px 0 0; color: var(--primary); background: transparent; text-align: left; }
 
 .workspace { flex: 1; min-width: 0; min-height: 0; padding: 30px 34px; overflow-y: auto; }
@@ -219,6 +225,8 @@ td small { margin-top: 4px; color: #7b857e; }
 .reference-fields { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .reference-fields span { display: grid; gap: 2px; }
 .reference-fields small { color: var(--muted-foreground); font-size: 9px; text-transform: uppercase; }
+.reference-tiles { margin-bottom: 14px; }
+.reference-tiles .tile { min-height: 0; }
 .notification-list { display: grid; gap: 12px; margin-top: 16px; }
 .notification-card { padding: 17px 19px; }
 .notification-card.unread { border-left: 3px solid var(--primary); }

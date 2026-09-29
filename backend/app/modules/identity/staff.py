@@ -114,7 +114,7 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
             id=uuid4(), login=login, email=email, name=name, department=department, role=role, site=site,
             active=True,
         )
-        # The role's sections come from ROLE_DEFAULTS + the «Доступы» matrix; nothing is seeded (NAV-ACCESS).
+        # The role's sections come from the «Доступы» matrix row of the role; nothing is seeded.
         uow.identity.add_user(user, password_hash, {})
         _audit(uow, user.id, "identity.user_created", actor, now, {
             "login": login, "email": email, "name": name, "department": department, "role": role,
@@ -129,14 +129,15 @@ def access_keepers(
     admin_matrix: dict[str, AccessMode],
     exceptions: dict[UUID, dict[str, AccessMode]],
 ) -> set[UUID]:
-    """Active administrators who can still open «Сотрудники» and «Доступы» (`identity` edit + the admin role, the
-    gate of every identity route) — after the matrix row of the admin role and their own exceptions."""
+    """Active administrators who can still open «Сотрудники» (`staffdir` edit + the admin role; «Доступы» is the admin
+    role alone) — after the matrix row of the admin role and their own exceptions. SUPPLYMAP portalAccessSave drops
+    `admin.staffdir = none` for the same reason."""
     base = role_permissions("admin", admin_matrix)
     return {
         user.id
         for user in users
         if user.active and user.role == "admin"
-        and effective_permissions(base, exceptions.get(user.id, {})).get("identity") is AccessMode.EDIT
+        and effective_permissions(base, exceptions.get(user.id, {})).get("staffdir") is AccessMode.EDIT
     }
 
 

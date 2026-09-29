@@ -11,7 +11,7 @@ const admin: Principal = {
     department: "ERP",
   },
   roles: ["admin"],
-  permissions: { references: "edit" },
+  permissions: { erpref: "edit", procurement: "edit" },
 };
 
 function json(body: unknown) {
@@ -35,6 +35,7 @@ it("edits and atomically saves all reference maps", async () => {
       suppliers: [{ key: "example.ru", value: "Поставщик" }],
       countries: [{ key: "Fraxis", value: "Россия" }],
       gost_awg: [{ key: "0,35", value: "22" }],
+      can_edit: { suppliers: true, gost_awg: true },
     });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -108,7 +109,7 @@ it("edits a technology row with the old value and hides editing for non-admins",
   expect(await screen.findByText("Запись сохранена")).toBeInTheDocument();
   unmount();
 
-  render(<ReferencesPage principal={{ ...admin, roles: ["receiver"], permissions: { references: "view" } }} />);
+  render(<ReferencesPage principal={{ ...admin, roles: ["receiver"], permissions: { erpref: "view" } }} />);
   fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
   expect((await screen.findAllByText("МГТФ")).length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
@@ -168,4 +169,44 @@ it("shows the СПР.КАБ tables as read-only grids", async () => {
   fireEvent.click(screen.getByRole("button", { name: "СПР.КАБ · AWG" }));
   expect(await screen.findByText("0,35")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
+});
+
+it("shows base tiles with record counts and opens a base from its tile", async () => {
+  const opened: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [
+      { id: "prov", label: "БД.ПРОВ — провода", editable: true, icon: "🧵", sub: "марки · сечения", count: 42 },
+      { id: "tk_templates", label: "БД.ТК — шаблоны ТК", editable: false, icon: "🧩", sub: "шаблоны", count: null },
+    ] });
+    if (path.startsWith("/api/references/tech-operations?")) {
+      opened.push(path);
+      return json({ metadata: null, records: [] });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={admin} />);
+  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
+  expect(await screen.findByLabelText("Записей: 42")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /БД\.ТК — шаблоны ТК/ })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: /БД\.ПРОВ — провода/ }));
+  await waitFor(() => expect(opened.some((path) => path.includes("tab=prov"))).toBe(true));
+});
+
+it("lets the buyer edit supplier maps but not the ГОСТ→AWG map", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({
+      suppliers: [{ key: "склад", value: "Склад" }], countries: [], gost_awg: [{ key: "0,35", value: "22" }],
+      can_edit: { suppliers: true, gost_awg: false },
+    });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={{ ...admin, roles: ["buyer"], permissions: { erpref: "view", procurement: "edit" } }} />);
+  expect(await screen.findByLabelText("Поставщик 1")).toBeEnabled();
+  expect(screen.getByLabelText("AWG 1")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Сохранить справочники" })).toBeInTheDocument();
 });
