@@ -1,15 +1,15 @@
 """Входные коробки работы — в порядке ввода: годные + брак берутся из них по порядку (SUPPLYMAP prodPick_).
 
-Revision ID: 0062_production_work_input_order
-Revises: 0061_procurement_traceability
+Revision ID: 0063_production_work_input_order
+Revises: 0062_fulfillment_shortfall_note
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 
-revision = "0062_production_work_input_order"
-down_revision = "0061_procurement_traceability"
+revision = "0063_production_work_input_order"
+down_revision = "0062_fulfillment_shortfall_note"
 branch_labels = None
 depends_on = None
 
