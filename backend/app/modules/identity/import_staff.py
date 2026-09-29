@@ -76,6 +76,23 @@ class SourceEmployee:
     role: str
 
 
+# Монтажники (installers), owner 2026-09-29: they are not in the SUPPLYMAP snapshot (new people), so the import adds
+# them itself, on the same run and with a PIN each — the master assigns operations to them, and the operator list is
+# every active employee (production has no role filter), so the role is «Сотрудник» (staff), department «Производство».
+# Logins are transliterated; there are no real mailboxes yet (login is by name + PIN), the administrator can edit them.
+ADDITIONAL_STAFF: list[SourceEmployee] = [
+    SourceEmployee(email="rybkina.olga@fraxis.local", name="Рыбкина Ольга", department="Производство", role="staff"),
+    SourceEmployee(email="epifanov.ilya@fraxis.local", name="Епифанов Илья", department="Производство", role="staff"),
+    SourceEmployee(email="popov.ignat@fraxis.local", name="Попов Игнат", department="Производство", role="staff"),
+    SourceEmployee(email="bogorodskaya.elina@fraxis.local", name="Богородская Элина", department="Производство", role="staff"),
+    SourceEmployee(email="makarova.polina@fraxis.local", name="Макарова Полина", department="Производство", role="staff"),
+    SourceEmployee(email="naumova.elena@fraxis.local", name="Наумова Елена", department="Производство", role="staff"),
+    SourceEmployee(email="puzanov.aleksandr@fraxis.local", name="Пузанов Александр", department="Производство", role="staff"),
+    SourceEmployee(email="dumanskaya.anna@fraxis.local", name="Думанская Анна", department="Производство", role="staff"),
+    SourceEmployee(email="shilov.artem@fraxis.local", name="Шилов Артем", department="Производство", role="staff"),
+]
+
+
 def staff_id(email: str) -> UUID:
     return uuid5(NAMESPACE_URL, STAFF_ID_NAMESPACE + normalize_email(email))
 
@@ -124,6 +141,16 @@ def read_source(source: Path) -> list[SourceEmployee]:
             department=info.get("dept", ""),
             role=ROLE_MAP.get(raw_role, "staff"),
         ))
+    people.sort(key=lambda person: person.name.casefold())
+    return people
+
+
+def all_source_staff(source: Path) -> list[SourceEmployee]:
+    """Everyone the import brings in: the SUPPLYMAP directory plus ADDITIONAL_STAFF (installers), deduped by e-mail —
+    a SUPPLYMAP row wins over an addition with the same e-mail."""
+    people = read_source(source)
+    seen = {normalize_email(person.email) for person in people}
+    people.extend(person for person in ADDITIONAL_STAFF if normalize_email(person.email) not in seen)
     people.sort(key=lambda person: person.name.casefold())
     return people
 
@@ -201,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
 
     source = args.source or Path(os.getenv("SUPPLYMAP_SOURCE_REPOSITORY", str(DEFAULT_SOURCE)))
     try:
-        people = read_source(source)
+        people = all_source_staff(source)
     except StaffImportError as error:
         print(f"Источник не прочитан: {error}", file=sys.stderr)
         return 2

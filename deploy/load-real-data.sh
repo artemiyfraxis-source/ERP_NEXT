@@ -20,7 +20,7 @@ ok_or_report() { local code=$?; [ $code -le 1 ] || exit $code; }   # exit 1 = «
 
 case "${1:-}" in
   base)
-    if ! printf '%s\n%s\n' "$password" "$password" | cli python -m app.identity_admin create-user \
+    if ! ./erp.sh run --rm -e ERP_NEW_USER_PASSWORD="$password" api python -m app.identity_admin create-user \
         --login "$login" --email "$login@erp.local" --name 'Администратор ERP' --department 'Руководство' --role admin; then
       echo "(admin уже есть — пропускаю)"
     fi

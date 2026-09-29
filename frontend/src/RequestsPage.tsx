@@ -86,7 +86,7 @@ function applyCategoryRule<T extends Pick<Draft, "category" | "quality_document"
 
 const TITLES = { all: "Заявки", create: "Оформить заявку", mine: "Мои заявки" };
 const SUBTITLES = {
-  all: "Создание потребности и передача закупщику.",
+  all: "Все позиции заявок и передача закупщику. Новая заявка — в «Оформить заявку».",
   create: "Новые позиции: после сохранения они появятся в «Моих заявках».",
   mine: "Позиции, которые оформили вы, и на каком они этапе.",
 };
@@ -718,8 +718,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
-      <div className={view ? "single-layout" : "split-layout"}>
-        {view === "mine" ? null : canEdit ? (
+      {/* «Заявки» и «Мои заявки» — только список; новая заявка оформляется в своём разделе «Оформить заявку». */}
+      <div className={view === "create" ? "single-layout" : "list-layout"}>
+        {view !== "create" ? null : canEdit ? (
           <div className="panel request-form">
             <div className="panel-heading"><h2>Новая заявка</h2><span>Обязательные поля отмечены *</span></div>
             <div className="mode-tabs">

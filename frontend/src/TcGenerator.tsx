@@ -237,10 +237,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const s = side === "A" ? S.coax.sideA : S.coax.sideB;
     if (!s || !s.art) return;
     const v = (key: string) => (coaxAdd[side]?.[key] || "").trim();
-    const dia = gen.coaxCableDiaLookup_();
     const payload = {
       connArticle: s.art, type: v("type"), wire: v("wire") || gen.coaxBomCable_(), mfr: "", program: "",
-      d1: v("d1") || (dia?.d1 || ""), d2: v("d2") || (dia?.d2 || ""), d3: v("d3") || (dia?.d3 || ""),
+      // D1–D3 не пишем: диаметры у кабеля (СПР.КАБ), генератор берёт их оттуда.
+      d1: "", d2: "", d3: "",
       l1: v("l1"), l2: v("l2"), l3: v("l3"), lPlus: v("lPlus"), lMinus: v("lMinus"),
       pinType: side === "A" ? S.coax.pinA : S.coax.pinB, shieldType: S.coax.shield,
     };
@@ -366,7 +366,6 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const pinKey = side === "A" ? "pinA" : "pinB";
     const coverKey = side === "A" ? "coverA" : "coverB";
     const add = coaxAdd[side] || {};
-    const dia = gen.coaxCableDiaLookup_();
     const addValue = (key: string, fallback = "") => add[key] ?? fallback;
     const setAdd = (key: string, value: string) => setCoaxAdd((current) => ({ ...current, [side]: { ...(current[side] || {}), [key]: value } }));
     return <div className="gcard">
@@ -382,9 +381,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <small>Нет в БД.КОАКС — введите размеры и добавьте:</small>
         <label className="field-label">Тип/Серия<input value={addValue("type")} placeholder="напр. SMA-male R/A" onChange={(event) => setAdd("type", event.target.value)} /></label>
         <label className="field-label">Провод<input value={addValue("wire", gen.coaxBomCable_())} onChange={(event) => setAdd("wire", event.target.value)} /></label>
-        <div className="coax-dims">{(["d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus"] as const).map((key) =>
-          <input key={key} aria-label={`${key} ${side}`} placeholder={{ d1: "D1", d2: "D2", d3: "D3", l1: "L1", l2: "L2", l3: "L3", lPlus: "L+", lMinus: "L-" }[key]}
-            value={addValue(key, key.startsWith("d") && dia ? String(dia[key as "d1" | "d2" | "d3"] || "").replace(".", ",") : "")} onChange={(event) => setAdd(key, event.target.value)} />)}
+        {/* D1–D3 — у кабеля (СПР.КАБ), у разъёма только длины разделки. */}
+        <div className="coax-dims">{(["l1", "l2", "l3", "lPlus", "lMinus"] as const).map((key) =>
+          <input key={key} aria-label={`${key} ${side}`} placeholder={{ l1: "L1", l2: "L2", l3: "L3", lPlus: "L+", lMinus: "L-" }[key]}
+            value={addValue(key)} onChange={(event) => setAdd(key, event.target.value)} />)}
         </div>
         <button className="secondary small" disabled={busy} onClick={() => void saveCoaxToDb(side)}>Добавить в БД.КОАКС</button>
       </div>}

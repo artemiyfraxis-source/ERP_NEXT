@@ -69,7 +69,7 @@ describe("RequestsPage", () => {
       throw new Error(`Unexpected request: ${path}`);
     });
 
-    render(<RequestsPage principal={principal} />);
+    render(<RequestsPage principal={principal} view="create" />);
     fireEvent.change(await screen.findByLabelText(/Наименование/), {
       target: { value: "Разъём" },
     });
@@ -160,7 +160,7 @@ describe("RequestsPage", () => {
       />,
     );
 
-    expect(await screen.findByText("Только просмотр")).toBeInTheDocument();
+    expect(await screen.findByText("Последние заявки")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Создать заявку" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "В закупку" })).not.toBeInTheDocument();
   });
@@ -225,7 +225,7 @@ describe("RequestsPage", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/requests")).toBe(false);
   });
 
-  it("NAV-SECTIONS: «Заявки» shows the form only with `newrequest`, not with `requests: edit`", async () => {
+  it("NAV-SECTIONS: «Заявки» is the list only — a request is made in «Оформить заявку»", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/requests/schema") return json(schema);
@@ -235,7 +235,8 @@ describe("RequestsPage", () => {
 
     render(<RequestsPage principal={{ ...principal, roles: ["buyer"], permissions: { requests: "edit" } }} />);
 
-    expect(await screen.findByText("Только просмотр")).toBeInTheDocument();
+    expect(await screen.findByText("Последние заявки")).toBeInTheDocument();
+    expect(screen.queryByText("Новая заявка")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Создать заявку" })).not.toBeInTheDocument();
   });
 

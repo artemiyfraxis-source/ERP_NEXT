@@ -750,6 +750,29 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 /* prodBoxShow_: номер коробки крупно, его переписывают от руки */
 .box-dialog { position: fixed; left: 50%; top: 30%; transform: translateX(-50%); z-index: 50; max-width: min(92vw, 420px); box-shadow: 0 12px 40px rgba(0,0,0,.25); }
 .box-dialog .box-no { font-size: 40px; font-weight: 700; letter-spacing: 2px; text-align: center; font-variant-numeric: tabular-nums; }
+/* Производственный план: сверху проекты с дедлайнами, ниже загрузка людей */
+.gantt-bar.done { background: #9aa9a7; }
+.gantt-bar.absent { background: repeating-linear-gradient(135deg, #d9dede, #d9dede 6px, #eef1f1 6px, #eef1f1 12px); color: #56605f; }
+.production-plan-page > .panel { padding: 14px 16px; margin-bottom: 16px; min-width: 0; }
+.plan-section-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.plan-section-head h2 { margin: 0; font-size: 16px; }
+.plan-section-head .plan-filters { flex: 1; margin: 0; }
+.plan-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.plan-table th { text-align: left; font-size: 11.5px; color: var(--muted-foreground); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.plan-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.plan-table tbody tr { cursor: pointer; }
+.plan-table tbody tr:hover, .plan-table tbody tr.selected { background: #edf5f4; }
+.plan-table tr.dim { opacity: .55; }
+.plan-table td:first-child { white-space: nowrap; }
+.plan-table td small { color: var(--muted-foreground); }
+.plan-details-wrap { margin-top: 12px; position: relative; }
+.plan-details-close { position: absolute; right: 12px; top: 10px; z-index: 1; }
+.plan-load .gantt-label { flex-basis: 240px; width: 240px; }
+.plan-load .gantt-row { min-height: 44px; }
+.plan-legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.plan-legend .gantt-bar { position: static; display: inline-block; }
+@media (max-width: 1024px) { .plan-table td:nth-child(6), .plan-table th:nth-child(6) { display: none; } }
+@media (max-width: 640px) { .plan-load .gantt-label { flex-basis: 150px; width: 150px; } }
 .access-matrix thead th:first-child { z-index: 3; }
 /* Row buttons stay row-sized so a button column does not double every row's height. */
 .data-table td button.small, .data-table td .secondary, .data-table td .primary { padding: 2px 10px; border-radius: 7px; font-size: 12px; line-height: 1.5; }

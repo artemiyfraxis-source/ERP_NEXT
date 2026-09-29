@@ -37,10 +37,13 @@ def requested_access(values: list[str], role: str) -> dict[str, AccessMode]:
 
 
 def create_user(args: argparse.Namespace, sessions: sessionmaker[Session]) -> None:
-    password = getpass.getpass("New ERP password: ")
-    confirmation = getpass.getpass("Repeat password: ")
-    if password != confirmation:
-        raise SystemExit("Passwords do not match")
+    # Scripts pass the password in ERP_NEW_USER_PASSWORD: getpass reads the console, not a pipe, on Windows.
+    password = os.getenv("ERP_NEW_USER_PASSWORD", "")
+    if not password:
+        password = getpass.getpass("New ERP password: ")
+        confirmation = getpass.getpass("Repeat password: ")
+        if password != confirmation:
+            raise SystemExit("Passwords do not match")
     user_access = requested_access(args.permission, args.role)
     identifiers = {
         normalize_login(args.login),
