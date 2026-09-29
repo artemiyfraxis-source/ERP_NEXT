@@ -49,6 +49,7 @@ class ShipmentRepository(Protocol):
 
 class ProjectAddresseeRepository(Protocol):
     def get(self, project: str) -> ProjectAddressee | None: ...
+    def list(self) -> Sequence[ProjectAddressee]: ...
     def add(self, addressee: ProjectAddressee) -> None: ...
 
 
@@ -180,6 +181,28 @@ class UpdateDocumentsCommand(ShipmentCommand):
     upd_date: date | None
     upd_url: str
     track_number: str
+
+
+@dataclass(frozen=True)
+class SetRequestedCommand(ShipmentCommand):
+    line_id: UUID
+    quantity: Decimal
+
+
+@dataclass(frozen=True)
+class PackProjectCommand:
+    """`portalShipPack`: «Упаковать» в карточке проекта — отправка из того, что лежит на складе ГП."""
+
+    project: str
+    lines: tuple[RequestedGood, ...]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class ShippedResult:
+    shipment: Shipment
+    why: str
 
 
 def _audit(aggregate_id: UUID, event_type: str, actor: Actor, now: datetime, details: dict, uow: UnitOfWork) -> None:
@@ -486,14 +509,67 @@ def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipme
         return updated
 
 
-def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
+def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> ShippedResult:
+    """`shipShipped_`: одна кнопка склада — дата отгрузки и сразу «Закрыта», если для этого всё есть."""
     with uow:
         shipment = _shipment(command.shipment_id, command.expected_version, uow)
         updated = shipment.mark_shipped(command.now.date())
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.shipped", command.actor, command.now, {}, uow)
+        why = ""
+        try:
+            closed = updated.close()
+        except ShippingValidationError as error:
+            why = str(error)
+        else:
+            updated = closed
+            uow.shipments.add(updated)
+            _audit(shipment.id, "shipping.closed", command.actor, command.now, {"auto": True}, uow)
+        uow.commit()
+        return ShippedResult(shipment=updated, why=why)
+
+
+def set_requested(command: SetRequestedCommand, uow: UnitOfWork) -> Shipment:
+    with uow:
+        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        updated = shipment.set_requested(command.line_id, command.quantity)
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.requested_changed", command.actor, command.now, {
+            "line_id": str(command.line_id), "quantity": str(command.quantity),
+        }, uow)
         uow.commit()
         return updated
+
+
+def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
+    """`shipPackProject_`: отмеченное количество, не больше остатка ГП, адресат — из карточки проекта."""
+    project = str(command.project or "").strip()
+    with uow:
+        goods = {good.id: good for good in uow.goods.by_project(project)}
+        addressee = uow.addressees.get(project)
+    if not goods:
+        raise ShippingValidationError(f"У проекта {project} нет строк готовой продукции.")
+    remain = {good_id: good.remaining for good_id, good in goods.items()}
+    lines: list[RequestedGood] = []
+    for requested in command.lines:
+        if requested.good_id not in goods:
+            raise ShippingValidationError("Позиция не относится к проекту")
+        quantity = min(Decimal(requested.quantity), max(remain[requested.good_id], Decimal("0")))
+        if not quantity > 0:
+            continue
+        remain[requested.good_id] -= quantity
+        lines.append(RequestedGood(good_id=requested.good_id, quantity=quantity))
+    if not lines:
+        raise ShippingValidationError("Упаковывать нечего: на складе по отмеченным КБ пусто — сначала «Принять» от цеха.")
+    if addressee is None or not addressee.shipping_point:
+        raise ShippingValidationError("Укажи адрес отгрузки в карточке проекта.")
+    customer = next(iter(goods.values())).customer
+    return create_shipment(CreateShipmentCommand(
+        customer=customer, receiver=addressee.receiver or customer or project,
+        shipping_point=addressee.shipping_point, contact=addressee.contact, phone=addressee.phone,
+        terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="",
+        note="", lines=tuple(lines), actor=command.actor, now=command.now, no_docs=True,
+    ), uow)
 
 
 def close_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:

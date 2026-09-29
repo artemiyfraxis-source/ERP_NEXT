@@ -398,13 +398,35 @@ class Shipment:
         )
 
     def mark_shipped(self, day: date) -> Shipment:
-        if self.status != ShipmentStatus.PACKED:
+        """`shipShipped_`: груз уехал из «Собрана» или «Упакована» (`shipGateMiss_('Отгружена')`)."""
+        if self.status not in {ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
             raise ShippingValidationError("Сначала наберите и упакуйте отгрузку")
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
         if self.upd_type != UpdType.EDO and not self.upd_url:
             raise ShippingValidationError("Для бумажной отгрузки приложите файл УПД")
-        return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=day, version=self.version + 1)
+        return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
+
+    def set_requested(self, line_id: UUID, quantity: Decimal) -> Shipment:
+        """`shipItemSetQty_`: менеджер передумал — «Заказано» не ниже уже набранного."""
+        if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+            raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
+        amount = _round2(Decimal(quantity))
+        if not amount.is_finite() or amount <= 0:
+            raise ShippingValidationError("Количество должно быть больше нуля")
+        updated = []
+        found = False
+        for line in self.lines:
+            if line.id == line_id:
+                found = True
+                if amount < line.picked:
+                    raise ShippingValidationError(f"По позиции уже набрано {_plain(line.picked)} — сначала верни на склад")
+                updated.append(replace(line, requested=amount))
+            else:
+                updated.append(line)
+        if not found:
+            raise ShippingValidationError("Позиция отгрузки не найдена")
+        return replace(self, lines=tuple(updated), version=self.version + 1)
 
     def close(self) -> Shipment:
         if self.status != ShipmentStatus.SHIPPED:
@@ -432,3 +454,13 @@ class Shipment:
                 released[line.finished_good_id] = released.get(line.finished_good_id, Decimal("0")) + line.picked
             lines.append(replace(line, picked=Decimal("0"), grn=None))
         return replace(self, status=ShipmentStatus.CANCELLED, lines=tuple(lines), version=self.version + 1), released
+
+
+def _round2(value: Decimal) -> Decimal:
+    return Decimal(value).quantize(Decimal("0.01"))
+
+
+def _plain(value: Decimal) -> str:
+    text = format(Decimal(value).normalize(), "f")
+    return text
+

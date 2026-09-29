@@ -12,15 +12,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, shipping_manager_principal, shipping_view_principal, shipping_warehouse_principal
+from app.shared.http_auth import (
+    Principal, require_section, shipping_manager_principal, shipping_view_principal, shipping_warehouse_principal,
+)
 
 from .application import (
     AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand,
-    QueueProjectCommand, RegisterGoodCommand, RequestedGood, SetProjectAddresseeCommand,
-    ShipmentCommand, UnitOfWork, UnpickCommand, UpdateDocumentsCommand, accept_good,
-    cancel_shipment, close_shipment, create_shipment, drop_project, mark_shipped, pack_shipment,
-    pick_shipment, queue_project, register_good, set_project_addressee, unpick_line,
-    update_documents,
+    PackProjectCommand, QueueProjectCommand, RegisterGoodCommand, RequestedGood,
+    SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand, UnitOfWork, UnpickCommand,
+    UpdateDocumentsCommand, accept_good, cancel_shipment, close_shipment, create_shipment, drop_project,
+    mark_shipped, pack_project, pack_shipment, pick_shipment, queue_project,
+    register_good, set_project_addressee, set_requested, unpick_line, update_documents,
 )
 from .domain import (
     DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShippingValidationError, UpdType,
@@ -28,6 +30,9 @@ from .domain import (
 
 
 router = APIRouter(prefix="/api/shipping", tags=["shipping"])
+# SUPPLYMAP `portalIssueGuard_(…, 'ship')`: упаковать в карточке проекта, сформировать отгрузочные и
+# поправить «Заказано» может и менеджер, и кладовщик.
+shipping_editor_principal = require_section("shipping", "edit", roles=frozenset({"pm", "receiver", "admin"}))
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 
 
@@ -104,6 +109,11 @@ class AddresseePayload(BaseModel):
     upd_type: UpdType | None = None
 
 
+class ProjectPackPayload(BaseModel):
+    project: str = Field(min_length=1, max_length=255)
+    lines: list[ShipmentLinePayload] = Field(min_length=1, max_length=500)
+
+
 class VersionPayload(BaseModel):
     version: int = Field(ge=1)
 
@@ -118,6 +128,10 @@ class DocumentsPayload(VersionPayload):
     upd_date: date | None = None
     upd_url: str = Field(default="", max_length=5000)
     track_number: str = Field(default="", max_length=255)
+
+
+class RequestedPayload(VersionPayload):
+    quantity: Quantity
 
 
 def shipping_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -266,6 +280,31 @@ def project_addressee(
     return {"addressee": _addressee_result(addressee or ProjectAddressee(project=name))}
 
 
+@router.get("/project-addressees")
+def project_addressees(
+    _principal: Annotated[Principal, Depends(shipping_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """All project cards at once, like `portalShipList` returns `projects` for the «Проекты» tab."""
+    with uow_factory() as uow: rows = uow.addressees.list()
+    return {"addressees": [_addressee_result(addressee) for addressee in rows]}
+
+
+@router.post("/project-pack")
+def pack_project_goods(
+    payload: ProjectPackPayload,
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    shipment = _run(lambda: pack_project(PackProjectCommand(
+        project=payload.project,
+        lines=tuple(RequestedGood(good_id=line.good_id, quantity=line.quantity) for line in payload.lines),
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {"shipment": _shipment_result(shipment)}
+
+
 @router.put("/project-addressee")
 def save_project_addressee(
     payload: AddresseePayload,
@@ -341,7 +380,16 @@ def documents(shipment_id: UUID, payload: DocumentsPayload, principal: Annotated
 
 @router.post("/shipments/{shipment_id}/ship")
 def ship(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Principal, Depends(shipping_warehouse_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
-    shipment = _run(lambda: mark_shipped(_command(shipment_id, payload, principal, now), uow_factory()))
+    result = _run(lambda: mark_shipped(_command(shipment_id, payload, principal, now), uow_factory()))
+    return {"shipment": _shipment_result(result.shipment), "closed": result.shipment.status.value == "Закрыта", "why": result.why}
+
+
+@router.put("/shipments/{shipment_id}/lines/{line_id}")
+def change_requested(shipment_id: UUID, line_id: UUID, payload: RequestedPayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+    shipment = _run(lambda: set_requested(SetRequestedCommand(
+        shipment_id=shipment_id, expected_version=payload.version, line_id=line_id, quantity=payload.quantity,
+        actor=principal.actor, now=now,
+    ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 
 

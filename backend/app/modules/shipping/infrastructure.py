@@ -226,6 +226,8 @@ class SqlAlchemyProjectAddresseeRepository:
             upd_type=UpdType(row.upd_type) if row.upd_type else None,
             updated_by=row.updated_by, updated_at=row.updated_at,
         )
+    def list(self) -> list[ProjectAddressee]:
+        return [self.get(project) for project in self.session.scalars(select(ProjectAddresseeRow.project).order_by(ProjectAddresseeRow.project))]
     def add(self, addressee: ProjectAddressee) -> None:
         row = self.session.get(ProjectAddresseeRow, addressee.project)
         if row is None:
