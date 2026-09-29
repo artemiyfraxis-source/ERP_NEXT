@@ -71,6 +71,12 @@ warehouse_edit_principal = require_section(
     "edit",
     roles=frozenset({"receiver", "admin"}),
 )
+# Import of an edited stock table (SK-14): the administrator only (SUPPLYMAP portalStock05Bulk, adminOnly).
+warehouse_admin_principal = require_section(
+    "warehouse",
+    "edit",
+    roles=frozenset({"admin"}),
+)
 fulfillment_view_principal = require_section(
     "fulfillment",
     "view",

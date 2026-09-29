@@ -7,6 +7,7 @@ import {
   type WarehouseManualItem,
   type WarehouseRowEdit,
 } from "./api";
+import { downloadStockTable, ItemTypesPanel, StockImportPanel } from "./WarehouseReferences";
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
   mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
@@ -40,6 +41,9 @@ export function WarehousePage() {
   const [moveLot, setMoveLot] = useState<WarehouseLot | null>(null);
   const [groupBy, setGroupBy] = useState<"" | "type" | "place" | "name" | "series">("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [panel, setPanel] = useState<"" | "types" | "import">("");
+  // Type suggestions (SK-14): the dictionary + the canonical types already on the stock.
+  const [typeChoices, setTypeChoices] = useState<string[]>([]);
   const requestVersion = useRef(0);
   const groupedLots = useMemo(() => warehouseGroups(lots, groupBy), [lots, groupBy]);
 
@@ -72,6 +76,11 @@ export function WarehousePage() {
       if (version === requestVersion.current) setLoading(false);
     }
   }
+
+  useEffect(() => {
+    // Suggestions only: a failed load leaves the type field free, as before.
+    warehouseApi.itemTypes().then((types) => setTypeChoices(Array.isArray(types?.choices) ? types.choices : []), () => undefined);
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void reload(), 250);
@@ -108,6 +117,12 @@ export function WarehousePage() {
       <div className="filters">
         <button className="primary compact" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>
         <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => { setMoveLot(null); setMoveOpen(true); }}>↔ Переместить</button>
+        <button className="secondary compact" onClick={() => setPanel((value) => value === "types" ? "" : "types")}>Справочник типов</button>
+        <button className="secondary compact" disabled={Boolean(busy)} onClick={() => {
+          setError("");
+          downloadStockTable().catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось выгрузить."));
+        }}>⬇ Выгрузить</button>
+        <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>⬆ Загрузить правки</button>
         <input className="search" aria-label="Поиск по складу" placeholder="Поиск: артикул, серия, место, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
@@ -118,6 +133,15 @@ export function WarehousePage() {
         <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />С нулевым остатком</label>
         <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
       </div>
+      <datalist id="warehouse-item-types">{typeChoices.map((type) => <option key={type} value={type} />)}</datalist>
+      {panel === "types" && <ItemTypesPanel
+        onClose={() => setPanel("")}
+        onChanged={async (types, renamed) => {
+          setTypeChoices(types.choices);
+          if (renamed) await reload();
+        }}
+      />}
+      {panel === "import" && <StockImportPanel onClose={() => setPanel("")} onApplied={() => reload()} />}
       {adding && <ManualStockForm
         busy={Boolean(busy) || loading}
         knownLots={lots}
@@ -382,7 +406,7 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
         }} /></label>
         <label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
         <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
-        <label>Тип<input value={itemType} onChange={(event) => setItemType(event.target.value)} /></label>
+        <label>Тип<input list="warehouse-item-types" value={itemType} onChange={(event) => setItemType(event.target.value)} /></label>
         <label>Количество<input aria-label="Количество для внесения" type="number" min="0.000001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
         <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
@@ -542,6 +566,7 @@ function LotRowEditForm({ lot, disabled, mutate, onClose }: {
     <p className="page-sub">ГРН {lot.grn}{lot.package ? ` · пакет ${lot.package}` : ""} · {lot.warehouse} — ключ строки, не правится. Пустое число — не трогать.</p>
     {ROW_EDIT_TEXT.map(([field, label]) => <label key={field}>{label}<input
       type={field === "expiry_date" ? "date" : "text"}
+      list={field === "item_type" ? "warehouse-item-types" : undefined}
       inputMode={field === "unit_mass_g" ? "decimal" : undefined}
       required={field === "article" || field === "unit" || field === "purpose"}
       value={values[field]}

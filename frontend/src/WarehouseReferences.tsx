@@ -1,0 +1,186 @@
+import { useEffect, useState, type ChangeEvent } from "react";
+import { warehouseApi, type WarehouseBulkResult, type WarehouseItemTypes, type WarehouseReferenceEdit } from "./api";
+import { decodeStockTable, stockTableBytes, stockTableEdits, stockTableText } from "./warehouseTable";
+
+const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
+
+/** SK-14 «Справочник типов» (SUPPLYMAP openStock05Types): the dropdown list is edited here, without code.
+ *  Renaming changes the type in EVERY stock row — that is how an old name leaves the dropdown. */
+export function ItemTypesPanel({ onClose, onChanged }: {
+  onClose: () => void;
+  onChanged: (types: WarehouseItemTypes, renamed: boolean) => Promise<void> | void;
+}) {
+  const [data, setData] = useState<WarehouseItemTypes | null>(null);
+  const [list, setList] = useState("");
+  const [message, setMessage] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [renaming, setRenaming] = useState("");
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    const loaded = await warehouseApi.itemTypes();
+    setData(loaded);
+    setList(loaded.types.join("\n"));
+    return loaded;
+  }
+
+  useEffect(() => {
+    load().catch((reason) => setMessage({ text: errorText(reason, "Не удалось загрузить справочник"), bad: true }));
+  }, []);
+
+  async function run(operation: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await operation();
+    } catch (reason) {
+      setMessage({ text: errorText(reason, "Ошибка"), bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const save = () => run(async () => {
+    setMessage({ text: "Сохраняю…" });
+    const saved = await warehouseApi.saveItemTypes(list.split(/\r?\n/));
+    setData(saved);
+    setList(saved.types.join("\n"));
+    setMessage({ text: saved.message });
+    await onChanged(saved, false);
+  });
+
+  const rename = () => run(async () => {
+    const result = await warehouseApi.renameItemType(renaming, target);
+    setRenaming("");
+    setTarget("");
+    const reloaded = await load();
+    setMessage({ text: result.message });
+    await onChanged(reloaded, true);
+  });
+
+  const counts = data?.counts ?? {};
+  const used = Object.keys(counts).sort((a, b) => a.localeCompare(b, "ru"));
+  const inDictionary = new Set((data?.types ?? []).map((type) => type.toLowerCase()));
+
+  return <section className="panel item-types-panel" aria-label="Справочник типов">
+    <div className="manual-stock-head"><h2>Справочник типов</h2><button type="button" className="link-button" onClick={onClose}>Закрыть</button></div>
+    <p className="page-sub">Один тип — одна строка; порядок строк — порядок в подсказках. Тип, которого нет в справочнике, но который стоит у позиций на складе, в подсказках тоже останется (хвостом) — чтобы убрать его совсем, переименуй его ниже в правильный.</p>
+    <textarea aria-label="Список типов" rows={10} value={list} disabled={!data} onChange={(event) => { setMessage(null); setList(event.target.value); }} />
+    <div className="manual-stock-actions"><button className="primary" type="button" disabled={busy || !data} onClick={() => void save()}>Сохранить список</button></div>
+    {message && <p className={message.bad ? "danger-text" : "page-sub"} role="status">{message.text}</p>}
+    <h3>Типы на складе</h3>
+    <table className="grid compact">
+      <thead><tr><th>Тип</th><th className="num">Строк</th><th /></tr></thead>
+      <tbody>{used.length ? used.map((type) => <tr key={type}>
+        <td>{type}{!inDictionary.has(type.toLowerCase()) && <span className="danger-text"> нет в справочнике</span>}</td>
+        <td className="num">{counts[type]}</td>
+        <td>{renaming === type
+          ? <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void rename(); }}>
+            <label>Новый тип<input aria-label={`Новый тип для «${type}»`} list="warehouse-item-types" required value={target} onChange={(event) => setTarget(event.target.value)} /></label>
+            <button className="primary small" disabled={busy || !target.trim()}>Переименовать {counts[type]} строк</button>
+            <button type="button" className="link-button" onClick={() => setRenaming("")}>Отмена</button>
+          </form>
+          : <button type="button" className="secondary small" disabled={busy} onClick={() => { setRenaming(type); setTarget(""); }}>Переименовать</button>}
+        </td>
+      </tr>) : <tr><td colSpan={3} className="page-sub">У позиций склада тип не проставлен.</td></tr>}</tbody>
+    </table>
+  </section>;
+}
+
+/** «⬇ Выгрузить»: the whole stock as a table for Excel (SUPPLYMAP wh05Export). */
+export async function downloadStockTable() {
+  const { rows } = await warehouseApi.exportRows();
+  const blob = new Blob([stockTableBytes(stockTableText(rows))], { type: "text/csv;charset=utf-16le" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const today = new Date();
+  const two = (value: number) => String(value).padStart(2, "0");
+  link.href = url;
+  link.download = `Склад ${today.getFullYear()}-${two(today.getMonth() + 1)}-${two(today.getDate())}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** «⬆ Загрузить правки склада» (SUPPLYMAP openStock05Import): check first — the preview shows what changes,
+ *  only the second button writes. The administrator only; the server refuses anyone else. */
+export function StockImportPanel({ onClose, onApplied }: { onClose: () => void; onApplied: () => Promise<void> | void }) {
+  const [text, setText] = useState("");
+  const [message, setMessage] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [edits, setEdits] = useState<WarehouseReferenceEdit[] | null>(null);
+  const [preview, setPreview] = useState<WarehouseBulkResult | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  function readFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    void file.arrayBuffer().then((buffer) => {
+      setText(decodeStockTable(new Uint8Array(buffer)));
+      setPreview(null);
+      setMessage({ text: "Файл прочитан — жми «Проверить»." });
+    });
+  }
+
+  async function check() {
+    const parsed = stockTableEdits(text);
+    setPreview(null);
+    if ("error" in parsed) {
+      setMessage({ text: parsed.error, bad: true });
+      return;
+    }
+    setBusy(true);
+    setMessage({ text: `Проверяю ${parsed.edits.length} строк…` });
+    try {
+      const result = await warehouseApi.importTable(parsed.edits, false);
+      setEdits(parsed.edits);
+      setPreview(result);
+      setMessage(result.count
+        ? { text: `Изменится полей: ${result.count} в строках: ${result.rows}. Проверь и подтверди.` }
+        : { text: "Отличий от склада нет — записывать нечего." });
+    } catch (reason) {
+      setMessage({ text: errorText(reason, "Ошибка"), bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function apply() {
+    if (!edits) return;
+    setBusy(true);
+    setMessage({ text: "Записываю…" });
+    try {
+      const result = await warehouseApi.importTable(edits, true);
+      setPreview(null);
+      setEdits(null);
+      setMessage({ text: `Записано: ${result.count} полей в ${result.rows} строках. Каждая правка — в журнале склада.` });
+      await onApplied();
+    } catch (reason) {
+      setMessage({ text: errorText(reason, "Ошибка"), bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="panel stock-import-panel" aria-label="Загрузить правки склада">
+    <div className="manual-stock-head"><h2>Загрузить правки склада</h2><button type="button" className="link-button" onClick={onClose}>Закрыть</button></div>
+    <p className="page-sub">Порядок: «⬇ Выгрузить» → правишь файл в Excel → выбираешь его здесь (или вставляешь диапазон вместе со строкой заголовков) → «Проверить». Сначала покажем, что изменится, и только по второй кнопке запишем. Строки находятся по Склад + ГРН + Пакет — эти три колонки не меняй. Загружаются справочные поля; количество из файла не загружается — его меняют списание, возврат и приход. Колонку можно удалить из файла — тогда она не трогается; пустая ячейка в оставленной колонке стирает значение (кроме наименования).</p>
+    <input type="file" aria-label="Файл таблицы" accept=".csv,.txt,.tsv" onChange={readFile} />
+    <textarea aria-label="Таблица склада" rows={6} placeholder="…или вставь сюда диапазон из Excel со строкой заголовков" value={text} onChange={(event) => { setPreview(null); setText(event.target.value); }} />
+    <div className="manual-stock-actions"><button className="primary" type="button" disabled={busy} onClick={() => void check()}>Проверить</button></div>
+    {message && <p className={message.bad ? "danger-text" : "page-sub"} role="status">{message.text}</p>}
+    {preview && preview.missing_count > 0 && <p className="danger-text">Не найдены на складе ({preview.missing_count}): {preview.missing.join(", ")}{preview.missing_count > preview.missing.length ? " …" : ""}</p>}
+    {preview && preview.errors.length > 0 && <p className="danger-text">Пропущены строки ({preview.errors.length}): {preview.errors.map((row) => `${row.grn}${row.package ? ` / ${row.package}` : ""} — ${row.error}`).join("; ")}</p>}
+    {preview && preview.count > 0 && <>
+      <div className="table-wrap"><table className="grid compact" aria-label="Что изменится">
+        <thead><tr><th>Склад</th><th>ГРН</th><th>Наименование</th><th>Поле</th><th>Было</th><th>Станет</th></tr></thead>
+        <tbody>{preview.changes.map((change, index) => <tr key={index}>
+          <td>{change.warehouse}</td><td>{change.grn}{change.package ? ` / ${change.package}` : ""}</td><td>{change.name}</td>
+          <td>{change.column}</td><td>{change.was || "—"}</td><td><strong>{change.now || "— (стереть)"}</strong></td>
+        </tr>)}</tbody>
+      </table></div>
+      {preview.count > preview.changes.length && <p className="page-sub">Показаны первые {preview.changes.length} из {preview.count}.</p>}
+      <div className="manual-stock-actions"><button className="primary" type="button" disabled={busy} onClick={() => void apply()}>Записать {preview.count} изменений</button></div>
+    </>}
+  </section>;
+}

@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, warehouse_edit_principal
+from app.shared.http_auth import Principal, warehouse_admin_principal, warehouse_edit_principal
 from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH
 from app.modules.references.domain import TechOperationTab
 from app.workflows.warehouse_article import infer_article_identity
@@ -42,6 +42,18 @@ from .application import (
     write_off,
 )
 from .domain import LOT_DETAIL_LIMITS, LOT_ROW_FIELDS, StockLot, WarehouseValidationError
+from .item_types import ITEM_TYPE_MAX_LENGTH, ITEM_TYPES_MAX
+from .reference_fields import (
+    BULK_EDIT_FIELDS,
+    BULK_EDIT_LIMIT,
+    BulkEditResult,
+    ReferenceEdit,
+    export_rows,
+    import_reference_fields,
+    item_type_dictionary,
+    rename_item_type,
+    save_item_types,
+)
 
 
 router = APIRouter(prefix="/api/stock", tags=["warehouse"])
@@ -523,3 +535,133 @@ def move_storage_location(
     except (IntegrityError, StaleDataError) as error:
         raise HTTPException(status_code=409, detail="Конкурентное изменение: обновите данные") from error
     return {"lots": [_result(lot) for lot in moved]}
+
+
+# ── Item type dictionary, rename, export / import of reference fields (SK-14) ──────────────────────
+
+
+class ItemTypesPayload(BaseModel):
+    # One type per entry; blank, too long and duplicate lines are dropped by the rule, not refused here.
+    types: list[Annotated[str, Field(max_length=1024)]] = Field(max_length=ITEM_TYPES_MAX * 5)
+
+
+class ItemTypeRenamePayload(BaseModel):
+    source: str = Field(max_length=255)
+    target: str = Field(max_length=255)
+
+
+class ReferenceEditInput(BaseModel):
+    """A row of the imported table: the key and the columns the table has. A column left out is not touched."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse: str = Field(default="", max_length=64)
+    grn: str = Field(min_length=1, max_length=64)
+    package: str = Field(default="", max_length=64)
+    article: str | None = Field(default=None, max_length=4096)
+    series: str | None = Field(default=None, max_length=4096)
+    name: str | None = Field(default=None, max_length=4096)
+    item_type: str | None = Field(default=None, max_length=4096)
+    unit: str | None = Field(default=None, max_length=4096)
+    purpose: str | None = Field(default=None, max_length=4096)
+    storage_location: str | None = Field(default=None, max_length=4096)
+    unit_mass_g: str | None = Field(default=None, max_length=4096)
+    expiry_date: str | None = Field(default=None, max_length=4096)
+    manufacturer: str | None = Field(default=None, max_length=4096)
+    description: str | None = Field(default=None, max_length=8192)
+    storage_conditions: str | None = Field(default=None, max_length=4096)
+
+
+class ReferenceImportPayload(BaseModel):
+    edits: list[ReferenceEditInput] = Field(max_length=BULK_EDIT_LIMIT)
+    apply: bool = False
+
+
+def _dictionary(uow_factory) -> dict:
+    dictionary = item_type_dictionary(uow_factory())
+    return {"types": dictionary.types, "counts": dictionary.counts, "choices": dictionary.choices}
+
+
+@router.get("/item-types")
+def item_types(
+    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """portalStock05TypesGet + the dropdown of stock05Refs_: the dictionary, rows per type, the choices."""
+    return _dictionary(uow_factory)
+
+
+@router.put("/item-types")
+def put_item_types(
+    payload: ItemTypesPayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """portalStock05TypesSave — admin and storekeeper (portalStock05FixGuard_)."""
+    types = _guarded(lambda: save_item_types(payload.types, principal.actor, now, uow_factory()))
+    return {**_dictionary(uow_factory), "message": f"Справочник типов сохранён: {len(types)}."}
+
+
+@router.post("/item-types/rename")
+def rename_type(
+    payload: ItemTypeRenamePayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """portalStock05TypeRename — the type in every stock row, each row journaled."""
+    result = _guarded(lambda: rename_item_type(payload.source, payload.target, principal.actor, now, uow_factory()))
+    source, target = payload.source.strip(), payload.target.strip()
+    message = (
+        f"Тип «{source}» → «{target}»: строк {result.rows}." if result.found
+        else f"Строк с типом «{source}» на складе нет."
+    )
+    return {**_bulk_result(result), "message": message}
+
+
+def _bulk_result(result: BulkEditResult) -> dict:
+    """stock05BulkEdit_ answer: the first 500 changes and 200 missing keys, with the full counts."""
+    return {
+        "applied": result.applied,
+        "rows": result.rows,
+        "count": len(result.changes),
+        "changes": [
+            {"warehouse": c.warehouse, "grn": c.grn, "package": c.package, "name": c.name,
+             "column": c.column, "was": c.was, "now": c.now}
+            for c in result.changes[:500]
+        ],
+        "missing": list(result.missing[:200]),
+        "missing_count": len(result.missing),
+        "errors": [
+            {"warehouse": e.warehouse, "grn": e.grn, "package": e.package, "error": e.error} for e in result.errors
+        ],
+    }
+
+
+@router.get("/export")
+def export_stock(
+    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """portalStock05Export: the whole stock (both warehouses, zero balance too) for editing in Excel."""
+    return {"rows": export_rows(uow_factory())}
+
+
+@router.post("/import")
+def import_stock_table(
+    payload: ReferenceImportPayload,
+    principal: Annotated[Principal, Depends(warehouse_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """portalStock05Bulk — the administrator only. apply=false is the preview."""
+    edits = [
+        ReferenceEdit(
+            grn=row.grn, package=row.package, warehouse=row.warehouse,
+            fields={name: getattr(row, name) for name in BULK_EDIT_FIELDS if getattr(row, name) is not None},
+        )
+        for row in payload.edits
+    ]
+    result = _guarded(lambda: import_reference_fields(edits, payload.apply, principal.actor, now, uow_factory()))
+    return _bulk_result(result)

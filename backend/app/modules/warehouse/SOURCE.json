@@ -27,6 +27,9 @@
     "article-derived suggestions only fill blank fields and remain editable",
     "single-lot identity edits require the optimistic version so a stale article correction is rejected",
     "a lot keeps its passport: the mass of one piece from the largest filled 1/10/100-piece sample rounded to 5 decimals, expiry, manufacturer, description, storage conditions, datasheet and certificate; a repeated receipt replaces the expiry and only a real mass",
+    "item types are suggested from the saved dictionary or the canonical list plus the canonical types already on the stock, merged without case and extra spaces; quick entry, the table import and a type rename write the canonical type (Мультипровод is Кабель, ТуТ ТтК термоусадка are Термоусадочная трубка), the row edit and receiving keep the type as typed",
+    "a type rename changes every lot of both warehouses whose type is exactly the old one and journals each lot",
+    "the table import changes only reference fields found by warehouse GRN and package, previews before it writes, leaves out a missing column, never writes an empty name, never takes quantities, and is for the administrator only",
     "every movement of a lot appends one row to the append-only СПИСАНИЕ journal (manual write-off, its return, a kitting issue per position, imported SUPPLYMAP rows) with ОСНОВАНИЕ, НАЗНАЧЕНИЕ, КТО СПИСАЛ, ПРОВЕДЕНО and ОСТАТОК ПОСЛЕ = lot balance after the posting; the journal never moves stock"
   ]
 }

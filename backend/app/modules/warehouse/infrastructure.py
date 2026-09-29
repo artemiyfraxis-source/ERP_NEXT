@@ -7,13 +7,13 @@ from uuid import UUID
 
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, func, or_, select
+from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.warehouse_location import storage_location_has_slot
 
-from .domain import StockLot, WriteOffEntry
+from .domain import WAREHOUSES, StockLot, WriteOffEntry
 
 
 class StockLotRow(Base):
@@ -118,6 +118,28 @@ class WarehouseSequenceRow(Base):
 
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ItemTypeRow(Base):
+    """The saved item type dictionary (SK-14): one row per type, `position` is its place in the dropdown.
+    No rows — nobody saved a list yet, and the canonical one from the code is used (stock05TypesList_)."""
+
+    __tablename__ = "warehouse_item_types"
+
+    position: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+
+
+class SqlAlchemyItemTypeDictionary:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def saved(self) -> list[str]:
+        return list(self.session.scalars(select(ItemTypeRow.name).order_by(ItemTypeRow.position)))
+
+    def replace(self, types: list[str]) -> None:
+        self.session.execute(delete(ItemTypeRow))
+        self.session.add_all(ItemTypeRow(position=index, name=name) for index, name in enumerate(types))
 
 
 def _row(lot: StockLot) -> StockLotRow:
@@ -258,6 +280,12 @@ class SqlAlchemyWarehouseRepository:
         )
         return int(self.session.scalar(statement) or 0)
 
+    def every(self) -> list[StockLot]:
+        """Every lot, zero balance included, ЦАР before ЖУК (the sheet order of SUPPLYMAP), then by ГРН and пакет."""
+        rows = self.session.scalars(select(StockLotRow).order_by(StockLotRow.grn, StockLotRow.package))
+        order = {name: index for index, name in enumerate(WAREHOUSES)}
+        return sorted((_domain(row) for row in rows), key=lambda lot: order.get(lot.warehouse, len(order)))
+
     def at_location(self, warehouse: str, storage_location: str) -> list[StockLot]:
         location_filter = StockLotRow.storage_location == storage_location
         if not storage_location_has_slot(storage_location):
@@ -318,6 +346,7 @@ class SqlAlchemyWarehouseUnitOfWork:
         self.session = self.session_factory()
         self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         self.writeoffs = SqlAlchemyWriteOffJournal(self.session)
+        self.item_types = SqlAlchemyItemTypeDictionary(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

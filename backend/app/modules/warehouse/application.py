@@ -27,6 +27,7 @@ from .domain import (
     normalize_location_as_is,
     normalize_location_code,
 )
+from .item_types import canonical_item_type
 from .stock_export import LegacyStockRow, LegacyWriteOffRow, parse_quantity
 
 
@@ -365,7 +366,7 @@ def _manual_lot(item: ManualStockItem) -> StockLot:
         grn=_MANUAL_GRN_PENDING,
         package="",
         name=name,
-        item_type=item.item_type,
+        item_type=canonical_item_type(item.item_type),  # stock05NormItem_: «ТуТ» → «Термоусадочная трубка»
         purpose=item.purpose.strip() or MANUAL_STOCK_DEFAULT_PURPOSE,
         unit=item.unit.strip() or MANUAL_STOCK_DEFAULT_UNIT,
         quantity=quantity,

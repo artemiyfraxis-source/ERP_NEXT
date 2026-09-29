@@ -242,6 +242,35 @@ export type WarehouseRowEdit = Partial<Record<
   string
 >>;
 
+/** SK-14: the item type dictionary, rows per type as written on the stock, and the dropdown choices. */
+export interface WarehouseItemTypes {
+  types: string[];
+  counts: Record<string, number>;
+  choices: string[];
+}
+
+/** SK-14: reference fields of one stock row, as text — the export row and the import edit share them. */
+export type WarehouseReferenceField =
+  | "name" | "item_type" | "unit" | "storage_location" | "purpose" | "unit_mass_g" | "expiry_date"
+  | "manufacturer" | "description" | "storage_conditions" | "article" | "series";
+
+export type WarehouseExportRow = { warehouse: string; grn: string; package: string; balance: string }
+  & Record<WarehouseReferenceField, string>;
+
+export type WarehouseReferenceEdit = { warehouse?: string; grn: string; package?: string }
+  & Partial<Record<WarehouseReferenceField, string>>;
+
+/** Bulk edit answer (stock05BulkEdit_): the first 500 changes, 200 missing keys, rows skipped with a reason. */
+export interface WarehouseBulkResult {
+  applied: boolean;
+  rows: number;
+  count: number;
+  changes: Array<{ warehouse: string; grn: string; package: string; name: string; column: string; was: string; now: string }>;
+  missing: string[];
+  missing_count: number;
+  errors: Array<{ warehouse: string; grn: string; package: string; error: string }>;
+}
+
 export interface WarehouseArticleInfo {
   series: string;
   name: string;
@@ -1043,6 +1072,22 @@ export const warehouseApi = {
       method: "POST",
       body: JSON.stringify({ warehouse, source_location: sourceLocation, target_location: targetLocation }),
     }),
+  itemTypes: () => api<WarehouseItemTypes>("/api/stock/item-types"),
+  saveItemTypes: (types: string[]) => api<WarehouseItemTypes & { message: string }>("/api/stock/item-types", {
+    method: "PUT",
+    body: JSON.stringify({ types }),
+  }),
+  renameItemType: (source: string, target: string) =>
+    api<WarehouseBulkResult & { message: string }>("/api/stock/item-types/rename", {
+      method: "POST",
+      body: JSON.stringify({ source, target }),
+    }),
+  exportRows: () => api<{ rows: WarehouseExportRow[] }>("/api/stock/export"),
+  /** apply=false is the preview: the same diff, nothing written. The administrator only. */
+  importTable: (edits: WarehouseReferenceEdit[], apply: boolean) => api<WarehouseBulkResult>("/api/stock/import", {
+    method: "POST",
+    body: JSON.stringify({ edits, apply }),
+  }),
 };
 
 export const fulfillmentApi = {
