@@ -311,17 +311,16 @@ function TemplateDetail({ template, canEdit, onBack, onEdit }: {
   </article>;
 }
 
-/** NAV-1: «Техкарты проектов» and «Шаблоны техкарт» are separate sections, as in SUPPLYMAP; without `view` both show. */
-export function TechcardsPage({ principal, view }: { principal: Principal; view?: "projects" | "templates" }) {
+/** NAV-1: «Техкарты проектов» and «Шаблоны техкарт» are separate sections, as in SUPPLYMAP; without `view` both show.
+    `embedded`: the templates view as a tab of «База данных» — the tab bar is the heading. */
+export function TechcardsPage({ principal, view, embedded = false }: { principal: Principal; view?: "projects" | "templates"; embedded?: boolean }) {
   const showProjects = view !== "templates";
   const showLibrary = view !== "projects";
   const [cards, setCards] = useState<ProjectTechcard[]>([]);
   const [templates, setTemplates] = useState<OperationCardSummary[]>([]);
   const [libraryCommit, setLibraryCommit] = useState("");
-  const [templateQuery, setTemplateQuery] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [templateDetail, setTemplateDetail] = useState<OperationCardDetail | null>(null);
-  const [templateCategory, setTemplateCategory] = useState("");
   const [editingTemplate, setEditingTemplate] = useState(false);
   const [sheetsOpen, setSheetsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState("");
@@ -362,11 +361,19 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     return [...byCode.values()];
   }, [templates]);
   const categories = useMemo(() => CATEGORY_ORDER.filter((name) => records.some((item) => recordCategory(item.code) === name)), [records]);
-  const filteredTemplates = useMemo(() => {
-    const query = templateQuery.trim().toLocaleLowerCase("ru-RU");
-    return records.filter((item) => (!templateCategory || recordCategory(item.code) === templateCategory) &&
-      (!query || `${item.code} ${item.name} ${item.step_text ?? ""}`.toLocaleLowerCase("ru-RU").includes(query)));
-  }, [records, templateQuery, templateCategory]);
+  // Rows in category order so the table groups them as the catalog did (SUPPLYMAP openTcRecords).
+  const orderedTemplates = useMemo(() => [...records].sort((a, b) =>
+    CATEGORY_ORDER.indexOf(recordCategory(a.code)) - CATEGORY_ORDER.indexOf(recordCategory(b.code))), [records]);
+  const templatePresets = useMemo(() => categories.map((name) => ({ label: name, test: (item: OperationCardSummary) => recordCategory(item.code) === name })), [categories]);
+  const templateColumns: DataColumn<OperationCardSummary>[] = [
+    { key: "code", title: "Код", value: (item) => item.code,
+      render: (item) => <button className="link-button" onClick={() => setSelectedTemplateId(item.id)}><strong className="tr-code">{item.code}</strong></button> },
+    { key: "name", title: "Наименование", value: (item) => item.name, wrap: true },
+    { key: "category", title: "Категория", value: (item) => recordCategory(item.code), filter: true },
+    { key: "first", title: "Первый шаг", value: (item) => item.first_step ?? "", wrap: true },
+    { key: "meta", title: "Состав", value: (item) => `${item.steps} шаг. ${item.controls ?? 0} контр. ${item.tooling} оснастки`, render: (item) => <small className="tr-meta">{recordMeta(item)}</small> },
+    { key: "steps_text", title: "Текст шагов", value: (item) => item.step_text ?? "", hidden: true, wrap: true },
+  ];
 
   async function load() {
     try {
@@ -484,7 +491,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     } finally { setBusy(false); }
   }
 
-  return <section className="page techcards-page">
+  return <section className={embedded ? "techcards-page embedded" : "page techcards-page"}>
     {showProjects ? <>
     <header className="page-head"><h1>Техкарты проектов</h1><span className="page-count">{cards.length}</span></header>
     <p className="page-sub">ЭТК собирается сервером из конфигурации изделия и снимка библиотеки операций; выданные версии остаются неизменяемыми.</p>
@@ -536,12 +543,12 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
       {!revisions.length && <div className="empty">Выданных ревизий пока нет.</div>}
     </article>}
     </> : <>
-    <header className="page-head"><h1>Шаблоны техкарт</h1></header>
+    {!embedded && <header className="page-head"><h1>Шаблоны техкарт</h1></header>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     </>}
     {showLibrary && <>
-    <header className="page-head library-head"><h2>Библиотека операций</h2><span className="page-count">{records.length}</span></header>
+    {!embedded && <header className="page-head library-head"><h2>Библиотека операций</h2><span className="page-count">{records.length}</span></header>}
     <p className="page-sub">Снимок SUPPLYMAP {libraryCommit ? libraryCommit.slice(0, 8) : "не загружен"}; карточка сохраняется внутри каждой собранной ЭТК. Карточка операции — то, из чего собирается лист техкарты: шаги, контроль с допусками, оснастка, безопасность, дефекты. Открой карточку, чтобы посмотреть{canEdit ? " или поправить" : ""}.</p>
     {sheetsOpen ? <TcTemplateSheets canEdit={canEditTemplates} onBack={() => setSheetsOpen(false)} onChanged={() => {
       void techcardsApi.templates().then((library) => setTemplates(library.items)).catch(() => undefined);
@@ -552,24 +559,17 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
       onCancel={() => setEditingTemplate(false)}
       onSave={saveTemplate}
     /> : <TemplateDetail template={templateDetail} canEdit={canEditTemplates} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
-    <div className="toolbar"><input aria-label="Поиск шаблона" placeholder="Поиск по коду, названию, тексту шага…" value={templateQuery} onChange={(event) => setTemplateQuery(event.target.value)} /> <button className="secondary" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>📄 Шаблоны-листы</button></div>
-    <div className="tr-chips">
-      <button className={templateCategory ? "" : "on"} onClick={() => setTemplateCategory("")}>Все · {records.length}</button>
-      {categories.map((name) => <button key={name} className={templateCategory === name ? "on" : ""} onClick={() => setTemplateCategory(name)}>{name} · {records.filter((item) => recordCategory(item.code) === name).length}</button>)}
-    </div>
-    {categories.map((name) => {
-      const items = filteredTemplates.filter((item) => recordCategory(item.code) === name);
-      if (!items.length) return null;
-      return <div className="tr-group" key={name}><h3>{name} <span>{items.length}</span></h3><div className="tr-grid">
-        {items.map((item) => <button className="tr-card" key={item.id} onClick={() => setSelectedTemplateId(item.id)}>
-          <strong className="tr-code">{item.code}</strong>
-          <span className="tr-name">{item.name}</span>
-          {item.first_step && <span className="tr-first">{item.first_step}</span>}
-          <small className="tr-meta">{recordMeta(item)}</small>
-        </button>)}
-      </div></div>;
-    })}
-    {!filteredTemplates.length && <div className="empty">Ничего не найдено.</div>}
+    <DataTable
+      label="Шаблоны техкарт"
+      rows={orderedTemplates}
+      columns={templateColumns}
+      rowKey={(item) => item.id}
+      storageKey="db:templates"
+      presets={templatePresets}
+      groupBy={(item) => recordCategory(item.code)}
+      exportName="Шаблоны техкарт"
+      toolbar={<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>📄 Шаблоны-листы</button>}
+    />
     </>}
     </>}
   </section>;

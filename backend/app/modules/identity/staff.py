@@ -27,6 +27,8 @@ from .domain import (
     department_list,
     hash_password,
     hash_pin,
+    new_pin,
+    validate_pin,
     normalize_department,
     normalize_email,
     normalize_login,
@@ -111,7 +113,17 @@ def pin_assigned(user_id: UUID, uow: UnitOfWork) -> bool:
         return user_id in uow.identity.pin_set_ids()
 
 
-def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfWork) -> IdentityUser:
+@dataclass(frozen=True)
+class CreatedEmployee:
+    """The new employee plus the PIN to hand them: the administrator issues staff themselves and sees the PIN once
+    (owner ask 2026-09-29 «все пины мне … чтобы я мог заводить новых сам»). A blank PIN is generated here rather
+    than left for portalRevealPin_, so the administrator always leaves the screen with a PIN to give out."""
+
+    user: IdentityUser
+    pin: str  # the PIN the administrator entered, or the one generated for a blank field — shown once
+
+
+def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfWork) -> CreatedEmployee:
     email = normalize_email(data.email)
     login = normalize_login(data.login or email)
     name = normalize_name(data.name)
@@ -120,7 +132,9 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
     site = normalize_site(data.site)
     # Without a password the credential is a hash of a random secret nobody knows: only the PIN opens the door.
     password_hash = hash_password(data.password or secrets.token_urlsafe(32))
-    pin_hash = hash_pin(data.pin) if str(data.pin or "").strip() else None
+    typed_pin = str(data.pin or "").strip()
+    pin = validate_pin(typed_pin) if typed_pin else new_pin()  # blank → issue one so the admin can hand it over
+    pin_hash = hash_pin(pin)
     now = as_utc(now)
     with uow:
         if uow.identity.identifiers_taken({login, email}):
@@ -133,13 +147,11 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
         uow.identity.add_user(user, password_hash, {}, pin_hash)
         details = {
             "login": login, "email": email, "name": name, "department": department, "role": role,
-            "site": site or "",
+            "site": site or "", "pin": "назначен",
         }
-        if pin_hash is not None:
-            details["pin"] = "назначен"
         _audit(uow, user.id, "identity.user_created", actor, now, details)
         uow.commit()
-        return user
+        return CreatedEmployee(user=user, pin=pin)
 
 
 def access_keepers(

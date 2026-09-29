@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from hashlib import sha256
 import json
@@ -317,6 +317,18 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
             skills=skills,
             names=names,
         )
+        # Сроки других операций пришли из базы: SQLite отдаёт их без пояса, PostgreSQL — с поясом. Новый план
+        # пишется в той же форме, иначе сроки задания не сравнить между собой.
+        stored = next((
+            value for item in task.operations if item.id != operation.id
+            for value in (item.planned_start, item.planned_finish) if value is not None
+        ), None)
+        if stored is not None:
+            plan = replace(
+                plan,
+                start=_same_timezone(plan.start, stored) if plan.start else None,
+                finish=_same_timezone(plan.finish, stored) if plan.finish else None,
+            )
         updated = task.assign(operation.id, command.operator_ids, plan, command.actor.name)
         if command.dry:
             # prodAssign_ dry: the preview is computed exactly like the save and nothing is written.

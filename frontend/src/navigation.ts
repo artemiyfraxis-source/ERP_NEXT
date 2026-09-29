@@ -19,6 +19,8 @@ export interface NavItem {
   /** What the section is for — the line under the label on a section card. */
   sub?: string;
   permission?: string;
+  /** Opens when any of these keys is granted (a section made of tabs with their own keys). */
+  anyPermission?: string[];
   minimum?: AccessMode;
   roles?: string[];
   block?: BlockId;
@@ -28,7 +30,7 @@ export interface NavItem {
 }
 
 export const BLOCKS: Array<{ id: BlockId; icon: string; title: string; sub: string }> = [
-  { id: "prod", icon: "🏭", title: "Производство", sub: "проекты · шаблоны техкарт · справочник · планирование · задания" },
+  { id: "prod", icon: "🏭", title: "Производство", sub: "проекты · база данных · планирование · задания" },
   { id: "supply", icon: "🛒", title: "Снабжение", sub: "оформить · заявки · закупка" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
   { id: "stock", icon: "📦", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
@@ -50,8 +52,10 @@ export const NAV: NavItem[] = [
   // SUPPLYMAP has no «Техкарты проектов» card: the ЭТК opens from the project card (Portal.gs: «Проекты» =
   // состав · спецификация · генератор · готовые ТК). The screen stays, reached from «Проекты» and the plan.
   { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", block: "prod", within: "projects" },
-  { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "prod" },
-  { id: "references", label: "Справочник", sub: "операции · оборудование · терминалы · провода · материалы", permission: "erpref", block: "prod" },
+  // «База данных» (owner, 29.09.2026): «Справочник» and «Шаблоны техкарт» are tabs of one section. Each tab keeps
+  // its access key, so the card opens on either; ?section=tctemplates still lands on the templates tab.
+  { id: "references", label: "База данных", sub: "шаблоны техкарт · техоперации · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "prod" },
+  { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "prod", within: "references" },
   { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", roles: ["master", "prodhead", "management", "qc", "admin"], block: "prod" },
   { id: "myops", label: "Задания", sub: "мои операции", permission: "production", roles: ["staff", "master", "admin"], block: "prod" },
   // Снабжение. «Оформить заявку» and «Мои заявки» are sections of their own, not actions inside «Заявки»
@@ -91,6 +95,7 @@ export function hasAccess(
 export function hasNavAccess(principal: Principal, item: NavItem) {
   return (
     hasAccess(principal.permissions, item.permission, item.minimum) &&
+    (!item.anyPermission || item.anyPermission.some((key) => hasAccess(principal.permissions, key, item.minimum))) &&
     (!item.roles || item.roles.some((role) => principal.roles.includes(role)))
   );
 }

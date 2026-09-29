@@ -23,7 +23,7 @@ it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order", () => {
 
 it("shows the administrator every block with SUPPLYMAP's cards in order, ERP-only sections in place", () => {
   expect(layout(as("admin", ALL_EDIT))).toEqual({
-    "Производство": ["Проекты", "Шаблоны техкарт", "Справочник", "Ресурсное планирование", "Задания"],
+    "Производство": ["Проекты", "База данных", "Ресурсное планирование", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
@@ -36,7 +36,7 @@ it("gives a rank-and-file employee the request form, own rows and read-only stoc
   expect(layout(as("staff", {
     ...OWN, requests: "edit", receiving: "view", warehouse: "view", production: "view", erpref: "view",
   }))).toEqual({
-    "Производство": ["Справочник", "Задания"],
+    "Производство": ["База данных", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки"],
     "Склад": ["Приёмка", "Склад"],
     "Менеджмент": ["Уведомления"],
@@ -47,7 +47,7 @@ it("gives the buyer the whole supply block and the stock view", () => {
   expect(layout(as("buyer", {
     ...OWN, requests: "edit", procurement: "edit", warehouse: "view", erpref: "view",
   }))).toEqual({
-    "Производство": ["Справочник"],
+    "Производство": ["База данных"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
     "Склад": ["Склад"],
     "Менеджмент": ["Уведомления"],
@@ -59,7 +59,7 @@ it("gives the storekeeper picking and handout as two sections", () => {
     ...OWN, receiving: "edit", warehouse: "edit", fulfillment: "edit", handout: "edit", shipping: "edit",
     procurement: "view", erpref: "view",
   }))).toEqual({
-    "Производство": ["Справочник"],
+    "Производство": ["База данных"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Лист закупки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Уведомления"],
@@ -70,7 +70,7 @@ it("gives the shop master planning, tasks and the production plan", () => {
   expect(layout(as("master", {
     ...OWN, receiving: "view", warehouse: "view", fulfillment: "view", handout: "view", production: "edit", shipping: "view", erpref: "view",
   }))).toEqual({
-    "Производство": ["Справочник", "Ресурсное планирование", "Задания"],
+    "Производство": ["База данных", "Ресурсное планирование", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
@@ -107,8 +107,9 @@ it("does not open procurement on a grant alone when the role is outside its set"
 it("opens techcards, templates and the reference book by their own keys to any role (ID-3)", () => {
   // The ЭТК screen opens from the project card, as in SUPPLYMAP — no card or menu item of its own.
   expect(layout(as("staff", { techcards: "view" }))["Производство"]).toBeUndefined();
-  expect(layout(as("master", { erptctpl: "view" }))["Производство"]).toEqual(["Шаблоны техкарт"]);
-  expect(layout(as("pm", { erpref: "view" }))["Производство"]).toEqual(["Справочник"]);
+  // «База данных» holds templates and the reference book as tabs: either key opens it (owner, 29.09.2026).
+  expect(layout(as("master", { erptctpl: "view" }))["Производство"]).toEqual(["База данных"]);
+  expect(layout(as("pm", { erpref: "view" }))["Производство"]).toEqual(["База данных"]);
   // The generator has no card of its own (SUPPLYMAP: a right, not a screen).
   expect(layout(as("staff", { tcgen: "view" }))["Производство"]).toBeUndefined();
 });

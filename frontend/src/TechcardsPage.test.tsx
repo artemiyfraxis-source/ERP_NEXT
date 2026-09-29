@@ -312,10 +312,10 @@ it("groups the library by category chips with counts, catalog meta and step-text
   expect(screen.getByText("правлена 28.09")).toBeInTheDocument();
   expect(screen.getByText("нет норм")).toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText("Поиск шаблона"), { target: { value: "флюсом" } });
+  fireEvent.change(screen.getByLabelText("Поиск: Шаблоны техкарт"), { target: { value: "флюсом" } });
   expect(screen.queryByText("CUT_WIRE_auto")).not.toBeInTheDocument();
   expect(screen.getByText("SDR_TIN")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Поиск шаблона"), { target: { value: "" } });
+  fireEvent.change(screen.getByLabelText("Поиск: Шаблоны техкарт"), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Резка · 1" }));
   expect(screen.queryByText("SDR_TIN")).not.toBeInTheDocument();
 });

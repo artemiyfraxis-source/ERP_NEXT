@@ -50,10 +50,10 @@ export function StaffPage() {
     const { id, draft } = editing;
     if (id === null) {
       const { active: _active, ...payload } = draft;
-      const { user } = await staffApi.create(payload);
+      const { user, pin } = await staffApi.create(payload);
       setEditing(null);
       await load();
-      return `Сотрудник ${user.name} заведён, вход — ${user.login}`;
+      return `Сотрудник ${user.name} заведён, вход — ${user.login}, PIN — ${pin} (запишите, больше не покажем)`;
     }
     const { user } = await staffApi.update(id, {
       name: draft.name, department: draft.department, role: draft.role, site: draft.site, active: draft.active,
@@ -168,7 +168,7 @@ function EmployeeForm({ data, editing, busy, onChange, onSave, onCancel }: {
       <label>Роль<select aria-label="Роль" value={draft.role} onChange={(event) => set("role", event.target.value)}>
         {data.roles.map((role) => <option key={role.key} value={role.key}>{role.label}</option>)}
       </select></label>
-      <label>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — узнает при первом входе" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
+      <label>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — сгенерируем и покажем" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
       <label>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "необязательно, 8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
       {!creating && <label className="check-inline"><input aria-label="Вход разрешён" type="checkbox" checked={draft.active} onChange={(event) => set("active", event.target.checked)} /> Вход разрешён</label>}
     </div>
