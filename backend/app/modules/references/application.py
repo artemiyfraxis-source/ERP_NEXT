@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-from .domain import MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
+from .domain import EDITABLE_TABS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
 from .technology import TECH_SNAPSHOT_SCHEMA_VERSION
 
 
@@ -166,6 +166,8 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
         record = uow.tech_operations.get(command.record_id)
         if record is None:
             raise LookupError("Запись справочника не найдена")
+        if record.tab not in EDITABLE_TABS:
+            raise ReferenceValidationError("База только для просмотра")
         fields = dict(record.fields)
         display = record.display_text
         refused: list[str] = []
@@ -198,6 +200,8 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
 
 
 def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
+    if command.tab not in EDITABLE_TABS:
+        raise ReferenceValidationError("База только для просмотра")
     fields = {str(key).strip(): _clean_cell(value) for key, value in command.fields.items() if str(key).strip()}
     filled = [value for value in fields.values() if value]
     if not filled:

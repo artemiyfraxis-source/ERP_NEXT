@@ -18,7 +18,11 @@ const TECH_TABS: Array<{ id: TechOperationTab; label: string }> = [
   { id: "coax", label: "Коаксиал" },
   { id: "prov", label: "Провода" },
   { id: "mat", label: "Материалы" },
+  { id: "kab_coax", label: "СПР.КАБ · коаксиал" },
+  { id: "kab_awg", label: "СПР.КАБ · AWG" },
 ];
+// СПР.КАБ — только просмотр (как в портале SUPPLYMAP): таблица как на листе, без правки и «+ Запись».
+const VIEW_ONLY_TABS: TechOperationTab[] = ["kab_coax", "kab_awg"];
 
 export function ReferencesPage({ principal }: { principal: Principal }) {
   const [pageTab, setPageTab] = useState<PageTab>("maps");
@@ -31,7 +35,8 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
-  const canEdit = principal.permissions.references === "edit" && principal.roles.includes("admin");
+  const viewOnly = VIEW_ONLY_TABS.includes(techTab);
+  const canEdit = principal.permissions.references === "edit" && principal.roles.includes("admin") && !viewOnly;
 
   async function loadMaps() {
     try {
@@ -91,6 +96,7 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
     }
   }
 
+  const gridColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
   const createColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
 
   function startCreate() {
@@ -125,11 +131,12 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
         <button className="secondary" onClick={() => void loadTech()}>Найти</button>
       </div>
       {tech.metadata && <div className="snapshot-meta">Схема v{tech.metadata.schema_version} · {tech.metadata.record_count} записей · импорт {new Date(tech.metadata.imported_at).toLocaleString("ru-RU")}</div>}
-      <div className="table-wrap"><table><thead><tr><th>Наименование</th><th>Источник</th><th>Поля</th>{canEdit && <th />}</tr></thead><tbody>{tech.records.map((record) => <tr key={record.id}><td className="text"><strong>{record.display_text}</strong></td><td>{record.source_sheet || "—"}</td><td className="text">{editing?.id === record.id ? <RowForm values={editing.values} onChange={(values) => setEditing({ id: record.id, values })} /> : <div className="reference-fields">{Object.entries(record.fields).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div>}</td>{canEdit && <td>{editing?.id === record.id ? <><button className="primary small" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary small" onClick={() => setEditing(null)}>Отмена</button></> : <button className="secondary small" onClick={() => startEdit(record)}>Править</button>}</td>}</tr>)}{!tech.records.length && <tr><td className="empty" colSpan={canEdit ? 4 : 3}>Записей по выбранному фильтру нет.</td></tr>}</tbody></table></div>
+      {viewOnly ? <div className="table-wrap"><table aria-label="СПР.КАБ"><thead><tr>{gridColumns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{tech.records.map((record) => <tr key={record.id}>{gridColumns.map((column) => <td key={column}>{record.fields[column] ?? ""}</td>)}</tr>)}{!tech.records.length && <tr><td className="empty" colSpan={Math.max(gridColumns.length, 1)}>Таблица СПР.КАБ не загружена из зеркала.</td></tr>}</tbody></table></div>
+      : <div className="table-wrap"><table><thead><tr><th>Наименование</th><th>Источник</th><th>Поля</th>{canEdit && <th />}</tr></thead><tbody>{tech.records.map((record) => <tr key={record.id}><td className="text"><strong>{record.display_text}</strong></td><td>{record.source_sheet || "—"}</td><td className="text">{editing?.id === record.id ? <RowForm values={editing.values} onChange={(values) => setEditing({ id: record.id, values })} /> : <div className="reference-fields">{Object.entries(record.fields).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div>}</td>{canEdit && <td>{editing?.id === record.id ? <><button className="primary small" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary small" onClick={() => setEditing(null)}>Отмена</button></> : <button className="secondary small" onClick={() => startEdit(record)}>Править</button>}</td>}</tr>)}{!tech.records.length && <tr><td className="empty" colSpan={canEdit ? 4 : 3}>Записей по выбранному фильтру нет.</td></tr>}</tbody></table></div>}
       {canEdit && (editing?.id === null
         ? <div className="panel"><RowForm values={editing.values} onChange={(values) => setEditing({ id: null, values })} /><div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div></div>
         : <div className="form-actions"><button className="secondary" disabled={!createColumns.length} onClick={startCreate}>+ Запись</button></div>)}
-      <p className="page-sub">СПР.КАБ (карта «ГОСТ-сечение → AWG» на вкладке карт) и шаблоны ТК доступны только для просмотра. Правки строк живут до следующего импорта снимка.</p>
+      <p className="page-sub">СПР.КАБ (карта «ГОСТ-сечение → AWG» на вкладке карт, вкладки «СПР.КАБ» здесь) и шаблоны ТК доступны только для просмотра. Правки строк живут до следующего импорта снимка.</p>
     </>}
   </section>;
 }

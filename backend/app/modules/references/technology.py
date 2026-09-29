@@ -435,6 +435,9 @@ class ImportedTechnologySnapshot:
 
 
 SHEET_TABLES = {"prov": "БД.ПРОВ", "mat": "БД.МАТ"}
+# СПР.КАБ (REF-SPRKAB): one sheet, two tables; view-only, kept in sheet order.
+KAB_TABLES = {"kab_coax": "СПР.КАБ · коаксиал", "kab_awg": "СПР.КАБ · AWG"}
+SPR_KAB_SHEET = "СПР.КАБ"
 
 
 def _column_letter(index: int) -> str:
@@ -452,14 +455,36 @@ def parse_mirror_tsv(text: str) -> dict[str, object]:
     return {"header": rows[0] if rows and rows[0] != [""] else [], "formulaCols": [], "rows": rows[1:]}
 
 
+def parse_spr_kab_tsv(text: str) -> dict[str, dict[str, object]]:
+    """Mirror `_local/db/СПР.КАБ.tsv` → `{"kab_coax": table, "kab_awg": table}` (the `tables` shape).
+
+    The sheet holds two tables one under another with blank rows between them and no common header: the coax
+    table (header `Кабель / D1 / D2 / D3`) on top, the AWG table below, its header starting with the cell
+    `AWG`. Cells stay as displayed (decimal commas, «—»)."""
+    lines = str(text or "").lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    rows = [line.split("\t") for line in lines]
+    awg_at = next((i for i, row in enumerate(rows) if row and row[0].strip().casefold() == "awg"), None)
+    if awg_at is None:
+        raise ValueError(f"В {SPR_KAB_SHEET} нет шапки таблицы AWG (строка, начинающаяся с «AWG»)")
+
+    def block(part: list[list[str]], name: str) -> dict[str, object]:
+        filled = [row for row in part if any(cell.strip() for cell in row)]
+        if not filled:
+            raise ValueError(f"В {SPR_KAB_SHEET} нет таблицы «{name}»")
+        return {"header": filled[0], "formulaCols": [], "rows": filled[1:]}
+
+    return {"kab_coax": block(rows[:awg_at], "коаксиал"), "kab_awg": block(rows[awg_at:], "AWG")}
+
+
 def import_sheet_table(tab: str, table: object) -> tuple[ImportedTechnologyRecord, ...]:
     """SUPPLYMAP PortalRef `refTable_` shape → records keyed by the sheet header (БД.ПРОВ / БД.МАТ).
 
     Formula columns are left out like in the other bases; empty cells stay as empty strings; rows with no
     non-formula cell are sheet filler, not records."""
-    if tab not in SHEET_TABLES:
-        raise ValueError(f"Таблица «{tab}» не поддерживается: только {', '.join(SHEET_TABLES)}")
-    sheet = SHEET_TABLES[tab]
+    names = {**SHEET_TABLES, **KAB_TABLES}
+    if tab not in names:
+        raise ValueError(f"Таблица «{tab}» не поддерживается: только {', '.join(names)}")
+    sheet = names[tab]
     if not isinstance(table, Mapping) or not isinstance(table.get("header"), list) or not isinstance(table.get("rows"), list):
         raise ValueError(f"Некорректная таблица {sheet}: нужны header и rows")
     header = [re.sub(r"\s+", " ", str(item or "")).strip() or f"Колонка {_column_letter(index)}"
@@ -482,7 +507,8 @@ def import_sheet_table(tab: str, table: object) -> tuple[ImportedTechnologyRecor
         fields = {name: cells[index] for index, name in enumerate(header) if index not in formula_cols}
         display = next(value for value in cells if value)
         records.append(ImportedTechnologyRecord(
-            tab=tab, display_text=display, search_text="", source_sheet=sheet, sort_key=display, fields=fields,
+            tab=tab, display_text=display, search_text="", source_sheet=sheet,
+            sort_key=f"{number:05d}" if tab in KAB_TABLES else display, fields=fields,
         ))
     return tuple(records)
 

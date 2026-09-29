@@ -617,7 +617,7 @@ export interface ReferenceMaps {
   gost_awg: ReferencePair[];
 }
 
-export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat";
+export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
 export interface TechOperationRecord {
   id: string;

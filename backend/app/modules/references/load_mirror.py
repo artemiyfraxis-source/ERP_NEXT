@@ -1,8 +1,10 @@
-"""REF-MIRROR-LOAD CLI: SUPPLYMAP mirror `_local/db/БД.ПРОВ.tsv` / `БД.МАТ.tsv` → references snapshot.
+"""REF-MIRROR-LOAD CLI: SUPPLYMAP mirror `_local/db/БД.ПРОВ.tsv` / `БД.МАТ.tsv` (+ `СПР.КАБ.tsv`) → references snapshot.
 
     ERP_DATABASE_URL=... python -m app.modules.references.load_mirror --dry-run
     ERP_DATABASE_URL=... python -m app.modules.references.load_mirror [--source ../SUPPLYMAP]
 
+`БД.ПРОВ` and `БД.МАТ` are required. `СПР.КАБ.tsv` (REF-SPRKAB: coax D1–D3 and AWG tables, view-only) is
+optional — a mirror without it loads as before — but a present file that does not parse is an error.
 Goes through `replace_snapshot`; only the tabs whose file is present are replaced, every other tab of the
 snapshot (and its schema version / source date) stays as it is. Exit code: 0 — done; 2 — a file is missing,
 unreadable or not a valid table, or ERP_DATABASE_URL is not set.
@@ -22,7 +24,10 @@ from app.shared.identity import Actor
 
 from .application import ReplaceSnapshotCommand, TechRecordInput, UnitOfWork, replace_snapshot
 from .domain import ReferenceValidationError, TechOperationTab
-from .technology import SHEET_TABLES, TECH_SNAPSHOT_SCHEMA_VERSION, import_sheet_table, parse_mirror_tsv
+from .technology import (
+    KAB_TABLES, SHEET_TABLES, SPR_KAB_SHEET, TECH_SNAPSHOT_SCHEMA_VERSION, import_sheet_table, parse_mirror_tsv,
+    parse_spr_kab_tsv,
+)
 
 ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
 MIRROR_SUBDIR = Path("_local") / "db"
@@ -51,8 +56,16 @@ def default_source() -> Path:
     return Path("..") / "SUPPLYMAP"
 
 
+def _inputs(records) -> list[TechRecordInput]:
+    return [TechRecordInput(
+        tab=TechOperationTab(item.tab), display_text=item.display_text, search_text=item.search_text,
+        source_sheet=item.source_sheet, sort_key=item.sort_key, fields=item.fields,
+    ) for item in records]
+
+
 def read_mirror(source: Path) -> dict[str, list[TechRecordInput]]:
-    """Both mirror files are required; a missing one is an error, not a silent empty table."""
+    """ПРОВ/МАТ files are required; a missing one is an error, not a silent empty table. СПР.КАБ is optional
+    (absent → its two tabs are not in the result and stay as they are in the snapshot)."""
     tables: dict[str, list[TechRecordInput]] = {}
     for tab, sheet in SHEET_TABLES.items():
         path = Path(source) / MIRROR_SUBDIR / f"{sheet}.tsv"
@@ -65,10 +78,14 @@ def read_mirror(source: Path) -> dict[str, list[TechRecordInput]]:
             records = import_sheet_table(tab, table)
         except (OSError, UnicodeDecodeError, ValueError) as error:
             raise MirrorLoadError(f"{path.name}: {error}") from error
-        tables[tab] = [TechRecordInput(
-            tab=TechOperationTab(item.tab), display_text=item.display_text, search_text=item.search_text,
-            source_sheet=item.source_sheet, sort_key=item.sort_key, fields=item.fields,
-        ) for item in records]
+        tables[tab] = _inputs(records)
+    kab_path = Path(source) / MIRROR_SUBDIR / f"{SPR_KAB_SHEET}.tsv"
+    if kab_path.is_file():
+        try:
+            for tab, table in parse_spr_kab_tsv(kab_path.read_text(encoding="utf-8")).items():
+                tables[tab] = _inputs(import_sheet_table(tab, table))
+        except (OSError, UnicodeDecodeError, ValueError) as error:
+            raise MirrorLoadError(f"{kab_path.name}: {error}") from error
     return tables
 
 
@@ -94,14 +111,14 @@ def load_mirror(source: Path, uow: UnitOfWork, *, dry_run: bool, now: datetime) 
 
 
 def format_report(result: MirrorLoadResult) -> str:
-    lines = ["Загрузка зеркала БД.ПРОВ / БД.МАТ: " + ("записано" if result.written else "пробный прогон, ничего не записано")]
+    lines = ["Загрузка зеркала БД.ПРОВ / БД.МАТ / СПР.КАБ: " + ("записано" if result.written else "пробный прогон, ничего не записано")]
     for tab, count in result.counts.items():
-        lines.append(f"  {SHEET_TABLES[tab]}: строк в зеркале {count}, сейчас в снимке {result.current[tab]}")
+        lines.append(f"  {({**SHEET_TABLES, **KAB_TABLES})[tab]}: строк в зеркале {count}, сейчас в снимке {result.current[tab]}")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Загрузка БД.ПРОВ и БД.МАТ из зеркала SUPPLYMAP в снимок справочников (REF-MIRROR-LOAD)")
+    parser = argparse.ArgumentParser(description="Загрузка БД.ПРОВ, БД.МАТ и СПР.КАБ из зеркала SUPPLYMAP в снимок справочников (REF-MIRROR-LOAD)")
     parser.add_argument("--source", default=None, help="корень репозитория SUPPLYMAP (по умолчанию SUPPLYMAP_SOURCE_REPOSITORY или соседняя папка)")
     parser.add_argument("--dry-run", action="store_true", help="только посчитать строки, без записи в базу")
     args = parser.parse_args(argv)

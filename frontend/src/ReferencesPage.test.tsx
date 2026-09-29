@@ -141,3 +141,31 @@ it("offers the create form on an empty tab from the known column schema", async 
 
   await waitFor(() => expect(created).toEqual({ tab: "mat", fields: { Наименование: "Трубка", Группа: "" } }));
 });
+
+it("shows the СПР.КАБ tables as read-only grids", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path.startsWith("/api/references/tech-operations?tab=kab_coax")) return json({
+      metadata: null, columns: ["Кабель", "D1", "D2", "D3"],
+      records: [{ id: "3", tab: "kab_coax", display_text: "RG-316", source_sheet: "СПР.КАБ · коаксиал", fields: { Кабель: "RG-316", D1: "0,5", D2: "1,48", D3: "1,95" } }],
+    });
+    if (path.startsWith("/api/references/tech-operations?tab=kab_awg")) return json({
+      metadata: null, columns: ["AWG", "ГОСТ"],
+      records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "СПР.КАБ · AWG", fields: { AWG: "22", ГОСТ: "0,35" } }],
+    });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={admin} />);
+  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
+  fireEvent.click(await screen.findByRole("button", { name: "СПР.КАБ · коаксиал" }));
+  expect(await screen.findByText("1,95")).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "D3" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "СПР.КАБ · AWG" }));
+  expect(await screen.findByText("0,35")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
+});

@@ -27,6 +27,8 @@ class TechOperationTab(str, Enum):
     COAX = "coax"
     WIRE = "prov"
     MATERIAL = "mat"
+    KAB_COAX = "kab_coax"  # СПР.КАБ, верхняя таблица: коаксиал, D1–D3
+    KAB_AWG = "kab_awg"  # СПР.КАБ, нижняя таблица: AWG → сечение, Ø жилы, Ø изоляции по маркам
 
 
 def normalized_supplier_key(value: str) -> str:
@@ -131,7 +133,8 @@ def validate_entries(entries: tuple[ReferenceEntry, ...]) -> None:
 
 
 # SUPPLYMAP PortalRef: editable bases; СПР.КАБ and БД.ТК templates are view-only.
-EDITABLE_TABS = frozenset(TechOperationTab)
+VIEW_ONLY_TABS = frozenset({TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG})
+EDITABLE_TABS = frozenset(TechOperationTab) - VIEW_ONLY_TABS
 VIEW_ONLY_BASES = ("spr_kab", "tk_templates")
 MAX_ROW_EDITS = 200
 
@@ -150,8 +153,9 @@ BASE_COLUMNS = {
         "Поставщик", "Ссылка на datasheet", "Источник данных",
     ),
 }
-# The v14 GAS snapshot never carries these two; a snapshot without them must not wipe portal-edited rows.
-SHEET_TABLE_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL)
+# The v14 GAS snapshot never carries these; a snapshot without them must not wipe portal-edited rows.
+# Same for СПР.КАБ (REF-SPRKAB): only the mirror carries it.
+SHEET_TABLE_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
 
 
 def _clean_cell(value: str) -> str:
