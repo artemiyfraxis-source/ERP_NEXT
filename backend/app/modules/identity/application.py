@@ -12,10 +12,13 @@ from app.shared.http_auth import Principal
 from app.shared.identity import Actor
 from app.shared.events import AuditEvent
 from app.shared.clock import as_utc
+from app.shared.notifications import notification_requested, publish_notification
 
 from .domain import (
     AccessMode,
     IdentityUser,
+    IdentityValidationError,
+    validate_password,
     effective_permissions,
     hash_password,
     role_permissions,
@@ -88,6 +91,7 @@ class IdentityRepository(Protocol):
         self, user: IdentityUser, password_hash: str, role_access: dict[str, AccessMode]
     ) -> None: ...
     def update_user(self, user: IdentityUser) -> None: ...
+    def password_hash(self, user_id: UUID) -> str | None: ...
     def set_password(self, user_id: UUID, password_hash: str) -> None: ...
     def active_admin_ids(self) -> list[UUID]: ...
     def saved_departments(self) -> list[str]: ...
@@ -102,6 +106,7 @@ class IdentityRepository(Protocol):
 class UnitOfWork(Protocol):
     identity: IdentityRepository
     audit: object
+    outbox: object  # notification.requested (ID-4: the brute-force alert)
 
     def __enter__(self) -> UnitOfWork: ...
     def __exit__(self, exc_type, exc, traceback) -> bool | None: ...
@@ -111,6 +116,12 @@ class UnitOfWork(Protocol):
 SESSION_TTL = timedelta(days=14)
 SESSION_ABSOLUTE_TTL = timedelta(days=30)
 THROTTLE_WINDOW = timedelta(minutes=10)
+# SUPPLYMAP Portal.gs:252-306 (ID-4): 10 failures per account and 30 over all accounts in 10 minutes close the login;
+# the global counter stops a fan-out over many accounts. ERP keeps its per-client ceiling on top.
+LOGIN_FAIL_LIMIT = 10
+LOGIN_FAIL_LIMIT_GLOBAL = 30
+CLIENT_FAIL_LIMIT = 300
+GLOBAL_KEY = "global:login"
 SECURITY_STATE_RETENTION = timedelta(days=7)
 DUMMY_PASSWORD_HASH = hash_password("not-a-real-user-password", salt=b"\0" * 16)
 SYSTEM_ACTOR = Actor(id=UUID(int=0), name="Identity", department="Система")
@@ -168,11 +179,24 @@ def login(
             THROTTLE_WINDOW,
             SECURITY_STATE_RETENTION,
         )
-        uow.identity.lock_throttle_keys((login_key, client_key))
+        uow.identity.lock_throttle_keys((login_key, client_key, GLOBAL_KEY))
         login_failures = uow.identity.failure_count(login_key, now, THROTTLE_WINDOW)
         client_failures = uow.identity.failure_count(client_key, now, THROTTLE_WINDOW)
-        if login_failures >= 10 or client_failures >= 300:
-            limited_key = client_key if client_failures >= 300 else login_key
+        global_failures = uow.identity.failure_count(GLOBAL_KEY, now, THROTTLE_WINDOW)
+        if (
+            login_failures >= LOGIN_FAIL_LIMIT
+            or global_failures >= LOGIN_FAIL_LIMIT_GLOBAL
+            or client_failures >= CLIENT_FAIL_LIMIT
+        ):
+            if login_failures >= LOGIN_FAIL_LIMIT:
+                limited_key, limited_by = login_key, "login"
+                message = "Слишком много попыток. Подождите 10 минут."
+            elif global_failures >= LOGIN_FAIL_LIMIT_GLOBAL:
+                limited_key, limited_by = GLOBAL_KEY, "global"
+                message = "Вход временно закрыт (слишком много неудачных попыток). Подождите 10 минут."
+            else:
+                limited_key, limited_by = client_key, "client"
+                message = "Слишком много попыток входа; попробуйте позже"
             if uow.identity.mark_rate_limit_audited(limited_key, now):
                 _audit(
                     uow,
@@ -183,17 +207,21 @@ def login(
                     details={
                         "identifier_hash": secret_hash(normalized),
                         "client_key": client_key,
-                        "limited_by": "client" if limited_key == client_key else "login",
+                        "limited_by": limited_by,
                     },
                 )
                 uow.commit()
-            raise AuthenticationRateLimited("Слишком много попыток входа; попробуйте позже")
+            raise AuthenticationRateLimited(message)
 
         record = uow.identity.credentials_for_login(normalized)
         encoded = record[1] if record is not None and record[0].active else DUMMY_PASSWORD_HASH
         if not verify_password(password, encoded) or record is None or not record[0].active:
             uow.identity.increment_failure(login_key, now, THROTTLE_WINDOW)
             uow.identity.increment_failure(client_key, now, THROTTLE_WINDOW)
+            uow.identity.increment_failure(GLOBAL_KEY, now, THROTTLE_WINDOW)
+            attempt = login_failures + 1
+            total = global_failures + 1
+            # portalLoginFail_: every failure goes to the journal with its attempt number.
             _audit(
                 uow,
                 aggregate_id=record[0].id if record is not None else UUID(int=0),
@@ -203,8 +231,24 @@ def login(
                 details={
                     "identifier_hash": secret_hash(normalized),
                     "client_key": client_key,
+                    "attempt": str(attempt),
+                    "total": str(total),
                 },
             )
+            # …and exactly at a threshold the owner is told (SUPPLYMAP e-mailed CONFIG.ERROR_ALERT_EMAIL; ERP puts it
+            # into the administrators' notification feed).
+            if attempt == LOGIN_FAIL_LIMIT or total == LOGIN_FAIL_LIMIT_GLOBAL:
+                publish_notification(uow.outbox, notification_requested(
+                    key=f"login-bruteforce:{secret_hash(normalized)}:{now.isoformat()}",
+                    now=now,
+                    title="Подбор пароля при входе",
+                    body=(
+                        f"Неудачных входов за 10 мин: по учётной записи «{normalized}» — {attempt}, всего — {total}. "
+                        "Вход заблокирован до конца окна. Записи — в системном журнале."
+                    ),
+                    kind="security",
+                    roles=("admin",),
+                ))
             uow.commit()
             raise AuthenticationError("Неверный логин или пароль")
 
@@ -330,3 +374,40 @@ def deactivate_user(
         )
         uow.commit()
         return user
+
+
+# ── Own profile and password (SUPPLYMAP portalState_ shows role, department, site) ──────────────────
+
+
+def own_profile(user_id: UUID, uow: UnitOfWork) -> IdentityUser:
+    with uow:
+        user = uow.identity.user_for_update(user_id)
+        if user is None or not user.active:
+            raise KeyError("Сотрудник не найден.")
+        return user
+
+
+def change_own_password(
+    user_id: UUID, current: str, new: str, actor: Actor, now: datetime, uow: UnitOfWork,
+) -> None:
+    """The employee changes their own password: the current one must match. SUPPLYMAP had PINs issued by the
+    administrator and no self-service change; ERP passwords are still issued by the administrator (no «узнать пароль
+    при первом входе»), and the holder may replace theirs."""
+    validate_password(new)
+    if current == new:
+        raise IdentityValidationError("Новый пароль совпадает с текущим.")
+    now = as_utc(now)
+    with uow:
+        encoded = uow.identity.password_hash(user_id)
+        if encoded is None or not verify_password(current, encoded):
+            raise AuthenticationError("Текущий пароль указан неверно.")
+        uow.identity.set_password(user_id, hash_password(new))
+        _audit(
+            uow,
+            aggregate_id=user_id,
+            event_type="identity.own_password_changed",
+            actor=actor,
+            now=now,
+            details={},
+        )
+        uow.commit()

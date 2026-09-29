@@ -11,12 +11,14 @@ from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.http_auth import identity_edit_principal
+from app.shared.http_auth import access_admin_principal, staffdir_principal
 
 from .application import (
     AuthenticationError,
     AuthenticationRateLimited,
     UnitOfWork,
+    change_own_password,
+    own_profile,
     login,
     logout,
     deactivate_user,
@@ -126,6 +128,43 @@ def me(principal: Annotated[Principal, Depends(authenticated_principal)]) -> dic
     return _principal_result(principal)
 
 
+class PasswordChangeInput(BaseModel):
+    current: str = Field(min_length=1, max_length=128)
+    new: str = Field(min_length=1, max_length=128)
+
+
+@router.get("/profile")
+def profile_route(
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """Шапка / профиль: ФИО, e-mail, роль, отдел, место работы (portalState_)."""
+    try:
+        user = own_profile(principal.actor.id, uow_factory())
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден.") from error
+    return {
+        "name": user.name, "login": user.login, "email": user.email, "department": user.department,
+        "role": user.role, "role_label": ROLE_LABELS.get(user.role, user.role),
+        "site": user.site or "", "site_label": WORK_SITES.get(user.site or "", "все площадки"),
+    }
+
+
+@router.post("/password", status_code=204)
+def change_password_route(
+    payload: PasswordChangeInput,
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> None:
+    try:
+        change_own_password(principal.actor.id, payload.current, payload.new, principal.actor, now, uow_factory())
+    except AuthenticationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except IdentityValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @router.post("/logout", status_code=204)
 def logout_route(
     request: Request,
@@ -149,7 +188,7 @@ def logout_route(
 @router.post("/users/{user_id}/deactivate")
 def deactivate_user_route(
     user_id: UUID,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -222,7 +261,7 @@ _STAFF_ERRORS = (KeyError, StaffConflict, IdentityValidationError, IntegrityErro
 
 @router.get("/staff")
 def staff_route(
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
     del principal
@@ -238,7 +277,7 @@ def staff_route(
 @router.post("/staff", status_code=201)
 def create_employee_route(
     payload: EmployeeCreateInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -253,7 +292,7 @@ def create_employee_route(
 def update_employee_route(
     user_id: UUID,
     payload: EmployeeUpdateInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -267,7 +306,7 @@ def update_employee_route(
 @router.put("/departments")
 def save_departments_route(
     payload: DepartmentsInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -281,7 +320,7 @@ def save_departments_route(
 @router.post("/departments/rename")
 def rename_department_route(
     payload: DepartmentRenameInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(staffdir_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -310,7 +349,7 @@ class UserAccessInput(BaseModel):
 
 @router.get("/access")
 def access_route(
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(access_admin_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
     del principal
@@ -333,7 +372,7 @@ def access_route(
 @router.put("/access/roles")
 def save_role_matrix_route(
     payload: RoleMatrixInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(access_admin_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
@@ -348,7 +387,7 @@ def save_role_matrix_route(
 def save_user_access_route(
     user_id: UUID,
     payload: UserAccessInput,
-    principal: Annotated[Principal, Depends(identity_edit_principal)],
+    principal: Annotated[Principal, Depends(access_admin_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:

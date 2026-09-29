@@ -226,9 +226,10 @@ function KitTile({ item, statuses, canEdit, open, remove }: {
   </div>;
 }
 
-function CreateFromCalc({ close, done, number = "", title = "➕ Создать проект из расчёта" }: {
-  close: () => void; done: (project: string, note: string, bad: boolean) => void; number?: string; title?: string;
+function CreateFromCalc({ close, done, number = "", source = "", title = "➕ Создать проект из расчёта" }: {
+  close: () => void; done: (project: string, note: string, bad: boolean) => void; number?: string; source?: string; title?: string;
 }) {
+  const [url, setUrl] = useState(/^https?:\/\//i.test(source) ? source : "");
   const [file, setFile] = useState<File | null>(null);
   const [form, setForm] = useState({ number, deadline: "", shipping_point: "", contact: "", phone: "" });
   const [busy, setBusy] = useState(false);
@@ -236,11 +237,13 @@ function CreateFromCalc({ close, done, number = "", title = "➕ Создать 
   const refresh = !!number;
 
   async function submit() {
-    if (!file || busy) { if (!file) setError("Выбери файл расчёта .xlsx"); return; }
+    if (busy) return;
+    if (!url.trim() && !file) { setError("Вставь ссылку на расчёт или выбери файл .xlsx"); return; }
     setBusy(true); setError("");
     try {
       const { res } = await kitsetsApi.load({
-        file_name: file.name, content_b64: await readFileBase64(file), number: form.number,
+        ...(url.trim() ? { url: url.trim() } : { file_name: file!.name, content_b64: await readFileBase64(file!) }),
+        number: form.number,
         deadline: form.deadline || null,
         ship: refresh ? null : { shipping_point: form.shipping_point, contact: form.contact, phone: form.phone },
       });
@@ -259,10 +262,11 @@ function CreateFromCalc({ close, done, number = "", title = "➕ Создать 
   return <div className="panel kit-modal" role="dialog" aria-label={title}>
     <h3>{title}</h3>
     <p className="page-sub">{refresh
-      ? "Загрузи свежий файл расчёта. Состав обновится, правки количеств, брака, наименований и ГРН сохранятся, статус и дедлайн не тронутся."
-      : "Нужен только файл расчёта (Google Таблица → Файл → Скачать → .xlsx): номер проекта, заказчик, сборки и состав читаются из листов ЗКЗ и СПЯ. Проект заведётся в реестре ERP вместе с позициями. Если он уже есть — обновится состав, правки количеств сохранятся, статус и дедлайн не тронутся."}</p>
+      ? "Расчёт перечитается по ссылке. Состав обновится, правки количеств, брака, наименований и ГРН сохранятся, статус и дедлайн не тронутся."
+      : "Нужна только ссылка на расчёт: номер проекта, заказчик, сборки и состав читаются из листов ЗКЗ и СПЯ. Проект заведётся в реестре ERP вместе с позициями. Если он уже есть — обновится состав, правки количеств сохранятся, статус и дедлайн не тронутся. Нет доступа к таблице — загрузи файл .xlsx (Файл → Скачать → Microsoft Excel)."}</p>
     <div className="grid wide">
-      <label>Файл расчёта (.xlsx)<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
+      <label>Ссылка на расчёт<input aria-label="Ссылка на расчёт" value={url} placeholder="https://docs.google.com/spreadsheets/d/…" onChange={(event) => setUrl(event.target.value)} /></label>
+      <label>или файл расчёта (.xlsx)<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
       {!refresh && <>
         <label>№ проекта<input value={form.number} placeholder="пусто — возьмём из расчёта" onChange={(event) => setForm({ ...form, number: event.target.value })} /></label>
         <label>Дедлайн<input type="date" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></label>
@@ -334,7 +338,7 @@ function KitsetCardView({ project, canEdit, back }: { project: string; canEdit: 
       <button className="secondary" onClick={() => openSection("shipping", { ship_project: card.project })}>🚚 Отгрузить</button>
       {note && <span className="muted">{note}</span>}
     </div>
-    {refreshing && <CreateFromCalc number={card.project} title="🔄 Обновить из расчёта" close={() => setRefreshing(false)} done={(_project, text, bad) => {
+    {refreshing && <CreateFromCalc number={card.project} source={card.calc_source} title="🔄 Обновить из расчёта" close={() => setRefreshing(false)} done={(_project, text, bad) => {
       setRefreshing(false); if (bad) setError(text); else setNote(text); void load();
     }} />}
     {error && <div className="error-banner" role="alert">{error}</div>}

@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.modules.identity.domain import (
     ROLE_DEFAULTS,
+    ROLE_SEED,
     IdentityUser,
     IdentityValidationError,
     department_is_role_like,
@@ -30,6 +31,7 @@ from app.modules.identity.infrastructure import (
     IdentityRoleAccessRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
+    seed_role_matrix,
 )
 from app.modules.requests.api import moscow_now
 from app.shared.persistence import AuditEventRow, create_schema
@@ -90,7 +92,8 @@ def staff_api():
         provision_user(session, _user(ADMIN_ID, "admin", "admin", "ИТ"), hash_password("admin-password"),
                        role_access=ROLE_DEFAULTS["admin"])
         provision_user(session, _user(BUYER_ID, "buyer", "buyer", "Снабжение"), hash_password("buyer-password"),
-                       role_access=ROLE_DEFAULTS["buyer"])
+                       role_access=ROLE_SEED["buyer"])
+        seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
         session.commit()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
     app.state.cookie_secure = False
@@ -151,8 +154,8 @@ def test_admin_creates_an_employee_who_can_log_in(staff_api):
     assert event.actor_id == ADMIN_ID and event.details["role"] == "master"
     assert "first-password" not in json.dumps(event.details)
     with staff_api() as session:
-        # The role's sections come from ROLE_DEFAULTS; nothing is copied into the matrix (NAV-ACCESS).
-        assert session.get(IdentityRoleAccessRow, ("master", "production")) is None
+        # The role's sections come from its matrix row; creating a person writes nothing into it.
+        assert session.get(IdentityRoleAccessRow, ("master", "production")).mode == "edit"
 
 
 @pytest.mark.parametrize(

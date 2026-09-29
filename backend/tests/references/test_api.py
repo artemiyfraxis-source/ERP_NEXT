@@ -34,7 +34,7 @@ def references_api():
         actor=actor,
         email="admin@example.test",
         roles=frozenset({"admin"}),
-        permissions={"references": "edit"},
+        permissions={"erpref": "edit", "procurement": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: datetime(2026, 9, 22, 10, 0)
     yield TestClient(app)
@@ -65,9 +65,61 @@ def test_replaces_both_editable_maps_atomically(references_api):
         "suppliers": [{"key": "https://www.Example.ru/catalog", "value": "ООО Поставщик"}],
         "countries": [{"key": "Fraxis", "value": "Россия"}],
         "gost_awg": [{"key": "0,35", "value": "22"}],
+        "can_edit": {"suppliers": True, "gost_awg": True},
     }
     assert duplicate.status_code == 422
     assert references_api.get("/api/references/maps").json() == fetched.json()
+
+
+def test_blank_rows_are_dropped_and_literal_supplier_keys_are_kept(references_api):
+    """RF-2 (References.gs saveReferences drops empty rows) and RF-1 (supplierKey_ keeps «Склад»/«Вода» literals)."""
+    response = references_api.put("/api/references/maps", json={
+        "suppliers": [
+            {"key": "", "value": ""}, {"key": "Склад", "value": "Склад"}, {"key": "Вода", "value": "ООО \"Польза природы\""},
+            {"key": "kroks.ru", "value": ""},
+        ],
+        "countries": [{"key": "  ", "value": "Россия"}],
+        "gost_awg": [{"key": "", "value": ""}],
+    })
+
+    assert response.status_code == 200
+    assert response.json()["suppliers"] == [
+        {"key": "Склад", "value": "Склад"}, {"key": "Вода", "value": "ООО \"Польза природы\""},
+    ]
+    assert response.json()["countries"] == [] and response.json()["gost_awg"] == []
+
+
+def test_nothing_saved_shows_the_supplymap_seed(references_api):
+    maps = references_api.get("/api/references/maps").json()
+
+    assert {"key": "фраксис", "value": "Склад"} in maps["suppliers"]
+    assert {"key": "chipdip.ru", "value": "АО \"ЧИП И ДИП\""} in maps["suppliers"]
+    assert maps["countries"] == []
+
+
+def test_supplier_maps_are_the_buyers_and_gost_awg_the_reference_books(references_api):
+    """Portal.gs portalSaveReferences: portalCanWork_ (procurement edit); ГОСТ→AWG follows `erpref` edit."""
+    references_api.put("/api/references/maps", json={
+        "suppliers": [{"key": "kroks.ru", "value": "Крокс"}], "countries": [],
+        "gost_awg": [{"key": "0,35", "value": "22"}],
+    })
+    as_user = lambda permissions, role: Principal(  # noqa: E731
+        actor=Actor(id=UUID("10000000-0000-0000-0000-000000000009"), name="Сотрудник", department="ERP"),
+        email="user@example.test", roles=frozenset({role}), permissions=permissions,
+    )
+    app.dependency_overrides[authenticated_principal] = lambda: as_user({"procurement": "edit", "erpref": "view"}, "buyer")
+    buyer = references_api.put("/api/references/maps", json={
+        "suppliers": [{"key": "chipdip.ru", "value": "ЧИП И ДИП"}], "countries": [], "gost_awg": [],
+    })
+    app.dependency_overrides[authenticated_principal] = lambda: as_user({"erpref": "view"}, "staff")
+    viewer = references_api.put("/api/references/maps", json={"suppliers": [], "countries": [], "gost_awg": []})
+    read = references_api.get("/api/references/maps")
+
+    assert buyer.status_code == 200
+    assert buyer.json()["suppliers"] == [{"key": "chipdip.ru", "value": "ЧИП И ДИП"}]
+    assert buyer.json()["gost_awg"] == [{"key": "0,35", "value": "22"}]  # not the buyer's map — kept
+    assert viewer.status_code == 403
+    assert read.status_code == 200 and read.json()["can_edit"] == {"suppliers": False, "gost_awg": False}
 
 
 def test_replaces_and_searches_versioned_technology_snapshot(references_api):
@@ -215,7 +267,7 @@ def test_viewer_cannot_replace_maps(references_api):
         ),
         email="staff@example.test",
         roles=frozenset({"staff"}),
-        permissions={"references": "view"},
+        permissions={"erpref": "view"},
     )
     response = references_api.put(
         "/api/references/maps",
