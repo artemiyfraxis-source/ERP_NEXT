@@ -78,18 +78,18 @@ class SourceEmployee:
 
 # Монтажники (installers), owner 2026-09-29: they are not in the SUPPLYMAP snapshot (new people), so the import adds
 # them itself, on the same run and with a PIN each — the master assigns operations to them, and the operator list is
-# every active employee (production has no role filter), so the role is «Сотрудник» (staff), department «Производство».
+# every active employee (production has no role filter), so the role is «Сотрудник» (staff); department «Монтаж» puts them on the master board (MasterBoard.installers).
 # Logins are transliterated; there are no real mailboxes yet (login is by name + PIN), the administrator can edit them.
 ADDITIONAL_STAFF: list[SourceEmployee] = [
-    SourceEmployee(email="rybkina.olga@fraxis.local", name="Рыбкина Ольга", department="Производство", role="staff"),
-    SourceEmployee(email="epifanov.ilya@fraxis.local", name="Епифанов Илья", department="Производство", role="staff"),
-    SourceEmployee(email="popov.ignat@fraxis.local", name="Попов Игнат", department="Производство", role="staff"),
-    SourceEmployee(email="bogorodskaya.elina@fraxis.local", name="Богородская Элина", department="Производство", role="staff"),
-    SourceEmployee(email="makarova.polina@fraxis.local", name="Макарова Полина", department="Производство", role="staff"),
-    SourceEmployee(email="naumova.elena@fraxis.local", name="Наумова Елена", department="Производство", role="staff"),
-    SourceEmployee(email="puzanov.aleksandr@fraxis.local", name="Пузанов Александр", department="Производство", role="staff"),
-    SourceEmployee(email="dumanskaya.anna@fraxis.local", name="Думанская Анна", department="Производство", role="staff"),
-    SourceEmployee(email="shilov.artem@fraxis.local", name="Шилов Артем", department="Производство", role="staff"),
+    SourceEmployee(email="rybkina.olga@fraxis.local", name="Рыбкина Ольга", department="Монтаж", role="staff"),
+    SourceEmployee(email="epifanov.ilya@fraxis.local", name="Епифанов Илья", department="Монтаж", role="staff"),
+    SourceEmployee(email="popov.ignat@fraxis.local", name="Попов Игнат", department="Монтаж", role="staff"),
+    SourceEmployee(email="bogorodskaya.elina@fraxis.local", name="Богородская Элина", department="Монтаж", role="staff"),
+    SourceEmployee(email="makarova.polina@fraxis.local", name="Макарова Полина", department="Монтаж", role="staff"),
+    SourceEmployee(email="naumova.elena@fraxis.local", name="Наумова Елена", department="Монтаж", role="staff"),
+    SourceEmployee(email="puzanov.aleksandr@fraxis.local", name="Пузанов Александр", department="Монтаж", role="staff"),
+    SourceEmployee(email="dumanskaya.anna@fraxis.local", name="Думанская Анна", department="Монтаж", role="staff"),
+    SourceEmployee(email="shilov.artem@fraxis.local", name="Шилов Артем", department="Монтаж", role="staff"),
 ]
 
 
