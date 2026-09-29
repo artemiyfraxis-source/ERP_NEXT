@@ -8,7 +8,9 @@ exporter builds them — `sheet_snapshot_records` → `import_supplymap_snapshot
 `PUT /tech-operations/supplymap-snapshot`), БД.ПРОВ and БД.МАТ (header-keyed tables), all required; `СПР.КАБ.tsv`
 (REF-SPRKAB: coax D1–D3 and AWG tables, view-only) is optional, but a present file that does not parse is an error.
 Everything goes through one `replace_snapshot` transaction: the loaded tabs are replaced whole, a tab whose file is
-absent (only СПР.КАБ may be) stays as it is. The snapshot's source date is the mirror's latest `pulledAt`
+absent (only СПР.КАБ may be) stays as it is. Records edited or created in ERP (`edited_in_erp`) are never overwritten
+or deleted (as in SUPPLYMAP, where the base sheet is the single source and portal edits persist); the report counts
+the mirror rows skipped because of that. The snapshot's source date is the mirror's latest `pulledAt`
 (`_meta.json`). Exit code: 0 — done; 2 — a file is missing, unreadable or not a valid table, or ERP_DATABASE_URL is
 not set.
 """
@@ -26,7 +28,7 @@ from uuid import UUID
 
 from app.shared.identity import Actor
 
-from .application import ReplaceSnapshotCommand, TechRecordInput, UnitOfWork, replace_snapshot
+from .application import ReplaceSnapshotCommand, TechRecordInput, UnitOfWork, replace_snapshot_detailed
 from .domain import ReferenceValidationError, TechOperationTab
 from .technology import (
     KAB_TABLES, SHEET_TABLES, SPR_KAB_SHEET, TECH_SHEETS, TECH_SNAPSHOT_SCHEMA_VERSION, import_sheet_table,
@@ -54,6 +56,7 @@ class MirrorLoadResult:
     current: dict[str, int]  # tab → rows in the snapshot before the load
     written: bool
     source_updated_at: datetime | None = None
+    skipped_edited: dict[str, int] | None = None  # tab → mirror rows not applied because edited in ERP
 
 
 def default_source() -> Path:
@@ -155,19 +158,21 @@ def load_mirror(source: Path, uow: UnitOfWork, *, dry_run: bool, now: datetime) 
         current = {tab: len(uow.tech_operations.list(tab=TechOperationTab(tab), query="", limit=100_000)) for tab in tables}
     counts = {tab: len(records) for tab, records in tables.items()}
     source_updated_at = mirror.source_updated_at or (metadata["source_updated_at"] if metadata else None)
+    skipped: dict[str, int] = {}
     if not dry_run:
         try:
-            replace_snapshot(ReplaceSnapshotCommand(
+            _count, skipped = replace_snapshot_detailed(ReplaceSnapshotCommand(
                 schema_version=TECH_SNAPSHOT_SCHEMA_VERSION,
                 source_updated_at=source_updated_at,
                 records=tuple(record for records in tables.values() for record in records),
                 actor=ACTOR, now=now,
                 declared_tabs=tuple(TechOperationTab(tab) for tab in tables),
-                keep_other_tabs=True,
+                keep_other_tabs=True, preserve_erp_edits=True,
             ), uow)
         except ReferenceValidationError as error:
             raise MirrorLoadError(str(error)) from error
-    return MirrorLoadResult(counts=counts, current=current, written=not dry_run, source_updated_at=source_updated_at)
+    return MirrorLoadResult(counts=counts, current=current, written=not dry_run, source_updated_at=source_updated_at,
+                            skipped_edited={tab: skipped.get(tab, 0) for tab in tables})
 
 
 def format_report(result: MirrorLoadResult) -> str:
@@ -175,7 +180,10 @@ def format_report(result: MirrorLoadResult) -> str:
     if result.source_updated_at:
         lines.append(f"  дата выгрузки зеркала: {result.source_updated_at.isoformat()}")
     for tab, count in result.counts.items():
-        lines.append(f"  {TAB_LABELS[tab]}: строк в зеркале {count}, сейчас в снимке {result.current[tab]}")
+        lines.append(f"  {TAB_LABELS[tab]}: строк в зеркале {count}, сейчас в снимке {result.current[tab]}"
+                     + (f", пропущено (правлено в ERP): {result.skipped_edited[tab]}" if result.skipped_edited and result.written else ""))
+    if result.skipped_edited and result.written:
+        lines.append(f"  всего пропущено, правлено в ERP: {sum(result.skipped_edited.values())}")
     return "\n".join(lines)
 
 
