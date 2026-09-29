@@ -9,14 +9,13 @@ from decimal import Decimal
 from hashlib import sha256
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, and_, select
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
-
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, ProjectAddressee, Shipment, ShipmentBox,
-    ShipmentLine, ShipmentStatus, UpdType,
+    ShipmentLine, ShipmentStatus, StoredFile, UpdType,
 )
 
 
@@ -283,6 +282,37 @@ class SqlAlchemyProjectAddresseeRepository:
         row.upd_type = addressee.upd_type.value if addressee.upd_type else None
 
 
+class ShippingFileRow(Base):
+    """Файл УПД отправки (`shipUpdAttach_` клал его в папку Drive «Отгрузочные документы/УПД»)."""
+
+    __tablename__ = "shipping_files"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    shipment_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SqlAlchemyUpdFileRepository:
+    def __init__(self, session: Session): self.session = session
+    def add(self, stored: StoredFile, content: bytes) -> None:
+        self.session.add(ShippingFileRow(
+            id=stored.id, shipment_id=stored.shipment_id, file_name=stored.file_name, content_type=stored.content_type,
+            size=stored.size, content=content, uploaded_by=stored.uploaded_by, uploaded_at=stored.uploaded_at,
+        ))
+    def get(self, file_id: UUID) -> tuple[StoredFile, bytes] | None:
+        row = self.session.get(ShippingFileRow, file_id)
+        if row is None:
+            return None
+        return StoredFile(
+            id=row.id, shipment_id=row.shipment_id, file_name=row.file_name, content_type=row.content_type,
+            size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at,
+        ), row.content
+
+
 class SqlAlchemyShippingUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory; self.session: Session | None = None; self.committed = False
@@ -291,6 +321,7 @@ class SqlAlchemyShippingUnitOfWork:
         self.goods = SqlAlchemyFinishedGoodsRepository(self.session)
         self.shipments = SqlAlchemyShipmentRepository(self.session)
         self.addressees = SqlAlchemyProjectAddresseeRepository(self.session)
+        self.files = SqlAlchemyUpdFileRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

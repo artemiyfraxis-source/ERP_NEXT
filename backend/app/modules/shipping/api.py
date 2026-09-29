@@ -1,12 +1,15 @@
 """HTTP contract for finished goods and shipment execution."""
 
+import base64
+import binascii
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -17,6 +20,7 @@ from app.shared.http_auth import (
 )
 
 from .application import (
+    AttachUpdCommand, attach_upd_file,
     AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand,
     LayOutCommand, PackProjectCommand, QueueProjectCommand, RegisterGoodCommand, RequestedGood,
     SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand, UnitOfWork, UnpickCommand,
@@ -160,6 +164,13 @@ class BoxPayload(BaseModel):
 class BoxesPayload(VersionPayload):
     boxes: list[BoxPayload] = Field(max_length=30)
     tk_note: str = Field(default="", max_length=5000)
+
+
+class UpdFilePayload(VersionPayload):
+    shipment_id: UUID
+    file_name: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(default="", max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
 
 
 def shipping_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -468,3 +479,38 @@ def close(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Princ
 def cancel(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Principal, Depends(shipping_manager_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
     shipment = _run(lambda: cancel_shipment(_command(shipment_id, payload, principal, now), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
+
+
+@router.post("/upd-files")
+def upload_upd(
+    payload: UpdFilePayload,
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """`portalShipUpdFile`: файл УПД к отправке, ссылка на него встаёт в отправку."""
+    try:
+        content = base64.b64decode(payload.content_base64, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(status_code=422, detail="Файл УПД повреждён") from error
+    shipment = _run(lambda: attach_upd_file(AttachUpdCommand(
+        shipment_id=payload.shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
+        file_name=payload.file_name, content_type=payload.content_type, content=content,
+    ), uow_factory()))
+    return {"shipment": _shipment_result(shipment)}
+
+
+@router.get("/files/{file_id}")
+def download_file(
+    file_id: UUID,
+    _principal: Annotated[Principal, Depends(shipping_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> Response:
+    with uow_factory() as uow:
+        found = uow.files.get(file_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    meta, content = found
+    return Response(content=content, media_type=meta.content_type, headers={
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(meta.file_name)}",
+    })

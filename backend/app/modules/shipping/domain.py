@@ -446,6 +446,12 @@ class Shipment:
             raise ShippingValidationError("Позиция отгрузки не найдена")
         return replace(self, lines=tuple(updated), version=self.version + 1)
 
+    def attach_upd(self, url: str) -> Shipment:
+        """`shipUpdAttach_`: файл УПД к отправке — в любом статусе, кроме отменённой."""
+        if self.status == ShipmentStatus.CANCELLED:
+            raise ShippingValidationError("Отправка отменена.")
+        return replace(self, upd_url=_text(url, "Ссылка на файл УПД"), version=self.version + 1)
+
     def lay_out(self, boxes: tuple[ShipmentBox, ...], tk_note: str) -> Shipment:
         """`portalShipDocs`: раскладка по коробам и примечания для ТК перед сборкой PL/DN."""
         if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
@@ -487,6 +493,19 @@ def _round2(value: Decimal) -> Decimal:
 def _plain(value: Decimal) -> str:
     text = format(Decimal(value).normalize(), "f")
     return text
+
+
+@dataclass(frozen=True)
+class StoredFile:
+    """Метаданные файла УПД в хранилище отгрузки."""
+
+    id: UUID
+    shipment_id: UUID
+    file_name: str
+    content_type: str
+    size: int
+    uploaded_by: str
+    uploaded_at: datetime
 
 
 @dataclass(frozen=True)

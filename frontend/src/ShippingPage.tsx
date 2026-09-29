@@ -313,6 +313,17 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
     try { openPrintSheets((await shippingApi.print(shipment.id, document)).sheets); }
     catch (reason) { setPrintError(reason instanceof Error ? reason.message : "Не удалось подготовить печать"); }
   };
+  // shipUpdPick_: файл читается в base64 — формат, который принимает сервер.
+  const uploadUpd = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = String(reader.result ?? "").split(",")[1] ?? "";
+      void mutate(`upd:${shipment.id}`, () => shippingApi.uploadUpd(shipment.id, shipment.version, { name: file.name, type: file.type || "application/octet-stream", base64 }), "УПД приложена");
+    };
+    reader.onerror = () => setPrintError("Не удалось прочитать файл");
+    reader.readAsDataURL(file);
+  };
   const saveRequested = (lineId: string, current: string) => {
     const value = requested[lineId];
     if (value === undefined || value === "" || num(value) === num(current)) return;
@@ -320,7 +331,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
   };
   return <article className={`panel shipping-card ${shipment.status === "Отменена" ? "cancelled" : ""}`}>
     <div className="procurement-title"><div><strong>{shipment.number}</strong><small>{shipment.receiver} · {shipment.shipping_point}</small></div><span className="status" title={shipment.status}>{STAGE_WORD[shipment.status] ?? shipment.status}</span></div>
-    <div className="shipping-meta"><span>Менеджер: {shipment.manager}</span><span>{shipment.terms || "условия не указаны"}{shipment.carrier ? ` · ${shipment.carrier}` : ""}</span>{shipment.deadline && <span className={overdue(shipment) ? "danger-text" : ""}>Дедлайн: {shipment.deadline}{overdue(shipment) ? " · просрочена" : ""}</span>}<span>{shipment.pl_number || "PL —"} · {shipment.dn_number || "DN —"}</span>{shipment.places > 0 && <span>мест {shipment.places}{shipment.weight ? ` · ${shipment.weight} кг` : ""}</span>}{shipment.packed_at && <span>упакована {shipment.packed_at}</span>}{shipment.shipped_at && <span>отгружена {shipment.shipped_at}</span>}{shipment.upd_url && <a href={shipment.upd_url} target="_blank" rel="noreferrer">УПД</a>}</div>
+    <div className="shipping-meta"><span>Менеджер: {shipment.manager}</span><span>{shipment.terms || "условия не указаны"}{shipment.carrier ? ` · ${shipment.carrier}` : ""}</span>{shipment.deadline && <span className={overdue(shipment) ? "danger-text" : ""}>Дедлайн: {shipment.deadline}{overdue(shipment) ? " · просрочена" : ""}</span>}<span>{shipment.pl_number || "PL —"} · {shipment.dn_number || "DN —"}</span>{shipment.places > 0 && <span>мест {shipment.places}{shipment.weight ? ` · ${shipment.weight} кг` : ""}</span>}{shipment.packed_at && <span>упакована {shipment.packed_at}</span>}{shipment.shipped_at && <span>отгружена {shipment.shipped_at}</span>}{shipment.upd_url ? <a href={shipment.upd_url} target="_blank" rel="noreferrer">Открыть УПД</a> : <span className="danger-text">файла УПД нет</span>}</div>
     <div className="table-scroll"><table><thead><tr><th>Позиция</th><th>Заказано</th><th>Набрано</th><th>Недобор</th><th>ГРН</th>{canWarehouse && <th />}</tr></thead><tbody>{shipment.lines.map((line) => <tr key={line.id}><td>{line.project} · {line.item_index}<small>{line.name}</small></td>
       <td>{canEdit ? <input className="qty-input" aria-label={`Заказано ${line.item_index}`} type="number" min="0.01" step="any" value={requested[line.id] ?? line.requested} onChange={(event) => setRequested({ ...requested, [line.id]: event.target.value })} onBlur={() => saveRequested(line.id, line.requested)} /> : `${line.requested} ${line.unit}`}</td>
       <td>{line.picked}</td><td>{line.shortage}</td><td>{line.grn || "—"}</td>{canWarehouse && <td>{num(line.picked) > 0 && ["Новая", "Собрана"].includes(shipment.status) && <button className="link-button danger-link" disabled={Boolean(busy)} onClick={() => void mutate(`unpick:${line.id}`, () => shippingApi.unpick(shipment.id, shipment.version, line.id), "Позиция возвращена на склад ГП")}>Вернуть</button>}</td>}</tr>)}</tbody></table></div>
@@ -330,6 +341,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
     <div className="fulfillment-actions">
       {canWarehouse && shipment.status === "Новая" && <button className="secondary" disabled={Boolean(busy)} onClick={() => void action("pick", "Заявка набрана из доступного остатка")}>Набрать</button>}
       {canEdit && got && (ACTIVE.includes(shipment.status) || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button className="secondary" disabled={Boolean(busy)} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
+      {canEdit && open && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
       {shipment.pl_number && got && <><button className="secondary" onClick={() => void print("pl")}>Печать PL</button><button className="secondary" onClick={() => void print("dn")}>Печать DN</button></>}
       {canWarehouse && got && ACTIVE.includes(shipment.status) && <button className="primary" disabled={Boolean(busy)} onClick={() => void action("ship", (result) => { const outcome = result as { closed?: boolean; why?: string }; return outcome.closed ? "Отгружено и закрыто" : `Отгружено. Не закрыта: ${outcome.why || "не хватает данных"}`; })}>Отгружено</button>}
       {canWarehouse && shipment.status === "Отгружена" && <button className="primary" disabled={Boolean(busy)} onClick={() => void action("close", "Отгрузка закрыта")}>Закрыть</button>}
