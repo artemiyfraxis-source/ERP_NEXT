@@ -427,7 +427,7 @@
 
 ## 2026-09-29 · по решению владельца · PK-4 «Проекты» и «Расчёт и КП» старой ERP сняты
 - Владелец (29.09): реестр «Проекты» и «Расчёт и КП» из старой ERP — другой блок, им займётся другой программист; у нас только производственные проекты, которые заводятся из расчёта
-- Сделано: из ERP_NEXT убраны раздел «Расчёт и КП» (навигация, право `calculation`, миграция 0059 чистит его строки доступа и сводит две головы Alembic main (0057_receiving_quality_details и 0058_shipping_upd_files)), iframe `LegacyFrame`, модуль `legacy_access` (`/api/legacy/grant`), `legacy-bridge.mjs`, `contracts/legacy-projects.openapi.json`, `sync:legacy-contracts`; CSP больше не разрешает frame/connect на legacy-origin. «Проекты» — нативные производственные проекты из расчёта (PK-1…PK-3)
+- Сделано: из ERP_NEXT убраны раздел «Расчёт и КП» (навигация, право `calculation`, миграция 0060 чистит его строки доступа), iframe `LegacyFrame`, модуль `legacy_access` (`/api/legacy/grant`), `legacy-bridge.mjs`, `contracts/legacy-projects.openapi.json`, `sync:legacy-contracts`; CSP больше не разрешает frame/connect на legacy-origin. «Проекты» — нативные производственные проекты из расчёта (PK-1…PK-3)
 - Решено агентом — проверить: `/api/production/plan/projects-snapshot` (приём снимка внешнего реестра) оставлен — он в модуле производства и ничего не ломает без реестра
 ## 2026-09-29 — план цеха: PP-1, отметки PX-3/PP-2 (тред «Перенос: планирование и производство»)
 - Сделано: в производственный план попадают только проекты реестра «Проекты» (ProdPlan.gs prodPlanData_); карточка ТК без строки реестра больше не создаёт строку плана. PX-3/PP-2 уже были исправлены в `scheduling.py`, отмечены в аудите

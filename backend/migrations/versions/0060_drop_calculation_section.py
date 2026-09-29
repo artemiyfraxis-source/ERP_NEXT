@@ -1,14 +1,14 @@
 """Раздел «Расчёт и КП» (legacy ERP_RECOVERED) снят с ERP: он в другом блоке. Удалить его строки доступа.
 
-Revision ID: 0059_drop_calculation_section
-Revises: 0057_receiving_quality_details, 0058_shipping_upd_files (сводит две головы main)
+Revision ID: 0060_drop_calculation_section
+Revises: 0059_receiving_quality_details
 """
 
 from alembic import op
 
 
-revision = "0059_drop_calculation_section"
-down_revision = ("0057_receiving_quality_details", "0058_shipping_upd_files")
+revision = "0060_drop_calculation_section"
+down_revision = "0059_receiving_quality_details"
 branch_labels = None
 depends_on = None
 
