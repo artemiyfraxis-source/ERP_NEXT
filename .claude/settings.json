@@ -11,7 +11,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node scripts/setup-env.mjs && node .claude/hooks/supplymap-drift.mjs",
+            "command": "node scripts/setup-env.mjs && node .claude/hooks/cloud-siblings.mjs && node .claude/hooks/supplymap-drift.mjs",
             "timeout": 600
           }
         ]
@@ -30,5 +30,22 @@
     "deny": [
       "Read(./backend/.env)"
     ]
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-skills": {
+      "source": {
+        "source": "github",
+        "repo": "alirezarezvani/claude-skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "self-improving-agent@claude-code-skills": true,
+    "karpathy-coder@claude-code-skills": true,
+    "write-a-skill@claude-code-skills": true,
+    "caveman@claude-code-skills": true,
+    "grill-me@claude-code-skills": true,
+    "handoff-engineering@claude-code-skills": true,
+    "reflect-skill@claude-code-skills": true
   }
 }
