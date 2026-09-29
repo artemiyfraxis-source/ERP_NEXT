@@ -13,8 +13,8 @@ def test_api_responses_are_not_cached_or_embeddable():
     assert response.headers["referrer-policy"] == "no-referrer"
     policy = response.headers["content-security-policy"]
     assert "frame-ancestors 'none'" in policy
-    assert "frame-src http://localhost:5177" in policy
-    assert "connect-src 'self' http://localhost:5177" in policy
+    assert "frame-src 'none'" in policy
+    assert "connect-src 'self'" in policy
 
 
 def test_https_responses_enable_hsts():

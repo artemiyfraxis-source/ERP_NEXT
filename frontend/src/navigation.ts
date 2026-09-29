@@ -6,7 +6,7 @@ import type { AccessMode, Principal } from "./api";
 
 export type Section =
   | "cabinet"
-  | "projects" | "calculation" | "techcards" | "tctemplates" | "references" | "production" | "myops"
+  | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops"
   | "newrequest" | "myrequests" | "requests" | "procurement"
   | "receiving" | "stock" | "issues" | "handout" | "shipping"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
@@ -41,9 +41,8 @@ export const NAV: NavItem[] = [
   // Производство
   // «Проекты» (SUPPLYMAP erptechmap): карточки наборов — состав, спецификация, снабжение, генератор, готовые ТК.
   { id: "projects", label: "Проекты", sub: "проекты · состав · спецификация · генератор", permission: "projects", block: "prod" },
-  { id: "calculation", label: "Расчёт и КП", sub: "расчёт стоимости · коммерческое предложение", permission: "calculation", block: "prod" },
   // Product cards with ETKs: in SUPPLYMAP they live inside «Проекты» (kit · generator · ready TCs). Here they are a
-  // native screen apart from the legacy registry iframe, so they sit next to «Проекты» instead of merging.
+  // native screen of their own, so they sit next to «Проекты» instead of merging.
   // ID-3 (SUPPLYMAP PORTAL_SECTIONS_): each card has its own key and no role list — the matrix alone decides.
   { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", block: "prod" },
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "prod" },

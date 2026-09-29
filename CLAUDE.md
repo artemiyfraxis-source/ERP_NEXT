@@ -6,8 +6,9 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 
 ## Read first
 - `ARCHITECTURE.md` — module boundaries, end-to-end flow, migration order.
-- `module-map.json` — which module is native, which is still legacy-owned (Projects, Calculation).
-- `README.md` — every command, env var and the legacy bridge.
+- `module-map.json` — module ownership (all native; the legacy Projects registry and «Расчёт и КП» are out of
+  scope since 2026-09-29 — another block, another programmer).
+- `README.md` — every command and env var.
 
 ## Sibling repos (expected next to this one in `Projects\`)
 - `../SUPPLYMAP` — live GAS system and the **source of domain rules**. Read-only from here: port the
@@ -16,8 +17,6 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
   The SessionStart hook `.claude/hooks/supplymap-drift.mjs` prints how many SUPPLYMAP code commits each
   ported module is behind, plus the latest ones — start a session by checking whether any of them change
   a rule that is already ported.
-- `../ERP_RECOVERED` — recovered legacy ERP; serves Projects/Calculation through `legacy-bridge.mjs`
-  and the contract in `contracts/`. `ERP_RECOVERED_ROOT` overrides the path.
 
 ## Cloud sessions (claude.ai/code)
 - `.claude/hooks/cloud-siblings.mjs` (SessionStart, only when `CLAUDE_CODE_REMOTE=true`) clones `../SUPPLYMAP` and
@@ -30,7 +29,7 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 - `npm run check` (repo root) — THE gate: architecture tests + backend pytest + frontend tests + build.
   Run it after every slice. Backend alone: `npm run test:backend`; frontend: `npm run test:frontend`.
 - Known red: architecture tests pin each module's `SOURCE.json` to a SUPPLYMAP commit, so they fail
-  whenever SUPPLYMAP `main` moves on. Only techcards, the operation library and the legacy contracts
+  whenever SUPPLYMAP `main` moves on. Only techcards and the operation library
   have a `npm run sync:*` script; run it for those. For every other module, re-baseline by hand, and
   only after reviewing the SUPPLYMAP commits since the pin: port any rule change first, then move
   `sourceCommit`/`sourceRef` in its `SOURCE.json`. Never edit file hashes in `SOURCE.json` by hand.

@@ -1,22 +1,12 @@
 """Security response headers for the cookie-authenticated browser application."""
 
-from urllib.parse import urlsplit
-
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
-def _frame_source(value: str) -> str:
-    parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return "'none'"
-    return f"{parsed.scheme}://{parsed.netloc}"
-
-
 class SecurityHeadersMiddleware:
-    def __init__(self, app: ASGIApp, *, legacy_origin: str):
+    def __init__(self, app: ASGIApp):
         self.app = app
-        legacy_frame = _frame_source(legacy_origin)
         self.content_security_policy = "; ".join(
             (
                 "default-src 'self'",
@@ -24,12 +14,12 @@ class SecurityHeadersMiddleware:
                 "object-src 'none'",
                 "form-action 'self'",
                 "frame-ancestors 'none'",
-                f"frame-src {legacy_frame}",
+                "frame-src 'none'",
                 "script-src 'self'",
                 "style-src 'self'",
                 "img-src 'self' data:",
                 "font-src 'self'",
-                f"connect-src 'self' {legacy_frame}",
+                "connect-src 'self'",
             )
         )
 
