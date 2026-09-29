@@ -1815,7 +1815,7 @@ export const fulfillmentApi = {
 export const productionApi = {
   list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
   mine: () => api<{ tasks: ProductionTask[] }>("/api/production/my"),
-  operators: () => api<{ operators: ProductionOperator[] }>("/api/production/operators"),
+  operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
     method: "PUT",

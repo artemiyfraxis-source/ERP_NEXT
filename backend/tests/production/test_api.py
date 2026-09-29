@@ -97,6 +97,26 @@ def test_operators_carry_department_for_the_master_board(production_api):
 
     assert listed.status_code == 200, listed.text
     assert {"id": str(operator_id), "name": "Оператор", "site": "ЦАР", "department": "Производство"} in listed.json()["operators"]
+    assert listed.json()["viewer_site"] == "ЦАР"
+
+
+def test_site_master_assigns_only_staff_of_the_own_site(production_api):
+    client, operator_id = production_api
+    task = launch_from_card(client, "site-master", "591K.3", "КБ1", 10, [("OP-01", "Разделка", 60, 120)]).json()["task"]
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, operator_id).site = "ЖУК"
+        uow.commit()
+    path = f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign"
+
+    refused = client.post(path, json={"version": task["version"], "operator_ids": [str(operator_id)]})
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, UUID("10000000-0000-0000-0000-000000000001")).site = None
+        uow.commit()
+    allowed = client.post(path, json={"version": task["version"], "operator_ids": [str(operator_id)]})
+
+    assert refused.status_code == 422, refused.text
+    assert "Площадка ЦАР" in refused.json()["detail"]
+    assert allowed.status_code == 200, allowed.text
 
 
 def test_master_launches_route_snapshot_assigns_multiple_people_and_preserves_cancelled_task(production_api):
