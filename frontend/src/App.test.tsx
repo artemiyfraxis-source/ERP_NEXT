@@ -177,7 +177,7 @@ it("opens the native production plan at the prodplan route", async () => {
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Производственный план", level: 1 })).toBeInTheDocument();
-  expect(await screen.findByText("Проектов в этом фильтре нет.")).toBeInTheDocument();
+  expect(await screen.findByText("Под этот фильтр проектов нет.")).toBeInTheDocument();
 });
 
 it("opens native finished-goods and shipping at the shipping route", async () => {

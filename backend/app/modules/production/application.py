@@ -117,6 +117,7 @@ class AssignProductionCommand:
     requested_start: datetime | None
     actor: Actor
     now: datetime
+    dry: bool = False
 
 
 @dataclass(frozen=True)
@@ -283,10 +284,15 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
     with uow:
         task = _task(command.task_id, command.expected_version, uow)
         operation = task.operation(command.operation_id)
+        names: dict[UUID, str] = {}
         for operator_id in command.operator_ids:
             operator = uow.operators.get(operator_id)
             if operator is None or not operator.active:
                 raise ProductionValidationError("Оператора нет в справочнике сотрудников")
+            names[operator_id] = operator.name
+        skills: dict[str, dict[UUID, OperatorSkill]] = {}
+        for item in uow.skills.list():
+            skills.setdefault(item.operation_code, {})[item.operator_id] = item
         tasks = uow.production.list(limit=10_000)
         busy = _with_absences(
             _busy(tasks, task.id, operation.id, command.now),
@@ -308,8 +314,13 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
             busy=busy,
             holidays=uow.calendar.holidays(),
             shift=_shift(uow.calendar),
+            skills=skills,
+            names=names,
         )
         updated = task.assign(operation.id, command.operator_ids, plan, command.actor.name)
+        if command.dry:
+            # prodAssign_ dry: the preview is computed exactly like the save and nothing is written.
+            return task, plan
         uow.production.add(updated)
         _audit(updated, "production.assigned", command.actor, command.now, {
             "operation_id": str(operation.id),
