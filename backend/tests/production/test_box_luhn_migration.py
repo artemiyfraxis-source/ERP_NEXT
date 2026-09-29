@@ -1,4 +1,4 @@
-"""PX-2: migration 0044 moves box and defect numbers issued with the 3/1 check digit to Luhn."""
+"""PX-2: migration 0045 moves box and defect numbers issued with the 3/1 check digit to Luhn."""
 
 import sqlite3
 from pathlib import Path
@@ -9,8 +9,8 @@ from alembic.config import Config
 
 from app.modules.production.traceability import format_box_number, validate_box_number
 
-BEFORE = "0043_references_gost_awg_full_seed"
-AFTER = "0044_production_box_luhn_check_digits"
+BEFORE = "0044_operations_job_marks"
+AFTER = "0045_production_box_luhn_check_digits"
 
 
 def _config(database_path: Path) -> Config:
