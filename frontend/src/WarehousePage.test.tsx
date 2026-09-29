@@ -272,6 +272,16 @@ it("groups article rows by ГРН, packages of one ГРН under one header", asy
   expect(screen.getByText("GHR-06V-S")).toBeInTheDocument();
 });
 
+it("opens the lot cards by a click anywhere on the article row", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByText("GHR-04V-S"));
+  expect(await screen.findByText("ГРН FRX.26.0000001")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Скрыть партии (1)" }));
+  expect(screen.queryByText("ГРН FRX.26.0000001")).not.toBeInTheDocument();
+});
+
 it("keeps an unnamed legacy lot expandable so its article can be entered", async () => {
   const unnamed = { ...lot, article: "", name: "", series: "", grn: "OLD.26.0000299" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [unnamed], total: 1, truncated: 0, next_cursor: null }));

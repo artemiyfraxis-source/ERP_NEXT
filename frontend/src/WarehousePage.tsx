@@ -369,7 +369,7 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
       const open = expanded.has(item.key);
       const unit = distinct(item.lots, "unit");
       return <Fragment key={item.key}>
-        <tr className={open ? "stock-article-row open" : "stock-article-row"}>
+        <tr className={open ? "stock-article-row open" : "stock-article-row"} title="Партии карточками" onClick={() => toggle(item.key)}>
           <td>{distinct(item.lots, "item_type")}</td>
           <td className="stock-grn">{distinct(item.lots, "grn")}</td>
           <td className="num"><strong>{quantity(item.lots, "balance")}{unit ? ` ${unit}` : ""}</strong></td>
@@ -377,7 +377,7 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
           <td>{places(item.lots)}</td>
           <td>{distinct(item.lots, "series")}</td>
           <td className="text">{item.article || "—"}</td>
-          <td className="text"><button className="link-button table-link" aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} title="Партии карточками" onClick={() => toggle(item.key)}>{distinct(item.lots, "name") || item.article || "Без наименования"}</button></td>
+          <td className="text"><button className="link-button table-link" aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(item.key); }}>{distinct(item.lots, "name") || item.article || "Без наименования"}</button></td>
           <td>{distinct(item.lots, "warehouse")}</td>
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={9}><div className="lot-cards">
