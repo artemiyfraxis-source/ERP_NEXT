@@ -933,6 +933,11 @@ export const procurementApi = {
       method: "POST",
       body: JSON.stringify({ version }),
     }),
+  split: (lineId: string, version: number, copies: number) =>
+    api<{ line: ProcurementLine; copies: ProcurementLine[] }>(`/api/procurement/${lineId}/split`, {
+      method: "POST",
+      body: JSON.stringify({ version, copies }),
+    }),
 };
 
 export const receivingApi = {

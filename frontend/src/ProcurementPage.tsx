@@ -362,6 +362,7 @@ function ProcurementCard({
       {line.invoice_url && line.status !== "Жду счет" && line.status !== "Отменено" && (
         <InvoiceReplaceForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
       )}
+      <SplitAction line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
     </article>
   );
 }
@@ -392,6 +393,29 @@ function InvoiceReplaceForm({ line, busy, disabled, onAdvance }: {
         <button className="secondary small" disabled={disabled}>{busy ? "Сохраняем…" : "Заменить"}</button>
       </form>
     </details>
+  );
+}
+
+// «Раздробить по поставщикам» (Pipeline.gs:127-220): N копий с новыми System ID уходят в «Новые».
+function SplitAction({ line, busy, disabled, onAdvance }: {
+  line: ProcurementLine;
+  busy: boolean;
+  disabled: boolean;
+  onAdvance: Advance;
+}) {
+  const [copies, setCopies] = useState("1");
+
+  function split(event: FormEvent) {
+    event.preventDefault();
+    const count = Number(copies);
+    void onAdvance(line, () => procurementApi.split(line.id, line.version, count), `${line.legacy_id}: создано копий — ${count}, они в очереди «Новые»`).catch(() => undefined);
+  }
+
+  return (
+    <form className="inline-action" onSubmit={split}>
+      <label>Раздробить по поставщикам, копий<input type="number" min="1" max="30" step="1" required value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
+      <button className="secondary small" disabled={disabled}>{busy ? "Дробим…" : "Раздробить"}</button>
+    </form>
   );
 }
 

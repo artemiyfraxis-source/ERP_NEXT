@@ -26,6 +26,7 @@ from .application import (
     SaveProcurementFactsCommand,
     BuildSupplierRequestsCommand,
     SupplierOrder,
+    SplitProcurementLineCommand,
     RecordInvoiceCommand,
     ReplaceInvoiceCommand,
     MarkProcurementPaidCommand,
@@ -41,6 +42,7 @@ from .application import (
     save_procurement_facts,
     build_supplier_requests,
     supplier_order,
+    split_procurement_line,
     record_invoice,
     replace_invoice,
     mark_procurement_paid,
@@ -49,7 +51,13 @@ from .application import (
     save_procurement_money,
     take_procurement_in_work,
 )
-from .domain import MoneyEntry, ProcurementFacts, ProcurementLine, ProcurementValidationError
+from .domain import (
+    SPLIT_MAX_COPIES,
+    MoneyEntry,
+    ProcurementFacts,
+    ProcurementLine,
+    ProcurementValidationError,
+)
 from .exchange_rates import CbrExchangeRates
 from .money import MoneyInput, parse_number_loose
 
@@ -148,6 +156,10 @@ class VersionInput(BaseModel):
 
 class PaidInput(VersionInput):
     manual_exchange_rate: Rate = None
+
+
+class SplitInput(VersionInput):
+    copies: int = Field(ge=1, le=SPLIT_MAX_COPIES)
 
 
 class BackorderConfirmInput(VersionInput):
@@ -637,3 +649,32 @@ def _offline(action: OfflineAction):
 router.post("/{line_id}/approval")(_offline(OfflineAction.APPROVAL))
 router.post("/{line_id}/approval/resume")(_offline(OfflineAction.RESUME))
 router.post("/{line_id}/cancel")(_offline(OfflineAction.CANCEL))
+
+
+@router.post("/{line_id}/split")
+def split(
+    line_id: UUID,
+    payload: SplitInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """«Раздробить по поставщикам»: N copies with new System IDs land in the «Новые» queue."""
+    copies: list[ProcurementLine] = []
+
+    def operation() -> ProcurementLine:
+        source, created = split_procurement_line(
+            SplitProcurementLineCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                copies=payload.copies,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+        copies[:] = created
+        return source
+
+    result = _transition(operation)
+    return {**result, "copies": [_line_result(copy) for copy in copies]}

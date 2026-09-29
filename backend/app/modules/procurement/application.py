@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -28,6 +28,7 @@ from .domain import (
     supplier_reference,
     supplier_request_blockers,
     supplier_request_letter,
+    split_line,
 )
 from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
 
@@ -222,6 +223,15 @@ class ProcurementOfflineCommand:
     line_id: UUID
     expected_version: int
     action: OfflineAction
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class SplitProcurementLineCommand:
+    line_id: UUID
+    expected_version: int
+    copies: int
     actor: Actor
     now: datetime
 
@@ -898,6 +908,63 @@ def set_procurement_offline_status(command: ProcurementOfflineCommand, uow: Unit
         if result != current:
             uow.commit()
         return result
+
+
+def split_procurement_line(
+    command: SplitProcurementLineCommand, uow: UnitOfWork
+) -> tuple[ProcurementLine, list[ProcurementLine]]:
+    """`portalSplitPurchaseRow` → `applyPendingSplits_`: one request → N suppliers, N new lines «Новый».
+
+    Any buyer may split any line (`portalCanWork_`, no ownership check). The source line keeps its data;
+    only its version moves, so a repeated click on a stale form gets 409 instead of N more copies.
+    """
+    _validate_split_actor(command.actor)
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        day = _moscow_day(command.now)
+        copies = split_line(
+            current,
+            command.copies,
+            uow.procurement.legacy_ids_with_prefix(f"SM-{day:%Y%m%d}-"),
+            day,
+            command.now,
+        )
+        source = replace(current, version=current.version + 1)
+        _save_transition(
+            current,
+            source,
+            event_type="procurement.split",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={
+                "copies": str(len(copies)),
+                "legacy_ids": ", ".join(copy.legacy_id for copy in copies),
+            },
+        )
+        for copy in copies:
+            uow.procurement.add(copy)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=copy.id,
+                    event_type="procurement.created",
+                    actor=command.actor,
+                    occurred_at=command.now,
+                    details={
+                        "legacy_id": copy.legacy_id,
+                        "split_from": current.legacy_id,
+                        "source_request_id": str(copy.source_request_id),
+                    },
+                )
+            )
+        uow.commit()
+        return source, copies
+
+
+def _validate_split_actor(actor: Actor) -> None:
+    if not str(actor.name or "").strip():
+        raise ProcurementValidationError("Не определён закупщик")
 
 
 def available_procurement(

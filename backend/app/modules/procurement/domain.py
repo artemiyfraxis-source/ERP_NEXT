@@ -740,3 +740,80 @@ def supplier_request_letter(group: SupplierRequestGroup, order_no: str) -> str:
             f"Адрес доставки: {group.delivery_point}.",
         ]
     )
+
+
+SPLIT_MAX_COPIES = 30
+_LEADING_DIGITS = re.compile(r"^\d+")
+
+
+def next_system_id(existing_ids: Iterable[str], day: date, prefix: str = "SM") -> str:
+    """`nextSystemId_` (SystemId.gs:13) over procurement IDs: <prefix>-YYYYMMDD-NN, max + 1.
+
+    Like `parseInt`, only the leading digits of the tail count, so `SM-…-03-Д` counts as 03.
+    """
+    stem = f"{prefix}-{day:%Y%m%d}-"
+    highest = 0
+    for existing in existing_ids:
+        value = str(existing)
+        if value.startswith(stem):
+            match = _LEADING_DIGITS.match(value[len(stem) :])
+            if match:
+                highest = max(highest, int(match.group()))
+    return f"{stem}{highest + 1:02d}"
+
+
+def split_line(
+    source: ProcurementLine,
+    copies: int,
+    existing_ids: Iterable[str],
+    day: date,
+    now: datetime,
+) -> list[ProcurementLine]:
+    """`applyPendingSplitsToSheet_` (Pipeline.gs:184-220): «Раздробить по поставщикам».
+
+    N copies (1–30) of the line with NEW System IDs, «Новый», Рев.A. They keep the request data
+    (`REQUEST_TO_PURCHASE_MAP`: dates, initiator, designation, point, link, article, calculated
+    name/quantity/price) and drop everything the buyer filled: buyer, supplier, facts, order, invoice,
+    money, payment. The source line stays as it is; any status may be split, as in SUPPLYMAP.
+    """
+    if isinstance(copies, bool) or not isinstance(copies, int) or not 1 <= copies <= SPLIT_MAX_COPIES:
+        raise ProcurementValidationError(f"Число копий — 1–{SPLIT_MAX_COPIES}.")
+    taken = list(existing_ids)
+    result: list[ProcurementLine] = []
+    for number in range(1, copies + 1):
+        legacy_id = next_system_id(taken, day)
+        taken.append(legacy_id)
+        result.append(
+            ProcurementLine(
+                id=uuid4(),
+                source_event_id=uuid4(),
+                source_idempotency_key=f"procurement:{source.id}:split:v{source.version}:{number}",
+                source_request_id=source.source_request_id,
+                legacy_id=legacy_id,
+                revision="A",
+                status=ProcurementStatus.NEW,
+                version=1,
+                created_at=now,
+                request_date=source.request_date,
+                initiator=source.initiator,
+                department=source.department,
+                task_type=source.task_type,
+                designation=source.designation,
+                project_reference=source.project_reference,
+                priority=source.priority,
+                delivery_point=source.delivery_point,
+                planned_date=source.planned_date,
+                link=source.link,
+                item_type=source.item_type,
+                design_article=source.design_article,
+                category=source.category,
+                calculated_name=source.calculated_name,
+                calculated_quantity=source.calculated_quantity,
+                calculated_unit=source.calculated_unit,
+                quality_document=source.quality_document,
+                calculated_price=source.calculated_price,
+                calculated_price_with_vat=source.calculated_price_with_vat,
+                calculated_sum=source.calculated_sum,
+            )
+        )
+    return result

@@ -372,3 +372,26 @@ it("replaces the invoice of a paid line without touching its payment", async () 
     { version: 3, invoice_url: "https://files.test/invoice-v2.pdf", invoice_number: "18", invoice_date: null },
   ]);
 });
+
+it("splits an own line into supplier copies with its optimistic version", async () => {
+  let splitBody: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") {
+      return json({ lines: [{ ...line, status: "В пути", buyer: "Закупщик" }], next_cursor: null });
+    }
+    if (path.endsWith("/split") && init?.method === "POST") {
+      splitBody = JSON.parse(String(init.body));
+      return json({ line: { ...line, version: 4 }, copies: [] });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.change(await screen.findByLabelText(/Раздробить по поставщикам/), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Раздробить" }));
+
+  await waitFor(() => expect(splitBody).toEqual({ version: 3, copies: 3 }));
+  expect(await screen.findByText(/создано копий — 3/)).toBeInTheDocument();
+});
