@@ -12,7 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, warehouse_admin_principal, warehouse_edit_principal
+from app.shared.http_auth import (
+    Principal,
+    warehouse_admin_principal,
+    warehouse_edit_principal,
+    warehouse_journal_principal,
+)
 from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH
 from app.modules.references.domain import TechOperationTab
 from app.workflows.warehouse_article import infer_article_identity
@@ -44,6 +49,7 @@ from .application import (
 )
 from .domain import LOT_DETAIL_LIMITS, LOT_ROW_FIELDS, StockLot, WarehouseValidationError
 from .item_types import ITEM_TYPE_MAX_LENGTH, ITEM_TYPES_MAX
+from .journal import warehouse_journal
 from .reference_fields import (
     BULK_EDIT_FIELDS,
     BULK_EDIT_LIMIT,
@@ -278,6 +284,26 @@ def lots(
         "total": total,
         "truncated": max(0, total - len(page)),
         "next_cursor": str(page[-1].id) if len(lots) > limit else None,
+    }
+
+
+@router.get("/journal")
+def journal(
+    _principal: Annotated[Principal, Depends(warehouse_journal_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+    q: Annotated[str, Query(max_length=255)] = "",
+) -> dict:
+    """SK-16 «Журнал склада» (portalStock05Log): events + write-offs, returns and issues, newest first, the last
+    400 matches of the search. The administrator only."""
+    page = warehouse_journal(uow_factory(), q)
+    return {
+        "rows": [
+            {"occurred_at": row.occurred_at.isoformat(), "kind": row.kind, "lot": row.lot, "name": row.name,
+             "event": row.event, "who": row.who, "warehouse": row.warehouse}
+            for row in page.rows
+        ],
+        "total": page.total,
+        "truncated": page.truncated,
     }
 
 

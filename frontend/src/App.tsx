@@ -267,7 +267,7 @@ export function App() {
         {activeSection === "requests" && <RequestsPage principal={principal} />}
         {activeSection === "procurement" && <ProcurementPage />}
         {activeSection === "receiving" && <ReceivingPage />}
-        {activeSection === "stock" && <WarehousePage />}
+        {activeSection === "stock" && <WarehousePage admin={principal.roles.includes("admin")} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} />}
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} />}

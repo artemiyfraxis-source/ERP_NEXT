@@ -10,10 +10,11 @@ from datetime import date, datetime
 from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.warehouse_location import storage_location_has_slot
 
 from .domain import WAREHOUSES, StockLot, WriteOffEntry
+from .journal import MIRRORED_BY_WRITEOFFS, JournalEvent
 
 
 class StockLotRow(Base):
@@ -109,6 +110,37 @@ class SqlAlchemyWriteOffJournal:
             select(WriteOffEntryRow)
             .where(WriteOffEntryRow.lot_id == lot_id)
             .order_by(WriteOffEntryRow.occurred_at, WriteOffEntryRow.id)
+        )
+        return [_writeoff_domain(row) for row in rows]
+
+
+class SqlAlchemyWarehouseJournalReader:
+    """Read side of «Журнал склада» (SK-16): warehouse audit events with their lot, and the write-off journal,
+    each newest first."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def audit_events(self) -> list[JournalEvent]:
+        rows = self.session.execute(
+            select(AuditEventRow, StockLotRow.grn, StockLotRow.package, StockLotRow.name, StockLotRow.warehouse)
+            .outerjoin(StockLotRow, StockLotRow.id == AuditEventRow.aggregate_id)
+            .where(AuditEventRow.event_type.like("warehouse.%"))
+            .where(AuditEventRow.event_type.not_in(sorted(MIRRORED_BY_WRITEOFFS)))
+            .order_by(AuditEventRow.occurred_at.desc(), AuditEventRow.id.desc())
+        )
+        return [
+            JournalEvent(
+                occurred_at=event.occurred_at, event_type=event.event_type, actor_name=event.actor_name,
+                details=event.details or {}, grn=grn or "", package=package or "", name=name or "",
+                warehouse=warehouse or "",
+            )
+            for event, grn, package, name, warehouse in rows
+        ]
+
+    def writeoff_entries(self) -> list[WriteOffEntry]:
+        rows = self.session.scalars(
+            select(WriteOffEntryRow).order_by(WriteOffEntryRow.occurred_at.desc(), WriteOffEntryRow.id.desc())
         )
         return [_writeoff_domain(row) for row in rows]
 
@@ -354,6 +386,7 @@ class SqlAlchemyWarehouseUnitOfWork:
         self.session = self.session_factory()
         self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         self.writeoffs = SqlAlchemyWriteOffJournal(self.session)
+        self.journal = SqlAlchemyWarehouseJournalReader(self.session)
         self.item_types = SqlAlchemyItemTypeDictionary(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)

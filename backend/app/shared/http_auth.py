@@ -28,6 +28,7 @@ def require_section(
     minimum: Literal["view", "edit"],
     *,
     roles: frozenset[str] | None = None,
+    detail: str = "Недостаточно прав для раздела",
 ):
     def dependency(
         principal: Annotated[Principal, Depends(authenticated_principal)],
@@ -37,7 +38,7 @@ def require_section(
         if roles is not None and not principal.roles.intersection(roles):
             allowed = False
         if not allowed:
-            raise HTTPException(status_code=403, detail="Недостаточно прав для раздела")
+            raise HTTPException(status_code=403, detail=detail)
         return principal
 
     return dependency
@@ -76,6 +77,14 @@ warehouse_admin_principal = require_section(
     "warehouse",
     "edit",
     roles=frozenset({"admin"}),
+)
+# «Журнал склада» (SK-16): SUPPLYMAP portalStock05Log — warehouse section + portalRealAdmin_ (admin role or admin
+# mode); ERP has no admin mode, so the admin role.
+warehouse_journal_principal = require_section(
+    "warehouse",
+    "view",
+    roles=frozenset({"admin"}),
+    detail="Журнал склада доступен только администратору.",
 )
 fulfillment_view_principal = require_section(
     "fulfillment",

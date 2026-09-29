@@ -1,5 +1,5 @@
-import { useEffect, useState, type ChangeEvent } from "react";
-import { warehouseApi, type WarehouseBulkResult, type WarehouseItemTypes, type WarehouseReferenceEdit } from "./api";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { warehouseApi, type WarehouseBulkResult, type WarehouseItemTypes, type WarehouseJournal, type WarehouseReferenceEdit } from "./api";
 import { decodeStockTable, stockTableBytes, stockTableEdits, stockTableText } from "./warehouseTable";
 
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
@@ -84,6 +84,47 @@ export function ItemTypesPanel({ onClose, onChanged }: {
         </td>
       </tr>) : <tr><td colSpan={3} className="page-sub">У позиций склада тип не проставлен.</td></tr>}</tbody>
     </table>
+  </section>;
+}
+
+/** SK-16 «Журнал склада» (SUPPLYMAP openStock05Log): who did what to the stock and when — receipts, moves, row edits,
+ *  write-offs, returns and issues, newest first. The search runs on the server; the last 400 matches come back. */
+export function StockJournalPanel({ onClose }: { onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [journal, setJournal] = useState<WarehouseJournal | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const request = useRef(0);
+
+  useEffect(() => {
+    const mine = ++request.current;
+    setLoading(true);
+    const timer = setTimeout(() => {
+      warehouseApi.journal(query)
+        .then((loaded) => { if (mine === request.current) { setJournal(loaded); setError(""); } })
+        .catch((reason) => { if (mine === request.current) setError(errorText(reason, "Не удалось загрузить журнал")); })
+        .finally(() => { if (mine === request.current) setLoading(false); });
+    }, query ? 450 : 0);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const rows = journal?.rows ?? [];
+  return <section className="panel stock-journal-panel" aria-label="Журнал склада">
+    <div className="manual-stock-head"><h2>Журнал склада</h2><button type="button" className="link-button" onClick={onClose}>Закрыть</button></div>
+    <p className="page-sub">Кто, когда и что сделал со складом: приход, перемещения, правки строк, выдачи по заявкам, списания и возвраты. Свежие сверху. Поиск — по ГРН, наименованию, фамилии или слову из события («перемещение», «возврат»).</p>
+    <input className="search" aria-label="Поиск по журналу склада" placeholder="поиск: OLD.26.0000012, возврат, Иванов…" value={query} onChange={(event) => setQuery(event.target.value)} />
+    {error && <p className="danger-text" role="alert">{error}</p>}
+    {!error && loading && !journal && <p className="page-sub">Загружаю…</p>}
+    {!error && journal && (rows.length ? <>
+      <div className="table-wrap"><table className="grid compact" aria-label="События склада">
+        <thead><tr><th>Когда</th><th>Что</th><th>ГРН / №</th><th>Наименование</th><th>Подробно</th><th>Склад</th><th>Кто</th></tr></thead>
+        <tbody>{rows.map((row, index) => <tr key={index}>
+          <td className="num">{new Date(row.occurred_at).toLocaleString("ru-RU")}</td><td>{row.kind}</td><td>{row.lot}</td>
+          <td>{row.name}</td><td className="text">{row.event}</td><td>{row.warehouse}</td><td>{row.who}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="page-sub">Показано {rows.length} из {journal.total}{journal.truncated ? " — уточни поиск, чтобы увидеть более старые" : ""}.</p>
+    </> : <p className="page-sub">Ничего не нашлось.</p>)}
   </section>;
 }
 

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ItemTypesPanel, StockImportPanel } from "./WarehouseReferences";
+import { ItemTypesPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 
 function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -78,4 +78,25 @@ it("says why a table cannot be checked without asking the server", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Проверить" }));
   expect(await screen.findByText("В шапке нет колонки «ГРН» — без неё строки не найти.")).toBeInTheDocument();
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it("shows the warehouse journal newest first and searches it on the server", async () => {
+  const paths: string[] = [];
+  const row = (kind: string, event: string) => ({
+    occurred_at: "2026-09-22T10:00:00+03:00", kind, lot: "OLD.26.0000012", name: "Кабель", event, who: "Иванов", warehouse: "ЦАР",
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path === "/api/stock/journal") return json({ rows: [row("Событие", "Перемещение: 1F4 → 2A1"), row("Списание", "−2 шт · Брак · проведено")], total: 900, truncated: 898 });
+    return json({ rows: [row("Возврат", "+1 шт · Излишек · проведено")], total: 1, truncated: 0 });
+  });
+
+  render(<StockJournalPanel onClose={() => undefined} />);
+  expect(await screen.findByText("Перемещение: 1F4 → 2A1")).toBeInTheDocument();
+  expect(screen.getByText("Показано 2 из 900 — уточни поиск, чтобы увидеть более старые.")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Поиск по журналу склада"), { target: { value: " возврат " } });
+  expect(await screen.findByText("+1 шт · Излишек · проведено", {}, { timeout: 2000 })).toBeInTheDocument();
+  expect(paths.at(-1)).toBe("/api/stock/journal?q=%D0%B2%D0%BE%D0%B7%D0%B2%D1%80%D0%B0%D1%82");
 });

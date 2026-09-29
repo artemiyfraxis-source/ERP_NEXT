@@ -580,3 +580,19 @@ it("shows no hint for an unknown shelf (SK-15)", async () => {
   await new Promise((resolve) => setTimeout(resolve, 400));
   expect(screen.queryByRole("status")).toBeNull();
 });
+
+it("offers «Журнал склада» to the administrator only", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).startsWith("/api/stock/journal")) return json({ rows: [], total: 0, truncated: 0 });
+    return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+  });
+
+  const { unmount } = render(<WarehousePage />);
+  expect(await screen.findByText("FRX.26.0000001")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Журнал склада" })).not.toBeInTheDocument();
+  unmount();
+
+  render(<WarehousePage admin />);
+  fireEvent.click(await screen.findByRole("button", { name: "Журнал склада" }));
+  expect(await screen.findByText("Ничего не нашлось.")).toBeInTheDocument();
+});

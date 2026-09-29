@@ -8,7 +8,7 @@ import {
   type WarehouseRowEdit,
 } from "./api";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
-import { downloadStockTable, ItemTypesPanel, StockImportPanel } from "./WarehouseReferences";
+import { downloadStockTable, ItemTypesPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
   mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
@@ -28,7 +28,8 @@ function passportLine(lot: WarehouseLot) {
   ].filter(Boolean).join(" · ");
 }
 
-export function WarehousePage() {
+/** `admin` — the administrator sees «Журнал склада» (SK-16, SUPPLYMAP portalStock05Log is admin only). */
+export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
@@ -42,7 +43,7 @@ export function WarehousePage() {
   const [moveLot, setMoveLot] = useState<WarehouseLot | null>(null);
   const [groupBy, setGroupBy] = useState<"" | "type" | "place" | "name" | "series">("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [panel, setPanel] = useState<"" | "types" | "import">("");
+  const [panel, setPanel] = useState<"" | "types" | "import" | "journal">("");
   // Type suggestions (SK-14): the dictionary + the canonical types already on the stock.
   const [typeChoices, setTypeChoices] = useState<string[]>([]);
   const requestVersion = useRef(0);
@@ -124,6 +125,7 @@ export function WarehousePage() {
           downloadStockTable().catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось выгрузить."));
         }}>⬇ Выгрузить</button>
         <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>⬆ Загрузить правки</button>
+        {admin && <button className="secondary compact" onClick={() => setPanel((value) => value === "journal" ? "" : "journal")}>Журнал склада</button>}
         <input className="search" aria-label="Поиск по складу" placeholder="Поиск: артикул, серия, место, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
@@ -143,6 +145,7 @@ export function WarehousePage() {
         }}
       />}
       {panel === "import" && <StockImportPanel onClose={() => setPanel("")} onApplied={() => reload()} />}
+      {panel === "journal" && <StockJournalPanel onClose={() => setPanel("")} />}
       {adding && <ManualStockForm
         busy={Boolean(busy) || loading}
         knownLots={lots}

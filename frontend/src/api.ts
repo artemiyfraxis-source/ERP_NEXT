@@ -271,6 +271,23 @@ export interface WarehouseBulkResult {
   errors: Array<{ warehouse: string; grn: string; package: string; error: string }>;
 }
 
+/** SK-16 «Журнал склада» (portalStock05Log): the last 400 matches, newest first. */
+export interface WarehouseJournalRow {
+  occurred_at: string;
+  kind: string;
+  lot: string;
+  name: string;
+  event: string;
+  who: string;
+  warehouse: string;
+}
+
+export interface WarehouseJournal {
+  rows: WarehouseJournalRow[];
+  total: number;
+  truncated: number;
+}
+
 export interface WarehouseShelfPlaces {
   warehouse: string;
   shelf: string;
@@ -1093,6 +1110,8 @@ export const warehouseApi = {
       body: JSON.stringify({ source, target }),
     }),
   exportRows: () => api<{ rows: WarehouseExportRow[] }>("/api/stock/export"),
+  /** The administrator only; the search runs on the server. */
+  journal: (query = "") => api<WarehouseJournal>(`/api/stock/journal${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`),
   /** apply=false is the preview: the same diff, nothing written. The administrator only. */
   importTable: (edits: WarehouseReferenceEdit[], apply: boolean) => api<WarehouseBulkResult>("/api/stock/import", {
     method: "POST",
