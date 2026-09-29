@@ -87,10 +87,12 @@ it("loads the whole sheet with server filters and pages by cursor", async () => 
 
   const status = screen.getByLabelText("Статус") as HTMLSelectElement;
   await waitFor(() => expect(Array.from(status.options).map((option) => option.value)).toContain("Готово"));
-  fireEvent.change(screen.getByLabelText("Поиск"), { target: { value: "разъём" } });
   fireEvent.change(status, { target: { value: "Готово" } });
+  await waitFor(() => expect((screen.getByLabelText("Закупщик") as HTMLSelectElement).disabled).toBe(false));
   fireEvent.change(screen.getByLabelText("Закупщик"), { target: { value: "Петров" } });
-  fireEvent.click(screen.getByRole("button", { name: "Показать" }));
+  await waitFor(() => expect((screen.getByLabelText("Статус") as HTMLSelectElement).disabled).toBe(false));
+  fireEvent.change(screen.getByLabelText("Поиск"), { target: { value: "разъём" } });
+  fireEvent.click(screen.getByRole("button", { name: "Найти" }));
   await waitFor(() => expect(screen.queryByText("Позиция 1")).not.toBeInTheDocument());
   expect(requested.some((path) => path.includes("status="))).toBe(true);
 });
