@@ -20,8 +20,9 @@ import { ReferencesPage } from "./ReferencesPage";
 import { NotificationsPage } from "./NotificationsPage";
 import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
+import { StaffPage } from "./StaffPage";
 
-type Section = "cabinet" | "projects" | "calculation" | "techcards" | "requests" | "procurement" | "receiving" | "stock" | "issues" | "prodplan" | "production" | "myops" | "shipping" | "references" | "notifications" | "operations";
+type Section = "cabinet" | "projects" | "calculation" | "techcards" | "requests" | "procurement" | "receiving" | "stock" | "issues" | "prodplan" | "production" | "myops" | "shipping" | "references" | "notifications" | "operations" | "staff";
 type NavGroup = "projects" | "supply" | "stock" | "production" | "data";
 
 const NAV: Array<{
@@ -118,6 +119,14 @@ const NAV: Array<{
     label: "Системный журнал",
     permission: "operations",
     roles: ["management", "admin"],
+    group: "data",
+  },
+  {
+    id: "staff",
+    label: "Сотрудники",
+    permission: "identity",
+    minimum: "edit",
+    roles: ["admin"],
     group: "data",
   },
 ];
@@ -276,6 +285,7 @@ export function App() {
         {activeSection === "references" && <ReferencesPage principal={principal} />}
         {activeSection === "notifications" && <NotificationsPage />}
         {activeSection === "operations" && <OperationsPage />}
+        {activeSection === "staff" && <StaffPage />}
       </main>
     </div>
   );

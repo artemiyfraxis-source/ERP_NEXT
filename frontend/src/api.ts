@@ -883,6 +883,59 @@ export const identityApi = {
   logout: () => api<void>("/api/auth/logout", { method: "POST" }),
 };
 
+/** ID-8 «Сотрудники»: the directory as the administrator sees it. No password ever comes back. */
+export interface Employee {
+  id: string;
+  login: string;
+  email: string;
+  name: string;
+  department: string;
+  role: string;
+  site: string;
+  active: boolean;
+}
+
+export interface StaffDirectory {
+  users: Employee[];
+  departments: string[];
+  roles: Array<{ key: string; label: string }>;
+  sites: Array<{ code: string; city: string }>;
+}
+
+export interface EmployeeCreate {
+  login: string;
+  email: string;
+  name: string;
+  department: string;
+  role: string;
+  site: string;
+  password: string;
+}
+
+export interface EmployeeUpdate {
+  name: string;
+  department: string;
+  role: string;
+  site: string;
+  active: boolean;
+  password?: string | null;
+}
+
+export const staffApi = {
+  directory: () => api<StaffDirectory>("/api/auth/staff"),
+  create: (payload: EmployeeCreate) =>
+    api<{ user: Employee }>("/api/auth/staff", { method: "POST", body: JSON.stringify(payload) }),
+  update: (id: string, payload: EmployeeUpdate) =>
+    api<{ user: Employee }>(`/api/auth/staff/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  saveDepartments: (departments: string[]) =>
+    api<{ departments: string[] }>("/api/auth/departments", { method: "PUT", body: JSON.stringify({ departments }) }),
+  renameDepartment: (source: string, target: string) =>
+    api<{ departments: string[]; users: number }>("/api/auth/departments/rename", {
+      method: "POST",
+      body: JSON.stringify({ source, target }),
+    }),
+};
+
 export const legacyApi = {
   grant: (scope: "projects" | "calculation") =>
     api<{ grant: string; expires_at: string; scope: string }>("/api/legacy/grant", {

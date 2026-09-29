@@ -11,7 +11,10 @@
     "role and per-user section access matrix",
     "user override wins over role access",
     "inactive user session revocation",
-    "account and client login throttling"
+    "account and client login throttling",
+    "admin-only staff directory: create and edit employee name, department, site, role, active",
+    "at least one active administrator remains",
+    "department list = saved list + departments in use, without role-like values"
   ],
   "intentionalSecurityUpgrades": [
     "Argon2id password hashes replace fast SHA-256 PIN hashes",

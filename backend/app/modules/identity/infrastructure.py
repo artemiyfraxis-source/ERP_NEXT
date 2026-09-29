@@ -104,6 +104,16 @@ class IdentitySessionRow(Base):
     revoked_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class IdentityDepartmentRow(Base):
+    """The department list of the «Сотрудники» screen (ID-8), in dropdown order. Empty until the first save:
+    then the list is the departments people already have, as SUPPLYMAP staffDepts_ did."""
+
+    __tablename__ = "identity_departments"
+
+    position: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
 class IdentityLoginThrottleRow(Base):
     __tablename__ = "identity_login_throttles"
 
@@ -309,6 +319,67 @@ class SqlAlchemyIdentityRepository:
         )
         return result.rowcount
 
+    # ── «Сотрудники» (ID-8) ──
+
+    def all_users(self) -> list[IdentityUser]:
+        return [_user_domain(row) for row in self.session.scalars(select(IdentityUserRow))]
+
+    def user_for_update(self, user_id: UUID) -> IdentityUser | None:
+        row = self.session.get(IdentityUserRow, user_id, with_for_update=True)
+        return _user_domain(row) if row is not None else None
+
+    def identifiers_taken(self, identifiers: set[str]) -> bool:
+        return self.session.scalar(
+            select(IdentityIdentifierRow.identifier)
+            .where(IdentityIdentifierRow.identifier.in_(identifiers))
+            .limit(1)
+        ) is not None
+
+    def add_user(
+        self, user: IdentityUser, password_hash: str, role_access: dict[str, AccessMode]
+    ) -> None:
+        provision_user(self.session, user, password_hash, role_access=role_access)
+
+    def update_user(self, user: IdentityUser) -> None:
+        row = self.session.get(IdentityUserRow, user.id)
+        if row is None:
+            raise KeyError(f"Identity user not found: {user.id}")
+        row.name = user.name
+        row.department = user.department
+        row.role = user.role
+        row.site = user.site
+        row.active = user.active
+
+    def ensure_role_access(self, role: str, defaults: dict[str, AccessMode]) -> None:
+        _seed_role_access(self.session, role, defaults)
+
+    def set_password(self, user_id: UUID, password_hash: str) -> None:
+        row = self.session.get(IdentityCredentialRow, user_id)
+        if row is None:
+            self.session.add(IdentityCredentialRow(user_id=user_id, password_hash=password_hash))
+        else:
+            row.password_hash = password_hash
+
+    def active_admin_ids(self) -> list[UUID]:
+        # Locks the admin rows, so two admins cannot demote each other at the same time.
+        return list(self.session.scalars(
+            select(IdentityUserRow.id)
+            .where(IdentityUserRow.role == "admin", IdentityUserRow.active.is_(True))
+            .with_for_update()
+        ))
+
+    def saved_departments(self) -> list[str]:
+        return list(self.session.scalars(
+            select(IdentityDepartmentRow.name).order_by(IdentityDepartmentRow.position)
+        ))
+
+    def replace_departments(self, departments: list[str]) -> None:
+        self.session.execute(delete(IdentityDepartmentRow))
+        self.session.add_all(
+            IdentityDepartmentRow(position=position, name=name)
+            for position, name in enumerate(departments)
+        )
+
 
 class SqlAlchemyIdentityUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
@@ -337,6 +408,13 @@ class SqlAlchemyIdentityUnitOfWork:
         self.committed = True
 
 
+def _seed_role_access(session: Session, role: str, defaults: dict[str, AccessMode]) -> None:
+    """A role gets its default sections once; rows that already exist (edited by hand) are left alone."""
+    for section, mode in defaults.items():
+        if session.get(IdentityRoleAccessRow, (role, section)) is None:
+            session.add(IdentityRoleAccessRow(role=role, section=section, mode=mode.value))
+
+
 def provision_user(
     session: Session,
     user: IdentityUser,
@@ -362,9 +440,6 @@ def provision_user(
     for identifier in {login, email}:
         session.add(IdentityIdentifierRow(identifier=identifier, user_id=user.id))
     session.add(IdentityCredentialRow(user_id=user.id, password_hash=password_hash))
-    for section, mode in (role_access or {}).items():
-        existing = session.get(IdentityRoleAccessRow, (user.role, section))
-        if existing is None:
-            session.add(IdentityRoleAccessRow(role=user.role, section=section, mode=mode.value))
+    _seed_role_access(session, user.role.strip(), role_access or {})
     for section, mode in (user_access or {}).items():
         session.add(IdentityUserAccessRow(user_id=user.id, section=section, mode=mode.value))

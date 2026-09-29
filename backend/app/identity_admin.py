@@ -12,66 +12,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import build_engine
 from app.modules.identity.domain import (
+    ROLE_DEFAULTS,
+    ROLES,
     AccessMode,
     IdentityUser,
     hash_password,
     normalize_login,
 )
 from app.modules.identity.infrastructure import IdentityIdentifierRow, provision_user
-
-
-ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
-    "admin": {
-        "identity": AccessMode.EDIT,
-        "projects": AccessMode.EDIT,
-        "calculation": AccessMode.EDIT,
-        "techcards": AccessMode.EDIT,
-        "requests": AccessMode.EDIT,
-        "procurement": AccessMode.EDIT,
-        "receiving": AccessMode.EDIT,
-        "warehouse": AccessMode.EDIT,
-        "fulfillment": AccessMode.EDIT,
-        "production": AccessMode.EDIT,
-        "shipping": AccessMode.EDIT,
-        "references": AccessMode.EDIT,
-        "operations": AccessMode.EDIT,
-    },
-    "buyer": {
-        "requests": AccessMode.EDIT,
-        "procurement": AccessMode.EDIT,
-        "references": AccessMode.VIEW,
-    },
-    "receiver": {
-        "receiving": AccessMode.EDIT,
-        "warehouse": AccessMode.EDIT,
-        "fulfillment": AccessMode.EDIT,
-        "shipping": AccessMode.EDIT,
-        "references": AccessMode.VIEW,
-    },
-    "engineer": {"fulfillment": AccessMode.EDIT, "references": AccessMode.VIEW},
-    "prodhead": {"fulfillment": AccessMode.VIEW, "production": AccessMode.VIEW, "shipping": AccessMode.VIEW, "references": AccessMode.VIEW},
-    "master": {"fulfillment": AccessMode.VIEW, "production": AccessMode.EDIT, "shipping": AccessMode.VIEW, "references": AccessMode.VIEW},
-    "management": {"production": AccessMode.VIEW, "shipping": AccessMode.VIEW, "references": AccessMode.VIEW, "operations": AccessMode.VIEW},
-    "pm": {"shipping": AccessMode.EDIT, "references": AccessMode.VIEW},
-    "staff": {"requests": AccessMode.EDIT, "production": AccessMode.VIEW, "references": AccessMode.VIEW},
-    "estimator": {"references": AccessMode.VIEW},
-    "qc": {"production": AccessMode.EDIT, "references": AccessMode.VIEW},
-}
-ROLES = frozenset(
-    {
-        "admin",
-        "buyer",
-        "receiver",
-        "estimator",
-        "prodhead",
-        "master",
-        "management",
-        "pm",
-        "qc",
-        "engineer",
-        "staff",
-    }
-)
 
 
 def requested_access(values: list[str], role: str) -> dict[str, AccessMode]:
