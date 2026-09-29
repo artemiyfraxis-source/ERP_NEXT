@@ -9,7 +9,7 @@ import {
   type ProcurementTraceabilityInput,
   type SupplierOrder,
 } from "./api";
-import { openPrintSheet } from "./print";
+import { openPrintSheet, printStoredDocument } from "./print";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementFillForm } from "./ProcurementFillForm";
@@ -370,6 +370,13 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             <div className="procurement-title">
               <div><strong>{order.order_number} · {order.supplier}</strong><small>{order.task_type} · от {order.order_date} · позиций: {order.line_ids.length}</small></div>
             </div>
+            {order.document && (
+              <div className="supplier-document">
+                <small>{order.document.folder}/{order.document.file_name}</small>
+                <a className="secondary small" href={order.document.url} target="_blank" rel="noreferrer">Открыть документ</a>
+                <button type="button" className="secondary small" onClick={() => printStoredDocument(order.document!.url)}>Печать</button>
+              </div>
+            )}
             <pre className="supplier-letter">{order.letter}</pre>
           </article>
         ))}
@@ -474,7 +481,13 @@ function ProcurementCard({
         <small className="hint">Поставщик: {line.supplier} — строка войдёт в запрос поставщику при формировании.</small>
       )}
       {line.order_number && (
-        <small className="hint">Заказ {line.order_number} от {line.order_date}</small>
+        <div className="supplier-document">
+          <small className="hint">Заказ {line.order_number} от {line.order_date}</small>
+          {line.order_url && <>
+            <a className="secondary small" href={line.order_url} target="_blank" rel="noreferrer">Открыть документ</a>
+            <button type="button" className="secondary small" onClick={() => printStoredDocument(line.order_url!)}>Печать</button>
+          </>}
+        </div>
       )}
       {line.status === "Готов к запросу" && line.replacement_open && (
         <small className="hint">Есть незакрытая замена — заказ этого поставщика не сформируется до решения «Разрешено».</small>

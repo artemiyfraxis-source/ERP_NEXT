@@ -1,6 +1,6 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { PrintSheet } from "./api";
-import { buildPrintDocumentHtml, buildPrintSheetHtml } from "./print";
+import { buildPrintDocumentHtml, buildPrintSheetHtml, printStoredDocument } from "./print";
 
 const sheet: PrintSheet = {
   title: "ЗАЯВКА НА ВЫДАЧУ REQ.26.001",
@@ -42,4 +42,16 @@ it("renders a multi-page document: one section per page, empty tables left out, 
   expect(html).toContain("1 &lt;b&gt;");
   expect(html).not.toContain("<th>Пусто</th>");
   expect(html).toContain("page-break-after: always");
+});
+
+it("prints a stored ERP document through a hidden same-origin frame", () => {
+  printStoredDocument("/api/procurement/supplier-requests/PO-001/document");
+
+  const frame = document.body.querySelector("iframe");
+  expect(frame?.getAttribute("src")).toBe("/api/procurement/supplier-requests/PO-001/document");
+  const print = vi.fn();
+  Object.defineProperty(frame!, "contentWindow", { value: { print, focus: vi.fn(), addEventListener: vi.fn() } });
+  frame!.onload?.(new Event("load"));
+  expect(print).toHaveBeenCalledOnce();
+  frame!.remove();
 });

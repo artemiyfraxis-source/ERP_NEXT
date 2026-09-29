@@ -10,8 +10,10 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -31,7 +33,7 @@ from app.shared.persistence import (
     SqlAlchemyOutboxRepository,
 )
 
-from .application import StatusNotificationDue, SupplierOrder
+from .application import StatusNotificationDue, SupplierOrder, SupplierOrderDocument
 from .domain import (
     ProcurementLine,
     ProcurementStatus,
@@ -318,6 +320,37 @@ class ProcurementSupplierOrderRow(Base):
     letter: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class ProcurementSupplierOrderDocumentRow(Base):
+    """Документ запроса поставщику (SUPPLYMAP клал Google Doc в «Запросы поставщикам/год/месяц/поставщик»)."""
+
+    __tablename__ = "procurement_supplier_order_documents"
+
+    order_number: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("procurement_supplier_orders.order_number", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    folder: Mapped[str] = mapped_column(String(1024), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def _document_from_row(row: ProcurementSupplierOrderDocumentRow) -> SupplierOrderDocument:
+    return SupplierOrderDocument(
+        order_number=row.order_number,
+        file_name=row.file_name,
+        folder=row.folder,
+        content_type=row.content_type,
+        size=row.size,
+        created_by=row.created_by,
+        created_at=row.created_at,
+    )
+
+
 class SqlAlchemyProcurementRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -522,7 +555,43 @@ class SqlAlchemyProcurementRepository:
             created_at=row.created_at,
             letter=row.letter,
             line_ids=tuple(line_ids),
+            document=self._document_meta(order_number),
         )
+
+    def _document_meta(self, order_number: str) -> SupplierOrderDocument | None:
+        # Без колонки content: метаданные карточки заказа не тянут байты файла.
+        found = self.session.execute(
+            select(
+                ProcurementSupplierOrderDocumentRow.order_number,
+                ProcurementSupplierOrderDocumentRow.file_name,
+                ProcurementSupplierOrderDocumentRow.folder,
+                ProcurementSupplierOrderDocumentRow.content_type,
+                ProcurementSupplierOrderDocumentRow.size,
+                ProcurementSupplierOrderDocumentRow.created_by,
+                ProcurementSupplierOrderDocumentRow.created_at,
+            ).where(ProcurementSupplierOrderDocumentRow.order_number == order_number)
+        ).first()
+        return SupplierOrderDocument(*found) if found else None
+
+    def add_order_document(self, document: SupplierOrderDocument, content: bytes) -> None:
+        self.session.add(
+            ProcurementSupplierOrderDocumentRow(
+                order_number=document.order_number,
+                file_name=document.file_name,
+                folder=document.folder,
+                content_type=document.content_type,
+                size=document.size,
+                content=content,
+                created_by=document.created_by,
+                created_at=document.created_at,
+            )
+        )
+
+    def get_order_document(self, order_number: str) -> tuple[SupplierOrderDocument, bytes] | None:
+        row = self.session.get(ProcurementSupplierOrderDocumentRow, order_number)
+        if row is None:
+            return None
+        return _document_from_row(row), row.content
 
     def has_lines_for_request(self, source_request_id: UUID) -> bool:
         statement = (
