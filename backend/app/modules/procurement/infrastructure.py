@@ -31,7 +31,7 @@ from app.shared.persistence import (
 )
 
 from .application import SupplierOrder
-from .domain import ProcurementLine, ProcurementStatus
+from .domain import ProcurementLine, ProcurementStatus, designation_key
 from .money import FactMoney
 
 
@@ -405,10 +405,10 @@ class SqlAlchemyProcurementRepository:
         return self.session.scalar(statement) is not None
 
     def revisions_for_designation(self, designation: str) -> list[str]:
-        statement = select(ProcurementLineRow.revision).where(
-            ProcurementLineRow.designation == designation.strip()
-        )
-        return list(self.session.scalars(statement))
+        # Compared in Python: SQLite's lower() folds only ASCII, and НАЗНАЧЕНИЕ is Cyrillic.
+        key = designation_key(designation)
+        statement = select(ProcurementLineRow.designation, ProcurementLineRow.revision)
+        return [revision for stored, revision in self.session.execute(statement) if designation_key(stored) == key]
 
     def add(self, line: ProcurementLine) -> None:
         incoming = _line_row(line)

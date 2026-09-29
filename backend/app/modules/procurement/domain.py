@@ -563,6 +563,12 @@ def number_to_revision(number: int) -> str:
     return letters
 
 
+def designation_key(designation: str | None) -> str:
+    """НАЗНАЧЕНИЕ as `requestRowsToPurchaseLocked_` groups revisions: `normHeader_` (Schema.gs:5) —
+    whitespace runs collapsed, trimmed, case-insensitive."""
+    return " ".join(str(designation or "").split()).casefold()
+
+
 def next_retransfer_revision(revisions: Iterable[str]) -> str:
     """`nextRetransferRevision_` (Schema.gs:134): max letter among the designation's lines + 1; none → 'A'."""
     return number_to_revision(max((revision_to_number(item) for item in revisions), default=0) + 1)

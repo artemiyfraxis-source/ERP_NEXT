@@ -325,3 +325,27 @@ def test_repeated_transfer_appends_next_revision_with_new_system_id_and_keeps_ol
         assert kept.buyer_id == buyer.id
         assert kept.revision == "A"
     engine.dispose()
+
+
+def test_sql_revisions_for_designation_fold_cyrillic_case_and_spaces():
+    # PR-2: SQLite's lower() folds only ASCII, so the repository compares НАЗНАЧЕНИЕ in Python.
+    from tests.procurement.test_application import transfer
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_schema(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    uow = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    consume_procurement_requested(transfer(1, designation="Проект 591К.3.001"), uow())
+    consume_procurement_requested(transfer(1, 2, designation="Проект 591К.3.001"), uow())
+    consume_procurement_requested(transfer(2, designation="  проект   591к.3.001 "), uow())
+
+    again = consume_procurement_requested(transfer(2, 2, designation="  проект   591к.3.001 "), uow())
+
+    assert (again.legacy_id, again.revision) == ("SM-20260915-04", "C")
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(ProcurementLineRow)) == 4
+    engine.dispose()

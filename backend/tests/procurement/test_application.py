@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
@@ -28,6 +29,7 @@ from app.modules.procurement.domain import (
     ProcurementFacts,
     ProcurementStatus,
     ProcurementValidationError,
+    designation_key,
 )
 from app.modules.procurement.money import MoneyInput
 from app.shared.events import OutboxMessage
@@ -87,7 +89,8 @@ class FakeProcurementRepository:
         return any(item.source_request_id == source_request_id for item in self.items.values())
 
     def revisions_for_designation(self, designation):
-        return [item.revision for item in self.items.values() if item.designation == designation]
+        key = designation_key(designation)
+        return [item.revision for item in self.items.values() if designation_key(item.designation) == key]
 
     def add(self, line):
         self.items[line.id] = line
@@ -147,6 +150,46 @@ def test_requested_event_is_consumed_once_and_audited_atomically():
         "source_event_id": str(message.id),
     }
     assert uow.commits == 1
+
+
+def transfer(suffix: int, attempt: int = 1, **payload) -> OutboxMessage:
+    """The `procurement.requested` of request `suffix`; attempt > 1 is a retransfer (new event, same request)."""
+    base = requested_message(suffix)
+    return replace(
+        base,
+        id=UUID(f"00000000-0000-0000-{attempt:04d}-{suffix:012d}"),
+        idempotency_key=f"request:{suffix}:procurement:v{attempt + 1}",
+        payload={**base.payload, **payload},
+    )
+
+
+# PR-2 — Pipeline.gs:66-74: revisions are grouped by НАЗНАЧЕНИЕ under normHeader_ (spaces, case).
+def test_retransfer_revision_counts_lines_whose_designation_differs_only_in_case_and_spaces():
+    uow = FakeUnitOfWork()
+    consume_procurement_requested(transfer(1, designation="RND.001"), uow)
+    consume_procurement_requested(transfer(1, 2, designation="RND.001"), uow)
+    consume_procurement_requested(transfer(2, designation=" rnd.001  "), uow)
+
+    again = consume_procurement_requested(transfer(2, 2, designation=" rnd.001  "), uow)
+
+    assert again.revision == "C"
+    assert again.legacy_id == "SM-20260915-04"  # 02 is the retransfer of request 1, 03 request 2 itself
+    assert sorted(item.revision for item in uow.procurement.items.values()) == ["A", "A", "B", "C"]
+
+
+# PR-2 — SUPPLYMAP finds «already transferred» by System ID: a line holding the request's ID means a new ID.
+def test_first_transfer_onto_an_id_taken_by_a_retransfer_line_gets_a_fresh_id_and_stays_revision_a():
+    uow = FakeUnitOfWork()
+    consume_procurement_requested(transfer(1), uow)
+    retransferred = consume_procurement_requested(transfer(1, 2), uow)
+    assert retransferred.legacy_id == "SM-20260915-02"  # the ID request 2 was given on its own sheet
+
+    first = consume_procurement_requested(transfer(2), uow)
+
+    assert (first.legacy_id, first.revision) == ("SM-20260915-03", "A")
+    assert first.source_request_id == UUID("10000000-0000-0000-0000-000000000002")
+    assert len({item.legacy_id for item in uow.procurement.items.values()}) == 3
+    assert consume_procurement_requested(transfer(2), uow) == first  # replay is read-only
 
 
 def test_take_batch_is_atomic_and_same_buyer_retry_is_read_only():

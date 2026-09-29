@@ -52,7 +52,9 @@ class ProcurementRepository(Protocol):
     def ready_for_request(self) -> Sequence[ProcurementLine]: ...
     def order_numbers_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def has_lines_for_request(self, source_request_id: UUID) -> bool: ...
-    def revisions_for_designation(self, designation: str) -> Sequence[str]: ...
+    def revisions_for_designation(self, designation: str) -> Sequence[str]:
+        """Revisions of every line whose НАЗНАЧЕНИЕ has the same `designation_key`."""
+        ...
     def add(self, line: ProcurementLine) -> None: ...
     def add_order(self, order: SupplierOrder) -> None: ...
     def get_order(self, order_number: str) -> SupplierOrder | None: ...
@@ -254,11 +256,16 @@ def _line_from_requested(message: OutboxMessage, lines: ProcurementRepository) -
     among lines of the same НАЗНАЧЕНИЕ + 1, «Новый» — and leaves the earlier line and its buyer data intact.
     """
     line = create_line_from_requested(message)
-    if not lines.has_lines_for_request(line.source_request_id):
+    repeated = lines.has_lines_for_request(line.source_request_id)
+    # SUPPLYMAP finds «already transferred» by System ID. A retransfer or split line may already hold the
+    # request's ID (both number over procurement IDs only), so a first transfer onto a taken ID also gets a
+    # fresh one — but stays Рев.A: it is the request's first line (PR-2).
+    id_taken = line.legacy_id in lines.legacy_ids_with_prefix(line.legacy_id)
+    if not repeated and not id_taken:
         return line
     day = line.created_at.date()
     legacy_id = next_system_id(lines.legacy_ids_with_prefix(f"SM-{day:%Y%m%d}-"), day)
-    revision = next_retransfer_revision(lines.revisions_for_designation(line.designation))
+    revision = next_retransfer_revision(lines.revisions_for_designation(line.designation)) if repeated else "A"
     return create_line_from_requested(message, legacy_id=legacy_id, revision=revision)
 
 

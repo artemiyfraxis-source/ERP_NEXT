@@ -12,6 +12,7 @@ from app.modules.procurement.domain import (
     ProcurementValidationError,
     create_backorder_line,
     create_line_from_requested,
+    designation_key,
     is_backorder_id,
     next_backorder_id,
     next_retransfer_revision,
@@ -618,6 +619,11 @@ def _strip_money(line):
 )
 def test_retransfer_revision_is_max_letter_plus_one(revisions, expected):
     assert next_retransfer_revision(revisions) == expected
+
+
+def test_designation_key_folds_spaces_and_case_like_norm_header():
+    assert designation_key("  591К.3   .001 ") == designation_key("591к.3 .001") == "591к.3 .001"
+    assert designation_key(None) == ""
 
 
 def test_revision_letters_round_trip_like_supplymap():
