@@ -237,6 +237,30 @@ it("edits an issued ETK operation from the UI and shows the new revision (portal
   expect(await screen.findByText(/правлена 29.09.2026 10:00 · Инженер/)).toBeInTheDocument();
 });
 
+it("shows the operation field chips and the sketch on the ETK screen (renderEtk_ chips / etkDraw*)", async () => {
+  const withFields: ProjectTechcard = { ...issuedEtk, document: { ...issuedEtk.document, operations: [{
+    position: 1, code: "PRS_TERMINAL_auto", side: "A", connector: "XS1", type: "prsTerm",
+    card: { name: "Опрессовка", steps: [{ number: "1", kind: "Операция", text: "Обжать контакт" }], tooling: [] },
+    fields: { applicator: "AP-22", crimpHeight: "0,85", pullForce: "40" },
+    times: { operation_seconds: "3,5", setup_seconds: "180" },
+  }] } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/projects") return json({ items: [withFields] });
+    if (path.endsWith("/revisions")) return json({ items: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="projects" />);
+  const chips = await screen.findByLabelText("Параметры операции");
+  expect(chips).toHaveTextContent("АппликаторAP-22");
+  expect(chips).toHaveTextContent("H обжима0,85 мм");
+  expect(chips).toHaveTextContent("Отрыв40 Н");
+  expect(chips).toHaveTextContent("Время3,5 с на шт. · подгот. 3 мин");
+  expect(screen.getByText("Эскиз")).toBeInTheDocument();
+  expect(screen.getByText("H обжима по жиле: 0,85 мм")).toBeInTheDocument();
+});
+
 it("prints the ETK through the shared print contract (etkPrint_)", async () => {
   const written: string[] = [];
   const win = { document: { open: vi.fn(), write: (html: string) => written.push(html), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
