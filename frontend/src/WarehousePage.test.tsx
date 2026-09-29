@@ -260,6 +260,18 @@ it("groups article rows by manufacturer series", async () => {
   expect(screen.getByText("GHR-04V-S")).toBeInTheDocument();
 });
 
+it("groups article rows by ГРН, packages of one ГРН under one header", async () => {
+  const second = { ...lot, id: "40000000-0000-0000-0000-000000000002", package: "2", article: "GHR-06V-S" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot, second], total: 2, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "grn" } });
+
+  expect(screen.getByText("FRX.26.0000001 · 2")).toBeInTheDocument();
+  expect(screen.getByText("GHR-06V-S")).toBeInTheDocument();
+});
+
 it("keeps an unnamed legacy lot expandable so its article can be entered", async () => {
   const unnamed = { ...lot, article: "", name: "", series: "", grn: "OLD.26.0000299" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [unnamed], total: 1, truncated: 0, next_cursor: null }));
