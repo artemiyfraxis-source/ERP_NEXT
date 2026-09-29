@@ -87,3 +87,22 @@ def test_sent_migration_backfills_from_shipments_that_left(tmp_path):
     command.downgrade(config, "0070_purpose_rnd_merge")
     with sqlite3.connect(database_path) as connection:
         assert "sent" not in {row[1] for row in connection.execute("PRAGMA table_info(finished_goods)")}
+
+
+def test_inherited_fields_migration_adds_an_empty_list_and_drops_it(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "inherited.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+    command.upgrade(config, "0071_finished_goods_sent")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO shipments (id, number, version, created_at, status, customer, receiver, shipping_point, contact,"
+            " phone, carrier, upd_number, upd_url, pl_number, dn_number, track_number, manager, note)"
+            " VALUES ('s1', 's1', 1, '2026-09-22', 'Новая', '', '', '', '', '', '', '', '', '', '', '', '', '')")
+    command.upgrade(config, "0072_shipment_inherited_fields")
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("SELECT inherited_fields FROM shipments").fetchall() == [("",)]
+    command.downgrade(config, "0071_finished_goods_sent")
+    with sqlite3.connect(database_path) as connection:
+        assert "inherited_fields" not in {row[1] for row in connection.execute("PRAGMA table_info(shipments)")}

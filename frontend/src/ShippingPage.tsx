@@ -299,7 +299,7 @@ function CreateShipment({ goods, busy, mutate }: { goods: FinishedGood[]; busy: 
 }
 
 function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, mutate }: { shipment: Shipment; canManage: boolean; canWarehouse: boolean; canEdit: boolean; busy: string; mutate: Mutate }) {
-  const [documents, setDocuments] = useState({ upd_type: shipment.upd_type ?? "", upd_number: shipment.upd_number, upd_url: shipment.upd_url, track_number: shipment.track_number });
+  const [documents, setDocuments] = useState({ upd_type: shipment.inherited.includes("upd_type") ? "" : shipment.upd_type ?? "", upd_number: shipment.upd_number, upd_date: shipment.upd_date ?? "", upd_url: shipment.upd_url, track_number: shipment.track_number });
   const [requested, setRequested] = useState<Record<string, string>>({});
   const [layout, setLayout] = useState(false);
   const [printError, setPrintError] = useState("");
@@ -333,7 +333,8 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
     <div className="table-scroll"><table><thead><tr><th>Позиция</th><th>Заказано</th><th>Набрано</th><th>Недобор</th><th>ГРН</th>{canWarehouse && <th />}</tr></thead><tbody>{shipment.lines.map((line) => <tr key={line.id}><td>{line.project} · {line.item_index}<small>{line.name}</small></td>
       <td>{canEdit ? <input className="qty-input" aria-label={`Заказано ${line.item_index}`} type="number" min="0.01" step="any" value={requested[line.id] ?? line.requested} onChange={(event) => setRequested({ ...requested, [line.id]: event.target.value })} onBlur={() => saveRequested(line.id, line.requested)} /> : `${line.requested} ${line.unit}`}</td>
       <td>{line.picked}</td><td>{line.shortage}</td><td>{line.grn || "—"}</td>{canWarehouse && <td>{num(line.picked) > 0 && ["Новая", "Собрана"].includes(shipment.status) && <button className="link-button danger-link" disabled={Boolean(busy)} onClick={() => void mutate(`unpick:${line.id}`, () => shippingApi.unpick(shipment.id, shipment.version, line.id), "Позиция возвращена на склад ГП")}>Вернуть</button>}</td>}</tr>)}</tbody></table></div>
-    {canManage && open && <div className="shipment-docs"><label>Тип УПД<select value={documents.upd_type} onChange={(event) => setDocuments({ ...documents, upd_type: event.target.value })}><option value="" /><option>ЭДО</option><option>БУМАГА</option></select></label><label>№ УПД<input value={documents.upd_number} onChange={(event) => setDocuments({ ...documents, upd_number: event.target.value })} /></label><label>Ссылка на файл УПД<input value={documents.upd_url} onChange={(event) => setDocuments({ ...documents, upd_url: event.target.value })} /></label><label>Трек-номер<input value={documents.track_number} onChange={(event) => setDocuments({ ...documents, track_number: event.target.value })} /></label><button className="secondary small" disabled={Boolean(busy)} onClick={() => void mutate(`docs:${shipment.id}`, () => shippingApi.documents(shipment.id, { version: shipment.version, ...documents, upd_type: documents.upd_type || null }), "Данные УПД и доставки сохранены")}>Сохранить документы</button></div>}
+    {canEdit && open && <ShipmentHead shipment={shipment} busy={busy} mutate={mutate} />}
+    {canManage && open && <div className="shipment-docs"><label>Тип УПД<select value={documents.upd_type} onChange={(event) => setDocuments({ ...documents, upd_type: event.target.value })}><option value="">{shipment.inherited.includes("upd_type") ? `из карточки проекта${shipment.upd_type ? `: ${shipment.upd_type}` : ""}` : "из карточки проекта"}</option><option>ЭДО</option><option>БУМАГА</option></select></label><label>№ УПД<input value={documents.upd_number} onChange={(event) => setDocuments({ ...documents, upd_number: event.target.value })} /></label><label>Дата УПД<input type="date" value={documents.upd_date} onChange={(event) => setDocuments({ ...documents, upd_date: event.target.value })} /></label><label>Ссылка на файл УПД<input value={documents.upd_url} onChange={(event) => setDocuments({ ...documents, upd_url: event.target.value })} /></label><label>Трек-номер<input value={documents.track_number} onChange={(event) => setDocuments({ ...documents, track_number: event.target.value })} /></label><button className="secondary small" disabled={Boolean(busy)} onClick={() => void mutate(`docs:${shipment.id}`, () => shippingApi.documents(shipment.id, { version: shipment.version, ...documents, upd_type: documents.upd_type || null, upd_date: documents.upd_date || null }), "Данные УПД и доставки сохранены")}>Сохранить документы</button></div>}
     {layout && <BoxesEditor shipment={shipment} busy={busy} mutate={mutate} onDone={() => setLayout(false)} />}
     {printError && <div className="error-banner" role="alert">{printError}</div>}
     <div className="fulfillment-actions">
@@ -346,6 +347,40 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
       {canManage && ACTIVE.includes(shipment.status) && <button className="link-button danger-link" disabled={Boolean(busy)} onClick={() => void action("cancel", "Заявка отменена, отбор возвращён на склад ГП")}>Отменить</button>}
     </div>
   </article>;
+}
+
+const HEAD_FIELDS: Array<[keyof Shipment & string, string]> = [
+  ["receiver", "Получатель"], ["shipping_point", "Адрес отгрузки"], ["contact", "Контактное лицо"], ["phone", "Телефон"],
+  ["carrier", "ТК / способ"],
+];
+
+/** `shipSetHead_`: шапка открытой отправки. Поле сохраняется при уходе из него; пустое поле адресата снова
+ * берётся из карточки проекта и идёт за ней, пока отправка не закрыта. */
+function ShipmentHead({ shipment, busy, mutate }: { shipment: Shipment; busy: string; mutate: Mutate }) {
+  const initial = (): Record<string, string> => ({
+    ...Object.fromEntries(HEAD_FIELDS.map(([key]) => [key, String(shipment[key] ?? "")])),
+    terms: shipment.terms ?? "", deadline: shipment.deadline ?? "", note: shipment.note,
+  });
+  const [draft, setDraft] = useState(initial);
+  // Сохранили поле или карточка проекта поменяла адрес — показываем то, что теперь в отправке.
+  useEffect(() => setDraft(initial()), [shipment.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  const inherited = (key: string) => shipment.inherited.includes(key);
+  const save = (key: string) => {
+    const value = draft[key].trim();
+    const stored = key === "terms" ? shipment.terms ?? "" : key === "deadline" ? shipment.deadline ?? "" : String(shipment[key as keyof Shipment] ?? "");
+    // Пустое поле адресата, уже идущее за карточкой, — не правка: сервер вернул бы то же значение.
+    if (value === stored.trim() || (value === "" && inherited(key))) return;
+    const sent = value === "" && (key === "terms" || key === "deadline") ? null : value;
+    void mutate(`head:${shipment.id}:${key}`, () => shippingApi.head(shipment.id, { version: shipment.version, [key]: sent }), "Отправка сохранена");
+  };
+  // Подпись под каждым полем (и пустая у своих) держит поля одной строки на одной высоте.
+  const hint = (key: string) => <small className="muted">{inherited(key) ? "из карточки проекта" : key === "deadline" || key === "note" ? "только у этой отправки" : "своё у отправки"}</small>;
+  return <div className="shipment-docs">
+    {HEAD_FIELDS.map(([key, label]) => <label key={key}>{label}{hint(key)}<input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={inherited(key) ? "" : "пусто — из карточки проекта"} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}
+    <label>Условия доставки{hint("terms")}<select aria-label={`Условия доставки ${shipment.number}`} disabled={Boolean(busy)} value={draft.terms} onChange={(event) => setDraft({ ...draft, terms: event.target.value })} onBlur={() => save("terms")}><option value="">из карточки проекта</option><option>САМОВЫВОЗ</option><option>ДОСТАВКА ТК</option></select></label>
+    <label>Дедлайн{hint("deadline")}<input type="date" aria-label={`Дедлайн ${shipment.number}`} disabled={Boolean(busy)} value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} onBlur={() => save("deadline")} /></label>
+    <label>Комментарий{hint("note")}<input aria-label={`Комментарий ${shipment.number}`} disabled={Boolean(busy)} value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} onBlur={() => save("note")} /></label>
+  </div>;
 }
 
 interface BoxDraft { kind: string; dims: string; net: string; gross: string; seal: string; q: Record<string, string> }

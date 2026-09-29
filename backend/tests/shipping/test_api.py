@@ -332,6 +332,68 @@ def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api
     assert stored["version"] == 2
 
 
+def test_open_shipment_follows_project_card_until_closed_and_head_edit_overrides(shipping_api):
+    client = shipping_api
+    good = _queued_good(client)
+    card = client.put("/api/shipping/project-addressee", json={
+        "project": "591К.3", "shipping_point": "Москва", "contact": "Иванов", "terms": "САМОВЫВОЗ", "upd_type": "БУМАГА",
+    }).json()["addressee"]
+    shipment = client.post("/api/shipping/shipments", json={
+        "contact": "Петров", "lines": [{"good_id": good["id"], "quantity": "5"}],
+    }).json()["shipment"]
+    assert shipment["inherited"] == ["carrier", "phone", "receiver", "shipping_point", "terms", "upd_type"]
+    card = client.put("/api/shipping/project-addressee", json={
+        "project": "591К.3", "version": card["version"] + 1, "shipping_point": "Тула", "contact": "Сидоров",
+        "terms": "ДОСТАВКА ТК", "carrier": "ПЭК", "upd_type": "ЭДО", "receiver": "АО Получатель",
+    }).json()["addressee"]
+    followed = _shipment(client, shipment["id"])
+
+    assert (followed["shipping_point"], followed["terms"], followed["carrier"], followed["upd_type"], followed["receiver"]) == (
+        "Тула", "ДОСТАВКА ТК", "ПЭК", "ЭДО", "АО Получатель")
+    assert followed["contact"] == "Петров"
+
+    edited = client.put(f"/api/shipping/shipments/{shipment['id']}/head", json={
+        "version": followed["version"], "shipping_point": "Тула, ворота 3", "contact": "", "deadline": "2026-10-05",
+    })
+    assert edited.status_code == 200, edited.text
+    edited = edited.json()["shipment"]
+    assert (edited["shipping_point"], edited["contact"], edited["deadline"]) == ("Тула, ворота 3", "Сидоров", "2026-10-05")
+    assert "shipping_point" not in edited["inherited"] and "contact" in edited["inherited"]
+    documents = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
+        "version": edited["version"], "upd_type": "БУМАГА", "upd_number": "12",
+    }).json()["shipment"]
+    assert documents["upd_type"] == "БУМАГА" and "upd_type" not in documents["inherited"]
+    back = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
+        "version": documents["version"], "upd_type": None, "upd_number": "12",
+    }).json()["shipment"]
+    assert back["upd_type"] == "ЭДО"
+
+    client.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": card["version"], "shipping_point": "Калуга", "contact": "Орлов"})
+    later = _shipment(client, shipment["id"])
+    assert (later["shipping_point"], later["contact"]) == ("Тула, ворота 3", "Орлов")
+
+
+def test_closed_shipment_keeps_its_address_when_project_card_changes(shipping_api):
+    client = shipping_api
+    good = _stocked_good(client, "КБ1", "5")
+    card = client.put("/api/shipping/project-addressee", json={"project": "591К.3", "shipping_point": "Москва", "upd_type": "ЭДО"}).json()["addressee"]
+    shipment = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "5"}]}).json()["shipment"]
+    shipment = client.put(f"/api/shipping/shipments/{shipment['id']}/documents", json={
+        "version": shipment["version"], "upd_number": "1", "upd_url": "https://files.example/upd.pdf",
+    }).json()["shipment"]
+    closed = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]}).json()
+    assert closed["closed"] is True, closed
+    client.put("/api/shipping/project-addressee", json={"project": "591К.3", "version": card["version"], "shipping_point": "Тула"})
+    refused = client.put(f"/api/shipping/shipments/{shipment['id']}/head", json={"version": closed["shipment"]["version"], "contact": "Иванов"})
+
+    assert _shipment(client, shipment["id"])["shipping_point"] == "Москва"
+    assert refused.status_code == 422
+
+
+def _shipment(client, shipment_id):
+    return next(item for item in client.get("/api/shipping/shipments").json()["shipments"] if item["id"] == shipment_id)
+
+
 def test_first_shipment_without_card_requires_point_only_then_seeds_card(shipping_api):
     client = shipping_api
     good = _queued_good(client)

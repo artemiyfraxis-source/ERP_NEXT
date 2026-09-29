@@ -19,7 +19,7 @@ const shipment = {
   customer: "Заказчик", receiver: "Получатель", shipping_point: "Москва", contact: "", phone: "",
   terms: "САМОВЫВОЗ", carrier: "", deadline: "2026-09-01", upd_type: "ЭДО", upd_number: "", upd_date: null, upd_url: "",
   pl_number: "PL591К.3-1", dn_number: "DN591К.3-1", track_number: "", packed_at: "2026-09-22", shipped_at: null,
-  manager: "Менеджер", note: "", tk_note: "", places: 0, weight: "", boxes: [],
+  manager: "Менеджер", note: "", tk_note: "", places: 0, weight: "", boxes: [], inherited: ["receiver", "shipping_point"],
   lines: [{ id: "l1", good_id: "g1", project: "591К.3", item_index: "КБ1", article: "A-1", name: "Жгут", requested: "10", picked: "6", shortage: "4", unit: "шт", grn: "ГП.26.0000001" }],
 };
 
@@ -37,6 +37,11 @@ function stub(shipments: unknown[] = [], goods: unknown[] = [good]) {
     if (url === "/api/shipping/shipments/s1/ship") return json({ shipment, closed: true, why: "" });
     return json({ shipment: {} });
   }));
+}
+
+function lastSent(url: string, method = "POST") {
+  const call = vi.mocked(fetch).mock.calls.filter(([target, init]) => String(target) === url && init?.method === method).at(-1);
+  return call ? JSON.parse(String(call[1]?.body)) : undefined;
 }
 
 function sent(url: string, method = "POST") {
@@ -147,6 +152,28 @@ describe("ShippingPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Отгружено" }));
     expect(await screen.findByText("Отгружено и закрыто")).toBeInTheDocument();
+  });
+
+  it("edits the shipment head: own value is sent, emptied address field goes back to the project card", async () => {
+    stub([shipment]);
+    render(<ShippingPage principal={principal} />);
+    fireEvent.click(screen.getByRole("button", { name: "Отправки" }));
+    fireEvent.click(await screen.findByText("ОТГ-20260922-01"));
+    expect(screen.getAllByText("из карточки проекта").length).toBeGreaterThan(0);
+
+    const point = screen.getByLabelText("Адрес отгрузки ОТГ-20260922-01");
+    fireEvent.change(point, { target: { value: "Тула, ворота 3" } });
+    fireEvent.blur(point);
+    await waitFor(() => expect(sent("/api/shipping/shipments/s1/head", "PUT")).toEqual({ version: 3, shipping_point: "Тула, ворота 3" }));
+
+    const terms = screen.getByLabelText("Условия доставки ОТГ-20260922-01");
+    fireEvent.change(terms, { target: { value: "" } });
+    fireEvent.blur(terms);
+    await waitFor(() => expect(lastSent("/api/shipping/shipments/s1/head", "PUT")).toEqual({ version: 3, terms: null }));
+
+    fireEvent.change(screen.getByLabelText("Дата УПД"), { target: { value: "2026-09-30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить документы" }));
+    await waitFor(() => expect(sent("/api/shipping/shipments/s1/documents", "PUT")).toMatchObject({ version: 3, upd_date: "2026-09-30", upd_type: "ЭДО" }));
   });
 
   it("uploads the УПД file of a shipment and links it", async () => {
