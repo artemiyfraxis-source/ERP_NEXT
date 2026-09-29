@@ -27,7 +27,7 @@ from app.shared.http_auth import (
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab, gost_awg_map
-from app.modules.references.technology import TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord
+from app.modules.references.technology import TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, gost_awg_from_wire_table
 from app.workflows.techcard_build import enrich_terminal_norms
 
 from .application import (
@@ -528,7 +528,10 @@ def auto_build_project_etk(
             records = references_uow.tech_operations.list(
                 tab=TechOperationTab.TERMINAL, query="", limit=10_000,
             ) if metadata and metadata["schema_version"] == TECH_SNAPSHOT_SCHEMA_VERSION else ()
-            gost_awg = gost_awg_map(references_uow.references.list())
+            # SUPPLYMAP gostAwgMap_: the map comes from the СПР.КАБ AWG table; the stored map only when it is not loaded.
+            gost_awg = gost_awg_from_wire_table(record.fields for record in references_uow.tech_operations.list(
+                tab=TechOperationTab.KAB_AWG, query="", limit=1_000,
+            )) or gost_awg_map(references_uow.references.list())
         if metadata and metadata["schema_version"] == TECH_SNAPSHOT_SCHEMA_VERSION:
             config = enrich_terminal_norms(
                 config,
