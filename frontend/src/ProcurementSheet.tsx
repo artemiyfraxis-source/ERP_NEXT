@@ -64,26 +64,15 @@ export function ProcurementSheetView() {
     procurementApi.meta().then((meta) => setStatuses(meta.statuses)).catch(() => undefined);
   }, []);
 
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    void load(draft);
+  // Server-side отбор: status and buyer apply at once, the search on «Найти»/Enter — all in the table's own toolbar.
+  function apply(next: typeof draft) {
+    setDraft(next);
+    void load(next);
   }
 
   return (
     <section className="panel table-panel">
       <div className="panel-heading"><h2>Весь лист закупки</h2><span>Все статусы и закупщики, только просмотр</span></div>
-      <form className="inline-action" onSubmit={submit} aria-label="Отбор листа закупки">
-        <label>Поиск<input type="search" value={draft.q} onChange={(event) => setDraft({ ...draft, q: event.target.value })} placeholder="ID, наименование, поставщик, № заказа…" /></label>
-        <label>Статус<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
-          <option value="">все</option>
-          {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
-        </select></label>
-        <label>Закупщик<select value={draft.buyer} onChange={(event) => setDraft({ ...draft, buyer: event.target.value })}>
-          <option value="">все</option>
-          {buyers.map((buyer) => <option key={buyer} value={buyer}>{buyer}</option>)}
-        </select></label>
-        <button className="primary small" disabled={loading}>{loading ? "Загружаем…" : "Показать"}</button>
-      </form>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <DataTable
         label="Лист закупки"
@@ -93,6 +82,19 @@ export function ProcurementSheetView() {
         storageKey="procurement-sheet"
         exportName="Лист закупки"
         emptyText={loading ? "Загружаем…" : "Строк нет"}
+        onSearch={(q) => apply({ ...draft, q })}
+        searchLabel="Поиск"
+        searchPlaceholder="ID, наименование, поставщик, № заказа — «Найти» ищет по всему листу"
+        toolbar={<>
+          <select aria-label="Статус" value={draft.status} disabled={loading} onChange={(event) => apply({ ...draft, status: event.target.value })}>
+            <option value="">Статус: все</option>
+            {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+          </select>
+          <select aria-label="Закупщик" value={draft.buyer} disabled={loading} onChange={(event) => apply({ ...draft, buyer: event.target.value })}>
+            <option value="">Закупщик: все</option>
+            {buyers.map((buyer) => <option key={buyer} value={buyer}>{buyer}</option>)}
+          </select>
+        </>}
       />
       {cursor && (
         <button className="secondary" disabled={loading} onClick={() => void load(applied, cursor)}>

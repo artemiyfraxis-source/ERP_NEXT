@@ -84,11 +84,12 @@ it("adds a missing coax connector to БД.КОАКС through the references reco
 
   expect(await screen.findByRole("tab", { name: "КОАКС", selected: true })).toBeInTheDocument();
   expect(screen.getByText("⚠ «SMA-J» нет в БД.КОАКС — добавьте ниже")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("d1 A"), { target: { value: "0,51" } });
+  expect(screen.queryByLabelText("d1 A")).toBeNull();
+  fireEvent.change(screen.getByLabelText("l1 A"), { target: { value: "4" } });
   fireEvent.click(screen.getByRole("button", { name: "Добавить в БД.КОАКС" }));
 
   await waitFor(() => expect(created).toEqual({ tab: "coax", fields: {
-    coaxArticle: "SMA-J", coaxWire: "RG316", d1: "0,51", pinType: "пайка", shieldType: "обжим", connArticle: "SMA-J",
+    coaxArticle: "SMA-J", coaxWire: "RG316", l1: "4", pinType: "пайка", shieldType: "обжим", connArticle: "SMA-J",
   } }));
 });
 

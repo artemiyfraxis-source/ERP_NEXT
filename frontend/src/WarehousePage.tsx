@@ -141,7 +141,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       <p className="page-sub">Остаток считается из движений, поэтому на вопрос «почему столько» отвечает история, а не догадка.</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
-      <div className="filters">
+      <div className="action-row">
         {!readOnly && <>
         <button className="primary compact" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>
         <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => { setMoveLot(null); setMoveOpen(true); }}>↔ Переместить</button>
@@ -155,7 +155,9 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         </>}
         {admin && <button className="secondary compact" onClick={() => { setJournalQuery(""); setPanel((value) => value === "journal" ? "" : "journal"); }}>Журнал склада</button>}
         {!readOnly && <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>Лист перемещения</button>}
-        <input className="search" aria-label="Поиск по складу" placeholder="Поиск: артикул, серия, место, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
+      </div>
+      <div className="filters table-toolbar">
+        <input className="search stock-search" aria-label="Поиск по складу" placeholder="Поиск: артикул, серия, место, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
         </select>
@@ -163,7 +165,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           <option value="">Без группировки</option><option value="type">По типу</option><option value="place">По месту (полка)</option><option value="name">По наименованию</option><option value="series">По серии</option>
         </select>
         <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />С нулевым остатком</label>
-        <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
+        <button className="secondary compact toolbar-end" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
       </div>
       <datalist id="warehouse-item-types">{typeChoices.map((type) => <option key={type} value={type} />)}</datalist>
       {panel === "types" && <ItemTypesPanel
