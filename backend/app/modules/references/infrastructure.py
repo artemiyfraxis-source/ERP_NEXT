@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Index, Integer, JSON, String, Text, Uuid, delete, func, select
+from sqlalchemy import Boolean, DateTime, Index, Integer, JSON, String, Text, Uuid, delete, false as sa_false, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
@@ -38,6 +38,8 @@ class TechOperationRecordRow(Base):
     source_sheet: Mapped[str] = mapped_column(String(255), nullable=False)
     sort_key: Mapped[str] = mapped_column(String(2000), nullable=False)
     fields: Mapped[dict] = mapped_column(JSON, nullable=False)
+    mirror_key: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    edited_in_erp: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
 
 
 class TechOperationSnapshotRow(Base):
@@ -66,7 +68,7 @@ class SqlAlchemyTechOperationRepository:
     def __init__(self, session: Session): self.session = session
     @staticmethod
     def _domain(row: TechOperationRecordRow) -> TechOperationRecord:
-        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields)
+        return TechOperationRecord(row.id, TechOperationTab(row.tab), row.display_text, row.normalized_search, row.source_sheet, row.sort_key, row.fields, row.mirror_key, row.edited_in_erp)
     def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> list[TechOperationRecord]:
         statement = select(TechOperationRecordRow)
         if tab is not None: statement = statement.where(TechOperationRecordRow.tab == tab.value)
@@ -83,14 +85,31 @@ class SqlAlchemyTechOperationRepository:
         row.tab = record.tab.value; row.display_text = record.display_text
         row.normalized_search = record.normalized_search; row.source_sheet = record.source_sheet
         row.sort_key = record.sort_key; row.fields = dict(record.fields)
-    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = ()) -> None:
+        row.mirror_key = record.mirror_key; row.edited_in_erp = record.edited_in_erp
+    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]:
+        """Replaces the records of every tab not in `keep_tabs`. With `preserve_erp_edits` the rows edited/created in
+        ERP stay untouched and a mirror record whose `mirror_key` belongs to an edited row is not inserted again;
+        returns {tab: skipped mirror records}."""
+        skipped: dict[str, int] = {}
+        scope = TechOperationRecordRow.tab.not_in([tab.value for tab in keep_tabs]) if keep_tabs else None
         statement = delete(TechOperationRecordRow)
-        if keep_tabs: statement = statement.where(TechOperationRecordRow.tab.not_in([tab.value for tab in keep_tabs]))
+        if scope is not None: statement = statement.where(scope)
+        if preserve_erp_edits:
+            statement = statement.where(TechOperationRecordRow.edited_in_erp.is_(False))
+            protected = {(row.tab, row.mirror_key) for row in self.session.execute(
+                select(TechOperationRecordRow.tab, TechOperationRecordRow.mirror_key).where(TechOperationRecordRow.edited_in_erp.is_(True), TechOperationRecordRow.mirror_key != ""))}
+            kept = []
+            for record in records:
+                if (record.tab.value, record.mirror_key) in protected:
+                    skipped[record.tab.value] = skipped.get(record.tab.value, 0) + 1
+                else:
+                    kept.append(record)
+            records = tuple(kept)
         self.session.execute(statement)
         self.session.add_all(TechOperationRecordRow(
             id=record.id, tab=record.tab.value, display_text=record.display_text,
             normalized_search=record.normalized_search, source_sheet=record.source_sheet,
-            sort_key=record.sort_key, fields=record.fields,
+            sort_key=record.sort_key, fields=record.fields, mirror_key=record.mirror_key, edited_in_erp=False,
         ) for record in records)
         meta = self.session.get(TechOperationSnapshotRow, "current")
         if meta is None: meta = TechOperationSnapshotRow(name="current"); self.session.add(meta)
@@ -98,8 +117,9 @@ class SqlAlchemyTechOperationRepository:
         meta.imported_at = imported_at
         meta.record_count = len(records)
         self.session.flush()
-        if keep_tabs:  # rows of БД.ПРОВ / БД.МАТ that this snapshot did not touch still count
+        if keep_tabs or preserve_erp_edits:  # rows this snapshot did not touch still count
             meta.record_count = self.session.scalar(select(func.count()).select_from(TechOperationRecordRow)) or 0
+        return skipped
     def metadata(self) -> dict | None:
         row = self.session.get(TechOperationSnapshotRow, "current")
         if row is None: return None
