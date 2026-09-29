@@ -23,7 +23,7 @@ it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order", () => {
 
 it("shows the administrator every block with SUPPLYMAP's cards in order, ERP-only sections in place", () => {
   expect(layout(as("admin", ALL_EDIT))).toEqual({
-    "Производство": ["Проекты", "Техкарты проектов", "Шаблоны техкарт", "Справочник", "Ресурсное планирование", "Задания"],
+    "Производство": ["Проекты", "Шаблоны техкарт", "Справочник", "Ресурсное планирование", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
@@ -105,7 +105,8 @@ it("does not open procurement on a grant alone when the role is outside its set"
 });
 
 it("opens techcards, templates and the reference book by their own keys to any role (ID-3)", () => {
-  expect(layout(as("staff", { techcards: "view" }))["Производство"]).toEqual(["Техкарты проектов"]);
+  // The ЭТК screen opens from the project card, as in SUPPLYMAP — no card or menu item of its own.
+  expect(layout(as("staff", { techcards: "view" }))["Производство"]).toBeUndefined();
   expect(layout(as("master", { erptctpl: "view" }))["Производство"]).toEqual(["Шаблоны техкарт"]);
   expect(layout(as("pm", { erpref: "view" }))["Производство"]).toEqual(["Справочник"]);
   // The generator has no card of its own (SUPPLYMAP: a right, not a screen).

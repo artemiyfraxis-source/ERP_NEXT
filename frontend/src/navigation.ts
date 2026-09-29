@@ -22,6 +22,9 @@ export interface NavItem {
   minimum?: AccessMode;
   roles?: string[];
   block?: BlockId;
+  /** A screen opened from another section, not a card or menu item of its own: SUPPLYMAP opens the ЭТК inside
+   *  «Проекты» (hub 'tc'), so the menu highlights that section instead. */
+  within?: Section;
 }
 
 export const BLOCKS: Array<{ id: BlockId; icon: string; title: string; sub: string }> = [
@@ -44,7 +47,9 @@ export const NAV: NavItem[] = [
   // Product cards with ETKs: in SUPPLYMAP they live inside «Проекты» (kit · generator · ready TCs). Here they are a
   // native screen of their own, so they sit next to «Проекты» instead of merging.
   // ID-3 (SUPPLYMAP PORTAL_SECTIONS_): each card has its own key and no role list — the matrix alone decides.
-  { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", block: "prod" },
+  // SUPPLYMAP has no «Техкарты проектов» card: the ЭТК opens from the project card (Portal.gs: «Проекты» =
+  // состав · спецификация · генератор · готовые ТК). The screen stays, reached from «Проекты» and the plan.
+  { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", block: "prod", within: "projects" },
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "prod" },
   { id: "references", label: "Справочник", sub: "операции · оборудование · терминалы · провода · материалы", permission: "erpref", block: "prod" },
   { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", roles: ["master", "prodhead", "management", "qc", "admin"], block: "prod" },
@@ -98,7 +103,7 @@ export function visibleNav(principal: Principal) {
 export function visibleBlocks(principal: Principal) {
   const items = visibleNav(principal);
   return BLOCKS
-    .map((block) => ({ ...block, items: items.filter((item) => item.block === block.id) }))
+    .map((block) => ({ ...block, items: items.filter((item) => item.block === block.id && !item.within) }))
     .filter((block) => block.items.length > 0);
 }
 
