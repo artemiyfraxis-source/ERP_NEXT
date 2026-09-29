@@ -23,6 +23,11 @@ from .domain import (
     create_request_batch,
     build_procurement_requested_snapshot,
     ensure_projects_registered,
+    CALC_MAX_COLUMNS,
+    CalcItem,
+    calc_project,
+    parse_zpk,
+    spreadsheet_id_from_url,
 )
 
 
@@ -75,6 +80,59 @@ class ProjectRegistry(Protocol):
     """
 
     def open_projects(self) -> Sequence[str] | None: ...
+
+
+class CalcSheetError(RuntimeError):
+    """The calculation spreadsheet could not be read; ``message`` is shown to the user as is.
+
+    ``kind``: ``config`` — reading by link is not configured on this server; ``access`` — the sheet is
+    not shared with the service account (or does not exist); ``unsupported`` — the link is not a
+    native Google Sheet; ``upstream`` — Google did not answer.
+    """
+
+    def __init__(self, message: str, kind: str = "upstream"):
+        super().__init__(message)
+        self.kind = kind
+
+
+@dataclass(frozen=True)
+class CalcSpreadsheet:
+    """What `extractFromCalc` reads from a calculation file: its title, ЗКП display values, ЗКЗ!B2.
+
+    ``zpk_grid`` is ``None`` when the file has no «ЗКП» sheet; ``project_cell`` is '' without «ЗКЗ».
+    """
+
+    title: str
+    zpk_grid: list[list[str]] | None
+    project_cell: str = ""
+
+
+class CalcSpreadsheetReader(Protocol):
+    """Port to Google Sheets: reads one calculation spreadsheet by id (display values, as GAS)."""
+
+    def read_calc(self, spreadsheet_id: str) -> CalcSpreadsheet: ...
+
+
+@dataclass(frozen=True)
+class CalcExtract:
+    project: str
+    items: list[CalcItem]
+
+
+def extract_from_calc(url: str, reader: CalcSpreadsheetReader) -> CalcExtract:
+    """`extractFromCalc(url)`: the ЗКП sheet of the linked calculation → positions + project.
+
+    Wording of the refusals is SUPPLYMAP's; the sheet is read up to 20 columns, the project comes
+    from ЗКЗ!B2, falling back to the file name without «Расчёт».
+    """
+    spreadsheet_id = spreadsheet_id_from_url(url)
+    if not spreadsheet_id:
+        raise ValidationError("Не похоже на ссылку Google Таблицы")
+    sheet = reader.read_calc(spreadsheet_id)
+    if sheet.zpk_grid is None:
+        raise ValidationError("В таблице нет листа «ЗКП»")
+    grid = [[cell or "" for cell in row[:CALC_MAX_COLUMNS]] for row in sheet.zpk_grid]
+    return CalcExtract(project=calc_project(sheet.project_cell, sheet.title), items=parse_zpk(grid))
 
 
 class AppendOnlyRepository(Protocol):
