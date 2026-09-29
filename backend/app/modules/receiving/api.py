@@ -21,17 +21,24 @@ from .application import (
     InspectReceivingCommand,
     OpenVkRevisionCommand,
     PlaceReceivingCommand,
+    StockBalanceLookup,
+    SupplierReturnCommand,
+    SupplierReturnItem,
     UnitOfWork,
     inspect_receiving,
     build_putaway_print_sheet,
     open_vk_revision,
     place_receiving,
     receiving_queue,
+    return_to_supplier,
+    supplier_return_candidates,
 )
 from .domain import (
     InspectionInput,
     ReceivingLine,
     ReceivingValidationError,
+    SUPPLIER_RETURN_REASONS,
+    SupplierReturnMode,
     verdict_reference_date,
 )
 
@@ -73,6 +80,28 @@ class VersionPayload(BaseModel):
 class PlacementPayload(BaseModel):
     version: int = Field(ge=1)
     storage_location: str = Field(min_length=3, max_length=16)
+
+
+class SupplierReturnItemPayload(BaseModel):
+    id: UUID
+    version: int = Field(ge=1)
+    # Empty → КОЛ-ВО ФАКТ of the line (SupplierReturn.gs: `it.qty` or the line's own quantity).
+    quantity: Quantity | None = None
+
+
+class SupplierReturnPayload(BaseModel):
+    items: list[SupplierReturnItemPayload] = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=255)
+    mode: SupplierReturnMode
+    claim: str = Field(default="", max_length=255)
+    comment: str = Field(default="", max_length=1000)
+
+
+def receiving_stock_lookup(request: Request) -> StockBalanceLookup:
+    lookup = getattr(request.app.state, "receiving_stock_lookup", None)
+    if lookup is None:
+        raise HTTPException(status_code=503, detail="Склад ERP не подключён")
+    return lookup
 
 
 def receiving_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -121,6 +150,8 @@ def _result(line: ReceivingLine) -> dict:
         "warehouse_event_emitted": line.warehouse_event_emitted,
         "inspected_on": line.inspected_on.isoformat() if line.inspected_on else None,
         "revision_of_id": str(line.revision_of_id) if line.revision_of_id else None,
+        "nonconformity_description": line.nonconformity_description,
+        "supplier_returns": line.supplier_returns,
     }
 
 
@@ -166,6 +197,70 @@ def putaway_sheet_endpoint(
     каждая строка уходит через POST /{line_id}/place."""
     sheet = _run(lambda: build_putaway_print_sheet(uow_factory(), now))
     return {"sheet": sheet.to_dict()}
+
+
+@router.get("/supplier-return")
+def supplier_return_list(
+    _principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+    stock: Annotated[StockBalanceLookup, Depends(receiving_stock_lookup)],
+) -> dict:
+    """RC-6 (SupplierReturn.gs supplierReturnRows_): принятые позиции и что по их ГРН лежит на складе."""
+    lines = _run(lambda: supplier_return_candidates(uow_factory()))
+    candidates = []
+    for line in lines:
+        lot = (
+            stock.lot_balance(line.grn, line.package)
+            if line.grn and line.warehouse_event_emitted
+            else None
+        )
+        candidates.append({
+            **_result(line),
+            "stock_warehouse": lot.warehouse if lot else None,
+            "stock_balance": _decimal(lot.balance) if lot else None,
+        })
+    return {
+        "lines": candidates,
+        "reasons": list(SUPPLIER_RETURN_REASONS),
+        "modes": {mode.value: label for mode, label in (
+            (SupplierReturnMode.WAIT, "Ждём замену — строка снова «В пути»"),
+            (SupplierReturnMode.CLOSE, "Заказ закрыт — «Возврат»"),
+        )},
+    }
+
+
+@router.post("/supplier-return")
+def supplier_return(
+    payload: SupplierReturnPayload,
+    principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+    stock: Annotated[StockBalanceLookup, Depends(receiving_stock_lookup)],
+) -> dict:
+    result = _run(
+        lambda: return_to_supplier(
+            SupplierReturnCommand(
+                items=tuple(
+                    SupplierReturnItem(line_id=item.id, expected_version=item.version, quantity=item.quantity)
+                    for item in payload.items
+                ),
+                reason=payload.reason,
+                mode=payload.mode,
+                claim=payload.claim,
+                comment=payload.comment,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+            stock,
+        )
+    )
+    return {
+        "lines": [_result(line) for line in result.lines],
+        "writeoffs": result.writeoffs,
+        "notes": list(result.notes),
+        "message": result.message,
+    }
 
 
 @router.post("/{line_id}/inspect")

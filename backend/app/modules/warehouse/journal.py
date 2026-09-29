@@ -23,8 +23,14 @@ JOURNAL_LIMIT = 400  # STOCK05_LOG_LIMIT_: the rest is reached by narrowing the 
 # The same movement already sits in warehouse_writeoffs: listing the audit event too would double it.
 MIRRORED_BY_WRITEOFFS = frozenset({
     "warehouse.written_off", "warehouse.writeoff_returned", "warehouse.legacy_writeoff_history",
+    "warehouse.returned_to_supplier",
 })
-WRITEOFF_KIND_LABELS = {"writeoff": "Списание", "return": "Возврат", "issue": "Выдача"}
+WRITEOFF_KIND_LABELS = {
+    "writeoff": "Списание",
+    "return": "Возврат",
+    "issue": "Выдача",
+    "supplier_return": "Возврат поставщику",
+}
 
 
 @dataclass(frozen=True)

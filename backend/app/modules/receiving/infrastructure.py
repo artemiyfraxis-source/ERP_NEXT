@@ -77,6 +77,8 @@ class ReceivingLineRow(Base):
         Uuid(as_uuid=True), ForeignKey("receiving_lines.id", ondelete="RESTRICT")
     )
     revision_root_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    nonconformity_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    supplier_returns: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -124,6 +126,8 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         inspected_on=line.inspected_on,
         revision_of_id=line.revision_of_id,
         revision_root_id=line.revision_root_id,
+        nonconformity_description=line.nonconformity_description,
+        supplier_returns=line.supplier_returns,
     )
 
 
@@ -175,6 +179,8 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         inspected_on=row.inspected_on,
         revision_of_id=row.revision_of_id,
         revision_root_id=row.revision_root_id,
+        nonconformity_description=row.nonconformity_description or "",
+        supplier_returns=row.supplier_returns or 0,
     )
 
 
@@ -238,6 +244,15 @@ class SqlAlchemyReceivingRepository:
                 ReceivingLineRow.storage_location.is_(None),
                 ReceivingLineRow.warehouse_event_emitted.is_(False),
             )
+            .order_by(ReceivingLineRow.created_at, ReceivingLineRow.id)
+            .limit(limit)
+        )
+        return [_domain(row) for row in rows]
+
+    def by_status(self, status: ReceivingStatus, limit: int = 500) -> list[ReceivingLine]:
+        rows = self.session.scalars(
+            select(ReceivingLineRow)
+            .where(ReceivingLineRow.status == status.value)
             .order_by(ReceivingLineRow.created_at, ReceivingLineRow.id)
             .limit(limit)
         )

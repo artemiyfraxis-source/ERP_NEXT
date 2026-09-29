@@ -24,7 +24,9 @@ from .domain import (
     ReceivingStatus,
     QUARANTINE_WORKDAYS,
     ReceivingValidationError,
+    SupplierReturnMode,
     create_line_from_expected,
+    supplier_return_basis,
     latest_overdue_inspection_date,
     quarantine_notify_targets,
     NOTIFY_SUPPLY,
@@ -76,9 +78,26 @@ class ReceivingRepository(Protocol):
     ) -> Sequence[ReceivingLine]: ...
     def waiting_inspected_by(self, day: date, limit: int = 200) -> Sequence[ReceivingLine]: ...
     def awaiting_placement(self, limit: int = 500) -> Sequence[ReceivingLine]: ...
+    def by_status(self, status: ReceivingStatus, limit: int = 500) -> Sequence[ReceivingLine]: ...
     def all_grns(self) -> Sequence[str]: ...
     def legacy_ids_starting_with(self, prefix: str) -> Sequence[str]: ...
     def add(self, line: ReceivingLine) -> None: ...
+
+
+@dataclass(frozen=True)
+class StockLotBalance:
+    """What the warehouse holds for one ГРН + ПАКЕТ, as a supplier return sees it."""
+
+    warehouse: str
+    balance: Decimal
+    unit: str = ""
+
+
+class StockBalanceLookup(Protocol):
+    """Read-only port into the Warehouse module (SupplierReturn.gs warehouseGrnInfo_): the lot of a
+    ГРН + ПАКЕТ in either warehouse, None when it is not on stock."""
+
+    def lot_balance(self, grn: str, package: str) -> StockLotBalance | None: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -137,6 +156,153 @@ class OpenVkRevisionCommand:
     expected_version: int
     actor: Actor
     now: datetime
+
+
+@dataclass(frozen=True)
+class SupplierReturnItem:
+    line_id: UUID
+    expected_version: int
+    quantity: Decimal | None = None  # empty → КОЛ-ВО ФАКТ of the line
+
+
+@dataclass(frozen=True)
+class SupplierReturnCommand:
+    items: tuple[SupplierReturnItem, ...]
+    reason: str
+    mode: SupplierReturnMode
+    actor: Actor
+    now: datetime
+    claim: str = ""
+    comment: str = ""
+
+
+@dataclass(frozen=True)
+class SupplierReturnResult:
+    lines: tuple[ReceivingLine, ...]
+    writeoffs: int
+    notes: tuple[str, ...]
+
+    @property
+    def message(self) -> str:
+        """The report SupplierReturn.gs gives back: what went back, what the warehouse will write off, warnings."""
+        if not self.lines:
+            return ""
+        status = self.lines[0].status.value
+        done = ", ".join(
+            f"{line.name or line.legacy_id}" + (f" ({line.grn})" if line.grn else "") for line in self.lines
+        )
+        text = f"Возврат оформлен ({len(self.lines)}): {done}. Статус приёмки → «{status}»"
+        if self.writeoffs:
+            text += f"; списаний со склада: {self.writeoffs}"
+        return text + (f". Внимание: {'; '.join(self.notes)}" if self.notes else ".")
+
+
+def _quantity_text(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def return_to_supplier(
+    command: SupplierReturnCommand,
+    uow: UnitOfWork,
+    stock: StockBalanceLookup,
+) -> SupplierReturnResult:
+    """SupplierReturn.gs supplierReturnApply_: построчный возврат пачкой по одной поставке.
+
+    Each accepted line changes status and gets the basis in ОПИСАНИЕ НЕСООТВ.; when its lot lies on
+    stock with enough balance, the warehouse is asked to write the returned quantity off
+    (`warehouse.supplier_return_requested`, same transaction). A line whose lot is not on stock (not
+    placed yet, no ГРН) is returned in receiving only and the report says so. A line no longer
+    «Принято» is skipped with a note; nothing done at all is an error."""
+    if not command.items:
+        raise ReceivingValidationError("Не выбрано ни одной позиции.")
+    basis = supplier_return_basis(command.reason, command.claim, command.comment)
+    done: list[ReceivingLine] = []
+    notes: list[str] = []
+    writeoffs = 0
+    with uow:
+        for item in command.items:
+            current = uow.receiving.get(item.line_id)
+            if current is None:
+                raise KeyError(f"Receiving line not found: {item.line_id}")
+            if current.version != item.expected_version:
+                raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
+            label = current.name or current.legacy_id
+            if current.status is not ReceivingStatus.ACCEPTED:
+                notes.append(f"{label}: статус уже «{current.status.value}» — пропущена")
+                continue
+            quantity = item.quantity
+            if quantity is None:
+                quantity = current.fact_quantity or current.accepted_quantity
+            if quantity is None or quantity <= 0:
+                notes.append(f"{label}: не удалось определить кол-во — пропущена")
+                continue
+            returned = current.return_to_supplier(
+                reason=command.reason, mode=command.mode, claim=command.claim, comment=command.comment
+            )
+            written_off = False
+            if not current.grn:
+                notes.append(f"{label}: ГРН не присвоен — складской проводки нет, только статус приёмки")
+            else:
+                lot = stock.lot_balance(current.grn, current.package) if current.warehouse_event_emitted else None
+                if lot is None:
+                    notes.append(f"{label}: на складе партии {current.grn} нет (ещё не разложена) — снимать нечего")
+                elif quantity > lot.balance:
+                    notes.append(
+                        f"{label}: склад — больше остатка (есть {_quantity_text(lot.balance)}), списание не поставлено"
+                    )
+                else:
+                    uow.outbox.add(
+                        OutboxMessage(
+                            id=uuid4(),
+                            topic="warehouse.supplier_return_requested",
+                            idempotency_key=f"receiving:{current.id}:supplier-return:{returned.supplier_returns}",
+                            created_at=command.now,
+                            payload={
+                                "receiving_line_id": str(current.id),
+                                "legacy_id": current.legacy_id,
+                                "warehouse": lot.warehouse,
+                                "grn": current.grn,
+                                "package": current.package,
+                                "quantity": str(quantity),
+                                "reason": basis,
+                                "supplier": current.supplier,
+                                "actor_id": str(command.actor.id),
+                                "actor_name": command.actor.name,
+                            },
+                        )
+                    )
+                    written_off = True
+                    writeoffs += 1
+            uow.receiving.add(returned)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=returned.id,
+                    event_type="receiving.returned_to_supplier",
+                    actor=command.actor,
+                    occurred_at=command.now,
+                    details={
+                        "legacy_id": returned.legacy_id,
+                        "from_status": current.status.value,
+                        "to_status": returned.status.value,
+                        "quantity": str(quantity),
+                        "basis": basis,
+                        "grn": current.grn,
+                        "warehouse_writeoff": written_off,
+                    },
+                )
+            )
+            done.append(returned)
+        if not done:
+            raise ReceivingValidationError("Ни одна позиция не оформлена. " + "; ".join(notes))
+        uow.commit()
+    return SupplierReturnResult(lines=tuple(done), writeoffs=writeoffs, notes=tuple(notes))
+
+
+def supplier_return_candidates(uow: UnitOfWork, *, limit: int = 500) -> list[ReceivingLine]:
+    """SupplierReturn.gs supplierReturnRows_: строки «Принято» — товар уже у нас."""
+    with uow:
+        return list(uow.receiving.by_status(ReceivingStatus.ACCEPTED, limit))
 
 
 def consume_receiving_expected(message: OutboxMessage, uow: UnitOfWork) -> ReceivingLine:
@@ -204,6 +370,9 @@ def dispatch_next_receiving_expected(now: datetime, uow: UnitOfWork) -> Receivin
 def _warehouse_payload(line: ReceivingLine) -> dict:
     return {
         "receiving_line_id": str(line.id),
+        # The lot counts each receipt once by this id; a replacement after a «wait» supplier return is a
+        # new receipt of the same line (RC-6), so it gets its own.
+        "receipt_id": f"{line.id}:r{line.supplier_returns}" if line.supplier_returns else str(line.id),
         "legacy_id": line.legacy_id,
         "warehouse": line.warehouse,
         "grn": line.grn,
@@ -225,7 +394,7 @@ def _warehouse_payload(line: ReceivingLine) -> dict:
 def _emit_warehouse_if_ready(line: ReceivingLine, uow: UnitOfWork, actor: Actor, now: datetime) -> ReceivingLine:
     if not line.ready_for_warehouse:
         return line
-    key = f"receiving:{line.id}:warehouse"
+    key = line.warehouse_event_key
     if uow.outbox.by_idempotency_key(key) is None:
         uow.outbox.add(
             OutboxMessage(

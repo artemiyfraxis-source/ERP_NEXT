@@ -53,6 +53,36 @@ TECHNOLOGIST_NONCONFORMITIES = {MECHANICAL_DAMAGE}
 NOTIFY_TECHNOLOGIST = "Технолог"
 NOTIFY_SUPPLY = "Снабжение"
 
+# SupplierReturn.gs:15-22 — причины возврата поставщику. Первые три — литералы характера несоответствия
+# входного контроля: возврат по браку продолжает ВК, и формулировки должны совпадать с актами.
+SUPPLIER_RETURN_REASONS = (
+    MECHANICAL_DAMAGE,
+    WRONG_ITEM,
+    EXPIRED,
+    "Пересорт / несоответствие спецификации",
+    "Не нужна — возврат из-за брака основной позиции",
+    "Отказ от поставки (иное)",
+)
+SUPPLIER_RETURN_DISPOSITION = "Возврат поставщику"
+
+
+class SupplierReturnMode(str, Enum):
+    """SupplierReturn.gs:24-26: ждём замену → строка снова «В пути»; заказ закрыт → «Возврат»."""
+
+    WAIT = "wait"
+    CLOSE = "close"
+
+
+def supplier_return_basis(reason: str, claim: str = "", comment: str = "") -> str:
+    """SupplierReturn.gs supplierReturnBasis_: одна строка для журнала склада и ОПИСАНИЯ НЕСООТВ."""
+    claim_text = str(claim or "").strip()
+    comment_text = str(comment or "").strip()
+    return (
+        f"Возврат поставщику: {str(reason or '').strip()}"
+        + (f" · претензия {claim_text}" if claim_text else "")
+        + (f" · {comment_text}" if comment_text else "")
+    )
+
 
 def workdays_between(start: date, end: date) -> int:
     """Full Mon–Fri days after ``start`` up to and including ``end``; holidays ignored (Schema.gs:564)."""
@@ -275,6 +305,11 @@ class ReceivingLine:
     inspected_on: date | None = None
     revision_of_id: UUID | None = None
     revision_root_id: UUID | None = None
+    # ОПИСАНИЕ НЕСООТВ.: free text of the nonconformity; a supplier return appends its basis here.
+    nonconformity_description: str = ""
+    # How many supplier returns the line went through; a «wait» return re-opens the line for the
+    # replacement, whose own hand-over to the warehouse needs a fresh outbox key.
+    supplier_returns: int = 0
 
     @property
     def lineage_root_id(self) -> UUID:
@@ -432,6 +467,47 @@ class ReceivingLine:
             revision_root_id=self.lineage_root_id,
         )
         return archived, revision
+
+    def return_to_supplier(
+        self,
+        *,
+        reason: str,
+        mode: SupplierReturnMode,
+        claim: str = "",
+        comment: str = "",
+    ) -> ReceivingLine:
+        """SupplierReturn.gs supplierReturnApply_: an accepted line goes back to the supplier.
+
+        РЕШЕНИЕ becomes «Возврат поставщику», the basis is appended to ОПИСАНИЕ НЕСООТВ.; «close» ends the
+        order («Возврат»), «wait» puts the line back «В пути» for the replacement and lets its next
+        acceptance reach the warehouse again (supplierReturnFreePushed_)."""
+        if self.status is not ReceivingStatus.ACCEPTED:
+            raise ReceivingValidationError(
+                f"Вернуть поставщику можно только принятую позицию (статус «{self.status.value}»)"
+            )
+        reason_text = str(reason or "").strip()
+        if not reason_text:
+            raise ReceivingValidationError("Укажи причину возврата.")
+        if reason_text not in SUPPLIER_RETURN_REASONS:
+            raise ReceivingValidationError("Неизвестная причина возврата")
+        basis = supplier_return_basis(reason_text, claim, comment)
+        previous = self.nonconformity_description.strip()
+        wait = mode is SupplierReturnMode.WAIT
+        return replace(
+            self,
+            status=ReceivingStatus.IN_TRANSIT if wait else ReceivingStatus.RETURN,
+            version=self.version + 1,
+            disposition=SUPPLIER_RETURN_DISPOSITION,
+            nonconformity_description=f"{previous}; {basis}" if previous else basis,
+            supplier_returns=self.supplier_returns + 1,
+            warehouse_event_emitted=False if wait else self.warehouse_event_emitted,
+        )
+
+    @property
+    def warehouse_event_key(self) -> str:
+        """Outbox key of the hand-over to the warehouse; each replacement after a «wait» return has its own."""
+        base = f"receiving:{self.id}:warehouse"
+        return f"{base}:r{self.supplier_returns}" if self.supplier_returns else base
 
     @property
     def ready_for_warehouse(self) -> bool:

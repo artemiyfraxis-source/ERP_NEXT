@@ -12,6 +12,7 @@
     "procurement article follows the receiving line into warehouse stock",
     "manufacturer series is recorded during incoming control and remains distinct from GRN",
     "first inspection shortfall of a paid line becomes a -Д procurement backorder",
-    "unit mass weighed at incoming control as 1, 10 or 100 pieces and the expiry date follow the line into warehouse stock"
+    "unit mass weighed at incoming control as 1, 10 or 100 pieces and the expiry date follow the line into warehouse stock",
+    "an accepted line returns to the supplier as one act per line with a shared reason: status «Возврат» or back «В пути» for a replacement, the returned quantity is written off its ГРН + ПАКЕТ lot only when the lot is on stock"
   ]
 }

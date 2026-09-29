@@ -221,3 +221,63 @@ it("ID-6: view mode shows the queue without inspection, placement or a new ВК"
   expect(screen.queryByRole("button", { name: "Провести новый ВК" })).not.toBeInTheDocument();
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 });
+
+it("returns an accepted line to the supplier with a shared reason and the chosen quantity", async () => {
+  const accepted = {
+    ...line,
+    status: "Принято",
+    version: 5,
+    grn: "FRX.26.0000001",
+    fact_quantity: "10",
+    accepted_quantity: "10",
+    warehouse_event_emitted: true,
+    storage_location: "1F4",
+    stock_warehouse: "ЦАР",
+    stock_balance: "10",
+  };
+  let sent: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [accepted] });
+    if (path === "/api/receiving/supplier-return" && init?.method === "POST") {
+      sent = JSON.parse(String(init.body));
+      return json({ lines: [{ ...accepted, status: "Возврат" }], writeoffs: 1, notes: [], message: "Возврат оформлен (1): Разъём (FRX.26.0000001). Статус приёмки → «Возврат»; списаний со склада: 1." });
+    }
+    if (path === "/api/receiving/supplier-return") {
+      return json({
+        lines: [accepted],
+        reasons: ["Механическое повреждение / брак", "Отказ от поставки (иное)"],
+        modes: { wait: "Ждём замену — строка снова «В пути»", close: "Заказ закрыт — «Возврат»" },
+      });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Возврат поставщику" }));
+  fireEvent.click(await screen.findByLabelText("Вернуть SM-20260921-01"));
+  expect(screen.getByText("10 шт · ЦАР")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Количество SM-20260921-01"), { target: { value: "4" } });
+  fireEvent.change(screen.getByLabelText("Причина"), { target: { value: "Механическое повреждение / брак" } });
+  fireEvent.change(screen.getByLabelText("№ претензии"), { target: { value: "П-17" } });
+  fireEvent.click(screen.getByLabelText("Ждём замену — строка снова «В пути»"));
+  fireEvent.click(screen.getByRole("button", { name: "Оформить возврат (1)" }));
+
+  await screen.findByText(/Возврат оформлен \(1\)/);
+  expect(sent).toEqual({
+    items: [{ id: accepted.id, version: 5, quantity: "4" }],
+    reason: "Механическое повреждение / брак",
+    mode: "wait",
+    claim: "П-17",
+    comment: "",
+  });
+});
+
+it("hides the supplier return in view mode", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [line] }));
+
+  render(<ReceivingPage readOnly />);
+
+  await screen.findByText(/SM-20260921-01/);
+  expect(screen.queryByRole("button", { name: "Возврат поставщику" })).toBeNull();
+});

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { receivingApi, type ReceivingLine } from "./api";
+import { SupplierReturnPanel } from "./SupplierReturnPanel";
 
 const MANUAL_CHECKS = [
   "Механическое повреждение / брак",
@@ -14,6 +15,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [returning, setReturning] = useState(false);
 
   async function reload(after?: string) {
     if (loading || busy) return;
@@ -89,9 +91,13 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     <section className="page">
       <header className="page-header">
         <div><span className="eyebrow">Входной контроль</span><h1>Приёмка</h1><p>{readOnly ? "Приёмка открыта вам только на просмотр." : "Проверка поставки, ГРН и передача на склад."}</p></div>
-        <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
+        <div className="header-actions">
+          {!readOnly && <button className="secondary" disabled={Boolean(busy)} onClick={() => setReturning((current) => !current)}>Возврат поставщику</button>}
+          <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
+        </div>
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {returning && <SupplierReturnPanel onDone={() => void reload()} onClose={() => setReturning(false)} />}
       <div className="queue-summary"><span><strong>{lines.length}</strong> позиций</span><span><strong>{lines.filter((line) => line.status === "Принято").length}</strong> принято</span></div>
       <section className="work-list">
         {lines.map((line) => (
@@ -175,6 +181,7 @@ function ReceivingCard({
         <span className="status">{line.status}</span>
       </div>
       {line.nonconformities.length > 0 && <p className="nonconformity">{line.nonconformities.join(" · ")}</p>}
+      {line.nonconformity_description && <p className="nonconformity">{line.nonconformity_description}</p>}
       {Number(line.backorder_quantity) > 0 && <p className="nonconformity">Недовоз {line.backorder_quantity} {line.unit} — оплаченный остаток ушёл в закупку дозавозом</p>}
       {inspectable && (
         <form onSubmit={submitInspection}>

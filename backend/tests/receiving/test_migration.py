@@ -116,3 +116,26 @@ def test_vk_revision_migration_keeps_one_live_line_per_procurement_line(tmp_path
         assert "revision_of_id" not in _columns(connection)
 
     command.upgrade(config, AFTER)
+
+
+def test_supplier_return_migration_adds_description_and_counter_with_defaults(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "receiving.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+
+    command.upgrade(config, "0042_shipping_project_addressees")
+    with sqlite3.connect(database_path) as connection:
+        assert "supplier_returns" not in _columns(connection)
+        _insert(connection, "1", "Принято")
+
+    command.upgrade(config, "0043_receiving_supplier_returns")
+    with sqlite3.connect(database_path) as connection:
+        assert {"nonconformity_description", "supplier_returns"} <= _columns(connection)
+        assert connection.execute(
+            "SELECT nonconformity_description, supplier_returns FROM receiving_lines"
+        ).fetchall() == [("", 0)]
+
+    command.downgrade(config, "0042_shipping_project_addressees")
+    with sqlite3.connect(database_path) as connection:
+        assert "supplier_returns" not in _columns(connection)

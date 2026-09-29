@@ -27,7 +27,11 @@ from app.modules.receiving.application import (
     quarantine_overdue_waiting,
 )
 from app.modules.receiving.infrastructure import SqlAlchemyReceivingUnitOfWork
-from app.modules.warehouse.application import PoisonWarehouseMessage, dispatch_next_warehouse_received
+from app.modules.warehouse.application import (
+    PoisonWarehouseMessage,
+    dispatch_next_supplier_return,
+    dispatch_next_warehouse_received,
+)
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
 from app.modules.operations.application import PoisonNotificationMessage, dispatch_next_notification
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
@@ -85,6 +89,20 @@ def dispatch_available(
             dispatched += 1
             continue
         if warehouse is not None:
+            dispatched += 1
+            progressed = True
+        if dispatched >= limit:
+            break
+        try:
+            supplier_return = dispatch_next_supplier_return(
+                moscow_now(),
+                SqlAlchemyWarehouseUnitOfWork(sessions),
+            )
+        except PoisonWarehouseMessage as error:
+            logging.warning("Quarantined invalid supplier return message %s", error.message_id)
+            dispatched += 1
+            continue
+        if supplier_return is not None:
             dispatched += 1
             progressed = True
         if dispatched >= limit:

@@ -199,6 +199,22 @@ export interface ReceivingLine {
   warehouse_event_emitted: boolean;
   inspected_on: string | null;
   revision_of_id?: string | null;
+  nonconformity_description?: string;
+  supplier_returns?: number;
+}
+
+/** RC-6: принятая позиция в форме возврата поставщику и что по её ГРН лежит на складе. */
+export interface SupplierReturnCandidate extends ReceivingLine {
+  stock_warehouse: string | null;
+  stock_balance: string | null;
+}
+
+export interface SupplierReturnPayload {
+  items: { id: string; version: number; quantity?: string }[];
+  reason: string;
+  mode: "wait" | "close";
+  claim?: string;
+  comment?: string;
 }
 
 export interface WarehouseLot {
@@ -1258,6 +1274,15 @@ export const receivingApi = {
       method: "POST",
       body: JSON.stringify({ version }),
     }),
+  supplierReturnCandidates: () =>
+    api<{ lines: SupplierReturnCandidate[]; reasons: string[]; modes: Record<string, string> }>(
+      "/api/receiving/supplier-return",
+    ),
+  returnToSupplier: (payload: SupplierReturnPayload) =>
+    api<{ lines: ReceivingLine[]; writeoffs: number; notes: string[]; message: string }>(
+      "/api/receiving/supplier-return",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
 };
 
 export const warehouseApi = {
