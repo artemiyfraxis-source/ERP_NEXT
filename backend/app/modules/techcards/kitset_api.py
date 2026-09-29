@@ -20,7 +20,9 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.modules.fulfillment.domain import FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
-from app.modules.production.plan import KIT_STAGES, TC_REVIEW_VALUES
+from app.modules.production.plan import (
+    KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, summarize_journal,
+)
 from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
@@ -161,7 +163,10 @@ def kitsets(
     rows = sort_kitsets(rows, sort, statuses)
     for row in rows:
         row["updated_at"] = row["updated_at"].isoformat()
-    return {"items": rows, "statuses": statuses}
+    return {
+        "items": rows, "statuses": statuses, "stages": list(KIT_STAGES),
+        "terminals": list(PROJECT_TERMINALS), "blockers": list(PLAN_BLOCKERS),
+    }
 
 
 class ShipPayload(BaseModel):
@@ -252,13 +257,26 @@ def _card(request: Request, kitset: Kitset) -> dict:
     stage, blocker = flow.kitset_stages([kitset], facts)[kitset.project]
     stage_of = {item.item_index: item for item in stage.kits}
     cards = flow.cards_state(kitset.project, facts.cards)
+    canon = normalize_project_number(kitset.project)
+    journal = summarize_journal(event for event in facts.events if normalize_project_number(event.project) == canon).get(canon)
+    active = journal.blocker if journal is not None else None
+    snapshot = next((item for item in facts.projects if normalize_project_number(item.project) == canon), None)
     with techcards_factory(request)() as uow:
         documents = uow.kitsets.documents(kitset.project)
     return {
         "project": kitset.project, "customer": kitset.customer, "calc_source": kitset.calc_source,
         "updated_at": kitset.updated_at.isoformat(), "updated_by": kitset.updated_by, "version": kitset.version,
         "status": stage.status, "blocker": blocker,
+        "blocker_info": None if active is None else {
+            "type": active.type, "text": active.text, "since": active.since.isoformat(), "who": active.who,
+        },
+        "deadline": ((journal.deadline if journal is not None else None) or (snapshot.deadline if snapshot else None)),
+        "journal": [{
+            "id": str(event.id), "occurred_at": event.occurred_at.isoformat(), "who": event.who, "kind": event.kind,
+            "blocker": event.blocker, "text": event.text, "item_index": event.item_index, "value": event.value,
+        } for event in (journal.events[:30] if journal is not None else ())],
         "stages": list(KIT_STAGES), "review_values": list(TC_REVIEW_VALUES),
+        "terminals": list(PROJECT_TERMINALS), "blockers": list(PLAN_BLOCKERS),
         "assemblies": [{
             "index": assembly.index, "name": assembly.name, "run": _number(assembly.run),
             "item": item_id(kitset.project, assembly.index),
@@ -413,6 +431,60 @@ def mark(
         item_index=payload.kb, value=payload.value,
     ), factory()))
     return {"msg": event.text or event.value, "event": {"kind": event.kind, "value": event.value, "item_index": event.item_index}}
+
+
+class StatusPayload(BaseModel):
+    action: str = Field(min_length=1, max_length=16)
+    value: str = Field(default="", max_length=64)
+    text: str = Field(default="", max_length=5000)
+
+
+@router.post("/{project}/status")
+def change_status(
+    project: str,
+    payload: StatusPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Статус проекта в один клик: этап (на все КБ) / «авто» / Отказ·Слился·Отменён, блокер или его снятие."""
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    kitset = _kitset(request, project)
+    events = _run(lambda: flow.change_project_status(flow.ChangeProjectStatusCommand(
+        project=kitset.project, item_indexes=tuple(assembly.index for assembly in kitset.assemblies),
+        action=payload.action, value=payload.value, text=payload.text, actor=principal.actor, now=now,
+    ), factory))
+    return {"events": len(events), "card": _card(request, kitset)}
+
+
+class JournalPayload(BaseModel):
+    kind: str = Field(min_length=1, max_length=16)
+    text: str = Field(default="", max_length=5000)
+    deadline: date | None = None
+
+
+@router.post("/{project}/journal")
+def journal_note(
+    project: str,
+    payload: JournalPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Комментарий или дедлайн в журнал проекта прямо из карточки (раньше — только нижняя панель плана)."""
+    if payload.kind not in {"note", "deadline"}:
+        raise HTTPException(status_code=422, detail="Неизвестный вид записи.")
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    kitset = _kitset(request, project)
+    _run(lambda: add_plan_event(AddPlanEventCommand(
+        project=kitset.project, kind=payload.kind, blocker="", text=payload.text, deadline=payload.deadline,
+        known_projects=(kitset.project,), actor=principal.actor, now=now,
+    ), factory()))
+    return {"card": _card(request, kitset)}
 
 
 class DocumentPayload(BaseModel):

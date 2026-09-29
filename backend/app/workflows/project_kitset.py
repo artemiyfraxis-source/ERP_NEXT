@@ -30,9 +30,12 @@ from app.modules.production.domain import ProductionTask
 from app.modules.production.plan import (
     KIT_STAGES,
     PLAN_KINDS,
+    PLAN_STAGE_AUTO,
     TC_REVIEW_VALUES,
     PlanEvent,
     PlanProjectSnapshot,
+    PROJECT_TERMINALS,
+    project_terminal,
     ProjectStage,
     normalize_project_number,
     project_from_purpose,
@@ -82,7 +85,7 @@ from app.workflows.production_plan import kit_stage_facts
 
 
 # Терминальные статусы реестра перекрывают вычисленный этап — решение человека (ERP_PROJ_TERMINALS_).
-TERMINAL_STATUSES = ("Отказ", "Слился", "Отменён")
+TERMINAL_STATUSES = PROJECT_TERMINALS
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 
 
@@ -294,21 +297,77 @@ def kitset_stages(kitsets: Iterable[Kitset], facts: KitsetFacts) -> dict[str, tu
         cards=facts.cards, tasks=facts.tasks, fulfillment=facts.fulfillment, goods=facts.goods, marks=marks,
     )
     journal = summarize_journal(facts.events)
-    terminals = {
-        normalize_project_number(item.project): item.status
-        for item in facts.projects if item.terminal and item.status
-    }
+    snapshots = {normalize_project_number(item.project): item for item in facts.projects}
     result = {}
     for kitset in kitsets:
         canon = normalize_project_number(kitset.project)
         stage = project_stage(
             kitset.project, [assembly.index for assembly in kitset.assemblies],
-            stage_facts, terminals.get(canon, ""), marks,
+            stage_facts, project_terminal(snapshots.get(canon), journal.get(canon)), marks,
         )
         entry = journal.get(canon)
         blocker = entry.blocker.type if entry is not None and entry.blocker is not None else ""
         result[kitset.project] = (stage, blocker)
     return result
+
+
+PROJECT_BLOCK = "block"
+PROJECT_UNBLOCK = "unblock"
+PROJECT_STATUS = "status"
+
+
+@dataclass(frozen=True)
+class ChangeProjectStatusCommand:
+    """Смена статуса проекта одним действием — из карточки, плитки и «Производственного плана».
+
+    ``action``: "status" — ``value`` этап лестницы (на все КБ), «авто» (снять ручные этапы) или
+    Отказ/Слился/Отменён; "block" — блокер ``value`` (ХОЛД, СТОП…) с причиной ``text``; "unblock" — снять блокер.
+    """
+
+    project: str
+    item_indexes: tuple[str, ...]
+    action: str
+    value: str
+    actor: Actor
+    now: datetime
+    text: str = ""
+
+
+def change_project_status(
+    command: ChangeProjectStatusCommand, uow_factory: Callable[[], PlanUnitOfWork],
+) -> list[PlanEvent]:
+    """Единая точка смены статуса проекта: пишет записи журнала проекта, как «Производственный план» SUPPLYMAP.
+
+    Этап лестницы у закрытого проекта сначала возвращает его в работу. «Отгружено» по факту отгрузки (ГП отгружено ≥
+    партии) ставится само и перекрывает ручной этап — вызывать эту функцию из отгрузки не нужно.
+    """
+    project, value, known = command.project, str(command.value or "").strip(), (command.project,)
+
+    def add(kind: str, *, item_index: str = "", event_value: str = "", blocker: str = "", text: str = "") -> PlanEvent:
+        return add_plan_event(AddPlanEventCommand(
+            project=project, kind=kind, blocker=blocker, text=text, deadline=None, known_projects=known,
+            actor=command.actor, now=command.now, item_index=item_index, value=event_value,
+        ), uow_factory())
+
+    if command.action == PROJECT_BLOCK:
+        return [add("block", blocker=value, text=command.text)]
+    if command.action == PROJECT_UNBLOCK:
+        return [add("unblock", text=command.text)]
+    if command.action != PROJECT_STATUS:
+        raise KitsetValidationError("Неизвестное действие со статусом проекта.")
+    if value in PROJECT_TERMINALS:
+        return [add("status", event_value=value, text=command.text)]
+    if value not in (*KIT_STAGES, PLAN_STAGE_AUTO):
+        raise KitsetValidationError(f"Неизвестный статус проекта: {value}")
+    canon = normalize_project_number(project)
+    with uow_factory() as uow:
+        snapshot = next((item for item in uow.plan_projects.list() if normalize_project_number(item.project) == canon), None)
+        journal = summarize_journal(uow.plan_events.list(project=canon)).get(canon)
+    events = [add("status", event_value=PLAN_STAGE_AUTO)] if project_terminal(snapshot, journal) else []
+    # Без КБ этап ставится на весь проект (запись с пустым КБ), как в «Производственном плане».
+    for index in command.item_indexes or ("",):
+        events.append(add("stage", item_index=index, event_value=value))
+    return events
 
 
 def kitset_statuses() -> list[str]:
@@ -570,6 +629,7 @@ def kit_number_payload(value: Decimal) -> str:
 __all__ = [
     "LoadKitsetCommand", "LoadKitsetResult", "KitsetFacts", "IssueFromKitsetResult", "PLAN_KINDS",
     "TC_REVIEW_VALUES", "attach_document", "cards_state", "delete_kitset", "detach_document",
+    "ChangeProjectStatusCommand", "change_project_status",
     "issue_from_kitset", "kit_number_payload", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
     "supply_rows",
 ]

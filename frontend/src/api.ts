@@ -2162,10 +2162,32 @@ export interface KitsetCard {
   version: number;
   status: string;
   blocker: string;
+  /** Активный блокер журнала проекта: вид, причина, с какого момента, кто поставил. */
+  blocker_info?: { type: string; text: string; since: string; who: string } | null;
+  deadline?: string | null;
+  journal?: KitsetJournalEvent[];
   stages: string[];
   review_values: string[];
+  terminals?: string[];
+  blockers?: string[];
   assemblies: KitsetAssembly[];
 }
+
+export interface KitsetJournalEvent {
+  id: string;
+  occurred_at: string;
+  who: string;
+  kind: string;
+  blocker: string;
+  text: string;
+  item_index: string;
+  value: string;
+}
+
+/** Смена статуса проекта в один клик (POST …/status): этап на все КБ, «авто», закрытие, блокер. */
+export type ProjectStatusAction = { action: "status"; value: string; text?: string }
+  | { action: "block"; value: string; text: string }
+  | { action: "unblock"; text?: string };
 
 export interface KitsetLoadResult {
   project: string;
@@ -2228,7 +2250,7 @@ export type KitsetBom = {
 };
 
 export const kitsetsApi = {
-  list: (sort = "upd") => api<{ items: KitsetTile[]; statuses: string[] }>(`/api/techcards/kitsets?sort=${encodeURIComponent(sort)}`),
+  list: (sort = "upd") => api<{ items: KitsetTile[]; statuses: string[]; stages?: string[]; terminals?: string[]; blockers?: string[] }>(`/api/techcards/kitsets?sort=${encodeURIComponent(sort)}`),
   get: (project: string) => api<KitsetCard>(kitsetPath(project)),
   load: (payload: {
     url: string;
@@ -2251,6 +2273,10 @@ export const kitsetsApi = {
   remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
   mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string }) =>
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
+  setStatus: (project: string, payload: ProjectStatusAction) =>
+    api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
+  journal: (project: string, payload: { kind: "note" | "deadline"; text: string; deadline?: string | null }) =>
+    api<{ card: KitsetCard }>(`${kitsetPath(project)}/journal`, { method: "POST", body: JSON.stringify(payload) }),
   addDocument: (project: string, payload: { index: string; file_name: string; content_type: string; content_b64: string }) =>
     api<{ res: KitsetDocument }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
   documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,

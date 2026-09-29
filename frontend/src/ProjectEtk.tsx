@@ -393,7 +393,8 @@ export function GeneratorPane({ card, principal, onChange, onDone }: {
   return <div className="gen-pane">
     <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft}
       onConfig={(config) => { generatedConfig.current = config; }}
-      more={<div className="build-config">
+      /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
+      more={!principal.roles.includes("admin") ? undefined : <div className="build-config">
         <label>JSON-конфигурация генератора (для эксперта)<textarea aria-label="Конфигурация автоматической сборки" rows={12} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
         <div className="form-actions">
           <button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button>

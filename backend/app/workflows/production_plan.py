@@ -17,6 +17,7 @@ from app.modules.production.plan import (
     KitMark,
     KitReview,
     PlanProjectSnapshot,
+    project_terminal,
     ProjectJournal,
     ProjectStage,
     MANUAL_TECHCARD_PROJECTS,
@@ -249,7 +250,7 @@ def build_production_plan(
         opened_on = (
             snapshot.opened_on if snapshot else min(card.created_at.date() for card in project_cards)
         )
-        terminal = snapshot.status if snapshot and snapshot.terminal else ""
+        terminal = project_terminal(snapshot, project_journal)
         stage = project_stage(
             project,
             item_indexes,
@@ -261,7 +262,7 @@ def build_production_plan(
             project=project, customer=customer, opened_on=opened_on,
             deadline=deadline, days_left=days_left(deadline, today),
             stage=stage, supply=supply.get(project), plan=task_plan.get(project),
-            journal=project_journal, terminal=bool(snapshot and snapshot.terminal),
+            journal=project_journal, terminal=bool(terminal),
         ))
     return tuple(sorted(rows, key=lambda row: (
         row.journal.blocker is None,

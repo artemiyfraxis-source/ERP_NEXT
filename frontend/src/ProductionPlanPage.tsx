@@ -223,7 +223,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
 
   return <section className="page production-plan-page">
     <header className="page-head">
-      <div><h1>Производственный план</h1><p className="page-sub">Сверху — проекты в работе и их дедлайны, ниже — загрузка людей по заданиям. Блокер, комментарий и дедлайн — нажми на проект.</p></div>
+      <div><h1>Производственный план</h1><p className="page-sub">Сверху — проекты в работе и их дедлайны, ниже — загрузка людей по заданиям. Нажми на проект — откроется его карточка: статус, блокер, журнал и техкарты.</p></div>
       <span className="page-count">{rows.length}</span>
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -241,7 +241,12 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
         <thead><tr><th>Проект</th><th>Этап</th><th>Дедлайн</th><th>Комплектующие</th><th>План цеха</th><th>Последняя запись</th></tr></thead>
         <tbody>
           {rows.map((row) => <tr key={row.project} className={`${row.project === selectedProject ? "selected" : ""}${row.terminal ? " dim" : ""}`}
-            onClick={() => setSelectedProject(row.project === selectedProject ? "" : row.project)}>
+            onClick={() => {
+              // Клик по проекту открывает его карточку (владелец 29.09: панель снизу неудобна); проект без карточки —
+              // журнал сбоку, поверх списка.
+              if (openProjectCard && row.kits.length) openProjectCard(row.project);
+              else setSelectedProject(row.project === selectedProject ? "" : row.project);
+            }}>
             <td><strong>{row.project}</strong><div className="plan-customer">{row.customer}</div></td>
             <td><div className="plan-tags"><span className="plan-tag stage">{row.stage}</span>{row.blocker && <span className="plan-tag blocker" title={row.blocker.text}>{row.blocker.type}</span>}</div><small>{kbText(row, data.stages)}</small></td>
             <td><div>{shortDate(row.deadline)}</div>{daysTag(row)}</td>
@@ -252,10 +257,13 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
           {loaded && !rows.length && <tr><td colSpan={6} className="empty">Под этот фильтр проектов нет.</td></tr>}
         </tbody>
       </table></div>
-      {selected && <div className="plan-details-wrap">
-        <button className="link-button plan-details-close" onClick={() => setSelectedProject("")}>Свернуть</button>
+      {selected && <div className="plan-drawer" role="dialog" aria-label={`Проект ${selected.project}`}>
+        <div className="plan-drawer-scrim" onClick={() => setSelectedProject("")} />
+        <div className="plan-drawer-body">
+        <button className="link-button plan-details-close" onClick={() => setSelectedProject("")}>✕ Закрыть</button>
         <PlanDetails row={selected} blockers={data.blockers} stages={data.stages} reviewValues={data.review_values} canEdit={canEdit} busy={busy} addEvent={addEvent}
           openProjectCard={openProjectCard && selected.kits.length ? () => openProjectCard(selected.project) : undefined} />
+        </div>
       </div>}
     </section>
 

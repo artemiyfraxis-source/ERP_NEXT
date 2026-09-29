@@ -201,11 +201,11 @@ it("shows people load under the projects: operations per operator, late, done, a
   }
 });
 
-it("opens the project card from the plan", async () => {
+it("opens the project card straight from the plan row, not a panel under the list", async () => {
   const opened: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   render(<ProductionPlanPage principal={principal} openProjectCard={(project) => opened.push(project)} />);
   await openProject("708К.4");
-  fireEvent.click(await screen.findByRole("button", { name: "Карточка проекта" }));
   expect(opened).toEqual(["708К.4"]);
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
