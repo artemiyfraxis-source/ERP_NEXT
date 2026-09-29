@@ -77,7 +77,7 @@ def build_packing_lists(shipment: Shipment) -> list[PrintSheet]:
     return sheets
 
 
-def _ticks(upd_type: UpdType) -> tuple[str, str]:
+def _ticks(upd_type: UpdType | None) -> tuple[str, str]:
     """`shipDnTicks_`: отметка по типу УПД — тексты как в шаблоне."""
     edo = "☑" if upd_type == UpdType.EDO else "☐"
     paper = "☑" if upd_type == UpdType.PAPER else "☐"
@@ -106,7 +106,7 @@ def build_delivery_note(shipment: Shipment, project: ProjectAddressee | None, no
             ("Заказчик", shipment.customer), ("Заказ №", card.po), ("Договор №", card.contract),
             # № спецификации по умолчанию — номер проекта (так во всех отгрузочных владельца).
             ("Спецификация №", card.spec or shipment.lines[0].project), ("Счёт №", card.invoice),
-            ("Условия поставки", shipment.terms.value), ("Оплачивает", card.pays),
+            ("Условия поставки", shipment.terms.value if shipment.terms else ""), ("Оплачивает", card.pays),
             ("Получатель", shipment.receiver or shipment.customer), ("Адрес заказчика", card.customer_address),
             ("Адрес доставки", shipment.shipping_point), ("Время работы", card.hours),
             ("Контактное лицо", shipment.contact), ("Телефон", shipment.phone),

@@ -318,7 +318,7 @@ def test_shipment_inherits_project_card_and_remembers_typed_contact(shipping_api
     assert stored["version"] == 2
 
 
-def test_first_shipment_without_card_requires_point_terms_and_upd_type_then_seeds_card(shipping_api):
+def test_first_shipment_without_card_requires_point_only_then_seeds_card(shipping_api):
     client = shipping_api
     good = _queued_good(client)
     lines = [{"good_id": good["id"], "quantity": "1"}]
@@ -331,10 +331,12 @@ def test_first_shipment_without_card_requires_point_terms_and_upd_type_then_seed
 
     assert no_point.status_code == 422
     assert "точку отгрузки" in no_point.json()["detail"]
-    assert no_terms.status_code == 422
+    # shipRequestCreate_: условия доставки и тип УПД могут остаться пустыми.
+    assert no_terms.status_code == 200
+    assert (no_terms.json()["shipment"]["terms"], no_terms.json()["shipment"]["upd_type"]) == (None, "ЭДО")
     assert made.status_code == 200
     assert made.json()["shipment"]["receiver"] == "Заказчик"
-    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("Москва", "+7 900", "", 1)
+    assert (card["shipping_point"], card["phone"], card["contact"], card["version"]) == ("Москва", "+7 900", "", 2)
     assert card["terms"] is None
 
 

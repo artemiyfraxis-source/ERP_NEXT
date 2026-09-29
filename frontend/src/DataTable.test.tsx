@@ -102,3 +102,26 @@ it("groups rows, opens a row detail and remembers hidden columns", () => {
   render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} storageKey="test" />);
   expect(screen.queryByRole("button", { name: "Поставщик" })).toBeNull();
 });
+
+it("counts chips over the searched rows when asked (SUPPLYMAP issFilterRender_), over all rows by default", () => {
+  const rows = [
+    { id: "1", name: "Разъём", status: "Новая" },
+    { id: "2", name: "Болт", status: "Новая" },
+    { id: "3", name: "Разъём угловой", status: "Готово" },
+  ];
+  const columns = [
+    { key: "name", title: "Наименование", value: (row: typeof rows[number]) => row.name },
+    { key: "status", title: "Статус", value: (row: typeof rows[number]) => row.status },
+  ];
+  const presets = ["Новая", "Готово"].map((label) => ({ label, test: (row: typeof rows[number]) => row.status === label }));
+  const { unmount } = render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Обычная" presets={presets} />);
+  fireEvent.change(screen.getByLabelText("Поиск: Обычная"), { target: { value: "разъём" } });
+  expect(screen.getByRole("button", { name: "Новая · 2" })).toBeInTheDocument();
+  unmount();
+
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Заявки" presets={presets} presetCountsFollowSearch />);
+  fireEvent.change(screen.getByLabelText("Поиск: Заявки"), { target: { value: "разъём" } });
+  expect(screen.getByRole("button", { name: "Все · 2" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Новая · 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Готово · 1" })).toBeInTheDocument();
+});

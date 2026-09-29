@@ -239,3 +239,29 @@ def test_effective_address_without_card_falls_back_to_customer_for_receiver_only
     assert address.shipping_point == ""
     assert address.terms is None
     assert address.inherited == frozenset()
+
+
+def test_ship_from_any_active_status_when_something_is_picked():
+    item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    new = shipment(item)
+    picked, _ = new.pick({item.id: item.remaining}, {item.id: item.grn or ""})
+
+    # shipShipped_: статус не важен, важно, что набрано (shipGateMiss_('Отгружена')).
+    assert picked.mark_shipped(date(2026, 9, 22)).status == ShipmentStatus.SHIPPED
+    assert replace(picked, status=ShipmentStatus.NEW).mark_shipped(date(2026, 9, 22)).status == ShipmentStatus.SHIPPED
+    with pytest.raises(ShippingValidationError, match="ни одна позиция не набрана"):
+        new.mark_shipped(date(2026, 9, 22))
+    with pytest.raises(ShippingValidationError, match="только активную"):
+        picked.mark_shipped(date(2026, 9, 22)).mark_shipped(date(2026, 9, 23))
+
+
+def test_shipment_without_terms_and_upd_type_needs_upd_file_to_ship_like_paper():
+    item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    picked, _ = shipment(item, terms=None, upd_type=None).pick({item.id: item.remaining}, {item.id: item.grn or ""})
+
+    # shipGateMiss_: val('edo') !== 'ЭДО' && !updUrl — пустой тип УПД тоже требует файл.
+    with pytest.raises(ShippingValidationError, match="файл УПД"):
+        picked.mark_shipped(date(2026, 9, 22))
+    documented = picked.update_documents(upd_type=None, upd_number="7", upd_date=None, upd_url="https://f/u.pdf", track_number="")
+    # Без условий доставки трек для закрытия не нужен (его требует только «ДОСТАВКА ТК»).
+    assert documented.mark_shipped(date(2026, 9, 22)).close().status == ShipmentStatus.CLOSED

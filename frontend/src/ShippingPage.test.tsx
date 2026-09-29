@@ -149,6 +149,20 @@ describe("ShippingPage", () => {
     expect(await screen.findByText("Отгружено и закрыто")).toBeInTheDocument();
   });
 
+  it("uploads the УПД file of a shipment and links it", async () => {
+    stub([shipment]);
+    render(<ShippingPage principal={principal} />);
+    fireEvent.click(screen.getByRole("button", { name: "Отправки" }));
+    fireEvent.click(await screen.findByText("ОТГ-20260922-01"));
+    expect(screen.getByText("файла УПД нет")).toBeInTheDocument();
+    const file = new File(["%PDF"], "upd.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("Загрузить УПД ОТГ-20260922-01"), { target: { files: [file] } });
+
+    await waitFor(() => expect(sent("/api/shipping/upd-files")).toEqual({
+      shipment_id: "s1", version: 3, file_name: "upd.pdf", content_type: "application/pdf", content_base64: btoa("%PDF"),
+    }));
+  });
+
   it("accepts a confirmed final box with lineage instead of a manual quantity", async () => {
     let payload: unknown;
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

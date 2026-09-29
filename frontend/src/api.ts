@@ -443,6 +443,8 @@ export interface FulfillmentRequest {
   handout_location: string | null;
   return_location: string | null;
   fully_reserved: boolean;
+  /** НЕДОБОР (issueShortText_): what a lot does not close yet. */
+  shortfall?: string;
   /** issueProjectOf_: the part of НАЗНАЧЕНИЕ before « · »; "" for a manual request. */
   project?: string;
   /** FF-4 stage dates by the first hit: В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА. */
@@ -474,6 +476,8 @@ export interface FulfillmentDraftLine {
   name: string;
   unit: string;
   requirement: string;
+  /** The picked warehouse lot (IssueForm FIFO pick); reserved when the request is created. */
+  lot_id?: string;
 }
 
 export interface ProductionOperator {
@@ -816,10 +820,10 @@ export interface Shipment {
   shipping_point: string;
   contact: string;
   phone: string;
-  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК";
+  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
   carrier: string;
   deadline: string | null;
-  upd_type: "ЭДО" | "БУМАГА";
+  upd_type: "ЭДО" | "БУМАГА" | null;
   upd_number: string;
   upd_date: string | null;
   upd_url: string;
@@ -1831,6 +1835,10 @@ export const shippingApi = {
   }),
   print: (shipmentId: string, document: "pl" | "dn") => api<{ sheets: PrintSheet[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
   addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
+  /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
+  uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
+    method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
+  }),
   saveAddressee: (payload: Record<string, unknown>) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-addressee", {
     method: "PUT", body: JSON.stringify(payload),
   }),

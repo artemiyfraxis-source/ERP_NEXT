@@ -27,3 +27,31 @@ def test_boxes_and_requisites_migration_upgrades_and_downgrades(tmp_path):
     with sqlite3.connect(database_path) as connection:
         assert "po" not in {row[1] for row in connection.execute("PRAGMA table_info(shipping_project_addressees)")}
         assert not connection.execute("SELECT name FROM sqlite_master WHERE name = 'shipment_boxes'").fetchall()
+
+
+def test_optional_terms_migration_allows_empty_terms_and_upd_type(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "terms.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+    command.upgrade(config, "0057_shipping_optional_terms")
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1]: row[3] for row in connection.execute("PRAGMA table_info(shipments)")}
+    assert columns["terms"] == 0 and columns["upd_type"] == 0
+    command.downgrade(config, "0050_shipping_boxes_requisites")
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1]: row[3] for row in connection.execute("PRAGMA table_info(shipments)")}
+    assert columns["terms"] == 1 and columns["upd_type"] == 1
+
+
+def test_upd_files_migration_creates_and_drops_the_storage(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "files.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+    command.upgrade(config, "0058_shipping_upd_files")
+    with sqlite3.connect(database_path) as connection:
+        assert {row[1] for row in connection.execute("PRAGMA table_info(shipping_files)")} >= {"content", "size", "uploaded_by"}
+    command.downgrade(config, "0057_shipping_optional_terms")
+    with sqlite3.connect(database_path) as connection:
+        assert not connection.execute("SELECT name FROM sqlite_master WHERE name = 'shipping_files'").fetchall()
