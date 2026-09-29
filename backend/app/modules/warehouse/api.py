@@ -7,7 +7,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -22,6 +22,7 @@ from .application import (
     ConcurrentWarehouseUpdate,
     CorrectLotLocationCommand,
     EditLotIdentityCommand,
+    EditLotRowCommand,
     ManualStockItem,
     MoveLocationCommand,
     MoveLotCommand,
@@ -31,13 +32,15 @@ from .application import (
     add_manual_stock,
     correct_lot_location,
     edit_lot_identity,
+    edit_lot_row,
+    edited_unit_mass,
     move_location,
     move_lot,
     return_writeoff,
     warehouse_lots,
     write_off,
 )
-from .domain import LOT_DETAIL_LIMITS, StockLot, WarehouseValidationError
+from .domain import LOT_DETAIL_LIMITS, LOT_ROW_FIELDS, StockLot, WarehouseValidationError
 
 
 router = APIRouter(prefix="/api/stock", tags=["warehouse"])
@@ -75,6 +78,59 @@ class EditIdentityPayload(BaseModel):
     article: str = Field(min_length=1, max_length=1024)
     name: str = Field(default="", max_length=1024)
     series: str = Field(default="", max_length=255)
+
+
+def _blank_is_none(value):
+    # SUPPLYMAP Stock05.gs:1058: an empty number input means «don't touch», never zero.
+    return None if isinstance(value, str) and not value.strip() else value
+
+
+EditQuantity = Annotated[
+    Annotated[Decimal, Field(max_digits=18, decimal_places=6)] | None, BeforeValidator(_blank_is_none)
+]
+
+
+class EditRowPayload(BaseModel):
+    """Manual edit of a stock row (SK-7). A field left out (or null) is not touched; "" clears a text field.
+    ГРН, ПАКЕТ and СКЛАД are the row key and are refused, not ignored."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+    article: str | None = Field(default=None, max_length=1024)
+    series: str | None = Field(default=None, max_length=255)
+    name: str | None = Field(default=None, max_length=1024)
+    item_type: str | None = Field(default=None, max_length=255)
+    unit: str | None = Field(default=None, max_length=32)
+    purpose: str | None = Field(default=None, max_length=128)
+    storage_location: str | None = Field(default=None, max_length=STORAGE_LOCATION_MAX_LENGTH)
+    unit_mass_g: str | None = Field(default=None, max_length=64)  # "" = no mass; a number as typed
+    expiry_date: str | None = Field(default=None, max_length=10)  # "" = no date; ГГГГ-ММ-ДД
+    manufacturer: str | None = Field(default=None, max_length=LOT_DETAIL_LIMITS["manufacturer"])
+    description: str | None = Field(default=None, max_length=LOT_DETAIL_LIMITS["description"])
+    storage_conditions: str | None = Field(default=None, max_length=LOT_DETAIL_LIMITS["storage_conditions"])
+    datasheet: str | None = Field(default=None, max_length=LOT_DETAIL_LIMITS["datasheet"])
+    certificate: str | None = Field(default=None, max_length=LOT_DETAIL_LIMITS["certificate"])
+    inbound: EditQuantity = None
+    written_off: EditQuantity = None
+    reserved: EditQuantity = None
+
+    def changes(self) -> dict[str, object]:
+        """The fields to set, typed for `StockLot.edit_row`."""
+        changes: dict[str, object] = {}
+        for field_name in LOT_ROW_FIELDS:
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            if field_name == "unit_mass_g":
+                value = edited_unit_mass(value)
+            elif field_name == "expiry_date":
+                try:
+                    value = date.fromisoformat(value.strip()) if value.strip() else None
+                except ValueError as error:
+                    raise WarehouseValidationError(f"Срок годности — дата ГГГГ-ММ-ДД, а не «{value}»") from error
+            changes[field_name] = value
+        return changes
 
 
 class MoveLocationPayload(BaseModel):
@@ -150,9 +206,9 @@ def _result(lot: StockLot) -> dict:
     }
 
 
-def _run(operation) -> dict:
+def _guarded(operation):
     try:
-        lot = operation()
+        return operation()
     except WarehouseValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentWarehouseUpdate as error:
@@ -161,7 +217,21 @@ def _run(operation) -> dict:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
         raise HTTPException(status_code=409, detail="Конкурентное изменение: обновите данные") from error
-    return {"lot": _result(lot)}
+
+
+def _run(operation) -> dict:
+    return {"lot": _result(_guarded(operation))}
+
+
+def _kitting_reserve(request: Request, lot_id: UUID) -> Decimal:
+    """Reserve kitting lines hold on the lot, read through the kitting unit of work (no import of that
+    module here). A kitting bind or unbind after this read bumps the lot version, so the edit then fails
+    with 409 instead of trusting a stale number."""
+    factory = getattr(request.app.state, "fulfillment_uow_factory", None)
+    if not callable(factory):
+        return Decimal("0")
+    with factory() as uow:
+        return uow.fulfillment.reserved_on_lot(lot_id)
 
 
 @router.get("")
@@ -375,6 +445,40 @@ def edit_identity(
             uow_factory(),
         )
     )
+
+
+@router.put("/batches/{lot_id}/row")
+def edit_row(
+    lot_id: UUID,
+    payload: EditRowPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """SUPPLYMAP portalStock05Edit: the whole row by hand — admin and storekeeper (portalStock05CanFix_)."""
+
+    def operation():
+        changes = payload.changes()
+        return edit_lot_row(
+            EditLotRowCommand(
+                lot_id=lot_id,
+                expected_version=payload.version,
+                changes=changes,
+                actor=principal.actor,
+                now=now,
+                kitting_reserve=_kitting_reserve(request, lot_id) if "reserved" in changes else Decimal("0"),
+            ),
+            uow_factory(),
+        )
+
+    lot, changes = _guarded(operation)
+    label = lot.grn + (f"/{lot.package}" if lot.package else "")
+    return {
+        "lot": _result(lot),
+        "changes": [{"field": field, "column": column, "from": was, "to": to} for field, column, was, to in changes],
+        "message": f"Строка {label} обновлена: {len(changes)} поле(й)." if changes else "Изменений нет.",
+    }
 
 
 @router.post("/locations/move")

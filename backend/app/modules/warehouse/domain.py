@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
@@ -64,6 +65,55 @@ def _unit_mass(value: Decimal | None) -> Decimal | None:
     if mass < 0:
         raise WarehouseValidationError("Масса 1 шт не может быть отрицательной")
     return mass if mass > 0 else None
+
+
+# Fields of the manual row edit (SUPPLYMAP STOCK05_EDIT_TEXT_ / STOCK05_EDIT_NUM_, Stock05.gs:982-993) → the
+# stock sheet column, used in the «было → стало» journal. DATASHEET and СЕРТИФИКАТ are edited by hand in the
+# SUPPLYMAP sheet; ERP has no sheet, so they are in the edit form too.
+LOT_ROW_FIELDS = {
+    "article": "АРТИКУЛ",
+    "series": "СЕРИЯ",
+    "name": "НАИМЕНОВАНИЕ",
+    "item_type": "ТИП",
+    "unit": "ЕД.ИЗМ",
+    "purpose": "НАЗНАЧЕНИЕ",
+    "storage_location": "МЕСТО ХРАНЕНИЯ",
+    "unit_mass_g": "МАССА 1 ШТ, Г",
+    "expiry_date": "СРОК ГОДНОСТИ",
+    "manufacturer": "ПРОИЗВОДИТЕЛЬ",
+    "description": "ОПИСАНИЕ",
+    "storage_conditions": "УСЛОВИЯ ХРАНЕНИЯ",
+    "datasheet": "DATASHEET",
+    "certificate": "СЕРТИФИКАТ",
+    "inbound": "ПРИХОД",
+    "written_off": "СПИСАНО",
+    "reserved": "РЕЗЕРВ",
+}
+LOT_ROW_QUANTITIES = ("inbound", "written_off", "reserved")
+
+
+def _shown(value) -> str:
+    """A cell value as the journal shows it: a number without trailing zeros, a date as ISO, None as ""."""
+    if value is None:
+        return ""
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def lot_row_changes(before: StockLot, after: StockLot) -> list[tuple[str, str, str, str]]:
+    """(field, column, было, стало) for every edited field that changed, БАЛАНС included when it moved —
+    SUPPLYMAP writes it as one more changed cell (Stock05.gs:1068)."""
+    changes = [
+        (field_name, column, _shown(getattr(before, field_name)), _shown(getattr(after, field_name)))
+        for field_name, column in LOT_ROW_FIELDS.items()
+        if getattr(before, field_name) != getattr(after, field_name)
+    ]
+    if before.balance != after.balance:
+        changes.append(("balance", "БАЛАНС", _shown(before.balance), _shown(after.balance)))
+    return changes
 
 
 @dataclass(frozen=True)
@@ -262,6 +312,65 @@ class StockLot:
         if all(getattr(self, field) == value for field, value in values.items()):
             return self
         return replace(self, **values, version=self.version + 1)
+
+    def edit_row(self, changes: Mapping[str, object], *, kitting_reserve: Decimal = Decimal("0")) -> StockLot:
+        """Manual edit of the whole stock row (SUPPLYMAP Stock05.gs stock05EditRowLocked_ 1027-1079).
+
+        `changes` holds only the fields to set (a missing key is left alone); a text field set to "" is
+        cleared. ГРН, ПАКЕТ and СКЛАД are the key of the row and are not edited here. БАЛАНС is not a field:
+        it follows ПРИХОД − СПИСАНО. `kitting_reserve` is what kitting lines hold on this lot — РЕЗЕРВ
+        cannot go under it, or unbinding/issuing those lines would fail."""
+        key_fields = set(changes) & {"grn", "package", "warehouse"}
+        if key_fields:
+            raise WarehouseValidationError("ГРН, пакет и склад — ключ партии, правкой строки не меняются.")
+        unknown = set(changes) - set(LOT_ROW_FIELDS)
+        if unknown:
+            raise WarehouseValidationError(f"Поле не правится: {', '.join(sorted(unknown))}")
+        values: dict[str, object] = {}
+        for field_name, raw in changes.items():
+            if field_name in LOT_ROW_QUANTITIES:
+                amount = Decimal(raw)
+                if amount < 0:
+                    raise WarehouseValidationError(f"{LOT_ROW_FIELDS[field_name]} не может быть отрицательным")
+                values[field_name] = amount
+            elif field_name == "storage_location":
+                values[field_name] = normalize_location_as_is(str(raw or ""))
+            elif field_name == "unit_mass_g":
+                values[field_name] = _unit_mass(raw)
+            elif field_name == "expiry_date":
+                if raw is not None and not isinstance(raw, date):
+                    raise WarehouseValidationError("Срок годности — дата")
+                values[field_name] = raw
+            elif field_name in LOT_DETAIL_LIMITS:
+                values[field_name] = _detail(field_name, raw)
+            else:
+                values[field_name] = str(raw or "").strip()
+        for field_name, message in (
+            ("article", "Артикул обязателен"),
+            ("purpose", "Назначение обязательно"),
+            ("unit", "Единица измерения обязательна"),
+        ):
+            if field_name in values and not values[field_name]:
+                raise WarehouseValidationError(message)
+        updated = replace(self, **values)
+        if updated == self:
+            return self
+        unit = f" {self.unit}" if self.unit else ""
+        if updated.balance < 0:
+            raise WarehouseValidationError(
+                f"СПИСАНО ({_shown(updated.written_off)}) больше ПРИХОДА ({_shown(updated.inbound)}): "
+                "остаток ушёл бы в минус."
+            )
+        if updated.reserved > updated.balance:
+            raise WarehouseValidationError(
+                f"РЕЗЕРВ ({_shown(updated.reserved)}) больше остатка ({_shown(updated.balance)}{unit})."
+            )
+        if updated.reserved != self.reserved and updated.reserved < kitting_reserve:
+            raise WarehouseValidationError(
+                f"Комплектация держит на партии {self.grn} резерв {_shown(kitting_reserve)}{unit}: РЕЗЕРВ меньше "
+                "не ставится. Сначала сними резерв в комплектации."
+            )
+        return replace(updated, version=self.version + 1)
 
     def receive(
         self,

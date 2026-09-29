@@ -211,6 +211,14 @@ export interface WarehouseLotPassport extends UnitMassFields {
   certificate: string;
 }
 
+/** Editable fields of a stock row (SK-7); ГРН, пакет and склад are the row key and are not here. */
+export type WarehouseRowEdit = Partial<Record<
+  | "article" | "series" | "name" | "item_type" | "unit" | "purpose" | "storage_location"
+  | "unit_mass_g" | "expiry_date" | "manufacturer" | "description" | "storage_conditions"
+  | "datasheet" | "certificate" | "inbound" | "written_off" | "reserved",
+  string
+>>;
+
 export interface WarehouseArticleInfo {
   series: string;
   name: string;
@@ -991,6 +999,12 @@ export const warehouseApi = {
       method: "PUT",
       body: JSON.stringify({ version, article, name, series }),
     }),
+  /** SK-7: the whole stock row by hand. Only the fields sent change; "" clears a text field. */
+  editRow: (lotId: string, version: number, changes: WarehouseRowEdit) =>
+    api<{ lot: WarehouseLot; changes: Array<{ field: string; column: string; from: string; to: string }>; message: string }>(
+      `/api/stock/batches/${lotId}/row`,
+      { method: "PUT", body: JSON.stringify({ version, ...changes }) },
+    ),
   correctLocation: (lotId: string, version: number, storageLocation: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/location`, {
       method: "PUT",

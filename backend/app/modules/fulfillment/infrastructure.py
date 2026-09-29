@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, select
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
@@ -137,6 +137,13 @@ class SqlAlchemyFulfillmentRepository:
                 FulfillmentRequestRow.number.like(f"{prefix}%")
             )
         ))
+
+    def reserved_on_lot(self, lot_id: UUID) -> Decimal:
+        """What kitting lines hold in reserve on one warehouse lot (the warehouse row edit may not go under it)."""
+        total = self.session.scalar(
+            select(func.coalesce(func.sum(FulfillmentLineRow.reserved), 0)).where(FulfillmentLineRow.lot_id == lot_id)
+        )
+        return Decimal(str(total or 0))
 
     def list(self, limit: int = 200, after_id: UUID | None = None) -> list[FulfillmentRequest]:
         statement = select(FulfillmentRequestRow)

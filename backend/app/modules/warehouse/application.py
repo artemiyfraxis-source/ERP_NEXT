@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -12,10 +13,16 @@ from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
-from app.shared.unit_mass import mass_per_unit
+from app.shared.unit_mass import mass_per_unit, parse_number
 from app.shared.warehouse_location import remap_storage_location, storage_location_has_slot
 
-from .domain import StockLot, WarehouseValidationError, normalize_location, normalize_location_as_is
+from .domain import (
+    StockLot,
+    WarehouseValidationError,
+    lot_row_changes,
+    normalize_location,
+    normalize_location_as_is,
+)
 from .stock_export import LegacyStockRow, LegacyWriteOffRow
 
 
@@ -129,6 +136,19 @@ class EditLotIdentityCommand:
     series: str
     actor: Actor
     now: datetime
+
+
+@dataclass(frozen=True)
+class EditLotRowCommand:
+    """Manual edit of a stock row (SK-7). `changes` holds only the fields to set, already typed for
+    `StockLot.edit_row`; `kitting_reserve` is the reserve kitting lines hold on the lot."""
+
+    lot_id: UUID
+    expected_version: int
+    changes: dict[str, object]
+    actor: Actor
+    now: datetime
+    kitting_reserve: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -254,6 +274,24 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
 def _manual_unit_mass(item: ManualStockItem) -> Decimal | None:
     try:
         return mass_per_unit(item.mass_1, item.mass_10, item.mass_100)
+    except ValueError as error:
+        raise WarehouseValidationError(str(error)) from error
+
+
+def edited_unit_mass(text: str) -> Decimal | None:
+    """МАССА 1 ШТ from the row edit: empty → no mass; otherwise a number read as icrNum_ and rounded as the
+    quick entry rounds it. SUPPLYMAP writes the cell text as typed; ERP keeps a number, so a text that is
+    not a number is refused instead of stored, and zero means «no mass» as everywhere in the lot."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    value = parse_number(raw)
+    if math.isnan(value) or math.isinf(value):
+        raise WarehouseValidationError(f"Масса 1 шт — не число: «{raw}»")
+    if value < 0:
+        raise WarehouseValidationError("Масса 1 шт не может быть отрицательной")
+    try:
+        return mass_per_unit(raw)
     except ValueError as error:
         raise WarehouseValidationError(str(error)) from error
 
@@ -614,6 +652,37 @@ def edit_lot_identity(command: EditLotIdentityCommand, uow: UnitOfWork) -> Stock
         )
         uow.commit()
         return updated
+
+
+LotRowChange = tuple[str, str, str, str]  # field, sheet column, было, стало
+
+
+def edit_lot_row(command: EditLotRowCommand, uow: UnitOfWork) -> tuple[StockLot, list[LotRowChange]]:
+    """SUPPLYMAP stock05EditRow_: set the given fields, recount БАЛАНС, journal «было → стало» per field.
+    Nothing changed → the lot as it was and no audit event («Изменений нет.»)."""
+    with uow:
+        current = _versioned(command.lot_id, command.expected_version, uow)
+        updated = current.edit_row(command.changes, kitting_reserve=command.kitting_reserve)
+        changes = lot_row_changes(current, updated)
+        if not changes:
+            return current, []
+        details = {
+            "grn": updated.grn,
+            "package": updated.package,
+            "warehouse": updated.warehouse,
+            "changes": "; ".join(f"{column}: «{was or '—'}» → «{now or '—'}»" for _, column, was, now in changes),
+        }
+        for field_name, _, was, now in changes:
+            details[f"{field_name}_from"], details[f"{field_name}_to"] = was, now
+        uow.warehouse.add(updated)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(), aggregate_id=updated.id, event_type="warehouse.row_edited",
+                actor=command.actor, occurred_at=command.now, details=details,
+            )
+        )
+        uow.commit()
+        return updated, changes
 
 
 def move_location(command: MoveLocationCommand, uow: UnitOfWork) -> list[StockLot]:

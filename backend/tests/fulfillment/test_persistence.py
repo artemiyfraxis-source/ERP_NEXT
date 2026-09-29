@@ -64,8 +64,12 @@ def test_request_and_stock_reservation_persist_in_one_database_transaction():
     with factory() as uow:
         stored = uow.fulfillment.get(created.id)
         stored_lot = uow.warehouse.get(lot.id)
+        held_by_kitting = uow.fulfillment.reserved_on_lot(lot.id)
+        held_elsewhere = uow.fulfillment.reserved_on_lot(created.id)
 
     assert stored == bound
     assert stored.status is FulfillmentStatus.COMPLETE
     assert stored_lot.reserved == Decimal("6")
+    # SK-7: the warehouse row edit may not put РЕЗЕРВ under what kitting holds on the lot.
+    assert (held_by_kitting, held_elsewhere) == (Decimal("6"), Decimal("0"))
     engine.dispose()

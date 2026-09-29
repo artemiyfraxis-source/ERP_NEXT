@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { warehouseApi, type WarehouseLot, type WarehouseLotPassport } from "./api";
+import { warehouseApi, type WarehouseLot, type WarehouseLotPassport, type WarehouseRowEdit } from "./api";
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
   mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
@@ -438,6 +438,76 @@ function MoveStockForm({ preset, busy, mutate, onClose }: {
   </form>;
 }
 
+type RowEditField = keyof WarehouseRowEdit;
+
+// SK-7 row edit (SUPPLYMAP Stock05.gs:982-993): reference and passport texts, then the quantities.
+const ROW_EDIT_TEXT: Array<[RowEditField, string]> = [
+  ["article", "Артикул"], ["series", "Серия"], ["name", "Наименование"], ["item_type", "Тип"], ["unit", "Ед. изм."],
+  ["purpose", "Назначение"], ["storage_location", "Место хранения"], ["unit_mass_g", "Масса 1 шт, г"],
+  ["expiry_date", "Срок годности"], ["manufacturer", "Производитель"], ["description", "Описание"],
+  ["storage_conditions", "Условия хранения"], ["datasheet", "Datasheet"], ["certificate", "Сертификат"],
+];
+const ROW_EDIT_NUMBERS: Array<[RowEditField, string]> = [["inbound", "Приход"], ["written_off", "Списано"], ["reserved", "Резерв"]];
+
+function rowValues(lot: WarehouseLot): Record<RowEditField, string> {
+  return Object.fromEntries([...ROW_EDIT_TEXT, ...ROW_EDIT_NUMBERS].map(([field]) => [field, String(lot[field] ?? "")])) as Record<RowEditField, string>;
+}
+
+/** Only what differs from the lot. An emptied number means «don't touch», as in SUPPLYMAP. */
+function rowChanges(lot: WarehouseLot, values: Record<RowEditField, string>): WarehouseRowEdit {
+  const initial = rowValues(lot);
+  const changes: WarehouseRowEdit = {};
+  for (const [field] of ROW_EDIT_TEXT) {
+    if (values[field].trim() !== initial[field].trim()) changes[field] = values[field].trim();
+  }
+  for (const [field] of ROW_EDIT_NUMBERS) {
+    const value = values[field].trim();
+    if (value && Number(value) !== Number(initial[field])) changes[field] = value;
+  }
+  return changes;
+}
+
+function LotRowEditForm({ lot, disabled, mutate, onClose }: {
+  lot: WarehouseLot;
+  disabled: boolean;
+  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [values, setValues] = useState(() => rowValues(lot));
+  const [notice, setNotice] = useState("");
+  const number = (field: RowEditField) => Number(values[field].trim() || lot[field] || 0);
+  const balance = Math.round((number("inbound") - number("written_off")) * 1_000_000) / 1_000_000;
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const changes = rowChanges(lot, values);
+    if (!Object.keys(changes).length) {
+      setNotice("Изменений нет.");
+      return;
+    }
+    void mutate(lot.id, () => warehouseApi.editRow(lot.id, lot.version, changes)).then(onClose, () => undefined);
+  }
+
+  return <form className="inline-action row-edit-form" aria-label="Правка строки" onSubmit={submit}>
+    <p className="page-sub">ГРН {lot.grn}{lot.package ? ` · пакет ${lot.package}` : ""} · {lot.warehouse} — ключ строки, не правится. Пустое число — не трогать.</p>
+    {ROW_EDIT_TEXT.map(([field, label]) => <label key={field}>{label}<input
+      type={field === "expiry_date" ? "date" : "text"}
+      inputMode={field === "unit_mass_g" ? "decimal" : undefined}
+      required={field === "article" || field === "unit" || field === "purpose"}
+      value={values[field]}
+      onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
+    /></label>)}
+    {ROW_EDIT_NUMBERS.map(([field, label]) => <label key={field}>{label}<input
+      type="number" min="0" step="any" placeholder={String(lot[field] ?? "")}
+      value={values[field]}
+      onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
+    /></label>)}
+    <p className="page-sub" role="status">{notice || `Баланс станет: ${balance} ${lot.unit}`}</p>
+    <button className="primary small" disabled={disabled}>Сохранить строку</button>
+    <button type="button" className="link-button" onClick={onClose}>Отмена</button>
+  </form>;
+}
+
 function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
   lot: WarehouseLot;
   busy: boolean;
@@ -454,6 +524,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
   const [series, setSeries] = useState(lot.series);
   const [place, setPlace] = useState(lot.storage_location);
   const [returning, setReturning] = useState(false);
+  const [editingRow, setEditingRow] = useState(false);
   const [returnQuantity, setReturnQuantity] = useState("");
   const [returnSource, setReturnSource] = useState("");
   const [returnReason, setReturnReason] = useState("");
@@ -479,6 +550,8 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove }: {
       </tr>
       {open && <tr className="stock-actions-row"><td colSpan={12}>{passport && <p className="page-sub" aria-label="Паспорт партии">{passport}</p>}<div className="stock-actions">
         <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
+        {!editingRow && <button className="secondary small" disabled={disabled} onClick={() => setEditingRow(true)}>Править строку</button>}
+        {editingRow && <LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} />}
         <form className="inline-action" onSubmit={(event) => {
           event.preventDefault();
           void mutate(lot.id, () => warehouseApi.editIdentity(lot.id, lot.version, article.trim(), name.trim(), series.trim())).catch(() => undefined);

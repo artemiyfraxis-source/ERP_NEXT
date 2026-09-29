@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
 import type { WarehouseLot } from "./api";
@@ -405,4 +405,55 @@ it("writes an old address as is from the lot operations and shows a lot without 
   fireEvent.click(screen.getByRole("button", { name: "Записать место" }));
 
   await waitFor(() => expect(payload).toEqual({ version: 4, storage_location: "A-01" }));
+});
+
+it("edits the whole stock row and sends only what changed, an emptied number untouched", async () => {
+  let payload: Record<string, unknown> | undefined;
+  const stocked = { ...lot, inbound: "10", written_off: "2", balance: "8", available: "8", manufacturer: "Molex" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) return json({ lots: [stocked], total: 1, truncated: 0, next_cursor: null });
+    if (path.endsWith("/row") && init?.method === "PUT") {
+      payload = JSON.parse(String(init.body));
+      return json({ lot: { ...stocked, version: 5 }, changes: [], message: "Строка FRX.26.0000001 обновлена: 4 поле(й)." });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
+  const form = within(screen.getByRole("form", { name: "Правка строки" }));
+  expect(form.getByText(/ГРН FRX\.26\.0000001 .* ключ строки, не правится/)).toBeInTheDocument();
+  expect(form.queryByLabelText("ГРН")).toBeNull();
+  fireEvent.change(form.getByLabelText("Тип"), { target: { value: " Разъёмы " } });
+  fireEvent.change(form.getByLabelText("Место хранения"), { target: { value: "A-01" } });
+  fireEvent.change(form.getByLabelText("Производитель"), { target: { value: "" } });
+  fireEvent.change(form.getByLabelText("Приход"), { target: { value: "12" } });
+  fireEvent.change(form.getByLabelText("Списано"), { target: { value: "" } });
+  expect(form.getByRole("status")).toHaveTextContent("Баланс станет: 10 шт");
+  fireEvent.click(form.getByRole("button", { name: "Сохранить строку" }));
+
+  await waitFor(() => expect(payload).toEqual({
+    version: 4,
+    item_type: "Разъёмы",
+    storage_location: "A-01",
+    manufacturer: "",
+    inbound: "12",
+  }));
+});
+
+it("does not send a row edit when nothing changed", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
+  const form = within(screen.getByRole("form", { name: "Правка строки" }));
+  fireEvent.click(form.getByRole("button", { name: "Сохранить строку" }));
+
+  expect(form.getByRole("status")).toHaveTextContent("Изменений нет.");
+  expect(fetch.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });
