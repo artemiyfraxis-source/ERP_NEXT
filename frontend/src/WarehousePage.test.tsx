@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
-import type { ReceivingLine, WarehouseLot } from "./api";
+import type { WarehouseLot } from "./api";
 
 const lot: WarehouseLot = {
   id: "40000000-0000-0000-0000-000000000001",
@@ -24,9 +24,9 @@ const lot: WarehouseLot = {
   source_receiving_ids: ["20000000-0000-0000-0000-000000000001"],
 };
 
-function json(body: unknown) {
+function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -35,62 +35,16 @@ function added(entered: WarehouseLot[], errors: Array<{ i: number; error: string
   return json({ added: entered.length, lots: entered, assigned: [], errors });
 }
 
-const putawayCandidate: ReceivingLine = {
-  id: "50000000-0000-0000-0000-000000000001",
-  legacy_id: "SM-20260921-01",
-  status: "Принято",
-  version: 2,
-  warehouse: "ЦАР",
-  article: "CON-001",
-  series: "",
-  name: "Разъём",
-  item_type: "Комплектующие",
-  purpose: "FRX.001",
-  supplier: "ООО Поставка",
-  ordered_quantity: "10",
-  unit: "шт",
-  quality_document_required: false,
-  shipping_document_url: "https://files.test/upd.pdf",
-  quality_document_url: null,
-  document_quantity: "10",
-  fact_quantity: "10",
-  expiry_date: null,
-  disposition: null,
-  verdict: "Годен",
-  nonconformities: [],
-  accepted_quantity: "10",
-  backorder_quantity: "0",
-  grn: "FRX.26.0000001",
-  package: "",
-  storage_location: null,
-  inspector: "Приёмщик",
-  warehouse_event_emitted: false,
-  inspected_on: "2026-09-21",
-};
-
 afterEach(() => vi.restoreAllMocks());
 
 it("warns instead of printing when nothing is waiting to be put away", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
-    if (path === "/api/receiving/putaway-sheet") return json({ generated_at: "2026-09-29T10:00:00+03:00", lines: [] });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "🖨 Лист перемещения" }));
-
-  expect(await screen.findByRole("alert")).toHaveTextContent("Нет позиций для раскладки");
-  expect(screen.queryByText("ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД")).not.toBeInTheDocument();
-});
-
-it("prints a putaway sheet for accepted lots waiting for a shelf", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const path = String(input);
-    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path === "/api/receiving/putaway-sheet") {
-      return json({ generated_at: "2026-09-29T10:00:00+03:00", lines: [putawayCandidate] });
+      return json({
+        detail: "Нет позиций для раскладки: нужны строки «Принято» с ГРН и пустым местом на складе.",
+      }, 422);
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -98,13 +52,37 @@ it("prints a putaway sheet for accepted lots waiting for a shelf", async () => {
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "🖨 Лист перемещения" }));
 
-  const sheet = await screen.findByRole("region", { name: "ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД" });
-  expect(within(sheet).getByText("Разъём")).toBeInTheDocument();
-  expect(within(sheet).getByText("FRX.26.0000001")).toBeInTheDocument();
-  expect(within(sheet).getByText(/Разложил:/)).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Нет позиций для раскладки");
+});
 
-  fireEvent.click(within(sheet).getByRole("button", { name: "Закрыть" }));
-  expect(screen.queryByRole("region", { name: "ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД" })).not.toBeInTheDocument();
+it("prints a putaway sheet for accepted lots waiting for a shelf — same mechanism as FF-8", async () => {
+  const printWindow = { document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
+  vi.spyOn(window, "open").mockReturnValue(printWindow as unknown as Window);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path === "/api/receiving/putaway-sheet") {
+      return json({ sheet: {
+        title: "ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД",
+        subtitle: "Позиций: 1 · сформирован 29.09.2026 10:00",
+        columns: ["№", "Наименование", "ГРН", "Пакет", "Кол-во", "Ед.", "Место на складе"],
+        rows: [["1", "Разъём", "FRX.26.0000001", "", "10", "шт", ""]],
+        note: "",
+        sign: "Разложил: ______________________        Дата: ______________",
+      } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "🖨 Лист перемещения" }));
+
+  await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
+  const written = printWindow.document.write.mock.calls[0][0] as string;
+  expect(written).toContain("ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД");
+  expect(written).toContain("Разъём");
+  expect(written).toContain("FRX.26.0000001");
+  expect(written).toContain("Разложил:");
 });
 
 it("writes off stock with its optimistic version and stated reason", async () => {

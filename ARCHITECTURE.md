@@ -1260,16 +1260,20 @@ SUPPLYMAP, последняя правка выигрывает.
 данные «принято, без места» уже есть нативно в receiving — `ReceivingLine` со статусом
 «Принято», пустым `storage_location` и `warehouse_event_emitted=False` (место появляется
 только через `place_receiving`, а событие на склад уходит из `_emit_warehouse_if_ready`
-в тот же момент). Добавлен `GET /api/receiving/putaway-sheet` (принцип тот же
-`receiving_edit_principal`, роли receiver/admin), кнопка печати — на экране склада
-(`WarehousePage`), как просил конвейер, хотя данные родом из receiving; решено не заводить
-здесь кросс-модульный Protocol в духе fulfillment→warehouse ради одного read-only списка —
-фронтенд просто зовёт `receivingApi.putawaySheet()`. Колонка «№ партии» из SUPPLYMAP
-(отдельно от «Пакет») не перенесена: у `ReceivingLine` нет поля партии/лота — вся ветка
-прослеживаемости ГОСТ РВ (`gost-rv-traceability`) в ERP_NEXT ещё не портирована; появится
-поле — добавить колонку в `putaway_sheet`/`PrintSheet`. Печать — не Google Doc, а новый
-общий фронтенд-компонент `PrintSheet` (`@media print` прячет всё, кроме `.print-sheet`);
-FF-8 печатает бланки выдачи тем же компонентом. «решено агентом — проверить».
+в тот же момент). `GET /api/receiving/putaway-sheet` (принцип тот же `receiving_edit_principal`,
+роли receiver/admin) строит и отдаёт `PrintSheet` через `build_putaway_print_sheet`
+(`receiving/application.py`) — пустой список строк не 200 с `lines: []`, а
+`ReceivingValidationError` → 422 («Нет позиций для раскладки…»), тот же контракт, что у FF-8.
+Кнопка печати — на экране склада (`WarehousePage`), как просил конвейер, хотя данные родом из
+receiving; фронтенд зовёт `receivingApi.putawaySheet()` и открывает результат через
+`openPrintSheet` (`frontend/src/print.ts`) — тот же механизм, что и FF-8, без отдельного
+React-компонента. Исходный `frontend/src/PrintSheet.tsx` (инлайновый `@media print` компонент,
+заведённый параллельно с FF-8 2026-09-29) удалён как дубликат: два воркера независимо построили
+печать в один день, теперь путь один — `app/shared/print_sheet.py` + `frontend/src/print.ts`.
+Колонка «№ партии» из SUPPLYMAP (отдельно от «Пакет») не перенесена: у `ReceivingLine` нет поля
+партии/лота — вся ветка прослеживаемости ГОСТ РВ (`gost-rv-traceability`) в ERP_NEXT ещё не
+портирована; появится поле — добавить колонку в `build_putaway_print_sheet`. «решено агентом —
+проверить».
 **Печатные бланки выдачи (FF-8, SUPPLYMAP Issue.gs:295-308 `buildIssueDoc_`, 572-587
 `buildIssueReturnDoc`) — решено агентом, проверить:**
 - До этой задачи в репозитории не было ни одного механизма печати/PDF (проверено по коду — нет
@@ -1280,9 +1284,9 @@ FF-8 печатает бланки выдачи тем же компоненто
   структуру `PrintSheet` (title/subtitle/columns/rows/note/sign — `app/shared/print_sheet.py`), а
   фронтенд открывает её в новом окне как автономный HTML и сразу вызывает `window.print()`
   (`frontend/src/print.ts`, `openPrintSheet`/`buildPrintSheetHtml`, экранирование ячеек — там же).
-  Именно эта пара (`PrintSheet` + `print.ts`) — общий контур печати для нескольких модулей
-  (fulfillment сейчас, склад по WH-6 далее); сознательно оставлена минимальной, чтобы не плодить
-  конфликты между параллельными задачами на одном файле.
+  Именно эта пара (`PrintSheet` + `print.ts`) — единственный контур печати в репозитории, общий
+  для нескольких модулей (fulfillment, склад по WH-6 — см. выше); сознательно оставлена
+  минимальной, чтобы не плодить конфликты между параллельными задачами на одном файле.
 - «Нужно» и «Набрать» в бланке заявки — как в SUPPLYMAP: `requirement` (потребность строки) отдельно
   от того, что реально набрано (`reserved`, пока не выдано; `issued`, после выдачи). Позиция без
   партии печатается с ГРН `«— ждём поставки —»` и попадает построчно в примечание «НЕДОБОР» —

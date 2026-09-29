@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
+from app.shared.print_sheet import PrintSheet
 
 from .domain import (
     InspectionInput,
@@ -401,10 +403,40 @@ def receiving_queue(
         return list(uow.receiving.queue(limit, after_id))
 
 
-def putaway_sheet(uow: UnitOfWork, *, limit: int = 500) -> list[ReceivingLine]:
-    """WH-6: строки «Принято» с ГРН, ещё не размещённые на складе — источник печатного «Листа
-    перемещения на склад» (SUPPLYMAP Warehouse.gs:349-382 buildTransferSheet). Место на складе
-    появляется у строки только через place_receiving, поэтому пустое storage_location и есть
-    признак «ждёт раскладки»."""
+def _display_number(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+# Печатный бланк (браузерная печать — см. app.shared.print_sheet, тот же механизм, что и FF-8
+# fulfillment/application.py build_issue_print_sheet). Чтение, без транзакции сверх самой выборки.
+
+def build_putaway_print_sheet(uow: UnitOfWork, now: datetime, *, limit: int = 500) -> PrintSheet:
+    """WH-6: «Лист перемещения на склад» — строки «Принято» с ГРН, ещё не размещённые на складе
+    (SUPPLYMAP Warehouse.gs:349-382 buildTransferSheet). Место на складе появляется у строки только
+    через place_receiving, поэтому пустое storage_location и есть признак «ждёт раскладки»."""
     with uow:
-        return list(uow.receiving.awaiting_placement(limit))
+        lines = list(uow.receiving.awaiting_placement(limit))
+    if not lines:
+        raise ReceivingValidationError(
+            "Нет позиций для раскладки: нужны строки «Принято» с ГРН и пустым местом на складе."
+        )
+    columns = ("№", "Наименование", "ГРН", "Пакет", "Кол-во", "Ед.", "Место на складе")
+    rows = tuple(
+        (
+            str(index),
+            line.name,
+            line.grn or "",
+            line.package or "",
+            _display_number(line.accepted_quantity) if line.accepted_quantity is not None else "",
+            line.unit,
+            "",
+        )
+        for index, line in enumerate(lines, start=1)
+    )
+    return PrintSheet(
+        title="ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД",
+        subtitle=f"Позиций: {len(lines)} · сформирован {now.strftime('%d.%m.%Y %H:%M')}",
+        columns=columns,
+        rows=rows,
+        sign="Разложил: ______________________        Дата: ______________",
+    )

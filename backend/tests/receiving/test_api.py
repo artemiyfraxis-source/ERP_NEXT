@@ -252,13 +252,13 @@ def test_document_date_without_historical_flag_keeps_today(receiving_api):
 
 
 def test_putaway_sheet_shows_accepted_unplaced_lines_only(receiving_api):
-    """WH-6: печатный лист перемещения — только «Принято» без места; поставленное на место пропадает."""
+    """WH-6: печатный лист перемещения — только «Принято» без места; поставленное на место пропадает.
+    Тот же печатный механизм, что и FF-8 (app.shared.print_sheet + frontend/src/print.ts)."""
     client, line = receiving_api
     base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
 
     empty = client.get("/api/receiving/putaway-sheet")
-    assert empty.status_code == 200, empty.text
-    assert empty.json()["lines"] == []
+    assert empty.status_code == 422, empty.text
 
     accepted = client.post(
         f"/api/receiving/{line.id}/inspect",
@@ -268,11 +268,10 @@ def test_putaway_sheet_shows_accepted_unplaced_lines_only(receiving_api):
 
     sheet = client.get("/api/receiving/putaway-sheet")
     assert sheet.status_code == 200, sheet.text
-    body = sheet.json()
-    assert "generated_at" in body
-    assert [row["id"] for row in body["lines"]] == [str(line.id)]
-    assert body["lines"][0]["storage_location"] is None
-    assert body["lines"][0]["grn"] is not None
+    body = sheet.json()["sheet"]
+    assert body["title"] == "ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД"
+    assert len(body["rows"]) == 1
+    assert body["rows"][0][1] == line.name
 
     placed = client.post(
         f"/api/receiving/{line.id}/place",
@@ -281,7 +280,7 @@ def test_putaway_sheet_shows_accepted_unplaced_lines_only(receiving_api):
     assert placed.status_code == 200, placed.text
 
     after_placement = client.get("/api/receiving/putaway-sheet")
-    assert after_placement.json()["lines"] == []
+    assert after_placement.status_code == 422, after_placement.text
 
 
 def test_putaway_sheet_requires_receiver_role(receiving_api):

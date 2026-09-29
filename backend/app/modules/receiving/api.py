@@ -23,9 +23,9 @@ from .application import (
     PlaceReceivingCommand,
     UnitOfWork,
     inspect_receiving,
+    build_putaway_print_sheet,
     open_vk_revision,
     place_receiving,
-    putaway_sheet,
     receiving_queue,
 )
 from .domain import (
@@ -161,13 +161,11 @@ def putaway_sheet_endpoint(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
 ) -> dict:
     """WH-6: «Лист перемещения на склад» — принятые позиции с ГРН, которым ещё не назначено место
-    (SUPPLYMAP Warehouse.gs:349-382 buildTransferSheet). Печатается кладовщиком, разносится по местам
-    от руки, потом каждая строка уходит через POST /{line_id}/place."""
-    lines = _run(lambda: putaway_sheet(uow_factory()))
-    return {
-        "generated_at": now.isoformat(),
-        "lines": [_result(line) for line in lines],
-    }
+    (SUPPLYMAP Warehouse.gs:349-382 buildTransferSheet). Печатается кладовщиком через тот же
+    печатный механизм, что и FF-8 (frontend/src/print.ts), разносится по местам от руки, потом
+    каждая строка уходит через POST /{line_id}/place."""
+    sheet = _run(lambda: build_putaway_print_sheet(uow_factory(), now))
+    return {"sheet": sheet.to_dict()}
 
 
 @router.post("/{line_id}/inspect")

@@ -10,15 +10,15 @@ from app.modules.receiving.application import (
     OpenVkRevisionCommand,
     PlaceReceivingCommand,
     PoisonReceivingMessage,
+    build_putaway_print_sheet,
     consume_receiving_expected,
     dispatch_next_receiving_expected,
     inspect_receiving,
     open_vk_revision,
     place_receiving,
-    putaway_sheet,
     quarantine_overdue_waiting,
 )
-from app.modules.receiving.domain import InspectionInput, ReceivingStatus
+from app.modules.receiving.domain import InspectionInput, ReceivingStatus, ReceivingValidationError
 from app.shared.events import OutboxMessage
 from tests.factories import Actor
 from uuid import UUID
@@ -352,9 +352,19 @@ def test_putaway_sheet_lists_only_accepted_lines_without_a_place():
         uow,
     )
 
-    sheet = putaway_sheet(uow)
+    sheet = build_putaway_print_sheet(uow, datetime(2026, 9, 21, 12, 0))
 
-    assert [line.id for line in sheet] == [unplaced.id]
+    assert len(sheet.rows) == 1
+    assert sheet.rows[0][1] == unplaced.name
+    assert sheet.rows[0][2] == unplaced.grn
+
+
+def test_putaway_sheet_rejects_when_nothing_is_waiting_for_a_shelf():
+    """WH-6: печатать нечего — тот же контракт, что и у FF-8 (пустая печать невозможна)."""
+    uow = Uow()
+
+    with pytest.raises(ReceivingValidationError):
+        build_putaway_print_sheet(uow, datetime(2026, 9, 21, 12, 0))
 
 
 def test_backorder_is_requested_once_per_delivery_across_vk_revisions():

@@ -2,14 +2,13 @@ import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "
 import {
   receivingApi,
   warehouseApi,
-  type ReceivingLine,
   type WarehouseAddResult,
   type WarehouseLot,
   type WarehouseLotPassport,
   type WarehouseManualItem,
   type WarehouseRowEdit,
 } from "./api";
-import { PrintSheet } from "./PrintSheet";
+import { openPrintSheet } from "./print";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { downloadStockTable, ItemTypesPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 
@@ -49,8 +48,8 @@ export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
   const [panel, setPanel] = useState<"" | "types" | "import" | "journal">("");
   // Type suggestions (SK-14): the dictionary + the canonical types already on the stock.
   const [typeChoices, setTypeChoices] = useState<string[]>([]);
-  // WH-6: печатный «Лист перемещения на склад» для принятых партий без места.
-  const [putawayLines, setPutawayLines] = useState<ReceivingLine[] | null>(null);
+  // WH-6: печатный «Лист перемещения на склад» для принятых партий без места — тот же механизм,
+  // что и FF-8 (frontend/src/print.ts): backend строит PrintSheet, окно печати открывает print.ts.
   const [putawayBusy, setPutawayBusy] = useState(false);
   const requestVersion = useRef(0);
   const groupedLots = useMemo(() => warehouseGroups(lots, groupBy), [lots, groupBy]);
@@ -99,12 +98,8 @@ export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
     setError("");
     setPutawayBusy(true);
     try {
-      const sheet = await receivingApi.putawaySheet();
-      if (!sheet.lines.length) {
-        setError("Нет позиций для раскладки: нужны строки «Принято» с ГРН и пустым местом на складе.");
-        return;
-      }
-      setPutawayLines(sheet.lines);
+      const { sheet } = await receivingApi.putawaySheet();
+      openPrintSheet(sheet);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось сформировать лист перемещения");
     } finally {
@@ -170,22 +165,6 @@ export function WarehousePage({ admin = false }: { admin?: boolean } = {}) {
       />}
       {panel === "import" && <StockImportPanel onClose={() => setPanel("")} onApplied={() => reload()} />}
       {panel === "journal" && <StockJournalPanel onClose={() => setPanel("")} />}
-      {putawayLines && <PrintSheet<ReceivingLine>
-        title="ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД"
-        subtitle={`Позиций: ${putawayLines.length} · сформирован ${new Date().toLocaleString("ru-RU")}`}
-        columns={[
-          { key: "n", label: "№", render: (_row, index) => index + 1 },
-          { key: "name", label: "Наименование", render: (row) => row.name },
-          { key: "grn", label: "ГРН", render: (row) => row.grn },
-          { key: "package", label: "Пакет", render: (row) => row.package || "—" },
-          { key: "qty", label: "Кол-во", align: "right", render: (row) => row.accepted_quantity ?? "" },
-          { key: "unit", label: "Ед.", render: (row) => row.unit },
-          { key: "place", label: "Место на складе", render: () => "" },
-        ]}
-        rows={putawayLines}
-        signLabels={["Разложил"]}
-        onClose={() => setPutawayLines(null)}
-      />}
       {adding && <ManualStockForm
         busy={Boolean(busy) || loading}
         knownLots={lots}
