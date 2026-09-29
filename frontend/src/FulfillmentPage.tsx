@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   fulfillmentApi,
-  type FulfillmentDraftLine,
   type FulfillmentLine,
   type FulfillmentLot,
   type FulfillmentPlaces,
@@ -72,19 +71,6 @@ function stamp(value?: string | null) {
 function day(value?: string | null) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? "");
   return match ? `${match[3]}.${match[2]}.${match[1]}` : value ?? "";
-}
-
-/** How much a warehouse lot looks like the line (openStockPick «похожие наверх»): the same article first, then
-    the share of the line's name words found in the lot's name. 0 — nothing in common. */
-export function lotSimilarity(line: Pick<FulfillmentLine, "article" | "name">, lot: Pick<FulfillmentLot, "article" | "name">) {
-  const norm = (value: string) => String(value ?? "").toLocaleLowerCase("ru").replace(/ё/g, "е").trim();
-  let score = 0;
-  if (norm(line.article) && norm(line.article) === norm(lot.article ?? "")) score += 100;
-  if (norm(line.name) && norm(line.name) === norm(lot.name)) score += 50;
-  const words = norm(line.name).split(/[\s,.;:()«»"/\\-]+/).filter((word) => word.length >= 2);
-  const lotName = norm(lot.name);
-  if (words.length) score += Math.round((words.filter((word) => lotName.includes(word)).length / words.length) * 40);
-  return score;
 }
 
 export function FulfillmentPage({ principal, mode }: { principal: Principal; mode?: keyof typeof MODES }) {
@@ -195,7 +181,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
       <p className="page-sub">{screen?.sub ?? "Партии выбирает человек. Заявка ждёт поставки, а в цех уходит только полностью собранный комплект."}</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
-      {creating && <CreateRequestForm onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await reload(); }} />}
+      {creating && <CreateRequestForm lots={lots} onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await reload(); }} />}
       {project && <ProjectPanel project={project} requests={projectRequests} onClose={() => setProject(null)} busyId={busy} {...cardProps} />}
       {!project && <DataTable
         rows={shown}
@@ -203,6 +189,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         rowKey={(request) => request.id}
         label={screen?.title ?? "Заявки на выдачу"}
         presets={presets}
+        presetCountsFollowSearch
         groupBy={byProject ? (request) => projectOf(request) || "Без проекта" : undefined}
         emptyText={loaded ? (archive ? "В архиве пусто." : screen?.empty ?? "Заявок на выдачу нет. Они появятся из состава производственного комплекта.") : "Загружаю…"}
         exportName={mode === "give" ? "vydacha" : "komplektaciya"}
@@ -327,6 +314,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
       <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><span className="status">{request.status}</span></div>
       {meta.length > 0 && <dl className="fulfillment-meta">{meta.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
       <p className="fulfillment-progress">Набрано {request.lines.length - waiting.length} из {request.lines.length} поз.{waiting.length > 0 && !closed ? ` · ждут ГРН: ${waiting.length}` : ""}</p>
+      {request.shortfall && <details className="fulfillment-short"><summary>Недобор по составу</summary><div>{request.shortfall}</div></details>}
       <div className="table-wrap fulfillment-lines"><table className="grid wide"><thead><tr><th>Позиция</th><th className="num">Потребность</th><th className="num">Резерв</th><th className="num">Выдано</th><th>Партия</th><th>Место</th><th /></tr></thead><tbody>
         {request.lines.map((line) => <FulfillmentLineRow key={line.id} request={request} line={line} lots={lots} canEdit={canPick} busy={busy} mutate={mutate} />)}
       </tbody></table></div>
@@ -415,32 +403,27 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
   </>;
 }
 
-/* stockPick_ / portalIssueStock: the whole warehouse with a balance, searched by words; lots that look like the
-   position go to the top and are marked — a missed automatic match is no dead end. The unit must match: a lot in
-   other units cannot be reserved against the requirement (ERP bind rule). */
+/* stockPick_ / portalIssueStock: the whole warehouse with a balance, searched by words (stockPickMatch_: наименование,
+   ГРН, пакет, место, склад, единица). The first opening is already filtered by the position's name — usually what is
+   needed is on screen at once; if not, the person erases the words and searches their own way. */
 function LotPicker({ line, lots, busy, onPick }: {
   line: FulfillmentLine;
   lots: FulfillmentLot[];
   busy: boolean;
   onPick: (lotId: string) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const unit = line.unit.trim().toLocaleLowerCase("ru");
-  const ranked = useMemo(() => lots
-    .filter((lot) => lot.unit.trim().toLocaleLowerCase("ru") === unit)
-    .map((lot, index) => ({ lot, index, score: lotSimilarity(line, lot) }))
-    .sort((a, b) => b.score - a.score || a.index - b.index), [lots, line, unit]);
-  const found = ranked.filter(({ lot }) => matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query));
+  const [query, setQuery] = useState(line.name);
+  const found = lots.filter((lot) => matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query));
   const need = Number(line.requirement);
   return <div className="lot-picker">
-    <input className="search" type="search" aria-label={`Поиск партии для ${line.name}`} placeholder="поиск: артикул · наименование · ГРН · место" value={query} onChange={(event) => setQuery(event.target.value)} />
-    {!found.length && <div className="empty">{ranked.length ? `По запросу ничего нет. Сотри слова — покажется весь склад (${ranked.length} строк).` : "На складе нет партий с остатком в этих единицах."}</div>}
+    <input className="search" type="search" aria-label={`Поиск партии для ${line.name}`} placeholder="поиск: вилка usb · 3B4 · ГРН-2026 …" value={query} onChange={(event) => setQuery(event.target.value)} />
+    {!found.length && <div className="empty">{lots.length ? `По запросу ничего нет. Сотри слова — покажется весь склад (${lots.length} строк).` : "На складе нет ни одной строки с остатком."}</div>}
     {found.length > 0 && <table className="grid wide"><thead><tr><th>Наименование</th><th>ГРН</th><th className="num">Доступно</th><th /></tr></thead><tbody>
-      {found.slice(0, 300).map(({ lot, score }) => {
+      {found.slice(0, 300).map((lot) => {
         const low = need > 0 && Number(lot.available) < need;
         return <tr key={lot.id}>
-          <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span>{score > 0 && <span className="status">похоже</span>}<small>{lot.warehouse} / {lot.storage_location || "без места"}</small></td>
-          <td>{lot.grn}{lot.package ? ` · пакет ${lot.package}` : ""}</td>
+          <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span><small>{lot.storage_location || "без места"}</small></td>
+          <td>{lot.grn}<small>{lot.warehouse}{lot.package ? ` · пакет ${lot.package}` : ""}</small></td>
           <td className="num">{lot.available} {lot.unit}{low && <small>меньше нужного</small>}</td>
           <td><button className="secondary small" disabled={busy} aria-label={`Выбрать ${lot.grn}`} onClick={() => onPick(lot.id)}>Выбрать</button></td>
         </tr>;
@@ -450,36 +433,94 @@ function LotPicker({ line, lots, busy, onPick }: {
   </div>;
 }
 
-/* Ручная заявка (SUPPLYMAP IssueForm.html): назначение, дедлайн (обязателен, FF-1) и позиции. Партии выбирают потом в
-   карточке — заявка без остатков ждёт поставки. Idempotency-Key живёт на форму: повтор отправки не плодит дубль. */
-function CreateRequestForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
-  const empty: FulfillmentDraftLine = { article: "", name: "", unit: "шт", requirement: "" };
+/** FIFO order of warehouse lots: the older receipt first. ERP keeps no receipt date on a lot, the ГРН is issued in
+    order («FRX.26.0000012»: year, then number), so it stands in for the order of the SUPPLYMAP sheet rows. */
+export function fifoOrder(a: FulfillmentLot, b: FulfillmentLot) {
+  const key = (lot: FulfillmentLot) => {
+    const match = /(\d{2})\.(\d+)$/.exec(lot.grn);
+    return match ? [Number(match[1]), Number(match[2])] : [Number.MAX_SAFE_INTEGER, 0];
+  };
+  const [yearA, numberA] = key(a);
+  const [yearB, numberB] = key(b);
+  return yearA - yearB || numberA - numberB || a.grn.localeCompare(b.grn) || a.package.localeCompare(b.package, "ru", { numeric: true });
+}
+
+/** SUPPLYMAP fifoPick_: from the first delivery to the last until the nominal quantity is reached. */
+export function fifoPick(rows: Array<{ lot: FulfillmentLot; free: number }>, need: number) {
+  let rest = need;
+  const picks: Array<{ lot: FulfillmentLot; qty: number }> = [];
+  if (!(need > 0)) return { picks, short: 0 };
+  for (const row of rows) {
+    if (rest <= 0.0001) break;
+    if (!(row.free > 0)) continue;
+    const take = Math.min(row.free, rest);
+    picks.push({ lot: row.lot, qty: Math.round(take * 100) / 100 });
+    rest = Math.round((rest - take) * 100) / 100;
+  }
+  return { picks, short: Math.max(rest, 0) };
+}
+
+/* Ручная заявка (SUPPLYMAP IssueForm.html → queueIssueRequest → issueCreateTasks_): назначение, дедлайн, склад; поиск
+   по складу даёт наименования с доступным остатком, количество подбирается FIFO по партиям этого наименования,
+   нехватка показывается как недобор. «Оформить» шлёт выбранные партии: сервер резервирует их по свежему остатку, чего
+   не хватило — строкой «ждём поставки». Idempotency-Key живёт на форму: повтор отправки не плодит дубль. */
+function CreateRequestForm({ lots, onClose, onCreated }: { lots: FulfillmentLot[]; onClose: () => void; onCreated: () => Promise<void> }) {
   const key = useRef(crypto.randomUUID());
+  // WAREHOUSE_STOCK_SHEETS order: ЦАР, ЖУК; any other warehouse after them.
+  const warehouses = [...new Set(["ЦАР", "ЖУК", ...lots.map((lot) => lot.warehouse)])].filter((name) => lots.some((lot) => lot.warehouse === name));
   const [purpose, setPurpose] = useState("");
   const [deadline, setDeadline] = useState("");
-  const [lines, setLines] = useState<FulfillmentDraftLine[]>([empty]);
+  const [warehouse, setWarehouse] = useState(warehouses[0] ?? "");
+  const [query, setQuery] = useState("");
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [quantity, setQuantity] = useState("");
+  const [added, setAdded] = useState<Array<{ lot: FulfillmentLot; qty: number }>>([]);
+  const [shorts, setShorts] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const title = (lot: FulfillmentLot) => lot.article || lot.name;
+  const norm = (value: string) => value.toLocaleLowerCase("ru").replace(/ё/g, "е").trim();
+  const taken = (lot: FulfillmentLot) => added.filter((pick) => pick.lot.id === lot.id).reduce((sum, pick) => sum + pick.qty, 0);
+  const free = (lot: FulfillmentLot) => Math.round((Number(lot.available) - taken(lot)) * 100) / 100;
+  const here = lots.filter((lot) => lot.warehouse === (warehouse || warehouses[0]));
+  const names = (() => {
+    const wanted = norm(query);
+    const byKey = new Map<string, { name: string; unit: string; avail: number }>();
+    for (const lot of here) {
+      if (wanted && !norm(title(lot)).includes(wanted) && !norm(lot.name).includes(wanted) && !norm(lot.grn).includes(wanted)) continue;
+      const itemKey = `${norm(title(lot))}|${lot.unit}`;
+      const item = byKey.get(itemKey) ?? { name: title(lot), unit: lot.unit, avail: 0 };
+      item.avail = Math.round((item.avail + free(lot)) * 100) / 100;
+      byKey.set(itemKey, item);
+    }
+    return [...byKey.values()];
+  })();
+  const chosenAvail = chosen ? here.filter((lot) => norm(title(lot)) === norm(chosen)).reduce((sum, lot) => sum + free(lot), 0) : 0;
 
-  function change(index: number, field: keyof FulfillmentDraftLine, value: string) {
-    setLines((current) => current.map((line, at) => at === index ? { ...line, [field]: value } : line));
+  function add() {
+    if (!chosen) return;
+    const rows = here.filter((lot) => norm(title(lot)) === norm(chosen)).sort(fifoOrder).map((lot) => ({ lot, free: free(lot) }));
+    const result = fifoPick(rows, Number(quantity));
+    setAdded((current) => [...current, ...result.picks]);
+    if (result.short > 0) setShorts((current) => [...current, `${chosen}: −${result.short}`]);
+    setQuantity("");
+    setChosen(null);
   }
 
   async function submit() {
     setError("");
     if (!purpose.trim()) { setError("Укажи назначение."); return; }
     if (!deadline) { setError("Укажи дедлайн."); return; }
-    const filled = lines.filter((line) => line.name.trim() || line.article.trim() || line.requirement);
-    if (!filled.length) { setError("Добавь хотя бы одну позицию."); return; }
-    if (filled.some((line) => !line.name.trim() || !line.unit.trim() || !(Number(line.requirement) > 0))) {
-      setError("У каждой позиции нужны наименование, единица и потребность больше нуля."); return;
-    }
+    if (!added.length) { setError("Нет позиций для выдачи."); return; }
     setSaving(true);
     try {
       await fulfillmentApi.create({
         purpose: purpose.trim(),
         deadline,
-        lines: filled.map((line) => ({ ...line, article: line.article.trim(), name: line.name.trim(), unit: line.unit.trim() })),
+        lines: added.map((pick) => ({
+          article: pick.lot.article ?? "", name: pick.lot.name || pick.lot.article || "—", unit: pick.lot.unit || "шт",
+          requirement: String(pick.qty), lot_id: pick.lot.id,
+        })),
       }, key.current);
       key.current = crypto.randomUUID();
       await onCreated();
@@ -491,24 +532,33 @@ function CreateRequestForm({ onClose, onCreated }: { onClose: () => void; onCrea
   }
 
   return <div className="panel fulfillment-create" role="form" aria-label="Новая заявка на комплектацию">
-    <h3>Новая заявка</h3>
+    <h3>Заявка на выдачу КБ</h3>
     <div className="return-line">
       <label>Назначение *<input aria-label="Назначение" placeholder="напр. 48К.13" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
       <label>Дедлайн *<input aria-label="Дедлайн" type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
+      <label>Склад<select aria-label="Склад" value={warehouse} onChange={(event) => { setWarehouse(event.target.value); setChosen(null); }}>{warehouses.map((value) => <option key={value}>{value}</option>)}</select></label>
     </div>
-    <div className="table-wrap"><table className="grid wide"><thead><tr><th>Артикул</th><th>Наименование</th><th>Ед.</th><th className="num">Потребность</th><th /></tr></thead><tbody>
-      {lines.map((line, index) => <tr key={index}>
-        <td><input aria-label={`Артикул ${index + 1}`} value={line.article} onChange={(event) => change(index, "article", event.target.value)} /></td>
-        <td><input aria-label={`Наименование ${index + 1}`} value={line.name} onChange={(event) => change(index, "name", event.target.value)} /></td>
-        <td><input aria-label={`Ед. ${index + 1}`} value={line.unit} onChange={(event) => change(index, "unit", event.target.value)} /></td>
-        <td className="num"><input aria-label={`Потребность ${index + 1}`} type="number" min="0" step="any" value={line.requirement} onChange={(event) => change(index, "requirement", event.target.value)} /></td>
-        <td>{lines.length > 1 && <button type="button" className="link-button danger-link" aria-label={`Удалить строку ${index + 1}`} onClick={() => setLines((current) => current.filter((_, at) => at !== index))}>✕</button>}</td>
+    <div className="return-line">
+      <label>Поиск<input aria-label="Поиск по складу" placeholder="Поиск: артикул / наименование" value={query} onChange={(event) => { setQuery(event.target.value); setChosen(null); }} /></label>
+      <label>Кол-во<input aria-label="Кол-во" type="number" min="0" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+      <button type="button" className="secondary small" disabled={!chosen || !(Number(quantity) > 0)} onClick={add}>Добавить</button>
+    </div>
+    <div className="lot-picker" role="listbox" aria-label="Наименования на складе">
+      {names.slice(0, 40).map((item) => <button type="button" role="option" aria-selected={chosen === item.name} key={`${item.name}|${item.unit}`} className={chosen === item.name ? "secondary small active" : "secondary small"} onClick={() => setChosen(item.name)}>{item.name} — доступно {item.avail} {item.unit}</button>)}
+      {!names.length && <span className="page-sub">Ничего не найдено (или всё в резерве)</span>}
+      {chosen && <span className="page-sub">Выбрано: {chosen} · доступно {Math.round(chosenAvail * 100) / 100}</span>}
+    </div>
+    <h4>Позиции заявки (FIFO — от первой поставки)</h4>
+    <div className="table-wrap"><table className="grid wide"><thead><tr><th>Наименование</th><th>ГРН</th><th>Пакет</th><th className="num">Кол-во</th><th>Место</th><th /></tr></thead><tbody>
+      {added.map((pick, index) => <tr key={`${pick.lot.id}:${index}`}>
+        <td>{title(pick.lot)}</td><td>{pick.lot.grn}</td><td>{pick.lot.package}</td><td className="num">{pick.qty} {pick.lot.unit}</td><td>{pick.lot.storage_location}</td>
+        <td><button type="button" className="link-button danger-link" aria-label={`Удалить позицию ${index + 1}`} onClick={() => setAdded((current) => current.filter((_, at) => at !== index))}>✕</button></td>
       </tr>)}
     </tbody></table></div>
+    {shorts.length > 0 && <p className="fulfillment-progress">Недобор (на складе меньше запрошенного): {shorts.join("; ")}</p>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="fulfillment-actions">
-      <button type="button" className="secondary small" onClick={() => setLines((current) => [...current, empty])}>+ строка</button>
-      <button type="button" className="primary" disabled={saving} onClick={() => void submit()}>Оформить заявку</button>
+      <button type="button" className="primary" disabled={saving || !added.length} onClick={() => void submit()}>Оформить заявку</button>
       <button type="button" className="secondary" onClick={onClose}>Отмена</button>
     </div>
   </div>;
