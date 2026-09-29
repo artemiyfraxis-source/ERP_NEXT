@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectsPage, deleteSummary, kitBatch } from "./ProjectsPage";
 
@@ -70,6 +70,72 @@ describe("ProjectsPage", () => {
     expect(screen.queryByText("708К.4")).toBeNull();
     expect(screen.getByText("показано 1 из 2")).toBeTruthy();
     expect(localStorage.getItem("kitFilt")).toBe("В работе");
+  });
+
+  it("changes the project status in one click from the tile: stage, ХОЛД with a reason, close", async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/status") {
+        calls.push({ url, body: JSON.parse(String(init?.body)) });
+        return json({ events: 1, card });
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    const chip = await screen.findByRole("button", { name: "Статус проекта 708К.4: Новый" });
+    fireEvent.click(chip);
+    const menu = screen.getByRole("menu", { name: "Статус проекта 708К.4" });
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "В работе" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].body).toEqual({ action: "status", value: "В работе" });
+    expect(screen.queryByText("Жгут питания")).toBeNull(); // клик по статусу не открыл карточку
+
+    fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "ХОЛД" }));
+    const reason = screen.getByLabelText("Причина ХОЛД");
+    expect(screen.getByRole("button", { name: "Поставить" })).toBeDisabled();
+    fireEvent.change(reason, { target: { value: "ждём оплату" } });
+    fireEvent.click(screen.getByRole("button", { name: "Поставить" }));
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1].body).toEqual({ action: "block", value: "ХОЛД", text: "ждём оплату" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Отказ" }));
+    await waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls[2].body).toEqual({ action: "status", value: "Отказ" });
+    // У проекта с активным блокером в меню — «Снять ХОЛД».
+    fireEvent.click(screen.getByRole("button", { name: "Статус проекта 591К.3: В работе, блокер ХОЛД" }));
+    expect(screen.getByRole("menuitem", { name: "Снять ХОЛД" })).toBeTruthy();
+  });
+
+  it("shows the status, active blocker and journal in the project card", async () => {
+    const held = { ...card, status: "В работе", blocker: "ХОЛД", deadline: "2026-10-20",
+      blocker_info: { type: "ХОЛД", text: "ждём оплату", since: "2026-09-28T10:00:00", who: "РП" },
+      journal: [{ id: "e1", occurred_at: "2026-09-28T10:00:00", who: "РП", kind: "Блокер", blocker: "ХОЛД", text: "ждём оплату", item_index: "", value: "" }] };
+    const posted: unknown[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(held);
+      if (url === "/api/techcards/kitsets/708К.4/journal") { posted.push(JSON.parse(String(init?.body))); return json({ card: held }); }
+      return base(input, init);
+    });
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    render(<ProjectsPage principal={editor} />);
+    expect(await screen.findByRole("button", { name: "Статус проекта 708К.4: В работе, блокер ХОЛД" })).toBeTruthy();
+    expect(screen.getByText(/ХОЛД с 28\.09\.2026 · ждём оплату — РП/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Журнал · 1" }));
+    fireEvent.change(screen.getByLabelText("Текст записи"), { target: { value: "позвонили заказчику" } });
+    fireEvent.click(screen.getByRole("button", { name: "Записать" }));
+    await waitFor(() => expect(posted).toEqual([{ kind: "note", text: "позвонили заказчику", deadline: null }]));
+  });
+
+  it("shows the status as a plain badge to a viewer", async () => {
+    render(<ProjectsPage principal={viewer} />);
+    expect(await screen.findByText("708К.4")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Статус проекта/ })).toBeNull();
   });
 
   it("hides shipped projects by default and projects with ready or checked techcards on request, per user", async () => {

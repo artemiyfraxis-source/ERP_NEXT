@@ -803,8 +803,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .plan-table tr.dim { opacity: .55; }
 .plan-table td:first-child { white-space: nowrap; }
 .plan-table td small { color: var(--muted-foreground); }
-.plan-details-wrap { margin-top: 12px; position: relative; }
-.plan-details-close { position: absolute; right: 12px; top: 10px; z-index: 1; }
 .plan-load .gantt-label { flex-basis: 240px; width: 240px; }
 .plan-load .gantt-row { min-height: 44px; }
 .plan-legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
@@ -1019,3 +1017,33 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .gen-more[open] { color: var(--foreground); }
 .gen-more > .secondary { justify-self: start; }
 .gen-more .build-config { margin: 0; padding: 0; border: 0; min-width: min(640px, 70vw); }
+
+/* Статус проекта в один клик (ProjectStatus): бейдж-кнопка и меню — плитка списка и шапка карточки. */
+.proj-status { position: relative; display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.proj-status-btn { border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; line-height: 1.5; }
+.proj-status-btn:hover { filter: brightness(.96); box-shadow: 0 0 0 1px currentColor inset; }
+.proj-status-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: min(420px, 86vw); display: grid; gap: 6px; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card, #fff); box-shadow: 0 10px 30px rgba(0,0,0,.14); cursor: default; }
+.psm-head { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); margin-top: 2px; }
+.psm-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.psm-item { border: 1px solid var(--border); border-radius: 999px; background: #fff; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.psm-item:hover:not(:disabled) { border-color: currentColor; }
+.psm-item.on { font-weight: 700; box-shadow: 0 0 0 2px currentColor inset; }
+.psm-reason { display: flex; gap: 6px; }
+.psm-reason input { flex: 1; min-width: 0; }
+.psm-error { color: #b91c1c; font-size: 12px; }
+.kit-head { align-items: center; gap: 12px; }
+.kit-head .proj-status-btn { font-size: 13px; padding: 4px 12px; }
+.kit-blocker { margin: -4px 0 8px; padding: 6px 10px; border-left: 3px solid #b91c1c; background: #fdf1f1; color: #7f1d1d; font-size: 13px; border-radius: 0 6px 6px 0; }
+.kit-journal-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.kit-journal-form input:not([type=date]) { flex: 1; min-width: 220px; }
+.kit-journal-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.kit-journal-list li { display: grid; grid-template-columns: 96px minmax(160px, auto) 1fr auto; gap: 10px; align-items: baseline; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.kit-journal-list time, .kit-journal-list small { color: var(--muted-foreground); font-size: 12px; }
+@media (max-width: 700px) { .kit-journal-list li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* «Производственный план»: проект без карточки открывает журнал сбоку поверх списка, а не под ним. */
+.plan-drawer { position: fixed; inset: 0; z-index: 45; }
+.plan-drawer-scrim { position: absolute; inset: 0; background: rgba(0, 26, 24, .25); }
+.plan-drawer-body { position: absolute; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; background: var(--background, #f6f8f8); box-shadow: -8px 0 30px rgba(0,0,0,.15); padding: 12px; }
+.plan-details-close { position: absolute; right: 18px; top: 18px; z-index: 1; }
+.psm-note { font-size: 12px; color: var(--muted-foreground); }

@@ -15,6 +15,7 @@ import {
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
+import { ProjectStatus } from "./ProjectStatus";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
    номер, заказчик, сборки с тиражом и состав каждой. Внутри — состав, снабжение, спецификация, генератор и
@@ -151,6 +152,7 @@ export function ProjectsPage({ principal }: { principal: Principal }) {
 function KitsetHub({ canEdit, user, openProject }: { canEdit: boolean; user: string; openProject: (project: string) => void }) {
   const [all, setAll] = useState<KitsetTile[] | null>(null);
   const [statuses, setStatuses] = useState<string[]>([]);
+  const [lists, setLists] = useState<{ stages?: string[]; terminals?: string[]; blockers?: string[] }>({});
   const [sort, setSort] = useState<SortKey>(() => stored("kitSort", "upd") as SortKey);
   const [filter, setFilter] = useState(() => stored("kitFilt", ""));
   const [hide, setHide] = useState(() => Object.fromEntries(HIDES.map(([key, , on]) =>
@@ -163,6 +165,7 @@ function KitsetHub({ canEdit, user, openProject }: { canEdit: boolean; user: str
     try {
       const result = await kitsetsApi.list(sort);
       setAll(result.items); setStatuses(result.statuses);
+      setLists({ stages: result.stages, terminals: result.terminals, blockers: result.blockers });
     } catch (reason) { setError(message(reason, "Не удалось загрузить проекты")); }
   }
   useEffect(() => { void load(); }, [sort]);
@@ -215,7 +218,8 @@ function KitsetHub({ canEdit, user, openProject }: { canEdit: boolean; user: str
         <span className="muted">показано {list.length} из {all.length}</span>
       </div>
       {list.length ? <div className="tiles kit-tiles">
-        {list.map((item) => <KitTile key={item.project} item={item} statuses={statuses} canEdit={canEdit} open={() => openProject(item.project)} remove={() => void remove(item.project)} />)}
+        {list.map((item) => <KitTile key={item.project} item={item} statuses={statuses} canEdit={canEdit} open={() => openProject(item.project)} remove={() => void remove(item.project)}
+          lists={lists} statusChanged={() => void load()} />)}
       </div> : <div className="empty">Нет проектов под выбранные фильтры.</div>}
     </>}
   </section>;
@@ -271,7 +275,7 @@ function CreateFromCalc({ close, done }: {
   </div>;
 }
 
-type Tab = "sostav" | "supply" | "spec" | "gen" | `tc:${string}`;
+type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | `tc:${string}`;
 
 function KitsetCardView({ project, principal, canEdit, canRequest, back }: { project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: () => void }) {
   const [genIndex, setGenIndex] = useState("");
@@ -324,13 +328,19 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
   const tabs: Array<[Tab, string]> = [
     ["sostav", "Состав"], ["supply", "Снабжение"], ["spec", "Спецификация"], ["gen", "Генератор"],
     ...tcTabs.map((assembly) => [`tc:${assembly.index}` as Tab, `ТК ${assembly.index}`] as [Tab, string]),
+    ["journal", `Журнал${card.journal?.length ? ` · ${card.journal.length}` : ""}`],
   ];
+  const blockerInfo = card.blocker_info;
 
   /* Шапка и вкладки — как карточка проекта SUPPLYMAP (kitCardRender_): строка «заказчик · расчёт · обновлено»,
      небольшие кнопки действий и сегментные вкладки Состав / Снабжение / Спецификация / Генератор / ТК КБn. */
   return <section className="page projects-page kit-card">
-    <header className="page-head"><button className="secondary small" onClick={back}>← Назад</button><h1>📋 {card.project}</h1></header>
-    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>} · обновлено {new Date(card.updated_at).toLocaleString("ru-RU")} {card.updated_by}</p>
+    <header className="page-head kit-head"><button className="secondary small" onClick={back}>← Назад</button><h1>📋 {card.project}</h1>
+      <ProjectStatus project={card.project} status={card.status} blocker={card.blocker} canEdit={canEdit}
+        stages={card.stages} terminals={card.terminals} blockers={card.blockers} onChanged={setCard} onError={setError} />
+    </header>
+    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.deadline && <> · дедлайн {new Date(card.deadline).toLocaleDateString("ru-RU")}</>} · обновлено {new Date(card.updated_at).toLocaleString("ru-RU")} {card.updated_by}</p>
+    {blockerInfo && <p className="kit-blocker">⛔ {blockerInfo.type} с {new Date(blockerInfo.since).toLocaleDateString("ru-RU")} · {blockerInfo.text} — {blockerInfo.who}</p>}
     <div className="kit-actions">
       {canEdit && <button className="secondary small" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "🔄 Обновить из расчёта"}</button>}
       {canEdit && <button className="secondary small" onClick={() => void remove()}>🗑 Удалить карточку</button>}
@@ -349,12 +359,55 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} />}
     {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex}
       done={(index) => { void load(); setTab(`tc:${index}`); setNote(`Техкарта ${index} готова — открыта вкладка «ТК ${index}».`); }} />}
+    {tab === "journal" && <JournalTab card={card} canEdit={canEdit} changed={setCard} />}
     {tab.startsWith("tc:") && (() => {
       const assembly = card.assemblies.find((item) => `tc:${item.index}` === tab);
       if (!assembly?.techcard) return <div className="empty">Сборка не найдена.</div>;
       return <div className="kit-pane"><TcTab key={assembly.techcard.card_id} assembly={assembly} principal={principal} rebuild={() => openGen(assembly.index)} changed={() => void load()} /></div>;
     })()}
   </section>;
+}
+
+/** Журнал проекта в карточке — то, что раньше было только в нижней панели «Производственного плана»:
+ *  комментарий, дедлайн и история (блокеры, этапы, проверка ТК, статус). Блокер и статус — меню статуса в шапке. */
+function JournalTab({ card, canEdit, changed }: { card: KitsetCard; canEdit: boolean; changed: (card: KitsetCard) => void }) {
+  const [kind, setKind] = useState<"note" | "deadline">("note");
+  const [text, setText] = useState("");
+  const [deadline, setDeadline] = useState(card.deadline || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const valid = kind === "deadline" ? Boolean(deadline) : Boolean(text.trim());
+
+  async function submit() {
+    if (busy || !valid) return;
+    setBusy(true); setError("");
+    try {
+      const result = await kitsetsApi.journal(card.project, { kind, text, deadline: kind === "deadline" ? deadline : null });
+      setText(""); changed(result.card);
+    } catch (reason) { setError(message(reason, "Запись не добавлена")); }
+    finally { setBusy(false); }
+  }
+
+  const events = card.journal || [];
+  return <div className="kit-pane kit-journal">
+    {canEdit && <form className="kit-journal-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <select aria-label="Вид записи" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
+        <option value="note">Комментарий</option><option value="deadline">Дедлайн</option>
+      </select>
+      {kind === "deadline" && <input type="date" aria-label="Дедлайн" value={deadline} onChange={(event) => setDeadline(event.target.value)} />}
+      <input aria-label="Текст записи" placeholder={kind === "deadline" ? "почему сдвинули (необязательно)" : "что происходит с проектом"} value={text} onChange={(event) => setText(event.target.value)} />
+      <button type="submit" className="primary small" disabled={busy || !valid}>Записать</button>
+    </form>}
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    <ul className="kit-journal-list">
+      {events.map((event) => <li key={event.id}>
+        <time>{new Date(event.occurred_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time>
+        <b>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}{event.item_index ? ` · ${event.item_index}` : ""}{event.value ? ` · ${event.value}` : ""}</b>
+        <span>{event.text}</span><small>{event.who}</small>
+      </li>)}
+      {!events.length && <li className="empty">Записей пока нет.</li>}
+    </ul>
+  </div>;
 }
 
 const REVIEW_TONE: Record<string, string> = { "проверена": "ok", "с погрешностями": "danger", "не проверена": "neutral" };

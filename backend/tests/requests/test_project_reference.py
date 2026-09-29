@@ -9,8 +9,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.modules.production.infrastructure import ProductionPlanProjectRow, SqlAlchemyProductionUnitOfWork
-from app.modules.production.plan import PlanProjectSnapshot
+from app.modules.production.infrastructure import ProductionPlanEventRow, ProductionPlanProjectRow, SqlAlchemyProductionUnitOfWork
+from app.modules.production.plan import PLAN_KINDS, PlanEvent, PlanProjectSnapshot
 from app.modules.requests.application import CreateRequestsCommand, create_requests
 from app.modules.requests.domain import (
     RequestDraft,
@@ -139,6 +139,7 @@ def test_create_without_registry_port_checks_format_only():
 def test_plan_snapshot_registry_lists_open_projects_only():
     engine = create_engine("sqlite+pysqlite:///:memory:", poolclass=StaticPool)
     ProductionPlanProjectRow.__table__.create(engine)
+    ProductionPlanEventRow.__table__.create(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     registry = PlanSnapshotProjectRegistry(lambda: SqlAlchemyProductionUnitOfWork(sessions))
 
@@ -155,4 +156,11 @@ def test_plan_snapshot_registry_lists_open_projects_only():
         uow.commit()
 
     assert registry.open_projects() == ["591К.3"]
+
+    # «Статус проекта» из журнала ERP сильнее снимка: закрытый уходит из списка, возвращённый — снова в нём.
+    with SqlAlchemyProductionUnitOfWork(sessions) as uow:
+        uow.plan_events.add(PlanEvent("591К.3", now, "РП", PLAN_KINDS["status"], value="Отказ"))
+        uow.plan_events.add(PlanEvent("366К.2", now, "РП", PLAN_KINDS["status"], value="авто"))
+        uow.commit()
+    assert registry.open_projects() == ["366К.2"]
     engine.dispose()

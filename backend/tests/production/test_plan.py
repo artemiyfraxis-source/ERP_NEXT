@@ -18,6 +18,7 @@ from app.modules.production.plan import (
     normalize_project_number,
     project_from_purpose,
     project_stage,
+    project_terminal,
     summarize_journal,
     summarize_kit_marks,
     summarize_supply,
@@ -263,3 +264,24 @@ def test_plan_rows_come_only_from_the_project_registry():
 
     # Карточка без строки реестра и голая строка реестра (710К.1) в план не попадают (PP-1).
     assert [row.project for row in rows] == ["708К.4"]
+
+
+def test_shipment_overrides_a_manual_stage_and_the_journal_closes_or_reopens_a_project():
+    marks = summarize_kit_marks((
+        PlanEvent("708К.4", datetime(2026, 9, 22, 9), "Мастер", PLAN_KINDS["stage"], item_index="КБ1", value="В работе"),
+    ))
+    shipped = project_stage("708К.4", ("КБ1",), {"shipped": {"708К.4|КБ1"}}, marks=marks)
+    assert (shipped.status, shipped.kits[0].manual) == ("Отгружено", False)
+
+    snapshot = PlanProjectSnapshot("708К.4", status="Отменён", terminal=True)
+    assert project_terminal(snapshot, None) == "Отменён"
+    reopened = summarize_journal((
+        PlanEvent("708К.4", datetime(2026, 9, 22, 9), "РП", PLAN_KINDS["status"], value="авто"),
+    ))["708К.4"]
+    assert project_terminal(snapshot, reopened) == ""
+    closed = summarize_journal((
+        PlanEvent("708К.4", datetime(2026, 9, 22, 9), "РП", PLAN_KINDS["status"], value="Слился"),
+    ))["708К.4"]
+    assert project_terminal(None, closed) == "Слился"
+    with pytest.raises(ProductionValidationError, match="статус"):
+        validate_plan_note({"project": "708К.4", "kind": "status", "value": "Готово"}, ("708К.4",))

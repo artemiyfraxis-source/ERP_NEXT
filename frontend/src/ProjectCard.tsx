@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { KitsetTile } from "./api";
+import { ProjectStatus } from "./ProjectStatus";
 
 /** Карточка проекта как в SUPPLYMAP «Проекты» (статус, блокер, ТК, проверка, набор, заказчик, сборки · позиции).
  *  Общая для списка проектов и экрана мастера. */
@@ -23,8 +24,11 @@ export function tcProgress(item: KitsetTile) {
 }
 
 // `extra` — строка экрана мастера (ДЛ, операции без исполнителя, к запуску); без `remove` корзины нет.
-export function KitTile({ item, statuses, canEdit, open, remove, extra }: {
+export function KitTile({ item, statuses, canEdit, open, remove, extra, statusChanged, lists }: {
   item: KitsetTile; statuses: string[]; canEdit: boolean; open: () => void; remove?: () => void; extra?: ReactNode;
+  /** Есть — статус меняется прямо на плитке в один клик (меню); нет — только бейдж. */
+  statusChanged?: () => void;
+  lists?: { stages?: string[]; terminals?: string[]; blockers?: string[] };
 }) {
   const kbs = item.kb_stages;
   const mixed = kbs.some((kb) => kb.status !== kbs[0].status);
@@ -36,7 +40,7 @@ export function KitTile({ item, statuses, canEdit, open, remove, extra }: {
   const index = statuses.indexOf(item.status);
   const late = index >= statuses.indexOf("В работе") && index < statuses.indexOf("Отгружено");
   const facts: Array<[string, string, string]> = [];
-  if (item.blocker) facts.push([`⛔ ${item.blocker}`, "danger", "Активный блокер из журнала проекта"]);
+  if (item.blocker && !statusChanged) facts.push([`⛔ ${item.blocker}`, "danger", "Активный блокер из журнала проекта"]);
   // Отказ/Слился/Отменён стоят после «Отгружено»: у закрытого проекта факты не нужны.
   if (total && index <= statuses.indexOf("Отгружено")) {
     facts.push(tc === total ? ["ТК ✓", "ok", "Техкарты выданы на все КБ"] : tc ? [`ТК ${tc}/${total}`, "warn", "Техкарты выданы не на все КБ"] : ["ТК нет", "neutral", "Техкарт ещё нет"]);
@@ -52,7 +56,9 @@ export function KitTile({ item, statuses, canEdit, open, remove, extra }: {
         {canEdit && remove && <button className="link-button danger-link" title="Удалить карточку проекта" aria-label={`Удалить ${item.project}`} onClick={(event) => { event.stopPropagation(); remove(); }}>🗑</button>}
       </div>
       <div className="kit-chips">
-        <span className={`kit-status tone-${toneOf(item.status, statuses)}`}>{item.status || "—"}</span>
+        {statusChanged
+          ? <ProjectStatus project={item.project} status={item.status} blocker={item.blocker} canEdit={canEdit} {...lists} onChanged={statusChanged} />
+          : <span className={`kit-status tone-${toneOf(item.status, statuses)}`}>{item.status || "—"}</span>}
         {facts.map(([text, tone, title]) => <span key={text} className={`kit-fact tone-${tone}`} title={title}>{text}</span>)}
       </div>
       {mixed && <div className="t-sub">{kbs.map((kb) => `${kb.index} — ${kb.status}`).join(" · ")}</div>}
