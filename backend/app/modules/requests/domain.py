@@ -15,12 +15,14 @@ from app.shared.identity import Actor
 
 TASK_TYPE = "Закупка"
 DEFAULT_CATEGORY = "Общепром"
+# «Опытный образец (НИОКР)» — то же, что RND (владелец 29.09.2026): старое значение из импорта и
+# Excel-шаблонов принимается и записывается как RND (миграция 0070 перевела и старые заявки).
+PURPOSE_ALIASES = {"опытный образец (ниокр)": "RND", "опытный образец": "RND"}
 STATIC_PURPOSES = (
     "RND",
     "FRX",
     "Хоз деятельность",
     "Обеспечение производства",
-    "Опытный образец (НИОКР)",
     "Ремонт и обслуживание",
     "Склад",
     "Расходники",
@@ -241,7 +243,8 @@ def apply_quality_document_rule(category: str | None, value: str | None) -> str:
 
 def validate_draft(draft: RequestDraft) -> RequestDraft:
     purpose_by_key = {item.casefold(): item for item in STATIC_PURPOSES}
-    purpose = purpose_by_key.get(_text(draft.purpose).casefold())
+    purpose_key = _text(draft.purpose).casefold()
+    purpose = purpose_by_key.get(purpose_key) or PURPOSE_ALIASES.get(purpose_key)
     if purpose is None:
         raise ValidationError("Недопустимое НАЗНАЧЕНИЕ: выберите значение из справочника")
 
