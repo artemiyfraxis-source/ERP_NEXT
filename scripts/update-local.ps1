@@ -6,7 +6,11 @@
 # проекты по снимку data\import\projects.json, подмена сайта, запуск API и фонового outbox_worker. Ошибка миграций → база из копии,
 # прежний код, прежний сайт, API снова запущен. В конце — версия и «Что нового» (влитые PR с прошлого
 # обновления; коммит прошлого обновления в backend\<база>.version), то же уходит в version.json для плашки в ERP.
-param([string]$DbFile = 'real.db', [int]$Port = 8022)
+# Техкарты (владелец 29.09: «отгенерировать ТК по проектам»): выданные в SUPPLYMAP переносятся из листа «Техкарты»,
+# остальным сборкам генератор собирает черновики ЭТК; отгруженные и ХОЛД не трогаются, готовые ТК не пересобираются.
+# Ключ Google erp-reader (только чтение): -Key путь (запоминается), иначе ERP_GOOGLE_SERVICE_ACCOUNT_JSON, иначе
+# запомненный путь (backend\google-key.path, его пишет и load-real-data.ps1), иначе поиск в Загрузках/Документах/Рабочем столе.
+param([string]$DbFile = 'real.db', [int]$Port = 8022, [string]$Key = '')
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $root = (Resolve-Path "$PSScriptRoot\..").Path
@@ -74,6 +78,7 @@ try {
   Set-Location $frontend
   npm ci --no-audit --no-fund; Check 'npm ci'
   npm run build -- --outDir dist-next --emptyOutDir; Check 'npm run build'
+  npm run build:tcgen; Check 'npm run build:tcgen'
 } catch {
   Write-Warning "Обновление не собралось, ERP остаётся на прежней версии: $_"
   Set-Location $root
@@ -108,6 +113,34 @@ else {
 Write-Host '== Отгруженные по листу цеха — из базы (владелец 29.09: отгруженное не нужно)'
 & $py -X utf8 ..\scripts\projects_import.py drop-shipped (Join-Path $root 'data\import\projects.json')
 if ($LASTEXITCODE -ne 0) { Write-Warning "Отгруженные не убраны (ошибка выше)" }
+
+# Ключ Google: только чтение таблиц; запоминается путь, не сам ключ.
+$keyPath = Join-Path $backend 'google-key.path'
+if ($Key) { $Key = (Resolve-Path $Key).Path }
+elseif ($env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON) { $Key = $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON }
+elseif ((Test-Path $keyPath) -and (Test-Path (Get-Content $keyPath -Raw).Trim())) { $Key = (Get-Content $keyPath -Raw).Trim() }
+else {
+  $found = @("$HOME\Downloads", "$HOME\Documents", "$HOME\Desktop", 'C:\secrets') | Where-Object { Test-Path $_ } |
+    ForEach-Object { Get-ChildItem $_ -Filter *.json -File -Depth 1 -ErrorAction SilentlyContinue } |
+    Where-Object { $_.Length -lt 20KB -and (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match '"client_email"\s*:\s*"erp-reader@' } |
+    Select-Object -First 1
+  if ($found) { $Key = $found.FullName; Write-Host "Ключ Google найден: $Key" }
+}
+if ($Key) { Set-Content $keyPath $Key; $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = $Key }
+
+Write-Host '== Техкарты: выданные в SUPPLYMAP (Google только читается) и черновики генератора'
+$report = Join-Path $backend 'techcards-report.txt'
+if ($Key) {
+  & $py -X utf8 -m app.workflows.techcards_all supplymap | Tee-Object -FilePath $report
+  if ($LASTEXITCODE -gt 1) { Write-Warning 'Выданные ТК из SUPPLYMAP не перенесены (ошибка выше)' }
+} else {
+  $warn = 'Ключ Google не найден: выданные ТК из SUPPLYMAP не перенесены, длины резки из расчёта не читаются. Один раз: scripts\update-local.ps1 -Key путь\к\ключу.json'
+  Write-Warning $warn
+  Set-Content $report $warn
+}
+& $py -X utf8 -m app.workflows.techcards_all generate | Tee-Object -FilePath $report -Append
+if ($LASTEXITCODE -gt 1) { Write-Warning 'Техкарты не сгенерированы (ошибка выше)' }
+Write-Host "Итог по техкартам: $report"
 
 $head = (git -C $root rev-parse HEAD).Trim()
 $stamp = "$db.version"

@@ -49,4 +49,11 @@ Run ..\scripts\projects_import.py apply (Join-Path $data 'projects.json') --logi
 Run -m app.outbox_worker --once
 Write-Host '== Наименования комплектующих с сайтов поставщиков'
 Run -m app.workflows.kitset_names
+Write-Host '== Техкарты: выданные в SUPPLYMAP и черновики генератора (генератору нужен npm run build:tcgen в frontend)'
+Set-Content (Join-Path $backend 'google-key.path') $Key  # update-local.ps1 берёт ключ отсюда
+$env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = $Key
+foreach ($step in 'supplymap', 'generate') {
+    & $py -X utf8 -m app.workflows.techcards_all $step
+    if ($LASTEXITCODE -gt 1) { Write-Warning "Техкарты ($step) не сделаны (ошибка выше)" }
+}
 Write-Host "Готово: база $env:ERP_DATABASE_URL. Запустите API над ней (ERP_DATABASE_URL=$env:ERP_DATABASE_URL)."

@@ -259,6 +259,24 @@ cd backend
 Обновить такую копию до свежего main без потери данных (копия базы в `.bak`, миграции, сборка сайта,
 перезапуск API на 8022): `powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1`.
 
+### Техкарты по всем проектам
+
+Два повторяемых шага (`backend`, `ERP_DATABASE_URL` — база приложения; оба есть в `update-local.ps1`,
+`load-real-data.ps1` и `deploy/load-real-data.sh techcards`):
+
+```powershell
+$env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = 'C:\secrets\erp-reader.json'   # Google только читается
+.\.venv\Scripts\python.exe -m app.workflows.techcards_all supplymap [--dry-run]  # выданные в SUPPLYMAP ТК → выданные ЭТК
+.\.venv\Scripts\python.exe -m app.workflows.techcards_all generate [--dry-run]   # «Создать техкарты» остальным сборкам
+```
+
+`supplymap` читает лист «Техкарты» таблицы «ERP — Производство»: маршрут изделия (этапы, коды, времена, ссылка на
+файл ТК) становится выданной ЭТК сборки; выданная в ERP ЭТК не перезаписывается. `generate` исполняет форму
+генератора (`frontend/src/tcGenBatch.ts`, сборка `cd frontend; npm run build:tcgen`, нужен Node.js) для каждой
+сборки без ЭТК и собирает черновик тем же путём, что кнопка «Создать техкарты». Пропускает отгруженные проекты и КБ,
+ХОЛД, статусы Отказ / Слился / Отменён и проекты с ручными ТК; длины резки из листа КБn — при заданном ключе. В конце
+итог по-русски: что собрано, что пропущено и почему, где не хватило данных (код выхода 1).
+
 ### Загрузка баз «Технологии» из зеркала (REF-MIRROR-LOAD, REF-MIRROR-ALL)
 
 Читает зеркало `_local/db/*.tsv` репозитория SUPPLYMAP (только чтение; путь — `--source` или
