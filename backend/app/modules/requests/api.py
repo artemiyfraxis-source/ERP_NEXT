@@ -23,6 +23,8 @@ from app.shared.http_auth import (
 from app.shared.clock import moscow_now, moscow_today
 
 from .application import (
+    CalcSheetError,
+    CalcSpreadsheetReader,
     CreateRequestsCommand,
     HandoffRequestsCommand,
     ProcurementDetails,
@@ -30,6 +32,7 @@ from .application import (
     ProjectRegistry,
     UnitOfWork,
     create_requests as create_requests_use_case,
+    extract_from_calc,
     handoff_requests as handoff_requests_use_case,
     my_requests as my_requests_use_case,
     recent_requests as recent_requests_use_case,
@@ -52,8 +55,9 @@ from .domain import (
     derive_priority,
     import_project_warning,
     parse_calc_number,
+    CalcItem,
+    calc_project,
     parse_zpk,
-    project_from_title,
     validate_draft,
 )
 
@@ -102,6 +106,12 @@ class CalcGridInput(BaseModel):
     title: str | None = Field(default=None, max_length=512)
 
 
+class CalcLinkInput(BaseModel):
+    """«Из расчёта»: the link to the calculation Google Sheet, as pasted in SUPPLYMAP `openCalc`."""
+
+    url: str = Field(min_length=1, max_length=2048)
+
+
 class CalcImportItemInput(BaseModel):
     item_type: str = Field(default="", max_length=255)
     name: str = Field(max_length=1024)
@@ -146,6 +156,19 @@ def unit_of_work_factory(request: WebRequest) -> Callable[[], UnitOfWork]:
 
 def project_registry(request: WebRequest) -> ProjectRegistry | None:
     return getattr(request.app.state, "project_registry", None)
+
+
+def calc_spreadsheet_reader(request: WebRequest) -> CalcSpreadsheetReader:
+    """Tests put a fake on ``app.state.calc_spreadsheet_reader``; otherwise the Google adapter from env."""
+    reader = getattr(request.app.state, "calc_spreadsheet_reader", None)
+    if reader is not None:
+        return reader
+    from .google_sheets import reader_from_env
+
+    try:
+        return reader_from_env()
+    except CalcSheetError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 def procurement_stage_lookup(request: WebRequest) -> ProcurementStageLookup | None:
@@ -354,15 +377,8 @@ def _calc_number(value: str) -> str | None:
     return format(number.normalize(), "f") if number is not None else None
 
 
-@router.post("/import/parse")
-def parse_calculation(
-    payload: CalcGridInput,
-    _principal: Annotated[Principal, Depends(newrequest_principal)],
-) -> dict:
-    """`extractFromCalc` without opening the sheet: the calculation module hands over the grid."""
-    grid = [[cell or "" for cell in row[:20]] for row in payload.grid]
-    project = (payload.project or "").strip() or project_from_title(payload.title)
-    return {
+def _calc_preview(project: str, items: list[CalcItem], warnings: list[str] | None = None) -> dict:
+    preview = {
         "project": project,
         "items": [
             {
@@ -377,9 +393,48 @@ def parse_calculation(
                 "quality_document": "",
                 "planned_date": None,
             }
-            for item in parse_zpk(grid)
+            for item in items
         ],
     }
+    if warnings is not None:
+        preview["warnings"] = warnings
+    return preview
+
+
+_CALC_SHEET_STATUS = {"config": 503, "access": 422, "unsupported": 422, "upstream": 502}
+
+
+@router.post("/import/calc")
+def extract_calculation(
+    payload: CalcLinkInput,
+    _principal: Annotated[Principal, Depends(newrequest_principal)],
+    reader: Annotated[CalcSpreadsheetReader, Depends(calc_spreadsheet_reader)],
+    projects: Annotated[ProjectRegistry | None, Depends(project_registry)],
+) -> dict:
+    """`portalExtractFromCalc(token, url)`: read the ЗКП sheet of the linked calculation.
+
+    The unknown-project warning of `importRequests_` is shown already here, before anything is created.
+    """
+    try:
+        extract = extract_from_calc(payload.url, reader)
+    except ValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except CalcSheetError as error:
+        raise HTTPException(status_code=_CALC_SHEET_STATUS.get(error.kind, 502), detail=str(error)) from error
+    warning = import_project_warning(
+        extract.project, projects.open_projects() if projects is not None else None
+    )
+    return _calc_preview(extract.project, extract.items, [warning] if warning else [])
+
+
+@router.post("/import/parse")
+def parse_calculation(
+    payload: CalcGridInput,
+    _principal: Annotated[Principal, Depends(newrequest_principal)],
+) -> dict:
+    """Fallback without Google: the ЗКП range pasted as a grid (plus ЗКЗ!B2 / file title if known)."""
+    grid = [[cell or "" for cell in row[:20]] for row in payload.grid]
+    return _calc_preview(calc_project(payload.project, payload.title), parse_zpk(grid))
 
 
 @router.post("/import", status_code=201)

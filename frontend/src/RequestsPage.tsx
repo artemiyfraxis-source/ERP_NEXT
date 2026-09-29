@@ -246,9 +246,9 @@ function firstMissing(positions: Draft[]): string {
    Manual form = SUPPLYMAP rcOpenForm: «Общее для всех позиций» once on top, one card per position, «+ Добавить
    позицию», copy/remove; the whole batch goes in one POST (one НАЗНАЧЕНИЕ.NNN per purpose). «Вставить из Excel»
    recognizes the pasted range and seeds the same cards (as rcOpenForm with seed).
-   RQ-IMPORT-UI: «Из расчёта» has the operator paste the ЗКП range instead of a Google Sheets link — this repo
-   has no Sheets access, only RQ-5's `/api/requests/import/*` over an already-extracted grid
-   (решено агентом — проверить).
+   RQ-IMPORT-UI: «Из расчёта» = SUPPLYMAP openCalc: the operator pastes the LINK to the calculation Google Sheet,
+   the server reads its ЗКП/ЗКЗ (`/api/requests/import/calc`, service account); pasting the ЗКП range
+   (`/import/parse`) stays only as a fallback when the server has no Google key.
    NAV-SECTIONS: filing takes `newrequest` (the form here and inside «Заявки»), own rows take `myrequests`, every row
    takes `requests` — so «Оформить заявку» never asks for the whole list. */
 export function RequestsPage({ principal, view }: { principal: Principal; view?: "create" | "mine" }) {
@@ -278,7 +278,12 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const [excelError, setExcelError] = useState("");
   const [templateNote, setTemplateNote] = useState("");
 
+  const [calcUrl, setCalcUrl] = useState("");
+  const [calcLoading, setCalcLoading] = useState(false);
   const [calcText, setCalcText] = useState("");
+  const [calcWarnings, setCalcWarnings] = useState<string[]>([]);
+  const [calcUnits, setCalcUnits] = useState<Record<string, string>>({});
+  const [calcCategory, setCalcCategory] = useState<Record<string, string>>({});
   const [calcPreview, setCalcPreview] = useState<CalcImportPreview | null>(null);
   const [calcSelected, setCalcSelected] = useState<boolean[]>([]);
   const [calcPurpose, setCalcPurpose] = useState("");
@@ -485,6 +490,38 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
 
   /* ── «Из расчёта» (RQ-5): recognize the pasted ЗКП range, fill the required-per-batch fields,
      bulk-set Ед.изм/Документ качества/План. дата per row, create the selected positions. ── */
+  /* rcCalcLoad → rcCalcRender: every row starts «Общепром», so its Документ качества pre-fills «Нет»
+     (rcCalcApplyCatRule); Ед.изм comes pre-filled by type and stays editable. */
+  function showCalcPreview(preview: CalcImportPreview) {
+    setCalcWarnings(preview.warnings ?? []);
+    if (!preview.items.length) {
+      setCalcError("Позиций не найдено");
+      setCalcPreview(null);
+      return;
+    }
+    setCalcPreview(preview);
+    setCalcSelected(preview.items.map(() => true));
+    setCalcUnits(Object.fromEntries(preview.items.map((item, i) => [i, item.unit ?? ""])));
+    setCalcCategory(Object.fromEntries(preview.items.map((_, i) => [i, "Общепром"])));
+    setCalcQuality(Object.fromEntries(preview.items.map((_, i) => [i, "Нет"])));
+    setCalcPlanned({});
+  }
+
+  function loadCalc() {
+    setCalcError("");
+    const url = calcUrl.trim();
+    if (!url) {
+      setCalcError("Вставь ссылку");
+      return;
+    }
+    setCalcLoading(true);
+    requestsApi
+      .importFromLink(url)
+      .then(showCalcPreview)
+      .catch((reason) => setCalcError(reason instanceof Error ? reason.message : "Не удалось прочитать расчёт"))
+      .finally(() => setCalcLoading(false));
+  }
+
   function recognizeCalc() {
     setCalcError("");
     const grid = tsvToGrid(calcText);
@@ -494,18 +531,23 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     }
     requestsApi
       .importParse(grid)
-      .then((preview) => {
-        if (!preview.items.length) {
-          setCalcError("Позиций не найдено — проверь, что вставлен диапазон со строкой заголовков листа ЗКП.");
-          setCalcPreview(null);
-          return;
-        }
-        setCalcPreview(preview);
-        setCalcSelected(preview.items.map(() => true));
-        setCalcQuality({});
-        setCalcPlanned({});
-      })
+      .then(showCalcPreview)
       .catch((reason) => setCalcError(reason instanceof Error ? reason.message : "Не удалось распознать"));
+  }
+
+  /* rcCalcApplyCatRule: ОП → «Да» and locked; ИП → «Да» if empty; Общепром → «Нет» if empty. */
+  function setRowCategory(index: number, category: string) {
+    setCalcCategory((current) => ({ ...current, [index]: category }));
+    setCalcQuality((current) => {
+      const now = current[index] ?? "";
+      const next = category === "ОП" ? "Да" : now || (category === "ИП" ? "Да" : "Нет");
+      return { ...current, [index]: next };
+    });
+  }
+
+  function bulkApplyCategory(category: string) {
+    if (!calcPreview) return;
+    calcPreview.items.forEach((_, i) => setRowCategory(i, category));
   }
 
   function bulkApplyQuality(value: string) {
@@ -520,7 +562,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
 
   async function submitCalc() {
     if (!calcPreview) {
-      setCalcError("Сначала загрузи и распознай диапазон.");
+      setCalcError("Сначала загрузи");
       return;
     }
     if (!calcDeadline) {
@@ -540,7 +582,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       setCalcError("Отметь галочками хотя бы одну позицию.");
       return;
     }
-    const missingUnit = selectedIndexes.filter((i) => !String(calcPreview.items[i].unit || "").trim());
+    const missingUnit = selectedIndexes.filter((i) => !String(calcUnits[i] || "").trim());
     const missingQuality = selectedIndexes.filter((i) => !String(calcQuality[i] || "").trim());
     const missingPlanned = selectedIndexes.filter((i) => !String(calcPlanned[i] || "").trim());
     if (missingUnit.length) {
@@ -565,7 +607,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
           item_type: item.item_type,
           name: item.name,
           quantity: item.quantity,
-          unit: item.unit,
+          unit: calcUnits[i],
+          category: calcCategory[i] || "Общепром",
           quality_document: calcQuality[i],
           planned_date: calcPlanned[i],
           link: item.link || null,
@@ -587,6 +630,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       const warningText = result.warnings.length ? ` Предупреждение: ${result.warnings.join("; ")}` : "";
       setNotice(`Создано заявок из расчёта: ${result.requests.length}.${warningText}`);
       setCalcText("");
+      setCalcUrl("");
+      setCalcWarnings([]);
       setCalcPreview(null);
       setCalcSelected([]);
       setCreateMode("manual");
@@ -776,33 +821,43 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
 
             {createMode === "calc" && (
               <div className="import-panel">
-                <p className="page-sub">Вставь диапазон листа ЗКП (со строкой заголовков «Обозначение» / «Без НДС») — позиции станут заявками.</p>
-                <textarea
-                  className="rc-tsv"
-                  rows={4}
-                  placeholder="Вставь сюда диапазон листа ЗКП (со строкой заголовков)…"
-                  value={calcText}
-                  onChange={(e) => setCalcText(e.target.value)}
-                />
+                <p className="page-sub">Вставь ссылку на Google-таблицу расчёта — позиции листа ЗКП станут заявками.</p>
                 <div className="form-grid">
+                  <label className="wide">Ссылка на расчёт<input type="text" placeholder="https://docs.google.com/spreadsheets/d/…" value={calcUrl} onChange={(e) => setCalcUrl(e.target.value)} /></label>
                   <label>Назначение (на всю пачку) *<select value={calcPurpose} onChange={(e) => setCalcPurpose(e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
                   <label>Дедлайн (на всю пачку) *<input type="date" value={calcDeadline} onChange={(e) => setCalcDeadline(e.target.value)} /></label>
                   <label className="wide">Точка отгрузки (на всю пачку) *<select value={calcPoint} onChange={(e) => setCalcPoint(e.target.value)}><option value="">— выбери адрес —</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
                 </div>
                 <div className="form-actions">
-                  <button type="button" className="secondary" onClick={recognizeCalc}>Распознать</button>
+                  <button type="button" className="secondary" disabled={calcLoading} onClick={loadCalc}>{calcLoading ? "Читаю…" : "Загрузить"}</button>
                 </div>
+                <details>
+                  <summary>Сервер не читает Google? Вставить диапазон листа ЗКП вручную</summary>
+                  <textarea
+                    className="rc-tsv"
+                    rows={4}
+                    placeholder="Вставь сюда диапазон листа ЗКП (со строкой заголовков)…"
+                    value={calcText}
+                    onChange={(e) => setCalcText(e.target.value)}
+                  />
+                  <div className="form-actions">
+                    <button type="button" className="secondary" onClick={recognizeCalc}>Распознать</button>
+                  </div>
+                </details>
                 {calcError && <div className="error-banner" role="alert">{calcError}</div>}
                 {calcPreview && (
                   <>
                     <p className="page-sub">Проект: <b>{calcPreview.project || "—"}</b> · Позиций: <b>{calcPreview.items.length}</b></p>
+                    {calcWarnings.map((warning) => <p key={warning} className="page-sub" role="status">Предупреждение: {warning}</p>)}
+                    <p className="page-sub">Поправь Ед.изм / Док. по качеству / План. дату при необходимости и нажми «Создать заявки».</p>
                     <div className="form-actions">
+                      <label>Категория — всем<select defaultValue="" onChange={(e) => e.target.value && bulkApplyCategory(e.target.value)}><option value="">— всем —</option><option>Общепром</option><option>ИП</option><option>ОП</option></select></label>
                       <label>Документ по качеству — всем<select defaultValue="" onChange={(e) => e.target.value && bulkApplyQuality(e.target.value)}><option value="">— всем —</option><option>Да</option><option>Нет</option></select></label>
                       <label>План. дата — всем<input type="date" onChange={(e) => e.target.value && bulkApplyPlanned(e.target.value)} /></label>
                     </div>
                     <div className="table-scroll">
                       <table>
-                        <thead><tr><th /><th>Тип</th><th>Наименование</th><th>Кол-во</th><th>Ед.изм</th><th>Документ качества *</th><th>План. дата *</th></tr></thead>
+                        <thead><tr><th /><th>Тип</th><th>Наименование</th><th>Кол-во</th><th>Ед.изм *</th><th>Категория</th><th>Документ качества *</th><th>План. дата *</th><th>С НДС</th></tr></thead>
                         <tbody>
                           {calcPreview.items.map((item, index) => (
                             <tr key={index}>
@@ -810,13 +865,19 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                               <td>{item.item_type}</td>
                               <td>{item.name}</td>
                               <td>{item.quantity ?? "—"}</td>
-                              <td>{item.unit ?? "—"}</td>
+                              <td><input aria-label={`Ед.изм: ${item.name}`} value={calcUnits[index] ?? ""} onChange={(e) => setCalcUnits((current) => ({ ...current, [index]: e.target.value }))} /></td>
                               <td>
-                                <select value={calcQuality[index] ?? ""} onChange={(e) => setCalcQuality((current) => ({ ...current, [index]: e.target.value }))}>
+                                <select aria-label={`Категория: ${item.name}`} value={calcCategory[index] ?? "Общепром"} onChange={(e) => setRowCategory(index, e.target.value)}>
+                                  <option>Общепром</option><option>ИП</option><option>ОП</option>
+                                </select>
+                              </td>
+                              <td>
+                                <select aria-label={`Документ качества: ${item.name}`} value={calcQuality[index] ?? ""} disabled={calcCategory[index] === "ОП"} onChange={(e) => setCalcQuality((current) => ({ ...current, [index]: e.target.value }))}>
                                   <option value="">—</option><option>Да</option><option>Нет</option>
                                 </select>
                               </td>
                               <td><input type="date" value={calcPlanned[index] ?? ""} onChange={(e) => setCalcPlanned((current) => ({ ...current, [index]: e.target.value }))} /></td>
+                              <td>{item.price_with_vat ?? ""}</td>
                             </tr>
                           ))}
                         </tbody>
