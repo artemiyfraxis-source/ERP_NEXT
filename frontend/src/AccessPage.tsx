@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DataTable, type DataColumn } from "./DataTable";
 import { accessApi, type AccessMode, type AccessOverview, type AccessRow, type AccessSetting } from "./api";
 
 /** NAV-ACCESS «Доступы» (SUPPLYMAP Portal.gs portalAccessGet/portalAccessSave, PortalApp.html openAccessHub and the
@@ -23,6 +24,48 @@ export function roleModes(data: AccessOverview, role: string): Partial<Record<st
 }
 
 const shown = (mode: AccessMode | undefined) => MODE_LABEL[mode ?? "none"];
+
+type Section = AccessOverview["sections"][number];
+
+/** A cell as a coloured pill: the effective mode picks the colour, an empty cell (the role's default) stays pale.
+ *  The native select lies invisibly over the pill, so the list keeps its full wording while the cell stays short. */
+function AccessCell({ label, value, fallback, emptyLabel, emptyShown, changed, onChange }: {
+  label: string;
+  /** What an empty cell shows; by default its fallback mode, or a dash when that is «закрыт». */
+  emptyShown?: string;
+  value: AccessSetting | "";
+  fallback: AccessMode | undefined;
+  emptyLabel: string;
+  changed?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const effective = value || fallback || "none";
+  const text = value ? MODE_LABEL[value] : emptyShown ?? (fallback ? MODE_LABEL[fallback] : "—");
+  const classes = ["access-pill", "access-cell", `access-${effective}`, value ? "access-set" : "access-default", changed ? "access-changed" : ""];
+  return <span className={classes.join(" ").trim()}>
+    {text}
+    <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">{emptyLabel}</option>
+      {SETTINGS.map((mode) => <option key={mode} value={mode}>{MODE_LABEL[mode]}</option>)}
+    </select>
+  </span>;
+}
+
+/** An empty cell reads as its default: a dash when the section stays closed, the mode otherwise. */
+const emptyText = (fallback: AccessMode | undefined) => fallback ? `${MODE_LABEL[fallback]} (по умолч.)` : "—";
+
+function Legend() {
+  return <p className="access-legend">
+    <span className="access-pill access-edit access-set">полный</span>
+    <span className="access-pill access-view access-set">просмотр</span>
+    <span className="access-pill access-none access-set">закрыт</span>
+    <span>выдано явно</span>
+    <span className="access-pill access-none access-default">—</span>
+    <span>пусто: закрыт (у администратора бледное «полный»)</span>
+    <span className="access-pill access-view access-set access-changed">просмотр</span>
+    <span>не сохранено</span>
+  </p>;
+}
 
 function withCell(row: AccessRow, section: string, value: string): AccessRow {
   const next = { ...row };
@@ -90,10 +133,58 @@ export function AccessPage() {
   const person = data?.users.find((user) => user.id === personId);
   const matrixDirty = data !== null && JSON.stringify(matrix) !== JSON.stringify(data.matrix);
 
+  const matrixColumns: DataColumn<Section>[] = data ? [
+    { key: "section", title: "Раздел", value: (section) => section.label, render: (section) => <strong>{section.label}</strong>, wrap: true },
+    ...data.roles.map((role): DataColumn<Section> => ({
+      key: role.key,
+      title: role.label,
+      value: (section) => shown(roleModes({ ...data, matrix }, role.key)[section.key]),
+      render: (section) => {
+        const fallback = data.defaults[role.key]?.[section.key];
+        const value = matrix[role.key]?.[section.key] ?? "";
+        return <AccessCell
+          label={`${section.label} · ${role.label}`}
+          value={value}
+          fallback={fallback}
+          emptyLabel={emptyText(fallback)}
+          changed={value !== (data.matrix[role.key]?.[section.key] ?? "")}
+          onChange={(next) => setMatrix({ ...matrix, [role.key]: withCell(matrix[role.key] ?? {}, section.key, next) })}
+        />;
+      },
+    })),
+  ] : [];
+
+  const personColumns = (role: string): DataColumn<Section>[] => data ? [
+    { key: "section", title: "Раздел", value: (section) => section.label, render: (section) => <strong>{section.label}</strong>, wrap: true },
+    {
+      key: "role", title: `У роли «${roleLabel(role)}»`,
+      value: (section) => shown(roleModes(data, role)[section.key]),
+      render: (section) => {
+        const mode = roleModes(data, role)[section.key] ?? "none";
+        return <span className={`access-pill access-${mode} access-default`}>{MODE_LABEL[mode]}</span>;
+      },
+    },
+    {
+      key: "personal", title: "Исключение",
+      value: (section) => personal[section.key] ? MODE_LABEL[personal[section.key]!] : "",
+      render: (section) => {
+        const value = personal[section.key] ?? "";
+        return <AccessCell
+          label={`Исключение: ${section.label}`}
+          value={value}
+          fallback={roleModes(data, role)[section.key]}
+          emptyLabel="как у роли"
+          emptyShown="как у роли"
+          onChange={(next) => setPersonal(withCell(personal, section.key, next))}
+        />;
+      },
+    },
+  ] : [];
+
   return <section className="page access-page">
     <header className="page-head"><h1>Доступы</h1></header>
     <p className="page-sub">
-      Кто какие разделы видит. Раздел открыт, только если <b>выдан явно</b>: пустая ячейка — <b>закрыт</b>
+      Кто какие разделы видит. Раздел открыт, только если <b>выдан явно</b>: пустая ячейка — <b>закрыт</b>{" "}
       (у технолога-администратора пустая ячейка — <b>полный</b>), <b>просмотр</b> снимает правку. Персональное
       исключение сильнее роли. Часть действий на сервере по-прежнему закреплена за ролями (например, правит закупку
       только снабжение и технолог) — матрица их другой роли не откроет. «Доступы» всегда открыты администратору.
@@ -105,35 +196,17 @@ export function AccessPage() {
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {data && tab === "roles" && <>
-      <div className="table-wrap"><table aria-label="Матрица доступов" className="access-matrix">
-        <thead><tr><th>Раздел</th>{data.roles.map((role) => <th key={role.key}>{role.label}</th>)}</tr></thead>
-        <tbody>
-          {data.sections.map((section) => <tr key={section.key}>
-            <td className="text"><strong>{section.label}</strong></td>
-            {data.roles.map((role) => {
-              const value = matrix[role.key]?.[section.key] ?? "";
-              const fallback = shown(data.defaults[role.key]?.[section.key]);
-              return <td key={role.key}>
-                <select
-                  aria-label={`${section.label} · ${role.label}`}
-                  className={value ? "access-set" : "access-default"}
-                  value={value}
-                  onChange={(event) => setMatrix({ ...matrix, [role.key]: withCell(matrix[role.key] ?? {}, section.key, event.target.value) })}
-                >
-                  <option value="">пусто: {fallback}</option>
-                  {SETTINGS.map((mode) => <option key={mode} value={mode}>{MODE_LABEL[mode]}</option>)}
-                </select>
-              </td>;
-            })}
-          </tr>)}
-        </tbody>
-      </table></div>
-      <div className="form-actions">
+      <Legend />
+      <div className="access-matrix">
+        <DataTable label="Матрица доступов" rows={data.sections} rowKey={(section) => section.key} columns={matrixColumns} emptyText="Разделов нет" />
+      </div>
+      <div className={matrixDirty ? "form-actions access-savebar dirty" : "form-actions access-savebar"}>
+        {matrixDirty && <span className="access-dirty-note">Есть несохранённые правки</span>}
         <button className="primary" disabled={busy || !matrixDirty} onClick={() => void saveRoles()}>Сохранить доступы ролей</button>{" "}
         <button className="secondary" disabled={busy || !matrixDirty} onClick={() => setMatrix(data.matrix)}>Отменить правки</button>
       </div>
     </>}
-    {data && tab === "people" && <article className="panel access-people">
+    {data && tab === "people" && <article className="access-people">
       <div className="filters">
         <select aria-label="Сотрудник" value={personId} onChange={(event) => choosePerson(event.target.value)}>
           <option value="">Выберите сотрудника…</option>
@@ -146,28 +219,7 @@ export function AccessPage() {
         </select>
       </div>
       {person ? <>
-        <div className="table-wrap"><table aria-label={`Исключения: ${person.name}`}>
-          <thead><tr><th>Раздел</th><th>У роли «{roleLabel(person.role)}»</th><th>Исключение</th></tr></thead>
-          <tbody>
-            {data.sections.map((section) => {
-              const byRole = roleModes(data, person.role)[section.key];
-              const value = personal[section.key] ?? "";
-              return <tr key={section.key}>
-                <td className="text">{section.label}</td>
-                <td>{shown(byRole)}</td>
-                <td><select
-                  aria-label={`Исключение: ${section.label}`}
-                  className={value ? "access-set" : "access-default"}
-                  value={value}
-                  onChange={(event) => setPersonal(withCell(personal, section.key, event.target.value))}
-                >
-                  <option value="">как у роли</option>
-                  {SETTINGS.map((mode) => <option key={mode} value={mode}>{mode === "none" ? "закрыть (сильнее роли)" : MODE_LABEL[mode]}</option>)}
-                </select></td>
-              </tr>;
-            })}
-          </tbody>
-        </table></div>
+        <DataTable label={`Исключения: ${person.name}`} rows={data.sections} rowKey={(section) => section.key} columns={personColumns(person.role)} />
         <div className="form-actions">
           <button className="primary" disabled={busy} onClick={() => void savePerson()}>Сохранить исключения</button>
         </div>
