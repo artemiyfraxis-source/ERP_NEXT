@@ -27,9 +27,10 @@ class TechcardRepository(Protocol):
 class OperationCardRepository(Protocol):
     def list(self) -> Sequence[OperationCardTemplate]: ...
     def get(self, source_id: str) -> OperationCardTemplate | None: ...
+    def edited_records(self) -> list[str]: ...
     def replace(
         self, cards: tuple[OperationCardTemplate, ...], *, source_commit: str, imported_at: datetime,
-    ) -> tuple[str, ...]: ...
+    ) -> None: ...
     def edit(self, code: str, edit: OperationRecordEdit, *, changed_at: datetime, changed_by: str) -> int: ...
     def metadata(self) -> dict | None: ...
 
@@ -94,7 +95,7 @@ class EditOperationRecordCommand:
 @dataclass(frozen=True)
 class ReplacedOperationLibrary:
     templates: int
-    kept_edited: tuple[str, ...]
+    overwritten_edited: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,11 @@ class ReplaceOperationLibraryCommand:
     templates: tuple[dict[str, Any], ...]
     actor: Actor
     now: datetime
+    force: bool = False
+
+
+class OperationLibraryEditedError(TechcardValidationError):
+    """SUPPLYMAP tcRecordsSync: records edited in the portal are not silently overwritten by a library reload."""
 
 
 def _current(command: ChangeProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
@@ -211,7 +217,10 @@ def _edited_operation(operation: dict[str, Any], actor: Actor, now: datetime) ->
     same normalization as a library record; the operation is stamped as edited (at, by). The card name stays."""
     card = operation.get("card")
     if not isinstance(card, dict):
-        return operation
+        raise TechcardValidationError(
+            f"У операции {operation.get('position') or operation.get('code') or ''} нет карточки — "
+            "сначала заведи её в «Шаблонах техкарт»"
+        )
     try:
         record = normalize_record_edit({**card, "name": str(card.get("name") or operation.get("code") or "")})
     except ValueError as error:
@@ -298,7 +307,13 @@ def replace_operation_library(command: ReplaceOperationLibraryCommand, uow: Unit
     except ValueError as error:
         raise TechcardValidationError(str(error)) from error
     with uow:
-        kept = uow.operation_cards.replace(cards, source_commit=source_commit, imported_at=command.now)
+        edited = uow.operation_cards.edited_records()
+        if edited and not command.force:
+            raise OperationLibraryEditedError(
+                "Записи правлены в портале, пересборка из БД.ТК их затрёт: " + "; ".join(edited)
+                + '. Затереть сознательно — повторить с force.'
+            )
+        uow.operation_cards.replace(cards, source_commit=source_commit, imported_at=command.now)
         uow.audit.add(AuditEvent(
             id=uuid4(),
             aggregate_id=UUID("00000000-0000-0000-0000-000000000018"),
@@ -307,8 +322,8 @@ def replace_operation_library(command: ReplaceOperationLibraryCommand, uow: Unit
             occurred_at=command.now,
             details={
                 "source_commit": source_commit, "templates": str(len(cards)),
-                "kept_edited": ", ".join(kept),
+                "overwritten_edited": "; ".join(edited),
             },
         ))
         uow.commit()
-    return ReplacedOperationLibrary(templates=len(cards), kept_edited=tuple(kept))
+    return ReplacedOperationLibrary(templates=len(cards), overwritten_edited=tuple(edited))

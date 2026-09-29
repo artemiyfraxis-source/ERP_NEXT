@@ -69,7 +69,7 @@ def test_imports_lists_and_reads_lossless_operation_cards(operation_library_api)
     detail = operation_library_api.get("/api/techcards/templates/cut-wire")
 
     assert imported.status_code == 200
-    assert imported.json() == {"templates": 1, "source_commit": SOURCE_COMMIT, "kept_edited": []}
+    assert imported.json() == {"templates": 1, "source_commit": SOURCE_COMMIT, "overwritten_edited": []}
     assert listed.json()["metadata"]["template_count"] == 1
     assert listed.json()["items"][0]["code"] == "CUT_WIRE"
     assert detail.json()["document"]["steps"][0]["text"] == "Выполнить операцию"
@@ -352,27 +352,34 @@ def test_operation_record_edit_needs_templates_edit(operation_library_api):
     assert operation_library_api.put("/api/techcards/templates/one", json=EDIT).status_code == 403
 
 
-def test_library_replace_keeps_edited_records_and_builds_with_them(operation_library_api):
-    """SUPPLYMAP tcRecordsSync / tcRecordResyncFromTemplate never overwrite a record edited in the portal: the next
-    snapshot load keeps the edit over the fresh template and reports the code; the ETK is built from the edit."""
+def test_library_replace_refuses_edited_records_unless_forced(operation_library_api):
+    """SUPPLYMAP tcRecordsSync: records edited in the portal make the whole reload refuse with their codes, nothing is
+    written; with force the reload overwrites them (ИЗМЕНЕНО is cleared)."""
     library = {"sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE"), _template("two", "OP_TWO")]}
     operation_library_api.put("/api/techcards/templates/supplymap-library", json=library)
     operation_library_api.put("/api/techcards/templates/one", json=EDIT)
+    other_commit = "b" * 40
 
-    reloaded = operation_library_api.put("/api/techcards/templates/supplymap-library", json=library)
-    detail = operation_library_api.get("/api/techcards/templates/one").json()
-    created = operation_library_api.post(
-        "/api/techcards/projects", json={"project": "P-300", "item_index": "КБ1", "product_name": "Жгут"},
-    ).json()
-    built = operation_library_api.post(f"/api/techcards/projects/{created['id']}/build", json={
-        "version": created["version"],
-        "config": {"assemblyName": "Жгут", "partQty": 1, "ops": [{"type": "heatTut", "templateId": "one"}]},
-    })
+    refused = operation_library_api.put(
+        "/api/techcards/templates/supplymap-library", json={**library, "sourceCommit": other_commit},
+    )
+    still_edited = operation_library_api.get("/api/techcards/templates/one").json()
+    forced = operation_library_api.put(
+        "/api/techcards/templates/supplymap-library", json={**library, "sourceCommit": other_commit, "force": True},
+    )
+    reloaded = operation_library_api.get("/api/techcards/templates/one").json()
 
-    assert reloaded.json()["kept_edited"] == ["OP_ONE"]
-    assert detail["document"]["steps"][0]["text"] == "Новый шаг"
-    assert detail["changed_by"] == "Администратор"
-    assert built.json()["document"]["operations"][0]["card"]["steps"][0]["text"] == "Новый шаг"
+    assert refused.status_code == 409
+    assert refused.json()["detail"].startswith("Записи правлены в портале, пересборка из БД.ТК их затрёт: OP_ONE (")
+    assert "Администратор)" in refused.json()["detail"]
+    assert refused.json()["detail"].endswith('. Затереть сознательно — повторить с force.')
+    assert still_edited["document"]["steps"][0]["text"] == "Новый шаг"
+    assert forced.status_code == 200
+    assert len(forced.json()["overwritten_edited"]) == 1 and forced.json()["overwritten_edited"][0].startswith("OP_ONE (")
+    assert reloaded["document"]["steps"][0]["text"] != "Новый шаг"
+    assert reloaded["changed_by"] in (None, "")
+    # no edits left: a plain reload passes again
+    assert operation_library_api.put("/api/techcards/templates/supplymap-library", json=library).status_code == 200
 
 
 def test_template_list_carries_supplymap_catalog_meta_and_norms(operation_library_api):

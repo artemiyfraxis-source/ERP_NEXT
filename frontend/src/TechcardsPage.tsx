@@ -225,13 +225,13 @@ function EtkView({ card, canEdit, revisions, onSaved }: {
           code={operation.code || ""}
           nameEditable={false}
           initial={editDraft(etkTitle(operation) + (operation.connector ? ` — ${operation.connector}` : ""), operation.card)}
-          hint={`Правка ТК проекта ${card.project} ${card.item_index}: ${card.status === "Выдана" ? `сохранение поднимет ревизию до ${card.revision + 1} и запишется в журнал` : "ЭТК ещё не выдана — ревизия не меняется"}. Карточка операции в библиотеке не меняется; при пересборке эта правка сохранится. Комплектующие, нормы и время считает генератор — их меняют через конфигурацию сборки.`}
+          hint={`Правка ТК проекта ${card.project} ${card.item_index}: сохранение поднимет ревизию до ${card.revision + 1} и запишется в журнал. Карточка операции в библиотеке не меняется; при пересборке эта правка сохранится. Комплектующие, нормы и время считает генератор — их меняют через конфигурацию сборки.`}
           onCancel={() => setEditing(false)}
           onSave={save}
         /> : <>
           <div className="etk-kicker">Операция {operation.position || index + 1} из {list.length} · <strong>{operation.code}</strong>
             {operation.edited && <b className="tr-edited"> · правлена {operation.edited.at}{operation.edited.by ? ` · ${operation.edited.by}` : ""}</b>}
-            {canEdit && operation.card && <button className="secondary small" onClick={() => setEditing(true)}>Править</button>}
+            {canEdit && operation.card && card.status === "Выдана" && <button className="secondary small" onClick={() => setEditing(true)}>Править</button>}
           </div>
           <EtkOperationCard operation={operation} />
           {operation.card?.tooling?.length ? <div className="etk-block"><strong>Оснастка</strong><ToolingBySection tooling={operation.card.tooling} /></div> : null}
