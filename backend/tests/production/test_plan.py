@@ -247,3 +247,18 @@ def test_a_broken_supply_column_leaves_the_plan_standing():
     )
 
     assert [(row.project, row.supply, row.terminal) for row in rows] == [("708К.4", None, True)]
+
+
+def test_plan_rows_come_only_from_the_project_registry():
+    card_time = datetime(2026, 9, 22, 9)
+    orphan = ProjectTechcard.create(
+        project="999К.1", item_index="КБ1", product_name="Жгут",
+        source_calculation="", deadline=None, now=card_time,
+    )
+
+    rows = build_production_plan(
+        cards=(orphan,), tasks=(), fulfillment=(), goods=(), requests=(), procurement=(),
+        projects=(PlanProjectSnapshot("708К.4"),), events=(), today=date(2026, 9, 22),
+    )
+
+    assert [row.project for row in rows] == ["708К.4"]
