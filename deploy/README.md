@@ -27,7 +27,7 @@ Let's Encrypt), ночные копии базы. Файлы (УПД, счета
 | `config/admin.txt`, `config/staff-pins.txt` | вход администратора и PIN сотрудников (после `load-real-data.sh base`) |
 | `supplymap/` | снимок SUPPLYMAP для импорта сотрудников и справочников |
 | `import/` | снимки Google для импорта склада и проектов |
-| `backups/daily`, `backups/weekly` | `pg_dump` в 03:00 МСК: 14 ежедневных + 8 воскресных |
+| `backups/daily`, `backups/weekly`, `backups/monthly` | `pg_dump` в 03:00 МСК: 14 ежедневных + 8 воскресных + 36 за 1-е число (прослеживаемость хранится 3 года) |
 
 ## Команды
 С компьютера владельца (PowerShell, из `Projects\ERP_NEXT`; рабочую копию не трогает, берёт `origin/main`):

@@ -1,7 +1,7 @@
 {
   "sourceRepository": "../SUPPLYMAP",
   "sourceRef": "main",
-  "sourceCommit": "013a986e85794e2378c95c712be5b9c46322df46",
+  "sourceCommit": "d0a030b37e6364d241fdb827c20e6af54c532085",
   "sourceFiles": ["Warehouse.gs", "Stock05.gs", "TcHousing.gs", "TcOpsDb.gs", "Config.gs", "Schema.gs"],
   "portedInvariants": [
     "stock lot identity is warehouse plus GRN plus package",
