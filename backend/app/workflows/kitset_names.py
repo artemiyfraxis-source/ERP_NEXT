@@ -139,6 +139,72 @@ def kitset_names_tick(
         logging.exception("tcKitNamesTick_:%s", project)
         queue.drop(project, now)
         return 0
-    if not result.left:  # добрали всё, что можно — проект прочь
+    # Добрали всё, что можно, — проект прочь. Тик без единого имени тоже: иначе ссылки, которые сайт не отдаёт
+    # (поиск elitan, 403), снова займут весь потолок тика и проект навсегда встанет в голове очереди, закрыв её
+    # остальным (баг tcKitNamesTick_ в SUPPLYMAP). Его остаток доберёт следующая постановка в очередь.
+    if not result.left or not result.filled:
         queue.drop(project, now)
     return result.filled
+
+
+def enqueue_missing(sessions: sessionmaker[Session], now: datetime) -> list[str]:
+    """Поставить в очередь каждый набор, где есть пустое наименование при ссылке, — для баз, загруженных там,
+    где фон не работал (ПК без outbox_worker), и для уже заведённых карточек."""
+    with SqlAlchemyTechcardsUnitOfWork(sessions) as uow:
+        kitsets = list(uow.kitsets.list())
+    projects = [
+        kitset.project for kitset in kitsets
+        if any(component.article.strip() and not component.name.strip() and component.link.strip()
+               for assembly in kitset.assemblies for component in assembly.components)
+    ]
+    queue = KitsetNameQueue(sessions)
+    for project in projects:
+        queue.enqueue(project, now)
+    return projects
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Разовый добор наименований: `python -m app.workflows.kitset_names [--enqueue-only]`.
+    Ставит в очередь наборы с пустыми наименованиями и, без --enqueue-only, проходит каждый целиком (на сервере
+    очередь проходит outbox_worker сам, тиками)."""
+    import argparse
+    import os
+    import sys
+
+    from app.database import build_engine
+
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--enqueue-only", action="store_true", help="только поставить в очередь, добор — фоном")
+    args = parser.parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    url = os.getenv("ERP_DATABASE_URL", "").strip()
+    if not url:
+        print("Задайте ERP_DATABASE_URL", file=sys.stderr)
+        return 2
+    engine = build_engine(url)
+    try:
+        sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+        projects = enqueue_missing(sessions, moscow_now())
+        print(f"Наборов с пустыми наименованиями: {len(projects)}")
+        if args.enqueue_only:
+            return 0
+        # Каждый проект целиком, без потолка тика: ссылки, которые сайт не отдал, иначе держали бы его в голове
+        # очереди бесконечно (у фона тик их повторяет).
+        filled, queue = 0, KitsetNameQueue(sessions)
+        for project in queue.items():
+            try:
+                filled += fill_project_names(
+                    project, lambda: SqlAlchemyTechcardsUnitOfWork(sessions), HttpPageFetcher(), cap=100_000,
+                ).filled
+            except Exception:  # noqa: BLE001 — битый проект не держит остальные
+                logging.exception("kitset names:%s", project)
+            queue.drop(project, moscow_now())
+        print(f"Наименований найдено на сайтах поставщиков: {filled}")
+        return 0
+    finally:
+        engine.dispose()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
