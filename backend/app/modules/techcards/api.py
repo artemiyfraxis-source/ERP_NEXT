@@ -39,12 +39,14 @@ from .application import (
     create_project_techcard,
     auto_build_project_techcard,
     edit_operation_record,
+    discard_project_techcard_draft,
     edit_project_operation,
     issue_project_techcard,
     rebuild_project_techcard,
     replace_operation_library,
 )
 
+from .domain.cut_lengths import CalcRow, CalcWire, cut_lengths_from_calc
 from .domain.coax import КоаксСборка
 from .domain.coax import Сторона as КоаксСторона
 from .domain.coax import построить_коакс
@@ -73,6 +75,24 @@ class ProjectTechcardPayload(BaseModel):
 
 class VersionPayload(BaseModel):
     version: int = Field(ge=1)
+
+
+class CutLengthWirePayload(BaseModel):
+    id: str = Field(min_length=1, max_length=255)
+    art: str = Field(default="", max_length=512)
+    name: str = Field(default="", max_length=512)
+
+
+class CutLengthCalcPayload(BaseModel):
+    code: str = Field(default="", max_length=255)
+    comp: str = Field(default="", max_length=512)
+    req: str = Field(default="", max_length=2000)
+    l: str = Field(default="", max_length=64)
+
+
+class CutLengthsPayload(BaseModel):
+    wires: list[CutLengthWirePayload] = Field(max_length=500)
+    calc_ops: list[CutLengthCalcPayload] = Field(max_length=2000)
 
 
 class RebuildTechcardPayload(VersionPayload):
@@ -448,6 +468,37 @@ def issue_project_etk(
         now=now,
     ), uow_factory()))
     return _card_result(card)
+
+
+@router.delete("/techcards/projects/{card_id}/etk")
+def discard_project_etk_draft(
+    card_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    """«Удалить созданные» генератора: убрать собранный, ещё не выданный черновик ЭТК."""
+    card = _run(lambda: discard_project_techcard_draft(ChangeProjectTechcardCommand(
+        card_id=card_id,
+        expected_version=payload.version,
+        actor=principal.actor,
+        now=now,
+    ), uow_factory()))
+    return _card_result(card)
+
+
+@router.post("/techcards/cut-lengths")
+def calc_cut_lengths(
+    payload: CutLengthsPayload,
+    _principal: Annotated[Principal, Depends(techcards_edit_principal)],
+) -> dict:
+    """Длины резки проводов из строк расчёта КБn (SUPPLYMAP calcCutLengths_, TcGenInline.html:2276)."""
+    lengths = cut_lengths_from_calc(
+        [CalcWire(id=item.id, art=item.art, name=item.name) for item in payload.wires],
+        [CalcRow(code=item.code, comp=item.comp, req=item.req, l_m=item.l) for item in payload.calc_ops],
+    )
+    return {"lengths": lengths}
 
 
 @router.put("/techcards/projects/{card_id}/operations/{operation_key}")

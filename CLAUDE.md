@@ -19,6 +19,13 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 - `../ERP_RECOVERED` — recovered legacy ERP; serves Projects/Calculation through `legacy-bridge.mjs`
   and the contract in `contracts/`. `ERP_RECOVERED_ROOT` overrides the path.
 
+## Cloud sessions (claude.ai/code)
+- `.claude/hooks/cloud-siblings.mjs` (SessionStart, only when `CLAUDE_CODE_REMOTE=true`) clones `../SUPPLYMAP` and
+  `../claude-brain` (the owner's notes, read-only here) and prints the owner's global rules. If a clone fails,
+  attach the repo with `add_repo` and rerun the hook. Obsidian MCP and the brain's PowerShell sync are local-only.
+- Plugins come from `enabledPlugins` + the `claude-code-skills` marketplace in `.claude/settings.json`; generic
+  skills copied from SUPPLYMAP live in `.claude/skills` (see `THIRD_PARTY_NOTICES.md`).
+
 ## Commands
 - `npm run check` (repo root) — THE gate: architecture tests + backend pytest + frontend tests + build.
   Run it after every slice. Backend alone: `npm run test:backend`; frontend: `npm run test:frontend`.

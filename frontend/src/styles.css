@@ -491,3 +491,41 @@ td small { margin-top: 4px; color: #7b857e; }
 .column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
 .table-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
+/* Генератор техкарт (порт SUPPLYMAP TcGenInline.html) */
+.tcgen { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; }
+.tcgen h3 { margin: 12px 0 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
+.tcgen .gcard, .tcgen .ep-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card); display: grid; gap: 8px; }
+.tcgen .gen-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tcgen .gen-tab-btn { border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 6px 12px; font-weight: 600; }
+.tcgen .gen-tab-btn.gactive { border-color: var(--primary); color: var(--primary); }
+.tcgen .field-label { display: grid; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.tcgen .field-label.inline { max-width: 220px; }
+.tcgen .info-kv { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 12px; }
+.tcgen .spy { width: 100%; font-size: 12px; }
+.tcgen .spy input { width: 100%; }
+.tcgen .gbadge { border-radius: 6px; padding: 1px 6px; font-size: 11px; background: #eef2f7; }
+.tcgen .badge-wire { background: #e0f2fe; } .tcgen .badge-term { background: #fef3c7; } .tcgen .badge-conn { background: #dcfce7; }
+.tcgen .section-hdr { display: flex; align-items: center; gap: 12px; }
+.tcgen .btn-link { border: 0; background: none; color: var(--primary); cursor: pointer; font-size: 12px; padding: 0; }
+.tcgen .btn-add { border: 1px dashed var(--border); background: var(--card); border-radius: 8px; padding: 5px 10px; font-size: 12px; font-weight: 600; justify-self: start; }
+.tcgen .btn-remove { border: 0; background: none; color: var(--muted-foreground); font-size: 16px; padding: 0 4px; cursor: pointer; }
+.tcgen .wire-entry { display: grid; grid-template-columns: minmax(0, 2fr) repeat(auto-fit, minmax(90px, 1fr)) auto; gap: 8px; align-items: end; }
+.tcgen .ter-row, .tcgen .op-times { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; align-items: end; }
+.tcgen .radio-row, .tcgen .chip-row, .tcgen .ep-route, .tcgen .ep-method { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; }
+.tcgen .toggle-row, .tcgen .ep-otp { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
+.tcgen .ep-head { display: flex; justify-content: space-between; align-items: center; }
+.tcgen .ep-badge { font-weight: 700; color: var(--primary); }
+.tcgen .ep-auto { font-size: 11px; color: var(--muted-foreground); }
+.tcgen .ep-sdr { font-size: 12px; } .tcgen .ep-sdr-warn { color: #b45309; }
+.tcgen .ep-pin, .tcgen .twist-pair-row { display: flex; gap: 6px; align-items: center; }
+.tcgen .cut-info { padding: 6px 8px; border: 1px solid #bcd8d5; background: #f0f7f6; border-radius: 6px; font-size: 12px; }
+.tcgen .cut-info.warn { border-color: #fde68a; background: #fffbeb; }
+.tcgen .coax-add { border: 1px dashed #e0a800; background: #fff8e1; border-radius: 6px; padding: 8px; display: grid; gap: 6px; }
+.tcgen .coax-dims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.tcgen .grapher-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tcgen .op-item { display: grid; grid-template-columns: 28px 1fr; gap: 8px; border-bottom: 1px solid var(--border); padding: 8px 0; }
+.tcgen .op-badge { width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.tcgen .op-title { font-weight: 600; }
+.tcgen .op-match.found, .tcgen .ok-text { color: #065f46; } .tcgen .op-match.not-found { color: #b45309; }
+.tcgen .f-ok { border-color: #34d399; } .tcgen .f-warn { border-color: #f59e0b; background: #fffbeb; } .tcgen .f-empty { border-color: #f87171; }
+.tcgen .muted { color: var(--muted-foreground); }

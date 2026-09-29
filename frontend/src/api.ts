@@ -1731,16 +1731,26 @@ export const referencesApi = {
     method: "PUT",
     body: JSON.stringify(maps),
   }),
-  techOperations: (tab: TechOperationTab, query = "") => {
+  techOperations: (tab: TechOperationTab, query = "", limit?: number) => {
     const params = new URLSearchParams({ tab });
     if (query.trim()) params.set("q", query.trim());
+    if (limit) params.set("limit", String(limit));
     return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
+  resolveTerminal: (payload: { article: string; wires: string[]; folded?: boolean; gost_awg?: Record<string, number> }) =>
+    api<TerminalResolution>("/api/references/technology/resolve-terminal", { method: "POST", body: JSON.stringify(payload) }),
 };
+
+export interface TerminalResolution {
+  applicator: string;
+  crimp_height: string;
+  pull_force: string;
+  by_section: Array<{ section: string; crimp_height: string; pull_force: string; applicator: string; range_only: boolean; found: boolean }>;
+}
 
 export const techcardsApi = {
   list: () => api<{ items: ProjectTechcard[] }>("/api/techcards/projects"),
@@ -1760,9 +1770,9 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, operation }),
     }),
-  importGrapher: (filename: string, contentBase64: string) =>
+  importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = []) =>
     api<GrapherImportResult>("/api/techcards/grapher/import", {
-      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components: [] }),
+      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components }),
     }),
   create: (payload: {
     project: string;
@@ -1791,6 +1801,16 @@ export const techcardsApi = {
     }),
   revisions: (cardId: string) =>
     api<{ items: TechcardRevision[] }>(`/api/techcards/projects/${cardId}/revisions`),
+  discardDraft: (cardId: string, version: number) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/etk`, {
+      method: "DELETE",
+      body: JSON.stringify({ version }),
+    }),
+  cutLengths: (wires: Array<{ id: string; art: string; name: string }>, calcOps: Array<{ code: string; comp: string; req?: string; l?: string }>) =>
+    api<{ lengths: Record<string, number> }>("/api/techcards/cut-lengths", {
+      method: "POST",
+      body: JSON.stringify({ wires, calc_ops: calcOps.map((op) => ({ code: op.code, comp: op.comp, req: op.req || "", l: op.l || "" })) }),
+    }),
 };
 
 export const operationsApi = {
@@ -1950,6 +1970,10 @@ export const kitsetsApi = {
   saveLines: (project: string, edits: KitsetLineEdit[]) =>
     api<{ res: { updated: number } }>(`${kitsetPath(project)}/lines`, { method: "PUT", body: JSON.stringify({ edits }) }),
   supply: (project: string) => api<{ lines: KitsetSupplyLine[] }>(`${kitsetPath(project)}/supply`),
+  bom: (project: string, index: string) =>
+    api<{ components: Array<{ id: string; type: string; name: string; art: string; kd: string; qty: number }> }>(
+      `${kitsetPath(project)}/bom/${encodeURIComponent(index)}`,
+    ),
   lots: (query: string) => api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}`),
   issue: (project: string, deadline: string) =>
     api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; message: string }>(
