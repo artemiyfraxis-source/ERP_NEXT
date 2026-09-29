@@ -24,13 +24,12 @@ type TabDef = { id: DbTab; label: string; base?: string };
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
 const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
   { title: "Техкарты", tabs: [{ id: "templates", label: "Шаблоны техкарт", base: "tk_templates" }] },
-  { title: "Техоперации", tabs: [
-    { id: "op", label: "Операции", base: "op" },
-    { id: "ob", label: "Оборудование", base: "ob" },
+  // Owner 29.09.2026: «выгрузку хранить не нужно… оставляем коаксиальные провода по диаметрам, разъёмы коаксиальные и
+  // терминалы». БД.ОП / БД.ОБ / БД.ПРОВ / БД.МАТ are not tabs any more; their rows stay in the database and the API,
+  // the generator and the templates' norms still read them.
+  { title: "Разделка и обжим", tabs: [
     { id: "ter", label: "Терминалы", base: "ter" },
     { id: "coax", label: "Коаксиал: разъёмы", base: "coax" },
-    { id: "prov", label: "Провода", base: "prov" },
-    { id: "mat", label: "Материалы", base: "mat" },
   ] },
   // СПР.КАБ: the AWG table is the whole «ГОСТ → AWG» map plus Ø по маркам — SUPPLYMAP derives the map from it
   // (TcGenData.gs gostAwgMap_), so there is no separate map tab (owner 29.09.2026: «нет диаметров по сечению»).
@@ -86,7 +85,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const allowed = groups.flatMap((group) => group.tabs.map((tab) => tab.id));
   const [tab, setTab] = useState<DbTab>(() => {
     const wanted = initialTab ?? savedTab();
-    return (allowed.find((id) => id === wanted) ?? allowed[0] ?? "op") as DbTab;
+    return (allowed.find((id) => id === wanted) ?? allowed[0] ?? "ter") as DbTab;
   });
   const [maps, setMaps] = useState<ReferenceMaps>(EMPTY_MAPS);
   const [savedMaps, setSavedMaps] = useState("");
@@ -223,7 +222,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
 
   return <section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{current && count(current) !== null && <span className="page-count">{count(current)}</span>}</header>
-    <p className="page-sub">Шаблоны техкарт, техоперации, СПР.КАБ и карты соответствий — одна база, каждая вкладка как лист. Техкарты конкретных проектов открываются из «Проектов».</p>
+    <p className="page-sub">Шаблоны техкарт, терминалы, коаксиальные разъёмы и кабели, СПР.КАБ и карты соответствий — одна база, каждая вкладка как лист. Техкарты конкретных проектов открываются из «Проектов».</p>
     <nav className="db-tabs" aria-label="Вкладки базы данных">
       {groups.map((group) => <div className="db-tab-group" key={group.title}>
         <span className="db-tab-group-title">{group.title}</span>
@@ -257,7 +256,6 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     })()}
 
     {techTab && <>
-      {tech.metadata && <div className="snapshot-meta">Схема v{tech.metadata.schema_version} · {tech.metadata.record_count} записей · импорт {new Date(tech.metadata.imported_at).toLocaleString("ru-RU")}</div>}
       {canEdit && editing && <div className="panel db-edit">
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${editingRecord?.display_text ?? ""}`}</h2></div>
         <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />
