@@ -1016,6 +1016,38 @@ export interface OperationCardToolValue {
   unit: string;
 }
 
+/** Шаблон-лист БД.ТК в каталоге (SUPPLYMAP tcTemplateCatalogForPortal). */
+export interface TemplateSheet {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  size: string;
+  updatedAt: string;
+  savedBy: string;
+}
+
+/** Черновик шаблона-листа (SUPPLYMAP лист «Черновик — …»). */
+export interface TemplateSheetDraft {
+  id: string;
+  draftSheet: string;
+  existingTemplateId: string;
+  title: string;
+  category: string;
+  description: string;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  rows?: string[][];
+}
+
+export interface TemplateSheetSaveResult {
+  action: "created" | "updated";
+  id: string;
+  title: string;
+  sizeLabel: string;
+}
+
 export interface OperationCardDetail extends OperationCardSummary {
   document: {
     safety: string;
@@ -1920,6 +1952,24 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify(record),
     }),
+  templateSheets: () => api<{ list: TemplateSheet[]; drafts: TemplateSheetDraft[] }>("/api/techcards/template-sheets"),
+  openTemplateDraft: (templateId: string, title: string) =>
+    api<TemplateSheetDraft>("/api/techcards/template-sheets/drafts", {
+      method: "POST", body: JSON.stringify({ template_id: templateId, title }),
+    }),
+  templateDraft: (draftId: string) => api<TemplateSheetDraft>(`/api/techcards/template-sheets/drafts/${draftId}`),
+  editTemplateDraft: (draftId: string, rows: string[][]) =>
+    api<TemplateSheetDraft>(`/api/techcards/template-sheets/drafts/${draftId}`, {
+      method: "PUT", body: JSON.stringify({ rows }),
+    }),
+  saveTemplateDraft: (draftId: string, form: { title: string; category: string; description: string }) =>
+    api<TemplateSheetSaveResult>(`/api/techcards/template-sheets/drafts/${draftId}/save`, {
+      method: "POST", body: JSON.stringify(form),
+    }),
+  dropTemplateDraft: (draftId: string) =>
+    api<{ dropped: boolean }>(`/api/techcards/template-sheets/drafts/${draftId}`, { method: "DELETE" }),
+  deleteTemplateSheet: (templateId: string) =>
+    api<{ deleted: boolean; id: string; title: string }>(`/api/techcards/template-sheets/${encodeURIComponent(templateId)}`, { method: "DELETE" }),
   editOperation: (cardId: string, version: number, operationKey: string, operation: Record<string, unknown>) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/operations/${encodeURIComponent(operationKey)}`, {
       method: "PUT",
