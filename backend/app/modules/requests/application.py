@@ -116,6 +116,7 @@ def _procurement_requested_payload(
         "legacy_id": line.legacy_id,
         "request_date": line.request_date.isoformat(),
         "initiator": line.initiator,
+        "initiator_id": str(line.initiator_id) if line.initiator_id else None,
         "department": line.department,
         "task_type": line.task_type,
         "designation": line.designation,

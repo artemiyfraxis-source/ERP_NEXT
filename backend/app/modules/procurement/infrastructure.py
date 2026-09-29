@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Sequence
 from uuid import UUID
 
 from sqlalchemy import (
@@ -20,6 +20,7 @@ from sqlalchemy import (
     false,
     or_,
     select,
+    update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
@@ -30,7 +31,7 @@ from app.shared.persistence import (
     SqlAlchemyOutboxRepository,
 )
 
-from .application import SupplierOrder
+from .application import StatusNotificationDue, SupplierOrder
 from .domain import ProcurementLine, ProcurementStatus, ReplacementDecision, designation_key
 from .money import FactMoney
 
@@ -114,6 +115,9 @@ class ProcurementLineRow(Base):
     replacement_decision: Mapped[str | None] = mapped_column(String(16))
     permission_number: Mapped[str | None] = mapped_column(String(32), index=True)
     permission_date: Mapped[Any | None] = mapped_column(Date)
+    initiator_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    # The last status the initiator was notified of (OwnerTick.gs notified_<id>); owned by the sweep.
+    notified_status: Mapped[str | None] = mapped_column(String(32))
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -187,6 +191,7 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         ),
         permission_number=line.permission_number,
         permission_date=line.permission_date,
+        initiator_id=line.initiator_id,
     )
 
 
@@ -263,7 +268,11 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
         ),
         permission_number=row.permission_number,
         permission_date=row.permission_date,
+        initiator_id=row.initiator_id,
     )
+
+
+_SWEEP_OWNED = frozenset({"id", "notified_status"})
 
 
 class ProcurementSupplierOrderRow(Base):
@@ -460,8 +469,38 @@ class SqlAlchemyProcurementRepository:
             self.session.add(incoming)
             return
         for column in ProcurementLineRow.__table__.columns:
-            if column.name != "id":
+            if column.name not in _SWEEP_OWNED:
                 setattr(stored, column.name, getattr(incoming, column.name))
+
+    def status_notifications_due(self, statuses: Sequence[str], limit: int) -> list[StatusNotificationDue]:
+        rows = self.session.execute(
+            select(
+                ProcurementLineRow.id, ProcurementLineRow.version, ProcurementLineRow.legacy_id,
+                ProcurementLineRow.status, ProcurementLineRow.initiator_id,
+                ProcurementLineRow.designation, ProcurementLineRow.calculated_name,
+                ProcurementLineRow.expected_arrival,
+            )
+            .where(
+                ProcurementLineRow.status.in_(tuple(statuses)),
+                or_(
+                    ProcurementLineRow.notified_status.is_(None),
+                    ProcurementLineRow.notified_status != ProcurementLineRow.status,
+                ),
+            )
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+            .limit(limit)
+        )
+        return [StatusNotificationDue(*row) for row in rows]
+
+    def mark_status_notified(self, line_id: UUID, status: str) -> bool:
+        # Core UPDATE: no version bump, and a line whose status moved on since the read stays due.
+        result = self.session.execute(
+            update(ProcurementLineRow)
+            .where(ProcurementLineRow.id == line_id, ProcurementLineRow.status == status)
+            .values(notified_status=status)
+            .execution_options(synchronize_session=False)
+        )
+        return bool(result.rowcount)
 
 
 class SqlAlchemyProcurementUnitOfWork:

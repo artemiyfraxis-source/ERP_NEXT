@@ -161,6 +161,8 @@ class ProcurementLine:
     replacement_decision: ReplacementDecision | None = None
     permission_number: str | None = None
     permission_date: date | None = None
+    # Инициатор as a user: status notifications go to this id; None = the name matched nobody (not notified).
+    initiator_id: UUID | None = None
 
     @property
     def replacement_open(self) -> bool:
@@ -645,6 +647,7 @@ def create_line_from_requested(
             calculated_price=_decimal(payload, "calculated_price"),
             calculated_price_with_vat=_decimal(payload, "calculated_price_with_vat"),
             calculated_sum=_decimal(payload, "calculated_sum"),
+            initiator_id=UUID(_text(payload.get("initiator_id"))) if _text(payload.get("initiator_id")) else None,
         )
     except (ValueError, TypeError, DecimalException) as error:
         if isinstance(error, ProcurementValidationError):
@@ -962,6 +965,7 @@ def split_line(
                 calculated_price=source.calculated_price,
                 calculated_price_with_vat=source.calculated_price_with_vat,
                 calculated_sum=source.calculated_sum,
+                initiator_id=source.initiator_id,
             )
         )
     return result

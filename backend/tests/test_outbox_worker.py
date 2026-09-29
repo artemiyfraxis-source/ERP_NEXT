@@ -33,6 +33,7 @@ def test_run_timers_moves_overdue_waiting_and_survives_a_concurrent_edit(monkeyp
         return ["line"]
 
     monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", sweep)
+    monkeypatch.setattr(outbox_worker, "notify_initiators", lambda now, uow: 0)
     assert outbox_worker.run_timers(object()) == 1
     assert len(calls) == 1
 
@@ -41,3 +42,14 @@ def test_run_timers_moves_overdue_waiting_and_survives_a_concurrent_edit(monkeyp
 
     monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", stale)
     assert outbox_worker.run_timers(object()) == 0
+
+
+def test_run_timers_notifies_initiators_even_when_the_quarantine_timer_fails(monkeypatch):
+    from sqlalchemy.orm.exc import StaleDataError
+
+    def stale(now, uow):
+        raise StaleDataError("changed")
+
+    monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", stale)
+    monkeypatch.setattr(outbox_worker, "notify_initiators", lambda now, uow: 2)
+    assert outbox_worker.run_timers(object()) == 2

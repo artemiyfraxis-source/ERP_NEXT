@@ -77,12 +77,18 @@ class Audit:
         self.items.append(item)
 
 
+class Outbox(Audit):
+    def by_idempotency_key(self, key):
+        return next((item for item in self.items if item.idempotency_key == key), None)
+
+
 class Uow:
     def __init__(self, *lots):
         self.fulfillment = Fulfillments()
         self.warehouse = Lots(*lots)
         self.writeoffs = Audit()
         self.audit = Audit()
+        self.outbox = Outbox()
         self.commits = 0
 
     def __enter__(self):
@@ -177,6 +183,13 @@ def test_human_lot_binding_and_whole_kit_issue_are_one_stock_transaction():
         ),
         uow,
     )
+    # Issue.gs:459-474: «готов к выдаче» reaches the requester (by user id) with the pickup place.
+    (ready_note,) = uow.outbox.items
+    assert ready_note.topic == "notification.requested"
+    assert ready_note.payload["recipient_user_ids"] == str(actor.id) == str(ready.requester_id)
+    assert ready_note.payload["recipient_roles"] == ""
+    assert ready_note.payload["title"] == f"Заявка {ready.number} готова к получению"
+    assert "место: Полка выдачи 2" in ready_note.payload["body"]
     issued = issue_fulfillment(
         VersionedFulfillmentCommand(
             request_id=ready.id,

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
+from app.shared.notifications import NotificationOutbox, notification_requested, publish_notification
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
@@ -94,6 +95,82 @@ class UnitOfWork(Protocol):
 
 class DispatchUnitOfWork(UnitOfWork, Protocol):
     outbox: DispatchOutboxRepository
+
+
+@dataclass(frozen=True)
+class StatusNotificationDue:
+    line_id: UUID
+    version: int
+    legacy_id: str
+    status: str
+    initiator_id: UUID | None
+    designation: str
+    name: str
+    expected_arrival: date | None
+
+
+class StatusNotificationRepository(Protocol):
+    def status_notifications_due(self, statuses: Sequence[str], limit: int) -> Sequence[StatusNotificationDue]: ...
+    def mark_status_notified(self, line_id: UUID, status: str) -> bool: ...
+
+
+class StatusNotificationUnitOfWork(Protocol):
+    procurement: StatusNotificationRepository
+    outbox: NotificationOutbox
+
+    def __enter__(self) -> StatusNotificationUnitOfWork: ...
+    def __exit__(self, exc_type, exc, traceback) -> bool | None: ...
+    def commit(self) -> None: ...
+
+
+# NOTIFY_PURCHASE_STATUSES (Config.gs:219): the statuses the initiator hears about. Internal
+# «Новый»/«В работе»/«Готов к запросу» are deliberately silent (noise).
+NOTIFY_INITIATOR_STATUSES = (
+    ProcurementStatus.APPROVAL,
+    ProcurementStatus.AWAITING_INVOICE,
+    ProcurementStatus.TO_PAY,
+    ProcurementStatus.IN_TRANSIT,
+    ProcurementStatus.QUARANTINE,
+    ProcurementStatus.DONE,
+    ProcurementStatus.CANCELLED,
+)
+
+
+def notify_initiators(now: datetime, uow: StatusNotificationUnitOfWork, *, limit: int = 500) -> int:
+    """OwnerTick.gs:872-903 `notifyInitiatorsSheet_`: a line that reached a notified status other than
+    the last one announced tells its initiator once. The mark is set with or without a recipient
+    (unmatched initiator = nobody to tell), so a line is never re-scanned for the same status.
+    Every status path (buyer actions, receiving sync, cancel) is covered because this reads the state."""
+    sent = 0
+    with uow:
+        due = uow.procurement.status_notifications_due(
+            [status.value for status in NOTIFY_INITIATOR_STATUSES], limit,
+        )
+        for item in due:
+            if not uow.procurement.mark_status_notified(item.line_id, item.status):
+                continue
+            body = (
+                "Статус вашей заявки изменился.\n\n"
+                f"System ID: {item.legacy_id}\nНазначение: {item.designation}\n"
+                f"Наименование: {item.name}\nНовый статус: {item.status}"
+                + (
+                    f"\nОжидаемая дата поступления: {item.expected_arrival.strftime('%d.%m.%Y')}"
+                    if item.expected_arrival else ""
+                )
+            )
+            if publish_notification(uow.outbox, notification_requested(
+                key=f"procurement:{item.line_id}:status:v{item.version}:{item.status}",
+                now=now,
+                title=f"Заявка {item.legacy_id} — статус: {item.status}",
+                body=body,
+                kind="status",
+                reference=item.legacy_id,
+                user_ids=(item.initiator_id,),
+            )):
+                sent += 1
+        if due:
+            uow.commit()
+    return sent
 
 
 class ExchangeRates(Protocol):

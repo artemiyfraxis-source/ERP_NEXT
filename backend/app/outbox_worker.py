@@ -16,6 +16,7 @@ from app.modules.procurement.application import (
     PoisonOutboxMessage,
     dispatch_next_backorder_requested,
     dispatch_next_procurement_requested,
+    notify_initiators,
 )
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
 from app.modules.requests.application import PoisonRequestMessage, dispatch_next_reorder_requested
@@ -135,12 +136,17 @@ def dispatch_available(
 
 def run_timers(sessions: sessionmaker[Session]) -> int:
     """Time-driven transitions that SUPPLYMAP ran from its owner tick."""
+    done = 0
     try:
-        moved = quarantine_overdue_waiting(moscow_now(), SqlAlchemyReceivingUnitOfWork(sessions))
+        done += len(quarantine_overdue_waiting(moscow_now(), SqlAlchemyReceivingUnitOfWork(sessions)))
     except (IntegrityError, StaleDataError):
         logging.warning("Receiving line changed during the quarantine timer; retrying next tick")
-        return 0
-    return len(moved)
+    # OwnerTick.gs notifyInitiators_: status changes of procurement lines → their initiators.
+    try:
+        done += notify_initiators(moscow_now(), SqlAlchemyProcurementUnitOfWork(sessions))
+    except (IntegrityError, StaleDataError):
+        logging.warning("Procurement line changed during the initiator notifications; retrying next tick")
+    return done
 
 
 def drain_available(sessions: sessionmaker[Session], *, limit: int = 100) -> int:

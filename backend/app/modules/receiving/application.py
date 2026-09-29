@@ -10,6 +10,12 @@ from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
+from app.shared.notifications import (
+    SUPPLY_ROLE,
+    TECHNOLOGIST_ROLE,
+    notification_requested,
+    publish_notification,
+)
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
@@ -21,10 +27,43 @@ from .domain import (
     create_line_from_expected,
     latest_overdue_inspection_date,
     quarantine_notify_targets,
+    NOTIFY_SUPPLY,
+    NOTIFY_TECHNOLOGIST,
 )
 
 
 SYSTEM_ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
+_NOTIFY_ROLES = {NOTIFY_TECHNOLOGIST: TECHNOLOGIST_ROLE, NOTIFY_SUPPLY: SUPPLY_ROLE}
+
+
+def _notify_roles(line: ReceivingLine) -> tuple[str, ...]:
+    return tuple(_NOTIFY_ROLES[target] for target in quarantine_notify_targets(line.nonconformities))
+
+
+def _notify_nonconformity(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> None:
+    """Receiving.gs:757-788 `notifyNonconformityAlerts_`: a BLOCKING nonconformity after ВК (the line
+    is not «Принято»; «Излишек» alone does not block) goes at once to the technologist (брак) and/or
+    supply (everything else). One event per inspected line; SUPPLYMAP grouped a sheet run per person."""
+    if line.status is ReceivingStatus.ACCEPTED or not line.nonconformities:
+        return
+    nature = ", ".join(line.nonconformities)
+    waiting = (
+        f"\n\nНужно решение в течение {QUARANTINE_WORKDAYS} раб. дн. (устранено → повторный ВК; "
+        "подтверждено → РЕШЕНИЕ), иначе позиция автоматически уйдёт в Карантин."
+        if line.status is ReceivingStatus.WAITING else ""
+    )
+    publish_notification(uow.outbox, notification_requested(
+        key=f"receiving:{line.id}:nonconformity:v{line.version}",
+        now=now,
+        title=f"Несоответствия при приёмке — {line.legacy_id} ({line.warehouse})",
+        body=(
+            f"Входной контроль выявил несоответствия ({line.warehouse}):\n\n"
+            f"• {line.legacy_id} · {line.name or '—'} — {nature} → статус «{line.status.value}»{waiting}"
+        ),
+        kind="nonconformity",
+        reference=line.legacy_id,
+        roles=_notify_roles(line),
+    ))
 
 
 class ReceivingRepository(Protocol):
@@ -254,6 +293,7 @@ def inspect_receiving(command: InspectReceivingCommand, uow: UnitOfWork) -> Rece
         )
         if current.status is ReceivingStatus.IN_TRANSIT:
             _request_backorder(inspected, uow, command.now)
+        _notify_nonconformity(inspected, uow, command.now)
         result = _emit_warehouse_if_ready(inspected, uow, command.actor, command.now)
         uow.commit()
         return result
@@ -356,7 +396,7 @@ def place_receiving(command: PlaceReceivingCommand, uow: UnitOfWork) -> Receivin
 def quarantine_overdue_waiting(now: datetime, uow: UnitOfWork, *, limit: int = 200) -> list[ReceivingLine]:
     """OwnerTick.gs waitingToQuarantineSweep_: «Ожидание» без решения дольше срока → «Карантин».
 
-    Письмо ответственному — отдельный шаг (уведомления, OP-1/RC-10); кому писать, пишется в аудит.
+    Ответственному по характеру — уведомление в портал (OP-1/RC-10); кому писали, пишется в аудит.
     """
     today: date = now.date()
     moved: list[ReceivingLine] = []
@@ -385,6 +425,23 @@ def quarantine_overdue_waiting(now: datetime, uow: UnitOfWork, *, limit: int = 2
                     },
                 )
             )
+            # OwnerTick.gs:573-581: the automatic move (no decision in time) notifies the same people.
+            publish_notification(uow.outbox, notification_requested(
+                key=f"receiving:{line.id}:auto_quarantine:v{quarantined.version}",
+                now=now,
+                title=f"Авто-Карантин (нет решения {QUARANTINE_WORKDAYS} р.д.) — {line.legacy_id}",
+                body=(
+                    f"{line.legacy_id} · {line.name or '—'} ({line.warehouse})"
+                    + (f"\nВ «Ожидании» с {line.inspected_on.strftime('%d.%m.%Y')}" if line.inspected_on else "")
+                    + (f"\nХарактер несоответствия: {', '.join(line.nonconformities)}" if line.nonconformities else "")
+                    + f"\n\nРешение не принято за {QUARANTINE_WORKDAYS} раб. дн. — позиция автоматически "
+                    "переведена в Карантин.\nПричина устранена → повторный «Входной контроль» по строке; "
+                    "подтверждено → заполни РЕШЕНИЕ."
+                ),
+                kind="quarantine",
+                reference=line.legacy_id,
+                roles=_notify_roles(line),
+            ))
             moved.append(quarantined)
         if moved:
             uow.commit()

@@ -156,6 +156,8 @@ class Shipment:
     manager: str
     note: str
     lines: tuple[ShipmentLine, ...]
+    # МЕНЕДЖЕР as a user: the track number goes to this id; None = the name matched nobody (→ all pm).
+    manager_id: UUID | None = None
 
     @classmethod
     def create(
@@ -163,7 +165,7 @@ class Shipment:
         shipping_point: str, contact: str, phone: str, terms: DeliveryTerms,
         carrier: str, deadline: date | None, upd_type: UpdType, upd_number: str,
         upd_date: date | None, upd_url: str, manager: str, note: str,
-        lines: tuple[ShipmentLine, ...],
+        lines: tuple[ShipmentLine, ...], manager_id: UUID | None = None,
     ) -> Shipment:
         if not lines:
             raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
@@ -180,6 +182,7 @@ class Shipment:
             upd_url=str(upd_url or "").strip(), pl_number="", dn_number="",
             track_number="", packed_at=None, shipped_at=None,
             manager=_text(manager, "Менеджер"), note=str(note or "").strip(), lines=lines,
+            manager_id=manager_id,
         )
 
     def pick(self, available: dict[UUID, Decimal], grns: dict[UUID, str]) -> tuple[Shipment, dict[UUID, Decimal]]:

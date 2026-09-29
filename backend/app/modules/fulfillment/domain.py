@@ -167,6 +167,8 @@ class FulfillmentRequest:
     lines: tuple[FulfillmentLine, ...]
     handout_location: str | None = None
     return_location: str | None = None
+    # ЗАЯВИТЕЛЬ as a user: «готова к получению» goes to this id; None = the name matched nobody.
+    requester_id: UUID | None = None
 
     @classmethod
     def create(
@@ -180,6 +182,7 @@ class FulfillmentRequest:
         deadline: date | None,
         lines: tuple[FulfillmentLine, ...],
         created_at: datetime,
+        requester_id: UUID | None = None,
     ) -> FulfillmentRequest:
         if not lines:
             raise FulfillmentValidationError("Для сборки без состава заявка не создаётся")
@@ -215,6 +218,7 @@ class FulfillmentRequest:
             deadline=deadline,
             status=FulfillmentStatus.NEW,
             lines=lines,
+            requester_id=requester_id,
         )
 
     @property

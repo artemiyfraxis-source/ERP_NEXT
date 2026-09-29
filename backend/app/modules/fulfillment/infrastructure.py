@@ -10,7 +10,7 @@ from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, Stri
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal
-from app.shared.persistence import Base, SqlAlchemyAuditRepository
+from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
 from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, LotSnapshot
 
@@ -29,6 +29,7 @@ class FulfillmentRequestRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     requester: Mapped[str] = mapped_column(String(255), nullable=False)
+    requester_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
     purpose: Mapped[str] = mapped_column(String(512), nullable=False)
     deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -116,6 +117,7 @@ class SqlAlchemyFulfillmentRepository:
             lines=tuple(_line(line) for line in lines),
             handout_location=row.handout_location,
             return_location=row.return_location,
+            requester_id=row.requester_id,
         )
 
     def get(self, request_id: UUID) -> FulfillmentRequest | None:
@@ -163,6 +165,7 @@ class SqlAlchemyFulfillmentRepository:
         row.version = request.version
         row.created_at = request.created_at
         row.requester = request.requester
+        row.requester_id = request.requester_id
         row.purpose = request.purpose
         row.deadline = request.deadline
         row.status = request.status.value
@@ -213,6 +216,7 @@ class SqlAlchemyFulfillmentUnitOfWork:
         self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         self.writeoffs = SqlAlchemyWriteOffJournal(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

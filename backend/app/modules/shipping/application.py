@@ -10,6 +10,13 @@ from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
+from app.shared.notifications import (
+    PROJECT_MANAGER_ROLE,
+    STOREKEEPER_ROLE,
+    NotificationOutbox,
+    notification_requested,
+    publish_notification,
+)
 
 from .domain import DeliveryTerms, FinishedGood, Shipment, ShipmentLine, ShippingValidationError, UpdType
 
@@ -42,6 +49,7 @@ class UnitOfWork(Protocol):
     goods: FinishedGoodsRepository
     shipments: ShipmentRepository
     audit: AppendOnlyRepository
+    outbox: NotificationOutbox
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
     def commit(self) -> None: ...
@@ -187,6 +195,7 @@ def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment
             carrier=command.carrier, deadline=command.deadline, upd_type=command.upd_type,
             upd_number=command.upd_number, upd_date=command.upd_date, upd_url=command.upd_url,
             manager=command.actor.name, note=command.note, lines=tuple(lines),
+            manager_id=command.actor.id,
         )
         uow.shipments.add(shipment)
         _audit(shipment.id, "shipping.created", command.actor, command.now, {"number": shipment.number}, uow)
@@ -243,6 +252,43 @@ def pack_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
         return updated
 
 
+def _notify_documents(before: Shipment, after: Shipment, now: datetime, uow: UnitOfWork) -> None:
+    project = after.lines[0].project if after.lines else ""
+    of_project = f" проекта {project}" if project else ""
+    # Shipment.gs:840-850: the storekeeper types the track, the manager waits for it. Recipient is the
+    # shipment's manager; no matching user → every project manager (`shipTrackRecipients_`).
+    if after.track_number and after.track_number != before.track_number:
+        publish_notification(uow.outbox, notification_requested(
+            key=f"shipping:{after.id}:track:v{after.version}",
+            now=now,
+            title=f"Трек по отправке {after.number}",
+            body=(
+                f"Отправка {after.number}{of_project} ушла. Трек-номер: {after.track_number}"
+                "\n\nОткрыть: портал → Отгрузка → карточка проекта."
+            ),
+            kind="ship",
+            reference=after.number,
+            user_ids=(after.manager_id,),
+            roles=() if after.manager_id else (PROJECT_MANAGER_ROLE,),
+        ))
+    # Shipment.gs:888 `shipUpdAttach_`: storekeepers print the УПД, so a newly attached file goes to them.
+    if after.upd_url and after.upd_url != before.upd_url:
+        items = ", ".join(f"{line.item_index} × {line.requested.normalize():f}" for line in after.lines)
+        publish_notification(uow.outbox, notification_requested(
+            key=f"shipping:{after.id}:upd:v{after.version}",
+            now=now,
+            title=f"УПД к отправке {after.number}",
+            body=(
+                f"Менеджер приложил УПД{f' № {after.upd_number}' if after.upd_number else ''} к отправке "
+                f"{after.number}{of_project} ({items}).\nФайл: {after.upd_url}"
+                "\n\nОткрыть: портал → Отгрузка → карточка проекта."
+            ),
+            kind="ship",
+            reference=after.number,
+            roles=(STOREKEEPER_ROLE,),
+        ))
+
+
 def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipment:
     with uow:
         shipment = _shipment(command.shipment_id, command.expected_version, uow)
@@ -253,6 +299,7 @@ def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipme
         )
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.documents_updated", command.actor, command.now, {}, uow)
+        _notify_documents(shipment, updated, command.now, uow)
         uow.commit()
         return updated
 

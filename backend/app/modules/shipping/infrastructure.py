@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, and_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.shared.persistence import Base, SqlAlchemyAuditRepository
+from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
 from .domain import DeliveryTerms, FinishedGood, Shipment, ShipmentLine, ShipmentStatus, UpdType
 
@@ -63,6 +63,7 @@ class ShipmentRow(Base):
     packed_at: Mapped[date | None] = mapped_column(Date(), nullable=True)
     shipped_at: Mapped[date | None] = mapped_column(Date(), nullable=True)
     manager: Mapped[str] = mapped_column(String(255), nullable=False)
+    manager_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
     note: Mapped[str] = mapped_column(Text(), nullable=False)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -136,7 +137,7 @@ class SqlAlchemyShipmentRepository:
             upd_type=UpdType(row.upd_type), upd_number=row.upd_number, upd_date=row.upd_date,
             upd_url=row.upd_url, pl_number=row.pl_number, dn_number=row.dn_number,
             track_number=row.track_number, packed_at=row.packed_at, shipped_at=row.shipped_at,
-            manager=row.manager, note=row.note,
+            manager=row.manager, note=row.note, manager_id=row.manager_id,
             lines=tuple(ShipmentLine(
                 id=line.id, finished_good_id=line.finished_good_id, project=line.project,
                 item_index=line.item_index, article=line.article, name=line.name,
@@ -171,6 +172,7 @@ class SqlAlchemyShipmentRepository:
             "number", "version", "created_at", "customer", "receiver", "shipping_point",
             "contact", "phone", "carrier", "deadline", "upd_number", "upd_date", "upd_url",
             "pl_number", "dn_number", "track_number", "packed_at", "shipped_at", "manager", "note",
+            "manager_id",
         ):
             setattr(row, key, getattr(shipment, key))
         row.status = shipment.status.value; row.terms = shipment.terms.value; row.upd_type = shipment.upd_type.value
@@ -192,6 +194,7 @@ class SqlAlchemyShippingUnitOfWork:
         self.goods = SqlAlchemyFinishedGoodsRepository(self.session)
         self.shipments = SqlAlchemyShipmentRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self
     def __exit__(self, exc_type, exc, traceback) -> None:
         if self.session is None: return

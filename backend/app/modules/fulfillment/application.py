@@ -18,6 +18,7 @@ from app.modules.warehouse.domain import (
 )
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
+from app.shared.notifications import NotificationOutbox, notification_requested, publish_notification
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
@@ -62,6 +63,7 @@ class UnitOfWork(Protocol):
     warehouse: WarehouseRepository
     writeoffs: AppendOnlyRepository  # the warehouse СПИСАНИЕ journal
     audit: AppendOnlyRepository
+    outbox: NotificationOutbox
 
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
@@ -203,6 +205,7 @@ def create_fulfillment(
             source_idempotency_key=key,
             source_fingerprint=fingerprint,
             requester=command.actor.name,
+            requester_id=command.actor.id,
             purpose=command.purpose,
             deadline=command.deadline,
             lines=command.lines,
@@ -268,6 +271,19 @@ def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest
         updated = request.mark_ready(command.handout_location)
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.ready", command.actor, command.now, {"handout_location": updated.handout_location}, uow)
+        # Issue.gs:459-474: the requester learns the kit is ready and where to pick it up.
+        publish_notification(uow.outbox, notification_requested(
+            key=f"fulfillment:{updated.id}:ready:v{updated.version}",
+            now=command.now,
+            title=f"Заявка {updated.number} готова к получению",
+            body=(
+                f"Заявка {updated.number} укомплектована и ждёт выдачи, место: {updated.handout_location}."
+                f"\nНазначение: {updated.purpose}"
+            ),
+            kind="ready",
+            reference=updated.number,
+            user_ids=(updated.requester_id,),
+        ))
         uow.commit()
         return updated
 

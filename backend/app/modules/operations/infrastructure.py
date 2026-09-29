@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import DateTime, String, Text, Uuid, case, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
+from app.modules.identity.infrastructure import IdentityUserRow
 from app.shared.persistence import AuditEventRow, Base, OutboxMessageRow, SqlAlchemyOutboxRepository
 
 from .domain import Notification
@@ -79,6 +80,33 @@ class SqlAlchemyNotificationRepository:
         ) or 0)
 
 
+class SqlAlchemyRecipientDirectory:
+    """Reads identity users to resolve addressed ids/roles; a deactivated user gets nothing."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def emails_for_users(self, user_ids: tuple[UUID, ...]) -> list[str]:
+        if not user_ids:
+            return []
+        return sorted(self.session.scalars(
+            select(IdentityUserRow.email).where(
+                IdentityUserRow.id.in_(user_ids),
+                IdentityUserRow.active.is_(True),
+            )
+        ))
+
+    def emails_for_roles(self, roles: tuple[str, ...]) -> list[str]:
+        if not roles:
+            return []
+        return sorted(self.session.scalars(
+            select(IdentityUserRow.email).where(
+                IdentityUserRow.role.in_(roles),
+                IdentityUserRow.active.is_(True),
+            )
+        ))
+
+
 class SqlAlchemyOperationsRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -142,6 +170,7 @@ class SqlAlchemyOperationsUnitOfWork:
         self.committed = False
         self.session = self.session_factory()
         self.notifications = SqlAlchemyNotificationRepository(self.session)
+        self.recipients = SqlAlchemyRecipientDirectory(self.session)
         self.operations = SqlAlchemyOperationsRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

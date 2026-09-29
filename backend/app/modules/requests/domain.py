@@ -212,6 +212,7 @@ class ProcurementRequestedSnapshot:
     calculated_price: Decimal | None
     calculated_price_with_vat: Decimal | None
     calculated_sum: Decimal | None
+    initiator_id: UUID | None = None
 
 
 def _text(value: str | None) -> str:
@@ -420,6 +421,7 @@ def build_procurement_requested_snapshot(
         idempotency_key=f"request:{request.id}:procurement:v{request.version}",
         request_date=request.created_at.date(),
         initiator=request.actor.name,
+        initiator_id=request.actor.id,
         department=request.actor.department,
         task_type=request.task_type,
         designation=request.designation,

@@ -255,7 +255,14 @@ def test_overdue_waiting_is_quarantined_by_the_system_with_notify_targets():
     assert event.details["to_status"] == "Карантин"
     assert event.details["waiting_since"] == "2026-09-24"
     assert event.details["notify"] == ["Технолог", "Снабжение"]
-    assert uow.outbox.items == []
+    # ВК «Ожидание» alerted at once; the automatic move alerts the same roles again (OwnerTick.gs:573-581).
+    alert, auto = uow.outbox.items
+    assert alert.topic == auto.topic == "notification.requested"
+    assert alert.payload["type"] == "nonconformity" and "в течение 2 раб. дн." in alert.payload["body"]
+    assert auto.payload["type"] == "quarantine"
+    assert auto.payload["title"] == f"Авто-Карантин (нет решения 2 р.д.) — {line.legacy_id}"
+    assert "В «Ожидании» с 24.09.2026" in auto.payload["body"]
+    assert alert.payload["recipient_roles"] == auto.payload["recipient_roles"] == "admin,buyer"
     assert uow.commits == commits + 1
     assert quarantine_overdue_waiting(datetime(2026, 9, 29, 8, 0), uow) == []
 
@@ -398,3 +405,60 @@ def test_revision_requests_the_backorder_its_source_never_did():
     backorders = [item for item in uow.outbox.items if item.topic == "procurement.backorder_requested"]
     assert [item.payload["legacy_id"] for item in backorders] == ["SM-20260921-01-В2"]
     assert backorders[0].idempotency_key == f"receiving:{line.id}:backorder"
+
+
+def _notifications(uow):
+    return [item for item in uow.outbox.items if item.topic == "notification.requested"]
+
+
+@pytest.mark.parametrize(
+    ("change", "roles"),
+    [
+        # Receiving.gs:771-788 via quarNotifyTargets_: брак → технолог (role admin, «Технолог»)…
+        ({"manual_nonconformities": ("Механическое повреждение / брак",)}, "admin"),
+        # …anything else → снабжение (role buyer).
+        ({"shipping_document_url": None}, "buyer"),
+        ({"fact_quantity": Decimal("8"), "document_quantity": Decimal("8")}, "buyer"),
+    ],
+)
+def test_blocking_nonconformity_notifies_by_nature(change, roles):
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+    inspected = inspect_receiving(
+        InspectReceivingCommand(
+            line_id=line.id,
+            expected_version=line.version,
+            inspection=replace(inspection(), **change),
+            actor=Actor(name="Приёмщик", department="ОТК"),
+            now=datetime(2026, 9, 21, 11, 0),
+        ),
+        uow,
+    )
+    assert inspected.status is not ReceivingStatus.ACCEPTED
+    (note,) = _notifications(uow)
+    assert note.payload["recipient_roles"] == roles
+    assert note.payload["recipient_user_ids"] == ""
+    assert note.payload["type"] == "nonconformity"
+    assert note.payload["reference"] == inspected.legacy_id
+    assert f"статус «{inspected.status.value}»" in note.payload["body"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{}, {"fact_quantity": Decimal("11")}],  # clean, and «Излишек» alone: accepted, nobody is alerted
+)
+def test_accepted_inspection_notifies_nobody(change):
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+    inspected = inspect_receiving(
+        InspectReceivingCommand(
+            line_id=line.id,
+            expected_version=line.version,
+            inspection=replace(inspection(), **change),
+            actor=Actor(name="Приёмщик", department="ОТК"),
+            now=datetime(2026, 9, 21, 11, 0),
+        ),
+        uow,
+    )
+    assert inspected.status is ReceivingStatus.ACCEPTED
+    assert _notifications(uow) == []
