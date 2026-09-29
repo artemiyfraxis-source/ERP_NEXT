@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
@@ -32,11 +32,15 @@ class RequestRepository(Protocol):
     def all_designations(self) -> Sequence[str]: ...
     def add(self, request: Request) -> None: ...
     def get(self, request_id: UUID) -> Request | None: ...
-    def recent(self, limit: int) -> Sequence[Request]: ...
-    def by_initiator(self, actor_id: UUID, limit: int, offset: int) -> Sequence[Request]:
+    def recent(self, limit: int, search: str = "") -> Sequence[Request]:
+        """Newest first; ``search`` — substring of ID, НАЗНАЧЕНИЕ, наименования, проекта, …"""
+        ...
+    def by_initiator(
+        self, actor_id: UUID, limit: int, offset: int, search: str = ""
+    ) -> Sequence[Request]:
         """RQ-MINE: server-side «Мои заявки», newest first, paginated."""
         ...
-    def count_by_initiator(self, actor_id: UUID) -> int: ...
+    def count_by_initiator(self, actor_id: UUID, search: str = "") -> int: ...
 
 
 class ProcurementStageLookup(Protocol):
@@ -46,6 +50,22 @@ class ProcurementStageLookup(Protocol):
     """
 
     def stages_for(self, request_ids: Sequence[UUID]) -> dict[UUID, str]: ...
+
+    def details_for(self, request_ids: Sequence[UUID]) -> dict[UUID, ProcurementDetails]:
+        """«Мои заявки»: what the initiator sees of the purchase sheet (stage, buyer, supplier, …)."""
+        ...
+
+
+@dataclass(frozen=True)
+class ProcurementDetails:
+    """Read model of a handed-off request's procurement lines, joined for one «Мои заявки» row."""
+
+    stage: str
+    buyer: str | None = None
+    supplier: str | None = None
+    order_number: str | None = None
+    expected_arrival: date | None = None
+    sum: Decimal | None = None
 
 
 class ProjectRegistry(Protocol):
@@ -271,18 +291,19 @@ def handoff_requests(
         return [messages[request_id] for request_id in request_ids]
 
 
-def recent_requests(limit: int, uow: UnitOfWork) -> list[Request]:
+def recent_requests(limit: int, uow: UnitOfWork, search: str = "") -> list[Request]:
     with uow:
-        return list(uow.requests.recent(limit))
+        return list(uow.requests.recent(limit, search.strip()))
 
 
 def my_requests(
-    actor_id: UUID, limit: int, offset: int, uow: UnitOfWork
+    actor_id: UUID, limit: int, offset: int, uow: UnitOfWork, search: str = ""
 ) -> tuple[list[Request], int]:
     """RQ-MINE: replaces the client-side name filter over the latest 200 rows."""
+    search = search.strip()
     with uow:
-        items = list(uow.requests.by_initiator(actor_id, limit, offset))
-        total = uow.requests.count_by_initiator(actor_id)
+        items = list(uow.requests.by_initiator(actor_id, limit, offset, search))
+        total = uow.requests.count_by_initiator(actor_id, search)
     return items, total
 
 
