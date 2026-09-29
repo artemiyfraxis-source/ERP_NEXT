@@ -15,17 +15,20 @@ from app.modules.warehouse.domain import WarehouseValidationError
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
+    fulfillment_admin_principal,
     fulfillment_edit_principal,
     fulfillment_handout_principal,
     fulfillment_view_principal,
 )
 from app.shared.print_sheet import PrintSheet
+from app.shared.warehouse_location import SHELF_LETTERS, configured_rack_layout, place_code
 
 from .application import (
     BindLotCommand,
     CompleteReturnCommand,
     ConcurrentFulfillmentUpdate,
     CreateFulfillmentCommand,
+    DeleteFulfillmentCommand,
     MarkReadyCommand,
     MarkReturnedCommand,
     ReturnDisposition,
@@ -36,14 +39,17 @@ from .application import (
     build_issue_print_sheet,
     build_issue_return_sheet,
     cancel_fulfillment,
+    close_issued,
+    complete_kit,
     complete_return,
     create_fulfillment,
+    delete_fulfillment,
     issue_fulfillment,
     mark_ready,
     mark_returned,
     unbind_lot,
 )
-from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentValidationError
+from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentValidationError, project_of
 
 
 router = APIRouter(prefix="/api/issues", tags=["fulfillment"])
@@ -72,8 +78,19 @@ class BindPayload(VersionPayload):
     lot_id: UUID
 
 
+class PlacePayload(BaseModel):
+    """«Отправить на выдачу» address as the warehouse keeps it (ih-rack / ih-shelf / ih-num / ih-slot)."""
+    rack: str = Field(default="", max_length=8)
+    shelf: str = Field(default="", max_length=8)
+    num: str = Field(default="", max_length=8)
+    slot: str = Field(default="", max_length=8)
+
+
 class ReadyPayload(VersionPayload):
-    handout_location: str = Field(min_length=1, max_length=255)
+    # Either a ready place string (fallback, old addresses) or `place` — the code is glued here (placeCode_), so
+    # every screen writes the same format (portalIssueStatus, owner 03.09.2026).
+    handout_location: str | None = Field(default=None, max_length=255)
+    place: PlacePayload | None = None
 
 
 class ReturnedPayload(VersionPayload):
@@ -103,6 +120,10 @@ def _number(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
+def _stamp(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
 def _result(request: FulfillmentRequest) -> dict:
     return {
         "id": str(request.id),
@@ -116,6 +137,12 @@ def _result(request: FulfillmentRequest) -> dict:
         "handout_location": request.handout_location,
         "return_location": request.return_location,
         "fully_reserved": request.fully_reserved,
+        "project": project_of(request.purpose),
+        "at_work": _stamp(request.at_work),
+        "at_picked": _stamp(request.at_picked),
+        "at_issued": _stamp(request.at_issued),
+        "at_returned": _stamp(request.at_returned),
+        "at_closed": _stamp(request.at_closed),
         "lines": [
             {
                 "id": str(line.id),
@@ -169,9 +196,17 @@ def requests(
             raise HTTPException(status_code=404, detail="Курсор выдачи не найден")
         rows = list(uow.fulfillment.list(limit + 1, after))
     page = rows[:limit]
+    layout = configured_rack_layout()
     return {
         "requests": [_result(request) for request in page],
         "next_cursor": str(page[-1].id) if len(rows) > limit else None,
+        # issueCardResp_ `places.config`: the rack layout for the handout address fields.
+        "places": {
+            "racks": layout.racks,
+            "shelves": layout.shelves,
+            "per_rack": {str(rack): count for rack, count in layout.per_rack.items()},
+            "slots": SHELF_LETTERS,
+        },
     }
 
 
@@ -303,21 +338,81 @@ def unbind(
     ), uow_factory()))
 
 
+def _handout_location(payload: ReadyPayload) -> str:
+    if payload.place is not None:
+        code = place_code(payload.place.rack, payload.place.shelf, payload.place.num, payload.place.slot)
+        if not code:
+            raise HTTPException(status_code=422, detail="Адрес неполный: нужны стеллаж, полка и № на полке.")
+        return code
+    location = str(payload.handout_location or "").strip()
+    if not location:
+        raise HTTPException(status_code=422, detail="Укажи место выдачи — без него комплект на полке не найти.")
+    return location
+
+
+# FF-2: «Готов к выдаче» is the picker's step (Issue.gs portalIssueStatus: only КБ Выдана / Готово / КБ Возвращена
+# take the `handout` section).
 @router.post("/{request_id}/ready")
 def ready(
     request_id: UUID,
     payload: ReadyPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    location = _handout_location(payload)
+    return _run(lambda: mark_ready(MarkReadyCommand(
+        request_id=request_id,
+        expected_version=payload.version,
+        handout_location=location,
+        actor=principal.actor,
+        now=now,
+    ), uow_factory()))
+
+
+@router.post("/{request_id}/complete")
+def complete(
+    request_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    return _run(lambda: complete_kit(
+        VersionedFulfillmentCommand(request_id, payload.version, principal.actor, now), uow_factory()
+    ))
+
+
+@router.post("/{request_id}/close")
+def close(
+    request_id: UUID,
+    payload: VersionPayload,
     principal: Annotated[Principal, Depends(fulfillment_handout_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
 ) -> dict:
-    return _run(lambda: mark_ready(MarkReadyCommand(
-        request_id=request_id,
-        expected_version=payload.version,
-        handout_location=payload.handout_location,
-        actor=principal.actor,
-        now=now,
-    ), uow_factory()))
+    return _run(lambda: close_issued(
+        VersionedFulfillmentCommand(request_id, payload.version, principal.actor, now), uow_factory()
+    ))
+
+
+@router.delete("/{request_id}")
+def delete(
+    request_id: UUID,
+    principal: Annotated[Principal, Depends(fulfillment_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    try:
+        result = delete_fulfillment(DeleteFulfillmentCommand(request_id, principal.actor, now), uow_factory())
+    except FulfillmentValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Заявка на выдачу не найдена") from error
+    except (IntegrityError, StaleDataError) as error:
+        raise HTTPException(status_code=409, detail="Конкурентное изменение: обновите данные") from error
+    return {"message": f"Заявка удалена: позиций {result.lines}"
+            + (f", снят резерв с {result.freed} партий" if result.freed else "") + "."}
 
 
 def _version_command(request_id: UUID, payload: VersionPayload, principal: Principal, now: datetime):
