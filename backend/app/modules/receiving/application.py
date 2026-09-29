@@ -385,7 +385,8 @@ def _warehouse_payload(line: ReceivingLine) -> dict:
         "package": line.package,
         "article": line.article,
         "series": line.series,
-        "name": line.name,
+        # Warehouse.gs:411 — НАИМЕНОВАНИЕ остатка из НАИМЕНОВАНИЕ (УПД/М-15); пустое — из заказа.
+        "name": line.document_name or line.name,
         "item_type": line.item_type,
         "purpose": line.purpose,
         "unit": line.unit,
@@ -817,8 +818,7 @@ def build_putaway_print_sheet(uow: UnitOfWork, now: datetime, *, limit: int = 50
 
 
 # RC-9: акты приёмки печатным бланком (DocGen.gs docTemplateSpec_: incoming / nonconformity / complaint /
-# usepermit). Поля те же, что в шаблонах SUPPLYMAP; чего в ERP нет (изготовитель, страна, № док. качества) —
-# прочерк, как незаполненный плейсхолдер в DocGen.
+# usepermit). Поля те же, что в шаблонах SUPPLYMAP; пустое поле — прочерк, как незаполненный плейсхолдер в DocGen.
 _OK = "Соответствует"
 _BAD = "Не соответствует"
 
@@ -891,11 +891,15 @@ def build_act_print_sheet(line: ReceivingLine, kind: str) -> PrintSheet:
     rows.append(("", "Поставщик", _dash(line.supplier)))
     if kind == "incoming":
         rows += [
-            ("", "Производитель", "—"),
-            ("", "Страна", "—"),
+            ("", "Производитель", _dash(line.manufacturer)),
+            ("", "Страна", _dash(line.country)),
             ("", "УПД/М-15 №", upd),
             ("", "№ партии", _dash(line.series)),
             ("", "Дата приезда", _day(line.inspected_on)),
+            ("", "Тип документа по качеству", _dash(line.quality_document_type)),
+            ("", "№ документа по качеству", _dash(line.quality_document_number)),
+            ("", "Дата документа по качеству", _day(line.quality_document_date)),
+            ("", "Стандарт", _dash(line.standard)),
             ("", "Документ по качеству", _dash(line.quality_document_url)),
         ]
         rows += list(_incoming_results(line))

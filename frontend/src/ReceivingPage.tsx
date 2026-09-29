@@ -236,6 +236,15 @@ function ReceivingCard({
   const [documentNumber, setDocumentNumber] = useState(line.document_number ?? "");
   const [documentName, setDocumentName] = useState(line.document_name ?? "");
   const [manufactureDate, setManufactureDate] = useState(line.manufacture_date ?? "");
+  // Изготовитель, страна и документ качества для акта ВК; из заказа, приёмщик уточняет.
+  const [quality, setQuality] = useState({
+    manufacturer: line.manufacturer ?? "",
+    country: line.country ?? "",
+    quality_document_type: line.quality_document_type ?? "",
+    quality_document_number: line.quality_document_number ?? "",
+    quality_document_date: line.quality_document_date ?? "",
+    standard: line.standard ?? "",
+  });
   const [note, setNote] = useState(line.inspection_note ?? "");
   const [description, setDescription] = useState("");
   // RC-13: партии изготовителя одной поставки; пусто — обычная приёмка одной строкой.
@@ -264,6 +273,12 @@ function ReceivingCard({
       document_number: documentNumber.trim(),
       document_name: documentName.trim(),
       manufacture_date: manufactureDate || null,
+      manufacturer: quality.manufacturer.trim(),
+      country: quality.country.trim(),
+      quality_document_type: quality.quality_document_type.trim(),
+      quality_document_number: quality.quality_document_number.trim(),
+      quality_document_date: quality.quality_document_date || null,
+      standard: quality.standard.trim(),
       note: note.trim(),
       nonconformity_description: description.trim(),
       ...(batches.length >= 2 ? { batches: batches.map((batch) => ({
@@ -307,6 +322,12 @@ function ReceivingCard({
             <label>№ УПД/М-15<input value={documentNumber} onChange={(event) => setDocumentNumber(event.target.value)} /></label>
             <label>Дата УПД/М-15<input type="date" required={historical} value={documentDate} onChange={(event) => setDocumentDate(event.target.value)} /></label>
             <label className="wide">Наименование по УПД<input value={documentName} onChange={(event) => setDocumentName(event.target.value)} /></label>
+            <label>Изготовитель<input value={quality.manufacturer} onChange={(event) => setQuality({ ...quality, manufacturer: event.target.value })} /></label>
+            <label>Страна<input value={quality.country} onChange={(event) => setQuality({ ...quality, country: event.target.value })} /></label>
+            <label>Тип док. качества<input value={quality.quality_document_type} onChange={(event) => setQuality({ ...quality, quality_document_type: event.target.value })} /></label>
+            <label>№ док. качества<input value={quality.quality_document_number} onChange={(event) => setQuality({ ...quality, quality_document_number: event.target.value })} /></label>
+            <label>Дата док. качества<input type="date" value={quality.quality_document_date} onChange={(event) => setQuality({ ...quality, quality_document_date: event.target.value })} /></label>
+            <label>Стандарт<input value={quality.standard} onChange={(event) => setQuality({ ...quality, standard: event.target.value })} /></label>
             {!batchMode && <>
               <label title="Можно заполнить только одно из двух количеств — второе примется равным ему.">Количество по УПД/М-15<input type="number" min="0.000001" step="any" required={!fact} value={documentQty} onChange={(event) => setDocumentQty(event.target.value)} /></label>
               <label>Фактическое количество<input type="number" min="0.000001" step="any" required={!documentQty} value={fact} onChange={(event) => setFact(event.target.value)} /></label>

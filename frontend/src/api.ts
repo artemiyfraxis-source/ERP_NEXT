@@ -235,6 +235,12 @@ export interface ReceivingLine {
   document_name?: string;
   inspection_note?: string;
   manufacture_date?: string | null;
+  manufacturer?: string;
+  country?: string;
+  quality_document_type?: string;
+  quality_document_number?: string;
+  quality_document_date?: string | null;
+  standard?: string;
   split_of_id?: string | null;
   /** RC-9: выпущенные акты строки — печатаются бланком. */
   acts?: { kind: string; title: string; number: string; date: string | null }[];
