@@ -13,7 +13,7 @@ function layout(principal: Principal) {
 }
 
 const ALL_EDIT = Object.fromEntries(
-  ["identity", "projects", "calculation", "techcards", "newrequest", "myrequests", "requests", "procurement",
+  ["identity", "projects", "techcards", "newrequest", "myrequests", "requests", "procurement",
     "receiving", "warehouse", "fulfillment", "handout", "production", "shipping", "references", "operations"].map((key) => [key, "edit" as AccessMode]),
 );
 
@@ -23,7 +23,7 @@ it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order", () => {
 
 it("shows the administrator every block with SUPPLYMAP's cards in order, ERP-only sections in place", () => {
   expect(layout(as("admin", ALL_EDIT))).toEqual({
-    "Производство": ["Проекты", "Расчёт и КП", "Техкарты проектов", "Шаблоны техкарт", "Справочник", "Ресурсное планирование", "Задания"],
+    "Производство": ["Проекты", "Техкарты проектов", "Шаблоны техкарт", "Справочник", "Ресурсное планирование", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],

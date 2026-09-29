@@ -57,7 +57,6 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
         "handout": AccessMode.EDIT,
         "identity": AccessMode.EDIT,
         "projects": AccessMode.EDIT,
-        "calculation": AccessMode.EDIT,
         "techcards": AccessMode.EDIT,
         "requests": AccessMode.EDIT,
         "procurement": AccessMode.EDIT,
@@ -157,7 +156,6 @@ ROLES = frozenset(
 # «Мои заявки» and «Выдача со списанием» have keys of their own (NAV-SECTIONS, SUPPLYMAP Portal.gs PORTAL_SECTIONS_).
 SECTION_LABELS: dict[str, str] = {
     "projects": "Проекты",
-    "calculation": "Расчёт и КП",
     "techcards": "Техкарты и шаблоны",
     "references": "Справочник",
     "production": "Планирование, задания, производственный план",

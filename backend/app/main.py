@@ -8,7 +8,6 @@ from fastapi.staticfiles import StaticFiles
 
 from .database import configure_database
 from .modules.identity import api as identity_api
-from .modules.legacy_access import api as legacy_access_api
 from .modules.identity.middleware import IdentitySessionMiddleware
 from .shared.http_limits import RequestBodyLimitMiddleware
 from .shared.security_headers import SecurityHeadersMiddleware
@@ -37,7 +36,6 @@ app.state.cookie_secure = os.getenv("ERP_COOKIE_SECURE", "1").strip().lower() no
     "false",
     "no",
 }
-app.state.legacy_bridge_secret = os.getenv("ERP_LEGACY_BRIDGE_SECRET", "")
 configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, not the first placement
 app.add_middleware(
     RequestBodyLimitMiddleware,
@@ -45,17 +43,13 @@ app.add_middleware(
     path_limits={"/api/techcards/kitsets": 30 * 1_048_576},
 )
 app.add_middleware(IdentitySessionMiddleware)
-app.add_middleware(
-    SecurityHeadersMiddleware,
-    legacy_origin=os.getenv("ERP_LEGACY_ORIGIN", "http://localhost:5177"),
-)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(
     techcards_api.router,
     dependencies=[Depends(techcards_view_principal)],
 )
 app.include_router(identity_api.router)
-app.include_router(legacy_access_api.router)
 app.include_router(requests_api.router)
 app.include_router(procurement_api.router)
 app.include_router(receiving_api.router)

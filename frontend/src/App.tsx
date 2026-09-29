@@ -3,7 +3,6 @@ import {
   AUTH_REQUIRED_EVENT,
   ApiError,
   identityApi,
-  legacyApi,
   type Principal,
 } from "./api";
 import {
@@ -164,7 +163,6 @@ export function App() {
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
         {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
         {activeSection === "projects" && <ProjectsPage principal={principal} />}
-        {activeSection === "calculation" && <LegacyFrame section="calc" scope="calculation" title="Расчёт и КП" />}
         {activeSection === "techcards" && <TechcardsPage principal={principal} view="projects" />}
         {activeSection === "tctemplates" && <TechcardsPage principal={principal} view="templates" />}
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
@@ -280,111 +278,3 @@ function BlockPage({
   );
 }
 
-function LegacyFrame({
-  section,
-  scope,
-  title,
-}: {
-  section: string;
-  scope: "projects" | "calculation";
-  title: string;
-}) {
-  const [ticket, setTicket] = useState("");
-  const [error, setError] = useState("");
-  const frameRef = useRef<HTMLIFrameElement>(null);
-  const grantRef = useRef("");
-  const base = import.meta.env.VITE_LEGACY_ERP_URL ?? "http://localhost:5177";
-  useEffect(() => {
-    let active = true;
-    setTicket("");
-    setError("");
-    grantRef.current = "";
-    const refresh = async () => {
-      try {
-        const result = await legacyApi.grant(scope);
-        if (!active) return;
-        if (!grantRef.current) {
-          const bootstrap = await legacyApi.exchange(base, result.grant);
-          if (!active) return;
-          setTicket(bootstrap.ticket);
-        } else {
-          frameRef.current?.contentWindow?.postMessage(
-            { type: "erp:legacy-grant", grant: result.grant },
-            new URL(base).origin,
-          );
-        }
-        grantRef.current = result.grant;
-      } catch (reason) {
-        if (active && !grantRef.current) {
-          setError(reason instanceof Error ? reason.message : "Legacy bridge недоступен");
-        }
-      }
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 60_000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [base, scope]);
-  const src = ticket ? resolveLegacyUrl(base, window.location.href, section, ticket) : null;
-  if (error) {
-    return <section className="page"><div className="error-banner" role="alert">{error}</div></section>;
-  }
-  if (!ticket) {
-    return <div className="screen-center muted">Открываем защищённый legacy-раздел…</div>;
-  }
-  if (!src) {
-    return (
-      <section className="page">
-        <div className="error-banner" role="alert">
-          Восстановленный ERP должен работать на отдельном origin. Проверьте VITE_LEGACY_ERP_URL.
-        </div>
-      </section>
-    );
-  }
-  return (
-    <section className="legacy-page">
-      <header className="page-header compact"><div><span className="eyebrow">Восстановленный модуль</span><h1>{title}</h1></div></header>
-      <iframe
-        ref={frameRef}
-        onLoad={() => {
-          if (grantRef.current) {
-            frameRef.current?.contentWindow?.postMessage(
-              { type: "erp:legacy-grant", grant: grantRef.current },
-              new URL(base).origin,
-            );
-          }
-        }}
-        className="legacy-frame"
-        src={src}
-        title={title}
-        sandbox="allow-forms allow-scripts allow-same-origin allow-downloads"
-      />
-    </section>
-  );
-}
-
-export function resolveLegacyUrl(
-  base: string,
-  currentUrl: string,
-  section: string,
-  ticket: string,
-) {
-  try {
-    const legacy = new URL(base, currentUrl);
-    if (
-      !["http:", "https:"].includes(legacy.protocol) ||
-      legacy.hostname.toLowerCase() === new URL(currentUrl).hostname.toLowerCase() ||
-      legacy.username ||
-      legacy.password
-    ) {
-      return null;
-    }
-    legacy.pathname = "/login";
-    legacy.search = new URLSearchParams({ section, ticket }).toString();
-    return legacy.toString();
-  } catch {
-    return null;
-  }
-}

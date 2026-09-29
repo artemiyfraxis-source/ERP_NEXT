@@ -1,7 +1,8 @@
 """Reading a calculation into a kitset — SUPPLYMAP `tcReadCalcKitset_` (TcKitset.gs).
 
-SUPPLYMAP opens the Google calculation by link. ERP does not reach Google: the same workbook comes in as an
-.xlsx file (Google «Файл → Скачать → Microsoft Excel»), read here with the standard library only. The rules are
+SUPPLYMAP opens the Google calculation by link; ERP does too (workflows/project_kitset.read_calc_by_link). The
+fallback is the same workbook as an .xlsx file (Google «Файл → Скачать → Microsoft Excel»), read here with the
+standard library only. The rules are
 the portal's: ЗКЗ!B2 = номер проекта, B3 = заказчик, rows under the ЗКЗ header = сборки (индекс, наименование,
 тираж, «Вкл. в расчет?»), СПЯ = состав по колонке «Сборка».
 """
