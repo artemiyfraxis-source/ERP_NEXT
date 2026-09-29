@@ -411,3 +411,21 @@ it("creates a request from a calculation link: preview by warehouse, picks and �
     short_note: ["DB-9M: нет на складе (−4)"],
   } });
 });
+
+it("walks every page of requests, not only the first hundred", async () => {
+  const second = { ...request, id: "second-page-id", number: "FRX-ISS-26-0101", purpose: "900К.1 · КБ2" };
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path === "/api/issues") return json({ requests: [request], next_cursor: request.id });
+    if (path === `/api/issues?after=${request.id}`) return json({ requests: [second], next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={{ ...principal, roles: ["master"], permissions: { fulfillment: "view" } }} />);
+
+  expect(await screen.findByText("FRX-ISS-26-0101")).toBeInTheDocument();
+  expect(screen.getByText("FRX-ISS-26-0001")).toBeInTheDocument();
+  expect(paths).toEqual(["/api/issues", `/api/issues?after=${request.id}`]);
+});
