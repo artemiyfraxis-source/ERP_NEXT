@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App, resolveLegacyUrl } from "./App";
 import type { Principal } from "./api";
@@ -137,8 +137,8 @@ it("opens native production fulfillment at the issues route", async () => {
 
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Выдача в цех", level: 1 })).toBeInTheDocument();
-  expect(await screen.findByText("Заявок на выдачу нет. Они появятся из состава производственного комплекта.")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Запросы на комплектацию", level: 1 })).toBeInTheDocument();
+  expect(await screen.findByText("Заявок на комплектацию нет. Они появятся из состава производственного комплекта.")).toBeInTheDocument();
 });
 
 it("opens native resource planning at the production route", async () => {
@@ -283,4 +283,75 @@ it("rejects a same-origin legacy ERP frame", () => {
   expect(
     resolveLegacyUrl("javascript:alert(1)", "https://erp.example.test/", "projects", "grant"),
   ).toBeNull();
+});
+
+it("NAV-1: home shows the blocks as tiles and a block shows its section cards in order", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
+    ...principal,
+    permissions: { requests: "edit", receiving: "view", warehouse: "view", production: "view", references: "view" },
+  }));
+
+  render(<App />);
+
+  const main = await screen.findByRole("main");
+  const tiles = within(main).getAllByRole("button").map((button) => button.getAttribute("aria-label"));
+  expect(tiles).toEqual(["Производство", "Снабжение", "Склад", "Менеджмент"]);
+
+  fireEvent.click(within(main).getByRole("button", { name: "Снабжение" }));
+
+  expect(await screen.findByRole("heading", { name: /Снабжение/, level: 1 })).toBeInTheDocument();
+  expect(within(screen.getByRole("main")).getAllByRole("button").map((button) => button.getAttribute("aria-label")))
+    .toEqual([null, "Оформить заявку", "Мои заявки", "Заявки"]);
+  expect(window.location.search).toBe("?block=supply");
+  // Sidebar groups agree with the blocks.
+  const nav = screen.getByRole("navigation", { name: "Основная навигация" });
+  expect(within(nav).getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent))
+    .toEqual(["Производство", "Снабжение", "Склад", "Менеджмент"]);
+});
+
+it("NAV-1: a block with a single visible section opens that section directly", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({ ...principal, permissions: {} });
+    if (path === "/api/notifications") return json({ notifications: [], unread: 0 });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  const main = await screen.findByRole("main");
+  expect(within(main).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Менеджмент"]);
+  fireEvent.click(within(main).getByRole("button", { name: "Менеджмент" }));
+
+  expect(await screen.findByRole("heading", { name: "Уведомления", level: 1 })).toBeInTheDocument();
+});
+
+it("NAV-1: a block URL the principal cannot open falls back to home", async () => {
+  window.history.replaceState({}, "", "/?block=stock");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ ...principal, permissions: { requests: "view" } }));
+
+  render(<App />);
+
+  expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
+  expect(within(screen.getByRole("main")).queryByRole("button", { name: "Склад" })).not.toBeInTheDocument();
+});
+
+it("NAV-1: handout is its own route and shows only requests waiting for the shop", async () => {
+  window.history.replaceState({}, "", "/?section=handout");
+  const base = { id: "i1", version: 1, number: "FRX-ISS-1", purpose: "КБ1", requester: "Инженер", lines: [] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({ ...principal, roles: ["master"], permissions: { fulfillment: "view" } });
+    if (path === "/api/issues") return json({ requests: [
+      { ...base, id: "i1", number: "FRX-ISS-1", status: "Новая" },
+      { ...base, id: "i2", number: "FRX-ISS-2", status: "Готов к выдаче" },
+    ], next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "Выдача со списанием", level: 1 })).toBeInTheDocument();
+  expect(await screen.findByText("FRX-ISS-2")).toBeInTheDocument();
+  expect(screen.queryByText("FRX-ISS-1")).not.toBeInTheDocument();
 });

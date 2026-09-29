@@ -163,4 +163,35 @@ describe("RequestsPage", () => {
     expect(screen.queryByRole("button", { name: "Создать заявку" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "В закупку" })).not.toBeInTheDocument();
   });
+
+  it("NAV-1: «Мои заявки» lists only rows the user initiated and has no form", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests") return json({ requests: [row, { ...row, id: "other", legacy_id: "REQ-2", initiator: "Кто-то другой" }] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<RequestsPage principal={principal} view="mine" />);
+
+    expect(await screen.findByText("REQ-1")).toBeInTheDocument();
+    expect(screen.queryByText("REQ-2")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Мои заявки", level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Создать заявку" })).not.toBeInTheDocument();
+  });
+
+  it("NAV-1: «Оформить заявку» shows the form without the request table", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests") return json({ requests: [row] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<RequestsPage principal={principal} view="create" />);
+
+    expect(await screen.findByRole("button", { name: "Создать заявку" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Оформить заявку", level: 1 })).toBeInTheDocument();
+    expect(screen.queryByText("REQ-1")).not.toBeInTheDocument();
+  });
 });

@@ -138,7 +138,10 @@ function TemplateDetail({ template }: { template: OperationCardDetail }) {
   </article>;
 }
 
-export function TechcardsPage({ principal }: { principal: Principal }) {
+/** NAV-1: «Техкарты проектов» and «Шаблоны техкарт» are separate sections, as in SUPPLYMAP; without `view` both show. */
+export function TechcardsPage({ principal, view }: { principal: Principal; view?: "projects" | "templates" }) {
+  const showProjects = view !== "templates";
+  const showLibrary = view !== "projects";
   const [cards, setCards] = useState<ProjectTechcard[]>([]);
   const [templates, setTemplates] = useState<OperationCardSummary[]>([]);
   const [libraryCommit, setLibraryCommit] = useState("");
@@ -162,7 +165,10 @@ export function TechcardsPage({ principal }: { principal: Principal }) {
 
   async function load() {
     try {
-      const [projectResult, libraryResult] = await Promise.all([techcardsApi.list(), techcardsApi.templates()]);
+      const [projectResult, libraryResult] = await Promise.all([
+        showProjects ? techcardsApi.list() : Promise.resolve({ items: [] as ProjectTechcard[] }),
+        showLibrary ? techcardsApi.templates() : Promise.resolve({ items: [] as OperationCardSummary[], metadata: null }),
+      ]);
       setCards((current) => current.length ? current : projectResult.items);
       setSelectedId((current) => current || projectResult.items[0]?.id || "");
       setTemplates(libraryResult.items);
@@ -274,6 +280,7 @@ export function TechcardsPage({ principal }: { principal: Principal }) {
   }
 
   return <section className="page techcards-page">
+    {showProjects ? <>
     <header className="page-head"><h1>Техкарты проектов</h1><span className="page-count">{cards.length}</span></header>
     <p className="page-sub">ЭТК собирается сервером из конфигурации изделия и снимка библиотеки операций; выданные версии остаются неизменяемыми.</p>
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -315,6 +322,11 @@ export function TechcardsPage({ principal }: { principal: Principal }) {
       {revisions.map((revision) => <div className="panel-heading" key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span>{revision.actor_name} · {new Date(revision.occurred_at).toLocaleString("ru-RU")}</span></div>)}
       {!revisions.length && <div className="empty">Выданных ревизий пока нет.</div>}
     </article>}
+    </> : <>
+    <header className="page-head"><h1>Шаблоны техкарт</h1></header>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    </>}
+    {showLibrary && <>
     <header className="page-head library-head"><h2>Библиотека операций</h2><span className="page-count">{templates.length}</span></header>
     <p className="page-sub">Снимок SUPPLYMAP {libraryCommit ? libraryCommit.slice(0, 8) : "не загружен"}; карточка сохраняется внутри каждой собранной ЭТК.</p>
     <div className="toolbar"><input aria-label="Поиск шаблона" placeholder="Код, название или категория" value={templateQuery} onChange={(event) => setTemplateQuery(event.target.value)} /></div>
@@ -323,5 +335,6 @@ export function TechcardsPage({ principal }: { principal: Principal }) {
       {!filteredTemplates.length && <tr><td colSpan={5} className="empty">Шаблоны не найдены.</td></tr>}
     </tbody></table></div>
     {templateDetail && <TemplateDetail template={templateDetail} />}
+    </>}
   </section>;
 }

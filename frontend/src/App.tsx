@@ -4,9 +4,17 @@ import {
   ApiError,
   identityApi,
   legacyApi,
-  type AccessMode,
   type Principal,
 } from "./api";
+import {
+  isBlock,
+  isSection,
+  visibleBlocks,
+  visibleNav as visibleNavFor,
+  type BlockId,
+  type NavItem,
+  type Section,
+} from "./navigation";
 import { LoginPage } from "./LoginPage";
 import { FulfillmentPage } from "./FulfillmentPage";
 import { ProcurementPage } from "./ProcurementPage";
@@ -22,157 +30,26 @@ import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
 import { StaffPage } from "./StaffPage";
 
-type Section = "cabinet" | "projects" | "calculation" | "techcards" | "requests" | "procurement" | "receiving" | "stock" | "issues" | "prodplan" | "production" | "myops" | "shipping" | "references" | "notifications" | "operations" | "staff";
-type NavGroup = "projects" | "supply" | "stock" | "production" | "data";
-
-const NAV: Array<{
-  id: Section;
-  label: string;
-  permission?: string;
-  minimum?: AccessMode;
-  roles?: string[];
-  group?: NavGroup;
-}> = [
-  { id: "cabinet", label: "Личный кабинет" },
-  { id: "projects", label: "Проекты", permission: "projects", group: "projects" },
-  { id: "calculation", label: "Расчёт и КП", permission: "calculation", group: "projects" },
-  {
-    id: "techcards",
-    label: "Техкарты проектов",
-    permission: "techcards",
-    roles: ["engineer", "master", "prodhead", "management", "admin"],
-    group: "projects",
-  },
-  { id: "requests", label: "Заявки", permission: "requests", group: "supply" },
-  // ID-6: view grants open these sections read-only; the role sets mirror backend *_view_principal.
-  {
-    id: "procurement",
-    label: "Лист закупки",
-    permission: "procurement",
-    roles: ["buyer", "receiver", "prodhead", "management", "admin"],
-    group: "supply",
-  },
-  {
-    id: "receiving",
-    label: "Приёмка",
-    permission: "receiving",
-    roles: ["receiver", "prodhead", "management", "master", "staff", "admin"],
-    group: "stock",
-  },
-  {
-    id: "stock",
-    label: "Склад",
-    permission: "warehouse",
-    roles: ["receiver", "buyer", "prodhead", "management", "master", "staff", "admin"],
-    group: "stock",
-  },
-  {
-    id: "shipping",
-    label: "Готовая продукция и отгрузка",
-    permission: "shipping",
-    roles: ["pm", "receiver", "master", "prodhead", "management", "admin"],
-    group: "stock",
-  },
-  {
-    id: "issues",
-    label: "Выдача в цех",
-    permission: "fulfillment",
-    roles: ["engineer", "receiver", "prodhead", "master", "admin"],
-    group: "production",
-  },
-  {
-    id: "prodplan",
-    label: "Производственный план",
-    permission: "production",
-    roles: ["master", "prodhead", "management", "admin"],
-    group: "production",
-  },
-  {
-    id: "production",
-    label: "Ресурсное планирование",
-    permission: "production",
-    roles: ["master", "prodhead", "management", "qc", "admin"],
-    group: "production",
-  },
-  {
-    id: "myops",
-    label: "Мои задания",
-    permission: "production",
-    roles: ["staff", "master", "admin"],
-    group: "production",
-  },
-  {
-    id: "references",
-    label: "Справочники",
-    permission: "references",
-    group: "data",
-  },
-  {
-    id: "notifications",
-    label: "Уведомления",
-    group: "data",
-  },
-  {
-    id: "operations",
-    label: "Системный журнал",
-    permission: "operations",
-    roles: ["management", "admin"],
-    group: "data",
-  },
-  {
-    id: "staff",
-    label: "Сотрудники",
-    permission: "identity",
-    minimum: "edit",
-    roles: ["admin"],
-    group: "data",
-  },
-];
-
-const NAV_GROUPS: Array<{ id: NavGroup; label: string }> = [
-  { id: "projects", label: "Проекты" },
-  { id: "supply", label: "Снабжение" },
-  { id: "stock", label: "Склад" },
-  { id: "production", label: "Производство" },
-  { id: "data", label: "Данные" },
-];
-
-function hasAccess(
-  permissions: Principal["permissions"],
-  permission?: string,
-  minimum: AccessMode = "view",
-) {
-  if (!permission) return true;
-  const actual = permissions[permission];
-  return actual === "edit" || (minimum === "view" && actual === "view");
-}
-
 // «Режим просмотра» (ID-6): edit controls only when the backend *_edit_principal would pass too.
 function canEdit(principal: Principal, permission: string, roles: string[]) {
   return principal.permissions[permission] === "edit" && roles.some((role) => principal.roles.includes(role));
 }
 
-function hasNavAccess(
-  principal: Principal,
-  item: (typeof NAV)[number],
-) {
-  return (
-    hasAccess(principal.permissions, item.permission, item.minimum) &&
-    (!item.roles || item.roles.some((role) => principal.roles.includes(role)))
-  );
-}
+type Place = { section: Section; block: BlockId | null };
 
-function sectionFromUrl(): Section {
-  const value = new URLSearchParams(window.location.search).get("section");
-  if (value === "warehouse") return "stock";
-  if (value === "home") return "cabinet";
-  return NAV.some(({ id }) => id === value) ? (value as Section) : "cabinet";
+function placeFromUrl(): Place {
+  const params = new URLSearchParams(window.location.search);
+  const value = params.get("section");
+  if (value === "warehouse") return { section: "stock", block: null };
+  if (isSection(value)) return { section: value, block: null };
+  const block = params.get("block");
+  return { section: "cabinet", block: isBlock(block) ? block : null };
 }
 
 export function App() {
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [loading, setLoading] = useState(true);
-  const [section, setSection] = useState<Section>(sectionFromUrl);
+  const [place, setPlace] = useState<Place>(placeFromUrl);
   const [shellError, setShellError] = useState("");
 
   useEffect(() => {
@@ -186,7 +63,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const listener = () => setSection(sectionFromUrl());
+    const listener = () => setPlace(placeFromUrl());
     window.addEventListener("popstate", listener);
     return () => window.removeEventListener("popstate", listener);
   }, []);
@@ -197,25 +74,25 @@ export function App() {
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
   }, []);
 
-  const visibleNav = useMemo(
-    () =>
-      NAV.filter((item) =>
-        principal ? hasNavAccess(principal, item) : !item.permission,
-      ),
-    [principal],
-  );
+  const visibleNav = useMemo(() => (principal ? visibleNavFor(principal) : []), [principal]);
+  const blocks = useMemo(() => (principal ? visibleBlocks(principal) : []), [principal]);
 
-  useEffect(() => {
-    if (!loading && principal && !visibleNav.some(({ id }) => id === section)) {
-      setSection("cabinet");
-    }
-  }, [loading, principal, section, visibleNav]);
-
-  function navigate(next: Section) {
+  function go(next: Place) {
     const url = new URL(window.location.href);
-    url.searchParams.set("section", next);
+    url.searchParams.delete("section");
+    url.searchParams.delete("block");
+    if (next.section !== "cabinet") url.searchParams.set("section", next.section);
+    else if (next.block) url.searchParams.set("block", next.block);
     window.history.pushState({}, "", url);
-    setSection(next);
+    setPlace(next);
+  }
+  const navigate = (section: Section) => go({ section, block: null });
+  // A block with a single visible section opens that section directly: a screen with one card is a
+  // wasted click (SUPPLYMAP openHomeBlock).
+  function openBlock(id: BlockId) {
+    const block = blocks.find((item) => item.id === id);
+    if (block?.items.length === 1) navigate(block.items[0].id);
+    else go({ section: "cabinet", block: id });
   }
 
   async function signOut() {
@@ -238,7 +115,9 @@ export function App() {
 
   if (loading) return <div className="screen-center muted">Загружаем ERP…</div>;
   if (!principal) return <LoginPage onLogin={setPrincipal} />;
-  const activeSection = visibleNav.some(({ id }) => id === section) ? section : "cabinet";
+  // A section or block the principal cannot open falls back to the home screen.
+  const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
+  const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
 
   return (
     <div className="app-shell shell">
@@ -248,16 +127,13 @@ export function App() {
           <span className="mod">ERP</span>
         </div>
         <nav aria-label="Основная навигация">
-          {visibleNav.filter((item) => !item.group).map((item) => <NavButton key={item.id} item={item} activeSection={activeSection} navigate={navigate} />)}
-          {NAV_GROUPS.map((group) => {
-            const items = visibleNav.filter((item) => item.group === group.id);
-            return items.length ? (
-              <div className="nav-group" key={group.id}>
-                <h4>{group.label}</h4>
-                {items.map((item) => <NavButton key={item.id} item={item} activeSection={activeSection} navigate={navigate} />)}
-              </div>
-            ) : null;
-          })}
+          {visibleNav.filter((item) => !item.block).map((item) => <NavButton key={item.id} item={item} active={activeSection === item.id && !activeBlock} navigate={navigate} />)}
+          {blocks.map((block) => (
+            <div className="nav-group" key={block.id}>
+              <h4>{block.title}</h4>
+              {block.items.map((item) => <NavButton key={item.id} item={item} active={activeSection === item.id} navigate={navigate} />)}
+            </div>
+          ))}
         </nav>
         <div className="profile side-foot">
           <strong>{principal.user.name}</strong>
@@ -272,16 +148,21 @@ export function App() {
       </aside>
       <main className="workspace main">
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
-        {activeSection === "cabinet" && <Home principal={principal} navigate={navigate} />}
+        {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
+        {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
         {activeSection === "projects" && <LegacyFrame section="projects" scope="projects" title="Проекты" />}
         {activeSection === "calculation" && <LegacyFrame section="calc" scope="calculation" title="Расчёт и КП" />}
-        {activeSection === "techcards" && <TechcardsPage principal={principal} />}
+        {activeSection === "techcards" && <TechcardsPage principal={principal} view="projects" />}
+        {activeSection === "tctemplates" && <TechcardsPage principal={principal} view="templates" />}
+        {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
+        {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
         {activeSection === "procurement" && <ProcurementPage readOnly={!canEdit(principal, "procurement", ["buyer", "admin"])} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canEdit(principal, "receiving", ["receiver", "admin"])} />}
         {activeSection === "stock" && <WarehousePage admin={principal.roles.includes("admin")} readOnly={!canEdit(principal, "warehouse", ["receiver", "admin"])} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
-        {activeSection === "issues" && <FulfillmentPage principal={principal} />}
+        {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
+        {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} />}
         {activeSection === "production" && <ProductionPage principal={principal} />}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
@@ -296,16 +177,16 @@ export function App() {
 
 function NavButton({
   item,
-  activeSection,
+  active,
   navigate,
 }: {
-  item: (typeof NAV)[number];
-  activeSection: Section;
+  item: NavItem;
+  active: boolean;
   navigate: (section: Section) => void;
 }) {
   return (
     <button
-      className={activeSection === item.id ? "nav-item active" : "nav-item"}
+      className={active ? "nav-item active" : "nav-item"}
       onClick={() => navigate(item.id)}
     >
       <span>{item.label}</span>
@@ -313,25 +194,71 @@ function NavButton({
   );
 }
 
+type VisibleBlock = ReturnType<typeof visibleBlocks>[number];
+
+// Home: the four SUPPLYMAP blocks as tiles; a block with no section open to this principal is hidden.
 function Home({
   principal,
-  navigate,
+  blocks,
+  openBlock,
 }: {
   principal: Principal;
-  navigate: (section: Section) => void;
+  blocks: VisibleBlock[];
+  openBlock: (id: BlockId) => void;
 }) {
-  const cards = NAV.filter(
-    (item) => item.permission && hasNavAccess(principal, item),
-  );
   return (
     <section className="page">
       <header className="page-header">
-        <div><span className="eyebrow">Рабочее пространство</span><h1>Добрый день, {principal.user.name}</h1></div>
+        <div><span className="eyebrow">Личный кабинет</span><h1>Добрый день, {principal.user.name}</h1><p>Выберите блок — внутри его разделы.</p></div>
       </header>
-      <div className="module-grid">
-        {cards.map((card) => (
-          <button className="module-card" key={card.id} onClick={() => navigate(card.id)}>
-            <span>{card.label}</span><small>Открыть раздел →</small>
+      <div className="tiles block-tiles">
+        {blocks.map((block) => {
+          const names = block.items.map((item) => item.label).join(" · ");
+          return (
+            <button className="tile block-tile" key={block.id} onClick={() => openBlock(block.id)} aria-label={block.title}>
+              <span className="tile-icon" aria-hidden="true">{block.icon}</span>
+              <span className="tile-body">
+                <strong className="t-h">{block.title}</strong>
+                {/* With few sections the block's promise would lie; print the sections themselves. */}
+                <span className="t-sub">{block.items.length >= 3 ? block.sub : names}</span>
+                {block.items.length >= 3 && <span className="t-in">{names}</span>}
+              </span>
+              <span className="tile-count">{block.items.length}</span>
+            </button>
+          );
+        })}
+      </div>
+      {!blocks.length && <div className="empty">Разделов для вашей роли пока нет. Обратитесь к администратору.</div>}
+    </section>
+  );
+}
+
+function BlockPage({
+  principal,
+  block,
+  navigate,
+  home,
+}: {
+  principal: Principal;
+  block: VisibleBlock;
+  navigate: (section: Section) => void;
+  home: () => void;
+}) {
+  return (
+    <section className="page">
+      <button className="link-button back-link" onClick={home}>← Главная</button>
+      <header className="page-header">
+        <div><span className="eyebrow">Блок</span><h1><span aria-hidden="true">{block.icon}</span> {block.title}</h1><p>{block.sub}</p></div>
+      </header>
+      <div className="tiles section-tiles">
+        {block.items.map((item) => (
+          <button className="tile section-tile" key={item.id} onClick={() => navigate(item.id)} aria-label={item.label}>
+            <span className="tile-body">
+              <strong className="t-h">{item.label}</strong>
+              {item.sub && <span className="t-sub">{item.sub}</span>}
+              {item.permission && principal.permissions[item.permission] === "view" && <span className="chip">только просмотр</span>}
+            </span>
+            <span className="tile-arrow" aria-hidden="true">→</span>
           </button>
         ))}
       </div>

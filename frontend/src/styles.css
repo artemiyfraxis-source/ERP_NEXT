@@ -281,9 +281,21 @@ td small { margin-top: 4px; color: #7b857e; }
 .template-detail { margin-top: 14px; }
 .template-detail p { margin: 12px 0 0; white-space: pre-line; font-size: 12px; }
 
-.module-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 15px; }
-.module-card { min-height: 150px; border: 1px solid #d5ddd5; border-radius: 18px; padding: 22px; color: #17211b; background: #fff; text-align: left; display: grid; align-content: space-between; font-size: 19px; font-weight: 800; }
-.module-card small { color: #617068; font-size: 12px; }
+/* NAV-1: home = block tiles, block page = section tiles (SUPPLYMAP .tiles/.tile). */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.tile { min-height: 116px; display: flex; align-items: flex-start; gap: 14px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; color: var(--foreground); background: var(--card); text-align: left; transition: border-color .15s, box-shadow .15s; }
+.tile:hover, .tile:focus-visible { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); box-shadow: 0 8px 24px rgba(0, 80, 72, .09); outline: none; }
+.tile-icon { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 10px; background: var(--accent); font-size: 22px; }
+.tile-body { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.tile .t-h { font-size: 17px; font-weight: 700; }
+.tile .t-sub { color: var(--muted-foreground); font-size: 13px; line-height: 1.4; }
+.tile .t-in { color: var(--foreground); font-size: 12px; line-height: 1.4; }
+.tile-count { flex: none; min-width: 28px; padding: 3px 8px; border-radius: 999px; color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); font-size: 12px; font-weight: 700; text-align: center; }
+.tile-arrow { flex: none; color: var(--primary); font-size: 18px; }
+.section-tile { min-height: 96px; }
+.tile .chip { justify-self: start; padding: 3px 8px; border-radius: 999px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; }
+.back-link { margin-bottom: 10px; padding: 0; }
+.single-layout { display: grid; gap: 20px; max-width: 980px; }
 .legacy-page { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .legacy-frame { width: 100%; height: 100%; border: 0; background: #fff; }
 
@@ -343,6 +355,10 @@ td small { margin-top: 4px; color: #7b857e; }
   .workspace { padding: 24px 14px 60px; overflow: visible; }
   .page { padding: 0; }
   .form-grid, .facts-grid { grid-template-columns: 1fr; }
+  .tiles { grid-template-columns: 1fr; }
+  /* NAV-1: on a phone the home tiles and block cards are the navigation; the full section list would push
+     the page below the fold. «Личный кабинет» stays as the way home. */
+  .sidebar .nav-group { display: none; }
   .facts-grid .wide, label.wide { grid-column: auto; }
   .inline-action { align-items: stretch; flex-direction: column; }
   .warehouse-grid { grid-template-columns: 1fr; }

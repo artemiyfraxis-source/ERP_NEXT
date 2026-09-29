@@ -142,3 +142,22 @@ it("shows connector housing pin layout on an installation operation", async () =
   expect(screen.getByTitle("Контакт 1: красный")).toBeInTheDocument();
   expect(screen.getByText(/Со стороны проводов/)).toBeInTheDocument();
 });
+
+it("NAV-1: «Шаблоны техкарт» shows only the operation library", async () => {
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [
+      { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
+    ] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="templates" />);
+
+  expect(await screen.findByText("CUT_WIRE_auto")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Шаблоны техкарт", level: 1 })).toBeInTheDocument();
+  expect(screen.queryByText("Новая карточка изделия")).not.toBeInTheDocument();
+  expect(paths).toEqual(["/api/techcards/templates"]);
+});

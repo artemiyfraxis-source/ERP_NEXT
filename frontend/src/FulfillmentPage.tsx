@@ -8,7 +8,27 @@ import {
 } from "./api";
 import { openPrintSheet } from "./print";
 
-export function FulfillmentPage({ principal }: { principal: Principal }) {
+/* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
+   only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» belongs to the handout
+   screen — the kit is packed and waits for the shop. Closed requests live in the archive of either screen. */
+const MODES = {
+  pick: {
+    title: "Запросы на комплектацию",
+    sub: "Набор комплекта под КБ: партии выбирает человек, склад на этом этапе только резервирует. Заявка ждёт поставки.",
+    stages: ["Новая", "Недоукомплектован", "Укомплектован"],
+    empty: "Заявок на комплектацию нет. Они появятся из состава производственного комплекта.",
+  },
+  give: {
+    title: "Выдача со списанием",
+    sub: "Передача собранного комплекта в цех: выдача списывает со склада, возврат принимает остаток и брак.",
+    stages: ["Готов к выдаче", "КБ Выдана", "КБ Возвращена"],
+    empty: "Заявок к выдаче нет. Сюда приходят укомплектованные заявки, отправленные на выдачу.",
+  },
+};
+const ARCHIVE = ["Готово", "Отменена"];
+
+export function FulfillmentPage({ principal, mode }: { principal: Principal; mode?: keyof typeof MODES }) {
+  const [archive, setArchive] = useState(false);
   const [requests, setRequests] = useState<FulfillmentRequest[]>([]);
   const [lots, setLots] = useState<FulfillmentLot[]>([]);
   const [busy, setBusy] = useState("");
@@ -16,6 +36,10 @@ export function FulfillmentPage({ principal }: { principal: Principal }) {
   const [loaded, setLoaded] = useState(false);
   const canEdit = principal.permissions.fulfillment === "edit" && principal.roles.some((role) => ["engineer", "receiver", "admin"].includes(role));
   const canHandout = principal.permissions.fulfillment === "edit" && principal.roles.some((role) => ["receiver", "admin"].includes(role));
+
+  const screen = mode ? MODES[mode] : null;
+  const stages = archive ? ARCHIVE : screen?.stages;
+  const shown = stages ? requests.filter((request) => stages.includes(request.status)) : requests;
 
   async function reload() {
     setError("");
@@ -51,11 +75,11 @@ export function FulfillmentPage({ principal }: { principal: Principal }) {
 
   return (
     <section className="page">
-      <header className="page-head"><h1>Выдача в цех</h1><span className="page-count">{requests.length}</span></header>
-      <p className="page-sub">Партии выбирает человек. Заявка ждёт поставки, а в цех уходит только полностью собранный комплект.</p>
+      <header className="page-head"><h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{shown.length}</span>{mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => setArchive((value) => !value)}>{archive ? "Активные" : "Архив"}</button>}</header>
+      <p className="page-sub">{screen?.sub ?? "Партии выбирает человек. Заявка ждёт поставки, а в цех уходит только полностью собранный комплект."}</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="work-list fulfillment-list">
-        {requests.map((request) => <FulfillmentCard
+        {shown.map((request) => <FulfillmentCard
           key={`${request.id}:${request.version}`}
           request={request}
           lots={lots}
@@ -65,7 +89,7 @@ export function FulfillmentPage({ principal }: { principal: Principal }) {
           mutate={mutate}
         />)}
       </div>
-      {loaded && !requests.length && <div className="empty">Заявок на выдачу нет. Они появятся из состава производственного комплекта.</div>}
+      {loaded && !shown.length && <div className="empty">{archive ? "В архиве пусто." : screen?.empty ?? "Заявок на выдачу нет. Они появятся из состава производственного комплекта."}</div>}
     </section>
   );
 }

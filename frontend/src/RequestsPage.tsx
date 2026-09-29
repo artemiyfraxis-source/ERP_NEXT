@@ -47,7 +47,17 @@ function emptyDraft(): Draft {
   };
 }
 
-export function RequestsPage({ principal }: { principal: Principal }) {
+const TITLES = { all: "Заявки", create: "Оформить заявку", mine: "Мои заявки" };
+const SUBTITLES = {
+  all: "Создание потребности и передача закупщику.",
+  create: "Новая позиция: после сохранения она появится в «Моих заявках».",
+  mine: "Позиции, которые оформили вы, и на каком они этапе.",
+};
+
+/* NAV-1: «Оформить заявку» (view="create": the form only) and «Мои заявки» (view="mine": own rows) are separate
+   sections, as in SUPPLYMAP; without view it is «Заявки»: form plus every row. «Mine» matches the initiator name like
+   SUPPLYMAP openMyRequests (mineInitiator: state.user.name), within the latest 200 rows the list returns. */
+export function RequestsPage({ principal, view }: { principal: Principal; view?: "create" | "mine" }) {
   const creationKey = useRef(crypto.randomUUID());
   const [schema, setSchema] = useState<RequestSchema | null>(null);
   const [rows, setRows] = useState<RequestRow[]>([]);
@@ -56,6 +66,7 @@ export function RequestsPage({ principal }: { principal: Principal }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const canEdit = principal.permissions.requests === "edit";
+  const shown = view === "mine" ? rows.filter((row) => row.initiator === principal.user.name) : rows;
   const canHandoff =
     principal.permissions.procurement === "edit" &&
     principal.roles.some((role) => role === "buyer" || role === "admin");
@@ -126,13 +137,13 @@ export function RequestsPage({ principal }: { principal: Principal }) {
   return (
     <section className="page">
       <header className="page-header">
-        <div><span className="eyebrow">Входящий поток</span><h1>Заявки</h1><p>Создание потребности и передача закупщику.</p></div>
-        <span className="counter">{rows.length} строк</span>
+        <div><span className="eyebrow">Снабжение</span><h1>{TITLES[view ?? "all"]}</h1><p>{SUBTITLES[view ?? "all"]}</p></div>
+        {view !== "create" && <span className="counter">{shown.length} строк</span>}
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
-      <div className="split-layout">
-        {canEdit ? <form className="panel request-form" onSubmit={submit}>
+      <div className={view ? "single-layout" : "split-layout"}>
+        {view === "mine" ? null : canEdit ? <form className="panel request-form" onSubmit={submit}>
           <div className="panel-heading"><h2>Новая заявка</h2><span>Обязательные поля отмечены *</span></div>
           <div className="form-grid">
             <label>Назначение *<select value={draft.purpose} onChange={(e) => field("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -150,14 +161,15 @@ export function RequestsPage({ principal }: { principal: Principal }) {
           </div>
           <button className="primary" disabled={busy || !schema}>{busy ? "Сохраняем…" : "Создать заявку"}</button>
         </form> : <div className="panel readonly-panel"><h2>Только просмотр</h2><p>У вас нет права создавать заявки.</p></div>}
-        <div className="panel table-panel">
-          <div className="panel-heading"><h2>Последние заявки</h2><span>До 200 строк</span></div>
+        {view !== "create" && <div className="panel table-panel">
+          <div className="panel-heading"><h2>{view === "mine" ? "Мои позиции" : "Последние заявки"}</h2><span>{view === "mine" ? "Среди последних 200 строк" : "До 200 строк"}</span></div>
           <div className="table-scroll">
             <table><thead><tr><th>ID</th><th>Наименование</th><th>Назначение</th><th>Кол-во</th><th>Приоритет</th><th>Статус</th><th /></tr></thead>
-              <tbody>{rows.map((row) => <tr key={row.id}><td><strong>{row.legacy_id}</strong><small>{row.designation}</small></td><td>{row.name}<small>{row.item_type}</small></td><td>{row.project_reference || row.purpose}</td><td>{row.quantity} {row.unit}</td><td>{row.priority}</td><td><span className="status">{row.status}</span></td><td>{row.status === "Новый" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => handoff(row.id)}>В закупку</button>}{row.status === "В работе" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => handoff(row.id, true)}>Повторно в закупку</button>}</td></tr>)}</tbody>
+              <tbody>{shown.map((row) => <tr key={row.id}><td><strong>{row.legacy_id}</strong><small>{row.designation}</small></td><td>{row.name}<small>{row.item_type}</small></td><td>{row.project_reference || row.purpose}</td><td>{row.quantity} {row.unit}</td><td>{row.priority}</td><td><span className="status">{row.status}</span></td><td>{row.status === "Новый" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => handoff(row.id)}>В закупку</button>}{row.status === "В работе" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => handoff(row.id, true)}>Повторно в закупку</button>}</td></tr>)}</tbody>
             </table>
           </div>
-        </div>
+          {view === "mine" && !shown.length && <div className="empty">Ваших заявок среди последних пока нет.</div>}
+        </div>}
       </div>
     </section>
   );
