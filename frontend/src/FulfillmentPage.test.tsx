@@ -367,3 +367,47 @@ it("lets only the administrator delete a request", async () => {
   await waitFor(() => expect(deleted).toBe(`/api/issues/${request.id}`));
   expect(await screen.findByText("Заявка удалена: позиций 1.")).toBeInTheDocument();
 });
+
+it("creates a request from a calculation link: preview by warehouse, picks and «нет на складе» (IssueCalc)", async () => {
+  const posts: Array<{ path: string; body: unknown }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") {
+      posts.push({ path, body: JSON.parse(String(init.body)) });
+      if (path === "/api/issues/calc-preview") return json({ project: "591К.3", lines: [
+        { name: "МГТФ 0,35", qty: "12.5", unit: "м", found: true, short: "2.5", picks: [
+          { lot_id: "l1", warehouse: "ЦАР", grn: "OLD.25.0000009", package: "", article: "", name: "МГТФ 0,35", unit: "м", storage_location: "1A1", qty: "10" },
+        ] },
+        { name: "DB-9M", qty: "4", unit: "шт", found: false, short: "4", picks: [] },
+      ] });
+      return json({ request });
+    }
+    if (path === "/api/issues") return json({ requests: [], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: "📐 Заявка по расчёту" }));
+  fireEvent.click(screen.getByRole("button", { name: "Подобрать" }));
+  expect(await screen.findByText("Вставь ссылку на расчёт.")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Ссылка на расчёт"), { target: { value: "https://docs.google.com/spreadsheets/d/X/edit" } });
+  fireEvent.change(screen.getByLabelText("Склад расчёта"), { target: { value: "ЖУК" } });
+  fireEvent.click(screen.getByRole("button", { name: "Подобрать" }));
+
+  expect(await screen.findByText("Позиций: 2 · полностью: 0 · с недобором: 1 · нет на складе: 1")).toBeInTheDocument();
+  expect(posts[0]).toEqual({ path: "/api/issues/calc-preview", body: { url: "https://docs.google.com/spreadsheets/d/X/edit", warehouse: "ЖУК" } });
+  expect(screen.getByLabelText("Назначение по расчёту")).toHaveValue("591К.3");
+  expect(screen.getByText("OLD.25.0000009: 10")).toBeInTheDocument();
+  expect(screen.getByText("недобор 2.5")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Дедлайн по расчёту"), { target: { value: "2026-10-05" } });
+  fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
+
+  await waitFor(() => expect(posts).toHaveLength(2));
+  expect(posts[1]).toEqual({ path: "/api/issues", body: {
+    purpose: "591К.3",
+    deadline: "2026-10-05",
+    lines: [{ article: "", name: "МГТФ 0,35", unit: "м", requirement: "10", lot_id: "l1" }],
+    short_note: ["DB-9M: нет на складе (−4)"],
+  } });
+});

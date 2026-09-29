@@ -369,7 +369,7 @@ def test_manual_request_reserves_picked_lots_at_creation_and_keeps_it_new(fulfil
     assert [(line["requirement"], line["reserved"], line["lot"] is not None) for line in body["lines"]] == [
         ("4", "4", True), ("2", "2", True), ("3", "0", False),
     ]
-    assert body["shortfall"] == "Разъём (ГРН не выбран): −3"
+    assert body["shortfall"] == "Разъём (FRX.26.0000001): −3"  # issueCreateTasks_ wording at creation
     assert body["at_work"] is None
     with factory() as uow:
         assert uow.warehouse.get(lot.id).reserved == Decimal("6")
