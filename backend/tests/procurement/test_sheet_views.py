@@ -198,3 +198,66 @@ def test_batch_paid_needs_edit_access(procurement_api):
     response = client.post("/api/procurement/paid", json={"items": [{"line_id": str(line.id), "version": 1}]})
     assert response.status_code == 403
 
+
+def as_buyer(name: str):
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name=name, department="Закупки"),
+        email=f"{name}@example.test",
+        roles=frozenset({"buyer"}),
+        permissions={"procurement": "edit"},
+    )
+
+
+def test_take_batch_skips_lines_other_buyers_took_and_takes_the_rest(procurement_api):
+    client, line, sessions = procurement_api
+    factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    free = consume_procurement_requested(message(2), factory())
+    as_buyer("Сидоров")
+    client.post("/api/procurement/take", json={"line_ids": [str(line.id)]})
+    as_buyer("Петров")
+
+    response = client.post("/api/procurement/take", json={"line_ids": [str(line.id), str(free.id)]})
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["lines"]] == [str(free.id)]
+    assert response.json()["lines"][0]["buyer"] == "Петров"
+    assert response.json()["skipped"] == [line.legacy_id]
+
+
+def test_fill_form_lists_own_in_work_lines_and_saves_marked_rows_in_one_call(procurement_api, suppliers):
+    client, line, sessions = procurement_api
+    factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    second = consume_procurement_requested(message(2), factory())
+    foreign = consume_procurement_requested(message(3), factory())
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id), str(second.id)]}).json()["lines"]
+    as_buyer("Сидоров")
+    client.post("/api/procurement/take", json={"line_ids": [str(foreign.id)]})
+    as_buyer("Петров")
+
+    listed = client.get("/api/procurement/in-work/mine").json()["lines"]
+    assert {item["id"] for item in listed} == {str(line.id), str(second.id)}
+
+    refused = client.post(
+        "/api/procurement/facts",
+        json={"rows": [
+            {"line_id": str(line.id), "legacy_id": line.legacy_id, "version": taken[0]["version"], "supplier": "ЧипДип"},
+            {"line_id": str(second.id), "legacy_id": second.legacy_id, "version": taken[1]["version"], "supplier": " "},
+        ]},
+    )
+    assert refused.status_code == 422
+    assert second.legacy_id in refused.json()["detail"]
+    assert client.get("/api/procurement/in-work/mine").json()["lines"][0]["supplier"] is None  # nothing written
+
+    saved = client.post(
+        "/api/procurement/facts",
+        json={"rows": [
+            {"line_id": str(line.id), "legacy_id": line.legacy_id, "version": taken[0]["version"],
+             "supplier": "ЧипДип", "link": "https://chipdip.ru/p/1", "actual_quantity": "2", "actual_unit": "шт"},
+            {"line_id": str(second.id), "legacy_id": second.legacy_id, "version": 99, "supplier": "Элитан"},
+        ]},
+    ).json()
+
+    assert (saved["saved"], saved["ready"], saved["skipped"], saved["failed"]) == (1, 1, [second.legacy_id], [])
+    assert saved["lines"][0]["status"] == "Готов к запросу"
+    assert suppliers.learned == [("https://chipdip.ru/p/1", "ЧипДип", "Петров")]
+
