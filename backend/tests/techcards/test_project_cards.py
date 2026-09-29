@@ -204,3 +204,47 @@ def test_project_etk_operation_edit_normalizes_card_and_logs_revision(project_te
     assert saved["card"]["safety"] == "ВАЖНО! ТРЕБОВАНИЕ БЕЗОПАСНОСТИ:\nОчки"
     assert saved["edited"] == {"at": "23.09.2026 10:00", "by": "Инженер"}
     assert revisions[-1]["reason"] == "Правка операции 1 (10 — XS1)"
+
+
+def test_discard_draft_keeps_issued_techcards():
+    built = _card().rebuild(_document(), NOW)
+    discarded = built.discard_draft(NOW + timedelta(minutes=1))
+    assert discarded.document is None
+    assert discarded.version == built.version + 1
+    with pytest.raises(TechcardValidationError, match="ещё не собран"):
+        discarded.discard_draft(NOW)
+    issued = built.issue(NOW)
+    with pytest.raises(TechcardValidationError, match="Выданную"):
+        issued.discard_draft(NOW)
+
+
+def test_discard_draft_api_removes_built_document(project_techcards_api):
+    card = project_techcards_api.post("/api/techcards/projects", json={
+        "project": "P-100", "item_index": "01", "product_name": "Жгут", "source_calculation": "",
+    }).json()
+    built = project_techcards_api.put(
+        f"/api/techcards/projects/{card['id']}/etk",
+        json={"version": card["version"], "document": _document()},
+    ).json()
+    discarded = project_techcards_api.request(
+        "DELETE", f"/api/techcards/projects/{card['id']}/etk", json={"version": built["version"]},
+    )
+    assert discarded.status_code == 200
+    assert discarded.json()["document"] is None
+    assert discarded.json()["status"] == "Черновик"
+
+
+def test_cut_lengths_api_matches_calc_rows(project_techcards_api):
+    response = project_techcards_api.post("/api/techcards/cut-lengths", json={
+        "wires": [
+            {"id": "w1", "art": "МГТФ 0,12", "name": "Провод МГТФ 0,12"},
+            {"id": "w2", "art": "ParLan U/UTP Cat5e 2х2х0,48", "name": ""},
+        ],
+        "calc_ops": [
+            {"code": "CUT_WIRE", "comp": "МГТФ 0,12", "req": "L=160мм + SHF-001T", "l": ""},
+            {"code": "CUT_WIRE", "comp": "U/UTP 2x2x0,48", "req": "", "l": "0,25"},
+            {"code": "PRS_TERMINAL", "comp": "МГТФ 0,12", "req": "L=999мм", "l": ""},
+        ],
+    })
+    assert response.status_code == 200
+    assert response.json() == {"lengths": {"w1": 160.0, "w2": 250}}

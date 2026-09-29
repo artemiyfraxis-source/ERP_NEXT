@@ -236,6 +236,18 @@ def _edit_reason(operation: dict[str, Any]) -> str:
     return f"Правка операции {position + ' ' if position else ''}({code}{f' — {suffix}' if suffix else ''})"
 
 
+def discard_project_techcard_draft(command: ChangeProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
+    with uow:
+        updated = _current(command, uow).discard_draft(command.now)
+        uow.techcards.save(updated)
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=updated.id, event_type="techcards.project_draft_discarded",
+            actor=command.actor, occurred_at=command.now, details={},
+        ))
+        uow.commit()
+        return updated
+
+
 def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWork) -> ProjectTechcard:
     with uow:
         current = _current(command, uow)
