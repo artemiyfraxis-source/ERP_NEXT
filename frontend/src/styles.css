@@ -631,6 +631,30 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .data-table tr.group-row td { background: var(--accent); font-size: 12px; }
 .data-table tr.group-row strong { display: inline; }
 .data-table .calendar-chips { margin-bottom: 0; }
+/* Dense, spreadsheet-like reading (the owner is used to Google Sheets): compact rows, zebra, dark text, the header
+   pinned while the rows scroll inside the card, columns as wide as their content, the first column as the row key. */
+.data-table .table-wrap { width: auto; max-height: calc(100dvh - 190px); overflow: auto; }
+.data-table table.grid.wide { width: max-content; min-width: 100%; }
+.data-table th, .data-table td, .table-wrap .grid th, .table-wrap .grid td { padding: 6px 12px; line-height: 1.35; }
+.data-table td, .table-wrap .grid td { color: var(--foreground); font-size: 13px; border-bottom-color: #edf0f2; }
+.data-table thead th, .table-wrap .grid thead th { position: sticky; top: 0; z-index: 2; padding-top: 9px; padding-bottom: 9px; background: #f3f6f6; color: #3d4a5c; font-weight: 600; border-bottom: 1px solid var(--border); box-shadow: 0 1px 0 var(--border); }
+.data-table tbody tr:nth-child(even):not(.group-row):not(.detail) td, .table-wrap .grid tbody tr:nth-child(even):not(.group-row):not(.detail) > td { background: #f3f6f7; }
+/* Like a sheet: one line per cell, the table scrolls sideways inside its card with the key column frozen. */
+.data-table .table-wrap td { white-space: nowrap; }
+.data-table .table-wrap td.text { white-space: normal; }
+.data-table table:not(.selectable) td.key, .data-table table:not(.selectable) thead th:first-child { position: sticky; left: 0; z-index: 1; background: var(--card); box-shadow: inset -1px 0 var(--border); }
+.data-table table:not(.selectable) thead th:first-child { z-index: 3; background: #f3f6f6; }
+.data-table td.key small { font-weight: 400; }
+.stock-table .link-button { padding: 0; }
+.data-table tbody tr:not(.group-row):not(.detail):hover td, .table-wrap .grid tbody tr:not(.group-row):not(.detail):hover > td { background: #eaf6f4; }
+.data-table td.key { font-weight: 600; }
+.data-table tbody tr:nth-child(even) td.key { background: #f3f6f7; }
+.data-table tbody tr:hover td.key { background: #eaf6f4; }
+.data-table td small { margin-top: 1px; color: var(--muted-foreground); font-size: 11.5px; }
+.data-table .grid td.text { min-width: 0; max-width: none; }
+/* Long text wraps only past ~40 characters, so short values keep their column narrow. */
+.data-table .cell-wrap { max-width: 340px; white-space: normal; }
+.data-table .table-footer { font-size: 12px; color: var(--muted-foreground); }
 .calendar-chip.active { color: var(--primary-foreground); background: var(--primary); }
 .column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
@@ -726,3 +750,8 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 /* prodBoxShow_: номер коробки крупно, его переписывают от руки */
 .box-dialog { position: fixed; left: 50%; top: 30%; transform: translateX(-50%); z-index: 50; max-width: min(92vw, 420px); box-shadow: 0 12px 40px rgba(0,0,0,.25); }
 .box-dialog .box-no { font-size: 40px; font-weight: 700; letter-spacing: 2px; text-align: center; font-variant-numeric: tabular-nums; }
+.access-matrix thead th:first-child { z-index: 3; }
+/* Row buttons stay row-sized so a button column does not double every row's height. */
+.data-table td button.small, .data-table td .secondary, .data-table td .primary { padding: 2px 10px; border-radius: 7px; font-size: 12px; line-height: 1.5; }
+@media (pointer: coarse) { .data-table td button { min-height: 32px; } }
+@media (pointer: coarse) { .table-wrap td .link-button { min-height: 28px; } }
