@@ -3,7 +3,7 @@
   "owner": "supplymap",
   "strategy": "native-rewrite",
   "sourceRef": "main",
-  "sourceCommit": "d2df8b80a89a9cd68dd7536f3fc844855045df74",
+  "sourceCommit": "1ec8951a8fe62520590130fefb5212b8d63d7174",
   "implementedStage": "technology-schema-v14-operation-and-terminal-norm-kernel",
   "sources": ["References.gs", "TcOpsDb.gs", "TcConfig.gs", "PortalRef.gs"],
   "invariants": [

@@ -7,14 +7,14 @@
   "grapherImport": {
     "sourceRepository": "../SUPPLYMAP",
     "sourceRef": "main",
-    "sourceCommit": "d2df8b80a89a9cd68dd7536f3fc844855045df74",
+    "sourceCommit": "1ec8951a8fe62520590130fefb5212b8d63d7174",
     "sourcePath": "TcGrapher.gs",
     "upstream": "TECHMAP-GRAPHER@codex/restore-20260918-0235"
   },
   "operationLibrary": {
     "sourceRepository": "../SUPPLYMAP",
     "sourceRef": "main",
-    "sourceCommit": "d2df8b80a89a9cd68dd7536f3fc844855045df74",
+    "sourceCommit": "1ec8951a8fe62520590130fefb5212b8d63d7174",
     "sourcePath": "_local/db/БД.ТК",
     "sourceSha256": "ddab961d2adbd4b39bf9fa9118e68a5f64f7f16dcd38f6505dcad500661456f9",
     "templateCount": 118,
