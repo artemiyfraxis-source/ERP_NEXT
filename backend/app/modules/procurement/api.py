@@ -68,6 +68,9 @@ from .application import (
     save_procurement_money,
     take_procurement_in_work,
     take_procurement_in_work_batch,
+    FactsBatchRow,
+    buyer_in_work_lines,
+    save_procurement_facts_batch,
 )
 from .domain import (
     ACTUAL_UNITS,
@@ -153,6 +156,23 @@ class ProcurementFactsInput(BaseModel):
             if name != "version"
         }
         return ProcurementFacts(**values)
+
+
+class FactsBatchRowInput(ProcurementFactsInput):
+    line_id: UUID
+    legacy_id: str = Field(default="", max_length=64)
+
+    def to_domain(self) -> ProcurementFacts:
+        values = {
+            name: getattr(self, name)
+            for name in self.model_fields_set
+            if name not in {"version", "line_id", "legacy_id"}
+        }
+        return ProcurementFacts(**values)
+
+
+class FactsBatchInput(BaseModel):
+    rows: list[FactsBatchRowInput] = Field(min_length=1, max_length=200)
 
 
 class ReplacementInput(BaseModel):
@@ -534,6 +554,48 @@ def paid_batch(
         "done": len(result.lines),
         "already": result.already,
         "no_invoice": result.no_invoice,
+        "failed": [{"legacy_id": legacy_id, "error": error} for legacy_id, error in result.failed],
+    }
+
+
+@router.get("/in-work/mine")
+def my_in_work_lines(
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """`portalPurchaseInWork`: every own «В работе» line for the «Заполнить данные» form."""
+    return {"lines": [_line_result(line) for line in buyer_in_work_lines(principal.actor, uow_factory())]}
+
+
+@router.post("/facts")
+def save_facts_batch(
+    payload: FactsBatchInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    suppliers: Annotated[SupplierDirectory | None, Depends(procurement_supplier_directory)],
+) -> dict:
+    """`portalSavePurchaseFacts`: the marked rows of «Заполнить данные» in one call, row by row."""
+    try:
+        result = _retry_transaction(
+            lambda: save_procurement_facts_batch(
+                [
+                    FactsBatchRow(row.line_id, row.version, row.to_domain(), row.legacy_id)
+                    for row in payload.rows
+                ],
+                principal.actor,
+                now,
+                uow_factory,
+                suppliers,
+            )
+        )
+    except ProcurementValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {
+        "lines": [_line_result(line) for line in result.lines],
+        "saved": len(result.lines),
+        "ready": result.ready,
+        "skipped": result.skipped,
         "failed": [{"legacy_id": legacy_id, "error": error} for legacy_id, error in result.failed],
     }
 

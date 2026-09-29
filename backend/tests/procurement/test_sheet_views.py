@@ -223,3 +223,41 @@ def test_take_batch_skips_lines_other_buyers_took_and_takes_the_rest(procurement
     assert response.json()["lines"][0]["buyer"] == "Петров"
     assert response.json()["skipped"] == [line.legacy_id]
 
+
+def test_fill_form_lists_own_in_work_lines_and_saves_marked_rows_in_one_call(procurement_api, suppliers):
+    client, line, sessions = procurement_api
+    factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    second = consume_procurement_requested(message(2), factory())
+    foreign = consume_procurement_requested(message(3), factory())
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id), str(second.id)]}).json()["lines"]
+    as_buyer("Сидоров")
+    client.post("/api/procurement/take", json={"line_ids": [str(foreign.id)]})
+    as_buyer("Петров")
+
+    listed = client.get("/api/procurement/in-work/mine").json()["lines"]
+    assert {item["id"] for item in listed} == {str(line.id), str(second.id)}
+
+    refused = client.post(
+        "/api/procurement/facts",
+        json={"rows": [
+            {"line_id": str(line.id), "legacy_id": line.legacy_id, "version": taken[0]["version"], "supplier": "ЧипДип"},
+            {"line_id": str(second.id), "legacy_id": second.legacy_id, "version": taken[1]["version"], "supplier": " "},
+        ]},
+    )
+    assert refused.status_code == 422
+    assert second.legacy_id in refused.json()["detail"]
+    assert client.get("/api/procurement/in-work/mine").json()["lines"][0]["supplier"] is None  # nothing written
+
+    saved = client.post(
+        "/api/procurement/facts",
+        json={"rows": [
+            {"line_id": str(line.id), "legacy_id": line.legacy_id, "version": taken[0]["version"],
+             "supplier": "ЧипДип", "link": "https://chipdip.ru/p/1", "actual_quantity": "2", "actual_unit": "шт"},
+            {"line_id": str(second.id), "legacy_id": second.legacy_id, "version": 99, "supplier": "Элитан"},
+        ]},
+    ).json()
+
+    assert (saved["saved"], saved["ready"], saved["skipped"], saved["failed"]) == (1, 1, [second.legacy_id], [])
+    assert saved["lines"][0]["status"] == "Готов к запросу"
+    assert suppliers.learned == [("https://chipdip.ru/p/1", "ЧипДип", "Петров")]
+
