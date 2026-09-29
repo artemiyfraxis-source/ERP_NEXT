@@ -18,7 +18,7 @@ from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
 from app.modules.production.traceability import ProductionBox, format_box_number
-from app.shared.clock import moscow_now, moscow_today
+from app.shared.clock import MOSCOW, moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
 from tests.factories import Actor
@@ -575,3 +575,24 @@ def test_first_operation_starts_and_submits_without_an_issued_kit(production_api
         json={"good_quantity": "3", "defect_quantity": "0"},
     )
     assert submitted.status_code == 200, submitted.text
+
+
+def test_assigning_operations_one_by_one_keeps_one_time_form(production_api):
+    # Демо 29.09: второе поштучное назначение падало 500 — даты из базы без пояса, новая с поясом.
+    client, operator_id = production_api
+    app.dependency_overrides[moscow_now] = lambda: datetime(2026, 9, 22, 9, 0, tzinfo=MOSCOW)
+    task = launch_from_card(
+        client, "one-by-one-v1", "591K.3", "КБ-1", 10,
+        [("", "Подготовка", 60, 0), ("", "Сборка", 60, 0)],
+    ).json()["task"]
+    for operation in task["operations"]:
+        response = client.post(
+            f"/api/production/tasks/{task['id']}/operations/{operation['id']}/assign",
+            json={"version": task["version"], "operator_ids": [str(operator_id)]},
+        )
+        assert response.status_code == 200, response.text
+        task = response.json()["task"]
+
+    assert task["assigned"] == 2
+    assert task["planned_start"] == task["operations"][0]["planned_start"]
+    assert task["planned_finish"] == task["operations"][1]["planned_finish"]
