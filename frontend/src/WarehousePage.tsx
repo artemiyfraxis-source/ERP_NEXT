@@ -45,7 +45,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [adding, setAdding] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveLot, setMoveLot] = useState<WarehouseLot | null>(null);
-  const [groupBy, setGroupBy] = useState<"" | "type" | "place" | "name" | "series">("series");
+  const [groupBy, setGroupBy] = useState<"" | "type" | "place" | "name" | "series" | "grn">("series");
   const [flat, setFlat] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "article", desc: false });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -164,7 +164,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         <input className="search stock-search" aria-label="Поиск по складу" placeholder="поиск: резистор 6-1 …" value={query} onChange={(event) => setQuery(event.target.value)} />
         <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />показывать нулевые</label>
         <label className="inline-select">группировать<select aria-label="Группировка склада" value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
-          <option value="">нет</option><option value="type">по типу</option><option value="place">по месту (полка)</option><option value="name">по наименованию</option><option value="series">по серии</option>
+          <option value="">нет</option><option value="type">по типу</option><option value="place">по месту (полка)</option><option value="name">по наименованию</option><option value="series">по серии</option><option value="grn">по ГРН</option>
         </select></label>
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
@@ -308,13 +308,14 @@ function compareArticles(left: WarehouseArticle, right: WarehouseArticle, sort: 
   return (sort.desc ? -order : order) || warehouseCollator.compare(left.key, right.key);
 }
 
-function warehouseGroups(lots: WarehouseLot[], groupBy: "" | "type" | "place" | "name" | "series", sort: { key: SortKey; desc: boolean }): WarehouseGroup[] {
+function warehouseGroups(lots: WarehouseLot[], groupBy: "" | "type" | "place" | "name" | "series" | "grn", sort: { key: SortKey; desc: boolean }): WarehouseGroup[] {
   const groupMap = new Map<string, WarehouseLot[]>();
   for (const lot of lots) {
     const value = groupBy === "type" ? lot.item_type
       : groupBy === "place" ? shelf(lot.storage_location)
       : groupBy === "name" ? lot.name
       : groupBy === "series" ? lot.series
+      : groupBy === "grn" ? lot.grn
       : "";
     const key = value.trim();
     groupMap.set(key, [...(groupMap.get(key) ?? []), lot]);
@@ -329,7 +330,7 @@ function warehouseGroups(lots: WarehouseLot[], groupBy: "" | "type" | "place" | 
       }
       return {
         key: `${groupBy}:${groupKey}`,
-        label: !groupBy ? "" : groupKey || ({ type: "Без типа", place: "Без места", name: "Без наименования", series: "Без серии" })[groupBy],
+        label: !groupBy ? "" : groupKey || ({ type: "Без типа", place: "Без места", name: "Без наименования", series: "Без серии", grn: "Без ГРН" })[groupBy],
         articles: [...articleMap.entries()]
           .map(([key, articleLots]) => ({ key: `${groupBy}:${groupKey}:${key}`, article: articleLots[0].article || articleLots[0].name, lots: articleLots }))
           .sort((left, right) => compareArticles(left, right, sort)),
