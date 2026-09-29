@@ -386,7 +386,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <input key={key} aria-label={`${key} ${side}`} placeholder={{ d1: "D1", d2: "D2", d3: "D3", l1: "L1", l2: "L2", l3: "L3", lPlus: "L+", lMinus: "L-" }[key]}
             value={addValue(key, key.startsWith("d") && dia ? String(dia[key as "d1" | "d2" | "d3"] || "").replace(".", ",") : "")} onChange={(event) => setAdd(key, event.target.value)} />)}
         </div>
-        <button className="secondary small" disabled={busy} onClick={() => void saveCoaxToDb(side)}>➕ Добавить в БД.КОАКС</button>
+        <button className="secondary small" disabled={busy} onClick={() => void saveCoaxToDb(side)}>Добавить в БД.КОАКС</button>
       </div>}
     </div>;
   }
@@ -417,14 +417,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       {gen.complexWarning() && <div className="warning-inline">{gen.complexWarning()}</div>}
       <div className="section-hdr"><h3>Кабели</h3>
         {complex && <button type="button" className="btn-link" onClick={() => update((current) => toggleLengthMode(current, makeGen(D, current).sharedLength()))}>{S.advancedLength ? "← общая длина" : "раздельная длина ▸"}</button>}
-        <label className="btn-link">📐 из чертежа<input aria-label="Экспорт TECHMAP-GRAPHER" type="file" hidden accept=".json,.zip,.techmap-project.zip" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void grapherFile(file); }} /></label>
+        <label className="btn-link">из чертежа<input aria-label="Экспорт TECHMAP-GRAPHER" type="file" hidden accept=".json,.zip,.techmap-project.zip" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void grapherFile(file); }} /></label>
       </div>
       {grapher && (() => {
         const h = grapher.data.harnesses[grapher.pick];
         const our = gen.getLengthAdjustment_();
         const sg = (x: string | number) => (Number(x) >= 0 ? "+" : "") + x;
         return <div className="gcard grapher-box">
-          <div className="grapher-head"><strong>📐 Чертёж {grapher.data.project.designation || grapher.data.project.name}</strong>
+          <div className="grapher-head"><strong>Чертёж {grapher.data.project.designation || grapher.data.project.name}</strong>
             {grapher.data.harnesses.length > 1 ? <select value={grapher.pick} onChange={(event) => setGrapher({ ...grapher, pick: Number(event.target.value) })}>
               {grapher.data.harnesses.map((x, i) => <option key={i} value={i}>{x.designation} × {x.quantity}</option>)}</select>
               : <span>жгут {h.designation} × {h.quantity}</span>}
@@ -499,7 +499,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <button className="btn-add" title="Определить пары по запасу длины из спецификации" onClick={() => update((current) => {
             const auto = makeGen(D, current).autoDetectTwistPairs();
             return { ...current, twist: { ...current.twist, pairs: auto.length ? auto.map(([a, b]) => ({ a: String(a), b: String(b) })) : [{ a: "", b: "" }] } };
-          })}>🔄 Авто</button>
+          })}>Авто</button>
         </div> : <div className="chip-row">{active.map((w, pos) => <label key={w.idx}><input type="checkbox" checked={gen.twistWireIndices_().includes(pos)} onChange={() => update((current) => {
           const now = makeGen(D, current).twistWireIndices_();
           return { ...current, twist: { ...current.twist, wires: now.includes(pos) ? now.filter((i) => i !== pos) : [...now, pos] } };

@@ -312,7 +312,7 @@ it("corrects one output of a returned box and shows that it waits for the master
       },
     },
   ]));
-  const dialog = await screen.findByRole("dialog", { name: "✅ Коробка исправлена" });
+  const dialog = await screen.findByRole("dialog", { name: "Коробка исправлена" });
   expect(dialog).toHaveTextContent("000002-6");
   expect(screen.queryByRole("button", { name: "Доложить" })).not.toBeInTheDocument();
 });
@@ -349,9 +349,9 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
   fireEvent.change(await screen.findByLabelText("Номера коробок"), { target: { value: "000001-8, 000002-6\n" } });
   fireEvent.click(screen.getByRole("button", { name: "Начать" }));
   fireEvent.change(await screen.findByLabelText("Годные изделия"), { target: { value: "5" } });
-  fireEvent.click(screen.getByRole("button", { name: "✅ Сдать" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
 
-  const dialog = await screen.findByRole("dialog", { name: "📦 Напиши на коробке" });
+  const dialog = await screen.findByRole("dialog", { name: "Напиши на коробке" });
   expect(dialog).toHaveTextContent("000007-5");
   expect(requests[0].body).toEqual({ inputs: ["000001-8", "000002-6"], materials: [] });
   fireEvent.click(screen.getByRole("button", { name: "Записал" }));

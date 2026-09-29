@@ -723,9 +723,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
           <div className="panel request-form">
             <div className="panel-heading"><h2>Новая заявка</h2><span>Обязательные поля отмечены *</span></div>
             <div className="mode-tabs">
-              <button type="button" className={createMode === "manual" ? "secondary small active" : "secondary small"} onClick={() => switchMode("manual")}>✍️ Вручную</button>
-              <button type="button" className={createMode === "excel" ? "secondary small active" : "secondary small"} onClick={() => switchMode("excel")}>📥 Вставить из Excel</button>
-              <button type="button" className={createMode === "calc" ? "secondary small active" : "secondary small"} onClick={() => switchMode("calc")}>🧮 Из расчёта</button>
+              <button type="button" className={createMode === "manual" ? "secondary small active" : "secondary small"} onClick={() => switchMode("manual")}>Вручную</button>
+              <button type="button" className={createMode === "excel" ? "secondary small active" : "secondary small"} onClick={() => switchMode("excel")}>Вставить из Excel</button>
+              <button type="button" className={createMode === "calc" ? "secondary small active" : "secondary small"} onClick={() => switchMode("calc")}>Из расчёта</button>
             </div>
 
             {createMode === "manual" && (
@@ -761,8 +761,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                     <fieldset className="form-grid request-position" key={index}>
                       <legend>Позиция {index + 1}</legend>
                       <div className="wide form-actions">
-                        <button type="button" className="secondary small" onClick={() => addPosition(position)}>⧉ Копия</button>
-                        <button type="button" className="secondary small" disabled={positions.length === 1} onClick={() => removePosition(index)}>× Убрать</button>
+                        <button type="button" className="secondary small" onClick={() => addPosition(position)}>Копия</button>
+                        <button type="button" className="secondary small" disabled={positions.length === 1} onClick={() => removePosition(index)}>Убрать</button>
                       </div>
                       {own.length > 0 && (
                         <p className="wide page-sub">Своё у позиции: {own.map((key) => `${LABEL_BY_KEY[key]} — ${position[key]}`).join("; ")}</p>
@@ -800,8 +800,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                   </p>
                   <p className="chips">{TEMPLATE_HEADERS.join(" · ")}</p>
                   <div className="form-actions">
-                    <button type="button" className="secondary small" onClick={() => void copyHeaders()}>⧉ Скопировать заголовки</button>
-                    <button type="button" className="secondary small" onClick={downloadTemplate}>⬇ Скачать шаблон (.csv)</button>
+                    <button type="button" className="secondary small" onClick={() => void copyHeaders()}>Скопировать заголовки</button>
+                    <button type="button" className="secondary small" onClick={downloadTemplate}>Скачать шаблон (.csv)</button>
                   </div>
                   {templateNote && <p className="page-sub">{templateNote}</p>}
                 </div>

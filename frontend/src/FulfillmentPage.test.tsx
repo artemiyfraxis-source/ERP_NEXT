@@ -119,7 +119,7 @@ it("does not load lots or show editing actions to a view-only production role", 
   expect(screen.queryByRole("button", { name: "Выбрать ГРН" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Отменить заявку" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "+ Заявка" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "🗑 Удалить заявку" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Удалить заявку" })).not.toBeInTheDocument();
 });
 
 it("prints the issue sheet and, once something is issued, offers the return sheet too", async () => {
@@ -315,10 +315,10 @@ it("marks the kit complete once every line is closed and sends it to handout wit
   render(<FulfillmentPage principal={{ ...principal, roles: ["engineer"], permissions: { fulfillment: "edit" } }} />);
   await expand("FRX-ISS-26-0001");
   expect(await screen.findByText("Взята в работу")).toBeInTheDocument();
-  fireEvent.click(await screen.findByRole("button", { name: "✅ Укомплектован" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Укомплектован" }));
   await waitFor(() => expect(calls[0]).toEqual({ path: `/api/issues/${request.id}/complete`, body: { version: 3 } }));
 
-  fireEvent.click(await screen.findByRole("button", { name: "📤 Отправить на выдачу" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Отправить на выдачу" }));
   fireEvent.change(screen.getByLabelText("Стеллаж"), { target: { value: "2" } });
   expect(within(screen.getByLabelText("Полка")).getAllByRole("option")).toHaveLength(5);
   fireEvent.change(screen.getByLabelText("Полка"), { target: { value: "C" } });
@@ -362,7 +362,7 @@ it("lets only the administrator delete a request", async () => {
 
   render(<FulfillmentPage principal={{ ...principal, roles: ["admin"] }} mode="pick" />);
   await expand("FRX-ISS-26-0001");
-  fireEvent.click(await screen.findByRole("button", { name: "🗑 Удалить заявку" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Удалить заявку" }));
 
   await waitFor(() => expect(deleted).toBe(`/api/issues/${request.id}`));
   expect(await screen.findByText("Заявка удалена: позиций 1.")).toBeInTheDocument();
@@ -388,7 +388,7 @@ it("creates a request from a calculation link: preview by warehouse, picks and �
   });
 
   render(<FulfillmentPage principal={principal} mode="pick" />);
-  fireEvent.click(await screen.findByRole("button", { name: "📐 Заявка по расчёту" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Заявка по расчёту" }));
   fireEvent.click(screen.getByRole("button", { name: "Подобрать" }));
   expect(await screen.findByText("Вставь ссылку на расчёт.")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Ссылка на расчёт"), { target: { value: "https://docs.google.com/spreadsheets/d/X/edit" } });

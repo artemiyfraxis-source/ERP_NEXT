@@ -298,7 +298,7 @@ export function DataTable<T>({
           </select>
         ))}
         <button type="button" className="secondary small" onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
-        {exportName && <button type="button" className="secondary small" onClick={download}>⬇ Excel</button>}
+        {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
         {toolbar}
       </div>
       {choosingColumns && (

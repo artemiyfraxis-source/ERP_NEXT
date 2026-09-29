@@ -71,11 +71,11 @@ function DraftEditor({ draft, catalog, onClose, onSaved }: {
       <button className="secondary small" onClick={() => setRows((current) => [...current, current[0].map(() => "")])}>+ Строка</button>
       <button className="secondary small" onClick={() => setRows((current) => current.map((cells) => [...cells, ""]))}>+ Колонка</button>
       <button className="secondary" disabled={busy} onClick={() => void saveDraft()}>Сохранить черновик</button>
-      <button className="primary" disabled={busy} onClick={() => setSaving(true)}>💾 Сохранить шаблон</button>
+      <button className="primary" disabled={busy} onClick={() => setSaving(true)}>Сохранить шаблон</button>
       <button className="secondary" disabled={busy} onClick={onClose}>Закрыть</button>
     </div>
     {saving && <div className="panel">
-      <div className="panel-heading"><strong>💾 Сохранить шаблон из черновика</strong></div>
+      <div className="panel-heading"><strong>Сохранить шаблон из черновика</strong></div>
       <p className="page-sub">{existing ? `Пересохранение существующего шаблона «${existing.title}» (контент заменится).` : "Создание нового шаблона из черновика."}</p>
       <div className="form-grid">
         <label>Название<input aria-label="Название шаблона" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label>
@@ -91,7 +91,7 @@ function DraftEditor({ draft, catalog, onClose, onSaved }: {
   </article>;
 }
 
-/** «📄 Шаблоны-листы»: каталог БД.ТК + черновики (SUPPLYMAP PortalApp openTcTplSheets). */
+/** «Шаблоны-листы»: каталог БД.ТК + черновики (SUPPLYMAP PortalApp openTcTplSheets). */
 export function TcTemplateSheets({ canEdit, onBack, onChanged }: { canEdit: boolean; onBack: () => void; onChanged: () => void }) {
   const [list, setList] = useState<TemplateSheet[]>([]);
   const [drafts, setDrafts] = useState<TemplateSheetDraft[]>([]);
@@ -154,16 +154,16 @@ export function TcTemplateSheets({ canEdit, onBack, onChanged }: { canEdit: bool
   }
 
   return <article className="panel template-sheets">
-    <div className="form-actions"><button className="secondary" onClick={onBack}>← Назад</button><strong>📄 Шаблоны-листы</strong></div>
-    <p className="page-sub">Листы БД.ТК, из которых собирает генератор. «✏️» открывает черновик шаблона — правь его сетку здесь, потом «💾 Сохранить шаблон». Новый шаблон строится на пустом черновике.</p>
+    <div className="form-actions"><button className="secondary" onClick={onBack}>← Назад</button><strong>Шаблоны-листы</strong></div>
+    <p className="page-sub">Листы БД.ТК, из которых собирает генератор. «✏️» открывает черновик шаблона — правь его сетку здесь, потом «Сохранить шаблон». Новый шаблон строится на пустом черновике.</p>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     <div className="toolbar">
-      {canEdit && <button className="secondary" disabled={busy} onClick={() => setNewTitle("")}>➕ Новый шаблон</button>}
+      {canEdit && <button className="secondary" disabled={busy} onClick={() => setNewTitle("")}>Новый шаблон</button>}
       <input aria-label="Поиск шаблона-листа" placeholder="Поиск по названию/категории…" value={query} onChange={(event) => setQuery(event.target.value)} />
     </div>
     {newTitle !== null && <div className="panel">
-      <p className="page-sub">Создастся черновик — построй на нём шаблон, потом нажми «💾 Сохранить шаблон».</p>
+      <p className="page-sub">Создастся черновик — построй на нём шаблон, потом нажми «Сохранить шаблон».</p>
       <label>Название шаблона<input aria-label="Название нового шаблона" placeholder="CUT_WIRE_auto | Резка" value={newTitle} onChange={(event) => setNewTitle(event.target.value)} /></label>
       <div className="form-actions">
         <button className="primary" disabled={busy || !newTitle.trim()} onClick={() => void openDraft("", newTitle)}>Создать черновик</button>
@@ -172,7 +172,7 @@ export function TcTemplateSheets({ canEdit, onBack, onChanged }: { canEdit: bool
     </div>}
     {drafts.length > 0 && <div className="warning-inline"><b>Открытые черновики:</b>{" "}
       {drafts.map((draft) => <span key={draft.id} className="nowrap">{draft.draftSheet.replace(DRAFT_PREFIX, "")}{" "}
-        {canEdit && <><button className="secondary small" disabled={busy} onClick={() => void resumeDraft(draft.id)}>✏️ Открыть</button>{" "}
+        {canEdit && <><button className="secondary small" disabled={busy} onClick={() => void resumeDraft(draft.id)}>Открыть</button>{" "}
         <button className="secondary small" disabled={busy} aria-label={`Удалить черновик ${draft.title}`} onClick={() => dropDraft(draft)}>✖</button></>}{" "}
       </span>)}
     </div>}

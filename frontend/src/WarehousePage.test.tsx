@@ -50,7 +50,7 @@ it("warns instead of printing when nothing is waiting to be put away", async () 
   });
 
   render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "🖨 Лист перемещения" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Лист перемещения" }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Нет позиций для раскладки");
 });
@@ -75,7 +75,7 @@ it("prints a putaway sheet for accepted lots waiting for a shelf — same mechan
   });
 
   render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "🖨 Лист перемещения" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Лист перемещения" }));
 
   await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
   const written = printWindow.document.write.mock.calls[0][0] as string;
@@ -661,7 +661,7 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   fireEvent.click(await screen.findByRole("button", { name: /Показать партии/ }));
   expect(await screen.findAllByText("FRX.26.0000001")).toHaveLength(2);
   expect(screen.getByText("Склад открыт вам только на просмотр.")).toBeInTheDocument();
-  for (const name of ["+ Внести позиции", "↔ Переместить", "Справочник типов", "⬇ Выгрузить", "⬆ Загрузить правки", "🖨 Лист перемещения", "Операции"]) {
+  for (const name of ["+ Внести позиции", "↔ Переместить", "Справочник типов", "Выгрузить", "Загрузить правки", "Лист перемещения", "Операции"]) {
     expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   }
   expect(requested.every((call) => call === "GET /api/stock")).toBe(true);
