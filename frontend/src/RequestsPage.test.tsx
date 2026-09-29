@@ -351,4 +351,120 @@ describe("RequestsPage", () => {
     expect(body.items[0]).toMatchObject({ name: "DB-9M", quality_document: "Нет", planned_date: "2026-10-20" });
     expect(await screen.findByText(/Создано заявок из расчёта: 1/)).toBeInTheDocument();
   });
+  it("manual form: several positions share «Общее для всех позиций» and go in one batch", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") {
+        return json({ ...schema, purposes: ["RND", "FRX"], projects: ["591К.3", "2000К.1"], categories: ["Общепром", "ИП", "ОП"] });
+      }
+      if (path === "/api/requests" && (init?.method ?? "GET") === "GET") return json({ requests: [] });
+      if (path === "/api/requests" && init?.method === "POST") {
+        return json({ requests: [row, { ...row, id: "second", legacy_id: "REQ-2" }] }, 201);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<RequestsPage principal={principal} view="create" />);
+    await screen.findByRole("button", { name: "Создать заявку" });
+    fireEvent.click(screen.getByRole("button", { name: "+ Добавить позицию" }));
+    const names = screen.getAllByLabelText(/Наименование/);
+    expect(names).toHaveLength(2);
+    fireEvent.change(names[0], { target: { value: "Разъём" } });
+    fireEvent.change(screen.getByLabelText("Цель (проект)"), { target: { value: "2000К.1" } });
+    fireEvent.change(screen.getByLabelText("Категория"), { target: { value: "ОП" } });
+    fireEvent.change(screen.getAllByLabelText("Артикул КД")[0], { target: { value: "АБВГ.123" } });
+    fireEvent.change(screen.getAllByLabelText("Цена с НДС")[0], { target: { value: "120" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Создать заявки (2)" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Позиция 2: заполни Наименование");
+
+    fireEvent.change(screen.getAllByLabelText(/Наименование/)[1], { target: { value: "Кабель" } });
+    fireEvent.click(screen.getByRole("button", { name: "Создать заявки (2)" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requests", expect.objectContaining({ method: "POST" })));
+    const [, init] = fetchMock.mock.calls.find(([reqInput, reqInit]) => String(reqInput) === "/api/requests" && reqInit?.method === "POST")!;
+    const body = JSON.parse(String(init?.body));
+    expect(body.requests).toHaveLength(2);
+    expect(body.requests[0]).toMatchObject({ name: "Разъём", project_reference: "2000К.1", category: "ОП", quality_document: "Да", design_article: "АБВГ.123", price_with_vat: "120" });
+    expect(body.requests[1]).toMatchObject({ name: "Кабель", project_reference: "2000К.1", category: "ОП", quality_document: "Да", delivery_point: "Москва" });
+    expect(await screen.findByText("Создано заявок: 2 (REQ-1, REQ-2)")).toBeInTheDocument();
+  });
+
+  it("Excel template: copies the headers and offers the .csv; recognizes SUPPLYMAP headers and dd.mm.yyyy dates", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/requests/schema") return json(schema);
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<RequestsPage principal={principal} view="create" />);
+    await screen.findByRole("button", { name: "Создать заявку" });
+    fireEvent.click(screen.getByRole("button", { name: "📥 Вставить из Excel" }));
+    fireEvent.click(screen.getByRole("button", { name: "⧉ Скопировать заголовки" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(writeText.mock.calls[0][0]).toContain("Наименование *\tТип *\tКатегория\tАртикул КД");
+    expect(await screen.findByText(/Заголовки скопированы/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "⬇ Скачать шаблон (.csv)" }));
+    expect(click).toHaveBeenCalled();
+
+    fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон из Excel/), {
+      target: { value: "НАИМЕНОВАНИЕ *\tКОЛ-ВО *\tАРТИКУЛ КД\tССЫЛКА\tЦЕНА\tПЛАН. ДАТА\nРазъём\t3\tАБВ.1\thttps://x.test\t10\t05.11.2026" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Распознать" }));
+
+    expect(await screen.findByDisplayValue("АБВ.1")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("https://x.test")).toBeInTheDocument();
+    expect(screen.getByText(/Своё у позиции: Плановая дата — 2026-11-05/)).toBeInTheDocument();
+  });
+
+  it("«Мои заявки» shows the purchase columns: buyer, supplier, order, expected date, sum", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.startsWith("/api/requests/mine")) {
+        return json({
+          requests: [{ ...row, stage: "В пути", buyer: "Петров", supplier: "ООО Ромашка", order_number: "З-17", expected_arrival: "2026-10-03", procurement_sum: "1500.00" }],
+          total: 1,
+          limit: 50,
+          offset: 0,
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<RequestsPage principal={principal} view="mine" />);
+
+    expect(await screen.findByText("Петров")).toBeInTheDocument();
+    expect(screen.getByText("ООО Ромашка")).toBeInTheDocument();
+    expect(screen.getByText("З-17")).toBeInTheDocument();
+    expect(screen.getByText("03.10.2026")).toBeInTheDocument();
+    expect(screen.getByText("1500.00")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Искать во всех моих заявках"), { target: { value: "кабель" } });
+    fireEvent.click(screen.getByRole("button", { name: "Найти" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requests/mine?limit=50&offset=0&q=%D0%BA%D0%B0%D0%B1%D0%B5%D0%BB%D1%8C", expect.anything()));
+  });
+
+  it("«Заявки»: selected new requests go to procurement in one handoff", async () => {
+    const second = { ...row, id: "20000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", name: "Кабель" };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests" && (init?.method ?? "GET") === "GET") return json({ requests: [row, second] });
+      if (path === "/api/requests/handoff" && init?.method === "POST") return json({ accepted: [row.id, second.id] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<RequestsPage principal={principal} />);
+    await screen.findByText("REQ-2");
+    fireEvent.click(screen.getByLabelText("Выбрать все показанные"));
+    fireEvent.click(screen.getByRole("button", { name: "Перенести в закупку" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/requests/handoff",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ request_ids: [row.id, second.id], retransfer: false }) }),
+    ));
+    expect(await screen.findByText("Передано в очередь закупки: 2")).toBeInTheDocument();
+  });
 });
