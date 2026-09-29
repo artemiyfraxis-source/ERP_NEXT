@@ -516,6 +516,23 @@ def unit_for_type(item_type: str | None) -> str:
     return ZPK_UNIT_BY_TYPE.get(_text(item_type), "шт")
 
 
+CALC_ZPK_SHEET = "ЗКП"  # CONFIG.ZPK_SHEET — позиции расчёта
+CALC_PROJECT_SHEET = "ЗКЗ"  # CONFIG.PROJECT_SHEET — лист с номером проекта
+CALC_PROJECT_CELL = "B2"  # CONFIG.PROJECT_CELL — A2 «Название проекта», B2 — номер
+CALC_MAX_COLUMNS = 20  # extractFromCalc: Math.min(20, sheet.getLastColumn())
+
+
+def spreadsheet_id_from_url(url: str | None) -> str:
+    """`spreadsheetIdFromUrl_`: the id after ``/d/`` of a Google Sheets link, '' when there is none."""
+    match = re.search(r"/d/([a-zA-Z0-9\-_]+)", str(url or ""))
+    return match.group(1) if match else ""
+
+
+def calc_project(project_cell: str | None, title: str | None) -> str:
+    """`extractFromCalc`: ЗКЗ!B2 is the project number; empty → the file name without «Расчёт»."""
+    return _text(project_cell) or project_from_title(title)
+
+
 def project_from_title(title: str | None) -> str:
     """`projectFromTitle_`: the calculation file name without the word «Расчёт»."""
     return re.sub(r"\s*расч[ёе]т\s*", " ", str(title or ""), flags=re.IGNORECASE).strip()
