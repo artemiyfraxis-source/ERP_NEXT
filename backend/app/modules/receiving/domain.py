@@ -104,6 +104,21 @@ class InspectionInput:
     mass_1: object = None
     mass_10: object = None
     mass_100: object = None
+    # Receiving.gs:685-693 — historical receipt judges expiry on the УПД date, not on today.
+    verdict_date: date | None = None
+
+
+def verdict_reference_date(
+    *,
+    today: date,
+    historical: bool,
+    document_date: date | None = None,
+    arrival_date: date | None = None,
+) -> date:
+    """«Сегодня» для вердикта ВК: у исторической приёмки — ДАТА УПД/М-15, иначе ФАКТ. ДАТА, иначе сегодня."""
+    if not historical:
+        return today
+    return document_date or arrival_date or today
 
 
 @dataclass(frozen=True)
@@ -145,7 +160,8 @@ def inspect_delivery(data: InspectionInput) -> InspectionResult:
         _append_unique(nature, MISSING_SHIPPING_DOCUMENT)
     if data.quality_document_required and not data.quality_document_present:
         _append_unique(nature, MISSING_QUALITY_DOCUMENT)
-    if data.expiry_date is not None and data.expiry_date < data.inspection_date:
+    reference = data.verdict_date or data.inspection_date
+    if data.expiry_date is not None and data.expiry_date < reference:
         _append_unique(nature, EXPIRED)
     if fact < document:
         _append_unique(nature, SHORT_FACT)

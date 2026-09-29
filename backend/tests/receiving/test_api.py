@@ -209,3 +209,43 @@ def test_new_vk_archives_line_and_queue_shows_both_rows(receiving_api):
         ("SM-20260921-01", "Архив ВК"),
         ("SM-20260921-01-В2", "В пути"),
     ]
+
+
+def test_historical_receipt_uses_document_date_for_verdict_but_today_for_grn(receiving_api):
+    client, line = receiving_api
+    base = {
+        "version": line.version,
+        "fact_quantity": "10",
+        "document_quantity": "10",
+        "expiry_date": "2026-03-01",
+        "shipping_document_url": "https://files.test/upd.pdf",
+    }
+
+    historical = client.post(
+        f"/api/receiving/{line.id}/inspect",
+        json={**base, "historical": True, "document_date": "2026-02-10"},
+    )
+
+    assert historical.status_code == 200, historical.text
+    body = historical.json()["line"]
+    assert body["status"] == "Принято"
+    assert body["verdict"] == "Годен"
+    assert body["grn"].split(".")[1] == "26"
+
+
+def test_document_date_without_historical_flag_keeps_today(receiving_api):
+    client, line = receiving_api
+    response = client.post(
+        f"/api/receiving/{line.id}/inspect",
+        json={
+            "version": line.version,
+            "fact_quantity": "10",
+            "document_quantity": "10",
+            "expiry_date": "2026-03-01",
+            "shipping_document_url": "https://files.test/upd.pdf",
+            "document_date": "2026-02-10",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["line"]["status"] == "Возврат"

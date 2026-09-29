@@ -75,6 +75,34 @@ it("submits document URLs and optimistic version without browser-owned presence 
   })));
   expect(inspection).not.toHaveProperty("has_shipping_document");
   expect(inspection).not.toHaveProperty("quality_document_present");
+  expect(inspection).toEqual(expect.objectContaining({ historical: false, document_date: null }));
+});
+
+it("sends the УПД date for a historical receipt so the verdict uses it", async () => {
+  let inspection: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [line] });
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      inspection = JSON.parse(String(init.body));
+      return json({ line });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  fireEvent.change(await screen.findByLabelText("Ссылка на УПД/М-15"), {
+    target: { value: "https://files.test/upd.pdf" },
+  });
+  expect(screen.queryByLabelText("Дата УПД/М-15")).toBeNull();
+  fireEvent.click(screen.getByLabelText("Историческая приёмка: срок годности сверяется с датой УПД"));
+  fireEvent.change(screen.getByLabelText("Дата УПД/М-15"), { target: { value: "2026-02-10" } });
+  fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
+
+  await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
+    historical: true,
+    document_date: "2026-02-10",
+  })));
 });
 
 it("sends the weighed mass and prefills the sample it was weighed with on repeated control", async () => {

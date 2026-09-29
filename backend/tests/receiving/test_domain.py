@@ -12,6 +12,7 @@ from app.modules.receiving.domain import (
     grn_prefix_for,
     inspect_delivery,
     next_grn,
+    verdict_reference_date,
     create_line_from_expected,
     latest_overdue_inspection_date,
     quarantine_notify_targets,
@@ -60,6 +61,43 @@ def test_wrong_item_or_expiry_is_terminal_return():
     assert wrong.status is ReceivingStatus.RETURN
     assert expired.status is ReceivingStatus.RETURN
     assert wrong.verdict == expired.verdict == "Не годен"
+
+
+def test_historical_receipt_judges_expiry_on_document_date():
+    # Receiving.gs:685-693: old-but-good stock must not land in terminal «Возврат» when entered late.
+    late = inspection(expiry_date=date(2026, 3, 1), inspection_date=date(2026, 9, 21))
+    historical = inspect_delivery(
+        inspection(
+            expiry_date=date(2026, 3, 1),
+            inspection_date=date(2026, 9, 21),
+            verdict_date=date(2026, 2, 10),
+        )
+    )
+    expired_then = inspect_delivery(
+        inspection(
+            expiry_date=date(2026, 2, 9),
+            inspection_date=date(2026, 9, 21),
+            verdict_date=date(2026, 2, 10),
+        )
+    )
+
+    assert inspect_delivery(late).status is ReceivingStatus.RETURN
+    assert historical.status is ReceivingStatus.ACCEPTED
+    assert historical.verdict == "Годен"
+    assert expired_then.status is ReceivingStatus.RETURN
+
+
+def test_verdict_reference_date_falls_back_from_document_to_arrival_to_today():
+    today = date(2026, 9, 21)
+    upd = date(2026, 2, 10)
+    arrival = date(2026, 2, 12)
+
+    assert verdict_reference_date(today=today, historical=False, document_date=upd) == today
+    assert verdict_reference_date(
+        today=today, historical=True, document_date=upd, arrival_date=arrival
+    ) == upd
+    assert verdict_reference_date(today=today, historical=True, arrival_date=arrival) == arrival
+    assert verdict_reference_date(today=today, historical=True) == today
 
 
 def test_returned_line_cannot_be_reinspected():

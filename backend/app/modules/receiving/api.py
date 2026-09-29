@@ -27,7 +27,12 @@ from .application import (
     place_receiving,
     receiving_queue,
 )
-from .domain import InspectionInput, ReceivingLine, ReceivingValidationError
+from .domain import (
+    InspectionInput,
+    ReceivingLine,
+    ReceivingValidationError,
+    verdict_reference_date,
+)
 
 
 router = APIRouter(prefix="/api/receiving", tags=["receiving"])
@@ -50,6 +55,9 @@ class InspectionPayload(BaseModel):
     mass_1: MassInput = None
     mass_10: MassInput = None
     mass_100: MassInput = None
+    historical: bool = False
+    document_date: date | None = None
+    arrival_date: date | None = None
 
     @field_validator("shipping_document_url", "quality_document_url")
     @classmethod
@@ -162,6 +170,12 @@ def inspect(
         quality_document_present=False,  # derived from the submitted URL in application layer
         expiry_date=payload.expiry_date,
         inspection_date=now.date(),
+        verdict_date=verdict_reference_date(
+            today=now.date(),
+            historical=payload.historical,
+            document_date=payload.document_date,
+            arrival_date=payload.arrival_date,
+        ),
         manual_nonconformities=tuple(payload.manual_nonconformities),
         disposition=payload.disposition,
         shipping_document_url=payload.shipping_document_url,

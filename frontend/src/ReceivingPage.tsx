@@ -135,6 +135,8 @@ function ReceivingCard({
     line.nonconformities.filter((item) => MANUAL_CHECKS.includes(item)),
   );
   const [prefix, setPrefix] = useState("");
+  const [historical, setHistorical] = useState(false);
+  const [documentDate, setDocumentDate] = useState("");
   const [series, setSeries] = useState(line.series);
   // МАССА 1 ШТ: any one of 1/10/100 pieces; the server prefills the one it was likely weighed with.
   const [mass, setMass] = useState(line.mass_fields ?? { mass_1: "", mass_10: "", mass_100: "" });
@@ -153,6 +155,8 @@ function ReceivingCard({
       manual_grn_prefix: prefix || null,
       series: series.trim(),
       ...mass,
+      historical,
+      document_date: historical && documentDate ? documentDate : null,
     }).catch(() => undefined);
   }
 
@@ -180,6 +184,8 @@ function ReceivingCard({
             <label>Документ качества{line.quality_document_required ? " *" : ""}<input type="url" required={line.quality_document_required} value={qualityDocument} onChange={(event) => setQualityDocument(event.target.value)} /></label>
             <label>Решение<select value={disposition} onChange={(event) => setDisposition(event.target.value)}><option value="">Ещё не принято</option><option>Изолятор</option><option>Использование по разрешению</option><option>Возврат поставщику</option></select></label>
             <label>Идентификатор ГРН<select value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">Автоматически</option><option>CSM</option><option>PPM</option></select></label>
+            <label className="check-field"><input type="checkbox" checked={historical} onChange={(event) => setHistorical(event.target.checked)} />Историческая приёмка: срок годности сверяется с датой УПД</label>
+            {historical && <label>Дата УПД/М-15<input type="date" required value={documentDate} onChange={(event) => setDocumentDate(event.target.value)} /></label>}
             <fieldset className="check-field wide"><legend>Несоответствия ручной проверки</legend>{MANUAL_CHECKS.map((item) => <label key={item}><input type="checkbox" checked={manual.includes(item)} onChange={(event) => setManual((current) => event.target.checked ? [...current, item] : current.filter((value) => value !== item))} />{item}</label>)}</fieldset>
           </div>
           <button className="primary small" disabled={disabled}>{busy ? "Проводим…" : "Провести входной контроль"}</button>
