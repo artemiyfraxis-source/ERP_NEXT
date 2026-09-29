@@ -15,7 +15,7 @@ from app.main import app
 from app.modules.references.application import ReplaceSnapshotCommand, TechRecordInput, replace_snapshot
 from app.modules.references.domain import TechOperationTab
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
-from app.modules.references.load_mirror import ACTOR, MirrorLoadError, default_source, load_mirror, main, read_mirror
+from app.modules.references.load_mirror import ACTOR, MirrorLoadError, default_source, format_report, load_mirror, main, read_mirror
 from app.modules.references.technology import import_supplymap_snapshot
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
@@ -310,3 +310,59 @@ def test_main_missing_mirror_exits_2(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("ERP_DATABASE_URL", f"sqlite:///{tmp_path / 'x.db'}")
     assert main(["--dry-run", "--source", str(tmp_path)]) == 2
     assert "Зеркало не читается" in capsys.readouterr().err
+
+
+# --- правки в ERP переживают перезагрузку зеркала (как в SUPPLYMAP, где лист БД — единственный источник) ---
+
+def _erp_record(uow, tab, display):
+    with uow:
+        [record] = [item for item in uow.tech_operations.list(tab=tab, query="", limit=1000) if item.display_text == display]
+    return record
+
+
+def test_reload_keeps_erp_edit_and_updates_untouched(tmp_path, uow):
+    from app.modules.references.application import EditRecordCommand, FieldEdit, edit_record
+    load_mirror(mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
+    record = _erp_record(uow, TechOperationTab.WIRE, "RG316")
+    edit_record(EditRecordCommand(record.id, (FieldEdit(next(iter(record.fields)), "RG316", "RG316-ERP"),), ACTOR, NOW), uow)
+
+    result = load_mirror(mirror(tmp_path / "b"), uow, dry_run=False, now=NOW)
+
+    edited = _erp_record(uow, TechOperationTab.WIRE, "RG316-ERP")
+    assert edited.id == record.id and edited.edited_in_erp
+    assert sorted(rows(uow, TechOperationTab.WIRE)) == ["RG316-ERP", "UL1061"]  # no mirror twin next to the edit
+    assert result.skipped_edited["prov"] == 1 and sum(result.skipped_edited.values()) == 1
+    assert "пропущено (правлено в ERP): 1" in format_report(result)
+    with uow:
+        assert uow.tech_operations.metadata()["record_count"] == 8
+
+
+def test_reload_updates_untouched_record_from_new_mirror(tmp_path, uow):
+    load_mirror(mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
+    old_id = _erp_record(uow, TechOperationTab.WIRE, "UL1061").id
+    changed = FILES["БД.ПРОВ"].replace("UL1061", "UL1061-NEW")
+    assert changed != FILES["БД.ПРОВ"]
+
+    result = load_mirror(mirror(tmp_path / "b", **{"БД.ПРОВ": changed}), uow, dry_run=False, now=NOW)
+
+    assert sorted(rows(uow, TechOperationTab.WIRE)) == ["RG316", "UL1061-NEW"]
+    assert sum(result.skipped_edited.values()) == 0
+    assert _erp_record(uow, TechOperationTab.WIRE, "UL1061-NEW").id != old_id
+
+
+def test_reload_keeps_record_created_in_erp(tmp_path, uow):
+    from app.modules.references.application import CreateRecordCommand, create_record
+    load_mirror(mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
+    created = create_record(CreateRecordCommand(TechOperationTab.WIRE, {"Марка": "ERP-NEW"}, ACTOR, NOW), uow)
+
+    result = load_mirror(mirror(tmp_path / "b"), uow, dry_run=False, now=NOW)
+    load_mirror(mirror(tmp_path / "c"), uow, dry_run=False, now=NOW)
+
+    assert _erp_record(uow, TechOperationTab.WIRE, "ERP-NEW").id == created.id
+    assert sorted(rows(uow, TechOperationTab.WIRE)) == ["ERP-NEW", "RG316", "UL1061"]
+    assert sum(result.skipped_edited.values()) == 0  # the new record has no mirror twin
+
+
+def test_dry_run_report_has_no_skipped_column(tmp_path, uow):
+    load_mirror(mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
+    assert "пропущено" not in format_report(load_mirror(mirror(tmp_path / "b"), uow, dry_run=True, now=NOW))
