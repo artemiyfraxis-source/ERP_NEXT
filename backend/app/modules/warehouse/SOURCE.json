@@ -30,6 +30,8 @@
     "item types are suggested from the saved dictionary or the canonical list plus the canonical types already on the stock, merged without case and extra spaces; quick entry, the table import and a type rename write the canonical type (Мультипровод is Кабель, ТуТ ТтК термоусадка are Термоусадочная трубка), the row edit and receiving keep the type as typed",
     "a type rename changes every lot of both warehouses whose type is exactly the old one and journals each lot",
     "the table import changes only reference fields found by warehouse GRN and package, previews before it writes, leaves out a missing column, never writes an empty name, never takes quantities, and is for the administrator only",
-    "every movement of a lot appends one row to the append-only СПИСАНИЕ journal (manual write-off, its return, a kitting issue per position, imported SUPPLYMAP rows) with ОСНОВАНИЕ, НАЗНАЧЕНИЕ, КТО СПИСАЛ, ПРОВЕДЕНО and ОСТАТОК ПОСЛЕ = lot balance after the posting; the journal never moves stock"
+    "every movement of a lot appends one row to the append-only СПИСАНИЕ journal (manual write-off, its return, a kitting issue per position, imported SUPPLYMAP rows) with ОСНОВАНИЕ, НАЗНАЧЕНИЕ, КТО СПИСАЛ, ПРОВЕДЕНО and ОСТАТОК ПОСЛЕ = lot balance after the posting; the journal never moves stock",
+    "a manual write-off carries the date typed in the form (today by default), the audit keeps the moment it was posted",
+    "the rack layout saved from the warehouse screen is checked like stock05PlacesSave_ and overrides the environment layout; its save is journaled"
   ]
 }
