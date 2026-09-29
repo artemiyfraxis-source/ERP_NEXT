@@ -252,15 +252,18 @@ def test_terminals_by_series_falls_back_to_whole_list_when_no_product_prefix_mat
 
 
 def test_article_identity_resolves_multi_series_terminal_row_by_prefix():
+    # bySeries only considers a series key of 4+ chars (unchanged rule), so GHR/GH (3/2 chars) never
+    # reach it here — GHDR and NSHR (4 chars each) do.
     records = (
         record(
             TechOperationTab.TERMINAL,
-            terArticle="SSHL-002T-P0.2", terSeries="GHDR, GHR", terComponent="GHD, GH", terType="Female",
+            terArticle="SSHL-003T-P0.2", terSeries="GHDR, GHR, NSHR, SHLP", terComponent="GHD, GH, NSH, SHL",
+            terType="Female",
         ),
     )
 
     ghdr = infer_article_identity("GHDR002", records)
-    ghr = infer_article_identity("GHR002", records)
+    nshr = infer_article_identity("NSHR002", records)
 
     assert ghdr.series == "GHD"
-    assert ghr.series == "GH"
+    assert nshr.series == "NSH"
