@@ -143,6 +143,13 @@ class InspectionInput:
     note: str = ""
     manufacture_date: date | None = None
     nonconformity_description: str = ""
+    # Лист закупки ИЗГОТОВИТЕЛЬ/СТРАНА/ТИП ДОК./№ и ДАТА ДОК. КАЧЕСТВА, Лист ожидания СТАНДАРТ → акт ВК.
+    manufacturer: str = ""
+    country: str = ""
+    quality_document_type: str = ""
+    quality_document_number: str = ""
+    standard: str = ""
+    quality_document_date: date | None = None
 
 
 # RC-9: акты приёмки (Config.gs DOC_TYPES): вид → (префикс номера, заголовок).
@@ -354,6 +361,13 @@ class ReceivingLine:
     manufacture_date: date | None = None
     # A batch (RC-13) or package (RC-8) line `-ПN` split off this line; the order stays one procurement line.
     split_of_id: UUID | None = None
+    # Реквизиты изготовителя и документа качества для акта ВК (Config.gs:269-270, 517-525).
+    manufacturer: str = ""
+    country: str = ""
+    quality_document_type: str = ""
+    quality_document_number: str = ""
+    standard: str = ""
+    quality_document_date: date | None = None
     # RC-9: № и дата актов строки (№ АКТ ВК/АКТ ВК ДАТА, № АКТ НС, № АКТ РЕКЛ., № РАЗРЕШ. ИСПОЛЬЗ.).
     vk_act_number: str = ""
     vk_act_date: date | None = None
@@ -483,6 +497,12 @@ class ReceivingLine:
             document_name=str(data.document_name or "").strip() or self.document_name,
             inspection_note=str(data.note or "").strip(),
             manufacture_date=data.manufacture_date,
+            manufacturer=str(data.manufacturer or "").strip() or self.manufacturer,
+            country=str(data.country or "").strip() or self.country,
+            quality_document_type=str(data.quality_document_type or "").strip() or self.quality_document_type,
+            quality_document_number=str(data.quality_document_number or "").strip() or self.quality_document_number,
+            standard=str(data.standard or "").strip() or self.standard,
+            quality_document_date=data.quality_document_date or self.quality_document_date,
             nonconformity_description=(
                 str(data.nonconformity_description or "").strip() or self.nonconformity_description
             ),
@@ -765,6 +785,16 @@ def create_line_from_expected(message: OutboxMessage) -> ReceivingLine:
             order_number=str(payload.get("order_number") or "").strip(),
             expected_arrival=(
                 date.fromisoformat(str(payload["expected_arrival"])) if payload.get("expected_arrival") else None
+            ),
+            manufacturer=str(payload.get("manufacturer") or "").strip(),
+            country=str(payload.get("country") or "").strip(),
+            quality_document_type=str(payload.get("quality_document_type") or "").strip(),
+            quality_document_number=str(payload.get("quality_document_number") or "").strip(),
+            standard=str(payload.get("standard") or "").strip(),
+            quality_document_date=(
+                date.fromisoformat(str(payload["quality_document_date"]))
+                if payload.get("quality_document_date")
+                else None
             ),
         )
     except (KeyError, ValueError, TypeError, DecimalException) as error:
