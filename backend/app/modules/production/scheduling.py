@@ -88,6 +88,20 @@ def _skill(
     return skills.get(operation_code, {}).get(operator_id)
 
 
+def _allowed(
+    skills: dict[str, dict[UUID, OperatorSkill]],
+    operation_code: str,
+    operator_id: UUID,
+) -> bool:
+    # prodSkillOf_: while no row exists for the operation code the matrix is not filled yet and
+    # admission is not checked; once one row exists, an operator without an allowed row is not admitted.
+    by_code = skills.get(operation_code)
+    if not by_code:
+        return True
+    skill = by_code.get(operator_id)
+    return skill is not None and skill.allowed
+
+
 def _rate(
     skills: dict[str, dict[UUID, OperatorSkill]],
     operation_code: str,
@@ -216,12 +230,12 @@ def schedule_task(
         else:
             candidates = tuple(
                 operator_id for operator_id in team
-                if (skill := _skill(skills, operation.code, operator_id)) is not None and skill.allowed
+                if _allowed(skills, operation.code, operator_id)
             )
             if not candidates:
                 raise ProductionValidationError(
                     f"Этап {operation.position} ({operation.code or operation.stage}): "
-                    "нет допущенных операторов"
+                    "нет допущенных операторов — заведите компетенции"
                 )
 
             def fit(crew: tuple[UUID, ...]) -> ScheduledOperation:

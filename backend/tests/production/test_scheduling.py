@@ -2,10 +2,13 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
+
 from app.modules.production.domain import (
     OperatorSkill,
     ProductionOperation,
     ProductionTask,
+    ProductionValidationError,
     WorkShift,
     add_work_seconds,
 )
@@ -84,3 +87,36 @@ def test_schedule_variants_keep_whole_batch_and_pareto_options():
     assert variants[0].transfer_batch == 250
     assert all(variant.operations for variant in variants)
     assert len(variants) <= 5
+
+
+def test_operation_without_any_skill_rows_is_not_admission_checked():
+    # PX-3: no matrix rows for OP-2 yet, so the whole team is admitted at the norm rate.
+    skills = {"OP-1": _skills()["OP-1"]}
+    result = schedule_task(
+        task=_task(), transfer_batch=10, team=(OPERATOR_A, OPERATOR_B),
+        skills=skills, busy={}, now=datetime(2026, 9, 23, 9), holidays=frozenset(), max_crew=1,
+    )
+    assert result.operations[1].operator_ids in ((OPERATOR_A,), (OPERATOR_B,))
+
+    empty = schedule_task(
+        task=_task(), transfer_batch=10, team=(OPERATOR_A,),
+        skills={}, busy={}, now=datetime(2026, 9, 23, 9), holidays=frozenset(), max_crew=1,
+    )
+    assert [item.operator_ids for item in empty.operations] == [(OPERATOR_A,), (OPERATOR_A,)]
+
+
+def test_filled_matrix_admits_only_operators_with_an_allowed_row():
+    skills = _skills()
+    skills["OP-2"] = {OPERATOR_B: OperatorSkill(OPERATOR_B, "OP-2", True, 4, Decimal("1"))}
+    result = schedule_task(
+        task=_task(), transfer_batch=10, team=(OPERATOR_A, OPERATOR_B),
+        skills=skills, busy={}, now=datetime(2026, 9, 23, 9), holidays=frozenset(), max_crew=2,
+    )
+    assert result.operations[1].operator_ids == (OPERATOR_B,)
+
+    skills["OP-2"] = {OPERATOR_B: OperatorSkill(OPERATOR_B, "OP-2", False, 0, Decimal("1"))}
+    with pytest.raises(ProductionValidationError, match="Этап 2 \\(OP-2\\): нет допущенных операторов"):
+        schedule_task(
+            task=_task(), transfer_batch=10, team=(OPERATOR_A, OPERATOR_B),
+            skills=skills, busy={}, now=datetime(2026, 9, 23, 9), holidays=frozenset(), max_crew=1,
+        )
