@@ -1,12 +1,9 @@
 """HTTP contract for finished goods and shipment execution."""
 
-import base64
-import binascii
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -18,6 +15,7 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal, require_section, shipping_manager_principal, shipping_view_principal, shipping_warehouse_principal,
 )
+from app.shared.stored_files import decode_upload, file_response
 
 from .application import (
     AttachUpdCommand, attach_upd_file,
@@ -489,10 +487,7 @@ def upload_upd(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
 ) -> dict:
     """`portalShipUpdFile`: файл УПД к отправке, ссылка на него встаёт в отправку."""
-    try:
-        content = base64.b64decode(payload.content_base64, validate=True)
-    except (binascii.Error, ValueError) as error:
-        raise HTTPException(status_code=422, detail="Файл УПД повреждён") from error
+    content = decode_upload(payload.content_base64, "Файл УПД повреждён")
     shipment = _run(lambda: attach_upd_file(AttachUpdCommand(
         shipment_id=payload.shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
         file_name=payload.file_name, content_type=payload.content_type, content=content,
@@ -511,6 +506,4 @@ def download_file(
     if found is None:
         raise HTTPException(status_code=404, detail="Файл не найден")
     meta, content = found
-    return Response(content=content, media_type=meta.content_type, headers={
-        "Content-Disposition": f"inline; filename*=UTF-8''{quote(meta.file_name)}",
-    })
+    return file_response(content, meta.content_type, meta.file_name)
