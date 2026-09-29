@@ -79,7 +79,12 @@ h3 { font-size: 15px; font-weight: 600; }
 .readonly-panel h2 { color: #17211b; }
 .form-grid, .facts-grid { padding: 0 20px 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 16px; }
 /* On a wide screen a form lays its fields out in more columns instead of stretching each field. */
-@media (min-width: 1600px) { .form-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); } }
+/* On a wide screen a form lays its fields out in four even columns; `half` fields take two of them, so rows close
+   without holes. Below that, two columns. */
+@media (min-width: 1600px) {
+  .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .form-grid > .half, .form-grid > .wide.half { grid-column: span 2; }
+}
 label { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
 /* A field inside a label keeps normal text, not the label's weight. */
 label input, label select, label textarea { color: var(--foreground); font-size: 14px; font-weight: 400; }
@@ -409,7 +414,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .section-tile { min-height: 96px; }
 .tile .chip { justify-self: start; padding: 3px 8px; border-radius: 999px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; }
 .back-link { margin-bottom: 10px; padding: 0; }
-.single-layout { display: grid; gap: 20px; max-width: 1400px; }
+.single-layout { display: grid; gap: 20px; }
 
 .plan-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0 10px; }
 .plan-filters .active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
@@ -786,3 +791,24 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .op-fields dt { color: var(--muted-foreground); font-size: 11px; }
 .op-fields dd { margin: 0; font-size: 12.5px; }
 .tr-toolbar-end { margin-left: auto; }
+
+/* List toolbar: one search, «Фильтры» opens the column filters, chosen filters show as removable tags,
+   «Колонки» and «Excel» sit at the right. */
+.table-toolbar { flex-wrap: wrap; }
+.table-search { display: flex; flex: 1 1 320px; gap: 8px; min-width: 220px; max-width: 640px; }
+.table-search .search { flex: 1; min-width: 0; }
+.table-toolbar .toolbar-end { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.filter-toggle.active { border-color: var(--primary); color: var(--primary); }
+.filter-panel { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.filter-panel[hidden] { display: none; }
+.filter-panel select { width: auto; min-width: 180px; max-width: 280px; }
+.filter-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.filter-tag { display: inline-flex; align-items: center; gap: 4px; border: 1px solid color-mix(in srgb, var(--primary) 35%, white); border-radius: 999px; padding: 3px 10px; color: var(--foreground); background: color-mix(in srgb, var(--primary) 9%, white); font-size: 12.5px; }
+.filter-tag span { color: var(--muted-foreground); }
+.filter-tags .link-button { padding: 0 4px; font-size: 12.5px; }
+.action-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
+.action-row .compact { padding: 7px 13px; font-size: 13px; }
+.stock-search { flex: 1 1 320px; max-width: 640px; }
+.table-toolbar select { width: auto; }
+.panel .filters { background: var(--card); }
+.panel > .data-table { padding: 0 16px 16px; }

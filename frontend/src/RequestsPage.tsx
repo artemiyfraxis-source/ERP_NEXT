@@ -340,11 +340,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  function searchServer(event: FormEvent) {
-    event.preventDefault();
+  function searchServer(query: string) {
+    setServerQuery(query);
     setError("");
-    if (view === "mine") void loadMine(0, serverQuery);
-    else reload(serverQuery).catch((reason) => setError(reason instanceof Error ? reason.message : "Ошибка загрузки"));
+    if (view === "mine") void loadMine(0, query);
+    else reload(query).catch((reason) => setError(reason instanceof Error ? reason.message : "Ошибка загрузки"));
   }
 
   /* rcBulkApply_: a common value goes into every position; rcCategoryRule follows the category. */
@@ -657,7 +657,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <>{row.name}<small>{row.item_type}</small></>, wrap: true },
     { key: "item_type", title: "Тип", value: (row) => row.item_type, filter: true, hidden: true },
     { key: "design_article", title: "Артикул КД", value: (row) => row.design_article ?? "", hidden: view === "mine" },
-    { key: "purpose", title: "Назначение (база)", value: (row) => row.purpose, filter: true, hidden: true },
+    { key: "purpose", title: "Назначение (база)", value: (row) => row.purpose, hidden: true },
     { key: "project_reference", title: "Цель", value: (row) => row.project_reference || row.purpose, filter: true },
     { key: "quantity", title: "Кол-во", value: (row) => `${row.quantity} ${row.unit}`, numeric: true },
     { key: "delivery_point", title: "Точка отгрузки", value: (row) => row.delivery_point, filter: true, hidden: true },
@@ -695,18 +695,12 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     },
   ];
 
-  const serverSearch = (
-    <form className="inline-search" onSubmit={searchServer}>
-      <input
-        type="search"
-        aria-label={view === "mine" ? "Искать во всех моих заявках" : "Искать среди всех заявок"}
-        placeholder={view === "mine" ? "Во всех моих заявках…" : "Среди всех заявок…"}
-        value={serverQuery}
-        onChange={(event) => setServerQuery(event.target.value)}
-      />
-      <button type="submit" className="secondary small">Найти</button>
-    </form>
-  );
+  /* One search box: typing filters the rows on screen, «Найти»/Enter searches every request on the server. */
+  const serverSearch = {
+    onSearch: (query: string) => searchServer(query),
+    searchLabel: view === "mine" ? "Искать во всех моих заявках" : "Искать среди всех заявок",
+    searchPlaceholder: view === "mine" ? "Поиск по моим заявкам — «Найти» ищет во всех" : "Поиск по заявкам — «Найти» ищет во всех",
+  };
 
   const shownCount = view === "mine" ? mineTotal : rows.length;
 
@@ -738,8 +732,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                 </p>
                 <fieldset className="form-grid">
                   <legend>Общее для всех позиций</legend>
-                  <label>Назначение *<select value={common.purpose} onChange={(e) => setCommonField("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
-                  <label>Цель (проект)
+                  <label className="half">Назначение *<select value={common.purpose} onChange={(e) => setCommonField("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
+                  <label className="half">Цель (проект)
                     {projects.length ? (
                       <select value={common.project_reference} onChange={(e) => setCommonField("project_reference", e.target.value)}>
                         <option value="">— без проекта —</option>
@@ -773,7 +767,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                       <label>Артикул КД<input value={position.design_article} onChange={(e) => setPositionField(index, "design_article", e.target.value)} /></label>
                       <label>Количество *<input type="number" min="0.000001" step="any" value={position.quantity} onChange={(e) => setPositionField(index, "quantity", e.target.value)} /></label>
                       <label>Единица *<select value={position.unit} onChange={(e) => setPositionField(index, "unit", e.target.value)}><option value="">—</option>{schema?.units.map((item) => <option key={item}>{item}</option>)}</select></label>
-                      <label className="wide">Ссылка<input value={position.link} onChange={(e) => setPositionField(index, "link", e.target.value)} placeholder="https://…" /></label>
+                      <label className="wide half">Ссылка<input value={position.link} onChange={(e) => setPositionField(index, "link", e.target.value)} placeholder="https://…" /></label>
                       <label>Цена<input type="number" min="0" step="0.01" value={position.price} onChange={(e) => setPositionField(index, "price", e.target.value)} /></label>
                       <label>Цена с НДС<input type="number" min="0" step="0.01" value={position.price_with_vat} onChange={(e) => setPositionField(index, "price_with_vat", e.target.value)} /></label>
                       <label className="wide">Комментарий<textarea value={position.comment} onChange={(e) => setPositionField(index, "comment", e.target.value)} rows={2} /></label>
@@ -905,7 +899,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               storageKey="requests-mine"
               label="Мои заявки"
               exportName="Мои заявки"
-              toolbar={serverSearch}
+              {...serverSearch}
               emptyText={mineLoading ? "Загружаю…" : "Ваших заявок пока нет."}
             />
           ) : (
@@ -916,7 +910,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               storageKey="requests-all"
               label="Заявки"
               exportName="Заявки"
-              toolbar={serverSearch}
+              {...serverSearch}
               presets={[
                 { label: "Ждут переноса", test: (row) => row.status === "Новый" },
                 { label: "В работе", test: (row) => row.status === "В работе" },
