@@ -48,7 +48,7 @@ def test_shelf_code_is_normalized(value, expected):
     assert existing_shelf(value) == expected
 
 
-@pytest.mark.parametrize("value", ["", "12", "C", "12CC", "12C4", "0C", "100A", "12Ы", "18A", "1AA"])
+@pytest.mark.parametrize("value", ["", "12", "C", "12CC", "12C4", "0C", "100A", "12Ы", "33A", "1AA"])
 def test_bad_shelf_code_is_refused(value):
     with pytest.raises(ValueError):
         existing_shelf(value)
@@ -92,7 +92,7 @@ def test_api_empty_shelf_is_number_one(warehouse_api):  # noqa: F811
 
 
 @pytest.mark.parametrize("params", [
-    {"warehouse": "ЦАР", "shelf": "18A"},  # no such rack
+    {"warehouse": "ЦАР", "shelf": "33A"},  # no such rack
     {"warehouse": "ЦАР", "shelf": "12"},
     {"warehouse": "ЦАР", "shelf": "1F4"},
     {"warehouse": "СКЛ", "shelf": "1F"},

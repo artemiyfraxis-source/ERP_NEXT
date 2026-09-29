@@ -289,7 +289,7 @@ def test_empty_place_and_old_address_never_move_with_a_rack_place(current):
     assert remap_storage_location("12c03b", "12C3", "15B5") == "15B5B"
 
 
-@pytest.mark.parametrize("location", ["18A1", "1A1000"])
+@pytest.mark.parametrize("location", ["33A1", "1A1000"])
 def test_lot_goes_only_to_a_place_that_exists_in_the_rack_layout(location):
     with pytest.raises(WarehouseValidationError, match=f"Места {location} нет: проверь номер стеллажа и полку."):
         lot().move(location)

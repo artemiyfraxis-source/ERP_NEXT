@@ -44,7 +44,7 @@ def test_bad_rows_are_skipped_and_the_good_ones_get_consecutive_numbers():
         _item(quantity="abc"),
         _item(warehouse="СКЛ"),
         _item(storage_location=""),
-        _item(storage_location="18A1"),
+        _item(storage_location="33A1"),
         _item(article="A-2", quantity="2,5"),
     ), uow)
 
@@ -58,7 +58,7 @@ def test_bad_rows_are_skipped_and_the_good_ones_get_consecutive_numbers():
         (3, "кол-во должно быть больше нуля"),
         (4, "неизвестный склад «СКЛ»"),
         (5, "укажи стеллаж, полку и № на полке"),
-        (6, "Места 18A1 нет: проверь номер стеллажа и полку."),
+        (6, "Места 33A1 нет: проверь номер стеллажа и полку."),
     ]
     assert [event.details["grn"] for event in uow.audit.items] == ["OLD.26.0000001", "OLD.26.0000002"]
     assert uow.commits == 1

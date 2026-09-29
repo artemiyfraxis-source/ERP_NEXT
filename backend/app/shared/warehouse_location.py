@@ -37,7 +37,7 @@ class RackLayout:
     """SUPPLYMAP Stock05.gs `stock05_places` (Script Properties): how many racks the warehouse has,
     how many shelves (letters from A) a rack has, and racks with their own shelf count."""
 
-    racks: int = 17  # STOCK05_RACKS_DEFAULT_ (owner, 2026-08-26)
+    racks: int = 32  # live SUPPLYMAP stock05_places (clasp run diagStock05Places, 2026-09-29); code default was 17
     shelves: int = 26  # STOCK05_SHELVES_DEFAULT_: A..Z (owner, 2026-09-22; was 7)
     per_rack: Mapping[int, int] = field(default_factory=dict)
 
@@ -85,7 +85,7 @@ def rack_layout_from_config(config: Mapping[str, object]) -> RackLayout:
 @cache
 def configured_rack_layout() -> RackLayout:
     """The layout of this installation: `ERP_WAREHOUSE_RACK_LAYOUT` as SUPPLYMAP JSON
-    {"racks": 17, "shelves": 26, "perRack": {"5": 12}}, otherwise the SUPPLYMAP defaults. A broken value
+    {"racks": 32, "shelves": 26, "perRack": {"5": 12}}, otherwise the live SUPPLYMAP layout 32×26. A broken value
     stops the app instead of silently falling back: a wrong layout rejects real places or lets typos in.
     RuntimeError, not ValueError: a setup fault must not read as a refused place (and poison an outbox message)."""
     raw = os.getenv(RACK_LAYOUT_ENV, "").strip()

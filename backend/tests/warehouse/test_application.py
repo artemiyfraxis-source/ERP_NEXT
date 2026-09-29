@@ -593,17 +593,17 @@ def test_writeoff_without_a_purpose_is_refused_with_the_supplymap_text(purpose):
 def test_whole_location_move_takes_stock_out_of_a_place_the_layout_lost_but_not_into_one():
     uow = Uow(message())
     first = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
-    first = replace(first, storage_location="20B5A")
+    first = replace(first, storage_location="40B5A")
     uow.warehouse.add(first)
     actor = Actor(name="Кладовщик", department="Склад")
 
-    with pytest.raises(WarehouseValidationError, match="Места 18C3 нет: проверь номер стеллажа и полку."):
+    with pytest.raises(WarehouseValidationError, match="Места 33C3 нет: проверь номер стеллажа и полку."):
         move_location(MoveLocationCommand(
-            warehouse="ЦАР", source_location="20B5", target_location="18C3",
+            warehouse="ЦАР", source_location="40B5", target_location="33C3",
             actor=actor, now=datetime(2026, 9, 22, 12, 0),
         ), uow)
     moved = move_location(MoveLocationCommand(
-        warehouse="ЦАР", source_location="20B5", target_location="12C3",
+        warehouse="ЦАР", source_location="40B5", target_location="12C3",
         actor=actor, now=datetime(2026, 9, 22, 12, 0),
     ), uow)
 
@@ -615,11 +615,11 @@ def test_quick_entry_refuses_a_place_the_rack_layout_does_not_have():
     result = add_manual_stock(AddManualStockCommand(
         items=(ManualStockItem(
             warehouse="ЦАР", name="Разъём", item_type="Комплектующие", purpose="Склад", unit="шт",
-            quantity=Decimal("1"), storage_location="18A1",
+            quantity=Decimal("1"), storage_location="33A1",
         ),),
         actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
     ), uow)
-    assert [row.error for row in result.errors] == ["Места 18A1 нет: проверь номер стеллажа и полку."]
+    assert [row.error for row in result.errors] == ["Места 33A1 нет: проверь номер стеллажа и полку."]
     assert uow.commits == 0
 
 

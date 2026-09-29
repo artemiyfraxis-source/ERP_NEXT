@@ -259,9 +259,9 @@ def test_receiving_places_only_where_the_rack_layout_has_a_place():
         inspection(), Actor(name="Приёмщик", department="ОТК"), existing_grns=(),
     )
 
-    with pytest.raises(ReceivingValidationError, match="Места 18A1 нет: проверь номер стеллажа и полку."):
-        inspected.place("18A1")
-    assert inspected.place("17A1").storage_location == "17A1"
+    with pytest.raises(ReceivingValidationError, match="Места 33A1 нет: проверь номер стеллажа и полку."):
+        inspected.place("33A1")
+    assert inspected.place("32A1").storage_location == "32A1"
 
 
 @pytest.mark.parametrize(

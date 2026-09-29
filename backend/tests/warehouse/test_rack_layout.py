@@ -26,17 +26,36 @@ def layout_env(monkeypatch):
     configured_rack_layout.cache_clear()
 
 
-def test_default_layout_is_supplymap_17_racks_of_shelves_a_to_z():
-    assert (DEFAULT_RACK_LAYOUT.racks, DEFAULT_RACK_LAYOUT.shelves, dict(DEFAULT_RACK_LAYOUT.per_rack)) == (17, 26, {})
+def test_default_layout_is_the_live_supplymap_32_racks_of_shelves_a_to_z():
+    # SK-9-RACKS: live stock05_places = {"racks":32,"shelves":26,"perRack":{}} (diagStock05Places, 2026-09-29)
+    assert (DEFAULT_RACK_LAYOUT.racks, DEFAULT_RACK_LAYOUT.shelves, dict(DEFAULT_RACK_LAYOUT.per_rack)) == (32, 26, {})
 
 
-@pytest.mark.parametrize("code", ["1A1", "17Z999", "17Z999Z", "9M12B"])
+@pytest.mark.parametrize("rack", range(18, 33))
+def test_racks_18_to_32_of_the_live_layout_are_accepted(rack):
+    assert existing_storage_location(f"{rack}H5", DEFAULT_RACK_LAYOUT) == f"{rack}H5"
+    assert existing_storage_location(f"{rack}Z999Z", DEFAULT_RACK_LAYOUT) == f"{rack}Z999Z"
+
+
+def test_rack_33_is_past_the_default_layout():
+    with pytest.raises(ValueError, match="^Места 33A1 нет: проверь номер стеллажа и полку.$"):
+        existing_storage_location("33A1", DEFAULT_RACK_LAYOUT)
+
+
+def test_environment_layout_still_overrides_the_default(layout_env):
+    layout_env('{"racks": 17}')
+    assert existing_storage_location("17A1") == "17A1"
+    with pytest.raises(ValueError, match="Места 18A1 нет"):
+        existing_storage_location("18A1")
+
+
+@pytest.mark.parametrize("code", ["1A1", "17Z999", "32Z999Z", "9M12B"])
 def test_codes_inside_the_default_layout_fit(code):
     assert storage_location_fits(code, DEFAULT_RACK_LAYOUT)
     assert existing_storage_location(code, DEFAULT_RACK_LAYOUT) == code
 
 
-@pytest.mark.parametrize("code", ["18A1", "99C3", "1A1000", "17Z1000B"])
+@pytest.mark.parametrize("code", ["33A1", "99C3", "1A1000", "17Z1000B"])
 def test_missing_rack_or_number_past_999_is_a_missing_place(code):
     assert not storage_location_fits(code, DEFAULT_RACK_LAYOUT)
     with pytest.raises(ValueError, match=f"^Места {code} нет: проверь номер стеллажа и полку.$"):
