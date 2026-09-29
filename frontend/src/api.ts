@@ -1313,8 +1313,19 @@ export const procurementApi = {
       no_invoice: string[];
       failed: { legacy_id: string; error: string }[];
     }>("/api/procurement/paid", { method: "POST", body: JSON.stringify({ items }) }),
+  // portalPurchaseInWork: все свои строки «В работе» для «Заполнить данные».
+  myInWork: () => api<{ lines: ProcurementLine[] }>("/api/procurement/in-work/mine"),
+  // portalSavePurchaseFacts: отмеченные строки одним вызовом.
+  saveFactsBatch: (rows: Record<string, unknown>[]) =>
+    api<{
+      lines: ProcurementLine[];
+      saved: number;
+      ready: number;
+      skipped: string[];
+      failed: { legacy_id: string; error: string }[];
+    }>("/api/procurement/facts", { method: "POST", body: JSON.stringify({ rows }) }),
   take: (lineIds: string[]) =>
-    api<{ lines: ProcurementLine[] }>("/api/procurement/take", {
+    api<{ lines: ProcurementLine[]; skipped?: string[] }>("/api/procurement/take", {
       method: "POST",
       body: JSON.stringify({ line_ids: lineIds }),
     }),
