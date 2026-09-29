@@ -840,7 +840,9 @@ def operators(
 ) -> dict:
     with uow_factory() as uow:
         rows = uow.operators.list()
-    return {"operators": [{"id": str(item.id), "name": item.name, "site": item.site} for item in rows]}
+    return {"operators": [
+        {"id": str(item.id), "name": item.name, "site": item.site, "department": item.department} for item in rows
+    ]}
 
 
 @router.post("/tasks")
