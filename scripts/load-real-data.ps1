@@ -4,8 +4,10 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key C:\путь\ключ-erp-reader.json -Db demo.db
 # База -Db (SQLite) пересоздаётся с нуля. Боевая PostgreSQL: -DatabaseUrl postgresql+psycopg://... — пустая база,
 # скрипт её не удаляет, только накатывает миграции. Живые выгрузки кладутся в data\import (в .gitignore).
+# Догрузка склада в уже загруженную базу (новые партии, нетронутые в ERP партии — к Google, остальное в отчёт):
+#   ... -Key ключ.json -Db demo.db -StockOnly [-DryRun]
 param([Parameter(Mandatory = $true)][string]$Key, [string]$Db = 'real.db', [string]$DatabaseUrl = '',
-      [string]$Login = 'preview', [string]$Password = 'Preview-2026!')
+      [string]$Login = 'preview', [string]$Password = 'Preview-2026!', [switch]$StockOnly, [switch]$DryRun)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\.."
 $backend = Join-Path $root 'backend'
@@ -17,6 +19,15 @@ Set-Location $backend
 $env:ERP_DATABASE_URL = if ($DatabaseUrl) { $DatabaseUrl } else { "sqlite+pysqlite:///$Db" }
 $env:ERP_COOKIE_SECURE = '0'
 function Run { & $py @args; if ($LASTEXITCODE -gt 1) { throw "Ошибка: $args" } }
+
+if ($StockOnly) {
+    Write-Host '== Догрузка склада из Google (только чтение Google)'
+    Run ..\scripts\stock_export_google.py --key $Key --out $data
+    Run -m alembic upgrade head
+    if ($DryRun) { Run -m app.modules.warehouse.import_stock --dir $data --dry-run }
+    else { Run -m app.modules.warehouse.import_stock --dir $data }
+    exit 0
+}
 
 Write-Host '== Снимки из Google (только чтение)'
 Run ..\scripts\stock_export_google.py --key $Key --out $data

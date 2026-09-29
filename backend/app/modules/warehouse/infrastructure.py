@@ -365,6 +365,15 @@ class SqlAlchemyWarehouseRepository:
         )).casefold()
         return all(word in haystack for word in words)
 
+    def audit_trail(self, lot_id: UUID) -> list[tuple[str, dict]]:
+        """(event_type, details) of every audit event on the lot, oldest first."""
+        self.session.flush()
+        rows = self.session.scalars(
+            select(AuditEventRow).where(AuditEventRow.aggregate_id == lot_id)
+            .order_by(AuditEventRow.occurred_at, AuditEventRow.id)
+        )
+        return [(row.event_type, dict(row.details or {})) for row in rows]
+
     def add(self, lot: StockLot) -> None:
         incoming = _row(lot)
         stored = self.session.get(StockLotRow, lot.id)

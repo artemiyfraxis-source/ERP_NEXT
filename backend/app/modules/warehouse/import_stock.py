@@ -2,6 +2,10 @@
 
     ERP_DATABASE_URL=... python -m app.modules.warehouse.import_stock --dir ../data/import --dry-run
 
+A rerun is a top-up («догрузка»): new lots are created; a lot the import made and ERP never moved is brought to
+the sheet (ПРИХОД, СПИСАНО, место, паспорт) with a «догрузка из Google» journal event, and new СПИСАНИЕ rows join
+its history; a lot ERP has moved (write-off, issue, reserve, move, edit) is left as it is and reported.
+
 Exit code: 0 — everything reconciled; 1 — some rows were not taken or differ (see the report);
 2 — the export cannot be read or ERP_DATABASE_URL is not set.
 """
@@ -133,18 +137,27 @@ def _n(value: Decimal | None) -> str:
 
 def format_report(export: StockExport, result: LegacyStockImportResult, check: Reconciliation) -> str:
     mode = "записано в базу" if result.committed else "ПРОБНЫЙ ПРОГОН — в базу ничего не записано"
+    changed = len(result.created) + len(result.synced) + result.history_synced
     lines = [f"Импорт склада SUPPLYMAP, выгрузка {export.exported_at or '?'}: {mode}", "", "Листы:"]
     for name, sheet in export.sheets.items():
         lines.append(f"  {name}: строк {sheet.rows_total}, пустых {sheet.blank_rows}")
     lines += ["", "Партии:",
-              f"  создано {len(result.created)}, уже в ERP без изменений {len(result.unchanged)}, "
-              f"расходятся с ERP {len(result.conflicts)}, отклонено {check.stock_rejected}"]
+              f"  создано {len(result.created)}, приведено к Google {len(result.synced)}, "
+              f"без изменений {len(result.unchanged)}, не тронуто (расходятся с ERP) {len(result.conflicts)}, "
+              f"отклонено {check.stock_rejected}"]
+    for row, changes in result.synced:
+        listed = "; ".join(f"{column} {was or '—'} → {now or '—'}" for _, column, was, now in changes)
+        lines.append(f"  догрузка из Google {row.sheet}:{row.row_number} {row.grn}"
+                     + (f" / {row.package}" if row.package else "") + f": {listed}")
     rejected = [(r.sheet, r.row_number, r.grn, r.reason) for r in export.rejected if r.sheet in STOCK_SHEETS]
     rejected += [(row.sheet, row.row_number, row.grn, reason) for row, reason in result.rejected]
     for sheet, number, grn, reason in rejected:
         lines.append(f"  отклонено {sheet}:{number} {grn or '—'}: {reason}")
     for row, reason in result.conflicts:
         lines.append(f"  не изменено {row.sheet}:{row.row_number} {row.grn}: {reason}")
+    for lot in result.missing_in_sheet:
+        label = lot.grn + (f" / {lot.package}" if lot.package else "")
+        lines.append(f"  нет в листе, в ERP оставлена как есть: {lot.warehouse} {label}, остаток {_n(lot.balance)} {lot.unit}")
     for row in result.reserve_not_transferred:
         lines.append(f"  резерв {_n(row.reserved)} {row.unit} не перенесён: {row.grn} ({row.sheet}:{row.row_number})")
 
@@ -162,7 +175,8 @@ def format_report(export: StockExport, result: LegacyStockImportResult, check: R
     journal = export.sheets.get(WRITEOFF_SHEET)
     journal_rejected = [r for r in export.rejected if r.sheet == WRITEOFF_SHEET]
     lines += ["", f"Журнал {WRITEOFF_SHEET} (история, количества не двигает): строк {journal.rows_total if journal else 0}",
-              f"  в историю новых партий {result.history_imported}, партия уже была в ERP {result.history_for_existing_lots}, "
+              f"  в историю новых партий {result.history_imported}, догружено к прежним {result.history_synced}, "
+              f"уже было или партия менялась в ERP {result.history_for_existing_lots}, "
               f"без партии {len(result.history_without_lot)}, отклонено {len(journal_rejected)}"]
     for row in result.history_without_lot:
         lines.append(f"  без партии {WRITEOFF_SHEET}:{row.row_number} {row.warehouse} {row.grn}")
@@ -200,7 +214,10 @@ def format_report(export: StockExport, result: LegacyStockImportResult, check: R
             f"{year} → с {number + 1:07d}" for year, number in sorted(result.manual_numbers.items()))]
     recount = f"; пересчитать физически партий: {len(check.journal_mismatches)}" if check.journal_mismatches else ""
     unread = f"; нечитаемых значений паспорта: {len(export.passport_warnings)}" if export.passport_warnings else ""
-    lines += ["", "ИТОГ: " + ("всё сошлось" if check.ok else "есть расхождения — см. выше") + recount + unread]
+    lines += ["", f"Изменений в ERP{' было бы' if not result.committed else ''}: новых партий {len(result.created)}, "
+              f"приведено к Google {len(result.synced)}, строк истории догружено {result.history_synced}"
+              + ("" if changed else " — ничего нового"),
+              "ИТОГ: " + ("всё сошлось" if check.ok else "есть расхождения — см. выше") + recount + unread]
     return "\n".join(lines)
 
 
@@ -211,6 +228,7 @@ def run_import(export: StockExport, uow: UnitOfWork, *, dry_run: bool, now: date
         source=f"SUPPLYMAP {export.exported_at}".strip(),
         now=now,
         dry_run=dry_run,
+        sync=True,
         reconcile_keys=tuple((r.sheet, r.grn, r.package) for r in export.rejected if r.sheet in STOCK_SHEETS),
     ), uow)
 

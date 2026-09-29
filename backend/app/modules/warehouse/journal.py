@@ -106,6 +106,8 @@ def event_text(event_type: str, details: Mapping[str, object]) -> str:
         place = _text(details, "storage_location")
         return (f"Перенос остатков из SUPPLYMAP: приход {_number(details.get('inbound'))}, "
                 f"списано {_number(details.get('written_off'))}") + (f" · место {place}" if place else "")
+    if event_type == "warehouse.legacy_synced":
+        return f"Догрузка из Google: {_text(details, 'changes') or '—'}"
     if event_type == "warehouse.moved":
         return f"Перемещение: {_route(details)}"
     if event_type == "warehouse.transferred":
