@@ -71,7 +71,7 @@ def stage_three_setup(*, fulfillment: bool):
 def test_first_operation_consumes_issued_grn_and_package_into_output_box():
     engine, sessions, factory, _master, operator, task, line_id, now = stage_three_setup(fulfillment=True)
     work = start_work(StartWorkCommand(
-        task_id=task.id, operation_id=task.operations[0].id, inputs=(), actor=operator, now=now,
+        task_id=task.id, operation_id=task.operations[0].id, box_numbers=(), actor=operator, now=now,
         materials=(MaterialInput(line_id, Decimal("3")),),
     ), factory())
     _completed, box, _output, _defect = submit_work(SubmitWorkCommand(

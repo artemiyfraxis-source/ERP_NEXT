@@ -652,13 +652,8 @@ class SqlAlchemyBoxRepository:
         row = self.session.get(ProductionBoxRow, box_id)
         return self._domain(row) if row is not None else None
 
-    def open_for(self, task_id: UUID, operation_id: UUID, operator_id: UUID) -> ProductionBox | None:
-        row = self.session.scalar(select(ProductionBoxRow).where(
-            ProductionBoxRow.task_id == task_id,
-            ProductionBoxRow.operation_id == operation_id,
-            ProductionBoxRow.operator_id == operator_id,
-            ProductionBoxRow.status == BoxStatus.OPEN.value,
-        ).order_by(ProductionBoxRow.created_at, ProductionBoxRow.id).limit(1))
+    def by_number(self, number: str) -> ProductionBox | None:
+        row = self.session.scalar(select(ProductionBoxRow).where(ProductionBoxRow.number == number).limit(1))
         return self._domain(row) if row is not None else None
 
     def list(self, *, task_id: UUID | None = None, operator_id: UUID | None = None, limit: int = 500) -> list[ProductionBox]:

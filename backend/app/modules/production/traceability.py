@@ -154,6 +154,44 @@ class ProductionBox:
             status=BoxStatus.OPEN, created_at=created_at,
         )
 
+    @classmethod
+    def submitted(
+        cls,
+        *,
+        task_id: UUID,
+        operation_id: UUID,
+        item: str,
+        operation_position: int,
+        operator_id: UUID,
+        number: str,
+        good: Decimal,
+        actor: str,
+        now: datetime,
+    ) -> ProductionBox:
+        """prodWorkSubmit_: one submission is one box, closed by the operator at once with the good pieces."""
+        return cls(
+            id=uuid4(), number=validate_box_number(number), version=1, task_id=task_id,
+            operation_id=operation_id, item=str(item).strip(),
+            operation_position=operation_position, operator_id=operator_id,
+            quantity=_quantity(good, "Количество годных", allow_zero=True),
+            consumed=Decimal("0"), reserved=Decimal("0"),
+            status=BoxStatus.OPERATOR_CLOSED, created_at=now,
+            closed_at=now, closed_by=str(actor).strip(),
+        )
+
+    def input_error(self, *, item: str, previous_position: int) -> str:
+        """prodInputError_: why this box cannot be an input of the next stage ('' when it can)."""
+        label = self.number or "без номера"
+        if self.status is not BoxStatus.CONFIRMED:
+            return f"Коробка {label} — «{self.status.value}»: брать можно только подтверждённую мастером."
+        if self.item.lower() != str(item).strip().lower():
+            return f"Коробка {label} — от другого изделия ({self.item})."
+        if self.operation_position != previous_position:
+            return f"Коробка {label} — с этапа {self.operation_position}, а на вход нужен этап {previous_position}."
+        if self.available <= 0:
+            return f"Коробка {label} пустая."
+        return ""
+
     def add_output(self, quantity: Decimal) -> ProductionBox:
         if self.status is not BoxStatus.OPEN:
             raise ProductionValidationError("Докладывать продукцию можно только в открытую коробку")
@@ -248,13 +286,6 @@ class ProductionBox:
         if not clean:
             raise ProductionValidationError("Причина возврата обязательна")
         return replace(self, status=BoxStatus.RETURNED, return_reason=clean, version=self.version + 1)
-
-    def reopen(self, operator_id: UUID) -> ProductionBox:
-        if self.operator_id != operator_id:
-            raise ProductionValidationError("Вернуть коробку в работу может только её оператор")
-        if self.status is not BoxStatus.RETURNED:
-            raise ProductionValidationError("В работу возвращается только отклонённая коробка")
-        return replace(self, status=BoxStatus.OPEN, version=self.version + 1)
 
     def correct(
         self, *, replaced_good: Decimal, good: Decimal, operator_id: UUID, actor: str, now: datetime,

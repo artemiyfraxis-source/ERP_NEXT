@@ -1,5 +1,6 @@
 """PX-1: correcting a returned box replaces one output (SUPPLYMAP `prodWorkFix_`)."""
 
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -18,7 +19,6 @@ from app.modules.production.execution import (
     StartWorkCommand,
     SubmitWorkCommand,
     cancel_work,
-    close_box,
     confirm_box,
     correct_box,
     decide_defect,
@@ -50,8 +50,10 @@ from tests.production.test_materials_finished_goods import stage_three_setup
 
 def _submit(factory, operator, task, now, *, good, defect="0", inputs=(), materials=(), position=2, **defect_text):
     operation = task.operations[position - 1]
+    with factory() as uow:
+        numbers = tuple(uow.boxes.get(item.box_id).number for item in inputs)
     work = start_work(StartWorkCommand(
-        task_id=task.id, operation_id=operation.id, inputs=tuple(inputs),
+        task_id=task.id, operation_id=operation.id, box_numbers=numbers,
         materials=tuple(materials), actor=operator, now=now,
     ), factory())
     _completed, box, output, defect_record = submit_work(SubmitWorkCommand(
@@ -62,8 +64,6 @@ def _submit(factory, operator, task, now, *, good, defect="0", inputs=(), materi
 
 
 def _close_and_return(factory, master, operator, box, now):
-    if box.status is BoxStatus.OPEN:
-        box = close_box(BoxCommand(box.id, box.version, operator, now), factory())
     return return_box(ReturnBoxCommand(
         box_id=box.id, expected_version=box.version, actor=master, now=now, reason="Пересчитать",
     ), factory())
@@ -133,13 +133,10 @@ def test_increase_takes_the_difference_from_the_same_input_box_or_fails_whole():
     engine, sessions, factory, master, operator, task, source, now = execution_setup()
     box, output, _ = _submit(factory, operator, task, now, good="8", inputs=(WorkInput(source.id, Decimal("8")),))
     returned = _close_and_return(factory, master, operator, box, now)
-    # Another work reserves the last two pieces of the input box.
-    pending = start_work(StartWorkCommand(
-        task_id=task.id, operation_id=task.operations[1].id,
-        inputs=(WorkInput(source.id, Decimal("2")),), actor=operator, now=now,
-    ), factory())
+    # Another submission takes the last two pieces of the input box.
+    _submit(factory, operator, task, now, good="2", inputs=(WorkInput(source.id, Decimal("2")),))
 
-    with pytest.raises(ProductionValidationError, match="превышает количество"):
+    with pytest.raises(ProductionValidationError, match="Больше, чем в задании"):
         _correct(factory, operator, returned, output, now, good="11")
     with pytest.raises(ProductionValidationError, match="Добрать 2 шт не из чего: во входных коробках 0 шт"):
         _correct(factory, operator, returned, output, now, good="10")
@@ -148,21 +145,18 @@ def test_increase_takes_the_difference_from_the_same_input_box_or_fails_whole():
         untouched_source = uow.boxes.get(source.id)
     assert untouched.status is BoxStatus.RETURNED
     assert untouched.version == returned.version
-    assert untouched_source.consumed == Decimal("8")
-    assert untouched_source.reserved == Decimal("2")
-    assert _count(sessions, ProductionOutputRow) == 1
+    assert untouched_source.consumed == Decimal("10")
+    assert untouched_source.status is BoxStatus.CONSUMED
+    assert _count(sessions, ProductionOutputRow) == 2
 
-    cancel_work(SessionCommand(pending.id, operator, now), factory())
-    corrected, _correction, _ = _correct(factory, operator, returned, output, now, good="10")
-
+    corrected, _correction, _ = _correct(factory, operator, returned, output, now, good="7")
     with factory() as uow:
         stored_source = uow.boxes.get(source.id)
-    assert corrected.quantity == Decimal("10")
-    assert stored_source.consumed == Decimal("10")
-    assert stored_source.status is BoxStatus.CONSUMED
-    assert _transferred(sessions, source.id, box.id) == Decimal("10")
+    assert corrected.quantity == Decimal("7")
+    assert stored_source.consumed == Decimal("9")
+    assert stored_source.status is BoxStatus.CONFIRMED
+    assert _transferred(sessions, source.id, box.id) == Decimal("7")
     engine.dispose()
-
 
 def test_repeated_correction_targets_the_latest_output_and_counts_once():
     engine, sessions, factory, master, operator, task, source, now = execution_setup()
@@ -203,12 +197,15 @@ def test_same_quantity_moves_nothing_and_hands_the_box_back():
     engine.dispose()
 
 
-def test_correction_of_one_output_moves_only_its_own_inputs():
+def test_each_submission_is_its_own_box_and_a_correction_moves_only_its_inputs():
     engine, sessions, factory, master, operator, task, source, now = execution_setup()
     other = _second_source(factory, master, operator, task, now)
-    box, first_output, _ = _submit(factory, operator, task, now, good="6", inputs=(WorkInput(source.id, Decimal("6")),))
+    first_box, _first_output, _ = _submit(factory, operator, task, now, good="6", inputs=(WorkInput(source.id, Decimal("6")),))
     box, second_output, _ = _submit(factory, operator, task, now, good="4", inputs=(WorkInput(other.id, Decimal("4")),))
-    assert box.quantity == Decimal("10")
+    # prodWorkSubmit_: одна сдача — одна коробка, сразу «Закрыта оператором».
+    assert first_box.id != box.id
+    assert (first_box.quantity, box.quantity) == (Decimal("6"), Decimal("4"))
+    assert first_box.status is box.status is BoxStatus.OPERATOR_CLOSED
     returned = _close_and_return(factory, master, operator, box, now)
 
     corrected, _correction, _ = _correct(factory, operator, returned, second_output, now, good="1")
@@ -217,12 +214,11 @@ def test_correction_of_one_output_moves_only_its_own_inputs():
         stored_source = uow.boxes.get(source.id)
         stored_other = uow.boxes.get(other.id)
         active = uow.outputs.active_for_box(box.id)
-    assert corrected.quantity == Decimal("7")
+    assert corrected.quantity == Decimal("1")
     assert stored_source.consumed == Decimal("6")
     assert stored_other.consumed == Decimal("1")
-    assert {item.id for item in active} == {first_output.id, _correction.id}
+    assert {item.id for item in active} == {_correction.id}
     engine.dispose()
-
 
 def test_give_back_returns_to_the_latest_input_box_first():
     engine, sessions, factory, master, operator, task, source, now = execution_setup()
@@ -246,7 +242,7 @@ def test_give_back_returns_to_the_latest_input_box_first():
 def test_correction_is_refused_without_writing_anything():
     engine, sessions, factory, master, operator, task, source, now = execution_setup()
     box, output, _ = _submit(factory, operator, task, now, good="6", inputs=(WorkInput(source.id, Decimal("6")),))
-    closed = close_box(BoxCommand(box.id, box.version, operator, now), factory())
+    closed = box
     other_box, other_output, _ = _submit(factory, operator, task, now, good="4", inputs=(WorkInput(source.id, Decimal("4")),))
 
     with pytest.raises(ProductionValidationError, match="не возвращена мастером"):
@@ -384,10 +380,10 @@ def test_first_operation_limit_counts_only_active_outputs_and_materials_stay_con
     assert _count(sessions, ProductionMaterialConsumptionRow) == 1
 
     work = start_work(StartWorkCommand(
-        task_id=task.id, operation_id=task.operations[0].id, inputs=(), actor=operator, now=now,
+        task_id=task.id, operation_id=task.operations[0].id, box_numbers=(), actor=operator, now=now,
         materials=(MaterialInput(line_id, Decimal("3")),),
     ), factory())
-    with pytest.raises(ProductionValidationError, match="превышает количество"):
+    with pytest.raises(ProductionValidationError, match="Больше, чем в задании"):
         submit_work(SubmitWorkCommand(
             session_id=work.id, actor=operator, now=now,
             good_quantity=Decimal("5"), defect_quantity=Decimal("0"),
@@ -435,17 +431,19 @@ def test_decreased_box_reaches_finished_goods_with_the_corrected_quantity():
 def test_top_up_may_use_an_input_box_everything_was_given_back_to():
     engine, sessions, factory, master, operator, task, source, now = execution_setup()
     other = _second_source(factory, master, operator, task, now)
+    with factory() as uow:  # шесть штук первой коробки уже ушли в другое задание
+        stored = uow.boxes.get(source.id)
+        uow.boxes.save(replace(stored, consumed=Decimal("6"), version=stored.version + 1))
+        uow.commit()
+    # Годные + брак берутся по порядку ввода: 4 из первой коробки, 4 из второй (prodPick_).
     box, output, _ = _submit(factory, operator, task, now, good="8", inputs=(
         WorkInput(source.id, Decimal("4")), WorkInput(other.id, Decimal("4")),
     ))
+    assert _transferred(sessions, source.id, box.id) == Decimal("4")
+    assert _transferred(sessions, other.id, box.id) == Decimal("4")
     returned = _close_and_return(factory, master, operator, box, now)
     down_box, down, _ = _correct(factory, operator, returned, output, now, good="4")
     assert _transferred(sessions, other.id, box.id) == Decimal("0")
-    # The first input box is used up elsewhere, so the top-up has to come from the second one.
-    pending = start_work(StartWorkCommand(
-        task_id=task.id, operation_id=task.operations[1].id,
-        inputs=(WorkInput(source.id, Decimal("6")),), actor=operator, now=now,
-    ), factory())
     returned = _close_and_return(factory, master, operator, down_box, now)
 
     corrected, _correction, _ = _correct(factory, operator, returned, down, now, good="6")
@@ -455,5 +453,4 @@ def test_top_up_may_use_an_input_box_everything_was_given_back_to():
     assert corrected.quantity == Decimal("6")
     assert stored_other.consumed == Decimal("2")
     assert _transferred(sessions, other.id, box.id) == Decimal("2")
-    cancel_work(SessionCommand(pending.id, operator, now), factory())
     engine.dispose()
