@@ -230,3 +230,30 @@ def test_calculation_link_refusals(kitset_api):
     refused = client.post("/api/techcards/kitsets/load", json={"url": LINK})
     assert refused.status_code == 422
     assert "Нет доступа" in refused.json()["detail"]
+
+
+def test_generator_bom_reads_kb_sheet_of_the_linked_calculation(kitset_api):
+    """`tcLoadBomFromKit.calcOps` = `tcCalcOps_(card.calcUrl, index)`: the КБn sheet from row 5, B/C/D/E/H;
+    a read failure gives an empty list, never an error."""
+    from app.modules.requests.application import CalcSheetError
+
+    client, _lot = kitset_api
+    kb = [
+        ["Операции КБ1"], [], [], ["№", "Код", "Комплектующее", "n", "L", "", "", "Требования к задаче"],
+        ["1", "CUT_WIRE", "UL1007  22AWG", "4", "0,16", "", "", "L=150мм +\nSHF-001T"],
+        ["2", "", "итого", "", "", "", "", ""],
+        ["3", "SDR_tin"],
+    ]
+    reader = FakeSheets({**SHEETS, "КБ1": kb}, title="708К.4.1 Расчет")
+    app.state.kitset_sheets_reader = reader
+    assert client.post("/api/techcards/kitsets/load", json={"url": LINK}).status_code == 200
+    bom = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
+    app.state.kitset_sheets_reader = FakeSheets({}, error=CalcSheetError("Нет доступа к таблице расчёта", "access"))
+    failed = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
+    assert reader.calls[-1] == ("1AbC-calc_id", ("КБ1",))
+    assert bom["calc_ops"] == [
+        {"code": "CUT_WIRE", "comp": "UL1007 22AWG", "n": "4", "l": "0,16", "req": "L=150мм + SHF-001T"},
+        {"code": "SDR_tin", "comp": "", "n": "", "l": "", "req": ""},
+    ]
+    assert failed["calc_ops"] == []
+    assert bom["run"] == "10"

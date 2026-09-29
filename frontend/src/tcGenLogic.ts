@@ -208,19 +208,12 @@ function endpointOpKey_(side: Side, ordinal: number, kind: "prs" | "ins" | "sold
 }
 export const sideRu_ = (s: string) => (s === "B" ? "В" : "А");
 
-/** calcCutLengths_ (TcGenInline.html:2276) — клиентская копия cut_lengths.py для предпросмотра. */
+/** calcCutMm_ (TcGenInline.html:2295): «L=…мм» из требований строки КБn, иначе колонка L (м). */
 export function calcCutMm_(o: CalcOp) {
   const m = /L\s*=\s*(\d+(?:[.,]\d+)?)\s*мм/i.exec(o.req || "");
   if (m) return parseDecimal_(m[1]);
   const l = parseDecimal_(o.l);
   return l > 0 ? Math.round(l * 1000) : 0;
-}
-
-/** Строки операций листа КБn (TSV: код, комплектующее, n, L, требования) → calcOps. */
-export function parseCalcTsv(text: string): CalcOp[] {
-  return String(text || "").split(/\r?\n/).map((line) => line.split("\t").map((cell) => cell.trim()))
-    .filter((cells) => cells[0] && /^[A-Za-z]+_/.test(cells[0]))
-    .map(([code, comp = "", n = "", l = "", req = ""]) => ({ code, comp, n, l, req }));
 }
 
 // ── Начальное состояние (init + populateComponentSelects + сидинги) ─────────
@@ -1123,12 +1116,21 @@ export function makeGen(D: GenData, S: GenState) {
     }
     return autoPickTemplate(spec);
   }
-  /** renderOpsCard: шаблон операции — ручной выбор, иначе автоподбор (резка/лента/коакс пересчитываются всегда). */
+  /** renderOpsCard: сохранённый шаблон операции (ручной или автоподобранный при первом показе — он «залипает»),
+   *  иначе автоподбор. Резка, лента/оплётка и коакс без ручного выбора пересчитываются всегда. */
   function templateIdFor(spec: OpSpec) {
-    const manual = S.manualTemplates.includes(spec.opKey);
-    const autoRepick = (spec.opKey === "cutWire" || spec.type === "insWrap" || S.tab === "coax") && !manual;
-    if (autoRepick) return pickTemplateForOp_(spec);
-    return (manual && S.selectedTemplates[spec.opKey]) || pickTemplateForOp_({ ...spec }) || "";
+    const autoRepick = (spec.opKey === "cutWire" || spec.type === "insWrap" || S.tab === "coax")
+      && !S.manualTemplates.includes(spec.opKey);
+    return (autoRepick ? pickTemplateForOp_(spec) : (S.selectedTemplates[spec.opKey] || pickTemplateForOp_(spec))) || "";
+  }
+  /** renderOpsCard: `selectedTemplates[opKey] = sel.value` для каждой показанной операции. null — запоминать нечего. */
+  function stickTemplates() {
+    let next: Record<string, string> | null = null;
+    for (const spec of getActiveOps()) {
+      const id = templateIdFor(spec);
+      if (id && S.selectedTemplates[spec.opKey] !== id) next = { ...(next || S.selectedTemplates), [spec.opKey]: id };
+    }
+    return next;
   }
   function matchOpByTitle(title: string) {
     const ops = D.ops || [];
@@ -1138,7 +1140,8 @@ export function makeGen(D: GenData, S: GenState) {
     const code = title.substring(0, pipeSep).trim().toLowerCase();
     return ops.find((op) => (op.opNumber || "").trim().toLowerCase() === code) || null;
   }
-  /** onTemplateSelect: запись БД.ОП по коду шаблона + времена (ручные правки живут, пока шаблон тот же). */
+  /** onTemplateSelect: запись БД.ОП по коду шаблона + времена из неё. Ручная правка времён живёт до следующей
+   *  перерисовки карточки операций (любой другой правки формы) — тогда времена снова из БД.ОП, как в SUPPLYMAP. */
   function opRow(spec: OpSpec) {
     const templateId = templateIdFor(spec);
     const tmpl = (D.templates || []).find((t) => t.id === templateId);
@@ -1335,7 +1338,7 @@ export function makeGen(D: GenData, S: GenState) {
     endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
-    coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, opRow, buildConfig, validate,
+    coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, asmLenFromName_, calcCutLengths_, freeEnds_,
     wireQtyFromTerms_: (wires: Comp[]) => {
       if (wires.length !== 1 || cableCoresFromName_(`${wires[0].name || ""} ${wires[0].art || ""}`) > 1) return 0;
@@ -1523,20 +1526,7 @@ export function applyCalcTin_(D: GenData, S: GenState): GenState {
   return { ...S, tin: { ...S.tin, enabled: true, stripLen: m ? m[1] : S.tin.stripLen } };
 }
 
-/** Длины из строк расчёта: подставить в кабели (правило autoFillAllWires). */
-export function applyCalcLengths(D: GenData, S0: GenState, lengths: Record<string, number>): GenState {
-  let S = S0;
-  const fromCalc = S.wires.filter((w) => w.compId).map((w) => lengths[w.compId] || 0);
-  if (!fromCalc.some(Boolean)) return S;
-  S = { ...S, lenFromCalc: true, wires: S.wires.map((w) => (lengths[w.compId] ? { ...w, length: lengths[w.compId] } : w)) };
-  if (!S.advancedLength) {
-    if (fromCalc.every((l) => l === fromCalc[0])) S = { ...S, drawingLength: fromCalc[0], sharedLengthText: String(fromCalc[0]) };
-    else S = { ...S, advancedLength: true };
-  }
-  return applyCalcTin_(D, S);
-}
-
-/** Строки чертежа TECHMAP-GRAPHER → «Кабели» (grapherApply_). compId — позиция состава или новая позиция из чертежа. */
+/** Строки чертежа TECHMAP-GRAPHER → «Кабели» (grapherApply_). compId — позиция состава, не найдено — пусто («выбери»). */
 export function applyGrapherGroups(S0: GenState, groups: Array<{ compId: string; qty: number; length: number; cores?: number; jacket?: string }>): GenState {
   let S = S0;
   let next = S.nextWireIdx;
