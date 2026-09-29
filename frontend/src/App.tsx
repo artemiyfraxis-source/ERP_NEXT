@@ -203,7 +203,7 @@ export function App() {
         {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
         {activeSection === "projects" && <ProjectsPage principal={principal} />}
         {activeSection === "techcards" && <TechcardsPage principal={principal} view="projects" />}
-        {activeSection === "tctemplates" && <TechcardsPage principal={principal} view="templates" />}
+        {activeSection === "tctemplates" && <ReferencesPage principal={principal} initialTab="templates" />}
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
