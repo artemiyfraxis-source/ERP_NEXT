@@ -124,6 +124,8 @@ def event_text(event_type: str, details: Mapping[str, object]) -> str:
         return f"Правка строки: {_text(details, 'changes') or '—'}" + (f" ({reason})" if reason else "")
     if event_type == "warehouse.item_types_saved":
         return f"Справочник типов сохранён: {_text(details, 'count')}"
+    if event_type == "warehouse.rack_layout_saved":
+        return f"Склад 0.5: {_text(details, 'message')}"
     return event_type
 
 

@@ -15,7 +15,7 @@ from .modules.identity.infrastructure import SqlAlchemyIdentityUnitOfWork
 from .modules.receiving.application import UnitOfWork as ReceivingUnitOfWork
 from .modules.receiving.infrastructure import SqlAlchemyReceivingUnitOfWork
 from .modules.warehouse.application import UnitOfWork as WarehouseUnitOfWork
-from .modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
+from .modules.warehouse.infrastructure import SqlAlchemyRackLayoutStore, SqlAlchemyWarehouseUnitOfWork
 from .modules.fulfillment.application import UnitOfWork as FulfillmentUnitOfWork
 from .modules.fulfillment.infrastructure import SqlAlchemyFulfillmentUnitOfWork
 from .modules.production.application import UnitOfWork as ProductionUnitOfWork
@@ -31,6 +31,7 @@ from .modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from .workflows.project_registry import PlanSnapshotProjectRegistry
 from .workflows.receiving_stock import WarehouseStockBalanceLookup
 from .workflows.procurement_stage import ProcurementLineStageLookup
+from .shared.warehouse_location import set_rack_layout_loader
 
 
 def build_engine(database_url: str) -> Engine:
@@ -114,4 +115,6 @@ def configure_database(app: FastAPI, database_url: str) -> Engine:
     app.state.project_registry = PlanSnapshotProjectRegistry(app.state.production_uow_factory)
     app.state.procurement_stage_lookup = ProcurementLineStageLookup(app.state.procurement_uow_factory)
     app.state.receiving_stock_lookup = WarehouseStockBalanceLookup(app.state.warehouse_uow_factory)
+    app.state.rack_layout_store = SqlAlchemyRackLayoutStore(sessionmaker(bind=engine, expire_on_commit=False, class_=Session))
+    set_rack_layout_loader(app.state.rack_layout_store.load)
     return engine

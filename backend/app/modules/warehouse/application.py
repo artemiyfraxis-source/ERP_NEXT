@@ -108,6 +108,7 @@ class WriteOffCommand:
     reason: str  # ОСНОВАНИЕ: the class of the expense; empty means «Выдача»
     actor: Actor
     now: datetime
+    entry_date: date | None = None  # ДАТА строки СПИСАНИЯ (Writeoff.html), None — сегодня
 
 
 @dataclass(frozen=True)
@@ -707,7 +708,12 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
         uow.writeoffs.add(WriteOffEntry.for_lot(
             updated, kind="writeoff", quantity=command.quantity, reason=reason, purpose=purpose,
             author=command.actor.name, actor_id=command.actor.id, actor_name=command.actor.name,
-            occurred_at=command.now, remaining_after=updated.balance,
+            occurred_at=(
+                datetime.combine(command.entry_date, command.now.time())
+                if command.entry_date and command.entry_date != command.now.date()
+                else command.now
+            ),
+            remaining_after=updated.balance,
         ))
         uow.audit.add(
             AuditEvent(
