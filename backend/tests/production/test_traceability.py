@@ -71,19 +71,22 @@ def test_confirmed_box_is_reserved_then_consumed_without_changing_number():
     assert consumed.available == Decimal("6")
 
 
-def test_returned_box_keeps_number_when_operator_reopens_and_closes_again():
+def test_submission_box_is_closed_at_once_and_checked_as_an_input_like_supplymap():
     now = datetime(2026, 9, 22, 9, 0)
     operator_id = uuid4()
-    box = ProductionBox.create(
-        task_id=uuid4(), operation_id=uuid4(), item="КБ-1",
-        operation_position=1, operator_id=operator_id, created_at=now,
-    ).add_output(Decimal("2")).close("104233-2", "Оператор", now)
-    returned = box.return_to_operator("Пересчитать количество")
-    reopened = returned.reopen(operator_id)
+    box = ProductionBox.submitted(
+        task_id=uuid4(), operation_id=uuid4(), item="708К.4КБ1", operation_position=1,
+        operator_id=operator_id, number="000001 8", good=Decimal("5"), actor="Оператор", now=now,
+    )
 
-    assert reopened.close("104233-2", "Оператор", now).number == "104233-2"
-    with pytest.raises(ProductionValidationError, match="менять нельзя"):
-        reopened.close(format_box_number(104234), "Оператор", now)
+    assert (box.number, box.status, box.quantity, box.closed_by) == ("000001-8", BoxStatus.OPERATOR_CLOSED, Decimal("5"), "Оператор")
+    assert box.input_error(item="708К.4КБ1", previous_position=1) == (
+        "Коробка 000001-8 — «Закрыта оператором»: брать можно только подтверждённую мастером."
+    )
+    confirmed = box.confirm("Мастер", now)
+    assert confirmed.input_error(item="708к.4кб1", previous_position=1) == ""
+    assert confirmed.input_error(item="КБ2", previous_position=1) == "Коробка 000001-8 — от другого изделия (708К.4КБ1)."
+    assert confirmed.input_error(item="708К.4КБ1", previous_position=2) == "Коробка 000001-8 — с этапа 1, а на вход нужен этап 2."
 
 
 def test_work_session_counts_pause_with_sqlite_naive_datetime_and_can_cancel():
@@ -144,8 +147,6 @@ def test_only_the_operator_of_a_returned_box_may_correct_it():
         closed.correct(replaced_good=Decimal("8"), good=Decimal("7"), operator_id=operator_id, actor="Оператор", now=now)
     with pytest.raises(ProductionValidationError, match="сдавал другой оператор"):
         returned.correct(replaced_good=Decimal("10"), good=Decimal("8"), operator_id=uuid4(), actor="Чужой", now=now)
-    with pytest.raises(ProductionValidationError, match="не возвращена мастером"):
-        returned.reopen(operator_id).correct(replaced_good=Decimal("10"), good=Decimal("8"), operator_id=operator_id, actor="Оператор", now=now)
 
 
 def test_give_back_undoes_consumption_and_revives_an_emptied_box():

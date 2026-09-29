@@ -29,14 +29,16 @@ from .traceability import (
     WorkInput,
     WorkSession,
     WorkStatus,
+    _count,
     give_back_inputs,
     pick_inputs,
+    validate_box_number,
 )
 
 
 class BoxRepository(Protocol):
     def get(self, box_id: UUID) -> ProductionBox | None: ...
-    def open_for(self, task_id: UUID, operation_id: UUID, operator_id: UUID) -> ProductionBox | None: ...
+    def by_number(self, number: str) -> ProductionBox | None: ...
     def list(self, *, task_id: UUID | None = None, operator_id: UUID | None = None, limit: int = 500) -> Sequence[ProductionBox]: ...
     def reserve_number(self) -> str: ...
     def save(self, box: ProductionBox) -> None: ...
@@ -128,7 +130,7 @@ class ExecutionUnitOfWork(Protocol):
 class StartWorkCommand:
     task_id: UUID
     operation_id: UUID
-    inputs: tuple[WorkInput, ...]
+    box_numbers: tuple[str, ...]
     actor: Actor
     now: datetime
     materials: tuple[MaterialInput, ...] = ()
@@ -205,6 +207,27 @@ def _task_operation(task_id: UUID, operation_id: UUID, actor: Actor, uow: Execut
     return task, operation
 
 
+def _input_boxes(numbers: Sequence[str], item: str, previous_position: int, uow: ExecutionUnitOfWork) -> list[ProductionBox]:
+    """prodCheckInputs_: boxes by the numbers as typed, repeats skipped, first refusal reason raised."""
+    seen: set[str] = set()
+    boxes: list[ProductionBox] = []
+    for raw in numbers:
+        if not str(raw or "").strip():
+            continue
+        number = validate_box_number(raw)
+        if number in seen:
+            continue
+        seen.add(number)
+        box = uow.boxes.by_number(number)
+        if box is None:
+            raise ProductionValidationError(f"Коробки {number} нет в учёте.")
+        error = box.input_error(item=item, previous_position=previous_position)
+        if error:
+            raise ProductionValidationError(error)
+        boxes.append(box)
+    return boxes
+
+
 def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSession:
     with uow:
         if uow.work.current(command.actor.id) is not None:
@@ -212,7 +235,7 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
         task, operation = _task_operation(command.task_id, command.operation_id, command.actor, uow)
         if operation.position == 1:
             # SUPPLYMAP начинает первый этап без выданного комплекта; выданные партии — по желанию, для родословной.
-            if command.inputs:
+            if command.box_numbers:
                 raise ProductionValidationError("Первая операция не берёт коробки предыдущего этапа")
             if command.materials and task.fulfillment_request_id is None:
                 raise ProductionValidationError("Задание не связано с заявкой выдачи")
@@ -227,30 +250,26 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
                 amount = Decimal(item.quantity)
                 if not amount.is_finite() or amount <= 0 or amount > source.available:
                     raise ProductionValidationError("Недостаточно доступного остатка позиции выдачи")
-        elif command.materials or not command.inputs:
-            raise ProductionValidationError("Укажите входные коробки предыдущего этапа")
-        if len({item.box_id for item in command.inputs}) != len(command.inputs):
-            raise ProductionValidationError("Одна входная коробка указана дважды")
-        reserved: list[tuple[ProductionBox, WorkInput]] = []
-        for item in command.inputs:
-            box = uow.boxes.get(item.box_id)
-            if box is None:
-                raise ProductionValidationError("Входная коробка не найдена")
-            updated = box.reserve(
-                item.quantity,
-                item=task.item,
-                previous_position=operation.position - 1,
+        elif command.materials:
+            raise ProductionValidationError("Складские партии берёт только первая операция")
+        inputs: tuple[WorkInput, ...] = ()
+        if operation.position > 1:
+            # prodWorkStart_: оператор вводит номера входных коробок; штуки берутся из них при сдаче.
+            if not command.box_numbers:
+                raise ProductionValidationError(
+                    f"Введи номера входных коробок с этапа {operation.position - 1}.",
+                )
+            inputs = tuple(
+                WorkInput(box.id, box.available)
+                for box in _input_boxes(command.box_numbers, task.item, operation.position - 1, uow)
             )
-            reserved.append((updated, item))
         session = WorkSession.start(task.id, operation.id, command.actor.id, command.now)
-        for box, _item in reserved:
-            uow.boxes.save(box)
         uow.work.save(session)
-        uow.work.add_inputs(session.id, command.inputs)
+        uow.work.add_inputs(session.id, inputs)
         uow.work.add_material_inputs(session.id, command.materials)
         _audit(session.id, "production.work_started", command.actor, command.now, {
             "task_id": str(task.id), "operation_id": str(operation.id),
-            "inputs": {str(item.box_id): str(item.quantity) for item in command.inputs},
+            "inputs": [str(item.box_id) for item in inputs],
             "materials": {str(item.fulfillment_line_id): str(item.quantity) for item in command.materials},
         }, uow)
         uow.commit()
@@ -287,17 +306,10 @@ def resume_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSessio
 def cancel_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSession:
     with uow:
         session = _session(command, uow)
-        inputs = tuple(uow.work.inputs(session.id))
-        for item in inputs:
-            box = uow.boxes.get(item.box_id)
-            if box is None:
-                raise ProductionValidationError("Входная коробка исчезла")
-            uow.boxes.save(box.release(item.quantity))
+        # prodWorkToggle_ drop: входные коробки при начале не резервируются, отменять нечего.
         cancelled = session.cancel()
         uow.work.save(cancelled)
-        _audit(cancelled.id, "production.work_cancelled", command.actor, command.now, {
-            "released_inputs": {str(item.box_id): str(item.quantity) for item in inputs},
-        }, uow)
+        _audit(cancelled.id, "production.work_cancelled", command.actor, command.now, {}, uow)
         uow.commit()
         return cancelled
 
@@ -310,24 +322,37 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
         defect = Decimal(command.defect_quantity)
         if not good.is_finite() or not defect.is_finite() or good < 0 or defect < 0 or good + defect <= 0:
             raise ProductionValidationError("Сумма годных и брака должна быть положительной")
-        inputs = tuple(uow.work.inputs(session.id))
         materials = tuple(uow.work.material_inputs(session.id))
-        input_total = sum((item.quantity for item in inputs), Decimal("0"))
-        if operation.position > 1 and good + defect != input_total:
-            raise ProductionValidationError("Годные плюс брак должны совпадать с количеством входа")
-        if operation.position == 1:
-            produced = uow.outputs.total_for_operation(operation.id)
-            if produced + good + defect > Decimal(task.quantity):
-                raise ProductionValidationError("Выработка превышает количество производственного задания")
-        output_box = uow.boxes.open_for(task.id, operation.id, command.actor.id)
-        if output_box is None:
-            output_box = ProductionBox.create(
-                task_id=task.id, operation_id=operation.id, item=task.item,
-                operation_position=operation.position, operator_id=command.actor.id,
-                created_at=command.now,
+        done = uow.outputs.total_for_operation(operation.id)
+        if done + good + defect > Decimal(task.quantity):
+            left = max(Decimal(0), Decimal(task.quantity) - done)
+            raise ProductionValidationError(
+                f"Больше, чем в задании: уже сдано {_count(done)} из {task.quantity}, осталось {_count(left)}.",
             )
-        if good > 0:
-            output_box = output_box.add_output(good)
+        inputs: tuple[WorkInput, ...] = ()
+        if operation.position > 1:
+            # prodWorkSubmit_: входные проверяем ещё раз — пока шла работа, коробку мог забрать напарник;
+            # годные + брак берутся из них по порядку ввода (prodPick_).
+            sources = []
+            for item in uow.work.inputs(session.id):
+                box = uow.boxes.get(item.box_id)
+                if box is None:
+                    raise ProductionValidationError("Входная коробка исчезла")
+                error = box.input_error(item=task.item, previous_position=operation.position - 1)
+                if error:
+                    raise ProductionValidationError(error)
+                sources.append(box)
+            have = sum((box.available for box in sources), Decimal("0"))
+            if have < good + defect:
+                raise ProductionValidationError(
+                    f"Во входных коробках {_count(have)} шт, а сдаёшь {_count(good + defect)} (годные + брак).",
+                )
+            inputs = pick_inputs(sources, good + defect)
+        output_box = ProductionBox.submitted(
+            task_id=task.id, operation_id=operation.id, item=task.item,
+            operation_position=operation.position, operator_id=command.actor.id,
+            number=uow.boxes.reserve_number(), good=good, actor=command.actor.name, now=command.now,
+        )
         completed = session.complete(command.now)
         output = ProductionOutput(
             id=uuid4(), session_id=session.id, task_id=task.id,
@@ -349,7 +374,9 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
             source = uow.boxes.get(item.box_id)
             if source is None:
                 raise ProductionValidationError("Входная коробка исчезла")
-            uow.boxes.save(source.consume(item.quantity))
+            uow.boxes.save(source.reserve(
+                item.quantity, item=task.item, previous_position=operation.position - 1,
+            ).consume(item.quantity))
             uow.consumption.add(ConsumptionEdge(
                 id=uuid4(), source_box_id=item.box_id, target_box_id=output_box.id,
                 quantity=item.quantity, output_id=output.id,
@@ -377,19 +404,6 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
         return completed, output_box, output, defect_record
 
 
-def close_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
-    with uow:
-        box = _box(command, uow)
-        if box.operator_id != command.actor.id:
-            raise ProductionValidationError("Закрыть коробку может только её оператор")
-        number = box.number or uow.boxes.reserve_number()
-        updated = box.close(number, command.actor.name, command.now)
-        uow.boxes.save(updated)
-        _audit(box.id, "production.box_closed", command.actor, command.now, {"number": number}, uow)
-        uow.commit()
-        return updated
-
-
 def confirm_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
     with uow:
         box = _box(command, uow)
@@ -406,16 +420,6 @@ def return_box(command: ReturnBoxCommand, uow: ExecutionUnitOfWork) -> Productio
         updated = box.return_to_operator(command.reason)
         uow.boxes.save(updated)
         _audit(box.id, "production.box_returned", command.actor, command.now, {"reason": command.reason}, uow)
-        uow.commit()
-        return updated
-
-
-def reopen_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
-    with uow:
-        box = _box(command, uow)
-        updated = box.reopen(command.actor.id)
-        uow.boxes.save(updated)
-        _audit(box.id, "production.box_reopened", command.actor, command.now, {}, uow)
         uow.commit()
         return updated
 
@@ -445,7 +449,10 @@ def correct_box(command: CorrectBoxCommand, uow: ExecutionUnitOfWork) -> tuple[P
         replaced_total = replaced.good_quantity + replaced.defect_quantity
         done = uow.outputs.total_for_operation(operation.id) - replaced_total
         if done + good + defect > Decimal(task.quantity):
-            raise ProductionValidationError("Выработка превышает количество производственного задания")
+            left = max(Decimal(0), Decimal(task.quantity) - done)
+            raise ProductionValidationError(
+                f"Больше, чем в задании: уже сдано {_count(done)} из {task.quantity}, осталось {_count(left)}.",
+            )
         output = ProductionOutput(
             id=uuid4(), session_id=None, task_id=task.id,
             operation_id=operation.id, operator_id=command.actor.id,

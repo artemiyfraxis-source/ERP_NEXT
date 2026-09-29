@@ -47,20 +47,18 @@ from .execution import (
     SessionCommand,
     StartWorkCommand,
     SubmitWorkCommand,
-    close_box,
     cancel_work,
     confirm_box,
     correct_box,
     decide_defect,
     handoff_box,
     pause_work,
-    reopen_box,
     resume_work,
     return_box,
     start_work,
     submit_work,
 )
-from .traceability import BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkInput, WorkSession
+from .traceability import BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkSession
 from .quality import (
     DecideQcRejectionCommand,
     InspectBoxCommand,
@@ -137,13 +135,9 @@ class ApplySchedulePayload(AutoSchedulePayload):
     transfer_batch: int = Field(gt=0, le=1_000_000)
 
 
-class WorkInputPayload(BaseModel):
-    box_id: UUID
-    quantity: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
-
-
 class StartWorkPayload(BaseModel):
-    inputs: list[WorkInputPayload] = Field(default_factory=list, max_length=100)
+    # prodWorkStart_: номера входных коробок, как их ввёл оператор (через запятую или с новой строки).
+    inputs: list[Annotated[str, Field(max_length=40)]] = Field(default_factory=list, max_length=100)
     materials: list["MaterialInputPayload"] = Field(default_factory=list, max_length=500)
 
 
@@ -547,7 +541,7 @@ def start_execution(
 ) -> dict:
     session = _execution(lambda: start_work(StartWorkCommand(
         task_id=task_id, operation_id=operation_id,
-        inputs=tuple(WorkInput(item.box_id, item.quantity) for item in payload.inputs),
+        box_numbers=tuple(payload.inputs),
         actor=principal.actor, now=now,
         materials=tuple(MaterialInput(item.fulfillment_line_id, item.quantity) for item in payload.materials),
     ), uow_factory()))
@@ -584,18 +578,6 @@ def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: An
         "session": _session_result(session), "box": _box_result(box),
         "output_id": str(output.id), "defect": _defect_result(defect) if defect else None,
     }
-
-
-@router.post("/boxes/{box_id}/close")
-def close_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
-    box = _execution(lambda: close_box(BoxCommand(box_id, payload.version, principal.actor, now), uow_factory()))
-    return {"box": _box_result(box)}
-
-
-@router.post("/boxes/{box_id}/reopen")
-def reopen_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
-    box = _execution(lambda: reopen_box(BoxCommand(box_id, payload.version, principal.actor, now), uow_factory()))
-    return {"box": _box_result(box)}
 
 
 @router.get("/boxes/{box_id}/outputs")

@@ -229,7 +229,7 @@ it("starts the first operation from an issued GRN and package", async () => {
   expect(await screen.findByText("Ещё не сдавали")).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "▶ Начать" }));
   fireEvent.change(await screen.findByLabelText("Количество из партии PPM.26.0000001 П1"), { target: { value: "3" } });
-  fireEvent.click(screen.getByRole("button", { name: "Начать операцию" }));
+  fireEvent.click(screen.getByRole("button", { name: "Начать" }));
 
   await waitFor(() => expect(payload).toEqual({
     inputs: [],
@@ -268,7 +268,7 @@ it("records the master's append-only decision for a QC rejection", async () => {
   await waitFor(() => expect(payload).toEqual({ disposition: "Доработка", act_reference: "Акт НС-12" }));
 });
 
-it("corrects one output of a returned box and keeps reopening as a separate action", async () => {
+it("corrects one output of a returned box and shows that it waits for the master again", async () => {
   const requests: Array<{ path: string; body: unknown }> = [];
   const operatorPrincipal: Principal = {
     user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
@@ -303,9 +303,6 @@ it("corrects one output of a returned box and keeps reopening as a separate acti
   await waitFor(() => expect(good).toHaveValue(10));
   fireEvent.change(good, { target: { value: "8" } });
   fireEvent.click(screen.getByRole("button", { name: "Записать исправление" }));
-  await waitFor(() => expect(requests).toHaveLength(1));
-  fireEvent.click(await screen.findByRole("button", { name: "Доложить" }));
-
   await waitFor(() => expect(requests).toEqual([
     {
       path: `/api/production/boxes/${returned.id}/correct`,
@@ -314,8 +311,51 @@ it("corrects one output of a returned box and keeps reopening as a separate acti
         good_quantity: "8", defect_quantity: "0", defect_character: "", defect_description: "",
       },
     },
-    { path: `/api/production/boxes/${returned.id}/reopen`, body: { version: 4 } },
   ]));
+  const dialog = await screen.findByRole("dialog", { name: "✅ Коробка исправлена" });
+  expect(dialog).toHaveTextContent("000002-6");
+  expect(screen.queryByRole("button", { name: "Доложить" })).not.toBeInTheDocument();
+});
+
+it("starts a later stage by typed box numbers and shows the new box number to write on it", async () => {
+  const requests: Array<{ path: string; body: unknown }> = [];
+  const operatorPrincipal: Principal = {
+    user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+    roles: ["staff"], permissions: { production: "view" },
+  };
+  const later = { ...task, operations: [{ ...task.operations[0], position: 2 }] };
+  const session = {
+    id: "76000000-0000-0000-0000-000000000001", task_id: later.id, operation_id: later.operations[0].id,
+    operator_id: operatorPrincipal.user.id, status: "В работе", started_at: "2026-09-22T09:00:00+03:00",
+    paused_at: null, pause_seconds: 0, finished_at: null, version: 1,
+  };
+  let current: typeof session | null = null;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [later] });
+    if (path === "/api/production/my/execution") return json({ session: current, boxes: [] });
+    if (path.endsWith("/inputs")) return json({ boxes: [], materials: [] });
+    if (init?.method === "POST") {
+      requests.push({ path, body: JSON.parse(String(init.body)) });
+      if (path.endsWith("/work/start")) { current = session; return json({ session }); }
+      current = null;
+      return json({ session, box: { id: "74000000-0000-0000-0000-000000000009", number: "000007-5" }, output_id: "x", defect: null });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProductionPage principal={operatorPrincipal} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "▶ Начать" }));
+  fireEvent.change(await screen.findByLabelText("Номера коробок"), { target: { value: "000001-8, 000002-6\n" } });
+  fireEvent.click(screen.getByRole("button", { name: "Начать" }));
+  fireEvent.change(await screen.findByLabelText("Годные изделия"), { target: { value: "5" } });
+  fireEvent.click(screen.getByRole("button", { name: "✅ Сдать" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "📦 Напиши на коробке" });
+  expect(dialog).toHaveTextContent("000007-5");
+  expect(requests[0].body).toEqual({ inputs: ["000001-8", "000002-6"], materials: [] });
+  fireEvent.click(screen.getByRole("button", { name: "Записал" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 it("groups the operator queue by plan day and hides start for a completed operation", async () => {
