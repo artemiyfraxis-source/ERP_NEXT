@@ -1162,6 +1162,9 @@ def _receiving_expected(line: ProcurementLine, now: datetime) -> OutboxMessage:
             "ordered_quantity": str(line.actual_quantity),
             "unit": line.actual_unit,
             "quality_document_required": line.quality_document == "Да",
+            # № ЗАКАЗА and ОЖИД. ДАТА: the receiving queue groups and orders by them (portalReceiveRows).
+            "order_number": line.order_number or "",
+            "expected_arrival": line.expected_arrival.isoformat() if line.expected_arrival else None,
         },
     )
 

@@ -493,6 +493,133 @@ def _request_backorder(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> N
     )
 
 
+@dataclass(frozen=True)
+class InspectBatchesCommand:
+    """RC-13: one delivery, several manufacturer batches — each gets its own line, ВК and ГРН."""
+
+    line_id: UUID
+    expected_version: int
+    batches: tuple[InspectionInput, ...]
+    actor: Actor
+    now: datetime
+    manual_grn_prefix: str | None = None
+
+
+def batch_quantity(data: InspectionInput) -> Decimal:
+    """Receiving.gs batchQty_: кол-во партии — по УПД, иначе по факту."""
+    if data.document_quantity is not None and data.document_quantity > 0:
+        return data.document_quantity
+    return data.fact_quantity
+
+
+def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -> list[ReceivingLine]:
+    """Receiving.gs submitReceiveFormImpl_ (≥ 2 партии) + applyWaitlistBatchSplits_: the line becomes batch 1,
+    the others new lines `-ПN`; each is inspected at once with its own facts and the shared ones. Sum of
+    batches below the order → the remainder goes to the backorder like any shortfall; above → surplus."""
+    if len(command.batches) < 2:
+        raise ReceivingValidationError("Для разбивки нужно минимум 2 партии")
+    with uow:
+        current = uow.receiving.get(command.line_id)
+        if current is None:
+            raise KeyError(f"Receiving line not found: {command.line_id}")
+        if current.version != command.expected_version:
+            raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
+        quantities = [batch_quantity(batch) for batch in command.batches]
+        parts = current.split_into_batches(
+            quantities,
+            existing_legacy_ids=uow.receiving.legacy_ids_starting_with(current.legacy_id),
+            now=command.now,
+        )
+        grns = list(uow.receiving.all_grns())
+        inspected: list[ReceivingLine] = []
+        for part, data in zip(parts, command.batches):
+            inspection = replace(
+                data,
+                ordered_quantity=part.ordered_quantity,
+                quality_document_required=part.quality_document_required,
+                has_shipping_document=bool(str(data.shipping_document_url or "").strip()),
+                quality_document_present=bool(str(data.quality_document_url or "").strip()),
+            )
+            line = part.inspect(
+                inspection, command.actor, existing_grns=grns, manual_grn_prefix=command.manual_grn_prefix
+            )
+            grns.append(line.grn)
+            uow.receiving.add(line)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=line.id,
+                    event_type="receiving.inspected",
+                    actor=command.actor,
+                    occurred_at=command.now,
+                    details={
+                        "legacy_id": line.legacy_id,
+                        "from_status": current.status.value,
+                        "to_status": line.status.value,
+                        "verdict": line.verdict,
+                        "batch_of": current.legacy_id,
+                        "batch_quantity": str(line.ordered_quantity),
+                    },
+                )
+            )
+            _notify_nonconformity(line, uow, command.now)
+            inspected.append(line)
+        remainder = current.ordered_quantity - sum(quantities, Decimal("0"))
+        if remainder > 0:
+            _request_backorder(replace(inspected[0], backorder_quantity=remainder), uow, command.now)
+        uow.commit()
+        return inspected
+
+
+@dataclass(frozen=True)
+class UnpackCommand:
+    line_id: UUID
+    expected_version: int
+    quantities: tuple[Decimal, ...]
+    actor: Actor
+    now: datetime
+
+
+def unpack_receiving(command: UnpackCommand, uow: UnitOfWork) -> list[ReceivingLine]:
+    """RC-8 «Разукомплектовка (пакеты)»: пакеты с общим ГРН до раскладки на склад."""
+    with uow:
+        current = uow.receiving.get(command.line_id)
+        if current is None:
+            raise KeyError(f"Receiving line not found: {command.line_id}")
+        if current.version != command.expected_version:
+            raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
+        packages = current.unpack(
+            list(command.quantities),
+            existing_legacy_ids=uow.receiving.legacy_ids_starting_with(current.legacy_id),
+            now=command.now,
+        )
+        for package in packages:
+            uow.receiving.add(package)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=current.id,
+                event_type="receiving.unpacked",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={
+                    "legacy_id": current.legacy_id,
+                    "grn": current.grn,
+                    "packages": [
+                        {
+                            "legacy_id": package.legacy_id,
+                            "package": package.package,
+                            "quantity": str(package.fact_quantity),
+                        }
+                        for package in packages
+                    ],
+                },
+            )
+        )
+        uow.commit()
+        return packages
+
+
 def open_vk_revision(command: OpenVkRevisionCommand, uow: UnitOfWork) -> tuple[ReceivingLine, ReceivingLine]:
     with uow:
         current = uow.receiving.get(command.line_id)

@@ -136,6 +136,13 @@ class InspectionInput:
     mass_100: object = None
     # Receiving.gs:685-693 — historical receipt judges expiry on the УПД date, not on today.
     verdict_date: date | None = None
+    # receiveFields_/batchFields_ (Receiving.gs:252-324): реквизиты накладной и партии изготовителя.
+    document_number: str = ""
+    document_date: date | None = None
+    document_name: str = ""
+    note: str = ""
+    manufacture_date: date | None = None
+    nonconformity_description: str = ""
 
 
 def verdict_reference_date(
@@ -310,6 +317,17 @@ class ReceivingLine:
     # How many supplier returns the line went through; a «wait» return re-opens the line for the
     # replacement, whose own hand-over to the warehouse needs a fresh outbox key.
     supplier_returns: int = 0
+    # Context of the order (Лист закупки → Лист ожидания): № ЗАКАЗА and ОЖИД. ДАТА for the queue.
+    order_number: str = ""
+    expected_arrival: date | None = None
+    # № УПД/М-15, ДАТА УПД/М-15, НАИМЕНОВАНИЕ (УПД/М-15), ПРИМЕЧАНИЕ ВК, ДАТА ИЗГОТОВЛЕНИЯ.
+    document_number: str = ""
+    document_date: date | None = None
+    document_name: str = ""
+    inspection_note: str = ""
+    manufacture_date: date | None = None
+    # A batch (RC-13) or package (RC-8) line `-ПN` split off this line; the order stays one procurement line.
+    split_of_id: UUID | None = None
 
     @property
     def lineage_root_id(self) -> UUID:
@@ -382,6 +400,14 @@ class ReceivingLine:
             grn=grn,
             inspector=actor,
             inspected_on=data.inspection_date,
+            document_number=str(data.document_number or "").strip() or self.document_number,
+            document_date=data.document_date or self.document_date,
+            document_name=str(data.document_name or "").strip() or self.document_name,
+            inspection_note=str(data.note or "").strip(),
+            manufacture_date=data.manufacture_date,
+            nonconformity_description=(
+                str(data.nonconformity_description or "").strip() or self.nonconformity_description
+            ),
         )
 
     def waiting_overdue(self, today: date) -> bool:
@@ -503,6 +529,101 @@ class ReceivingLine:
             warehouse_event_emitted=False if wait else self.warehouse_event_emitted,
         )
 
+    def _split_copy(self, *, legacy_id: str, now: datetime, key: str) -> ReceivingLine:
+        if len(legacy_id) > 32:
+            raise ReceivingValidationError("System ID части длиннее 32 символов")
+        return replace(
+            self,
+            id=uuid4(),
+            source_event_id=uuid4(),
+            source_idempotency_key=key,
+            legacy_id=legacy_id,
+            version=1,
+            created_at=now,
+            split_of_id=self.id,
+            revision_of_id=None,
+            revision_root_id=None,
+            supplier_returns=0,
+        )
+
+    def split_into_batches(
+        self, quantities: list[Decimal], *, existing_legacy_ids: Iterable[str], now: datetime
+    ) -> list[ReceivingLine]:
+        """Receiving.gs applyWaitlistBatchSplits_: поставка пришла несколькими партиями изготовителя.
+
+        This line becomes batch 1 (КОЛ-ВО ЗКП = its quantity); every other batch is a new line `<ID>-ПN`
+        with the order context and ЗКП = its quantity, still «В пути» — each then gets its own ВК, ГРН and
+        acts. Quantities are those of the batches (УПД, else fact)."""
+        if self.status not in {ReceivingStatus.IN_TRANSIT, ReceivingStatus.WAITING, ReceivingStatus.QUARANTINE}:
+            raise ReceivingValidationError("Разбить на партии можно только поставку до приёмки")
+        if self.warehouse_event_emitted or self.grn:
+            raise ReceivingValidationError("У строки уже есть ГРН — разбивка на партии только до первого ВК")
+        if len(quantities) < 2:
+            raise ReceivingValidationError("Для разбивки нужно минимум 2 партии")
+        amounts = [_positive(Decimal(value), f"Партия {index}: кол-во") for index, value in enumerate(quantities, 1)]
+        taken = {str(value or "").strip() for value in existing_legacy_ids}
+        first = replace(self, ordered_quantity=amounts[0], version=self.version + 1)
+        lines = [first]
+        number = 2
+        for index, amount in enumerate(amounts[1:], start=2):
+            while f"{self.legacy_id}-П{number}" in taken:
+                number += 1
+            legacy_id = f"{self.legacy_id}-П{number}"
+            taken.add(legacy_id)
+            copy = self._split_copy(legacy_id=legacy_id, now=now, key=f"receiving:{self.id}:batch:{legacy_id}")
+            lines.append(replace(copy, ordered_quantity=amount, status=ReceivingStatus.IN_TRANSIT))
+        return lines
+
+    def unpack(
+        self, quantities: list[Decimal], *, existing_legacy_ids: Iterable[str], now: datetime
+    ) -> list[ReceivingLine]:
+        """Receiving.gs applyUnpackSplits_ «Разукомплектовка (пакеты)»: a received position is split into
+        packages sharing its ГРН before it is placed. This line becomes package 1; packages 2..N are full
+        copies `<ID>-ПN` (acts, ГРН, status kept) with their own КОЛ-ВО ФАКТ and ПАКЕТ = N; ЗКП and УПД stay on
+        package 1 only. Each package is placed and goes to stock on its own."""
+        if self.status is not ReceivingStatus.ACCEPTED:
+            raise ReceivingValidationError("Разукомплектовка — только для строк «Принято» (после ВК)")
+        if not self.grn:
+            raise ReceivingValidationError("У строки нет ГРН — сначала проведи входной контроль")
+        if self.package:
+            raise ReceivingValidationError("Строка уже является пакетом разукомплектовки")
+        if self.storage_location or self.warehouse_event_emitted:
+            raise ReceivingValidationError(
+                "Строка уже разложена на склад — разукомплектовка возможна только до раскладки"
+            )
+        total = self.fact_quantity
+        if total is None or total <= 0:
+            raise ReceivingValidationError("У строки нет корректного КОЛ-ВО ФАКТ")
+        if len(quantities) < 2:
+            raise ReceivingValidationError("Нужно минимум 2 части")
+        amounts = [_positive(Decimal(value), f"Часть {index}: кол-во") for index, value in enumerate(quantities, 1)]
+        if abs(sum(amounts) - total) > Decimal("0.001"):
+            raise ReceivingValidationError(
+                f"Сумма частей {format(sum(amounts).normalize(), 'f')} ≠ исходному {format(total.normalize(), 'f')}"
+            )
+        taken = {str(value or "").strip() for value in existing_legacy_ids}
+        first = replace(
+            self, fact_quantity=amounts[0], accepted_quantity=amounts[0], package="1", version=self.version + 1
+        )
+        lines = [first]
+        number = 2
+        for index, amount in enumerate(amounts[1:], start=2):
+            while f"{self.legacy_id}-П{number}" in taken:
+                number += 1
+            legacy_id = f"{self.legacy_id}-П{number}"
+            taken.add(legacy_id)
+            copy = self._split_copy(legacy_id=legacy_id, now=now, key=f"receiving:{self.id}:package:{index}")
+            lines.append(replace(
+                copy,
+                fact_quantity=amount,
+                accepted_quantity=amount,
+                document_quantity=None,
+                ordered_quantity=amount,
+                backorder_quantity=Decimal("0"),
+                package=str(index),
+            ))
+        return lines
+
     @property
     def warehouse_event_key(self) -> str:
         """Outbox key of the hand-over to the warehouse; each replacement after a «wait» return has its own."""
@@ -555,6 +676,10 @@ def create_line_from_expected(message: OutboxMessage) -> ReceivingLine:
             ordered_quantity=quantity,
             unit=str(payload["unit"]).strip(),
             quality_document_required=bool(payload.get("quality_document_required", False)),
+            order_number=str(payload.get("order_number") or "").strip(),
+            expected_arrival=(
+                date.fromisoformat(str(payload["expected_arrival"])) if payload.get("expected_arrival") else None
+            ),
         )
     except (KeyError, ValueError, TypeError, DecimalException) as error:
         if isinstance(error, ReceivingValidationError):

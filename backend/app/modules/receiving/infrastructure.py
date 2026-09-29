@@ -21,13 +21,14 @@ class ReceivingLineRow(Base):
     __table_args__ = (
         UniqueConstraint("grn", "package", name="uq_receiving_grn_package"),
         UniqueConstraint("revision_of_id", name="uq_receiving_lines_revision_of_id"),
-        # One live line per procurement line; archived «Архив ВК» rows keep the link as history.
+        # One live line per procurement line; archived «Архив ВК» rows keep the link as history, and
+        # batch/package lines `-ПN` (split_of_id) share the order of the line they came from.
         Index(
             "ux_receiving_live_procurement_line",
             "procurement_line_id",
             unique=True,
-            sqlite_where=text("status <> 'Архив ВК'"),
-            postgresql_where=text("status <> 'Архив ВК'"),
+            sqlite_where=text("status <> 'Архив ВК' AND split_of_id IS NULL"),
+            postgresql_where=text("status <> 'Архив ВК' AND split_of_id IS NULL"),
         ),
         Index("ix_receiving_created_id", "created_at", "id"),
         Index("ix_receiving_status_created_id", "status", "created_at", "id"),
@@ -79,6 +80,16 @@ class ReceivingLineRow(Base):
     revision_root_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
     nonconformity_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     supplier_returns: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    order_number: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    expected_arrival: Mapped[Any | None] = mapped_column(Date)
+    document_number: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    document_date: Mapped[Any | None] = mapped_column(Date)
+    document_name: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    inspection_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    manufacture_date: Mapped[Any | None] = mapped_column(Date)
+    split_of_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("receiving_lines.id", ondelete="RESTRICT"), index=True
+    )
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -128,6 +139,14 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         revision_root_id=line.revision_root_id,
         nonconformity_description=line.nonconformity_description,
         supplier_returns=line.supplier_returns,
+        order_number=line.order_number,
+        expected_arrival=line.expected_arrival,
+        document_number=line.document_number,
+        document_date=line.document_date,
+        document_name=line.document_name,
+        inspection_note=line.inspection_note,
+        manufacture_date=line.manufacture_date,
+        split_of_id=line.split_of_id,
     )
 
 
@@ -181,6 +200,14 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         revision_root_id=row.revision_root_id,
         nonconformity_description=row.nonconformity_description or "",
         supplier_returns=row.supplier_returns or 0,
+        order_number=row.order_number or "",
+        expected_arrival=row.expected_arrival,
+        document_number=row.document_number or "",
+        document_date=row.document_date,
+        document_name=row.document_name or "",
+        inspection_note=row.inspection_note or "",
+        manufacture_date=row.manufacture_date,
+        split_of_id=row.split_of_id,
     )
 
 
