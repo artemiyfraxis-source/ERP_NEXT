@@ -2129,13 +2129,15 @@ export interface KitsetComponent {
   lot: KitsetLot | null;
 }
 
-/** Строка реестра «КД» (SUPPLYMAP TcKd.gs): сам файл — на Google Диске, `url` открывает его там. */
+/** Строка реестра «КД» (SUPPLYMAP TcKd.gs): файл хранится в базе ERP (`stored`), его отдаёт `documentUrl`.
+ *  Строка из времён Google Диска без байтов — только `url` на Диск, архив для чтения. */
 export interface KitsetDocument {
   id: string;
   index: string;
   name: string;
-  url: string;
-  file_id: string;
+  size: number | null;
+  stored: boolean;
+  url: string | null;
   uploaded_at: string;
   who: string;
 }
@@ -2251,6 +2253,7 @@ export const kitsetsApi = {
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
   addDocument: (project: string, payload: { index: string; file_name: string; content_type: string; content_b64: string }) =>
     api<{ res: KitsetDocument }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
+  documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
   removeDocument: (project: string, id: string) =>
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   openTechcard: (project: string, index: string) =>

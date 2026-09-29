@@ -1,6 +1,7 @@
 """SQLAlchemy persistence for project kitsets («Наборы») and the register of their КД attachments.
 
-The КД files are on Google Drive (SUPPLYMAP TcKd.gs); the register row keeps name, link and Drive file id."""
+The КД files are stored in the database with their register row (owner, 29.09: off Google Drive); `file_id` / `url`
+are kept read-only for rows attached while КД lived on Drive."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Index, Integer, String, Text, Uuid, delete, select
+from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, delete, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
@@ -42,6 +43,10 @@ class KitDocumentRow(Base):
     project: Mapped[str] = mapped_column(String(255), nullable=False)
     item_index: Mapped[str] = mapped_column(String(64), nullable=False)
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The card lists the register without the bytes; they are read only for the download.
+    content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
     file_id: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -127,7 +132,8 @@ class SqlAlchemyKitsetRepository:
     def _document(row: KitDocumentRow) -> KitDocument:
         return KitDocument(
             id=row.id, project=row.project, item_index=row.item_index, file_name=row.file_name,
-            file_id=row.file_id, url=row.url, uploaded_at=row.uploaded_at, uploaded_by=row.uploaded_by,
+            content_type=row.content_type or "", size=row.size, uploaded_at=row.uploaded_at,
+            uploaded_by=row.uploaded_by, file_id=row.file_id, url=row.url,
         )
 
     def documents(self, project: str) -> list[KitDocument]:
@@ -136,16 +142,42 @@ class SqlAlchemyKitsetRepository:
         )
         return [self._document(row) for row in rows]
 
-    def add_document(self, document: KitDocument) -> None:
+    def add_document(self, document: KitDocument, content: bytes) -> None:
         self.session.add(KitDocumentRow(
             id=document.id, project=document.project, item_index=document.item_index,
-            file_name=document.file_name, file_id=document.file_id, url=document.url,
+            file_name=document.file_name, content_type=document.content_type, size=len(content), content=content,
+            file_id=document.file_id, url=document.url,
             uploaded_at=document.uploaded_at, uploaded_by=document.uploaded_by,
         ))
 
     def document(self, project: str, document_id: UUID) -> KitDocument | None:
         row = self.session.get(KitDocumentRow, document_id)
         return None if row is None or row.project != project else self._document(row)
+
+    def document_content(self, project: str, document_id: UUID) -> tuple[KitDocument, bytes] | None:
+        """The file for the download; None when the row is not this project's or has no bytes (Drive-only)."""
+        row = self.session.get(KitDocumentRow, document_id)
+        if row is None or row.project != project or row.content is None:
+            return None
+        return self._document(row), row.content
+
+    def drive_only_documents(self) -> list[KitDocument]:
+        """Historical rows with a Drive file id and no bytes yet — what the one-time import brings over."""
+        rows = self.session.scalars(
+            select(KitDocumentRow)
+            .where(KitDocumentRow.content.is_(None), KitDocumentRow.file_id != "")
+            .order_by(KitDocumentRow.project, KitDocumentRow.uploaded_at)
+        )
+        return [self._document(row) for row in rows]
+
+    def store_content(self, document_id: UUID, content_type: str, content: bytes) -> int:
+        """Bytes into a row that has none (the import); a row that already has them is left alone."""
+        result = self.session.execute(
+            update(KitDocumentRow)
+            .where(KitDocumentRow.id == document_id, KitDocumentRow.content.is_(None))
+            .values(content=content, content_type=content_type, size=len(content))
+        )
+        return result.rowcount or 0
 
     def delete_document(self, project: str, document_id: UUID) -> int:
         result = self.session.execute(

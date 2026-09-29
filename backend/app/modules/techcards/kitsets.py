@@ -112,44 +112,26 @@ class CalcKitset:
 class KitDocument:
     """КД — attached to the assembly (КБ), not to a spec line: a drawing is issued for the product (TcKd.gs).
 
-    A register row as on the SUPPLYMAP sheet «КД» (№ ПРОЕКТА, КБ, ИМЯ ФАЙЛА, ССЫЛКА, ID ФАЙЛА, ЗАГРУЖЕНО, КТО):
-    the file itself lives on Google Drive, the row keeps only its name, link and id."""
+    A register row as on the SUPPLYMAP sheet «КД» (№ ПРОЕКТА, КБ, ИМЯ ФАЙЛА, ЗАГРУЖЕНО, КТО); the file itself
+    lives in the ERP database (owner, 29.09: off Google Drive). `file_id` / `url` are the historical Drive
+    reference of a row attached while КД lived on Drive — read-only; such a row has no bytes (`size` is None)
+    until the one-time import (`import_kd_from_drive`) brings them over."""
 
     id: UUID
     project: str
     item_index: str
     file_name: str
-    file_id: str
-    url: str
+    content_type: str
+    size: int | None
     uploaded_at: datetime
     uploaded_by: str
+    file_id: str = ""
+    url: str = ""
 
-
-KD_FOLDER = "КД"
-
-
-def folder_key(name: str) -> str:
-    """`tcFolderKey_`: головные папки на Диске названы вразнобой — «703К.», «221К», «479К. »; хвостовые точки
-    и пробелы и регистр при сравнении не важны."""
-    return re.sub(r"[.\s]+$", "", str(name or "")).strip().upper()
-
-
-def head_number(project: str) -> str:
-    """`tcHeadNo_`: головной номер — часть до точки. «708К.4» → «708К», «221К.10» → «221К»."""
-    text = str(project or "").strip()
-    return text.split(".", 1)[0] or text
-
-
-def kd_folder_path(project: str) -> tuple[tuple[str, str], ...]:
-    """`tcKdFolder_` over `tcProjectFolder_`: «Проекты» → головной номер (создаётся с точкой, «708К.») → полный
-    номер («708К.4») → «КД». Номер без подпроекта — один уровень. Pairs of (name to look for, name to create)."""
-    full = str(project or "").strip() or "БЕЗ ПРОЕКТА"
-    head = head_number(full) or full
-    path = [(head, head + ".")]
-    if folder_key(head) != folder_key(full):
-        path.append((full, full))
-    path.append((KD_FOLDER, KD_FOLDER))
-    return tuple(path)
+    @property
+    def stored(self) -> bool:
+        """The bytes are in ERP (downloadable); otherwise only the archived Drive link is left."""
+        return self.size is not None
 
 
 @dataclass(frozen=True)

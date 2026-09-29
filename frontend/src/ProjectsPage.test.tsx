@@ -146,6 +146,30 @@ describe("ProjectsPage", () => {
     expect(await screen.findByText("Заявок создано: 1, из них ждут поставки: 1. В-26-0001 (недобор)")).toBeTruthy();
   });
 
+  it("links КД from ERP, shows old Drive links as archive and detaches from ERP", async () => {
+    const withKd = { ...card, assemblies: [{ ...card.assemblies[0], kd: [
+      { id: "d1", index: "КБ1", name: "708К.4КБ1 — Чертёж.pdf", size: 13, stored: true, url: null, uploaded_at: "2026-09-29T10:00:00", who: "Технолог" },
+      { id: "d0", index: "КБ1", name: "708К.4КБ1 — Старый.pdf", size: null, stored: false, url: "https://drive.google.com/file/d/f-old/view", uploaded_at: "2026-09-29T09:00:00", who: "Технолог" },
+    ] }] };
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(withKd);
+      if (url === "/api/techcards/kitsets/708К.4/documents/d1") return json({ res: { deleted: 1 } });
+      return base(input, init);
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    expect((await screen.findByRole("link", { name: "Чертёж.pdf" })).getAttribute("href"))
+      .toBe("/api/techcards/kitsets/708%D0%9A.4/documents/d1");
+    expect(screen.getByRole("link", { name: "Старый.pdf" }).getAttribute("href")).toBe("https://drive.google.com/file/d/f-old/view");
+    expect(screen.getByText("на Диске (архив)")).toBeTruthy();
+    fireEvent.click(screen.getAllByTitle("Отвязать")[0]);
+    expect(confirm).toHaveBeenCalledWith("Отвязать КД? Файл и строка вложения удалятся из ERP.");
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/techcards/kitsets/708%D0%9A.4/documents/d1", expect.objectContaining({ method: "DELETE" })));
+  });
+
   it("mirrors the server batch formula and delete summary", () => {
     expect(kitBatch("1,5", "10", "5")).toBe(15.75);
     expect(kitBatch("", "10", "5")).toBe(0);

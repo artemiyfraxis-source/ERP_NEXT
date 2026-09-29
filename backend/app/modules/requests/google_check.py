@@ -1,7 +1,7 @@
 """Read-only check of the Google wiring the server runs with: ``python -m app.modules.requests.google_check``.
 
-Uses the same environment and adapters as the app (`reader_from_env`, `kd_drive_from_env`): signs in, reads the
-titles of the SUPPLYMAP spreadsheets and lists the sub-folders of the КД root. Writes nothing to Google. Prints
+Uses the same environment and adapter as the app (`reader_from_env`): signs in and reads the titles of the
+SUPPLYMAP spreadsheets. Writes nothing to Google (КД lives in the ERP database since 29.09). Prints
 one line per check and never the key; exit code 1 when a check fails. The GitHub workflow
 `google-access.yml` runs it with the repository secrets — the same values a server deploy will get.
 """
@@ -14,7 +14,6 @@ import sys
 from urllib.parse import quote
 
 from .application import CalcSheetError
-from .google_drive import FOLDER_ENV_VAR, OAUTH_ENV_VAR, DriveError, kd_drive_from_env
 from .google_sheets import ENV_VAR, SHEETS_API, reader_from_env
 
 # SUPPLYMAP Config.gs: Запросы, Лист закупки, Лист ожидания. Only titles are read.
@@ -44,29 +43,11 @@ def check_sheets(extra: list[str]) -> list[tuple[bool, str]]:
     return results
 
 
-def check_drive() -> list[tuple[bool, str]]:
-    folder = os.getenv(FOLDER_ENV_VAR, "").strip()
-    if not folder:
-        return [(False, f"{FOLDER_ENV_VAR} не задан — КД на Диск не ложится")]
-    try:
-        drive = kd_drive_from_env()
-        count = len(drive._folders(drive.root_folder_id))
-    except DriveError as error:
-        return [(False, f"папка КД {folder}: {error}")]
-    results = [(True, f"папка КД {folder}: {drive.account.client_email} видит {count} папок проектов")]
-    if not os.getenv(OAUTH_ENV_VAR, "").strip():
-        results.append((False, (
-            f"{OAUTH_ENV_VAR} не задан — сервисный аккаунт видит «Мой диск», но записать туда файл не может "
-            "(нет своей квоты): вложение КД ответит ошибкой. См. README, «КД на Google Диске»."
-        )))
-    return results
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Проверка доступа ERP к Google (только чтение).")
     parser.add_argument("--sheet", action="append", default=[], help="ещё одна таблица (ID) для проверки чтения")
     args = parser.parse_args(argv)
-    results = check_sheets(args.sheet) + check_drive()
+    results = check_sheets(args.sheet)
     for ok, text in results:
         print(("OK   " if ok else "FAIL ") + text)
     return 0 if all(ok for ok, _ in results) else 1
