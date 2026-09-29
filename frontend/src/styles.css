@@ -883,3 +883,12 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .lot-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .lot-card .stock-actions { grid-template-columns: 1fr; gap: 10px; }
 .lot-card:has(.stock-actions) { grid-column: 1 / -1; }
+
+/* Проекты как в SUPPLYMAP: плотная сетка карточек, фильтры в одну строку. */
+.kit-filters label { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+.kit-filters select { width: auto; }
+.kit-tiles { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.kit-tiles .kit-tile { min-height: 0; padding: 12px 14px; }
+.kit-tiles .tile-body { gap: 4px; }
+.kit-tiles .t-h { font-size: 15px; }
+.kit-tiles .t-sub { font-size: 12px; }
