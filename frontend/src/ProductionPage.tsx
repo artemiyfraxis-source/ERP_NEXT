@@ -21,7 +21,7 @@ import {
   type ProductionTask,
   type ProductionWorkSession,
 } from "./api";
-import { GanttWeekNav, ProductionGantt, type GanttRow } from "./ProductionGantt";
+import { Gantt, type GanttRow } from "./Gantt";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
@@ -369,11 +369,6 @@ function parseDate(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function deadlineEnd(value: string | null) {
-  const day = parseDate(value);
-  return day ? new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1) : null;
-}
-
 // Гант заданий (prodRenderTasks_): полоса план-старт..финиш, красная метка дедлайна, «позже дедлайна», «частично назначено».
 function TasksGantt({ tasks, holidays, week, setWeek, open }: {
   tasks: ProductionTask[];
@@ -383,24 +378,22 @@ function TasksGantt({ tasks, holidays, week, setWeek, open }: {
   open: (taskId: string) => void;
 }) {
   const rows: GanttRow[] = tasks.map((task) => {
-    const finish = parseDate(task.planned_finish);
-    const due = deadlineEnd(task.deadline);
-    const late = Boolean(finish && due && finish > due);
     const cancelled = task.status === "Отменено";
     return {
       key: task.id,
-      className: cancelled ? "pg-dim" : "",
+      dim: cancelled,
       onClick: () => open(task.id),
-      label: <><b>{task.number}</b> {task.item} <span className="pg-q">× {task.quantity}</span><div className="pg-s">{cancelled ? "отменено" : `назначено ${task.assigned} из ${task.operations.length}`}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{late ? " · позже дедлайна" : ""}</div></>,
+      label: <><b>{task.number}</b> {task.item} <span className="pg-q">× {task.quantity}</span></>,
+      sublabel: `${cancelled ? "отменено" : `назначено ${task.assigned} из ${task.operations.length}`}${task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}`,
       bars: [{
-        from: parseDate(task.planned_start), to: finish, text: task.item,
-        tone: `${late ? "late" : ""}${task.assigned < task.operations.length ? " part" : ""}`,
-        title: `${task.number}: ${formatDate(task.planned_start)} – ${formatDate(task.planned_finish)}${late ? " · позже дедлайна" : ""}`,
+        start: task.planned_start, finish: task.planned_finish, text: task.item,
+        tone: task.assigned < task.operations.length ? "partial" : "default",
+        title: `${task.number}: ${formatDate(task.planned_start)} – ${formatDate(task.planned_finish)}`,
       }],
-      marks: due ? [due] : [],
+      deadline: task.deadline,
     };
   });
-  return <div className="panel production-gantt"><GanttWeekNav week={week} setWeek={setWeek} /><ProductionGantt rows={rows} labelHead="Задание" week={week} holidays={holidays} /></div>;
+  return <div className="panel production-gantt"><Gantt rows={rows} labelHead="Задание" week={week} onWeekChange={setWeek} holidays={holidays} /></div>;
 }
 
 function factText(task: ProductionTask, operation: ProductionOperation) {
@@ -434,9 +427,10 @@ function TaskDetail({ task, tasks, operators, skills, holidays, week, setWeek, c
   const rows: GanttRow[] = task.operations.map((item) => ({
     key: item.id,
     onClick: edit ? () => setOperationId(item.id) : undefined,
-    label: <><b>{item.position}</b> {item.stage}{item.code ? <span className="pg-q"> {item.code}</span> : null}<div className="pg-s">{item.operator_ids.length ? item.operator_ids.map(nameOf).join(", ") : "не назначено"} · норма {hours(item.norm_seconds)}</div><div className="pg-s">{factText(task, item)}{item.state ? ` · ${item.state}` : ""}</div></>,
+    label: <><b>{item.position}</b> {item.stage}{item.code ? <span className="pg-q"> {item.code}</span> : null}</>,
+    sublabel: <>{item.operator_ids.length ? item.operator_ids.map(nameOf).join(", ") : "не назначено"} · норма {hours(item.norm_seconds)}<div>{factText(task, item)}{item.state ? ` · ${item.state}` : ""}</div></>,
     bars: [{
-      from: parseDate(item.planned_start), to: parseDate(item.planned_finish), tone: "op",
+      start: item.planned_start, finish: item.planned_finish,
       title: `${formatDate(item.planned_start)} – ${formatDate(item.planned_finish)}`,
       text: item.operator_ids.map((id) => nameOf(id).split(" ")[0]).join(", "),
     }],
@@ -456,8 +450,7 @@ function TaskDetail({ task, tasks, operators, skills, holidays, week, setWeek, c
       {edit && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
       <button className="secondary small" disabled={Boolean(busy)} onClick={toggleCancel}>{cancelled ? "↩ Вернуть в работу" : "⛔ Отменить задание"}</button>
     </div>}
-    <GanttWeekNav week={week} setWeek={setWeek} />
-    <ProductionGantt rows={rows} labelHead="Операция" week={week} holidays={holidays} />
+    <Gantt rows={rows} labelHead="Операция" week={week} onWeekChange={setWeek} holidays={holidays} />
     {operation && edit && <AssignCard
       task={task} operation={operation} tasks={tasks} operators={operators} skills={skills}
       holidays={holidays} week={week} setWeek={setWeek} busy={Boolean(busy)} mutate={mutate}
@@ -521,17 +514,17 @@ function AssignCard({ task, operation, tasks, operators, skills, holidays, week,
   for (const operator of operators) {
     if (operator.site !== site) {
       site = operator.site;
-      rows.push({ key: `site:${site}`, site: true, className: "pg-site", label: site || "Без площадки" });
+      rows.push({ key: `site:${site}`, label: <b>{site || "Без площадки"}</b>, bars: [] });
     }
     const bars = live.flatMap((item) => item.operations
       .filter((other) => !(item.id === task.id && other.id === operation.id) && other.operator_ids.includes(operator.id))
       .map((other) => ({
-        from: parseDate(other.planned_start), to: parseDate(other.planned_finish), tone: "busy",
+        start: other.planned_start, finish: other.planned_finish, tone: "busy" as const,
         text: `${item.number} · ${other.position}`,
         title: `${item.number} · этап ${other.position} ${other.stage}: ${formatDate(other.planned_start)} – ${formatDate(other.planned_finish)}`,
       })));
     if (selected.includes(operator.id) && preview?.start) {
-      bars.push({ from: parseDate(preview.start), to: parseDate(preview.finish), tone: "new", text: "этот этап", title: `${formatDate(preview.start)} – ${formatDate(preview.finish)}` });
+      bars.push({ start: preview.start, finish: preview.finish, tone: "new", text: "этот этап", title: `${formatDate(preview.start)} – ${formatDate(preview.finish)}` });
     }
     rows.push({
       key: operator.id,
@@ -543,8 +536,7 @@ function AssignCard({ task, operation, tasks, operators, skills, holidays, week,
   return <div className="panel assign-card">
     <div className="manual-stock-head"><div><h2>{task.number} · этап {operation.position} · {operation.stage}</h2><small>{task.item} × {task.quantity} · норма {hours(operation.norm_seconds)} на одного{operation.description ? ` · ${operation.description}` : ""}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
     <div className="pa-ctl"><label>Плановый старт<input aria-label={`Старт этапа ${operation.position}`} type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label><small>пусто — первое свободное время выбранных операторов</small></div>
-    <GanttWeekNav week={week} setWeek={setWeek} />
-    <ProductionGantt rows={rows} labelHead="Оператор" week={week} holidays={holidays} />
+    <Gantt rows={rows} labelHead="Оператор" week={week} onWeekChange={setWeek} holidays={holidays} />
     <div className={`pa-plan${planError ? " err" : ""}`} role="status">
       {planError || (!selected.length
         ? `Операторы не выбраны${operation.operator_ids.length ? " — «Назначить» снимет назначение." : "."}`
