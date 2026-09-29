@@ -554,6 +554,7 @@ export interface ProductionOperator {
   id: string;
   name: string;
   site: string;
+  department?: string;
 }
 
 export interface ProductionOperation {
