@@ -68,10 +68,10 @@ it("shows the versioned technology snapshot as a table of its own columns", asyn
       },
       records: [{
         id: "20000000-0000-0000-0000-000000000001",
-        tab: "op",
+        tab: "ter",
         display_text: "Обжим контакта",
-        source_sheet: "БД.ОП",
-        fields: { opNumber: "ОП-01" },
+        source_sheet: "БД.ТЕР",
+        fields: { terArticle: "ОП-01" },
       }],
     });
     if (path === "/api/references/bases") return json({ bases: [] });
@@ -81,8 +81,9 @@ it("shows the versioned technology snapshot as a table of its own columns", asyn
   render(<ReferencesPage principal={admin} />);
 
   expect(await screen.findByText("ОП-01")).toBeInTheDocument();
-  expect(screen.getByText(/Схема v14/)).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Номер" })).toBeInTheDocument();
+  expect(screen.queryByText(/Схема v14/)).toBeNull(); // the one-time import line is gone (owner 29.09.2026)
+  expect(screen.getByRole("columnheader", { name: "Артикул контакта" })).toBeInTheDocument();
+  for (const gone of ["Операции", "Оборудование", "Провода", "Материалы"]) expect(screen.queryByRole("button", { name: gone })).toBeNull();
 });
 
 
@@ -102,7 +103,7 @@ it("edits a technology row with the old value and hides editing for non-admins",
   });
 
   const { unmount } = render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Провода" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Терминалы" }));
   fireEvent.click(await screen.findByRole("button", { name: "Править" }));
   fireEvent.change(screen.getByLabelText("Поле Сечение"), { target: { value: "0,5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
@@ -133,7 +134,7 @@ it("offers the create form on an empty tab from the known column schema", async 
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Материалы" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Коаксиал: разъёмы" }));
   const add = await screen.findByRole("button", { name: "+ Запись" });
   await waitFor(() => expect(add).toBeEnabled());
   fireEvent.click(add);
@@ -141,7 +142,7 @@ it("offers the create form on an empty tab from the known column schema", async 
   expect(screen.getByLabelText("Поле Группа")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
 
-  await waitFor(() => expect(created).toEqual({ tab: "mat", fields: { Наименование: "Трубка", Группа: "" } }));
+  await waitFor(() => expect(created).toEqual({ tab: "coax", fields: { Наименование: "Трубка", Группа: "" } }));
 });
 
 it("shows the СПР.КАБ tables as read-only grids", async () => {
@@ -178,7 +179,7 @@ it("shows record counts on the tabs and opens a base from its tab", async () => 
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path === "/api/references/bases") return json({ bases: [
-      { id: "prov", label: "БД.ПРОВ — провода", editable: true, icon: "🧵", sub: "марки · сечения", count: 42 },
+      { id: "coax", label: "БД.КОАКС — коаксиал", editable: true, icon: "📡", sub: "разделка", count: 42 },
     ] });
     if (path.startsWith("/api/references/tech-operations?")) {
       opened.push(path);
@@ -188,11 +189,11 @@ it("shows record counts on the tabs and opens a base from its tab", async () => 
   });
 
   render(<ReferencesPage principal={admin} />);
-  const prov = await screen.findByRole("button", { name: "Провода" });
+  const prov = await screen.findByRole("button", { name: "Коаксиал: разъёмы" });
   await waitFor(() => expect(prov).toHaveTextContent("42"));
   expect(screen.queryByRole("button", { name: "Шаблоны техкарт" })).toBeNull(); // no erptctpl grant
   fireEvent.click(prov);
-  await waitFor(() => expect(opened.some((path) => path.includes("tab=prov"))).toBe(true));
+  await waitFor(() => expect(opened.some((path) => path.includes("tab=coax"))).toBe(true));
 });
 
 it("opens the templates tab by its own key without the reference book (ID-3)", async () => {
