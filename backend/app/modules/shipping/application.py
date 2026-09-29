@@ -20,12 +20,16 @@ from app.shared.notifications import (
 
 from .domain import (
     DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
-    ShippingValidationError, UpdType, check_boxes, effective_address, packed_by_index, plan_project_queue,
+    ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index, plan_project_queue,
 )
 
 
 class ConcurrentShippingUpdate(RuntimeError):
     pass
+
+
+# SUPPLYMAP ограничения не задаёт (Drive принимает что угодно); ERP держит файл в базе — 20 МБ.
+UPD_FILE_LIMIT = 20 * 1024 * 1024
 
 
 class FinishedGoodsRepository(Protocol):
@@ -57,7 +61,13 @@ class AppendOnlyRepository(Protocol):
     def add(self, item) -> None: ...
 
 
+class UpdFileRepository(Protocol):
+    def add(self, stored: StoredFile, content: bytes) -> None: ...
+    def get(self, file_id: UUID) -> tuple[StoredFile, bytes] | None: ...
+
+
 class UnitOfWork(Protocol):
+    files: UpdFileRepository
     goods: FinishedGoodsRepository
     shipments: ShipmentRepository
     addressees: ProjectAddresseeRepository
@@ -176,7 +186,7 @@ class UnpickCommand(ShipmentCommand):
 
 @dataclass(frozen=True)
 class UpdateDocumentsCommand(ShipmentCommand):
-    upd_type: UpdType
+    upd_type: UpdType | None
     upd_number: str
     upd_date: date | None
     upd_url: str
@@ -334,10 +344,6 @@ def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment
         )
         if not address.shipping_point:
             raise ShippingValidationError("Укажите точку отгрузки в заявке или в карточке проекта")
-        if address.terms is None:
-            raise ShippingValidationError("Укажите условия доставки в заявке или в карточке проекта")
-        if address.upd_type is None:
-            raise ShippingValidationError("Укажите тип УПД в заявке или в карточке проекта")
         shipment = Shipment.create(
             number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
             customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
@@ -498,6 +504,45 @@ def _notify_documents(before: Shipment, after: Shipment, now: datetime, uow: Uni
             reference=after.number,
             roles=(STOREKEEPER_ROLE,),
         ))
+
+
+@dataclass(frozen=True)
+class AttachUpdCommand(ShipmentCommand):
+    file_name: str
+    content_type: str
+    content: bytes
+
+
+def upd_file_url(file_id: UUID) -> str:
+    return f"/api/shipping/files/{file_id}"
+
+
+def attach_upd_file(command: AttachUpdCommand, uow: UnitOfWork) -> Shipment:
+    """`shipUpdAttach_`: файл кладётся в хранилище, ссылка встаёт в отправку, кладовщикам — уведомление."""
+    if not command.content:
+        raise ShippingValidationError("Файл не передан.")
+    if len(command.content) > UPD_FILE_LIMIT:
+        raise ShippingValidationError("Файл УПД больше 20 МБ.")
+    with uow:
+        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        original = str(command.file_name or "").strip()
+        extension = original[original.rfind("."):] if "." in original else ""
+        project = shipment.lines[0].project if shipment.lines else ""
+        name = " ".join(part for part in (
+            "УПД", f"№ {shipment.upd_number}" if shipment.upd_number else "", project, shipment.number,
+        ) if part) + extension
+        stored = StoredFile(
+            id=uuid4(), shipment_id=shipment.id, file_name=name,
+            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            size=len(command.content), uploaded_by=command.actor.name, uploaded_at=command.now,
+        )
+        updated = shipment.attach_upd(upd_file_url(stored.id))
+        uow.files.add(stored, command.content)
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.upd_attached", command.actor, command.now, {"file_id": str(stored.id), "name": name}, uow)
+        _notify_documents(shipment, updated, command.now, uow)
+        uow.commit()
+        return updated
 
 
 def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipment:

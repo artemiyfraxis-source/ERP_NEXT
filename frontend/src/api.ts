@@ -816,10 +816,10 @@ export interface Shipment {
   shipping_point: string;
   contact: string;
   phone: string;
-  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК";
+  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
   carrier: string;
   deadline: string | null;
-  upd_type: "ЭДО" | "БУМАГА";
+  upd_type: "ЭДО" | "БУМАГА" | null;
   upd_number: string;
   upd_date: string | null;
   upd_url: string;
@@ -1804,6 +1804,10 @@ export const shippingApi = {
   }),
   print: (shipmentId: string, document: "pl" | "dn") => api<{ sheets: PrintSheet[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
   addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
+  /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
+  uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
+    method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
+  }),
   saveAddressee: (payload: Record<string, unknown>) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-addressee", {
     method: "PUT", body: JSON.stringify(payload),
   }),

@@ -37,6 +37,22 @@ def test_requested_quantity_changes_after_creation_but_never_below_picked(shippi
     assert changed.json()["shipment"]["lines"][0]["shortage"] == "2"
 
 
+def test_requested_quantity_changes_on_cancelled_shipment_without_moving_stock(shipping_api):
+    client = shipping_api
+    good = _stocked(client)
+    shipment = _shipment(client, [{"good_id": good["id"], "quantity": "4"}], no_docs=True)
+    cancelled = client.post(f"/api/shipping/shipments/{shipment['id']}/cancel", json={"version": shipment["version"]}).json()["shipment"]
+    line = cancelled["lines"][0]
+    changed = client.put(f"/api/shipping/shipments/{shipment['id']}/lines/{line['id']}", json={"version": cancelled["version"], "quantity": "9"})
+    goods = client.get("/api/shipping/goods").json()["goods"]
+
+    # shipItemSetQty_ не смотрит на статус; склад ГП от «Заказано» не зависит.
+    assert changed.status_code == 200
+    assert changed.json()["shipment"]["status"] == "Отменена"
+    assert changed.json()["shipment"]["lines"][0]["requested"] == "9"
+    assert goods[0]["remaining"] == "6"
+
+
 def test_ship_closes_at_once_when_upd_is_filled_and_stays_shipped_otherwise(shipping_api):
     client = shipping_api
     good = _stocked(client, accepted="10")
@@ -112,7 +128,7 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     empty = _stocked(client, item_index="КБ2", accepted="")
     no_point = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "4"}]})
     client.put("/api/shipping/project-addressee", json={
-        "project": "591К.3", "shipping_point": "Склад заказчика", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
+        "project": "591К.3", "shipping_point": "Склад заказчика",
     })
     nothing = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": empty["id"], "quantity": "4"}]})
     packed = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "9"}]})
@@ -123,6 +139,8 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     shipment = packed.json()["shipment"]
     assert shipment["status"] == "Собрана" and shipment["pl_number"] == ""
     assert shipment["receiver"] == "Заказчик" and shipment["shipping_point"] == "Склад заказчика"
+    # shipPackProject_: условий доставки и типа УПД в карточке нет — отправка встаёт с пустыми.
+    assert (shipment["terms"], shipment["upd_type"]) == (None, None)
     assert shipment["lines"][0]["requested"] == "6" and shipment["lines"][0]["picked"] == "6"
     assert [row["project"] for row in addressees] == ["591К.3"]
     assert addressees[0]["po"] == ""
