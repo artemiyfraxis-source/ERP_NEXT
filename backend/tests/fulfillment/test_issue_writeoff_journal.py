@@ -1,6 +1,6 @@
 """SK-13: handing out a kitting request writes one СПИСАНИЕ row per issued position (Issue.gs:475-502)."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -15,6 +15,7 @@ from app.modules.fulfillment.application import (
     MarkReadyCommand,
     VersionedFulfillmentCommand,
     bind_lot,
+    complete_kit,
     create_fulfillment,
     issue_fulfillment,
     mark_ready,
@@ -76,7 +77,7 @@ def ready_request(factory):
         uow.warehouse.add(lot_b)
         uow.commit()
     request = create_fulfillment(CreateFulfillmentCommand(
-        idempotency_key="kitset:SK-13", purpose="591К.3 / КБ-1", deadline=None,
+        idempotency_key="kitset:SK-13", purpose="591К.3 / КБ-1", deadline=date(2026, 10, 1),
         lines=(
             FulfillmentLine.create(article="КД-001", name="Разъём", unit="шт", requirement=Decimal("8")),
             FulfillmentLine.create(article="КД-002", name="Гайка", unit="шт", requirement=Decimal("3")),
@@ -86,6 +87,7 @@ def ready_request(factory):
     request = bind(factory, request, open_line(request, "Разъём"), lot_a)
     request = bind(factory, request, open_line(request, "Разъём"), lot_b)
     request = bind(factory, request, open_line(request, "Гайка"), lot_b)
+    request = complete_kit(VersionedFulfillmentCommand(request.id, request.version, ACTOR, NOW), factory())
     request = mark_ready(MarkReadyCommand(
         request_id=request.id, expected_version=request.version, handout_location="Полка выдачи 1",
         actor=ACTOR, now=NOW,

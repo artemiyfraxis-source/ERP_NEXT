@@ -137,6 +137,13 @@ fulfillment_edit_principal = require_section(
     "edit",
     roles=frozenset({"engineer", "receiver", "admin"}),
 )
+# FF-5: SUPPLYMAP portalIssueDelete — section `issues` on edit + portalRealAdmin_; ERP has no admin mode, so the role.
+fulfillment_admin_principal = require_section(
+    "fulfillment",
+    "edit",
+    roles=frozenset({"admin"}),
+    detail="Удалять заявки может только администратор.",
+)
 fulfillment_handout_principal = require_section(
     "handout",
     "edit",

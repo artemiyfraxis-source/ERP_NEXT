@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -40,7 +40,7 @@ def request(*lines: FulfillmentLine) -> FulfillmentRequest:
         source_fingerprint="fingerprint",
         requester="Технолог",
         purpose="591К.3 / КБ-1",
-        deadline=None,
+        deadline=date(2026, 10, 1),
         lines=tuple(lines),
         created_at=datetime(2026, 9, 22, 8, 0),
     )
@@ -93,8 +93,10 @@ def test_unbinding_merges_rows_created_by_partial_lot():
 def test_complete_kit_requires_handout_place_and_is_issued_whole():
     original = request(line("3"), line("2"))
     first = original.bind_line(original.lines[0].id, lot(1), Decimal("3"))
-    complete = first.bind_line(first.lines[1].id, lot(2), Decimal("2"))
+    bound = first.bind_line(first.lines[1].id, lot(2), Decimal("2"))
 
+    assert bound.status is FulfillmentStatus.UNDERFILLED
+    complete = bound.mark_complete()
     assert complete.status is FulfillmentStatus.COMPLETE
     with pytest.raises(FulfillmentValidationError, match="место выдачи"):
         complete.mark_ready("")
@@ -110,7 +112,7 @@ def test_incomplete_or_issued_request_cannot_bypass_gates():
     original = request(line("3"))
     with pytest.raises(FulfillmentValidationError, match="не укомплектован"):
         original.mark_ready("Полка 1")
-    complete = original.bind_line(original.lines[0].id, lot(), Decimal("3"))
+    complete = original.bind_line(original.lines[0].id, lot(), Decimal("3")).mark_complete()
     issued = complete.mark_ready("Полка 1").mark_issued()
     with pytest.raises(FulfillmentValidationError, match="возврат"):
         issued.cancel()
@@ -118,7 +120,7 @@ def test_incomplete_or_issued_request_cannot_bypass_gates():
 
 def test_return_records_good_defects_and_consumed_without_exceeding_issued():
     original = request(line("5"))
-    issued = original.bind_line(original.lines[0].id, lot(), Decimal("5")).mark_ready("Полка 1").mark_issued()
+    issued = original.bind_line(original.lines[0].id, lot(), Decimal("5")).mark_complete().mark_ready("Полка 1").mark_issued()
     with pytest.raises(FulfillmentValidationError, match="место возврата"):
         issued.mark_returned("")
     returned = issued.mark_returned("Стеллаж возврата")
@@ -135,3 +137,53 @@ def test_return_records_good_defects_and_consumed_without_exceeding_issued():
         returned.complete_return({
             returned.lines[0].id: (Decimal("4"), Decimal("2"), Decimal("0")),
         })
+
+
+def test_deadline_is_required():
+    with pytest.raises(FulfillmentValidationError, match="Укажи дедлайн"):
+        FulfillmentRequest.create(
+            number="REQ-26-000002", source_idempotency_key="k", source_fingerprint="f",
+            requester="Технолог", purpose="591К.3", deadline=None, lines=(line(),),
+            created_at=datetime(2026, 9, 22, 8, 0),
+        )
+
+
+def test_first_bind_moves_new_to_underfilled_even_when_the_only_line_is_closed():
+    original = request(line("3"))
+    bound = original.bind_line(original.lines[0].id, lot(), Decimal("3"))
+
+    assert bound.status is FulfillmentStatus.UNDERFILLED
+    assert bound.fully_reserved
+
+
+def test_complete_is_manual_and_gated_by_every_line_closed():
+    original = request(line("3"), replace(line("2"), name="Провод"))
+    first = original.bind_line(original.lines[0].id, lot(1), Decimal("3"))
+    with pytest.raises(FulfillmentValidationError, match="не закрыто позиций — 1 \\(Провод\\)"):
+        first.mark_complete()
+    complete = first.bind_line(first.lines[1].id, lot(2), Decimal("2")).mark_complete()
+    assert complete.status is FulfillmentStatus.COMPLETE
+    released = complete.unbind_line(complete.lines[0].id)
+    assert released.status is FulfillmentStatus.UNDERFILLED
+
+
+def test_stage_dates_are_set_once_on_the_first_hit():
+    t1, t2, t3, t4 = (datetime(2026, 9, 22, hour, 0) for hour in (9, 10, 11, 12))
+    original = request(line("3"))
+    assert original.stamped(t1).at_work is None
+    bound = original.bind_line(original.lines[0].id, lot(), Decimal("3")).stamped(t1)
+    complete = bound.mark_complete().stamped(t2)
+    ready = complete.mark_ready("1A1").stamped(t3)
+    issued = ready.mark_issued().stamped(t4)
+    closed = issued.close_issued().stamped(t4)
+
+    assert (closed.at_work, closed.at_picked, closed.at_issued, closed.at_closed) == (t1, t3, t4, t4)
+    assert closed.at_returned is None
+    assert closed.status is FulfillmentStatus.DONE
+    assert closed.lines[0].consumed == Decimal("3")
+
+
+def test_close_without_return_only_from_issued():
+    original = request(line("3"))
+    with pytest.raises(FulfillmentValidationError, match="выданный"):
+        original.close_issued()
