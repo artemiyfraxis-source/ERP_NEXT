@@ -298,7 +298,7 @@ def test_cancel_retry_is_read_only():
     assert [event.event_type for event in uow.audit.items].count("fulfillment.cancelled") == 1
 
 
-def test_lot_unit_must_match_requirement_unit():
+def test_a_lot_in_other_units_binds_and_gives_the_line_its_unit():
     warehouse_lot = stock("5", "0000003")
     uow = Uow(warehouse_lot)
     actor = Actor(name="Технолог", department="КБ")
@@ -315,20 +315,21 @@ def test_lot_unit_must_match_requirement_unit():
         uow,
     )
 
-    with pytest.raises(FulfillmentValidationError, match="Единица партии"):
-        bind_lot(
-            BindLotCommand(
-                request_id=created.id,
-                expected_version=created.version,
-                line_id=created.lines[0].id,
-                lot_id=warehouse_lot.id,
-                actor=actor,
-                now=now,
-            ),
-            uow,
-        )
+    bound = bind_lot(
+        BindLotCommand(
+            request_id=created.id,
+            expected_version=created.version,
+            line_id=created.lines[0].id,
+            lot_id=warehouse_lot.id,
+            actor=actor,
+            now=now,
+        ),
+        uow,
+    )
 
-    assert uow.warehouse.get(warehouse_lot.id).reserved == Decimal("0")
+    # issueAttachLot_: no unit check; the bound row takes the lot's ЕД.ИЗМ.
+    assert uow.warehouse.get(warehouse_lot.id).reserved == Decimal("5")
+    assert bound.lines[0].unit == warehouse_lot.unit
 
 
 def test_print_sheet_marks_shortage_and_return_sheet_lists_only_issued_lines():

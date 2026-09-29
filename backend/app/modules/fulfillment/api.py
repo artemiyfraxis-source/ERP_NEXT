@@ -215,15 +215,12 @@ def available_lots(
     _principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
     q: Annotated[str, Query(max_length=255)] = "",
-    unit: Annotated[str, Query(max_length=32)] = "",
 ) -> dict:
     with uow_factory() as uow:
         lots = uow.warehouse.list(limit=1000, query=q, include_zero=False)
-    normalized_unit = unit.strip().casefold()
     candidates = [
         lot for lot in lots
-        if lot.available > 0
-        and (not normalized_unit or lot.unit.strip().casefold() == normalized_unit)
+        if lot.available > 0  # portalIssueStock: every lot with a balance, whatever its unit
     ][:200]
     return {"lots": [{
         "id": str(lot.id),

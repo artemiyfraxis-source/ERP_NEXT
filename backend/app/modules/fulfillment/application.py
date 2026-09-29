@@ -227,10 +227,7 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
         lot = uow.warehouse.get(command.lot_id)
         if lot is None:
             raise KeyError(f"Warehouse lot not found: {command.lot_id}")
-        if line.unit.strip().casefold() != lot.unit.strip().casefold():
-            raise FulfillmentValidationError(
-                f"Единица партии {lot.unit} не совпадает с потребностью {line.unit}"
-            )
+        # issueAttachLot_ does not compare units: any lot with a balance can be bound, its ЕД.ИЗМ goes to the line.
         quantity = min(line.requirement, lot.available)
         if quantity <= 0:
             raise FulfillmentValidationError("У выбранной партии нет доступного остатка")
@@ -241,7 +238,7 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
             package=lot.package,
             storage_location=lot.storage_location,
         )
-        updated = request.bind_line(line.id, snapshot, quantity).stamped(command.now)
+        updated = request.bind_line(line.id, snapshot, quantity, lot.unit).stamped(command.now)
         uow.warehouse.add(lot.reserve(quantity))
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity)}, uow)

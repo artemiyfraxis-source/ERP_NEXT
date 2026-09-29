@@ -102,6 +102,7 @@ class FulfillmentLine:
         self,
         lot: LotSnapshot,
         quantity: Decimal,
+        unit: str | None = None,
     ) -> tuple[FulfillmentLine, FulfillmentLine | None]:
         if self.issued > 0:
             raise FulfillmentValidationError("Выданную позицию нельзя перепривязать")
@@ -110,7 +111,9 @@ class FulfillmentLine:
         amount = _positive(quantity, "Резерв")
         if amount > self.requirement:
             raise FulfillmentValidationError("Резерв не может превышать потребность")
-        bound = replace(self, requirement=amount, reserved=amount, lot=lot)
+        # issueAttachLot_: the bound row takes the lot's ЕД.ИЗМ; the remainder row keeps the position's own unit.
+        lot_unit = str(unit or "").strip()
+        bound = replace(self, requirement=amount, reserved=amount, lot=lot, unit=lot_unit or self.unit)
         remainder = None
         if amount < self.requirement:
             remainder = replace(
@@ -247,6 +250,7 @@ class FulfillmentRequest:
         line_id: UUID,
         lot: LotSnapshot,
         quantity: Decimal,
+        unit: str | None = None,
     ) -> FulfillmentRequest:
         self._require_editable()
         updated: list[FulfillmentLine] = []
@@ -256,7 +260,7 @@ class FulfillmentRequest:
                 updated.append(line)
                 continue
             found = True
-            bound, remainder = line.bind(lot, quantity)
+            bound, remainder = line.bind(lot, quantity, unit)
             updated.append(bound)
             if remainder is not None:
                 updated.append(remainder)
