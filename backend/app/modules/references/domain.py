@@ -109,11 +109,13 @@ class TechOperationRecord:
     source_sheet: str
     sort_key: str
     fields: dict[str, str]
+    mirror_key: str = ""  # identity of the mirror row this record came from ('' — created in ERP); survives ERP edits
+    edited_in_erp: bool = False  # edited/created in ERP: a mirror reload never overwrites or deletes it
 
     @classmethod
     def create(
         cls, *, tab: TechOperationTab, display_text: str, search_text: str,
-        source_sheet: str, sort_key: str, fields: dict[str, str],
+        source_sheet: str, sort_key: str, fields: dict[str, str], mirror_key: str = "", edited_in_erp: bool = False,
     ) -> TechOperationRecord:
         display = str(display_text or "").strip()
         if not display:
@@ -122,7 +124,7 @@ class TechOperationRecord:
         search = " ".join(f"{display} {search_text or ''} {' '.join(clean_fields.values())}".casefold().split())
         return cls(
             uuid4(), tab, display, search, str(source_sheet or "").strip(),
-            str(sort_key or display).strip(), clean_fields,
+            str(sort_key or display).strip(), clean_fields, mirror_key, edited_in_erp,
         )
 
 

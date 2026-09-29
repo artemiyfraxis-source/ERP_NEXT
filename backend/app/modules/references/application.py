@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol, Sequence
@@ -23,7 +25,7 @@ class TechOperationRepository(Protocol):
     def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> Sequence[TechOperationRecord]: ...
     def get(self, record_id: UUID) -> TechOperationRecord | None: ...
     def save(self, record: TechOperationRecord) -> None: ...
-    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime) -> None: ...
+    def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]: ...
     def metadata(self) -> dict | None: ...
 
 
@@ -74,6 +76,19 @@ class ReplaceSnapshotCommand:
     now: datetime
     declared_tabs: tuple[TechOperationTab, ...] = ()
     keep_other_tabs: bool = False  # partial load (mirror ПРОВ/МАТ): every tab not in the payload stays as it is
+    preserve_erp_edits: bool = False  # mirror reload: records edited/created in ERP are neither overwritten nor deleted
+
+
+def mirror_keys(records) -> list[str]:
+    """Identity of each mirror row: hash of (tab, display, sort_key) plus the occurrence number among equal ones,
+    so twin rows get distinct stable keys. The key is stored on the record and does not change when it is edited."""
+    seen: Counter = Counter()
+    keys = []
+    for item in records:
+        base = f"{item.tab.value}\x1f{item.display_text.strip()}\x1f{str(item.sort_key or item.display_text).strip()}"
+        keys.append(hashlib.sha1(f"{base}\x1f{seen[base]}".encode("utf-8")).hexdigest())
+        seen[base] += 1
+    return keys
 
 
 def _audit(event_type: str, actor: Actor, now: datetime, details: dict, uow: UnitOfWork) -> None:
@@ -105,27 +120,34 @@ def replace_maps(command: ReplaceMapsCommand, uow: UnitOfWork) -> tuple[Referenc
 
 
 def replace_snapshot(command: ReplaceSnapshotCommand, uow: UnitOfWork) -> int:
+    return replace_snapshot_detailed(command, uow)[0]
+
+
+def replace_snapshot_detailed(command: ReplaceSnapshotCommand, uow: UnitOfWork) -> tuple[int, dict[str, int]]:
+    """(records written, {tab: mirror records skipped because they were edited in ERP})."""
     if command.schema_version != TECH_SNAPSHOT_SCHEMA_VERSION:
         raise ReferenceValidationError(
             f"Ожидается схема БД.Технология v{TECH_SNAPSHOT_SCHEMA_VERSION}"
         )
     records = tuple(TechOperationRecord.create(
         tab=item.tab, display_text=item.display_text, search_text=item.search_text,
-        source_sheet=item.source_sheet, sort_key=item.sort_key, fields=item.fields,
-    ) for item in command.records)
+        source_sheet=item.source_sheet, sort_key=item.sort_key, fields=item.fields, mirror_key=key,
+    ) for item, key in zip(command.records, mirror_keys(command.records)))
     # БД.ПРОВ / БД.МАТ are replaced only when the snapshot carries them (rows or an explicit table).
     present = {item.tab for item in command.records} | set(command.declared_tabs)
     keep_tabs = tuple(tab for tab in (tuple(TechOperationTab) if command.keep_other_tabs else SHEET_TABLE_TABS) if tab not in present)
     with uow:
-        uow.tech_operations.replace(
+        skipped = uow.tech_operations.replace(
             records, keep_tabs=keep_tabs, schema_version=command.schema_version,
             source_updated_at=command.source_updated_at, imported_at=command.now,
-        )
-        _audit("references.tech_snapshot_replaced", command.actor, command.now, {
-            "schema_version": command.schema_version, "records": len(records),
-        }, uow)
+            preserve_erp_edits=command.preserve_erp_edits,
+        ) or {}
+        details = {"schema_version": command.schema_version, "records": len(records)}
+        if command.preserve_erp_edits:
+            details["skipped_edited_in_erp"] = sum(skipped.values())
+        _audit("references.tech_snapshot_replaced", command.actor, command.now, details, uow)
         uow.commit()
-    return len(records)
+    return len(records), skipped
 
 
 @dataclass(frozen=True)
@@ -188,7 +210,7 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
             fields[edit.field] = value
         if refused:
             raise StaleRecordError("Не записано ничего — отклонено полей: " + str(len(refused)) + "; " + "; ".join(refused))
-        updated = replace(record, fields=fields, display_text=display)
+        updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
         updated = replace(updated, normalized_search=_search_text(updated))
         uow.tech_operations.save(updated)
         _audit("references.tech_record_edited", command.actor, command.now, {
@@ -208,7 +230,7 @@ def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperatio
         raise ReferenceValidationError("Заполни хотя бы одно поле")
     record = TechOperationRecord.create(
         tab=command.tab, display_text=filled[0], search_text="", source_sheet="",
-        sort_key=filled[0], fields=fields,
+        sort_key=filled[0], fields=fields, edited_in_erp=True,
     )
     with uow:
         uow.tech_operations.save(record)
