@@ -80,11 +80,11 @@ it("automatically builds and issues an electronic techcard", async () => {
   render(<TechcardsPage principal={engineer} />);
   const editor = await screen.findByLabelText("Конфигурация автоматической сборки");
   fireEvent.change(editor, { target: { value: JSON.stringify({ ops: [{ templateId: "one" }] }) } });
-  fireEvent.click(screen.getByRole("button", { name: "Собрать ЭТК автоматически" }));
-  expect(await screen.findByText("Черновик ЭТК собран")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Собрать ЭТК по JSON" }));
+  // Как SUPPLYMAP «Создать техкарты»: собранная ЭТК сразу выдана, отдельной кнопки «Выдать ЭТК» нет.
+  expect(await screen.findByText("ЭТК создана и выдана, ревизия 1")).toBeInTheDocument();
   expect(screen.getByText("Собрать")).toBeInTheDocument();
-  fireEvent.click(await screen.findByRole("button", { name: "Выдать ЭТК" }));
-  expect(await screen.findByText("ЭТК выдана, ревизия 1 зафиксирована")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).not.toBeInTheDocument();
 });
 
 it("shows the imported operation library and opens a structured template", async () => {

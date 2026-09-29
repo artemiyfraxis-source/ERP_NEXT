@@ -778,6 +778,10 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tcgen .ep-sides h3 { margin-top: 4px; }
 .tcgen .gen-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .tcgen .gen-actions .toggle-row { margin-right: auto; }
+.tcgen .gen-more { font-size: 12px; }
+.tcgen .gen-more summary { cursor: pointer; color: var(--muted-foreground); font-weight: 600; }
+.tcgen .gen-more[open] { display: grid; gap: 8px; justify-items: start; }
+.tcgen .gen-more .build-config { width: 100%; }
 
 /* Шаблоны-листы БД.ТК: каталог и сетка черновика */
 .nowrap { white-space: nowrap; }
