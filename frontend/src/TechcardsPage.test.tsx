@@ -312,10 +312,10 @@ it("groups the library by category chips with counts, catalog meta and step-text
   expect(screen.getByText("правлена 28.09")).toBeInTheDocument();
   expect(screen.getByText("нет норм")).toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText("Поиск: Шаблоны техкарт"), { target: { value: "флюсом" } });
+  fireEvent.change(screen.getByLabelText("Поиск: Операции"), { target: { value: "флюсом" } });
   expect(screen.queryByText("CUT_WIRE_auto")).not.toBeInTheDocument();
   expect(screen.getByText("SDR_TIN")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Поиск: Шаблоны техкарт"), { target: { value: "" } });
+  fireEvent.change(screen.getByLabelText("Поиск: Операции"), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Резка · 1" }));
   expect(screen.queryByText("SDR_TIN")).not.toBeInTheDocument();
 });
@@ -442,4 +442,33 @@ it("creates a new template draft, drops a draft and deletes a template sheet", a
   expect(screen.getAllByLabelText(/^Ячейка 12:/)).toHaveLength(7);
   expect(calls).toContain("DELETE /api/techcards/template-sheets/drafts/d2");
   expect(calls).toContain("DELETE /api/techcards/template-sheets/strip");
+});
+
+it("merges БД.ОП into the operation cards: op-only codes get a card and every card opens its БД.ОП row", async () => {
+  const paths: string[] = [];
+  const ops = [
+    { id: "o1", tab: "op", display_text: "Резка", source_sheet: "БД.ОП", fields: { opNumber: "CUT_WIRE_auto", opName: "Резка", tOp: "3,50", "Номер": "CUT_WIRE_auto", "Машина": "EW-05F", "Тип операции": "Погонный" } },
+    { id: "o2", tab: "op", display_text: "Лазерная маркировка", source_sheet: "БД.ОП", fields: { opNumber: "LASER_MARK", opName: "Лазерная маркировка", tOp: "12", tPrep: "60", "Номер": "LASER_MARK", "Машина": "Лазер", "Программа": "7" } },
+  ];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: ops });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "view" } }} view="templates" />);
+  expect(await screen.findByText("LASER_MARK")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Все · 3" })).toBeInTheDocument();
+  expect(screen.getByText("EW-05F · Погонный")).toBeInTheDocument();
+  expect(screen.getByText("нет шаблона ТК")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Поиск: Операции"), { target: { value: "лазер" } });
+  expect(screen.queryByText("CUT_WIRE_auto")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("LASER_MARK"));
+  expect(await screen.findByText(/Шаблона листа \(БД\.ТК\) у этой операции нет/)).toBeInTheDocument();
+  expect(screen.getByText("Программа")).toBeInTheDocument();
+  expect(screen.getByText("60 с")).toBeInTheDocument();
+  expect(paths.some((path) => path.includes("tab=op"))).toBe(true);
 });

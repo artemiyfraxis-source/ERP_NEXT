@@ -54,7 +54,7 @@ export const NAV: NavItem[] = [
   { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", block: "prod", within: "projects" },
   // «База данных» (owner, 29.09.2026): «Справочник» and «Шаблоны техкарт» are tabs of one section. Each tab keeps
   // its access key, so the card opens on either; ?section=tctemplates still lands on the templates tab.
-  { id: "references", label: "База данных", sub: "шаблоны техкарт · терминалы · коаксиал · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "prod" },
+  { id: "references", label: "База данных", sub: "операции · терминалы · коаксиал · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "prod" },
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "prod", within: "references" },
   { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", roles: ["master", "prodhead", "management", "qc", "admin"], block: "prod" },
   { id: "myops", label: "Задания", sub: "мои операции", permission: "production", roles: ["staff", "master", "admin"], block: "prod" },

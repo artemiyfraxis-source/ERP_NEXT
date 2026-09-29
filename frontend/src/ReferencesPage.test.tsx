@@ -191,7 +191,7 @@ it("shows record counts on the tabs and opens a base from its tab", async () => 
   render(<ReferencesPage principal={admin} />);
   const prov = await screen.findByRole("button", { name: "Коаксиал: разъёмы" });
   await waitFor(() => expect(prov).toHaveTextContent("42"));
-  expect(screen.queryByRole("button", { name: "Шаблоны техкарт" })).toBeNull(); // no erptctpl grant
+  expect(screen.queryByRole("button", { name: "Операции" })).toBeNull(); // no erptctpl grant
   fireEvent.click(prov);
   await waitFor(() => expect(opened.some((path) => path.includes("tab=coax"))).toBe(true));
 });
@@ -210,7 +210,7 @@ it("opens the templates tab by its own key without the reference book (ID-3)", a
   render(<ReferencesPage principal={{ ...admin, roles: ["master"], permissions: { erptctpl: "view" } }} />);
   expect(await screen.findByText("CUT_WIRE_auto")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "База данных", level: 1 })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Операции" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Терминалы" })).toBeNull();
   expect(paths).toEqual(["/api/techcards/templates"]);
 });
 

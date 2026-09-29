@@ -113,12 +113,12 @@ def test_role_map_covers_current_supplymap_roles():
 
 
 def test_installers_are_added_to_the_import(source):
-    # Монтажники (owner 2026-09-29) are not in SUPPLYMAP; the import adds them itself as staff in «Производство».
+    # Монтажники (owner 2026-09-29) are not in SUPPLYMAP; the import adds them itself as staff in «Монтаж».
     everyone = all_source_staff(source)
     installers = [person for person in everyone if person in ADDITIONAL_STAFF]
     assert len(installers) == 9
     assert {"Рыбкина Ольга", "Шилов Артем", "Пузанов Александр"} <= {person.name for person in installers}
-    assert all(person.role == "staff" and person.department == "Производство" for person in installers)
+    assert all(person.role == "staff" and person.department == "Монтаж" for person in installers)
     # They join the SUPPLYMAP directory rather than replacing it.
     assert len(everyone) == len(read_source(source)) + 9
 

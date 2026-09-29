@@ -22,6 +22,7 @@ import {
   type ProductionWorkSession,
 } from "./api";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
+import { MasterBoard } from "./MasterBoard";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
@@ -40,7 +41,9 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [showSkills, setShowSkills] = useState(false);
   const [holidays, setHolidays] = useState<string[]>([]);
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
+  const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [selectedOperationId, setSelectedOperationId] = useState("");
   const [week, setWeek] = useState(0);
   const canEdit = principal.permissions.production === "edit" && principal.roles.some((role) => ["master", "admin"].includes(role));
   const canQuality = principal.permissions.production === "edit" && principal.roles.some((role) => ["qc", "admin"].includes(role));
@@ -72,10 +75,11 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       if (!mine && canOverview) {
         // Праздники — для подсветки Ганта, компетенции — для метки допуска в карточке назначения (prodSkillTag_).
         const [calendarResult, skillResult] = await Promise.all([
-          productionApi.calendar().catch(() => ({ holidays: [] as string[] })),
+          productionApi.calendar().catch(() => ({ holidays: [] as string[], absences: [] as ProductionAbsence[] })),
           productionApi.skills().catch(() => ({ skills: [] as ProductionSkill[] })),
         ]);
         setHolidays(calendarResult.holidays);
+        setAbsences(calendarResult.absences ?? []);
         setSkills(skillResult.skills);
       }
     } catch (reason) {
@@ -128,6 +132,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && selectedTask && <TaskDetail
       key={`${selectedTask.id}:${selectedTask.version}`}
       task={selectedTask}
+      initialOperationId={selectedOperationId}
       tasks={tasks}
       operators={operators}
       skills={skills}
@@ -137,10 +142,14 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       canEdit={canEdit}
       busy={busy}
       mutate={mutate}
-      back={() => setSelectedTaskId("")}
+      back={() => { setSelectedTaskId(""); setSelectedOperationId(""); }}
     />}
-    {!mine && !selectedTask && tasks.length > 0 && <TasksGantt tasks={tasks} holidays={holidays} week={week} setWeek={setWeek} open={setSelectedTaskId} />}
-    {loaded && !tasks.length && <div className="empty">{mine ? "Назначенных операций пока нет." : `Производственных заданий пока нет.${canEdit ? " Запустите первое кнопкой выше." : ""}`}</div>}
+    {!mine && !selectedTask && loaded && canOverview && <MasterBoard
+      tasks={tasks} operators={operators} skills={skills} absences={absences}
+      canEdit={canEdit} busy={busy} mutate={mutate}
+      openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
+    />}
+    {mine && loaded && !tasks.length && <div className="empty">Назначенных операций пока нет.</div>}
   </section>;
 }
 
@@ -374,33 +383,6 @@ function parseDate(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-// Гант заданий (prodRenderTasks_): полоса план-старт..финиш, красная метка дедлайна, «позже дедлайна», «частично назначено».
-function TasksGantt({ tasks, holidays, week, setWeek, open }: {
-  tasks: ProductionTask[];
-  holidays: string[];
-  week: number;
-  setWeek: (value: number) => void;
-  open: (taskId: string) => void;
-}) {
-  const rows: GanttRow[] = tasks.map((task) => {
-    const cancelled = task.status === "Отменено";
-    return {
-      key: task.id,
-      dim: cancelled,
-      onClick: () => open(task.id),
-      label: <><b>{task.number}</b> {itemId(task)} <span className="pg-q">× {task.quantity}</span></>,
-      sublabel: `${cancelled ? "отменено" : `назначено ${task.assigned} из ${task.operations.length}`}${task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}`,
-      bars: [{
-        start: task.planned_start, finish: task.planned_finish, text: itemId(task),
-        tone: task.assigned < task.operations.length ? "partial" : "default",
-        title: `${task.number}: ${formatDate(task.planned_start)} – ${formatDate(task.planned_finish)}`,
-      }],
-      deadline: task.deadline,
-    };
-  });
-  return <div className="panel production-gantt"><Gantt rows={rows} labelHead="Задание" week={week} onWeekChange={setWeek} holidays={holidays} /></div>;
-}
-
 function factText(task: ProductionTask, operation: ProductionOperation) {
   const fact = operation.fact;
   const processed = Number(fact?.processed ?? 0);
@@ -411,8 +393,9 @@ function factText(task: ProductionTask, operation: ProductionOperation) {
 }
 
 // Задание (prodRenderTask_): Гант операций с фактом, авторасчёт, отмена; клик по операции — карточка назначения.
-function TaskDetail({ task, tasks, operators, skills, holidays, week, setWeek, canEdit, busy, mutate, back }: {
+function TaskDetail({ task, initialOperationId = "", tasks, operators, skills, holidays, week, setWeek, canEdit, busy, mutate, back }: {
   task: ProductionTask;
+  initialOperationId?: string;
   tasks: ProductionTask[];
   operators: ProductionOperator[];
   skills: ProductionSkill[];
@@ -424,7 +407,7 @@ function TaskDetail({ task, tasks, operators, skills, holidays, week, setWeek, c
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   back: () => void;
 }) {
-  const [operationId, setOperationId] = useState("");
+  const [operationId, setOperationId] = useState(initialOperationId);
   const cancelled = task.status === "Отменено";
   const edit = canEdit && !cancelled;
   const nameOf = (id: string) => operators.find((operator) => operator.id === id)?.name ?? id;
@@ -446,7 +429,7 @@ function TaskDetail({ task, tasks, operators, skills, holidays, week, setWeek, c
     void mutate(task.id, () => productionApi.cancel(task.id, task.version, !cancelled));
   }
   return <div className="panel production-card">
-    <button className="secondary small" onClick={back}>← Планирование</button>
+    <button className="secondary small" onClick={back}>← Экран мастера</button>
     <div className="procurement-title">
       <div><strong>{task.number} · {itemId(task)}{task.name ? ` · ${task.name}` : ""}</strong><small>{task.project} · кол-во {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · запущено {formatDate(task.created_at)}{cancelled ? " · отменено" : ""}{edit ? " · нажми на операцию, чтобы назначить операторов" : ""}</small></div>
       <span className="status">{task.status}</span>
