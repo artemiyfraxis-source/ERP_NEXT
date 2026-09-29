@@ -411,9 +411,10 @@ class Shipment:
         )
 
     def mark_shipped(self, day: date) -> Shipment:
-        """`shipShipped_`: груз уехал из «Собрана» или «Упакована» (`shipGateMiss_('Отгружена')`)."""
-        if self.status not in {ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
-            raise ShippingValidationError("Сначала наберите и упакуйте отгрузку")
+        """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:
+        набрана хоть одна позиция и, кроме ЭДО, приложен файл УПД."""
+        if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
+            raise ShippingValidationError("Отгрузить можно только активную заявку")
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
         if self.upd_type != UpdType.EDO and not self.upd_url:

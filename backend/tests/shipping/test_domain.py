@@ -239,3 +239,17 @@ def test_effective_address_without_card_falls_back_to_customer_for_receiver_only
     assert address.shipping_point == ""
     assert address.terms is None
     assert address.inherited == frozenset()
+
+
+def test_ship_from_any_active_status_when_something_is_picked():
+    item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    new = shipment(item)
+    picked, _ = new.pick({item.id: item.remaining}, {item.id: item.grn or ""})
+
+    # shipShipped_: статус не важен, важно, что набрано (shipGateMiss_('Отгружена')).
+    assert picked.mark_shipped(date(2026, 9, 22)).status == ShipmentStatus.SHIPPED
+    assert replace(picked, status=ShipmentStatus.NEW).mark_shipped(date(2026, 9, 22)).status == ShipmentStatus.SHIPPED
+    with pytest.raises(ShippingValidationError, match="ни одна позиция не набрана"):
+        new.mark_shipped(date(2026, 9, 22))
+    with pytest.raises(ShippingValidationError, match="только активную"):
+        picked.mark_shipped(date(2026, 9, 22)).mark_shipped(date(2026, 9, 23))
