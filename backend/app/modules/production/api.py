@@ -835,12 +835,13 @@ def launchable(
 
 @router.get("/operators")
 def operators(
-    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
 ) -> dict:
     with uow_factory() as uow:
         rows = uow.operators.list()
-    return {"operators": [
+        viewer = uow.operators.get(principal.actor.id)
+    return {"viewer_site": viewer.site if viewer is not None else "", "operators": [
         {"id": str(item.id), "name": item.name, "site": item.site, "department": item.department} for item in rows
     ]}
 

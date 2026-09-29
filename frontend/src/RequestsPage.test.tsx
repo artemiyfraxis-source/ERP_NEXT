@@ -365,6 +365,29 @@ describe("RequestsPage", () => {
     expect(await screen.findByText(/Создано заявок из расчёта: 1/)).toBeInTheDocument();
   });
 
+  it("opens «Из расчёта» from the project card with the link and project number filled in", async () => {
+    window.history.replaceState({}, "", "/?section=newrequest&calc_url=https%3A%2F%2Fdocs.google.com%2Fspreadsheets%2Fd%2F1AbC%2Fedit&calc_project=708%D0%9A.4");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests/import/calc" && init?.method === "POST") {
+        return json({ project: "", items: [{ item_type: "Разъём", name: "DB-9M", quantity: "4", price: null, price_with_vat: null,
+          link: null, country: null, unit: "шт", quality_document: "", planned_date: null }] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<RequestsPage principal={principal} view="create" />);
+
+    expect(await screen.findByText("DB-9M")).toBeInTheDocument();
+    expect(screen.getByLabelText("Ссылка на расчёт")).toHaveValue("https://docs.google.com/spreadsheets/d/1AbC/edit");
+    const [, loadInit] = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === "/api/requests/import/calc")!;
+    expect(JSON.parse(String(loadInit?.body))).toEqual({ url: "https://docs.google.com/spreadsheets/d/1AbC/edit" });
+    expect(screen.getByText("708К.4")).toBeInTheDocument();
+    expect(window.location.search).toBe("?section=newrequest");
+    window.history.replaceState({}, "", "/");
+  });
+
   it("«Из расчёта» fallback: the pasted ЗКП range still goes through /import/parse", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);

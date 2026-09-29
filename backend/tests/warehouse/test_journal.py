@@ -170,7 +170,7 @@ def test_journal_endpoint_reads_real_movements_once_newest_first(journal_api):
     assert [row["kind"] for row in client.get("/api/stock/journal", params={"q": "брак"}).json()["rows"]] == ["Списание"]
 
 
-@pytest.mark.parametrize("roles", [("receiver",), ("management",), ("buyer",)])
+@pytest.mark.parametrize("roles", [("receiver",), ("master",), ("staff",)])
 def test_journal_is_for_the_administrator_only(journal_api, roles):
     client, _, login = journal_api
     login(*roles)
