@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request as WebRequest
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request as WebRequest
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -23,10 +23,12 @@ from app.shared.clock import moscow_now, moscow_today
 from .application import (
     CreateRequestsCommand,
     HandoffRequestsCommand,
+    ProcurementStageLookup,
     ProjectRegistry,
     UnitOfWork,
     create_requests as create_requests_use_case,
     handoff_requests as handoff_requests_use_case,
+    my_requests as my_requests_use_case,
     recent_requests as recent_requests_use_case,
 )
 from .domain import (
@@ -142,6 +144,10 @@ def project_registry(request: WebRequest) -> ProjectRegistry | None:
     return getattr(request.app.state, "project_registry", None)
 
 
+def procurement_stage_lookup(request: WebRequest) -> ProcurementStageLookup | None:
+    return getattr(request.app.state, "procurement_stage_lookup", None)
+
+
 @router.get("/schema")
 def request_schema(
     _principal: Annotated[Principal, Depends(requests_view_principal)],
@@ -199,12 +205,13 @@ def validate_request(
     }
 
 
-def _request_result(request) -> dict:
+def _request_result(request, stage: str | None = None) -> dict:
     return {
         "id": str(request.id),
         "legacy_id": request.legacy_id,
         "designation": request.designation,
         "status": request.status.value,
+        "stage": stage if stage is not None else request.status.value,
         "created_at": request.created_at.isoformat(),
         "initiator": request.actor.name,
         "department": request.actor.department,
@@ -244,6 +251,29 @@ def list_requests(
             _request_result(request)
             for request in recent_requests_use_case(200, uow_factory())
         ]
+    }
+
+
+@router.get("/mine")
+def my_requests(
+    principal: Annotated[Principal, Depends(requests_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
+    stages: Annotated[ProcurementStageLookup | None, Depends(procurement_stage_lookup)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict:
+    """RQ-MINE: server-side filter by initiator, paginated, enriched with the procurement stage.
+
+    Replaces the client-side name match over the latest 200 rows (NAV-1): filtered by the caller's
+    own actor id, not a name match, and not capped to a fixed window.
+    """
+    items, total = my_requests_use_case(principal.actor.id, limit, offset, uow_factory())
+    stage_by_id = stages.stages_for([item.id for item in items]) if stages is not None else {}
+    return {
+        "requests": [_request_result(item, stage_by_id.get(item.id)) for item in items],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 

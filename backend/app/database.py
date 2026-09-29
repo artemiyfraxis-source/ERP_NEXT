@@ -29,6 +29,7 @@ from .modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from .modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from .modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from .workflows.project_registry import PlanSnapshotProjectRegistry
+from .workflows.procurement_stage import ProcurementLineStageLookup
 
 
 def build_engine(database_url: str) -> Engine:
@@ -110,4 +111,5 @@ def configure_database(app: FastAPI, database_url: str) -> Engine:
     app.state.operations_uow_factory = build_operations_uow_factory(engine)
     app.state.techcards_uow_factory = build_techcards_uow_factory(engine)
     app.state.project_registry = PlanSnapshotProjectRegistry(app.state.production_uow_factory)
+    app.state.procurement_stage_lookup = ProcurementLineStageLookup(app.state.procurement_uow_factory)
     return engine

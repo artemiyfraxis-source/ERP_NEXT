@@ -33,6 +33,19 @@ class RequestRepository(Protocol):
     def add(self, request: Request) -> None: ...
     def get(self, request_id: UUID) -> Request | None: ...
     def recent(self, limit: int) -> Sequence[Request]: ...
+    def by_initiator(self, actor_id: UUID, limit: int, offset: int) -> Sequence[Request]:
+        """RQ-MINE: server-side «Мои заявки», newest first, paginated."""
+        ...
+    def count_by_initiator(self, actor_id: UUID) -> int: ...
+
+
+class ProcurementStageLookup(Protocol):
+    """Port to the Procurement module: the pipeline stage a handed-off request has reached.
+
+    ``None``/absent means Procurement has not taken the request yet — Requests' own status stands.
+    """
+
+    def stages_for(self, request_ids: Sequence[UUID]) -> dict[UUID, str]: ...
 
 
 class ProjectRegistry(Protocol):
@@ -261,6 +274,16 @@ def handoff_requests(
 def recent_requests(limit: int, uow: UnitOfWork) -> list[Request]:
     with uow:
         return list(uow.requests.recent(limit))
+
+
+def my_requests(
+    actor_id: UUID, limit: int, offset: int, uow: UnitOfWork
+) -> tuple[list[Request], int]:
+    """RQ-MINE: replaces the client-side name filter over the latest 200 rows."""
+    with uow:
+        items = list(uow.requests.by_initiator(actor_id, limit, offset))
+        total = uow.requests.count_by_initiator(actor_id)
+    return items, total
 
 
 def _reorder_draft(original: Request, payload: dict[str, str | None]) -> RequestDraft:

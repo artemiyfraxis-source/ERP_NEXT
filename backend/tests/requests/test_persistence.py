@@ -128,6 +128,39 @@ def test_uncommitted_unit_of_work_rolls_back(database):
         assert session.get(RequestRow, request.id).status == RequestStatus.NEW.value
 
 
+def test_by_initiator_paginates_newest_first_and_ignores_other_actors(database):
+    engine, uow_factory = database
+    ivanov = Actor(name="Иванов", department="РНД")
+    petrov = Actor(name="Петров", department="Закупки")
+    create_requests(
+        CreateRequestsCommand(
+            creation_key="mine:sql:1",
+            drafts=(draft("Разъём"), draft("Кабель")),
+            actor=ivanov,
+            now=datetime(2026, 9, 15, 10, 0),
+        ),
+        uow_factory(),
+    )
+    create_requests(
+        CreateRequestsCommand(
+            creation_key="mine:sql:2",
+            drafts=(draft("Труба"),),
+            actor=petrov,
+            now=datetime(2026, 9, 15, 11, 0),
+        ),
+        uow_factory(),
+    )
+
+    with uow_factory() as uow:
+        total = uow.requests.count_by_initiator(ivanov.id)
+        first_page = uow.requests.by_initiator(ivanov.id, limit=1, offset=0)
+        second_page = uow.requests.by_initiator(ivanov.id, limit=1, offset=1)
+
+    assert total == 2
+    assert [item.name for item in first_page] == ["Кабель"]
+    assert [item.name for item in second_page] == ["Разъём"]
+
+
 def test_initial_migration_builds_a_database_usable_by_unit_of_work(tmp_path):
     backend_root = Path(__file__).parents[2]
     database_path = tmp_path / "erp-next.db"

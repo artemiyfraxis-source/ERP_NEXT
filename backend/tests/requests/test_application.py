@@ -9,6 +9,7 @@ from app.modules.requests.application import (
     HandoffRequestsCommand,
     create_requests,
     handoff_requests,
+    my_requests,
 )
 from app.modules.requests.domain import RequestDraft, RequestStatus, ValidationError
 from tests.factories import Actor
@@ -53,6 +54,17 @@ class FakeRequestRepository:
 
     def get(self, request_id):
         return self.items.get(request_id)
+
+    def by_initiator(self, actor_id, limit, offset):
+        mine = sorted(
+            (item for item in self.items.values() if item.actor.id == actor_id),
+            key=lambda item: (item.created_at, item.creation_index),
+            reverse=True,
+        )
+        return mine[offset : offset + limit]
+
+    def count_by_initiator(self, actor_id):
+        return sum(1 for item in self.items.values() if item.actor.id == actor_id)
 
 
 class FakeAppendOnlyRepository:
@@ -253,3 +265,36 @@ def test_retransfer_emits_a_new_event_per_call_and_needs_request_in_work():
         "request.resent_to_procurement",
     ]
     assert second[0].payload["legacy_id"] == request.legacy_id
+
+
+def test_my_requests_filters_by_actor_id_newest_first_and_reports_total():
+    """RQ-MINE: server-side filter by initiator id (not a name match), paginated."""
+    uow = FakeUnitOfWork()
+    ivanov = Actor(name="Иванов", department="РНД")
+    petrov = Actor(name="Петров", department="Закупки")
+    create_requests(
+        CreateRequestsCommand(
+            creation_key="mine:1",
+            drafts=(draft("Разъём"), draft("Кабель")),
+            actor=ivanov,
+            now=datetime(2026, 9, 15, 10, 0),
+        ),
+        uow,
+    )
+    create_requests(
+        CreateRequestsCommand(
+            creation_key="mine:2",
+            drafts=(draft("Труба"),),
+            actor=petrov,
+            now=datetime(2026, 9, 15, 11, 0),
+        ),
+        uow,
+    )
+
+    first_page, total = my_requests(ivanov.id, limit=1, offset=0, uow=uow)
+    second_page, total_again = my_requests(ivanov.id, limit=1, offset=1, uow=uow)
+
+    assert total == total_again == 2
+    assert [item.name for item in first_page] == ["Кабель"]
+    assert [item.name for item in second_page] == ["Разъём"]
+    assert all(item.actor.id == ivanov.id for item in first_page + second_page)

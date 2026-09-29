@@ -138,6 +138,75 @@ def test_handoff_requires_buyer_and_retry_does_not_duplicate_outbox(write_api):
         assert session.get(RequestRow, UUID(request_id)).procurement_actor_name == "Петров"
 
 
+def test_mine_lists_only_own_requests_newest_first_with_default_stage(write_api):
+    """RQ-MINE: server-side filter by the authenticated actor id, not the client-side name match."""
+    client, _, _ = write_api
+    client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:mine:ivanov"},
+        json={"requests": [request_payload("Разъём"), request_payload("Кабель")]},
+    )
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Петров", department="Закупки"),
+        email="petrov@example.test",
+        roles=frozenset({"employee"}),
+        permissions={"requests": "edit"},
+    )
+    client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:mine:petrov"},
+        json={"requests": [request_payload("Труба")]},
+    )
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Иванов", department="РНД"),
+        email="ivanov@example.test",
+        roles=frozenset({"employee"}),
+        permissions={"requests": "view"},
+    )
+
+    first_page = client.get("/api/requests/mine", params={"limit": 1, "offset": 0})
+    second_page = client.get("/api/requests/mine", params={"limit": 1, "offset": 1})
+
+    assert first_page.status_code == 200, first_page.text
+    assert first_page.json()["total"] == 2
+    assert [item["name"] for item in first_page.json()["requests"]] == ["Кабель"]
+    assert first_page.json()["requests"][0]["stage"] == "Новый"
+    assert [item["name"] for item in second_page.json()["requests"]] == ["Разъём"]
+
+
+def test_mine_rejects_limit_outside_bounds(write_api):
+    client, _, _ = write_api
+
+    response = client.get("/api/requests/mine", params={"limit": 0})
+
+    assert response.status_code == 422
+
+
+def test_mine_reports_procurement_stage_once_handed_off(write_api):
+    """A stage beyond Requests' own status (buyer pipeline) comes from the Procurement port."""
+    client, _, _ = write_api
+
+    class StubStageLookup:
+        def stages_for(self, request_ids):
+            return {request_id: "Жду счет" for request_id in request_ids}
+
+    app.state.procurement_stage_lookup = StubStageLookup()
+    try:
+        client.post(
+            "/api/requests",
+            headers={"Idempotency-Key": "create:mine:stage"},
+            json={"requests": [request_payload()]},
+        )
+
+        response = client.get("/api/requests/mine")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["requests"][0]["stage"] == "Жду счет"
+        assert response.json()["requests"][0]["status"] == "Новый"
+    finally:
+        del app.state.procurement_stage_lookup
+
+
 def test_retransfer_is_an_explicit_flag_and_refused_for_a_new_request(write_api):
     client, engine, sessions = write_api
     created = client.post(

@@ -456,6 +456,17 @@ class SqlAlchemyProcurementRepository:
         )
         return self.session.scalar(statement) is not None
 
+    def by_source_request_ids(self, source_request_ids: Sequence[UUID]) -> list[ProcurementLine]:
+        ids = list(source_request_ids)
+        if not ids:
+            return []
+        statement = (
+            select(ProcurementLineRow)
+            .where(ProcurementLineRow.source_request_id.in_(ids))
+            .order_by(ProcurementLineRow.created_at)
+        )
+        return [_line_domain(row) for row in self.session.scalars(statement)]
+
     def revisions_for_designation(self, designation: str) -> list[str]:
         # Compared in Python: SQLite's lower() folds only ASCII, and НАЗНАЧЕНИЕ is Cyrillic.
         key = designation_key(designation)

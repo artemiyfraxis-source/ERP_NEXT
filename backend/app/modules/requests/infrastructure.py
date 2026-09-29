@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    func,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
@@ -230,6 +231,22 @@ class SqlAlchemyRequestRepository:
             .limit(limit)
         )
         return [_request_domain(row) for row in self.session.scalars(statement)]
+
+    def by_initiator(self, actor_id: UUID, limit: int, offset: int) -> list[Request]:
+        statement = (
+            select(RequestRow)
+            .where(RequestRow.actor_id == actor_id)
+            .order_by(RequestRow.created_at.desc(), RequestRow.creation_index.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [_request_domain(row) for row in self.session.scalars(statement)]
+
+    def count_by_initiator(self, actor_id: UUID) -> int:
+        statement = (
+            select(func.count()).select_from(RequestRow).where(RequestRow.actor_id == actor_id)
+        )
+        return int(self.session.scalar(statement) or 0)
 
 
 class SqlAlchemyUnitOfWork:
