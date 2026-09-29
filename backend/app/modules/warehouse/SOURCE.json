@@ -1,7 +1,7 @@
 {
   "sourceRepository": "../SUPPLYMAP",
   "sourceRef": "main",
-  "sourceCommit": "6a636fc78b555b0611ed6af430797aa787e06954",
+  "sourceCommit": "013a986e85794e2378c95c712be5b9c46322df46",
   "sourceFiles": ["Warehouse.gs", "Stock05.gs", "TcHousing.gs", "TcOpsDb.gs", "Config.gs", "Schema.gs"],
   "portedInvariants": [
     "stock lot identity is warehouse plus GRN plus package",
@@ -23,6 +23,7 @@
     "manual stock requires an article or a name (an empty article takes the name) and keeps article and manufacturer series as strings",
     "quick entry takes up to 200 rows, skips each bad row and reports it as {i, error} while the good rows are entered",
     "manual stock suggests name series and type from existing lots terminal and coax references connector families and coax article codes",
+    "article recognition drops the @supplier tail and Molex leading zeros, names series without a housing drawing before housing families, finds a 9-digit number inside a description, takes plug or socket from the housing title and reads supplier coax codes, coax descriptions, every RG and .086 as RG-405",
     "article-derived suggestions only fill blank fields and remain editable",
     "single-lot identity edits require the optimistic version so a stale article correction is rejected",
     "a lot keeps its passport: the mass of one piece from the largest filled 1/10/100-piece sample rounded to 5 decimals, expiry, manufacturer, description, storage conditions, datasheet and certificate; a repeated receipt replaces the expiry and only a real mass"
