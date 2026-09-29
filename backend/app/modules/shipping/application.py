@@ -176,7 +176,7 @@ class UnpickCommand(ShipmentCommand):
 
 @dataclass(frozen=True)
 class UpdateDocumentsCommand(ShipmentCommand):
-    upd_type: UpdType
+    upd_type: UpdType | None
     upd_number: str
     upd_date: date | None
     upd_url: str
@@ -334,10 +334,6 @@ def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment
         )
         if not address.shipping_point:
             raise ShippingValidationError("Укажите точку отгрузки в заявке или в карточке проекта")
-        if address.terms is None:
-            raise ShippingValidationError("Укажите условия доставки в заявке или в карточке проекта")
-        if address.upd_type is None:
-            raise ShippingValidationError("Укажите тип УПД в заявке или в карточке проекта")
         shipment = Shipment.create(
             number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
             customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,

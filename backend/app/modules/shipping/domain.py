@@ -308,10 +308,12 @@ class Shipment:
     shipping_point: str
     contact: str
     phone: str
-    terms: DeliveryTerms
+    # Условия доставки и тип УПД могут быть пустыми, как в SUPPLYMAP (shipRequestCreate_ требует только
+    # получателя и точку). Пустой тип УПД — не ЭДО: без файла УПД груз не уедет (shipGateMiss_).
+    terms: DeliveryTerms | None
     carrier: str
     deadline: date | None
-    upd_type: UpdType
+    upd_type: UpdType | None
     upd_number: str
     upd_date: date | None
     upd_url: str
@@ -332,8 +334,8 @@ class Shipment:
     @classmethod
     def create(
         cls, *, number: str, created_at: datetime, customer: str, receiver: str,
-        shipping_point: str, contact: str, phone: str, terms: DeliveryTerms,
-        carrier: str, deadline: date | None, upd_type: UpdType, upd_number: str,
+        shipping_point: str, contact: str, phone: str, terms: DeliveryTerms | None,
+        carrier: str, deadline: date | None, upd_type: UpdType | None, upd_number: str,
         upd_date: date | None, upd_url: str, manager: str, note: str,
         lines: tuple[ShipmentLine, ...], manager_id: UUID | None = None,
     ) -> Shipment:
@@ -399,7 +401,7 @@ class Shipment:
         )
 
     def update_documents(
-        self, *, upd_type: UpdType, upd_number: str, upd_date: date | None,
+        self, *, upd_type: UpdType | None, upd_number: str, upd_date: date | None,
         upd_url: str, track_number: str,
     ) -> Shipment:
         if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
@@ -418,7 +420,7 @@ class Shipment:
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
         if self.upd_type != UpdType.EDO and not self.upd_url:
-            raise ShippingValidationError("Для бумажной отгрузки приложите файл УПД")
+            raise ShippingValidationError("Нельзя отгрузить: не хватает — файл УПД (без файла — только по ЭДО)")
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
 
     def set_requested(self, line_id: UUID, quantity: Decimal) -> Shipment:

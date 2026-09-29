@@ -55,10 +55,10 @@ class ShipmentRow(Base):
     shipping_point: Mapped[str] = mapped_column(Text(), nullable=False)
     contact: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str] = mapped_column(String(128), nullable=False)
-    terms: Mapped[str] = mapped_column(String(32), nullable=False)
+    terms: Mapped[str | None] = mapped_column(String(32), nullable=True)
     carrier: Mapped[str] = mapped_column(String(255), nullable=False)
     deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
-    upd_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    upd_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     upd_number: Mapped[str] = mapped_column(String(255), nullable=False)
     upd_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     upd_url: Mapped[str] = mapped_column(Text(), nullable=False)
@@ -187,8 +187,8 @@ class SqlAlchemyShipmentRepository:
             id=row.id, number=row.number, version=row.version, created_at=row.created_at,
             status=ShipmentStatus(row.status), customer=row.customer, receiver=row.receiver,
             shipping_point=row.shipping_point, contact=row.contact, phone=row.phone,
-            terms=DeliveryTerms(row.terms), carrier=row.carrier, deadline=row.deadline,
-            upd_type=UpdType(row.upd_type), upd_number=row.upd_number, upd_date=row.upd_date,
+            terms=DeliveryTerms(row.terms) if row.terms else None, carrier=row.carrier, deadline=row.deadline,
+            upd_type=UpdType(row.upd_type) if row.upd_type else None, upd_number=row.upd_number, upd_date=row.upd_date,
             upd_url=row.upd_url, pl_number=row.pl_number, dn_number=row.dn_number,
             track_number=row.track_number, packed_at=row.packed_at, shipped_at=row.shipped_at,
             manager=row.manager, note=row.note, manager_id=row.manager_id, tk_note=row.tk_note or "",
@@ -233,7 +233,8 @@ class SqlAlchemyShipmentRepository:
             "manager_id", "tk_note",
         ):
             setattr(row, key, getattr(shipment, key))
-        row.status = shipment.status.value; row.terms = shipment.terms.value; row.upd_type = shipment.upd_type.value
+        row.status = shipment.status.value; row.terms = shipment.terms.value if shipment.terms else None
+        row.upd_type = shipment.upd_type.value if shipment.upd_type else None
         existing = {line.id: line for line in self.session.scalars(select(ShipmentLineRow).where(ShipmentLineRow.shipment_id == shipment.id))}
         for position, line in enumerate(shipment.lines):
             stored = existing.pop(line.id, None)

@@ -128,7 +128,7 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     empty = _stocked(client, item_index="КБ2", accepted="")
     no_point = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "4"}]})
     client.put("/api/shipping/project-addressee", json={
-        "project": "591К.3", "shipping_point": "Склад заказчика", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
+        "project": "591К.3", "shipping_point": "Склад заказчика",
     })
     nothing = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": empty["id"], "quantity": "4"}]})
     packed = client.post("/api/shipping/project-pack", json={"project": "591К.3", "lines": [{"good_id": good["id"], "quantity": "9"}]})
@@ -139,6 +139,8 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     shipment = packed.json()["shipment"]
     assert shipment["status"] == "Собрана" and shipment["pl_number"] == ""
     assert shipment["receiver"] == "Заказчик" and shipment["shipping_point"] == "Склад заказчика"
+    # shipPackProject_: условий доставки и типа УПД в карточке нет — отправка встаёт с пустыми.
+    assert (shipment["terms"], shipment["upd_type"]) == (None, None)
     assert shipment["lines"][0]["requested"] == "6" and shipment["lines"][0]["picked"] == "6"
     assert [row["project"] for row in addressees] == ["591К.3"]
     assert addressees[0]["po"] == ""

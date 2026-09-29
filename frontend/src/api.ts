@@ -758,10 +758,10 @@ export interface Shipment {
   shipping_point: string;
   contact: string;
   phone: string;
-  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК";
+  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
   carrier: string;
   deadline: string | null;
-  upd_type: "ЭДО" | "БУМАГА";
+  upd_type: "ЭДО" | "БУМАГА" | null;
   upd_number: string;
   upd_date: string | null;
   upd_url: string;

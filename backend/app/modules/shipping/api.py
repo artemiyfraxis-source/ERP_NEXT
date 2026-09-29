@@ -132,7 +132,7 @@ class UnpickPayload(VersionPayload):
 
 
 class DocumentsPayload(VersionPayload):
-    upd_type: UpdType
+    upd_type: UpdType | None = None
     upd_number: str = Field(default="", max_length=255)
     upd_date: date | None = None
     upd_url: str = Field(default="", max_length=5000)
@@ -203,9 +203,9 @@ def _shipment_result(shipment: Shipment) -> dict:
         "created_at": shipment.created_at.isoformat(), "status": shipment.status.value,
         "customer": shipment.customer, "receiver": shipment.receiver,
         "shipping_point": shipment.shipping_point, "contact": shipment.contact,
-        "phone": shipment.phone, "terms": shipment.terms.value, "carrier": shipment.carrier,
+        "phone": shipment.phone, "terms": shipment.terms.value if shipment.terms else None, "carrier": shipment.carrier,
         "deadline": shipment.deadline.isoformat() if shipment.deadline else None,
-        "upd_type": shipment.upd_type.value, "upd_number": shipment.upd_number,
+        "upd_type": shipment.upd_type.value if shipment.upd_type else None, "upd_number": shipment.upd_number,
         "upd_date": shipment.upd_date.isoformat() if shipment.upd_date else None,
         "upd_url": shipment.upd_url, "pl_number": shipment.pl_number,
         "dn_number": shipment.dn_number, "track_number": shipment.track_number,
