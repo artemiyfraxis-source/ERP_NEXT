@@ -55,6 +55,16 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # Revision ids here run past Alembic's default VARCHAR(32) (0013_production_materials_finished_goods):
+        # SQLite ignores the length, PostgreSQL refuses the UPDATE. The table is created wide before Alembic
+        # would create it narrow; an existing narrow one is widened.
+        if connection.dialect.name == "postgresql":
+            connection.exec_driver_sql(
+                "CREATE TABLE IF NOT EXISTS alembic_version ("
+                "version_num VARCHAR(128) NOT NULL, CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            )
+            connection.exec_driver_sql("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(128)")
+            connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():
             context.run_migrations()

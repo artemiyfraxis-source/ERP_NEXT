@@ -83,6 +83,17 @@ def _moment(value: object) -> datetime | None:
                     int(match[6] or 0), tzinfo=MOSCOW)
 
 
+def _wall(value: datetime | None) -> datetime | None:
+    """Московское «настенное» время без зоны: SQLite отдаёт его как записано, PostgreSQL — в UTC с зоной."""
+    from app.shared.clock import MOSCOW
+
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(MOSCOW).replace(tzinfo=None)
+    return value.replace(microsecond=0)
+
+
 def spreadsheet_id(url: str) -> str:
     match = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", str(url or ""))
     return match[1] if match else ""
@@ -317,8 +328,7 @@ def apply(args: argparse.Namespace) -> None:
 
     # 3. «Журнал проектов» — как есть, с датой и автором записи.
     with production() as uow:
-        have = {(e.project, e.occurred_at.replace(tzinfo=None, microsecond=0) if e.occurred_at else None,
-                 e.kind, e.text, e.item_index) for e in uow.plan_events.list()}
+        have = {(e.project, _wall(e.occurred_at), e.kind, e.text, e.item_index) for e in uow.plan_events.list()}
         for row in journal:
             project = normalize_project_number(row.get("№ ПРОЕКТА"))
             occurred = _moment(row.get("ДАТА"))
@@ -326,7 +336,7 @@ def apply(args: argparse.Namespace) -> None:
                 report["failed"].append(f"журнал: строка без № или даты — {row}")
                 continue
             kind = row.get("ВИД", "")
-            key = (project, occurred.replace(tzinfo=None), kind, row.get("ТЕКСТ", ""), row.get("КБ", ""))
+            key = (project, _wall(occurred), kind, row.get("ТЕКСТ", ""), row.get("КБ", ""))
             if key in have:
                 continue
             deadline = None

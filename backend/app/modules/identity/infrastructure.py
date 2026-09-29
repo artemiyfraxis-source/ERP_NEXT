@@ -553,6 +553,9 @@ def provision_user(
             active=user.active,
         )
     )
+    # The dependent rows below reference the user by FK only in the schema (no ORM relationship), so the unit
+    # of work cannot order them: PostgreSQL checks the FK per statement and refuses them before the user.
+    session.flush()
     for identifier in {login, email}:
         session.add(IdentityIdentifierRow(identifier=identifier, user_id=user.id))
     session.add(IdentityCredentialRow(user_id=user.id, password_hash=password_hash, pin_hash=pin_hash))
