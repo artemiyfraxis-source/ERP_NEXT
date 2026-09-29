@@ -35,6 +35,18 @@ def _decimal(value: object) -> Decimal:
         return Decimal(0)
 
 
+def gost_awg_from_wire_table(rows: Iterable[Mapping[str, str]]) -> dict[str, int]:
+    """ГОСТ section → AWG from the СПР.КАБ AWG table, as SUPPLYMAP derives it (TcGenData.gs `readDiaTables_`):
+    only whole-number AWG rows (1/0, 2/0 are not AWG numbers for the lookup)."""
+    result: dict[str, int] = {}
+    for row in rows:
+        awg = str(row.get("AWG") or "").strip()
+        gost = _decimal(row.get("ГОСТ"))
+        if gost > 0 and re.fullmatch(r"\d+", awg):
+            result[format(gost.normalize(), "f")] = int(awg)
+    return result
+
+
 def _nearest_awg(mm2: Decimal) -> int:
     if mm2 <= 0:
         return 0
@@ -602,6 +614,74 @@ def _normalize_header(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "").lower()).strip()
 
 
+def sheet_column_name(value: object) -> str:
+    """A sheet header as a record field name: line breaks inside the header cell become spaces."""
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _resolve_schema(fields: Sequence[_SchemaField], header: Sequence[object]) -> dict[str, int]:
+    """Schema field → header index, once by alias then by regex (TcOpsDb.gs `buildRecordFromSchema_`); -1 — none."""
+    header_map: dict[str, int] = {}
+    for index, name in enumerate(header):
+        if _normalize_header(name):
+            header_map[_normalize_header(name)] = index  # last duplicate wins, as in GAS
+    resolved = {}
+    for field in fields:
+        index = next((header_map[_normalize_header(alias)] for alias in field.aliases
+                      if _normalize_header(alias) in header_map), -1)
+        if index < 0 and field.pattern:
+            index = next((header_map[key] for key in header_map if re.search(field.pattern, key)), -1)
+        resolved[field.key] = index
+    return resolved
+
+
+# Fields the import derives from the sheet besides the DB_SCHEMA ones (БД.ТЕР AWG/мм² ranges).
+_DERIVED_KEYS = {"ter": ("awgFrom", "awgTo", "mm2From", "mm2To")}
+
+
+def schema_keys(tab: str) -> frozenset[str]:
+    """Record fields that are schema values, not sheet columns (for ОБ/ОП/ТЕР/КОАКС); empty for other tabs."""
+    if tab not in _TECH_SCHEMA:
+        return frozenset()
+    return frozenset(field.key for field in _TECH_SCHEMA[tab][0]) | frozenset(_DERIVED_KEYS.get(tab, ()))
+
+
+def sync_schema_fields(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
+    """Sheet columns → the schema values the generator reads (opName, terArticle…), as the import derives them.
+    A record without sheet columns (imported before they were kept) is returned unchanged."""
+    result = dict(fields)
+    if tab not in _TECH_SCHEMA:
+        return result
+    keys = schema_keys(tab)
+    columns = [name for name in fields if name not in keys]
+    if not columns:
+        return result
+    schema_fields = _TECH_SCHEMA[tab][0]
+    resolved = _resolve_schema(schema_fields, columns)
+    for field in schema_fields:
+        index = resolved[field.key]
+        if field.store and index >= 0:
+            result[field.key] = str(fields[columns[index]] or "").strip()
+    if tab == "ter":
+        for key, index in _range_indexes(columns).items():
+            if index >= 0:
+                result[key] = str(fields[columns[index]] or "").strip()
+    return result
+
+
+def schema_display_text(tab: str, fields: Mapping[str, str]) -> str:
+    """The record's display text by DB_SCHEMA (ОБ «Для базы», ОП «Название | Номер»…), from its sheet columns."""
+    if tab not in _TECH_SCHEMA:
+        return ""
+    schema_fields, display, _search, _sort = _TECH_SCHEMA[tab]
+    keys = schema_keys(tab)
+    columns = [name for name in fields if name not in keys]
+    resolved = _resolve_schema(schema_fields, columns)
+    values = {field.key: (str(fields[columns[resolved[field.key]]] or "").strip() if resolved[field.key] >= 0
+                          else str(fields.get(field.key, "") or "").strip()) for field in schema_fields}
+    return display(values)
+
+
 def sheet_snapshot_records(tab: str, rows: Sequence[Sequence[object]]) -> tuple[list[str], list[dict[str, object]]]:
     """One base sheet (display values, sheet rows from 1) → `(columnHeaders, records)` exactly as the GAS exporter
     builds them (SUPPLYMAP TcOpsDb.gs `fetchTechOperationsSnapshotFromSource_` + `buildRecordFromSchema_`): header
@@ -612,18 +692,8 @@ def sheet_snapshot_records(tab: str, rows: Sequence[Sequence[object]]) -> tuple[
     if len(rows) < 2 or len(rows) < header_row:
         return [], []
     header = list(rows[header_row - 1])
-    header_map: dict[str, int] = {}
-    for index, name in enumerate(header):
-        if _normalize_header(name):
-            header_map[_normalize_header(name)] = index  # last duplicate wins, as in GAS
     named = [(str(name or "").strip(), index) for index, name in enumerate(header) if str(name or "").strip()]
-    resolved = {}
-    for field in fields:
-        index = next((header_map[_normalize_header(alias)] for alias in field.aliases
-                      if _normalize_header(alias) in header_map), -1)
-        if index < 0 and field.pattern:
-            index = next((header_map[key] for key in header_map if re.search(field.pattern, key)), -1)
-        resolved[field.key] = index
+    resolved = _resolve_schema(fields, header)
 
     def cell(row: Sequence[object], index: int) -> str:
         return str(row[index] if 0 <= index < len(row) and row[index] is not None else "").strip()
@@ -697,6 +767,14 @@ def import_supplymap_snapshot(payload: Mapping[str, object]) -> ImportedTechnolo
         }
         tab = str(raw.get("tabKey") or "").strip()
         export_values = raw.get("exportValues")
+        # Every named sheet column goes into the record, as the portal shows the base (owner 29.09.2026:
+        # «не всё перенеслось»); the schema values above stay for the generator.
+        tab_headers = headers_by_tab.get(tab)
+        if isinstance(export_values, list) and isinstance(tab_headers, list):
+            for name, value in zip(tab_headers, export_values):
+                column = sheet_column_name(name)
+                if column and column not in fields:
+                    fields[column] = str(value or "").strip()
         if tab == "ter" and isinstance(export_values, list):
             for key, index in terminal_indexes.items():
                 fields[key] = str(export_values[index] or "").strip() if 0 <= index < len(export_values) else ""

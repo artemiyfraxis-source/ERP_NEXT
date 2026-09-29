@@ -43,14 +43,14 @@ it("edits and atomically saves all reference maps", async () => {
 
   render(<ReferencesPage principal={admin} initialTab="suppliers" />);
   fireEvent.change(await screen.findByLabelText("Поставщик 1"), { target: { value: "Новый поставщик" } });
-  fireEvent.click(screen.getByRole("button", { name: "ГОСТ → AWG" }));
-  fireEvent.change(screen.getByLabelText("AWG 1"), { target: { value: "23" } });
+  fireEvent.click(screen.getByRole("button", { name: "Изготовитель → страна" }));
+  fireEvent.change(screen.getByLabelText("Страна 1"), { target: { value: "Китай" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить справочники" }));
 
   await waitFor(() => expect(payload).toEqual({
     suppliers: [{ key: "example.ru", value: "Новый поставщик" }],
-    countries: [{ key: "Fraxis", value: "Россия" }],
-    gost_awg: [{ key: "0,35", value: "23" }],
+    countries: [{ key: "Fraxis", value: "Китай" }],
+    gost_awg: [{ key: "0,35", value: "22" }],
   }));
   expect(await screen.findByText("Справочники сохранены целиком")).toBeInTheDocument();
 });
@@ -150,24 +150,24 @@ it("shows the СПР.КАБ tables as read-only grids", async () => {
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path.startsWith("/api/references/tech-operations?tab=kab_coax")) return json({
       metadata: null, columns: ["Кабель", "D1", "D2", "D3"],
-      records: [{ id: "3", tab: "kab_coax", display_text: "RG-316", source_sheet: "СПР.КАБ · коаксиал", fields: { Кабель: "RG-316", D1: "0,5", D2: "1,48", D3: "1,95" } }],
+      records: [{ id: "3", tab: "kab_coax", display_text: "RG-316", source_sheet: "Коаксиал: D1 · D2 · D3", fields: { Кабель: "RG-316", D1: "0,5", D2: "1,48", D3: "1,95" } }],
     });
     if (path.startsWith("/api/references/tech-operations?tab=kab_awg")) return json({
       metadata: null, columns: ["AWG", "ГОСТ"],
-      records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "СПР.КАБ · AWG", fields: { AWG: "22", ГОСТ: "0,35" } }],
+      records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "Провода: AWG · ГОСТ · Ø по маркам", fields: { AWG: "22", ГОСТ: "0,35" } }],
     });
     if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "СПР.КАБ · коаксиал" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Коаксиал: D1 · D2 · D3" }));
   expect(await screen.findByText("1,95")).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "D3" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
 
-  fireEvent.click(screen.getByRole("button", { name: "СПР.КАБ · AWG" }));
+  fireEvent.click(screen.getByRole("button", { name: "Провода: AWG · ГОСТ · Ø по маркам" }));
   expect(await screen.findByText("0,35")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
 });
@@ -213,7 +213,7 @@ it("opens the templates tab by its own key without the reference book (ID-3)", a
   expect(paths).toEqual(["/api/techcards/templates"]);
 });
 
-it("lets the buyer edit supplier maps but not the ГОСТ→AWG map", async () => {
+it("lets the buyer edit supplier maps and shows no separate ГОСТ→AWG map (it is the СПР.КАБ table)", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({
@@ -226,8 +226,6 @@ it("lets the buyer edit supplier maps but not the ГОСТ→AWG map", async () 
 
   render(<ReferencesPage principal={{ ...admin, roles: ["buyer"], permissions: { erpref: "view", procurement: "edit" } }} initialTab="suppliers" />);
   expect(await screen.findByLabelText("Поставщик 1")).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "ГОСТ → AWG" }));
-  expect(await screen.findByText("22")).toBeInTheDocument();
-  expect(screen.queryByLabelText("AWG 1")).toBeNull();
+  expect(screen.queryByRole("button", { name: "ГОСТ → AWG" })).toBeNull();
   expect(screen.getByRole("button", { name: "Сохранить справочники" })).toBeInTheDocument();
 });

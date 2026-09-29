@@ -17,7 +17,7 @@ import {
    Every tab is the shared DataTable — search, column filters, sort, column chooser, Excel — so the shop's
    references read like one database. Project techcards (ЭТК) stay with the projects. */
 
-type MapTab = "suppliers" | "countries" | "gost_awg";
+type MapTab = "suppliers" | "countries";
 export type DbTab = "templates" | TechOperationTab | MapTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
@@ -32,17 +32,20 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "prov", label: "Провода", base: "prov" },
     { id: "mat", label: "Материалы", base: "mat" },
   ] },
-  { title: "СПР.КАБ", tabs: [{ id: "kab_coax", label: "СПР.КАБ · коаксиал" }, { id: "kab_awg", label: "СПР.КАБ · AWG" }] },
+  // СПР.КАБ: the AWG table is the whole «ГОСТ → AWG» map plus Ø по маркам — SUPPLYMAP derives the map from it
+  // (TcGenData.gs gostAwgMap_), so there is no separate map tab (owner 29.09.2026: «нет диаметров по сечению»).
+  { title: "СПР.КАБ", tabs: [
+    { id: "kab_awg", label: "Провода: AWG · ГОСТ · Ø по маркам" },
+    { id: "kab_coax", label: "Коаксиал: D1 · D2 · D3" },
+  ] },
   { title: "Соответствия", tabs: [
     { id: "suppliers", label: "Домен → поставщик" },
     { id: "countries", label: "Изготовитель → страна" },
-    { id: "gost_awg", label: "ГОСТ → AWG" },
   ] },
 ];
 const MAP_TABS: Record<MapTab, { keyLabel: string; valueLabel: string }> = {
   suppliers: { keyLabel: "Домен или ссылка", valueLabel: "Поставщик" },
   countries: { keyLabel: "Изготовитель", valueLabel: "Страна" },
-  gost_awg: { keyLabel: "Сечение ГОСТ, мм²", valueLabel: "AWG" },
 };
 // СПР.КАБ — только просмотр (как в портале SUPPLYMAP): таблица как на листе, без правки и «+ Запись».
 const VIEW_ONLY_TABS: DbTab[] = ["kab_coax", "kab_awg"];
@@ -92,10 +95,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
   const canEdit = principal.permissions.erpref === "edit" && !viewOnly;
-  // Maps (Portal.gs portalSaveReferences): supplier/country — the buyer's (portalCanWork_), ГОСТ→AWG — «Справочник».
+  // Maps (Portal.gs portalSaveReferences): supplier/country — the buyer's (portalCanWork_).
   const canEditSuppliers = Boolean(maps.can_edit?.suppliers);
-  const canEditGost = Boolean(maps.can_edit?.gost_awg);
-  const canSaveMaps = canEditSuppliers || canEditGost;
+  const canSaveMaps = canEditSuppliers;
   const mapsPayload = JSON.stringify({ suppliers: maps.suppliers, countries: maps.countries, gost_awg: maps.gost_awg });
   const mapsDirty = savedMaps !== "" && mapsPayload !== savedMaps;
 
@@ -171,12 +173,22 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   }
 
   const fieldColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
+  // Edit form: the sheet's columns only; the server moves the schema values derived from them.
+  const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns.filter((key) => key in record.fields).map((key) => [key, record.fields[key]]));
   const techColumns: DataColumn<TechOperationRecord>[] = [
-    ...fieldColumns.map((field): DataColumn<TechOperationRecord> => ({ key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "", wrap: true })),
+    // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
+    ...fieldColumns.map((field): DataColumn<TechOperationRecord> => {
+      const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
+      return {
+        key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "",
+        wrap: values.some((value) => value.length > 40),
+        numeric: values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
+      };
+    }),
     { key: "__source", title: "Источник", value: (record) => record.source_sheet || "", hidden: true },
     ...(canEdit ? [{
       key: "__edit", title: "", value: () => "",
-      render: (record: TechOperationRecord) => <button className="secondary small" onClick={() => setEditing({ id: record.id, values: { ...record.fields } })}>Править</button>,
+      render: (record: TechOperationRecord) => <button className="secondary small" onClick={() => setEditing({ id: record.id, values: editValues(record) })}>Править</button>,
     }] : []),
   ];
   const current = groups.flatMap((group) => group.tabs).find((def) => def.id === tab);
@@ -202,7 +214,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     {tab === "templates" && <TechcardsPage principal={principal} view="templates" embedded />}
 
     {isMapTab(tab) && (() => {
-      const disabled = tab === "gost_awg" ? !canEditGost : !canEditSuppliers;
+      const disabled = !canEditSuppliers;
       return <MapTable
         key={tab}
         tab={tab}
@@ -235,7 +247,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         emptyText={viewOnly ? "Таблица СПР.КАБ не загружена из зеркала." : "Записей нет."}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
       />
-      <p className="page-sub">{viewOnly ? "СПР.КАБ — только просмотр; карта «ГОСТ → AWG» правится на вкладке соответствий." : "Правки строк живут до следующего импорта снимка."}</p>
+      <p className="page-sub">{viewOnly ? "СПР.КАБ — только просмотр, как в портале SUPPLYMAP; генератор берёт из этой таблицы и «ГОСТ → AWG»." : "Правки строк живут до следующего импорта снимка."}</p>
     </>}
   </section>;
 }
