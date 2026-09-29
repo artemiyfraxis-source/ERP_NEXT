@@ -24,7 +24,9 @@ Run ..\scripts\projects_import.py snapshot --key $Key --out (Join-Path $data 'pr
 
 if (-not $DatabaseUrl) { Write-Host "== Пересоздаю базу $Db"; Remove-Item -ErrorAction SilentlyContinue $Db }
 Run -m alembic upgrade head
-"$Password`n$Password`n" | & $py -m app.identity_admin create-user --login $Login --email "$Login@example.com" --name 'Артемий' --department 'Руководство' --role admin
+$env:ERP_NEW_USER_PASSWORD = $Password
+& $py -m app.identity_admin create-user --login $Login --email "$Login@example.com" --name 'Артемий' --department 'Руководство' --role admin
+Remove-Item Env:ERP_NEW_USER_PASSWORD
 $supplymap = if ($env:SUPPLYMAP_SOURCE_REPOSITORY) { $env:SUPPLYMAP_SOURCE_REPOSITORY } else { Join-Path $root '..\SUPPLYMAP' }
 Run -m app.modules.references.load_mirror --source $supplymap
 Run -m app.modules.techcards.seed_library
