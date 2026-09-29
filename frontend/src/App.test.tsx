@@ -358,3 +358,26 @@ it("NAV-1: handout is its own route and shows only requests waiting for the shop
   expect(await screen.findByText("FRX-ISS-2")).toBeInTheDocument();
   expect(screen.queryByText("FRX-ISS-1")).not.toBeInTheDocument();
 });
+
+it("shows the unread bell on every screen and opens the inbox, which clears it", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(principal);
+    if (path === "/api/notifications/unread") return json({ unread: 3 });
+    if (path === "/api/notifications") return json({
+      notifications: [{ id: "n1", created_at: "2026-09-29T09:00:00", type: "digest", reference: "", title: "Дайджест — просрочки и Карантин", body: "…", read: false }],
+      unread: 3,
+    });
+    if (path === "/api/notifications/read" && init?.method === "POST") return json({ unread: 0 });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByTestId("notif-badge")).toHaveTextContent("3");
+  fireEvent.click(screen.getByTitle("Уведомления: 3 непрочитанных"));
+  expect(await screen.findByRole("heading", { name: "Уведомления", level: 1 })).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Прочитать все" }));
+  expect(await screen.findByTitle("Уведомления")).toBeInTheDocument();
+  expect(screen.queryByTestId("notif-badge")).not.toBeInTheDocument();
+});

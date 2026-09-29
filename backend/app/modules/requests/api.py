@@ -25,6 +25,7 @@ from app.shared.clock import moscow_now, moscow_today
 from .application import (
     CreateRequestsCommand,
     HandoffRequestsCommand,
+    ProcurementDetails,
     ProcurementStageLookup,
     ProjectRegistry,
     UnitOfWork,
@@ -37,6 +38,7 @@ from .domain import (
     Actor,
     CATEGORIES,
     DELIVERY_POINTS,
+    ITEM_TYPES,
     REQUIRED_FIELDS,
     STATIC_PURPOSES,
     TASK_TYPE,
@@ -153,13 +155,18 @@ def procurement_stage_lookup(request: WebRequest) -> ProcurementStageLookup | No
 @router.get("/schema")
 def request_schema(
     _principal: Annotated[Principal, Depends(requests_form_principal)],
+    projects: Annotated[ProjectRegistry | None, Depends(project_registry)],
 ) -> dict:
+    # `purposeProjects_`: open registry projects feed the ЦЕЛЬ dropdown; registry down → empty list.
+    open_projects = projects.open_projects() if projects is not None else None
     return {
+        "projects": list(open_projects or []),
         "required": list(REQUIRED_FIELDS),
         "purposes": list(STATIC_PURPOSES),
         "delivery_points": list(DELIVERY_POINTS),
         "units": list(UNITS),
         "categories": list(CATEGORIES),
+        "item_types": list(ITEM_TYPES),
         "item_type": {"mode": "combobox", "required": True},
         "project_reference": {
             "required": False,
@@ -207,6 +214,22 @@ def validate_request(
     }
 
 
+def _money(value: Decimal | None) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _procurement_result(details: ProcurementDetails | None) -> dict:
+    return {
+        "buyer": details.buyer if details else None,
+        "supplier": details.supplier if details else None,
+        "order_number": details.order_number if details else None,
+        "expected_arrival": (
+            details.expected_arrival.isoformat() if details and details.expected_arrival else None
+        ),
+        "procurement_sum": _money(details.sum) if details else None,
+    }
+
+
 def _request_result(request, stage: str | None = None) -> dict:
     return {
         "id": str(request.id),
@@ -227,6 +250,15 @@ def _request_result(request, stage: str | None = None) -> dict:
         "unit": request.unit,
         "priority": request.priority,
         "planned_date": request.planned_date.isoformat(),
+        "procurement_deadline": request.procurement_deadline.isoformat(),
+        "quality_document": request.quality_document,
+        "design_article": request.design_article,
+        "link": request.link,
+        "price": _money(request.price),
+        "price_with_vat": _money(request.price_with_vat),
+        "line_sum": _money(request.line_sum),
+        "comment": request.comment,
+        "task_type": request.task_type,
     }
 
 
@@ -247,11 +279,12 @@ def _retry_transaction(operation):
 def list_requests(
     _principal: Annotated[Principal, Depends(requests_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
+    q: Annotated[str, Query(max_length=200)] = "",
 ) -> dict:
     return {
         "requests": [
             _request_result(request)
-            for request in recent_requests_use_case(200, uow_factory())
+            for request in recent_requests_use_case(200, uow_factory(), q)
         ]
     }
 
@@ -263,16 +296,26 @@ def my_requests(
     stages: Annotated[ProcurementStageLookup | None, Depends(procurement_stage_lookup)],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    q: Annotated[str, Query(max_length=200)] = "",
 ) -> dict:
     """RQ-MINE: server-side filter by initiator, paginated, enriched with the procurement stage.
 
     Replaces the client-side name match over the latest 200 rows (NAV-1): filtered by the caller's
     own actor id, not a name match, and not capped to a fixed window.
     """
-    items, total = my_requests_use_case(principal.actor.id, limit, offset, uow_factory())
-    stage_by_id = stages.stages_for([item.id for item in items]) if stages is not None else {}
+    items, total = my_requests_use_case(principal.actor.id, limit, offset, uow_factory(), q)
+    details_by_id = stages.details_for([item.id for item in items]) if stages is not None else {}
+    results = []
+    for item in items:
+        details = details_by_id.get(item.id)
+        results.append(
+            {
+                **_request_result(item, details.stage if details else None),
+                **_procurement_result(details),
+            }
+        )
     return {
-        "requests": [_request_result(item, stage_by_id.get(item.id)) for item in items],
+        "requests": results,
         "total": total,
         "limit": limit,
         "offset": offset,

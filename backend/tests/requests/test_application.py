@@ -55,16 +55,24 @@ class FakeRequestRepository:
     def get(self, request_id):
         return self.items.get(request_id)
 
-    def by_initiator(self, actor_id, limit, offset):
+    def by_initiator(self, actor_id, limit, offset, search=""):
         mine = sorted(
-            (item for item in self.items.values() if item.actor.id == actor_id),
+            (
+                item
+                for item in self.items.values()
+                if item.actor.id == actor_id and search.casefold() in item.name.casefold()
+            ),
             key=lambda item: (item.created_at, item.creation_index),
             reverse=True,
         )
         return mine[offset : offset + limit]
 
-    def count_by_initiator(self, actor_id):
-        return sum(1 for item in self.items.values() if item.actor.id == actor_id)
+    def count_by_initiator(self, actor_id, search=""):
+        return sum(
+            1
+            for item in self.items.values()
+            if item.actor.id == actor_id and search.casefold() in item.name.casefold()
+        )
 
 
 class FakeAppendOnlyRepository:

@@ -15,6 +15,7 @@ from .domain import ProductionValidationError
 
 BOX_NUMBER = re.compile(r"^(\d{6})-?(\d)$")
 # SUPPLYMAP issues 100000 + seq; ERP stays below it so both systems never hand out the same number.
+# The same split holds for defect boxes «Б-»: ERP Б-000001…099999, SUPPLYMAP from Б-100001.
 ERP_BOX_SEQUENCE_LIMIT = 99_999
 
 
@@ -40,6 +41,12 @@ def format_box_number(sequence: int) -> str:
 def issue_box_number(sequence: int) -> str:
     if sequence < 1 or sequence > ERP_BOX_SEQUENCE_LIMIT:
         raise ProductionValidationError("Серия номеров коробок ERP 000001–099999 исчерпана")
+    return format_box_number(sequence)
+
+
+def issue_defect_number(sequence: int) -> str:
+    if sequence < 1 or sequence > ERP_BOX_SEQUENCE_LIMIT:
+        raise ProductionValidationError("Серия номеров брака ERP Б-000001–099999 исчерпана")
     return format_box_number(sequence)
 
 

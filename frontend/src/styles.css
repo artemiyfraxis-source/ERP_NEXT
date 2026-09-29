@@ -23,6 +23,8 @@ button:disabled { cursor: wait; opacity: .55; }
 .sidebar { width: 240px; flex: none; height: 100%; padding: 18px 12px; color: var(--foreground); background: var(--card); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; letter-spacing: .04em; }
 .wordmark { font-size: 19px; letter-spacing: .08em; }
+.notif-bell { margin-left: auto; position: relative; background: none; border: 0; padding: 4px 6px; font-size: 18px; line-height: 1; cursor: pointer; }
+.notif-badge { position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #d93025; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; letter-spacing: 0; }
 .brand .mod, .logo-row .mod { color: var(--muted-foreground); font-size: 11px; letter-spacing: .09em; text-transform: uppercase; }
 .brand-mark { width: 38px; height: 38px; border-radius: 12px; display: inline-grid; place-items: center; background: #dbff57; color: #10281d; font-weight: 900; }
 .brand-mark.large { width: 56px; height: 56px; font-size: 24px; }
