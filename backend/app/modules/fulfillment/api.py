@@ -20,7 +20,10 @@ from app.shared.http_auth import (
     fulfillment_handout_principal,
     fulfillment_view_principal,
 )
+from app.modules.requests.application import CalcSheetError
+from app.modules.requests.domain import ValidationError as CalcValidationError
 from app.shared.print_sheet import PrintSheet
+from app.workflows import issue_calc
 from app.shared.warehouse_location import SHELF_LETTERS, configured_rack_layout, place_code
 
 from .application import (
@@ -69,6 +72,13 @@ class CreatePayload(BaseModel):
     purpose: str = Field(min_length=1, max_length=512)
     deadline: date | None = None
     lines: list[CreateLinePayload] = Field(min_length=1, max_length=500)
+    # queueIssueRequest shortNote: shortfalls already known on picking (IssueCalc: «нет на складе»).
+    short_note: list[Annotated[str, Field(max_length=1024)]] = Field(default_factory=list, max_length=500)
+
+
+class CalcPreviewPayload(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    warehouse: str = Field(min_length=1, max_length=8)
 
 
 class VersionPayload(BaseModel):
@@ -212,6 +222,28 @@ def requests(
     }
 
 
+_CALC_SHEET_STATUS = {"config": 503, "access": 422, "unsupported": 422, "upstream": 502}
+
+
+@router.post("/calc-preview")
+def calc_preview(
+    payload: CalcPreviewPayload,
+    request: Request,
+    _principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«Заявка по расчёту» (Issue.gs issueCalcPreview): the ЗКП positions of the linked calculation, matched against the
+    warehouse and picked FIFO. Creating the request goes through POST /api/issues with the picked lots + shortNote."""
+    try:
+        return issue_calc.issue_calc_preview(
+            payload.url, payload.warehouse, issue_calc.calc_reader(request.app.state), uow_factory,
+        )
+    except (issue_calc.IssueCalcError, CalcValidationError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except CalcSheetError as error:
+        raise HTTPException(status_code=_CALC_SHEET_STATUS.get(error.kind, 502), detail=str(error)) from error
+
+
 @router.get("/lots")
 def available_lots(
     _principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
@@ -294,6 +326,7 @@ def create(
                 requirement=line.requirement,
             ) for line in payload.lines),
             lot_ids=tuple(line.lot_id for line in payload.lines) if any(line.lot_id for line in payload.lines) else (),
+            short_note=tuple(payload.short_note),
             actor=principal.actor,
             now=now,
         ),
