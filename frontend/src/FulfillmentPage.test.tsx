@@ -255,6 +255,9 @@ it("searches by number, purpose, requester and status and counts every stage in 
   fireEvent.change(screen.getByLabelText("Поиск: Запросы на комплектацию"), { target: { value: "петров КБ1" } });
   expect(screen.getByText("FRX-ISS-26-0002")).toBeInTheDocument();
   expect(screen.queryByText("FRX-ISS-26-0001")).not.toBeInTheDocument();
+  // issFilterRender_: the chips count what the search left.
+  expect(screen.getByRole("button", { name: "Новая · 0" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Недоукомплектован · 1" })).toBeInTheDocument();
 });
 
 it("opens a project with every request of it and a whole-order view", async () => {

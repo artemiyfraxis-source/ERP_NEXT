@@ -190,6 +190,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         rowKey={(request) => request.id}
         label={screen?.title ?? "Заявки на выдачу"}
         presets={presets}
+        presetCountsFollowSearch
         groupBy={byProject ? (request) => projectOf(request) || "Без проекта" : undefined}
         emptyText={loaded ? (archive ? "В архиве пусто." : screen?.empty ?? "Заявок на выдачу нет. Они появятся из состава производственного комплекта.") : "Загружаю…"}
         exportName={mode === "give" ? "vydacha" : "komplektaciya"}
