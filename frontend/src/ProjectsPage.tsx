@@ -204,13 +204,13 @@ function CreateFromCalc({ close, done }: {
   return <div className="panel kit-modal" role="dialog" aria-label={title}>
     <h3>{title}</h3>
     <p className="page-sub">Нужна только ссылка: номер проекта, заказчик, сборки и состав читаются из листов ЗКЗ и СПЯ. Проект заведётся в реестре ERP вместе с позициями. Если он уже есть — обновится состав, правки количеств сохранятся, статус и дедлайн не тронутся.</p>
-    <div className="grid wide">
-      <label>Ссылка на расчёт<input aria-label="Ссылка на расчёт" value={url} placeholder="https://docs.google.com/spreadsheets/…" onChange={(event) => setUrl(event.target.value)} /></label>
+    <div className="form-grid">
+      <label className="wide">Ссылка на расчёт<input aria-label="Ссылка на расчёт" value={url} placeholder="https://docs.google.com/spreadsheets/…" onChange={(event) => setUrl(event.target.value)} /></label>
       <label>№ проекта<input value={form.number} placeholder="пусто — возьмём из расчёта" onChange={(event) => setForm({ ...form, number: event.target.value })} /></label>
       <label>Дедлайн<input type="date" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></label>
-      <label>Адрес отгрузки<input value={form.shipping_point} placeholder="можно позже — в окне «Отгрузить»" onChange={(event) => setForm({ ...form, shipping_point: event.target.value })} /></label>
       <label>Контактное лицо<input value={form.contact} placeholder="кто принимает" onChange={(event) => setForm({ ...form, contact: event.target.value })} /></label>
       <label>Телефон<input value={form.phone} placeholder="для связи" onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
+      <label className="wide">Адрес отгрузки<input value={form.shipping_point} placeholder="можно позже — в окне «Отгрузить»" onChange={(event) => setForm({ ...form, shipping_point: event.target.value })} /></label>
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="page-actions">

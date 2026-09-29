@@ -99,7 +99,7 @@ it("writes off stock with its optimistic version and stated reason", async () =>
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(await screen.findByRole("button", { name: "− Списать" }));
   fireEvent.change(await screen.findByLabelText("Количество"), {
     target: { value: "2" },
   });
@@ -136,7 +136,7 @@ it("offers «Выдача» as the write-off basis and needs a purpose before wr
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(await screen.findByRole("button", { name: "− Списать" }));
   expect(screen.getByLabelText("Основание")).toHaveValue("Выдача");
   fireEvent.change(screen.getByLabelText("Количество"), { target: { value: "1" } });
   fireEvent.change(screen.getByLabelText("Назначение списания"), { target: { value: "   " } });
@@ -163,8 +163,7 @@ it("returns a write-off to the lot with where it comes back from", async () => {
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
-  fireEvent.click(screen.getByRole("button", { name: "Вернуть на склад" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Вернуть на склад" }));
   expect(screen.getByLabelText("Количество возврата")).toHaveAttribute("max", "4");
   expect(screen.getByLabelText("Откуда возврат")).toBeRequired();
   fireEvent.change(screen.getByLabelText("Количество возврата"), { target: { value: "3" } });
@@ -190,7 +189,7 @@ it("offers no return on a lot that was never written off", async () => {
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(await screen.findByRole("button", { name: "− Списать" }));
 
   expect(screen.getByRole("button", { name: "Списать" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Вернуть на склад" })).not.toBeInTheDocument();
@@ -210,7 +209,7 @@ it("edits article, description, and manufacturer series without changing the lot
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.change(screen.getAllByLabelText("Артикул")[0], { target: { value: "CON-001" } });
   fireEvent.change(screen.getAllByLabelText("Наименование")[0], { target: { value: "Разъём питания" } });
   fireEvent.change(screen.getAllByLabelText("Серия")[0], { target: { value: "LOT-2410" } });
@@ -268,7 +267,7 @@ it("keeps an unnamed legacy lot expandable so its article can be entered", async
   render(<WarehousePage />);
   expect(await screen.findByText("Без наименования")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
 
   expect(screen.getByRole("button", { name: "Сохранить карточку" })).toBeInTheDocument();
   expect(screen.getAllByLabelText("Артикул")[0]).toHaveValue("");
@@ -346,7 +345,6 @@ it("sends the filled lot passport with a manual entry and shows it in the lot op
   expect(payload?.items[0]).not.toHaveProperty("certificate");
 
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
   expect(screen.getByLabelText("Паспорт партии")).toHaveTextContent(
     "Масса 1 шт: 0.048 г · Годен до 01.05.2030 · Производитель: Molex · Условия хранения: Сухо · Сертификат: РОСС RU.0001",
   );
@@ -471,7 +469,6 @@ it("moves a whole lot to the other warehouse without asking for a new place", as
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
   fireEvent.click(screen.getAllByRole("button", { name: "Переместить" })[0]);
   fireEvent.change(screen.getByLabelText("Склад назначения"), { target: { value: "ЖУК" } });
   expect(screen.getByLabelText("Новое место")).not.toBeRequired();
@@ -499,7 +496,7 @@ it("writes an old address as is from the lot operations and shows a lot without 
   expect(await screen.findByText("Без места · 1")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Показать партии (1)" }));
   expect(screen.getByText("без места")).toBeInTheDocument();
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.change(screen.getByLabelText("Место как есть"), { target: { value: " A-01 " } });
   fireEvent.click(screen.getByRole("button", { name: "Записать место" }));
 
@@ -521,7 +518,7 @@ it("edits the whole stock row and sends only what changed, an emptied number unt
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
   const form = within(screen.getByRole("form", { name: "Правка строки" }));
   expect(form.getByText(/ГРН FRX\.26\.0000001 .* ключ строки, не правится/)).toBeInTheDocument();
@@ -548,7 +545,7 @@ it("does not send a row edit when nothing changed", async () => {
 
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
+  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
   const form = within(screen.getByRole("form", { name: "Правка строки" }));
   fireEvent.click(form.getByRole("button", { name: "Сохранить строку" }));
@@ -661,7 +658,7 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   fireEvent.click(await screen.findByRole("button", { name: /Показать партии/ }));
   expect(await screen.findByText("ГРН FRX.26.0000001")).toBeInTheDocument();
   expect(screen.getByText("Склад открыт вам только на просмотр.")).toBeInTheDocument();
-  for (const name of ["+ Внести позиции", "↔ Переместить", "Стеллажи", "Типы", "Выгрузить", "Загрузить правки", "Лист перемещения", "Операции"]) {
+  for (const name of ["+ Внести позиции", "↔ Переместить", "Стеллажи", "Типы", "Выгрузить", "Загрузить правки", "Лист перемещения", "− Списать", "✎ Правка"]) {
     expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   }
   expect(requested.every((call) => call === "GET /api/stock")).toBe(true);
@@ -677,7 +674,6 @@ it("«История» on a lot opens the stock journal filtered by its ГРН (
 
   render(<WarehousePage admin />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
   fireEvent.click(screen.getByRole("button", { name: "История" }));
 
   expect(await screen.findByLabelText("Поиск по журналу склада")).toHaveValue("FRX.26.0000001");

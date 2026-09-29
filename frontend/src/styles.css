@@ -875,7 +875,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .lot-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
 .lot-card { display: grid; gap: 8px; align-content: start; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--card); white-space: normal; }
 .lot-card.busy { opacity: .6; }
-.lot-card-main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.lot-card-main { display: grid; grid-template-columns: minmax(110px, max-content) minmax(110px, max-content); gap: 12px 40px; }
 .lot-card-main > div { display: grid; gap: 2px; }
 .lot-card-big { font-size: 20px; font-weight: 700; line-height: 1.2; }
 .lot-card-main small, .lot-card-meta { color: var(--muted-foreground); font-size: 12px; }
@@ -892,3 +892,5 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .kit-tiles .tile-body { gap: 4px; }
 .kit-tiles .t-h { font-size: 15px; }
 .kit-tiles .t-sub { font-size: 12px; }
+.lot-card-passport { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.4; }
+.lot-card-actions .active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
