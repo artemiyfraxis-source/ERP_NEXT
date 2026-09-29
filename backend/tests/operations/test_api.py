@@ -84,6 +84,13 @@ def test_inbox_is_scoped_to_session_and_can_mark_all_read(operations_api):
     assert read.json() == {"unread": 0}
 
 
+def test_bell_counts_only_the_session_users_unread(operations_api):
+    client, _actor = operations_api
+    assert client.get("/api/notifications/unread").json() == {"unread": 1}
+    client.post("/api/notifications/read", json={"ids": []})
+    assert client.get("/api/notifications/unread").json() == {"unread": 0}
+
+
 def test_audit_is_restricted_to_management_and_admin(operations_api):
     client, actor = operations_api
     forbidden = client.get("/api/operations/audit")

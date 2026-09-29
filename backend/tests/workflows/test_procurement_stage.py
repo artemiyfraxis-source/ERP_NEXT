@@ -95,4 +95,11 @@ def test_stages_for_reports_procurement_status_once_handed_off_and_taken_in_work
     stages = lookup.stages_for([handed_request.id, untouched_request.id])
 
     assert stages == {handed_request.id: "В работе"}
+    details = lookup.details_for([handed_request.id, untouched_request.id])
+    assert list(details) == [handed_request.id]
+    assert details[handed_request.id].stage == "В работе"
+    assert details[handed_request.id].buyer == "Петров"
+    assert details[handed_request.id].order_number is None
+    assert details[handed_request.id].sum is None
+    assert lookup.details_for([]) == {}
     engine.dispose()

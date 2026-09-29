@@ -29,6 +29,8 @@ DELIVERY_POINTS = (
     "г. Москва, ул. 6-я Радиальная, д. 17",
     "г. Раменское, ул. 100-й Свирской Дивизии, д. 52",
 )
+# ТИП is a combobox (REQUEST_FORM_FIELDS): pick one or type your own.
+ITEM_TYPES = ("ЗИП", "Оборудование", "Расходники", "Комплектующие", "Инструмент", "СИЗ", "Услуга")
 UNITS = ("шт", "кг", "м", "л", "уп", "компл")
 CATEGORIES = ("Общепром", "ИП", "ОП")
 REQUIRED_FIELDS = (
@@ -231,6 +233,9 @@ def apply_quality_document_rule(category: str | None, value: str | None) -> str:
         return "Да"
     if normalized_category.casefold() == "ип" and not current:
         return "Да"
+    # RQ-1 (Schema.gs passportRule_): Общепром — «Нет» по умолчанию, но можно поставить «Да».
+    if normalized_category.casefold() == "общепром" and not current:
+        return "Нет"
     return current
 
 
@@ -252,7 +257,7 @@ def validate_draft(draft: RequestDraft) -> RequestDraft:
     unit_by_key = {item.casefold(): item for item in UNITS}
     unit = unit_by_key.get(_text(draft.unit).casefold())
     if unit is None:
-        raise ValidationError("Недопустимая ЕД.ИЗМ: выерите значение из справочника")
+        raise ValidationError("Недопустимая ЕД.ИЗМ: выберите значение из справочника")
     quality_document = apply_quality_document_rule(category, draft.quality_document)
     project_reference = _text(draft.project_reference)
     if project_reference and not project_reference_valid(project_reference):
@@ -357,7 +362,15 @@ def create_request_batch(
         raise ValidationError("Нет позиций")
     _validate_actor(actor)
 
-    normalized_drafts = [validate_draft(item) for item in drafts]
+    # RQ-2 (Forms.gs:66-67): the failing position is named, «Позиция N: …».
+    normalized_drafts = []
+    for index, item in enumerate(drafts, start=1):
+        try:
+            normalized_drafts.append(validate_draft(item))
+        except ValidationError as error:
+            if str(error).startswith("Позиция "):
+                raise
+            raise ValidationError(f"Позиция {index}: {error}") from error
     allocated_ids = list(existing_legacy_ids)
     allocated_designations = list(existing_designations)
     designation_by_purpose: dict[str, str] = {}
