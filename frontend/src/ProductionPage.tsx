@@ -117,7 +117,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
     {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
     {showLaunch && canEdit && <LaunchForm tasks={tasks} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
-    {!mine && canOverview && <TraceabilitySearch />}
+    {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
     {!mine && canEdit && <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
@@ -932,6 +932,10 @@ function InstrumentRegistry({ instruments, busy, mutate }: {
     <div className="calendar-absences">{instruments.map((item) => <div key={item.id}><span><strong>{item.inventory_number}</strong> · {item.name} · {item.instrument_type}</span><small>{item.verification_number} · до {item.verification_due.slice(0, 10)} · {item.status}</small></div>)}</div>
   </div>;
 }
+
+// Поиск родословной отложен владельцем 29.09: сначала распределение задач из техкарт, прослеживаемость — потом.
+// Бэкенд и данные на месте; вернуть блок — поставить true.
+const SHOW_TRACEABILITY = false;
 
 function TraceabilitySearch() {
   const [query, setQuery] = useState("");
