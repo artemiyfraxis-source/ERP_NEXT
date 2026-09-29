@@ -20,7 +20,7 @@ import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
 import { TcTemplateSheets } from "./TcTemplateSheets";
 
-type EtkRow = { name?: string; art?: string; norm?: string; unit?: string };
+type EtkRow = { name?: string; art?: string; kd?: string; grn?: string; norm?: string; unit?: string };
 type EtkStep = { number?: string; kind?: string; text?: string; tolerance?: string };
 type Housing = {
   title: string; art: string; rows: number; cols: number; n: number; color: string;
@@ -128,6 +128,18 @@ function Rows({ title, rows }: { title: string; rows?: EtkRow[] }) {
   )}</div>;
 }
 
+/** Комплектующие (SUPPLYMAP etkPartRow_): артикул к применению, под ним «по КД», наименование по артикулу, ГРН партии. */
+function PartRows({ rows }: { rows?: EtkRow[] }) {
+  if (!rows?.length) return null;
+  return <div className="etk-block"><strong>Комплектующие</strong>{rows.map((row, index) =>
+    <span key={`${row.art || row.name}:${index}`}>
+      {row.art || row.name || "—"}{row.kd && <small>по КД: {row.kd}, аналог</small>}
+      {row.art && row.name && <small>{row.name}</small>}{row.grn && <small>ГРН {row.grn}</small>}
+      <small>{row.norm || "—"} {row.unit || ""}</small>
+    </span>
+  )}</div>;
+}
+
 function EtkOperationCard({ operation }: { operation: EtkOperation }) {
   const raw = operation as Record<string, unknown>;
   // Корпус при монтаже в разъём рисует HousingView ниже; остальные эскизы — SVG-строки etkDraw (как в печати).
@@ -137,7 +149,7 @@ function EtkOperationCard({ operation }: { operation: EtkOperation }) {
     <div className="etk-chips" aria-label="Параметры операции">{etkChips(raw).map(([label, value]) =>
       <span key={label}><small>{label}</small>{value}</span>)}</div>
     <div className="etk-flow">
-      <Rows title="Комплектующие" rows={operation.components} />
+      <PartRows rows={operation.components} />
       <Rows title="Вход" rows={operation.semis} />
       <Rows title="Результат" rows={operation.result} />
       <Rows title="Время, мин" rows={operation.time} />
