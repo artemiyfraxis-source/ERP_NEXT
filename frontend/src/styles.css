@@ -441,6 +441,15 @@ td small { margin-top: 4px; color: #7b857e; }
 .login-card h1 { margin: 0 0 -10px; font-size: 20px; font-weight: 500; }
 .login-card .sub { margin: 0 0 6px; color: var(--muted-foreground); font-size: 13px; }
 .login-card label { text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
+.login-card form { display: grid; gap: 15px; }
+.login-card select { width: 100%; }
+.pin-overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.45); z-index: 50; }
+.pin-card { width: min(420px, 100%); padding: 24px; border-radius: 12px; background: var(--card); display: grid; gap: 10px; text-align: center; }
+.pin-card h2 { margin: 0; font-size: 18px; }
+.pin-card p { margin: 0; }
+.pin-reveal { font-size: 38px; font-weight: 800; letter-spacing: .16em; font-variant-numeric: tabular-nums; color: var(--primary, #00b09b); }
+.side-foot .role-label { color: var(--muted-foreground); font-size: 12px; }
+.side-foot .admin-mode.on { border-color: var(--primary, #00b09b); }
 .login-card label input { margin-top: 2px; text-transform: none; letter-spacing: normal; font-size: 14px; }
 .screen-center { min-height: 100vh; display: grid; place-items: center; }
 .muted { color: #637069; }

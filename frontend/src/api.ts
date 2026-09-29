@@ -10,6 +10,25 @@ export interface Principal {
   };
   roles: string[];
   permissions: Record<string, AccessMode>;
+  /** portalState_ roleLabel: the effective role, «· режим» while the admin mode is on. */
+  role_label?: string;
+  /** «Режим админа» (portalToggleAdmin): the account may switch it / it is on for this session. */
+  can_admin_mode?: boolean;
+  admin_mode?: boolean;
+}
+
+/** The login list (portalStaffLite_): active employees, no e-mails. */
+export interface LoginStaff {
+  id: string;
+  name: string;
+  department: string;
+}
+
+/** portalRevealPin_: the new PIN of a newcomer, shown once. */
+export interface PinReveal {
+  reveal: true;
+  name: string;
+  pin: string;
 }
 
 export interface RequestSchema {
@@ -1120,7 +1139,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...init, headers, credentials: "include" });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    if (response.status === 401 && path !== "/api/auth/login") {
+    if (response.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/pin-login") {
       window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
     }
     throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail);
@@ -1136,6 +1155,12 @@ export const identityApi = {
       method: "POST",
       body: JSON.stringify({ login, password }),
     }),
+  loginStaff: () => api<{ staff: LoginStaff[] }>("/api/auth/login-staff"),
+  /** An empty PIN asks for «узнать PIN» (first sign-in); the answer is then a PinReveal, not a session. */
+  pinLogin: (who: string, pin: string) =>
+    api<Principal | PinReveal>("/api/auth/pin-login", { method: "POST", body: JSON.stringify({ who, pin }) }),
+  adminMode: (on: boolean) =>
+    api<Principal>("/api/auth/admin-mode", { method: "POST", body: JSON.stringify({ on }) }),
   logout: () => api<void>("/api/auth/logout", { method: "POST" }),
   profile: () => api<OwnProfile>("/api/auth/profile"),
   changePassword: (current: string, next: string) =>
@@ -1164,6 +1189,8 @@ export interface Employee {
   role: string;
   site: string;
   active: boolean;
+  /** portalStaffGet `pinSet`: a PIN is assigned (the PIN itself never comes back). */
+  pin_set?: boolean;
 }
 
 export interface StaffDirectory {
@@ -1181,6 +1208,8 @@ export interface EmployeeCreate {
   role: string;
   site: string;
   password: string;
+  /** 6–8 digits; empty — no PIN yet. */
+  pin: string;
 }
 
 export interface EmployeeUpdate {
@@ -1190,6 +1219,7 @@ export interface EmployeeUpdate {
   site: string;
   active: boolean;
   password?: string | null;
+  pin?: string | null;
 }
 
 export const staffApi = {

@@ -1,14 +1,15 @@
 """«Сотрудники» (ID-8): the administrator keeps the staff directory and the department list.
 
 SUPPLYMAP Staff.gs:1-179 (portalStaffGet / portalStaffSave / staffDepts_) saved the whole directory at once
-and assigned a PIN. Here every employee is a row with its own audited change, and the credential is an
-Argon2id password the administrator types — the same path as the CLI `create-user`; it is never echoed
-back. Removing a row in SUPPLYMAP took away the login; here the employee is deactivated (sessions revoked),
+and assigned a PIN. Here every employee is a row with its own audited change. The administrator sets the PIN
+(6–8 digits, PORTAL_PIN_RE_) and sees whether one is assigned (`pinSet`); a password for the login+password path is
+optional. Both are Argon2id hashes and are never echoed back. Removing a row in SUPPLYMAP took away the login; here the employee is deactivated (sessions revoked),
 so the id that owns their history stays."""
 
 from __future__ import annotations
 
 import json
+import secrets
 from dataclasses import dataclass, replace
 from datetime import datetime
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -25,6 +26,7 @@ from .domain import (
     department_is_role_like,
     department_list,
     hash_password,
+    hash_pin,
     normalize_department,
     normalize_email,
     normalize_login,
@@ -51,6 +53,7 @@ class StaffConflict(ValueError):
 class StaffDirectory:
     users: list[IdentityUser]
     departments: list[str]
+    pin_set: frozenset[UUID] = frozenset()  # portalStaffGet `pinSet`
 
 
 @dataclass(frozen=True)
@@ -58,10 +61,11 @@ class NewEmployee:
     email: str
     name: str
     role: str
-    password: str
+    password: str = ""  # empty → no password: the employee signs in by PIN (SUPPLYMAP had PINs only)
     login: str = ""  # empty → the e-mail, as SUPPLYMAP logged in by e-mail
     department: str = ""
     site: str | None = None
+    pin: str = ""  # empty → no PIN yet (the employee may learn one on the first sign-in, portalRevealPin_)
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,7 @@ class EmployeeChange:
     active: bool
     site: str | None = None
     password: str | None = None  # None / empty → the password stays
+    pin: str | None = None  # None / empty → the PIN stays (portalStaffSave: pin is optional)
 
 
 def _audit(uow: UnitOfWork, aggregate_id: UUID, event_type: str, actor: Actor, now: datetime, details: dict) -> None:
@@ -95,7 +100,15 @@ def staff_directory(uow: UnitOfWork) -> StaffDirectory:
     with uow:
         users = uow.identity.all_users()
         departments = department_list(uow.identity.saved_departments(), [user.department for user in users])
-        return StaffDirectory(users=sorted(users, key=_name_key), departments=departments)
+        return StaffDirectory(
+            users=sorted(users, key=_name_key), departments=departments,
+            pin_set=frozenset(uow.identity.pin_set_ids()),
+        )
+
+
+def pin_assigned(user_id: UUID, uow: UnitOfWork) -> bool:
+    with uow:
+        return user_id in uow.identity.pin_set_ids()
 
 
 def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfWork) -> IdentityUser:
@@ -105,7 +118,9 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
     department = normalize_department(data.department)
     role = normalize_role(data.role)
     site = normalize_site(data.site)
-    password_hash = hash_password(data.password)
+    # Without a password the credential is a hash of a random secret nobody knows: only the PIN opens the door.
+    password_hash = hash_password(data.password or secrets.token_urlsafe(32))
+    pin_hash = hash_pin(data.pin) if str(data.pin or "").strip() else None
     now = as_utc(now)
     with uow:
         if uow.identity.identifiers_taken({login, email}):
@@ -115,11 +130,14 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
             active=True,
         )
         # The role's sections come from the «Доступы» matrix row of the role; nothing is seeded.
-        uow.identity.add_user(user, password_hash, {})
-        _audit(uow, user.id, "identity.user_created", actor, now, {
+        uow.identity.add_user(user, password_hash, {}, pin_hash)
+        details = {
             "login": login, "email": email, "name": name, "department": department, "role": role,
             "site": site or "",
-        })
+        }
+        if pin_hash is not None:
+            details["pin"] = "назначен"
+        _audit(uow, user.id, "identity.user_created", actor, now, details)
         uow.commit()
         return user
 
@@ -169,6 +187,7 @@ def update_employee(
     role = normalize_role(change.role)
     site = normalize_site(change.site)
     password_hash = hash_password(change.password) if change.password else None
+    pin_hash = hash_pin(change.pin) if str(change.pin or "").strip() else None
     now = as_utc(now)
     with uow:
         current = uow.identity.user_for_update(user_id)
@@ -182,17 +201,22 @@ def update_employee(
             for field in ("name", "department", "role", "site", "active")
             if getattr(current, field) != getattr(updated, field)
         }
-        if not changes and password_hash is None:
+        if not changes and password_hash is None and pin_hash is None:
             return current
         uow.identity.update_user(updated)
         if password_hash is not None:
             uow.identity.set_password(user_id, password_hash)
+        # portalStaffSave: a new PIN replaces the hash; open sessions stay, as in SUPPLYMAP.
+        if pin_hash is not None:
+            uow.identity.set_pin(user_id, pin_hash)
         # A new password or a lost login ends every open session of the employee.
         if password_hash is not None or (current.active and not updated.active):
             uow.identity.revoke_user_sessions(user_id, now)
         details = {"login": current.login, "changes": json.dumps(changes, ensure_ascii=False)}
         if password_hash is not None:
             details["password"] = "сменён"
+        if pin_hash is not None:
+            details["pin"] = "назначен"
         _audit(uow, user_id, "identity.user_updated", actor, now, details)
         uow.commit()
         return updated

@@ -222,6 +222,40 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
+# ── PIN (SUPPLYMAP Portal.gs portalLogin / portalRevealPin_ / portalSetPin, Staff.gs portalStaffSave) ──────────
+# PORTAL_PIN_RE_: one policy for the administrator's PIN and the staff screen — 6–8 digits.
+PIN_RE = re.compile(r"^[0-9]{6,8}$")  # as JS \d: ASCII digits only
+PIN_POLICY = "PIN — 6–8 цифр."
+
+
+def validate_pin(pin: str) -> str:
+    value = str(pin if pin is not None else "").strip()
+    if not PIN_RE.fullmatch(value):
+        raise IdentityValidationError(PIN_POLICY)
+    return value
+
+
+def hash_pin(pin: str, *, salt: bytes | None = None) -> str:
+    """The PIN is kept as an Argon2id hash with the password parameters (SUPPLYMAP: sha256(email:PIN))."""
+    value = validate_pin(pin)
+    actual_salt = salt or secrets.token_bytes(ARGON2_SALT_BYTES)
+    return PASSWORD_HASHER.hash(value, salt=actual_salt)
+
+
+def new_pin() -> str:
+    """portalNewPin_: six digits, the first is not zero (a PIN typed as a number loses a leading zero)."""
+    return str(secrets.randbelow(9) + 1) + "".join(str(secrets.randbelow(10)) for _ in range(5))
+
+
+# ── «Режим админа» (Portal.gs portalCanAdminMode_ / portalToggleAdmin) ─────────────────────────────────────
+# The account that may lift its role to admin for a while: GOD_MODE_EMAIL (Config.gs, Виктор Домрачев).
+ADMIN_MODE_EMAIL = "tektra.real.tektra@gmail.com"
+
+
+def can_admin_mode(email: str) -> bool:
+    return str(email or "").strip().casefold() == ADMIN_MODE_EMAIL.casefold()
+
+
 def _overlay(base: dict[str, AccessMode], overrides: dict[str, AccessMode]) -> dict[str, AccessMode]:
     result = {section: mode for section, mode in base.items() if mode is not AccessMode.NONE}
     for section, mode in overrides.items():

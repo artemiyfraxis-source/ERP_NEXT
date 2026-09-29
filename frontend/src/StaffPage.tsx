@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { staffApi, type Employee, type EmployeeCreate, type StaffDirectory } from "./api";
 
 /** ID-8 «Сотрудники» (SUPPLYMAP Staff.gs portalStaffGet/portalStaffSave): the administrator creates and
- *  edits employees and keeps the department list. A password is set here and never shown again. */
+ *  edits employees and keeps the department list. The PIN (6–8 digits) and the optional password are set here and
+ *  never shown again; the list says whether a PIN is assigned (`pinSet`). */
 
 type Draft = EmployeeCreate & { active: boolean };
 
-const EMPTY_DRAFT: Draft = { login: "", email: "", name: "", department: "", role: "staff", site: "", password: "", active: true };
+const EMPTY_DRAFT: Draft = { login: "", email: "", name: "", department: "", role: "staff", site: "", password: "", pin: "", active: true };
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
 export function StaffPage() {
@@ -56,11 +57,14 @@ export function StaffPage() {
     }
     const { user } = await staffApi.update(id, {
       name: draft.name, department: draft.department, role: draft.role, site: draft.site, active: draft.active,
-      password: draft.password || null,
+      password: draft.password || null, pin: draft.pin.trim() || null,
     });
     setEditing(null);
     await load();
-    return draft.password ? `Сохранено: ${user.name}, пароль сменён — прежние входы закрыты` : `Сохранено: ${user.name}`;
+    const parts = [`Сохранено: ${user.name}`];
+    if (draft.pin.trim()) parts.push("PIN назначен");
+    if (draft.password) parts.push("пароль сменён — прежние входы закрыты");
+    return parts.join(", ");
   });
 
   const saveDepartments = () => run(async () => {
@@ -79,7 +83,8 @@ export function StaffPage() {
   });
 
   function startEdit(user: Employee) {
-    setEditing({ id: user.id, draft: { ...user, password: "" } });
+    const { pin_set: _pinSet, ...fields } = user;
+    setEditing({ id: user.id, draft: { ...fields, password: "", pin: "" } });
   }
 
   const roleLabel = (key: string) => data?.roles.find((role) => role.key === key)?.label ?? key;
@@ -94,7 +99,7 @@ export function StaffPage() {
     {notice && <div className="success-banner">{notice}</div>}
     {data && <>
       <div className="table-wrap"><table aria-label="Сотрудники">
-        <thead><tr><th>ФИО</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>Вход</th><th /></tr></thead>
+        <thead><tr><th>ФИО</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>PIN</th><th>Вход</th><th /></tr></thead>
         <tbody>
           {data.users.map((user) => <tr key={user.id} className={user.active ? undefined : "muted"}>
             <td className="text"><strong>{user.name}</strong></td>
@@ -102,6 +107,7 @@ export function StaffPage() {
             <td>{user.department || "—"}</td>
             <td>{user.site || "все"}</td>
             <td>{roleLabel(user.role)}</td>
+            <td>{user.pin_set ? "✓ назначен" : "✗ нет"}</td>
             <td>{user.active ? "активен" : "отключён"}</td>
             <td><button className="secondary small" aria-label={`Править ${user.name}`} onClick={() => startEdit(user)}>Править</button></td>
           </tr>)}
@@ -162,7 +168,8 @@ function EmployeeForm({ data, editing, busy, onChange, onSave, onCancel }: {
       <label>Роль<select aria-label="Роль" value={draft.role} onChange={(event) => set("role", event.target.value)}>
         {data.roles.map((role) => <option key={role.key} value={role.key}>{role.label}</option>)}
       </select></label>
-      <label>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
+      <label>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — узнает при первом входе" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
+      <label>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "необязательно, 8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
       {!creating && <label className="check-inline"><input aria-label="Вход разрешён" type="checkbox" checked={draft.active} onChange={(event) => set("active", event.target.checked)} /> Вход разрешён</label>}
     </div>
     <div className="form-actions">

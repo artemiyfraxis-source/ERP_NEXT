@@ -76,6 +76,24 @@ def create_user(args: argparse.Namespace, sessions: sessionmaker[Session]) -> No
         print(f"Created {user.login} ({user.id})")
 
 
+def pin_reveal(args: argparse.Namespace, sessions: sessionmaker[Session]) -> None:
+    """SUPPLYMAP pinRevealOn / pinRevealOff: «узнать PIN при первом входе» on the login screen."""
+    from app.modules.identity.application import set_pin_reveal
+    from app.modules.identity.infrastructure import IdentityUserRow, SqlAlchemyIdentityUnitOfWork
+
+    enabled = args.state == "on"
+    set_pin_reveal(enabled, SqlAlchemyIdentityUnitOfWork(sessions))
+    if enabled:
+        with sessions() as session:
+            seen = len(list(session.scalars(select(IdentityUserRow.id).where(IdentityUserRow.seen_at.is_not(None)))))
+        print(
+            "Режим «узнать пароль при первом входе» ВКЛЮЧЁН. Уже входивших (пароль им не выдаётся): "
+            f"{seen}. Выключить: pin-reveal off."
+        )
+    else:
+        print("Режим «узнать пароль» ВЫКЛЮЧЕН — вход только по PIN.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Administer ERP Next Identity")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -92,6 +110,8 @@ def main() -> None:
         default=[],
         help="User permission override, for example procurement=edit",
     )
+    reveal = subparsers.add_parser("pin-reveal", help="«узнать PIN при первом входе» (pinRevealOn/Off)")
+    reveal.add_argument("state", choices=("on", "off"))
     args = parser.parse_args()
 
     database_url = os.getenv("ERP_DATABASE_URL")
@@ -102,6 +122,8 @@ def main() -> None:
     try:
         if args.command == "create-user":
             create_user(args, sessions)
+        elif args.command == "pin-reveal":
+            pin_reveal(args, sessions)
     finally:
         engine.dispose()
 

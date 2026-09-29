@@ -16,12 +16,19 @@ from app.shared.http_auth import access_admin_principal, staffdir_principal
 from .application import (
     AuthenticationError,
     AuthenticationRateLimited,
+    LoginResult,
+    PinRefused,
+    PinReveal,
     UnitOfWork,
     change_own_password,
     own_profile,
     login,
+    login_staff,
+    login_with_pin,
     logout,
     deactivate_user,
+    role_label,
+    toggle_admin_mode,
 )
 from .access import access_overview, save_role_matrix, save_user_access
 from .domain import (
@@ -39,6 +46,7 @@ from .staff import (
     NewEmployee,
     StaffConflict,
     create_employee,
+    pin_assigned,
     rename_department,
     save_departments,
     staff_directory,
@@ -72,34 +80,19 @@ def _principal_result(principal: Principal) -> dict:
         },
         "roles": sorted(principal.roles),
         "permissions": principal.permissions,
+        # portalState_: roleLabel («· режим» in the admin mode), canAdminMode, adminMode.
+        "role_label": role_label(principal),
+        "can_admin_mode": principal.can_admin_mode,
+        "admin_mode": principal.admin_mode,
     }
 
 
-@router.post("/login")
-def login_route(
-    payload: LoginInput,
-    request: Request,
-    response: Response,
-    now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
-) -> dict:
+def _client_key(request: Request) -> str:
     client_address = request.client.host if request.client else "unknown"
-    client_key = f"client:{secret_hash(client_address)}"
-    try:
-        result = login(
-            payload.login,
-            payload.password,
-            now,
-            uow_factory(),
-            client_key=client_key,
-        )
-    except AuthenticationRateLimited as error:
-        raise HTTPException(status_code=429, detail=str(error)) from error
-    except (AuthenticationError, IdentityValidationError) as error:
-        raise HTTPException(status_code=401, detail="Неверный логин или пароль") from error
-    except IntegrityError as error:
-        raise HTTPException(status_code=409, detail="Повторите попытку входа") from error
+    return f"client:{secret_hash(client_address)}"
 
+
+def _start_session(request: Request, response: Response, result: LoginResult) -> dict:
     secure = bool(getattr(request.app.state, "cookie_secure", True))
     session_cookie, csrf_cookie = cookie_names(secure)
     response.set_cookie(
@@ -121,6 +114,103 @@ def login_route(
         path="/",
     )
     return _principal_result(result.principal)
+
+
+@router.post("/login")
+def login_route(
+    payload: LoginInput,
+    request: Request,
+    response: Response,
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    try:
+        result = login(
+            payload.login,
+            payload.password,
+            now,
+            uow_factory(),
+            client_key=_client_key(request),
+        )
+    except AuthenticationRateLimited as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
+    except (AuthenticationError, IdentityValidationError) as error:
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль") from error
+    except IntegrityError as error:
+        raise HTTPException(status_code=409, detail="Повторите попытку входа") from error
+    return _start_session(request, response, result)
+
+
+# ── Вход по PIN (SUPPLYMAP Portal.gs portalStaffLite_ / portalLogin / portalRevealPin_) ────────────────
+
+
+@router.get("/login-staff")
+def login_staff_route(
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """The login list before sign-in: active employees — id, name, department. No e-mails (portalStaffLite_)."""
+    return {
+        "staff": [
+            {"id": str(user.id), "name": user.name, "department": user.department}
+            for user in login_staff(uow_factory())
+        ]
+    }
+
+
+class PinLoginInput(BaseModel):
+    who: str = Field(min_length=1, max_length=255)  # the employee id from the list, or an e-mail / login
+    pin: str = Field(default="", max_length=128)  # empty → «узнать PIN» on the first sign-in
+
+
+@router.post("/pin-login")
+def pin_login_route(
+    payload: PinLoginInput,
+    request: Request,
+    response: Response,
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    try:
+        result = login_with_pin(payload.who, payload.pin, now, uow_factory(), client_key=_client_key(request))
+    except AuthenticationRateLimited as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
+    except PinRefused as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except AuthenticationError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    except IntegrityError as error:
+        raise HTTPException(status_code=409, detail="Повторите попытку входа") from error
+    if isinstance(result, PinReveal):
+        # Shown once: the screen asks to write it down and fills the PIN field.
+        return {"reveal": True, "name": result.name, "pin": result.pin}
+    return _start_session(request, response, result)
+
+
+# ── «Режим админа» (Portal.gs portalToggleAdmin) ─────────────────────────────────────────────────────
+
+
+class AdminModeInput(BaseModel):
+    on: bool
+
+
+@router.post("/admin-mode")
+def admin_mode_route(
+    payload: AdminModeInput,
+    request: Request,
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    session = getattr(request.state, "identity_session", None)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Требуется вход в ERP")
+    try:
+        updated = toggle_admin_mode(session, principal, payload.on, now, uow_factory())
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except AuthenticationError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    return _principal_result(updated)
 
 
 @router.get("/me")
@@ -211,7 +301,8 @@ class EmployeeCreateInput(BaseModel):
     department: str = Field(default="", max_length=255)
     role: str = Field(min_length=1, max_length=64)
     site: str = Field(default="", max_length=8)
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(default="", max_length=128)  # empty → PIN only
+    pin: str = Field(default="", max_length=16)  # 6–8 digits; empty → none yet
 
 
 class EmployeeUpdateInput(BaseModel):
@@ -221,6 +312,7 @@ class EmployeeUpdateInput(BaseModel):
     site: str = Field(default="", max_length=8)
     active: bool
     password: str | None = Field(default=None, max_length=128)  # empty → the password stays
+    pin: str | None = Field(default=None, max_length=16)  # empty → the PIN stays
 
 
 class DepartmentsInput(BaseModel):
@@ -232,8 +324,8 @@ class DepartmentRenameInput(BaseModel):
     target: str = Field(min_length=1, max_length=255)
 
 
-def _employee(user: IdentityUser) -> dict:
-    # No password or hash ever leaves the server; the screen only sets a new one.
+def _employee(user: IdentityUser, pin_set: bool = False) -> dict:
+    # No password, PIN or hash ever leaves the server; the screen only sets a new one and sees `pin_set`.
     return {
         "id": str(user.id),
         "login": user.login,
@@ -243,6 +335,7 @@ def _employee(user: IdentityUser) -> dict:
         "role": user.role,
         "site": user.site or "",
         "active": user.active,
+        "pin_set": pin_set,
     }
 
 
@@ -267,7 +360,7 @@ def staff_route(
     del principal
     directory = staff_directory(uow_factory())
     return {
-        "users": [_employee(user) for user in directory.users],
+        "users": [_employee(user, user.id in directory.pin_set) for user in directory.users],
         "departments": directory.departments,
         "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()],
         "sites": [{"code": code, "city": city} for code, city in WORK_SITES.items()],
@@ -285,7 +378,7 @@ def create_employee_route(
         user = create_employee(NewEmployee(**payload.model_dump()), principal.actor, now, uow_factory())
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
-    return {"user": _employee(user)}
+    return {"user": _employee(user, bool(payload.pin.strip()))}
 
 
 @router.put("/staff/{user_id}")
@@ -300,7 +393,7 @@ def update_employee_route(
         user = update_employee(user_id, EmployeeChange(**payload.model_dump()), principal.actor, now, uow_factory())
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
-    return {"user": _employee(user)}
+    return {"user": _employee(user, pin_assigned(user.id, uow_factory()))}
 
 
 @router.put("/departments")
