@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { TcGenerator, type BomItem } from "./TcGenerator";
 import {
+  kitsetsApi,
   techcardsApi,
   type OperationCardDetail,
   type OperationCardSummary,
   type OperationRecordEdit,
-  type GrapherImportResult,
   type Principal,
   type ProjectTechcard,
   type TechcardRevision,
@@ -318,7 +319,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
   const [revisions, setRevisions] = useState<TechcardRevision[]>([]);
   const [form, setForm] = useState({ project: "", item_index: "", product_name: "", source_calculation: "", deadline: "" });
   const [configText, setConfigText] = useState("{}");
-  const [grapher, setGrapher] = useState<GrapherImportResult | null>(null);
+  const generatedConfig = useRef<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -328,6 +329,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     const project = projectFilter.trim().toLocaleUpperCase("ru-RU");
     return project ? cards.filter((card) => card.project.toLocaleUpperCase("ru-RU") === project) : cards;
   }, [cards, projectFilter]);
+  const [bom, setBom] = useState<BomItem[] | undefined>(undefined);
   // Одна запись на код операции: пара (A)/(B) — одна карточка (SUPPLYMAP tcRecordsByCode_).
   const records = useMemo(() => {
     const byCode = new Map<string, OperationCardSummary>();
@@ -369,6 +371,15 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     void techcardsApi.revisions(selected.id).then((result) => setRevisions(result.items)).catch(() => setRevisions([]));
   }, [selectedId, selected?.version]);
   useEffect(() => {
+    // SUPPLYMAP tcLoadBomFromKit: состав для генератора — из набора проекта; набора нет → ручной состав.
+    if (!selected) { setBom(undefined); return; }
+    let live = true;
+    void kitsetsApi.bom(selected.project, selected.item_index)
+      .then((result) => { if (live) setBom(result.components.map(({ art, name, type, qty }) => ({ art, name, type, qty }))); })
+      .catch(() => { if (live) setBom(undefined); });
+    return () => { live = false; };
+  }, [selected?.project, selected?.item_index]);
+  useEffect(() => {
     setEditingTemplate(false);
     if (!selectedTemplateId) { setTemplateDetail(null); return; }
     void techcardsApi.template(selectedTemplateId).then(setTemplateDetail).catch(() => setTemplateDetail(null));
@@ -402,11 +413,10 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     } finally { setBusy(false); }
   }
 
-  async function autoBuild() {
+  async function build(config: Record<string, unknown>) {
     if (!selected || busy) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const config = JSON.parse(configText) as Record<string, unknown>;
       const updated = await techcardsApi.autoBuild(selected.id, selected.version, config);
       replaceCard(updated);
       const warningCount = warnings(updated.document).length;
@@ -416,51 +426,26 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     } finally { setBusy(false); }
   }
 
-  async function importGrapher(file: File) {
-    if (busy) return;
-    setBusy(true); setError(""); setNotice("");
+  async function autoBuild() {
+    let config: Record<string, unknown>;
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
-      });
-      const result = await techcardsApi.importGrapher(file.name, dataUrl.split(",", 2)[1] || "");
-      setGrapher(result);
-      setNotice(`Чертёж прочитан · жгутов: ${result.harnesses.length}`);
+      config = JSON.parse(configText) as Record<string, unknown>;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Экспорт TECHMAP-GRAPHER не разобран");
-    } finally { setBusy(false); }
+      setError(reason instanceof Error ? reason.message : "Конфигурация содержит неверный JSON");
+      return;
+    }
+    await build(config);
   }
 
-  function applyHarness(harness: GrapherImportResult["harnesses"][number]) {
+  async function discardDraft() {
+    if (!selected || busy) return;
+    setBusy(true); setError(""); setNotice("");
     try {
-      const current = JSON.parse(configText) as Record<string, unknown>;
-      const wires = harness.groups.map((group) => ({
-        name: group.material, art: group.material, qty: group.quantity,
-        length: group.length_mm ?? 0, cores: group.cores,
-        jacketStrip: group.jacket_mm,
-        grapher: {
-          source_ids: group.source_ids, ends: group.ends, cut_mm: group.cut_mm,
-          correction_from_mm: group.correction_from_mm,
-          correction_to_mm: group.correction_to_mm,
-        },
-      }));
-      setConfigText(JSON.stringify({
-        ...current,
-        assemblyIndex: harness.designation || current.assemblyIndex,
-        partQty: harness.quantity || current.partQty,
-        wires,
-        grapherImport: {
-          project: grapher?.project.designation || "", pairs: harness.pairs,
-          connectors: harness.connectors, warnings: harness.warnings,
-        },
-      }, null, 2));
-      setNotice(`Кабели из ${harness.designation || "чертежа"} подставлены в конфигурацию`);
+      replaceCard(await techcardsApi.discardDraft(selected.id, selected.version));
+      setNotice("Черновик ЭТК удалён");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Текущая конфигурация содержит неверный JSON");
-    }
+      setError(reason instanceof Error ? reason.message : "Черновик не удалён");
+    } finally { setBusy(false); }
   }
 
   async function issue() {
@@ -505,15 +490,9 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
         setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
       }} />
       {!operations(selected.document).length && <div className="empty">ЭТК ещё не собрана.</div>}
-      {canEdit && <details className="build-config"><summary>Конфигурация автоматической сборки</summary>
-        <div className="grapher-import">
-          <label>Экспорт TECHMAP-GRAPHER<input aria-label="Экспорт TECHMAP-GRAPHER" type="file" accept=".json,.zip,.techmap-project.zip" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importGrapher(file); }} /></label>
-          {grapher && <div className="grapher-harnesses">{grapher.harnesses.map((harness) => <div key={harness.designation}>
-            <span><strong>{harness.designation || "Без индекса"}</strong> · кабелей/проводов {harness.groups.length} · пар {harness.pairs}</span>
-            <button className="secondary small" onClick={() => applyHarness(harness)}>Подставить в «Кабели»</button>
-            {harness.warnings.map((warning) => <small className="danger-text" key={warning}>{warning}</small>)}
-          </div>)}</div>}
-        </div>
+      {canEdit && <TcGenerator card={selected} bom={bom} busy={busy} onBuild={build} onDiscard={discardDraft} onConfig={(config) => { generatedConfig.current = config; }} />}
+      {canEdit && <details className="build-config"><summary>JSON-конфигурация (для эксперта)</summary>
+        <div className="form-actions"><button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button></div>
         <label>Config генератора SUPPLYMAP<textarea aria-label="Конфигурация автоматической сборки" rows={14} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
       </details>}
       {canEdit && <div className="form-actions"><button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК автоматически</button>{selected.status === "Черновик" && selected.document && <button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}</div>}
