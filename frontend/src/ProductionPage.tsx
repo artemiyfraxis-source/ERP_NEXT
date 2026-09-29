@@ -363,6 +363,11 @@ function LaunchForm({ tasks, busy, mutate, close }: {
   </div>;
 }
 
+// tcKitItemId_: изделие задания в SUPPLYMAP — проект + индекс КБ в верхнем регистре.
+function itemId(task: { project: string; item: string }) {
+  return task.item.toUpperCase().startsWith(task.project.toUpperCase()) ? task.item : `${task.project}${task.item.toUpperCase()}`;
+}
+
 function parseDate(value: string | null | undefined) {
   if (!value) return null;
   const date = new Date(value);
@@ -383,10 +388,10 @@ function TasksGantt({ tasks, holidays, week, setWeek, open }: {
       key: task.id,
       dim: cancelled,
       onClick: () => open(task.id),
-      label: <><b>{task.number}</b> {task.item} <span className="pg-q">× {task.quantity}</span></>,
+      label: <><b>{task.number}</b> {itemId(task)} <span className="pg-q">× {task.quantity}</span></>,
       sublabel: `${cancelled ? "отменено" : `назначено ${task.assigned} из ${task.operations.length}`}${task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}`,
       bars: [{
-        start: task.planned_start, finish: task.planned_finish, text: task.item,
+        start: task.planned_start, finish: task.planned_finish, text: itemId(task),
         tone: task.assigned < task.operations.length ? "partial" : "default",
         title: `${task.number}: ${formatDate(task.planned_start)} – ${formatDate(task.planned_finish)}`,
       }],
@@ -443,7 +448,7 @@ function TaskDetail({ task, tasks, operators, skills, holidays, week, setWeek, c
   return <div className="panel production-card">
     <button className="secondary small" onClick={back}>← Планирование</button>
     <div className="procurement-title">
-      <div><strong>{task.number} · {task.item}{task.name ? ` · ${task.name}` : ""}</strong><small>{task.project} · кол-во {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · запущено {formatDate(task.created_at)}{cancelled ? " · отменено" : ""}{edit ? " · нажми на операцию, чтобы назначить операторов" : ""}</small></div>
+      <div><strong>{task.number} · {itemId(task)}{task.name ? ` · ${task.name}` : ""}</strong><small>{task.project} · кол-во {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · запущено {formatDate(task.created_at)}{cancelled ? " · отменено" : ""}{edit ? " · нажми на операцию, чтобы назначить операторов" : ""}</small></div>
       <span className="status">{task.status}</span>
     </div>
     {canEdit && <div className="page-actions">
@@ -534,7 +539,7 @@ function AssignCard({ task, operation, tasks, operators, skills, holidays, week,
   }
 
   return <div className="panel assign-card">
-    <div className="manual-stock-head"><div><h2>{task.number} · этап {operation.position} · {operation.stage}</h2><small>{task.item} × {task.quantity} · норма {hours(operation.norm_seconds)} на одного{operation.description ? ` · ${operation.description}` : ""}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
+    <div className="manual-stock-head"><div><h2>{task.number} · этап {operation.position} · {operation.stage}</h2><small>{itemId(task)} × {task.quantity} · норма {hours(operation.norm_seconds)} на одного{operation.description ? ` · ${operation.description}` : ""}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
     <div className="pa-ctl"><label>Плановый старт<input aria-label={`Старт этапа ${operation.position}`} type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label><small>пусто — первое свободное время выбранных операторов</small></div>
     <Gantt rows={rows} labelHead="Оператор" week={week} onWeekChange={setWeek} holidays={holidays} />
     <div className={`pa-plan${planError ? " err" : ""}`} role="status">
@@ -587,7 +592,7 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
   return <div className="schedule-planner">
     <button className="secondary small" onClick={() => setShow((value) => !value)}>⚙ Авторасчёт плана</button>
     {show && <div className="schedule-panel">
-      <small>{task.item} × {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · этапы идут цепочкой: следующий начинает, как только предыдущий отдал передаточную партию. Операторы — из «Компетенции», по допуску и коэффициенту.</small>
+      <small>{itemId(task)} × {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · этапы идут цепочкой: следующий начинает, как только предыдущий отдал передаточную партию. Операторы — из «Компетенции», по допуску и коэффициенту.</small>
       <div className="schedule-controls">
         <label>Операторов на операцию, до<select aria-label={`Максимум операторов ${task.number}`} value={maxCrew} onChange={(event) => setMaxCrew(Number(event.target.value))}>{[1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label><input type="checkbox" checked={replan} onChange={(event) => setReplan(event.target.checked)} />пересчитать и уже назначенные этапы</label>
@@ -652,7 +657,7 @@ function MyQueue({ tasks, session, busy, mutate }: {
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
         <div className="mo-h"><b>{operation.stage || `Этап ${operation.position}`}</b>{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(operation.planned_start)} → ${formatDate(operation.planned_finish)}` : "время не назначено"}</span></div>
-        <div className="mo-s">{task.number} · этап {operation.position} · <b>{task.item}</b> × {task.quantity}{task.name ? ` · ${task.name}` : ""}</div>
+        <div className="mo-s">{task.number} · этап {operation.position} · <b>{itemId(task)}</b> × {task.quantity}{task.name ? ` · ${task.name}` : ""}</div>
         {operation.description && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
         <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {task.quantity}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}</div>
@@ -779,10 +784,10 @@ function StartWorkForm({ task, operation, busy, mutate }: {
   const selectable = operation.position === 1 ? materials : boxes;
   return <div className="start-work">
     {error && <small className="danger-text">{error}</small>}
-    {!selectable.length && !error && <small>{operation.position === 1 ? "Нет выданных складских партий. Свяжите задание с выданной заявкой комплектации." : "Нет подтверждённых коробок предыдущего этапа."}</small>}
+    {!selectable.length && !error && operation.position > 1 && <small>Нет подтверждённых коробок предыдущего этапа.</small>}
     {materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
     {boxes.map((box) => <label key={box.id}>{box.number} · доступно {box.available}<input aria-label={`Количество из коробки ${box.number}`} type="number" min="0" max={box.available} step="any" value={quantities[box.id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [box.id]: event.target.value }))} /></label>)}
-    {selectable.length > 0 && <button className="primary small" disabled={busy || !(inputs.length || materialInputs.length) || inputs.some((item) => Number(item.quantity) > Number(boxes.find((box) => box.id === item.box_id)?.available ?? 0)) || materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0))} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs))}>Начать операцию</button>}
+    {(operation.position === 1 || selectable.length > 0) && <button className="primary small" disabled={busy || (operation.position > 1 && !inputs.length) || inputs.some((item) => Number(item.quantity) > Number(boxes.find((box) => box.id === item.box_id)?.available ?? 0)) || materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0))} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs))}>Начать операцию</button>}
   </div>;
 }
 

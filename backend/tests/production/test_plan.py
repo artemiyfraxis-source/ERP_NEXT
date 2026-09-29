@@ -242,7 +242,7 @@ def test_a_broken_supply_column_leaves_the_plan_standing():
 
     rows = build_production_plan(
         cards=(), tasks=(), fulfillment=(), goods=(), requests=broken, procurement=(),
-        projects=(PlanProjectSnapshot("708К.4", terminal=True, status="Закрыт"),), events=(),
+        projects=(PlanProjectSnapshot("708К.4", terminal=True, status="Закрыт"),), events=(PlanEvent("708К.4", datetime(2026, 9, 22, 8, tzinfo=timezone.utc), "Мастер", PLAN_KINDS["note"], text="заметка"),),
         today=date(2026, 9, 28),
     )
 
@@ -258,7 +258,8 @@ def test_plan_rows_come_only_from_the_project_registry():
 
     rows = build_production_plan(
         cards=(orphan,), tasks=(), fulfillment=(), goods=(), requests=(), procurement=(),
-        projects=(PlanProjectSnapshot("708К.4"),), events=(), today=date(2026, 9, 22),
+        projects=(PlanProjectSnapshot("708К.4"), PlanProjectSnapshot("710К.1")), events=(PlanEvent("708К.4", datetime(2026, 9, 22, 8, tzinfo=timezone.utc), "Мастер", PLAN_KINDS["note"], text="заметка"),), today=date(2026, 9, 22),
     )
 
+    # Карточка без строки реестра и голая строка реестра (710К.1) в план не попадают (PP-1).
     assert [row.project for row in rows] == ["708К.4"]
