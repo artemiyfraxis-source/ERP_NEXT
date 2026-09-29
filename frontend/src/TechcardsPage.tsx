@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DataTable, type DataColumn } from "./DataTable";
 import { TcGenerator, type BomItem } from "./TcGenerator";
 import {
   kitsetsApi,
@@ -330,6 +331,15 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     return project ? cards.filter((card) => card.project.toLocaleUpperCase("ru-RU") === project) : cards;
   }, [cards, projectFilter]);
   const [bom, setBom] = useState<BomItem[] | undefined>(undefined);
+  const cardColumns: DataColumn<ProjectTechcard>[] = [
+    { key: "project", title: "Проект", value: (card) => card.project,
+      render: (card) => <button className="link-button" onClick={() => setSelectedId(card.id)}><strong>{card.project}</strong></button> },
+    { key: "item", title: "Изделие", value: (card) => `${card.item_index} · ${card.product_name}`,
+      render: (card) => <button className="link-button" onClick={() => setSelectedId(card.id)}>{card.item_index} · {card.product_name}</button> },
+    { key: "status", title: "Статус", value: (card) => card.status },
+    { key: "revision", title: "Ревизия", value: (card) => card.revision || "—", numeric: true },
+    { key: "deadline", title: "Срок", value: (card) => card.deadline || "—" },
+  ];
   // Одна запись на код операции: пара (A)/(B) — одна карточка (SUPPLYMAP tcRecordsByCode_).
   const records = useMemo(() => {
     const byCode = new Map<string, OperationCardSummary>();
@@ -477,10 +487,20 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
       </div>
       <div className="form-actions"><button className="primary" disabled={busy || !form.project || !form.item_index || !form.product_name} onClick={() => void createCard()}>Создать карточку</button></div>
     </article>}
-    <div className="table-wrap"><table><thead><tr><th>Проект</th><th>Изделие</th><th>Статус</th><th>Ревизия</th><th>Срок</th></tr></thead><tbody>
-      {shownCards.map((card) => <tr key={card.id} className={selectedId === card.id ? "selected" : ""} onClick={() => setSelectedId(card.id)}><td><strong>{card.project}</strong></td><td>{card.item_index} · {card.product_name}</td><td>{card.status}</td><td>{card.revision || "—"}</td><td>{card.deadline || "—"}</td></tr>)}
-      {!shownCards.length && <tr><td colSpan={5} className="empty">{projectFilter ? `Карточек проекта ${projectFilter} нет.` : "Карточек проектов пока нет."}</td></tr>}
-    </tbody></table></div>
+    <DataTable
+      rows={shownCards}
+      columns={cardColumns}
+      rowKey={(card) => card.id}
+      storageKey="techcards-projects"
+      label="Техкарты проектов"
+      exportName="Техкарты проектов"
+      presets={[
+        { label: "Черновики", test: (card) => card.status === "Черновик" },
+        { label: "Выданные", test: (card) => card.status === "Выдана" },
+      ]}
+      rowClassName={(card) => (selectedId === card.id ? "selected" : "")}
+      emptyText={projectFilter ? `Карточек проекта ${projectFilter} нет.` : cards.length ? "Ничего не найдено." : "Карточек проектов пока нет."}
+    />
     {selected && <article className="panel project-etk">
       <div className="panel-heading"><strong>{selected.project} · {selected.item_index}</strong><span>{selected.status} · ревизия {selected.revision || "—"}</span></div>
       {warnings(selected.document).map((warning) => <div className="warning-inline" key={warning}>{warning}</div>)}
