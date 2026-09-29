@@ -3,11 +3,14 @@
 # bootstrap.sh (first time) or update.sh (every next time, with a backup first).
 #   .\deploy\push.ps1 -Server 203.0.113.10               # ERP from origin/main
 #   .\deploy\push.ps1 -Server 203.0.113.10 -Ref <sha>    # a specific commit (rollback)
+#   .\deploy\push.ps1 -Server 203.0.113.10 -GoogleKey $HOME\Downloads\techmap-498119-….json   # first time
 param(
   [Parameter(Mandatory = $true)][string]$Server,
   [string]$Ref = 'origin/main',
   [string]$Key = "$HOME\.ssh\erp_server",
   [string]$Domain = '',
+  [string]$GoogleKey = '',   # JSON-ключ erp-reader: кладётся в /opt/erp/config/secrets до установки
+
   [string]$ErpRepo = (Split-Path $PSScriptRoot -Parent),
   [string]$SupplymapRepo = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'SUPPLYMAP')
 )
@@ -27,6 +30,12 @@ if (Test-Path $SupplymapRepo) {
 
 & scp @ssh "$tmp\*.tar.gz" "${target}:/tmp/"
 if ($LASTEXITCODE) { throw 'scp failed' }
+if ($GoogleKey) {
+  & ssh @ssh $target 'mkdir -p /opt/erp/config/secrets && chmod 700 /opt/erp/config && chmod 755 /opt/erp/config/secrets'
+  & scp @ssh $GoogleKey "${target}:/opt/erp/config/secrets/google-service-account.json"
+  if ($LASTEXITCODE) { throw 'scp key failed' }
+  & ssh @ssh $target 'chown 10001 /opt/erp/config/secrets/*.json && chmod 600 /opt/erp/config/secrets/*.json'
+}
 $remote = @"
 set -e
 mkdir -p /opt/erp/supplymap
