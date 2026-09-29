@@ -29,6 +29,7 @@ from .application import (
     MoveLotCommand,
     ReturnWriteOffCommand,
     UnitOfWork,
+    shelf_occupancy,
     WriteOffCommand,
     add_manual_stock,
     correct_lot_location,
@@ -277,6 +278,23 @@ def lots(
         "total": total,
         "truncated": max(0, total - len(page)),
         "next_cursor": str(page[-1].id) if len(lots) > limit else None,
+    }
+
+
+@router.get("/places")
+def shelf_places(
+    _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+    warehouse: Annotated[str, Query(pattern="^(ЦАР|ЖУК)$")],
+    shelf: Annotated[str, Query(min_length=1, max_length=8)],
+) -> dict:
+    """SK-15: places taken on a shelf («12C») and its smallest free number. A hint, never a refusal."""
+    result = _guarded(lambda: shelf_occupancy(uow_factory(), warehouse, shelf))
+    return {
+        "warehouse": result.warehouse,
+        "shelf": result.shelf,
+        "occupied": result.occupied,
+        "next_number": result.next_number,
     }
 
 

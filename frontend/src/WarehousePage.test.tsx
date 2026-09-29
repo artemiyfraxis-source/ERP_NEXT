@@ -506,3 +506,77 @@ it("does not send a row edit when nothing changed", async () => {
   expect(form.getByRole("status")).toHaveTextContent("Изменений нет.");
   expect(fetch.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });
+
+it("hints the smallest free number on the shelf and marks a taken place without blocking it (SK-15)", async () => {
+  const places: string[] = [];
+  let payload: { items: Array<{ storage_location: string }> } | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.startsWith("/api/stock/places?")) {
+      places.push(path);
+      return json({ warehouse: "ЦАР", shelf: "12C", occupied: ["12C1", "12C2B", "12C4"], next_number: 3 });
+    }
+    if (path === "/api/stock/batches" && init?.method === "POST") {
+      payload = JSON.parse(String(init.body));
+      return added([lot]);
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  const place = screen.getByLabelText("Место хранения для внесения");
+  fireEvent.change(place, { target: { value: "12c" } });
+
+  expect(await screen.findByText(/первый свободный № — 3/)).toBeInTheDocument();
+  expect(places).toEqual(["/api/stock/places?warehouse=%D0%A6%D0%90%D0%A0&shelf=12C"]);
+  expect(place).not.toHaveClass("place-busy");
+
+  fireEvent.click(screen.getByRole("button", { name: "Подставить 12C3" }));
+  expect(place).toHaveValue("12C3");
+  expect(place).not.toHaveClass("place-busy");
+
+  fireEvent.change(place, { target: { value: "12C4" } });
+  await waitFor(() => expect(place).toHaveClass("place-busy"));
+  expect(screen.getByText(/Здесь уже лежит другая позиция/)).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
+  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Внести" }));
+  await waitFor(() => expect(payload?.items[0].storage_location).toBe("12C4"));
+});
+
+it("counts the places already listed for entry as taken when it offers a number (SK-15)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.startsWith("/api/stock/places?")) return json({ warehouse: "ЦАР", shelf: "1F", occupied: ["1F1"], next_number: 2 });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-001" } });
+  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F2" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ В список" }));
+  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "1F" } });
+
+  expect(await screen.findByText(/первый свободный № — 3/)).toBeInTheDocument();
+});
+
+it("shows no hint for an unknown shelf (SK-15)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.startsWith("/api/stock/places?")) return new Response(JSON.stringify({ detail: "Полки 18A нет" }), { status: 422 });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "↔ Переместить" }));
+  fireEvent.change(screen.getByLabelText("Новое место"), { target: { value: "18A1" } });
+
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(screen.queryByRole("status")).toBeNull();
+});

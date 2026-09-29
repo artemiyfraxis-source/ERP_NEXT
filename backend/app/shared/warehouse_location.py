@@ -3,7 +3,7 @@
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import cache
 
@@ -125,6 +125,38 @@ def existing_storage_location(value: str, layout: RackLayout | None = None) -> s
     if not storage_location_fits(code, layout or configured_rack_layout()):
         raise ValueError(f"Места {code} нет: проверь номер стеллажа и полку.")
     return code
+
+
+_SHELF = re.compile(r"^([0-9]{1,2})([A-Z])$")
+
+
+def existing_shelf(value: str, layout: RackLayout | None = None) -> str:
+    """A shelf code «12C» (rack + shelf letter) that exists in the layout, leading zeros dropped."""
+    normalized = re.sub(r"\s+", "", str(value or "").upper()).translate(_HOMOGLYPHS)
+    match = _SHELF.fullmatch(normalized)
+    if match is None or int(match.group(1)) < 1:
+        raise ValueError("Полка должна иметь вид 12C: номер стеллажа и буква полки")
+    code = f"{int(match.group(1))}{match.group(2)}"
+    if not storage_location_fits(f"{code}1", layout or configured_rack_layout()):
+        raise ValueError(f"Полки {code} нет: проверь номер стеллажа и полку.")
+    return code
+
+
+def places_on_shelf(occupied: Iterable[str], shelf: str) -> list[str]:
+    """SUPPLYMAP stock05UsedPlaces_ + placeNextNum_ (Stock05.gs:322-344, PortalApp.html:8365): the distinct rack
+    codes on `shelf` («12C») among the occupied places, by number then cell. An old address is no rack code."""
+    found: set[tuple[int, str]] = set()
+    for value in occupied:
+        parts = _parse(value, max_number=9999)
+        if parts is not None and f"{parts[0]}{parts[1]}" == shelf:
+            found.add((int(parts[2]), parts[3]))
+    return [f"{shelf}{number}{slot}" for number, slot in sorted(found)]
+
+
+def next_free_number(occupied: Iterable[str], shelf: str) -> int | None:
+    """The smallest № 1..999 on the shelf where nothing lies, whatever the cell letter; None when all are taken."""
+    taken = {int(_parse(code, max_number=9999)[2]) for code in places_on_shelf(occupied, shelf)}  # type: ignore[index]
+    return next((number for number in range(1, PLACE_MAX_NUMBER + 1) if number not in taken), None)
 
 
 def normalize_storage_location(value: str) -> str:

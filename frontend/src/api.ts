@@ -271,6 +271,13 @@ export interface WarehouseBulkResult {
   errors: Array<{ warehouse: string; grn: string; package: string; error: string }>;
 }
 
+export interface WarehouseShelfPlaces {
+  warehouse: string;
+  shelf: string;
+  occupied: string[];
+  next_number: number | null;
+}
+
 export interface WarehouseArticleInfo {
   series: string;
   name: string;
@@ -1029,6 +1036,9 @@ export const warehouseApi = {
     const suffix = params.size ? `?${params}` : "";
     return api<{ lots: WarehouseLot[]; total: number; truncated: number; next_cursor: string | null }>(`/api/stock${suffix}`);
   },
+  shelfPlaces: (warehouse: string, shelf: string) => api<WarehouseShelfPlaces>(
+    `/api/stock/places?warehouse=${encodeURIComponent(warehouse)}&shelf=${encodeURIComponent(shelf)}`,
+  ),
   articleInfo: (article: string) => api<{ info: WarehouseArticleInfo | null }>(
     `/api/stock/article-info?q=${encodeURIComponent(article)}`,
   ),

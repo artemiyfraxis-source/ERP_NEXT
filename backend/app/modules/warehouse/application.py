@@ -15,7 +15,13 @@ from app.shared.clock import MOSCOW
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
 from app.shared.unit_mass import mass_per_unit, parse_number
-from app.shared.warehouse_location import remap_storage_location, storage_location_has_slot
+from app.shared.warehouse_location import (
+    existing_shelf,
+    next_free_number,
+    places_on_shelf,
+    remap_storage_location,
+    storage_location_has_slot,
+)
 
 from .domain import (
     WAREHOUSES,
@@ -56,6 +62,7 @@ class WarehouseRepository(Protocol):
         include_zero: bool = False,
     ) -> int: ...
     def at_location(self, warehouse: str, storage_location: str) -> Sequence[StockLot]: ...
+    def occupied_locations(self, warehouse: str) -> Sequence[str]: ...
     def reserve_manual_numbers(self, year: int, count: int) -> int: ...
     def ensure_manual_number(self, year: int, number: int) -> int: ...
     def add(self, lot: StockLot) -> None: ...
@@ -856,3 +863,24 @@ def warehouse_lots(
             raise KeyError(f"Warehouse cursor not found: {after_id}")
         lots = uow.warehouse.list(limit, after_id, query, warehouse, include_zero)
         return list(lots), uow.warehouse.count(query, warehouse, include_zero)
+
+
+@dataclass(frozen=True)
+class ShelfOccupancy:
+    warehouse: str
+    shelf: str
+    occupied: list[str]  # rack codes on the shelf where a lot with a balance lies
+    next_number: int | None  # smallest free № on the shelf; None when all 999 are taken
+
+
+def shelf_occupancy(uow: UnitOfWork, warehouse: str, shelf: str) -> ShelfOccupancy:
+    """SK-15: what lies on a shelf and where the next lot may go. Advice only — nothing is refused."""
+    if warehouse not in WAREHOUSES:
+        raise WarehouseValidationError("Неизвестный склад")
+    try:
+        code = existing_shelf(shelf)
+    except ValueError as error:
+        raise WarehouseValidationError(str(error)) from error
+    with uow:
+        used = list(uow.warehouse.occupied_locations(warehouse))
+    return ShelfOccupancy(warehouse, code, places_on_shelf(used, code), next_free_number(used, code))

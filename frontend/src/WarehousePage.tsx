@@ -7,6 +7,7 @@ import {
   type WarehouseManualItem,
   type WarehouseRowEdit,
 } from "./api";
+import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { downloadStockTable, ItemTypesPanel, StockImportPanel } from "./WarehouseReferences";
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
@@ -372,6 +373,8 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
     setPassport(EMPTY_PASSPORT); setArticleSource("");
   };
   const pending = rows.length + (currentItem() ? 1 : 0);
+  const placeHint = usePlaceHint(warehouse, storageLocation,
+    rows.filter((row) => row.item.warehouse === warehouse).map((row) => row.item.storage_location));
 
   return (
     <form className="panel manual-stock-form" noValidate onSubmit={async (event) => {
@@ -411,8 +414,9 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
         <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
         <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
         <label>Назначение<input value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
-        <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>
+        <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" className={placeHint.busy ? "place-busy" : undefined} title={placeHint.busy ? BUSY_TITLE : undefined} value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>
       </div>
+      <PlaceHint {...placeHint} place={storageLocation} onPick={setStorageLocation} />
       <details className="manual-stock-passport">
         <summary>Паспорт партии — необязательно</summary>
         <p className="page-sub">Масса: заполните любое одно поле — мелочь точнее взвесить десятком или сотней, хранится масса одной штуки.</p>
@@ -469,6 +473,7 @@ function MoveStockForm({ preset, busy, mutate, onClose }: {
   const [target, setTarget] = useState("");
   const [targetWarehouse, setTargetWarehouse] = useState("");
   const [error, setError] = useState("");
+  const placeHint = usePlaceHint(mode === "lot" && targetWarehouse ? targetWarehouse : warehouse, target);
   const transfer = mode === "lot" && Boolean(targetWarehouse) && targetWarehouse !== warehouse;
 
   async function submit(event: FormEvent) {
@@ -505,8 +510,9 @@ function MoveStockForm({ preset, busy, mutate, onClose }: {
       <label>{mode === "lot" ? "ГРН" : "Откуда"}<input aria-label={mode === "lot" ? "ГРН для перемещения" : "Исходное место"} required value={source} onChange={(event) => setSource(event.target.value)} /></label>
       {mode === "lot" && <label>Пакет<input aria-label="Пакет для перемещения" value={packageNumber} onChange={(event) => setPackageNumber(event.target.value)} /></label>}
       {mode === "lot" && <label>На склад<select aria-label="Склад назначения" value={targetWarehouse} onChange={(event) => setTargetWarehouse(event.target.value)}><option value="">Тот же склад</option>{["ЦАР", "ЖУК"].filter((item) => item !== warehouse).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
-      <label>Куда<input aria-label="Новое место" placeholder={transfer ? "прежнее место" : "20B5"} required={!transfer} value={target} onChange={(event) => setTarget(event.target.value)} /></label>
+      <label>Куда<input aria-label="Новое место" placeholder={transfer ? "прежнее место" : "20B5"} required={!transfer} className={placeHint.busy ? "place-busy" : undefined} title={placeHint.busy ? BUSY_TITLE : undefined} value={target} onChange={(event) => setTarget(event.target.value)} /></label>
     </div>
+    <PlaceHint {...placeHint} place={target} onPick={setTarget} />
     {transfer && <p className="page-sub">Партия уедет на {targetWarehouse} целиком: с остатком и историей списаний. Пустое место — останется прежнее.</p>}
     <button className="primary" disabled={busy}>{busy ? "Перемещаем…" : "Переместить"}</button>
   </form>;

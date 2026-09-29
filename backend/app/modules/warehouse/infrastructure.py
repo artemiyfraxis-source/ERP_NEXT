@@ -300,6 +300,14 @@ class SqlAlchemyWarehouseRepository:
         ).order_by(StockLotRow.grn, StockLotRow.package).with_for_update())
         return [_domain(row) for row in rows]
 
+    def occupied_locations(self, warehouse: str) -> list[str]:
+        """Places of the lots that still have a balance: an emptied lot frees its place (SK-15)."""
+        return list(self.session.scalars(select(StockLotRow.storage_location).where(
+            StockLotRow.warehouse == warehouse,
+            StockLotRow.storage_location != "",
+            StockLotRow.inbound - StockLotRow.written_off > 0,
+        ).distinct()))
+
     @staticmethod
     def _filters(warehouse: str | None, include_zero: bool):
         filters = []

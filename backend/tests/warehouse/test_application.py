@@ -70,6 +70,12 @@ class Lots:
             and remap_storage_location(item.storage_location, storage_location, storage_location) is not None
         ]
 
+    def occupied_locations(self, warehouse):
+        return sorted({
+            item.storage_location for item in self.items.values()
+            if item.warehouse == warehouse and item.balance > 0 and item.storage_location
+        })
+
     def add(self, lot):
         self.items[lot.id] = lot
 
