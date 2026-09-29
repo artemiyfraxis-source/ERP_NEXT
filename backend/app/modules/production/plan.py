@@ -18,11 +18,15 @@ PLAN_KINDS = {
     "deadline": "Дедлайн",
     "stage": "Этап КБ",
     "tcReview": "Проверка ТК",
+    "status": "Статус проекта",
 }
 PLAN_BLOCKERS = ("ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА")
 KIT_STAGES = ("Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено")
 TC_REVIEW_VALUES = ("не проверена", "проверена", "с погрешностями")
 PLAN_STAGE_AUTO = "авто"
+# ERP_PROJ_TERMINALS_ (Schema.gs): решение человека перекрывает вычисленный этап. В SUPPLYMAP — СТАТУС листа
+# «Проекты»; в ERP ставится записью журнала «Статус проекта» (value «авто» — вернуть в работу), она сильнее снимка.
+PROJECT_TERMINALS = ("Отказ", "Слился", "Отменён")
 _KIT_STAGE_FACTS = ("", "tc", "kit", "work", "stock", "shipped")
 _HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
 
@@ -110,6 +114,10 @@ def project_stage(
             stage_index -= 1
         mark = marks.get(key, KitMark())
         manual_index = KIT_STAGES.index(mark.stage) if mark.stage in KIT_STAGES else -1
+        # Контрактное производство: отгрузка по проекту — последний статус, ручной этап её не перекрывает
+        # (владелец 29.09; в SUPPLYMAP ручной этап перекрывал и отгрузку).
+        if key in facts.get("shipped", ()):
+            manual_index = -1
         stages.append(KitStage(
             str(item_index).strip().upper(),
             KIT_STAGES[manual_index if manual_index >= 0 else stage_index],
@@ -254,6 +262,8 @@ class ProjectJournal:
     last: LastComment | None
     events: tuple[PlanEvent, ...]
     deadline: date | None = None
+    # Последняя запись «Статус проекта»: None — записей нет (решает снимок реестра), "" — возвращён в работу.
+    status: str | None = None
 
 
 def summarize_journal(events: Iterable[PlanEvent]) -> dict[str, ProjectJournal]:
@@ -262,7 +272,7 @@ def summarize_journal(events: Iterable[PlanEvent]) -> dict[str, ProjectJournal]:
         project = normalize_project_number(event.project)
         if not project:
             continue
-        row = state.setdefault(project, {"blocker": None, "last": None, "events": [], "deadline": None})
+        row = state.setdefault(project, {"blocker": None, "last": None, "events": [], "deadline": None, "status": None})
         row["events"].insert(0, event)
         if event.kind == PLAN_KINDS["block"]:
             row["blocker"] = ActiveBlocker(event.blocker, event.text, event.occurred_at, event.who)
@@ -270,14 +280,23 @@ def summarize_journal(events: Iterable[PlanEvent]) -> dict[str, ProjectJournal]:
             row["blocker"] = None
         elif event.kind == PLAN_KINDS["deadline"]:
             row["deadline"] = event.deadline
+        elif event.kind == PLAN_KINDS["status"]:
+            row["status"] = event.value if event.value in PROJECT_TERMINALS else ""
         if event.text and event.kind in {
             PLAN_KINDS["note"], PLAN_KINDS["block"], PLAN_KINDS["unblock"],
         }:
             row["last"] = LastComment(event.occurred_at, event.who, event.text)
     return {
-        project: ProjectJournal(row["blocker"], row["last"], tuple(row["events"]), row["deadline"])
+        project: ProjectJournal(row["blocker"], row["last"], tuple(row["events"]), row["deadline"], row["status"])
         for project, row in state.items()
     }
+
+
+def project_terminal(snapshot: PlanProjectSnapshot | None, journal: ProjectJournal | None) -> str:
+    """Терминальный статус проекта (Отказ/Слился/Отменён) или "": запись журнала сильнее снимка реестра."""
+    if journal is not None and journal.status is not None:
+        return journal.status
+    return snapshot.status if snapshot is not None and snapshot.terminal and snapshot.status else ""
 
 
 def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
@@ -318,6 +337,8 @@ def validate_plan_note(payload: Mapping[str, object], known_projects: Iterable[s
         raise ProductionValidationError("Укажи КБ.")
     if kind == "stage" and payload.get("value") not in (*KIT_STAGES, PLAN_STAGE_AUTO):
         raise ProductionValidationError("Неизвестный этап.")
+    if kind == "status" and payload.get("value") not in (*PROJECT_TERMINALS, PLAN_STAGE_AUTO):
+        raise ProductionValidationError("Неизвестный статус проекта.")
     if kind == "tcReview" and payload.get("value") not in TC_REVIEW_VALUES:
         raise ProductionValidationError("Неизвестная отметка проверки.")
     if kind == "tcReview" and payload.get("value") == "с погрешностями" and not str(payload.get("text") or "").strip():

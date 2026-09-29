@@ -77,7 +77,7 @@ it("automatically builds and issues an electronic techcard", async () => {
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<TechcardsPage principal={engineer} />);
+  render(<TechcardsPage principal={{ ...engineer, roles: ["admin"] }} />);
   const editor = await screen.findByLabelText("Конфигурация автоматической сборки");
   fireEvent.change(editor, { target: { value: JSON.stringify({ ops: [{ templateId: "one" }] }) } });
   // Одна кнопка: сборка ЭТК и выдача сразу, отдельного шага «Выдать» нет (как файл техкарты в SUPPLYMAP).
