@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Real data into the production database — the server twin of scripts/load-real-data.ps1. Google is only read.
 #   deploy/load-real-data.sh base    # admin, staff (+PINs), references mirror, techcard library, projects
-#   deploy/load-real-data.sh stock   # ЦАР/ЖУК/СПИСАНИЕ → lots; run ONCE, on the day Google stops being the warehouse
+#   deploy/load-real-data.sh stock [--yes]  # ЦАР/ЖУК/СПИСАНИЕ → lots; without --yes only the report. Rerun = top-up:
+#       new lots are created, lots ERP never moved follow Google («догрузка из Google»), moved lots are reported
 #   deploy/load-real-data.sh projects  # re-read projects (idempotent: nothing is duplicated)
 # Secrets the owner reads afterwards: $ERP_HOME/config/admin.txt, $ERP_HOME/config/staff-pins.txt (chmod 600).
 set -euo pipefail
