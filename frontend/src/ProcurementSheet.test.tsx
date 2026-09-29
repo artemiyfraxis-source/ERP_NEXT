@@ -40,6 +40,7 @@ it("PR-11: groups open lines by supplier with stage chips and drills into one su
           line(1, { supplier: "ЧипДип", status: "В работе", buyer: "Петров" }),
           line(2, { supplier: "ЧипДип", status: "Жду счет", buyer: "Сидоров", order_number: "PO-001" }),
           line(3, { status: "Новый" }),
+          line(4, { supplier: "ЧипДип", status: "Согласование" }),
         ],
       });
     }
@@ -50,6 +51,8 @@ it("PR-11: groups open lines by supplier with stage chips and drills into one su
   const tile = await screen.findByRole("button", { name: /ЧипДип/ });
   expect(tile).toHaveTextContent("В работе · 1");
   expect(tile).toHaveTextContent("заказов: 1");
+  expect(tile).toHaveTextContent("поз.: 3");
+  expect(tile).not.toHaveTextContent("Согласование");
   expect(screen.getByRole("button", { name: /Без поставщика/ })).toHaveTextContent("заказ не сформирован");
 
   fireEvent.click(tile);
