@@ -13,7 +13,7 @@ import {
   type Principal,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
-import { KitTile } from "./ProjectCard";
+import { KitTile, tcProgress } from "./ProjectCard";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
    номер, заказчик, сборки с тиражом и состав каждой. Внутри — состав, снабжение, спецификация, генератор и
@@ -31,6 +31,22 @@ function stored(key: string, fallback: string) {
 
 function remember(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* private window */ }
+}
+
+/* Переключатели «Скрыть …» над списком проектов: чтобы отгруженные и закрытые по техкартам проекты не засоряли
+   список. Помнятся у каждого пользователя отдельно; «Скрыть отгруженные» включён, пока его не выключили. */
+type HideKey = "shipped" | "tcReady" | "tcChecked";
+const HIDES: Array<[HideKey, string, boolean]> = [
+  ["shipped", "Скрыть отгруженные", true], ["tcReady", "Скрыть с готовыми ТК", false], ["tcChecked", "Скрыть с проверенными ТК", false],
+];
+
+function hidden(item: KitsetTile, hide: Record<HideKey, boolean>, status: string) {
+  const { total, tc, unreviewed } = tcProgress(item);
+  // Статус «Отгружено», выбранный в фильтре явно, важнее переключателя.
+  if (hide.shipped && item.status === "Отгружено" && status !== "Отгружено") return true;
+  if (hide.tcReady && total > 0 && tc === total) return true;             // бейдж «ТК ✓»
+  if (hide.tcChecked && total > 0 && tc === total && !unreviewed) return true; // «ТК ✓» без «не проверено»
+  return false;
 }
 
 function message(reason: unknown, fallback: string) {
@@ -99,14 +115,16 @@ export function ProjectsPage({ principal }: { principal: Principal }) {
   const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).get("project") || "");
   const canRequest = principal.permissions.newrequest === "edit";
   if (open) return <KitsetCardView project={open} canEdit={canEdit} canRequest={canRequest} back={() => setOpen("")} />;
-  return <KitsetHub canEdit={canEdit} openProject={setOpen} />;
+  return <KitsetHub canEdit={canEdit} user={principal.user.id} openProject={setOpen} />;
 }
 
-function KitsetHub({ canEdit, openProject }: { canEdit: boolean; openProject: (project: string) => void }) {
+function KitsetHub({ canEdit, user, openProject }: { canEdit: boolean; user: string; openProject: (project: string) => void }) {
   const [all, setAll] = useState<KitsetTile[] | null>(null);
   const [statuses, setStatuses] = useState<string[]>([]);
   const [sort, setSort] = useState<SortKey>(() => stored("kitSort", "upd") as SortKey);
   const [filter, setFilter] = useState(() => stored("kitFilt", ""));
+  const [hide, setHide] = useState(() => Object.fromEntries(HIDES.map(([key, , on]) =>
+    [key, stored(`kitHide.${key}.${user}`, on ? "1" : "0") === "1"])) as Record<HideKey, boolean>);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [creating, setCreating] = useState(false);
@@ -121,7 +139,7 @@ function KitsetHub({ canEdit, openProject }: { canEdit: boolean; openProject: (p
 
   // Запомненный фильтр, под который больше нет ни одного проекта, спрятал бы весь список.
   const activeFilter = all && filter && !all.some((item) => item.status === filter) ? "" : filter;
-  const list = (all || []).filter((item) => !activeFilter || item.status === activeFilter);
+  const list = (all || []).filter((item) => (!activeFilter || item.status === activeFilter) && !hidden(item, hide, activeFilter));
 
   async function remove(project: string) {
     if (!window.confirm(`Удалить карточку «${project}»?\n\n${DELETE_TEXT}`)) return;
@@ -161,11 +179,14 @@ function KitsetHub({ canEdit, openProject }: { canEdit: boolean; openProject: (p
             return count ? <option key={status} value={status}>{`${status} · ${count}`}</option> : null;
           })}
         </select></label>
+        {HIDES.map(([key, label]) => <label key={key}><input type="checkbox" checked={hide[key]} onChange={(event) => {
+          setHide({ ...hide, [key]: event.target.checked }); remember(`kitHide.${key}.${user}`, event.target.checked ? "1" : "0");
+        }} />{label}</label>)}
         <span className="muted">показано {list.length} из {all.length}</span>
       </div>
       {list.length ? <div className="tiles kit-tiles">
         {list.map((item) => <KitTile key={item.project} item={item} statuses={statuses} canEdit={canEdit} open={() => openProject(item.project)} remove={() => void remove(item.project)} />)}
-      </div> : <div className="empty">Нет проектов с таким статусом.</div>}
+      </div> : <div className="empty">Нет проектов под выбранные фильтры.</div>}
     </>}
   </section>;
 }
