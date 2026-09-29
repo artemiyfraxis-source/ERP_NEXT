@@ -40,7 +40,8 @@ configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, 
 app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=1_048_576,
-    path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576},
+    path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
+                 "/api/procurement/invoice-files": 30 * 1_048_576},
 )
 app.add_middleware(IdentitySessionMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)

@@ -39,6 +39,17 @@ class _Unset:
 
 UNSET = _Unset()
 
+# A file uploaded to ERP is linked by its own download path (SUPPLYMAP linked the Drive file).
+_STORED_INVOICE = re.compile(r"/api/procurement/files/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def normalize_invoice_url(value: str | None) -> str | None:
+    """СЧЕТ: an absolute http(s) link or the path of an invoice file stored by ERP."""
+    text = str(value or "").strip()
+    if _STORED_INVOICE.fullmatch(text):
+        return text
+    return normalize_document_url(value)
+
 
 class ProcurementStatus(str, Enum):
     NEW = "Новый"
@@ -370,10 +381,13 @@ class ProcurementLine:
         invoice_url: str,
         expected_arrival: date,
         actor: Actor,
+        invoice_number: str | None = None,
+        invoice_date: date | None = None,
     ) -> ProcurementLine:
+        """`uploadInvoice` on a «Жду счет» line: СЧЕТ, and № / ДАТА СЧЕТА from the file when recognised."""
         self._require_owner(actor)
         try:
-            url = normalize_document_url(invoice_url)
+            url = normalize_invoice_url(invoice_url)
         except ValueError as error:
             raise ProcurementValidationError(str(error)) from error
         if url is None:
@@ -388,6 +402,8 @@ class ProcurementLine:
         return replace(
             self,
             invoice_url=url,
+            invoice_number=_text(invoice_number) or self.invoice_number,
+            invoice_date=invoice_date or self.invoice_date,
             expected_arrival=expected_arrival,
             status=ProcurementStatus.TO_PAY,
             version=self.version + 1,
@@ -407,7 +423,7 @@ class ProcurementLine:
         """
         self._require_owner(actor)
         try:
-            url = normalize_document_url(invoice_url)
+            url = normalize_invoice_url(invoice_url)
         except ValueError as error:
             raise ProcurementValidationError(str(error)) from error
         if url is None:
