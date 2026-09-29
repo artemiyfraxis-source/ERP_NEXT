@@ -2077,8 +2077,9 @@ export const kitsetsApi = {
   list: (sort = "upd") => api<{ items: KitsetTile[]; statuses: string[] }>(`/api/techcards/kitsets?sort=${encodeURIComponent(sort)}`),
   get: (project: string) => api<KitsetCard>(kitsetPath(project)),
   load: (payload: {
-    file_name: string;
-    content_b64: string;
+    url?: string;
+    file_name?: string;
+    content_b64?: string;
     number?: string;
     deadline?: string | null;
     ship?: { shipping_point: string; contact: string; phone: string } | null;
