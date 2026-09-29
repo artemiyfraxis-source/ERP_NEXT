@@ -65,3 +65,17 @@ def test_replacement_permission_migration_adds_nullable_columns_and_downgrade_re
 
     command.downgrade(config, "0036_identity_departments")
     assert not columns & _columns(database_path)
+
+
+def test_invoice_files_migration_creates_and_drops_the_storage(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "files.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+    command.upgrade(config, "0062_procurement_invoice_files")
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(procurement_files)")}
+    assert columns >= {"line_id", "content", "size", "uploaded_by"}
+    command.downgrade(config, "0061_procurement_traceability")
+    with sqlite3.connect(database_path) as connection:
+        assert not connection.execute("SELECT name FROM sqlite_master WHERE name = 'procurement_files'").fetchall()

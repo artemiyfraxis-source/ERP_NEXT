@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -31,7 +32,7 @@ from app.shared.persistence import (
     SqlAlchemyOutboxRepository,
 )
 
-from .application import StatusNotificationDue, SupplierOrder
+from .application import StatusNotificationDue, StoredInvoiceFile, SupplierOrder
 from .domain import (
     ProcurementLine,
     ProcurementStatus,
@@ -590,6 +591,41 @@ class SqlAlchemyProcurementRepository:
         return bool(result.rowcount)
 
 
+class ProcurementFileRow(Base):
+    """Invoice file (`uploadInvoice` kept it in the Drive folder «Счета/<год>/<месяц>/<поставщик>»)."""
+
+    __tablename__ = "procurement_files"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    line_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    uploaded_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SqlAlchemyInvoiceFileRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, stored: StoredInvoiceFile, content: bytes) -> None:
+        self.session.add(ProcurementFileRow(
+            id=stored.id, line_id=stored.line_id, file_name=stored.file_name, content_type=stored.content_type,
+            size=stored.size, content=content, uploaded_by=stored.uploaded_by, uploaded_at=stored.uploaded_at,
+        ))
+
+    def get(self, file_id: UUID) -> tuple[StoredInvoiceFile, bytes] | None:
+        row = self.session.get(ProcurementFileRow, file_id)
+        if row is None:
+            return None
+        return StoredInvoiceFile(
+            id=row.id, line_id=row.line_id, file_name=row.file_name, content_type=row.content_type,
+            size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at,
+        ), row.content
+
+
 class SqlAlchemyProcurementUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -602,6 +638,7 @@ class SqlAlchemyProcurementUnitOfWork:
         self.procurement = SqlAlchemyProcurementRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
+        self.files = SqlAlchemyInvoiceFileRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

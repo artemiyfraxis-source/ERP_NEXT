@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProcurementPage } from "./ProcurementPage";
 import type { ProcurementLine } from "./api";
@@ -624,4 +624,109 @@ it("saves traceability of an own line: maker, country, quality document, standar
     version: 3, manufacturer: "Molex", country: "", quality_document_type: "", quality_document_number: "П-17",
     quality_document_date: "2026-09-01", standard: "ГОСТ 23587-96",
   }));
+});
+
+const UPLOADED = {
+  url: "/api/procurement/files/40000000-0000-0000-0000-000000000001",
+  file_name: "Счёт № 58 от 14.09.2026 Поставщик D-1 PO-001.pdf",
+  invoice_number: "58",
+  invoice_date: "2026-09-14",
+  hint: "",
+};
+
+it("uploads the invoice file, prefills its recognised № and date and sends the line to payment", async () => {
+  const ready = { ...awaitingInvoice, order_number: "PO-001", pay_missing: ["ОЖИД. ДАТА"], invoice_number: "17" };
+  let uploadBody: Record<string, unknown> | undefined;
+  let invoiceBody: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [ready], next_cursor: null });
+    if (path === "/api/procurement/invoice-files" && init?.method === "POST") {
+      uploadBody = JSON.parse(String(init.body));
+      return json(UPLOADED);
+    }
+    if (path.endsWith("/invoice") && init?.method === "POST") {
+      invoiceBody = JSON.parse(String(init.body));
+      return json({ line: { ...ready, status: "В оплату", version: 4 } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const file = new File(["%PDF-1.4"], "счёт.pdf", { type: "application/pdf" });
+  fireEvent.change(await screen.findByLabelText("Файл счёта"), { target: { files: [file] } });
+
+  expect(await screen.findByText(/распознано: № 58, дата 2026-09-14 — проверьте/)).toBeInTheDocument();
+  expect(uploadBody).toMatchObject({ line_id: ready.id, file_name: "счёт.pdf", content_type: "application/pdf" });
+  expect(screen.getByLabelText("Ссылка на счёт")).toHaveValue(UPLOADED.url);
+  expect(screen.getByLabelText("№ счёта по файлу")).toHaveValue("58");
+  expect(screen.getByLabelText("Дата счёта по файлу")).toHaveValue("2026-09-14");
+
+  fireEvent.change(screen.getByLabelText("Ожидаемая дата"), { target: { value: "2026-10-01" } });
+  fireEvent.click(screen.getByRole("button", { name: "В оплату" }));
+
+  await waitFor(() => expect(invoiceBody).toEqual({
+    version: 3, invoice_url: UPLOADED.url, expected_arrival: "2026-10-01", invoice_number: "58", invoice_date: "2026-09-14",
+  }));
+});
+
+it("says to type № and date by hand when the invoice file has no text", async () => {
+  const shipped = { ...line, status: "В пути" as const, buyer: "Закупщик", invoice_url: "https://files.test/invoice.pdf", paid_at: "2026-09-22T12:00:00+03:00", pay_missing: [] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [shipped], next_cursor: null });
+    if (path === "/api/procurement/invoice-files") {
+      return json({ ...UPLOADED, invoice_number: "", invoice_date: "", file_name: "Счёт.jpg", hint: "Текст из файла не читается (скан или картинка) — № и дату счёта впишите вручную." });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.click(await screen.findByText("Заменить счёт"));
+  fireEvent.change(screen.getByLabelText("Файл счёта"), { target: { files: [new File(["jpg"], "scan.jpg", { type: "image/jpeg" })] } });
+
+  expect(await screen.findByText(/Счёт\.jpg · Текст из файла не читается/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Ссылка на новый счёт")).toHaveValue(UPLOADED.url);
+  expect(screen.getByLabelText("№ счёта")).toHaveValue("");
+});
+
+it("uploads one invoice file for the whole order in the КП form and fills № and date of every row", async () => {
+  const awaiting = { ...line, status: "Жду счет" as const, buyer: "Закупщик", order_number: "PO-001", actual_quantity: "2", actual_unit: "шт" };
+  const other = { ...awaiting, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", version: 5 };
+  let uploadBody: Record<string, unknown> | undefined;
+  let saved: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: saved ? [] : [awaiting, other] });
+    if (path === "/api/procurement/kp?reference=PO-001") return json({ order_reference: "PO-001", lines: [awaiting, other] });
+    if (path === "/api/procurement/invoice-files") {
+      uploadBody = JSON.parse(String(init?.body));
+      return json(UPLOADED);
+    }
+    if (path === "/api/procurement/kp" && init?.method === "POST") {
+      saved = JSON.parse(String(init.body));
+      return json({ lines: [awaiting, other], invoice_error: "" });
+    }
+    throw new Error(`Unexpected ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.click((await screen.findAllByRole("button", { name: "Внести КП" }))[0]);
+  const form = await screen.findByRole("form", { name: "КП по заказу PO-001" });
+  await within(form).findByLabelText("REQ-2 Кол-во (факт)");
+  fireEvent.change(within(form).getByLabelText("Файл счёта"), { target: { files: [new File(["%PDF"], "inv.pdf", { type: "application/pdf" })] } });
+
+  await waitFor(() => expect(within(form).getByLabelText("REQ-2 № счёта")).toHaveValue("58"));
+  expect(uploadBody).toMatchObject({ line_id: awaiting.id, file_name: "inv.pdf" });
+  expect(within(form).getByLabelText("REQ-1 Дата счёта")).toHaveValue("2026-09-14");
+  expect(within(form).getByLabelText("Ссылка на счёт (один на заказ, необязательно)")).toHaveValue(UPLOADED.url);
+
+  fireEvent.click(within(form).getByRole("button", { name: "Сохранить КП" }));
+  await waitFor(() => expect(saved).toBeDefined());
+  expect(saved).toMatchObject({ order_reference: "PO-001", invoice_url: UPLOADED.url });
+  const rows = saved?.rows as Record<string, unknown>[];
+  expect(rows.map((row) => [row.invoice_number, row.invoice_date])).toEqual([["58", "2026-09-14"], ["58", "2026-09-14"]]);
 });

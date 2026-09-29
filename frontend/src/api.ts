@@ -1317,6 +1317,14 @@ export type KpRowInput = {
 
 export type KpMatch = { line_id: string; name: string; qty: string; price: string; vat: string };
 
+export interface InvoiceUpload {
+  url: string;
+  file_name: string;
+  invoice_number: string;
+  invoice_date: string;
+  hint: string;
+}
+
 export const procurementApi = {
   kpOrder: (reference: string) =>
     api<{ order_reference: string; lines: ProcurementLine[] }>(
@@ -1422,6 +1430,8 @@ export const procurementApi = {
     version: number,
     invoiceUrl: string,
     expectedArrival: string,
+    invoiceNumber = "",
+    invoiceDate = "",
   ) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/invoice`, {
       method: "POST",
@@ -1429,7 +1439,15 @@ export const procurementApi = {
         version,
         invoice_url: invoiceUrl,
         expected_arrival: expectedArrival,
+        invoice_number: invoiceNumber.trim() || null,
+        invoice_date: invoiceDate || null,
       }),
+    }),
+  /** Invoices.gs `uploadInvoice`: the file goes to ERP storage; № and date come back recognised for the form. */
+  uploadInvoiceFile: (lineId: string, file: { name: string; type: string; base64: string }) =>
+    api<InvoiceUpload>("/api/procurement/invoice-files", {
+      method: "POST",
+      body: JSON.stringify({ line_id: lineId, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
     }),
   replaceInvoice: (
     lineId: string,
