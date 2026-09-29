@@ -14,3 +14,4 @@
 - [Local demo](erp-local-demo.md) — owner's PC demo over Remote Control, ports, Auto-mode limits
 - [Gate red without failures](gate-red-without-failures.md) — pytest-current symlink exit 1 (fixed by conftest basetemp); drift tests blind for 9 of 11 modules
 - [Windows Python CRLF](windows-python-crlf.md) — Python text-mode writes CRLF into the LF-only repo; use newline=""
+- [Bulk techcards](techcards-bulk.md) — SUPPLYMAP issued ТК import + headless generator for all projects

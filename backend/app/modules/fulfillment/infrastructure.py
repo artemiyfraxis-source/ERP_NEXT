@@ -161,10 +161,18 @@ class SqlAlchemyFulfillmentRepository:
         return Decimal(str(total or 0))
 
     def list(self, limit: int = 200, after_id: UUID | None = None) -> list[FulfillmentRequest]:
+        # Creation order, as SUPPLYMAP reads the ВЫДАЧА sheet top to bottom; ids are random, so the page cursor
+        # is (created_at, number) of the last row, not the id alone.
         statement = select(FulfillmentRequestRow)
         if after_id is not None:
-            statement = statement.where(FulfillmentRequestRow.id > after_id)
-        rows = self.session.scalars(statement.order_by(FulfillmentRequestRow.id).limit(limit))
+            cursor = self.session.get(FulfillmentRequestRow, after_id)
+            if cursor is not None:
+                statement = statement.where(
+                    (FulfillmentRequestRow.created_at > cursor.created_at)
+                    | ((FulfillmentRequestRow.created_at == cursor.created_at) & (FulfillmentRequestRow.number > cursor.number))
+                )
+        order = (FulfillmentRequestRow.created_at, FulfillmentRequestRow.number)
+        rows = self.session.scalars(statement.order_by(*order).limit(limit))
         return [self._domain(row) for row in rows]
 
     def add(self, request: FulfillmentRequest) -> None:

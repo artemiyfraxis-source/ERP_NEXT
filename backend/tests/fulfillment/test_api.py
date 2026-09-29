@@ -373,3 +373,29 @@ def test_manual_request_reserves_picked_lots_at_creation_and_keeps_it_new(fulfil
     assert body["at_work"] is None
     with factory() as uow:
         assert uow.warehouse.get(lot.id).reserved == Decimal("6")
+
+
+def test_list_pages_in_creation_order_without_losing_requests(fulfillment_api):
+    # Real projects give hundreds of requests: every page must follow creation order and the cursor must not skip
+    # (ids are random uuid4, so ordering by id shuffled the screen and a page boundary fell anywhere).
+    client, _lot, _factory = fulfillment_api
+    created = []
+    for index in range(7):
+        app.dependency_overrides[moscow_now] = lambda index=index: datetime(2026, 9, 22, 12, index // 2)
+        response = client.post(
+            "/api/issues", headers={"Idempotency-Key": f"page-{index}"},
+            json={"purpose": f"77К.{index} · КБ1", "deadline": "2026-10-01",
+                  "lines": [{"article": "", "name": "Разъём", "unit": "шт", "requirement": "1"}]},
+        )
+        assert response.status_code == 200, response.text
+        created.append(response.json()["request"]["number"])
+
+    seen, cursor = [], None
+    while True:
+        page = client.get("/api/issues", params={"limit": 3, **({"after": cursor} if cursor else {})}).json()
+        seen.extend(request["number"] for request in page["requests"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+
+    assert seen == created

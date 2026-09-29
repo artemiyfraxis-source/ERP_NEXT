@@ -1734,9 +1734,19 @@ export const warehouseApi = {
 };
 
 export const fulfillmentApi = {
-  list: (after?: string) => api<{ requests: FulfillmentRequest[]; next_cursor: string | null; places?: FulfillmentPlaces }>(
-    `/api/issues${after ? `?after=${encodeURIComponent(after)}` : ""}`,
-  ),
+  // portalIssueList reads the whole sheet; the API pages by 100, so the screens walk every page (real projects give
+  // hundreds of requests — the first page alone lost the rest).
+  list: async () => {
+    type Page = { requests: FulfillmentRequest[]; next_cursor: string | null; places?: FulfillmentPlaces };
+    const first = await api<Page>("/api/issues");
+    const requests = [...first.requests];
+    for (let cursor = first.next_cursor; cursor;) {
+      const page: Page = await api<Page>(`/api/issues?after=${encodeURIComponent(cursor)}`);
+      requests.push(...page.requests);
+      cursor = page.next_cursor;
+    }
+    return { ...first, requests, next_cursor: null };
+  },
   create: (
     payload: { purpose: string; deadline: string; lines: FulfillmentDraftLine[]; short_note?: string[] },
     idempotencyKey: string,

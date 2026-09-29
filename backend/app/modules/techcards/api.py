@@ -26,9 +26,8 @@ from app.shared.http_auth import (
     tctemplates_edit_principal, tctemplates_view_principal,
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
-from app.modules.references.domain import TechOperationTab, gost_awg_map
-from app.modules.references.technology import TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, gost_awg_from_wire_table
-from app.workflows.techcard_build import enrich_terminal_norms
+from app.modules.references.domain import TechOperationTab
+from app.workflows.techcard_build import with_technology
 from app.workflows.warehouse_article import infer_article_identity
 
 from .application import (
@@ -556,32 +555,7 @@ def auto_build_project_etk(
         Depends(optional_references_uow_factory),
     ],
 ) -> dict:
-    config = payload.config
-    technology_source = None
-    if references_factory is not None:
-        with references_factory() as references_uow:
-            metadata = references_uow.tech_operations.metadata()
-            records = references_uow.tech_operations.list(
-                tab=TechOperationTab.TERMINAL, query="", limit=10_000,
-            ) if metadata and metadata["schema_version"] == TECH_SNAPSHOT_SCHEMA_VERSION else ()
-            # SUPPLYMAP gostAwgMap_: the map comes from the СПР.КАБ AWG table; the stored map only when it is not loaded.
-            gost_awg = gost_awg_from_wire_table(record.fields for record in references_uow.tech_operations.list(
-                tab=TechOperationTab.KAB_AWG, query="", limit=1_000,
-            )) or gost_awg_map(references_uow.references.list())
-        if metadata and metadata["schema_version"] == TECH_SNAPSHOT_SCHEMA_VERSION:
-            config = enrich_terminal_norms(
-                config,
-                (TerminalRecord.from_fields(record.fields) for record in records),
-                gost_awg,
-            )
-            technology_source = {
-                "schema_version": metadata["schema_version"],
-                "source_updated_at": (
-                    metadata["source_updated_at"].isoformat()
-                    if metadata["source_updated_at"] else None
-                ),
-                "imported_at": metadata["imported_at"].isoformat(),
-            }
+    config, technology_source = with_technology(payload.config, references_factory)
     card = _run(lambda: auto_build_project_techcard(AutoBuildProjectTechcardCommand(
         card_id=card_id,
         expected_version=payload.version,

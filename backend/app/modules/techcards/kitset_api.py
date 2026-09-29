@@ -38,7 +38,6 @@ from .kitsets import (
     sort_kitsets,
     supply_lines,
 )
-from .etk_parts import use_article
 from .project_cards import TechcardValidationError
 
 
@@ -108,24 +107,9 @@ def _number(value: Decimal) -> str:
 
 
 def _facts(request: Request) -> flow.KitsetFacts:
-    techcards = techcards_factory(request)
-    production = production_factory(request)
-
-    def production_read(uow):
-        return (
-            tuple(uow.production.list(limit=10_000)),
-            tuple(uow.plan_events.list()),
-            tuple(uow.plan_projects.list()),
-        )
-
-    tasks, events, projects = _read(production, production_read, ((), (), ()))
-    return flow.KitsetFacts(
-        cards=_read(techcards, lambda uow: tuple(uow.techcards.list())),
-        tasks=tasks,
-        fulfillment=_read(fulfillment_factory(request), lambda uow: tuple(uow.fulfillment.list(limit=10_000))),
-        goods=_read(shipping_factory(request), lambda uow: tuple(uow.goods.list(limit=10_000))),
-        events=events,
-        projects=projects,
+    return flow.kitset_facts(
+        techcards_factory(request), production_factory(request),
+        fulfillment_factory(request), shipping_factory(request),
     )
 
 
@@ -567,23 +551,9 @@ def bom(
     assembly = kitset.assembly(index)
     if assembly is None:
         raise HTTPException(status_code=404, detail=f"В наборе «{kitset.project}» нет сборки {index}")
-    components = []
-    for position, component in enumerate(assembly.components):
-        use = use_article(component.article, component.name)
-        components.append({
-            "id": f"kit-{position}", "type": component.type,
-            "name": use["art"] if use["kd"] else (component.name or component.article),
-            "art": use["art"], "kd": use["kd"], "qty": _number(component.per_unit or Decimal("1")),
-            "scrap": _number(component.scrap_pct / 100),
-        })
-    return {
-        "project": kitset.project, "index": assembly.index, "name": assembly.name,
-        "run": _number(assembly.run), "part_qty": _number(assembly.run or Decimal("1")),
-        "calc_source": kitset.calc_source, "components": components,
-        "calc_ops": flow.calc_ops_by_link(
-            kitset.calc_source, assembly.index, lambda: flow.calc_sheets_reader(request.app.state),
-        ),
-    }
+    return flow.generator_bom(kitset, assembly, flow.calc_ops_by_link(
+        kitset.calc_source, assembly.index, lambda: flow.calc_sheets_reader(request.app.state),
+    ))
 
 
 class TechcardPayload(BaseModel):
