@@ -22,7 +22,6 @@ from .domain import (
     ValidationError,
     create_request_batch,
     build_procurement_requested_snapshot,
-    ensure_projects_registered,
     CALC_MAX_COLUMNS,
     CalcItem,
     calc_project,
@@ -262,10 +261,8 @@ def create_requests(
             creation_fingerprint=fingerprint,
             designation_base=command.designation_base,
         )
-        ensure_projects_registered(
-            [request.project_reference for request in requests],
-            projects.open_projects() if projects is not None else None,
-        )
+        # Ручная заявка: № проекта вписывают руками, пусто — без проекта (владелец, 29.09). Реестр —
+        # только подсказка в поле; формат 591К.3 проверяет create_request_batch.
         for request in requests:
             uow.requests.add(request)
             uow.audit.add(
