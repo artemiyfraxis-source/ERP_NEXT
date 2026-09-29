@@ -22,11 +22,23 @@ const missing = [];
 for (const r of repos) {
   if (existsSync(join(r.dir, ".git"))) {
     git(["pull", "-q", "--ff-only"], r.dir); // best effort: a stale copy still beats none
-    continue;
+  } else {
+    const url = `https://github.com/artemiyfraxis-source/${r.name}`;
+    const res = git(["clone", "-q", ...(r.full ? [] : ["--depth", "1"]), url, r.dir]);
+    if (res.status !== 0) { missing.push(r.name); continue; }
   }
-  const url = `https://github.com/artemiyfraxis-source/${r.name}`;
-  const res = git(["clone", "-q", ...(r.full ? [] : ["--depth", "1"]), url, r.dir]);
-  if (res.status !== 0) missing.push(r.name);
+  if (r.full) localBranches(r.dir);
+}
+
+// SOURCE.json pins may name a SUPPLYMAP branch (feat/techmap-web-generator); architecture tests rev-parse it
+// by its bare name, so every remote branch gets a local one.
+function localBranches(dir) {
+  git(["fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*"], dir);
+  const current = git(["branch", "--show-current"], dir).stdout.trim();
+  const remote = git(["for-each-ref", "--format=%(refname:strip=3)", "refs/remotes/origin"], dir).stdout;
+  for (const b of remote.split("\n").filter((b) => b && b !== "HEAD" && b !== current)) {
+    git(["branch", "-f", b, `origin/${b}`], dir);
+  }
 }
 
 const out = [];
