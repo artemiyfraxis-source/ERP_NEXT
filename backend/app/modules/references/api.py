@@ -130,7 +130,7 @@ def tech_operations(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
     tab: TechOperationTab | None = None,
     q: Annotated[str, Query(max_length=255)] = "",
-    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 200,
 ) -> dict:
     with uow_factory() as uow:
         records = uow.tech_operations.list(tab=tab, query=q, limit=limit)
