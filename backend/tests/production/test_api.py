@@ -63,18 +63,38 @@ def production_api():
     engine.dispose()
 
 
+def issue_card(project, index, ops, name="Жгут"):
+    now = datetime(2026, 9, 22, 9, 0)
+    config = {"ops": [
+        {"type": "assembly", "stage": stage, "opNumber": code, "tOp": t_op, "tPrep": t_prep}
+        for code, stage, t_op, t_prep in ops
+    ]}
+    card = ProjectTechcard.create(
+        project=project, item_index=index, product_name=name,
+        source_calculation="", deadline=None, now=now,
+    ).rebuild({
+        "operations": [{"code": code or f"OP-{i}", "connector": str(i), "side": ""} for i, (code, *_rest) in enumerate(ops, 1)],
+        "build_config": config, "kit": {"part_quantity": "10"},
+    }, now).issue(now)
+    with app.state.techcards_uow_factory() as uow:
+        uow.techcards.save(card)
+        uow.commit()
+    return card
+
+
+def launch_from_card(client, key, project, index, quantity, ops, **extra):
+    card = issue_card(project, index, ops)
+    return client.post(
+        "/api/production/tasks", headers={"Idempotency-Key": key},
+        json={"techcard_id": str(card.id), "quantity": quantity, **extra},
+    )
+
+
 def test_master_launches_route_snapshot_assigns_multiple_people_and_preserves_cancelled_task(production_api):
     client, operator_id = production_api
-    launched = client.post(
-        "/api/production/tasks", headers={"Idempotency-Key": "project-591k3-kb1-v1"},
-        json={
-            "project": "591K.3", "item": "591K.3.КБ1", "name": "Жгут", "quantity": 10,
-            "deadline": "2026-10-01",
-            "operations": [{
-                "position": 1, "code": "OP-01", "stage": "Разделка",
-                "description": "Подготовить кабель", "seconds_per_unit": "60", "setup_seconds": "120",
-            }],
-        },
+    launched = launch_from_card(
+        client, "project-591k3-kb1-v1", "591K.3", "КБ1", 10,
+        [("OP-01", "Разделка", 60, 120)], deadline="2026-10-01",
     )
     task = launched.json()["task"]
     assigned = client.post(
@@ -90,6 +110,9 @@ def test_master_launches_route_snapshot_assigns_multiple_people_and_preserves_ca
 
     assert launched.status_code == 200, launched.text
     assert task["number"] == "ПЗ-0001"
+    assert (task["project"], task["item"], task["name"]) == ("591K.3", "КБ1", "Жгут")
+    assert task["operations"][0]["code"] == "OP-01"
+    assert task["operations"][0]["norm_seconds"] == 720
     assert assigned.status_code == 200, assigned.text
     assert assigned_task["operations"][0]["operator_ids"] == [str(operator_id)]
     assert cancelled.status_code == 200, cancelled.text
@@ -106,7 +129,7 @@ def test_operator_cannot_mutate_resource_plan(production_api):
 
     response = client.post(
         "/api/production/tasks", headers={"Idempotency-Key": "forbidden"},
-        json={"project": "P", "item": "I", "quantity": 1, "operations": [{"position": 1, "stage": "Этап"}]},
+        json={"techcard_id": "10000000-0000-0000-0000-00000000000a", "quantity": 1},
     )
 
     assert response.status_code == 403
@@ -149,16 +172,9 @@ def test_master_previews_and_applies_schedule_from_competency_matrix(production_
         {"operation_code": "OP-1", "allowed": True, "stars": 5, "coefficient": "1.2"},
         {"operation_code": "OP-2", "allowed": True, "stars": 4, "coefficient": "1"},
     ]})
-    launched = client.post(
-        "/api/production/tasks", headers={"Idempotency-Key": "auto-schedule-v1"},
-        json={
-            "project": "708К.2", "item": "КБ1", "quantity": 20,
-            "deadline": "2026-09-30",
-            "operations": [
-                {"position": 1, "code": "OP-1", "stage": "Резка", "seconds_per_unit": "60"},
-                {"position": 2, "code": "OP-2", "stage": "Сборка", "seconds_per_unit": "120"},
-            ],
-        },
+    launched = launch_from_card(
+        client, "auto-schedule-v1", "708К.2", "КБ1", 20,
+        [("OP-1", "Резка", 60, 0), ("OP-2", "Сборка", 120, 0)], deadline="2026-09-30",
     ).json()["task"]
     preview = client.post(f"/api/production/tasks/{launched['id']}/schedule", json={
         "version": launched["version"], "replan": False, "max_crew": 2,
@@ -201,10 +217,7 @@ def test_native_production_plan_combines_project_snapshot_techcard_task_and_jour
     })
     launched = client.post(
         "/api/production/tasks", headers={"Idempotency-Key": "plan-708k4-kb1"},
-        json={
-            "project": "708К.4", "item": "КБ1", "name": "Жгут", "quantity": 10,
-            "operations": [{"position": 1, "code": "OP-1", "stage": "Сборка"}],
-        },
+        json={"techcard_id": str(card.id), "quantity": 10},
     )
     loaded = client.get("/api/production/plan")
 
@@ -278,6 +291,7 @@ def test_manual_techcard_project_appears_from_snapshot_without_fake_card(product
         "deadline": None,
         "days_left": None,
         "stage": "ТК готова",
+        "terminal": False,
         "stage_manual": False,
         "kits": [],
         "supply": None,
@@ -322,15 +336,9 @@ def test_stage_mark_without_kb_sets_stage_of_project_without_kits(production_api
 
 def test_operator_starts_and_cancels_work_from_confirmed_previous_box(production_api):
     client, operator_id = production_api
-    launched = client.post(
-        "/api/production/tasks", headers={"Idempotency-Key": "execution-api-v1"},
-        json={
-            "project": "591K.3", "item": "КБ-1", "quantity": 10,
-            "operations": [
-                {"position": 1, "stage": "Подготовка"},
-                {"position": 2, "stage": "Сборка"},
-            ],
-        },
+    launched = launch_from_card(
+        client, "execution-api-v1", "591K.3", "КБ-1", 10,
+        [("", "Подготовка", 0, 0), ("", "Сборка", 0, 0)],
     ).json()["task"]
     task = launched
     for operation in launched["operations"]:
@@ -377,12 +385,9 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
         actor=Actor(id=operator_id, name="Оператор", department="Производство"),
         email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
     )
-    task = client.post(
-        "/api/production/tasks", headers={"Idempotency-Key": "correction-api-v1"},
-        json={
-            "project": "591K.3", "item": "КБ-1", "quantity": 10,
-            "operations": [{"position": 1, "stage": "Подготовка"}, {"position": 2, "stage": "Сборка"}],
-        },
+    task = launch_from_card(
+        client, "correction-api-v1", "591K.3", "КБ-1", 10,
+        [("", "Подготовка", 0, 0), ("", "Сборка", 0, 0)],
     ).json()["task"]
     for operation in list(task["operations"]):
         task = client.post(
@@ -431,3 +436,128 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
     assert again.status_code == 422
     assert "не возвращена мастером" in again.json()["detail"]
     assert [item["id"] for item in after.json()["outputs"]] == [corrected.json()["output"]["id"]]
+
+
+def test_launch_only_from_issued_techcard_and_launchable_counts_launched(production_api):
+    client, _operator_id = production_api
+    now = datetime(2026, 9, 22, 9, 0)
+    draft = ProjectTechcard.create(
+        project="800К.1", item_index="КБ2", product_name="Черновик",
+        source_calculation="", deadline=None, now=now,
+    ).rebuild({"operations": [{"code": "OP-1", "connector": "A", "side": "A"}]}, now)
+    with app.state.techcards_uow_factory() as uow:
+        uow.techcards.save(draft)
+        uow.commit()
+
+    refused = client.post(
+        "/api/production/tasks", headers={"Idempotency-Key": "draft"},
+        json={"techcard_id": str(draft.id), "quantity": 5},
+    )
+    manual = client.post(
+        "/api/production/tasks", headers={"Idempotency-Key": "manual"},
+        json={"project": "P", "item": "I", "quantity": 1, "operations": [{"position": 1, "stage": "Этап"}]},
+    )
+    launched = launch_from_card(client, "kb1-a", "800К.1", "кб1", 7, [("OP-1", "Резка", 30, 60)])
+    launchable = client.get("/api/production/launchable")
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "Техкарта «800К.1КБ2» не выдана — запускать нечего"
+    assert manual.status_code == 422
+    assert launched.status_code == 200, launched.text
+    assert launchable.json()["items"] == [{
+        "techcard_id": launchable.json()["items"][0]["techcard_id"], "project": "800К.1", "index": "кб1",
+        "item": "800К.1КБ1", "name": "Жгут", "customer": "", "run": "10", "deadline": None, "launched": 7, "operations": 1,
+    }]
+
+
+def test_assign_preview_warns_about_admission_and_applies_speed_coefficient(production_api):
+    client, operator_id = production_api
+    master_id = UUID("10000000-0000-0000-0000-000000000001")
+    client.put(f"/api/production/skills/{operator_id}", json={"skills": [
+        {"operation_code": "OP-1", "allowed": True, "stars": 5, "coefficient": "2"},
+    ]})
+    task = launch_from_card(client, "coef", "801К.1", "КБ1", 10, [("OP-1", "Резка", 360, 0)]).json()["task"]
+    operation = task["operations"][0]
+
+    preview = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{operation['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(operator_id), str(master_id)], "dry": True},
+    )
+    after = client.get("/api/production/tasks").json()["tasks"][0]
+    fast = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{operation['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(operator_id)]},
+    )
+    codes = client.get("/api/production/skills").json()["operation_codes"]
+
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["dry"] is True
+    assert preview.json()["plan"]["warnings"] == ["Мастер: нет допуска к операции OP-1"]
+    assert after["version"] == task["version"]
+    assert after["operations"][0]["operator_ids"] == []
+    # 360 с/шт × 10 шт при коэффициенте 2 — 30 минут вместо часа.
+    assert fast.json()["plan"] == {"start": "2026-09-22T09:00:00", "finish": "2026-09-22T09:30:00", "warnings": []}
+    assert codes == [{"code": "OP-1", "name": "Резка"}]
+
+
+def test_task_list_reports_operation_fact_state_and_wip(production_api):
+    client, operator_id = production_api
+    task = launch_from_card(
+        client, "fact", "802К.1", "КБ1", 10, [("", "Подготовка", 0, 0), ("", "Сборка", 0, 0)],
+    ).json()["task"]
+    for operation in list(task["operations"]):
+        task = client.post(
+            f"/api/production/tasks/{task['id']}/operations/{operation['id']}/assign",
+            json={"version": task["version"], "operator_ids": [str(operator_id)]},
+        ).json()["task"]
+    now = datetime(2026, 9, 22, 9, 0)
+    source = ProductionBox.create(
+        task_id=UUID(task["id"]), operation_id=UUID(task["operations"][0]["id"]),
+        item="КБ1", operation_position=1, operator_id=operator_id, created_at=now,
+    ).add_output(Decimal("10")).close(format_box_number(104300), "Оператор", now).confirm("Мастер", now)
+    with app.state.production_uow_factory() as uow:
+        uow.boxes.save(source)
+        uow.commit()
+    master = app.dependency_overrides[authenticated_principal]
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=operator_id, name="Оператор", department="Производство"),
+        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+    )
+    started = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][1]['id']}/work/start",
+        json={"inputs": [{"box_id": str(source.id), "quantity": "4"}]},
+    ).json()["session"]
+    client.post(f"/api/production/work/{started['id']}/submit", json={"good_quantity": "3", "defect_quantity": "1", "defect_character": "Обрыв", "defect_description": "обрыв жилы"})
+    mine = client.get("/api/production/my").json()["tasks"]
+    app.dependency_overrides[authenticated_principal] = master
+    listed = client.get("/api/production/tasks").json()["tasks"][0]["operations"]
+
+    assert listed[0]["state"] == "не начата"
+    assert listed[0]["wip"] == {"ok": "6", "closed": "0"}
+    assert listed[1]["fact"] == {"good": "3", "defect": "1", "processed": "4"}
+    assert listed[1]["state"] == "в работе"
+    assert listed[1]["wip"] == {"ok": "0", "closed": "3"}
+    assert [item["operations"][0]["first"] for item in mine] == [True, False]
+    assert mine[1]["operations"][0]["mates"] == []
+
+
+def test_production_plan_survives_a_failing_source(production_api):
+    # ProdPlan.gs prodPlanData_: «Недоступный источник не валит план — его колонка будет пустой» (PP-5).
+    client, _operator_id = production_api
+    client.put("/api/production/plan/projects-snapshot", json={"projects": [{
+        "project": "714К.", "customer": "Заказчик", "status": "Новый", "terminal": False,
+    }]})
+
+    def broken():
+        raise RuntimeError("источник недоступен")
+
+    saved = app.state.shipping_uow_factory, app.state.procurement_uow_factory
+    app.state.shipping_uow_factory = broken
+    app.state.procurement_uow_factory = broken
+    try:
+        loaded = client.get("/api/production/plan")
+    finally:
+        app.state.shipping_uow_factory, app.state.procurement_uow_factory = saved
+
+    assert loaded.status_code == 200, loaded.text
+    assert [row["project"] for row in loaded.json()["rows"]] == ["714К.1"]

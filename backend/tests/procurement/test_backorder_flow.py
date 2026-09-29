@@ -250,9 +250,11 @@ def test_supply_summary_counts_backorder_as_its_own_position():
     )
     original = SimpleNamespace(
         source_request_id=request.id, status=ProcurementStatus.IN_TRANSIT, expected_arrival=date(2026, 9, 25),
+        planned_date=date(2026, 10, 5),
     )
     backorder = SimpleNamespace(
         source_request_id=request.id, status=ProcurementStatus.APPROVAL, expected_arrival=None,
+        planned_date=date(2026, 10, 5),
     )
 
     summary = _supply([request], [original, backorder])["591К.3"]

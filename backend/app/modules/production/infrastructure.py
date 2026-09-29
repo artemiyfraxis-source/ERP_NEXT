@@ -806,6 +806,14 @@ class SqlAlchemyOutputRepository:
         ).order_by(ProductionOutputRow.finished_at, ProductionOutputRow.id))
         return [self._domain(row) for row in rows]
 
+    def active_for_tasks(self, task_ids: tuple[UUID, ...]) -> list[ProductionOutput]:
+        if not task_ids:
+            return []
+        rows = self.session.scalars(select(ProductionOutputRow).where(
+            ProductionOutputRow.task_id.in_(task_ids), self._active(),
+        ))
+        return [self._domain(row) for row in rows]
+
     def total_for_operation(self, operation_id: UUID) -> Decimal:
         value = self.session.scalar(select(func.coalesce(
             func.sum(ProductionOutputRow.good_quantity + ProductionOutputRow.defect_quantity), 0,

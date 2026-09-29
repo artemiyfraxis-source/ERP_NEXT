@@ -60,8 +60,14 @@ class Serials:
         return changed
 
 
+class Skills:
+    def __init__(self): self.rows = []
+    def list(self): return list(self.rows)
+
+
 class Uow:
     def __init__(self):
+        self.skills = Skills()
         self.production = ProductionRepo()
         self.operators = Operators()
         self.calendar = Calendar()
