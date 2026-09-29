@@ -10,10 +10,9 @@ from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any
-from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -21,6 +20,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.modules.fulfillment.domain import FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
+from app.modules.requests.google_drive import DriveError
 from app.modules.production.plan import KIT_STAGES, TC_REVIEW_VALUES
 from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
 from app.shared.clock import moscow_now
@@ -263,10 +263,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
             "item": item_id(kitset.project, assembly.index),
             "stage": _kb_stage(stage_of[assembly.index]) if assembly.index in stage_of else None,
             "techcard": cards.get(assembly.index),
-            "kd": [{
-                "id": str(document.id), "name": document.file_name, "size": document.size,
-                "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
-            } for document in documents if document.item_index == assembly.index],
+            "kd": [_document_json(document) for document in documents if document.item_index == assembly.index],
             "components": [{
                 "art": component.article, "type": component.type, "name": component.name, "link": component.link,
                 "per": _number(component.per_unit), "scrap": _number(component.scrap_pct),
@@ -424,6 +421,21 @@ class DocumentPayload(BaseModel):
     content_b64: str = Field(min_length=1)
 
 
+def _document_json(document) -> dict:
+    """A row of the «КД» register as `tcKdByAssembly_` hands it to the card: the link opens the file on Drive."""
+    return {
+        "id": str(document.id), "index": document.item_index, "name": document.file_name, "url": document.url,
+        "file_id": document.file_id, "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
+    }
+
+
+def _drive_run(operation):
+    try:
+        return _run(operation)
+    except DriveError as error:
+        raise HTTPException(status_code=503 if error.kind == "config" else 502, detail=str(error)) from error
+
+
 @router.post("/{project}/documents", status_code=201)
 def add_document(
     project: str,
@@ -432,33 +444,13 @@ def add_document(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKdAdd`: вложить файл к сборке."""
+    """`portalKdAdd`: вложить файл к сборке — файл ложится на Диск в папку «КД» проекта, строка — в реестр."""
     content = _decode(payload.content_b64)
-    document = _run(lambda: flow.attach_document(
+    document = _drive_run(lambda: flow.attach_document(
         project, payload.index, payload.file_name, payload.content_type, content,
-        principal.actor, now, techcards_factory(request),
+        principal.actor, now, techcards_factory(request), lambda: flow.kd_drive(request.app.state),
     ))
-    return {"res": {
-        "id": str(document.id), "index": document.item_index, "name": document.file_name,
-        "size": document.size, "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
-    }}
-
-
-@router.get("/{project}/documents/{document_id}")
-def document(
-    project: str,
-    document_id: UUID,
-    request: Request,
-    _principal: Annotated[Principal, Depends(projects_view_principal)],
-) -> Response:
-    with techcards_factory(request)() as uow:
-        found = uow.kitsets.document_content(document_id)
-    if found is None or found[0].project != _kitset(request, project).project:
-        raise HTTPException(status_code=404, detail="Файл КД не найден")
-    meta, content = found
-    return Response(content=content, media_type=meta.content_type, headers={
-        "Content-Disposition": f"inline; filename*=UTF-8''{quote(meta.file_name)}",
-    })
+    return {"res": _document_json(document)}
 
 
 @router.delete("/{project}/documents/{document_id}")
@@ -467,12 +459,13 @@ def delete_document(
     document_id: UUID,
     request: Request,
     principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKdDelete`: отвязать вложение."""
-    kitset = _kitset(request, project)
-    with techcards_factory(request)() as uow:
-        deleted = uow.kitsets.delete_document(kitset.project, document_id)
-        uow.commit()
+    """`portalKdDelete`: отвязать вложение — строка реестра прочь, файл в корзину Диска."""
+    deleted = _drive_run(lambda: flow.detach_document(
+        project, document_id, principal.actor, now, techcards_factory(request),
+        lambda: flow.kd_drive(request.app.state),
+    ))
     return {"res": {"deleted": deleted}}
 
 

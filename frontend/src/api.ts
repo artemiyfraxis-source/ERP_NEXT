@@ -2128,10 +2128,13 @@ export interface KitsetComponent {
   lot: KitsetLot | null;
 }
 
+/** Строка реестра «КД» (SUPPLYMAP TcKd.gs): сам файл — на Google Диске, `url` открывает его там. */
 export interface KitsetDocument {
   id: string;
+  index: string;
   name: string;
-  size: number;
+  url: string;
+  file_id: string;
   uploaded_at: string;
   who: string;
 }
@@ -2209,7 +2212,6 @@ export interface KitsetDeleteResult {
   deleted: number;
   erp: Record<string, number>;
   cards: { cards: number; revisions: number };
-  kd: number;
   gp: { deleted: number; kept: number };
 }
 
@@ -2247,8 +2249,7 @@ export const kitsetsApi = {
   mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string }) =>
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
   addDocument: (project: string, payload: { index: string; file_name: string; content_type: string; content_b64: string }) =>
-    api<{ res: KitsetDocument & { index: string } }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
-  documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
+    api<{ res: KitsetDocument }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
   removeDocument: (project: string, id: string) =>
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   openTechcard: (project: string, index: string) =>

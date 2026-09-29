@@ -70,6 +70,7 @@ from app.modules.techcards.kitsets import (
     SupplyRow,
     issue_tasks,
     item_id,
+    kd_folder_path,
     project_key,
     project_number_valid,
     supply_lines,
@@ -461,9 +462,11 @@ def delete_kitset(
     production_uow: Callable[[], PlanUnitOfWork] | None,
     shipping_uow: Callable[[], ShippingUnitOfWork] | None,
 ) -> dict[str, Any]:
-    """The card goes everywhere at once: composition and spec, KD, the registry row, issued techcards with their
+    """The card goes everywhere at once: composition and spec, the registry row, issued techcards with their
     revisions, finished-goods rows without movement. Left alone: shop tasks (people's work), purchase requests,
-    fulfillment requests and finished goods that already moved — those belong to their own sections."""
+    fulfillment requests and finished goods that already moved — those belong to their own sections. КД stays too,
+    as in `tcKitsetDelete`: its register rows and the files on Drive outlive the card and show up again when the
+    project is loaded from the calculation anew."""
     project = str(project or "").strip()
     if not project:
         raise KitsetValidationError("Не указан номер проекта")
@@ -472,7 +475,6 @@ def delete_kitset(
         if kitset is None:
             raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
         lines = kitset.lines
-        documents = uow.kitsets.delete_documents(kitset.project)
         uow.kitsets.delete(kitset.project)
         canon = project_key(kitset.project)
         cards = revisions = 0
@@ -481,7 +483,7 @@ def delete_kitset(
             cards += dropped[0]
             revisions += dropped[1]
         _audit(uow, kitset.project, "techcards.kitset_deleted", actor, now, {
-            "lines": str(lines), "cards": str(cards), "documents": str(documents),
+            "lines": str(lines), "cards": str(cards),
         })
         uow.commit()
     erp: dict[str, int] = {}
@@ -499,19 +501,43 @@ def delete_kitset(
         gp = {"deleted": dropped.deleted, "kept": dropped.kept}
     return {
         "project": kitset.project, "deleted": lines, "erp": erp,
-        "cards": {"cards": cards, "revisions": revisions}, "kd": documents, "gp": gp,
+        "cards": {"cards": cards, "revisions": revisions}, "gp": gp,
     }
 
 
 # ── КД (TcKd.gs) ────────────────────────────────────────────────────────
 
 
+class KdDrive(Protocol):
+    """Where КД files live — Google Drive in SUPPLYMAP (`tcKdFolder_`, `createFile`, `setTrashed`)."""
+
+    root_folder_id: str
+
+    def folder(self, parent_id: str, wanted: str, create_as: str) -> str: ...
+
+    def upload(self, folder_id: str, name: str, content_type: str, content: bytes) -> Any: ...
+
+    def trash(self, file_id: str) -> None: ...
+
+
+def kd_drive(state: Any) -> KdDrive:
+    """Tests put a fake on ``app.state.kitset_kd_drive``; otherwise the service-account adapter from env. Raises
+    `DriveError` (kind ``config``) without the key or the «Проекты» folder id."""
+    drive = getattr(state, "kitset_kd_drive", None)
+    if drive is not None:
+        return drive
+    from app.modules.requests.google_drive import kd_drive_from_env
+
+    return kd_drive_from_env()
+
+
 def attach_document(
     project: str, index: str, file_name: str, content_type: str, content: bytes, actor: Actor, now: datetime,
-    techcards_uow: Callable[[], TechcardsUnitOfWork],
+    techcards_uow: Callable[[], TechcardsUnitOfWork], drive: Callable[[], KdDrive],
 ) -> KitDocument:
-    """`tcKdAdd`: the file name carries the product id in front («708К.4КБ1 — …») — it is recognised outside
-    the card too. Files live in ERP itself: there is no Drive after Google."""
+    """`tcKdAdd`: the file goes to Drive into «Проекты/<головной>/<полный>/КД» (`tcKdFolder_`), named with the
+    product id in front («708К.4КБ1 — …») so it is recognised outside the folder too — in search, mail, print.
+    The register row keeps the Drive name, link and id."""
     index = str(index or "").strip().upper()
     if not index:
         raise KitsetValidationError("Не указана сборка")
@@ -525,18 +551,50 @@ def attach_document(
             raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
         if kitset.assembly(index) is None:
             raise KitsetValidationError(f"В наборе «{kitset.project}» нет сборки {index}")
-        document = KitDocument(
-            id=uuid4(), project=kitset.project, item_index=index,
-            file_name=f"{item_id(kitset.project, index)} — {str(file_name or '').strip() or 'КД'}",
-            content_type=str(content_type or "").strip() or "application/octet-stream",
-            size=len(content), uploaded_at=now, uploaded_by=actor.name,
-        )
-        uow.kitsets.add_document(document, content)
+    store = drive()
+    folder_id = store.root_folder_id
+    for wanted, create_as in kd_folder_path(kitset.project):
+        folder_id = store.folder(folder_id, wanted, create_as)
+    name = f"{item_id(kitset.project, index)} — {str(file_name or '').strip() or 'КД'}"
+    file = store.upload(folder_id, name, str(content_type or "").strip() or "application/octet-stream", content)
+    document = KitDocument(
+        id=uuid4(), project=kitset.project, item_index=index, file_name=file.name or name,
+        file_id=file.id, url=file.url, uploaded_at=now, uploaded_by=actor.name,
+    )
+    with techcards_uow() as uow:
+        uow.kitsets.add_document(document)
         _audit(uow, kitset.project, "techcards.kitset_document_added", actor, now, {
-            "item_index": index, "file": document.file_name,
+            "item_index": index, "file": document.file_name, "file_id": document.file_id,
         })
         uow.commit()
     return document
+
+
+def detach_document(
+    project: str, document_id: UUID, actor: Actor, now: datetime,
+    techcards_uow: Callable[[], TechcardsUnitOfWork], drive: Callable[[], KdDrive],
+) -> int:
+    """`tcKdDelete`: the register row goes, the file goes to the Drive trash (reversible for 30 days). A file
+    already gone from Drive (removed by hand) does not stop the row from going."""
+    store = drive()
+    with techcards_uow() as uow:
+        kitset = uow.kitsets.get(project)
+        if kitset is None:
+            raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
+        document = uow.kitsets.document(kitset.project, document_id)
+        if document is None:
+            return 0
+        deleted = uow.kitsets.delete_document(kitset.project, document_id)
+        _audit(uow, kitset.project, "techcards.kitset_document_removed", actor, now, {
+            "item_index": document.item_index, "file": document.file_name, "file_id": document.file_id,
+        })
+        uow.commit()
+    if document.file_id:
+        try:
+            store.trash(document.file_id)
+        except Exception:  # noqa: BLE001 — `try { setTrashed(true) } catch (e) { /* уже нет */ }`
+            logging.getLogger(__name__).warning("КД %s: файл %s не ушёл в корзину Диска", project, document.file_id)
+    return deleted
 
 
 def kit_number_payload(value: Decimal) -> str:
@@ -546,7 +604,7 @@ def kit_number_payload(value: Decimal) -> str:
 
 __all__ = [
     "LoadKitsetCommand", "LoadKitsetResult", "KitsetFacts", "IssueFromKitsetResult", "PLAN_KINDS",
-    "TC_REVIEW_VALUES", "attach_document", "cards_state", "delete_kitset", "issue_from_kitset",
-    "kit_number_payload", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
+    "KdDrive", "TC_REVIEW_VALUES", "attach_document", "cards_state", "delete_kitset", "detach_document",
+    "issue_from_kitset", "kd_drive", "kit_number_payload", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
     "supply_rows",
 ]

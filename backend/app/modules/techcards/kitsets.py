@@ -110,16 +110,46 @@ class CalcKitset:
 
 @dataclass(frozen=True)
 class KitDocument:
-    """КД — attached to the assembly (КБ), not to a spec line: a drawing is issued for the product (TcKd.gs)."""
+    """КД — attached to the assembly (КБ), not to a spec line: a drawing is issued for the product (TcKd.gs).
+
+    A register row as on the SUPPLYMAP sheet «КД» (№ ПРОЕКТА, КБ, ИМЯ ФАЙЛА, ССЫЛКА, ID ФАЙЛА, ЗАГРУЖЕНО, КТО):
+    the file itself lives on Google Drive, the row keeps only its name, link and id."""
 
     id: UUID
     project: str
     item_index: str
     file_name: str
-    content_type: str
-    size: int
+    file_id: str
+    url: str
     uploaded_at: datetime
     uploaded_by: str
+
+
+KD_FOLDER = "КД"
+
+
+def folder_key(name: str) -> str:
+    """`tcFolderKey_`: головные папки на Диске названы вразнобой — «703К.», «221К», «479К. »; хвостовые точки
+    и пробелы и регистр при сравнении не важны."""
+    return re.sub(r"[.\s]+$", "", str(name or "")).strip().upper()
+
+
+def head_number(project: str) -> str:
+    """`tcHeadNo_`: головной номер — часть до точки. «708К.4» → «708К», «221К.10» → «221К»."""
+    text = str(project or "").strip()
+    return text.split(".", 1)[0] or text
+
+
+def kd_folder_path(project: str) -> tuple[tuple[str, str], ...]:
+    """`tcKdFolder_` over `tcProjectFolder_`: «Проекты» → головной номер (создаётся с точкой, «708К.») → полный
+    номер («708К.4») → «КД». Номер без подпроекта — один уровень. Pairs of (name to look for, name to create)."""
+    full = str(project or "").strip() or "БЕЗ ПРОЕКТА"
+    head = head_number(full) or full
+    path = [(head, head + ".")]
+    if folder_key(head) != folder_key(full):
+        path.append((full, full))
+    path.append((KD_FOLDER, KD_FOLDER))
+    return tuple(path)
 
 
 @dataclass(frozen=True)

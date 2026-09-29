@@ -1,4 +1,6 @@
-"""SQLAlchemy persistence for project kitsets («Наборы») and their КД attachments."""
+"""SQLAlchemy persistence for project kitsets («Наборы») and the register of their КД attachments.
+
+The КД files are on Google Drive (SUPPLYMAP TcKd.gs); the register row keeps name, link and Drive file id."""
 
 from __future__ import annotations
 
@@ -7,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, delete, select
+from sqlalchemy import JSON, DateTime, Index, Integer, String, Text, Uuid, delete, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
@@ -40,9 +42,8 @@ class KitDocumentRow(Base):
     project: Mapped[str] = mapped_column(String(255), nullable=False)
     item_index: Mapped[str] = mapped_column(String(64), nullable=False)
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
-    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
-    size: Mapped[int] = mapped_column(Integer, nullable=False)
-    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    file_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -126,7 +127,7 @@ class SqlAlchemyKitsetRepository:
     def _document(row: KitDocumentRow) -> KitDocument:
         return KitDocument(
             id=row.id, project=row.project, item_index=row.item_index, file_name=row.file_name,
-            content_type=row.content_type, size=row.size, uploaded_at=row.uploaded_at, uploaded_by=row.uploaded_by,
+            file_id=row.file_id, url=row.url, uploaded_at=row.uploaded_at, uploaded_by=row.uploaded_by,
         )
 
     def documents(self, project: str) -> list[KitDocument]:
@@ -135,23 +136,19 @@ class SqlAlchemyKitsetRepository:
         )
         return [self._document(row) for row in rows]
 
-    def add_document(self, document: KitDocument, content: bytes) -> None:
+    def add_document(self, document: KitDocument) -> None:
         self.session.add(KitDocumentRow(
             id=document.id, project=document.project, item_index=document.item_index,
-            file_name=document.file_name, content_type=document.content_type, size=document.size,
-            content=content, uploaded_at=document.uploaded_at, uploaded_by=document.uploaded_by,
+            file_name=document.file_name, file_id=document.file_id, url=document.url,
+            uploaded_at=document.uploaded_at, uploaded_by=document.uploaded_by,
         ))
 
-    def document_content(self, document_id: UUID) -> tuple[KitDocument, bytes] | None:
+    def document(self, project: str, document_id: UUID) -> KitDocument | None:
         row = self.session.get(KitDocumentRow, document_id)
-        return None if row is None else (self._document(row), row.content)
+        return None if row is None or row.project != project else self._document(row)
 
     def delete_document(self, project: str, document_id: UUID) -> int:
         result = self.session.execute(
             delete(KitDocumentRow).where(KitDocumentRow.project == project, KitDocumentRow.id == document_id)
         )
-        return result.rowcount or 0
-
-    def delete_documents(self, project: str) -> int:
-        result = self.session.execute(delete(KitDocumentRow).where(KitDocumentRow.project == project))
         return result.rowcount or 0

@@ -21,7 +21,7 @@ from app.shared.clock import moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
 from tests.factories import Actor
-from tests.techcards.calc_sheets import FakeSheets
+from tests.techcards.calc_sheets import FakeDrive, FakeSheets
 
 
 STATE = (
@@ -60,8 +60,11 @@ def kitset_api():
         uow.warehouse.add(lot)
         uow.commit()
     app.state.kitset_sheets_reader = FakeSheets()
+    app.state.kitset_kd_drive = FakeDrive({"root-projects": {"708К. ": "head-708"}})
     yield TestClient(app), lot
     del app.state.kitset_sheets_reader
+    if hasattr(app.state, "kitset_kd_drive"):
+        del app.state.kitset_kd_drive
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
     app.dependency_overrides.pop(moscow_today, None)
@@ -156,8 +159,21 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
     assert attached.status_code == 201, attached.text
     document = attached.json()["res"]
     assert document["name"] == "708К.4КБ1 — Чертёж.pdf"
-    downloaded = client.get(f"/api/techcards/kitsets/708К.4/documents/{document['id']}")
-    assert downloaded.content == b"%PDF-1.4 test"
+    drive = app.state.kitset_kd_drive
+    stored = drive.files[document["file_id"]]
+    # tcKdFolder_: «Проекты» → существующая головная «708К. » → новая «708К.4» → «КД»; байты — на Диске.
+    assert drive.path_of(stored["folder"]) == ["708К. ", "708К.4", "КД"]
+    assert (stored["name"], stored["type"], stored["content"]) == (
+        "708К.4КБ1 — Чертёж.pdf", "application/pdf", b"%PDF-1.4 test",
+    )
+    assert document["url"] == f"https://drive.google.com/file/d/{document['file_id']}/view?usp=drivesdk"
+    card = client.get("/api/techcards/kitsets/708К.4").json()
+    assert card["assemblies"][0]["kd"] == [{
+        "id": document["id"], "index": "КБ1", "name": "708К.4КБ1 — Чертёж.pdf", "url": document["url"],
+        "file_id": document["file_id"], "uploaded_at": "2026-09-29T10:00:00", "who": "Технолог",
+    }]
+    # ERP больше не отдаёт байты: ссылка ведёт на Диск.
+    assert client.get(f"/api/techcards/kitsets/708К.4/documents/{document['id']}").status_code in (404, 405)
 
     bom = client.get("/api/techcards/kitsets/708К.4/bom/КБ1").json()
     assert [(c["art"], c["qty"], c["scrap"]) for c in bom["components"]] == [
@@ -172,12 +188,64 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
     deleted = client.delete("/api/techcards/kitsets/708К.4")
     assert deleted.status_code == 200, deleted.text
     res = deleted.json()["res"]
-    assert (res["deleted"], res["kd"], res["cards"]["cards"], res["gp"]["deleted"], res["erp"]) == (
-        3, 1, 1, 2, {"Проекты": 1},
-    )
+    assert (res["deleted"], res["cards"]["cards"], res["gp"]["deleted"], res["erp"]) == (3, 1, 2, {"Проекты": 1})
     gone = client.get("/api/techcards/kitsets/708К.4")
     assert gone.status_code == 404
     assert gone.json()["detail"]["gone"] is True
+    # tcKitsetDelete не трогает лист «КД» и Диск: вложение возвращается с проектом.
+    assert drive.trashed == []
+    _load(client)
+    back = client.get("/api/techcards/kitsets/708К.4").json()
+    assert [item["file_id"] for item in back["assemblies"][0]["kd"]] == [document["file_id"]]
+
+
+def test_kd_detach_trashes_drive_file_and_tolerates_missing_file(kitset_api):
+    """`tcKdDelete`: строка реестра прочь, файл — в корзину Диска; файла уже нет — строку это не держит."""
+    client, _lot = kitset_api
+    _load(client)
+    drive = app.state.kitset_kd_drive
+
+    def attach(name):
+        response = client.post("/api/techcards/kitsets/708К.4/documents", json={
+            "index": "КБ2", "file_name": name, "content_b64": base64.b64encode(b"x").decode(),
+        })
+        assert response.status_code == 201, response.text
+        return response.json()["res"]
+
+    first, second = attach("Схема.png"), attach("ТЗ.docx")
+    assert drive.files[first["file_id"]]["type"] == "application/octet-stream"
+    removed = client.delete(f"/api/techcards/kitsets/708К.4/documents/{first['id']}")
+    assert removed.json()["res"] == {"deleted": 1}
+    assert drive.trashed == [first["file_id"]]
+
+    drive.trash_error = RuntimeError("File not found")
+    removed = client.delete(f"/api/techcards/kitsets/708К.4/documents/{second['id']}")
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["res"] == {"deleted": 1}
+    card = client.get("/api/techcards/kitsets/708К.4").json()
+    assert card["assemblies"][1]["kd"] == []
+    again = client.delete(f"/api/techcards/kitsets/708К.4/documents/{second['id']}")
+    assert again.json()["res"] == {"deleted": 0}
+
+
+def test_kd_without_drive_key_is_503(kitset_api, monkeypatch):
+    """Как чтение расчёта: без ключа сервисного аккаунта или папки «Проекты» — 503 с подсказкой, реестр не тронут."""
+    client, _lot = kitset_api
+    _load(client)
+    del app.state.kitset_kd_drive
+    monkeypatch.delenv("ERP_GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
+    monkeypatch.delenv("ERP_KD_DRIVE_FOLDER_ID", raising=False)
+    response = client.post("/api/techcards/kitsets/708К.4/documents", json={
+        "index": "КБ1", "file_name": "Чертёж.pdf", "content_b64": base64.b64encode(b"x").decode(),
+    })
+    assert response.status_code == 503
+    assert "ERP_KD_DRIVE_FOLDER_ID" in response.json()["detail"]
+    assert client.get("/api/techcards/kitsets/708К.4").json()["assemblies"][0]["kd"] == []
+    # Проверки набора — раньше Диска: неизвестная сборка отвечает 422, а не 503.
+    wrong = client.post("/api/techcards/kitsets/708К.4/documents", json={
+        "index": "КБ9", "file_name": "x.pdf", "content_b64": base64.b64encode(b"x").decode(),
+    })
+    assert wrong.status_code == 422
 
 
 def test_view_only_reads_but_cannot_write(kitset_api):

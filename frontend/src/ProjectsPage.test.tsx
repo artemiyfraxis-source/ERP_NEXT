@@ -149,7 +149,7 @@ describe("ProjectsPage", () => {
   it("mirrors the server batch formula and delete summary", () => {
     expect(kitBatch("1,5", "10", "5")).toBe(15.75);
     expect(kitBatch("", "10", "5")).toBe(0);
-    expect(deleteSummary({ project: "708К.4", deleted: 3, erp: { "Проекты": 1 }, cards: { cards: 2, revisions: 1 }, kd: 1, gp: { deleted: 2, kept: 1 } }))
-      .toBe("Снесено строк: спецификация 3, проекты 1, техкарты 2, КД 1, склад ГП 2. На складе ГП осталось с движением: 1");
+    expect(deleteSummary({ project: "708К.4", deleted: 3, erp: { "Проекты": 1 }, cards: { cards: 2, revisions: 1 }, gp: { deleted: 2, kept: 1 } }))
+      .toBe("Снесено строк: спецификация 3, проекты 1, техкарты 2, склад ГП 2. На складе ГП осталось с движением: 1");
   });
 });
