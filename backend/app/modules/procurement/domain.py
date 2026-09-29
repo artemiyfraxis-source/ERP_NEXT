@@ -126,6 +126,20 @@ class ProcurementFacts:
 
 
 @dataclass(frozen=True)
+class ProcurementTraceability:
+    """Traceability columns of «Лист закупки» the buyer fills (TRACE_COLUMNS.PURCHASE, Config.gs:269):
+    ИЗГОТОВИТЕЛЬ, СТРАНА, ТИП ДОК., № / ДАТА ДОК. КАЧЕСТВА — plus СТАНДАРТ, which SUPPLYMAP keeps on the
+    waitlist; they travel to Receiving with the delivery (Config.gs:523-525 join into the ВК act)."""
+
+    manufacturer: str | None = None
+    country: str | None = None
+    quality_document_type: str | None = None
+    quality_document_number: str | None = None
+    quality_document_date: date | None = None
+    standard: str | None = None
+
+
+@dataclass(frozen=True)
 class MoneyEntry:
     """Invoice money form: typed amounts plus the invoice identity (НАИМЕНОВАНИЕ / № / ДАТА СЧЕТА)."""
 
@@ -204,6 +218,7 @@ class ProcurementLine:
     permission_date: date | None = None
     # Инициатор as a user: status notifications go to this id; None = the name matched nobody (not notified).
     initiator_id: UUID | None = None
+    trace: ProcurementTraceability = ProcurementTraceability()
 
     @property
     def replacement_open(self) -> bool:
@@ -326,6 +341,28 @@ class ProcurementLine:
             permission_date=permission_date if keeps_permission else None,
             version=self.version + 1,
         )
+
+    def set_traceability(self, trace: ProcurementTraceability, actor: Actor) -> ProcurementLine:
+        """The buyer types ИЗГОТОВИТЕЛЬ / СТРАНА / ТИП ДОК. / № и ДАТА ДОК. КАЧЕСТВА / СТАНДАРТ on their line.
+        They are not required for the invoice (PUR_PAY_REQUIRED, ENFORCE_QUALITY_DOC=false), so they are
+        editable from «В работе» to «В оплату»; after payment the delivery snapshot is with Receiving, which
+        keeps editing them there."""
+        self._require_owner(actor)
+        normalized = ProcurementTraceability(
+            manufacturer=_text(trace.manufacturer) or None,
+            country=_text(trace.country) or None,
+            quality_document_type=_text(trace.quality_document_type) or None,
+            quality_document_number=_text(trace.quality_document_number) or None,
+            quality_document_date=trace.quality_document_date,
+            standard=_text(trace.standard) or None,
+        )
+        if normalized == self.trace:
+            return self
+        if self.status not in REPLACEMENT_EDITABLE:
+            raise ProcurementValidationError(
+                "Прослеживаемость заполняют в работе у закупщика — от «В работе» до «В оплату»; дальше — в Приёмке"
+            )
+        return replace(self, trace=normalized, version=self.version + 1)
 
     def record_invoice(
         self,

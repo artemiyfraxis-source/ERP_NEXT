@@ -6,6 +6,7 @@ import {
   type ManualRatePrompt,
   type MoneyDriver,
   type ProcurementLine,
+  type ProcurementTraceabilityInput,
   type SupplierOrder,
 } from "./api";
 import { openPrintSheet } from "./print";
@@ -465,6 +466,9 @@ function ProcurementCard({
       {REPLACEMENT_STATUSES.has(line.status) && (
         <ReplacementControl line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
       )}
+      {REPLACEMENT_STATUSES.has(line.status) && (
+        <TraceabilityForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
+      )}
       {line.permission_number && <ReplacementPermissionPrint line={line} />}
       {line.status === "Готов к запросу" && (
         <small className="hint">Поставщик: {line.supplier} — строка войдёт в запрос поставщику при формировании.</small>
@@ -633,6 +637,52 @@ function ReplacementControl({ line, busy, disabled, onAdvance }: {
         </select>
       </label>
     </div>
+  );
+}
+
+// «Лист закупки» TRACE_COLUMNS.PURCHASE: ИЗГОТОВИТЕЛЬ, СТРАНА, ТИП ДОК., № / ДАТА ДОК. КАЧЕСТВА (+ СТАНДАРТ) —
+// уходят в приёмку со снимком поставки; пустая СТРАНА подставляется по изготовителю из справочника.
+function TraceabilityForm({ line, busy, disabled, onAdvance }: {
+  line: ProcurementLine;
+  busy: boolean;
+  disabled: boolean;
+  onAdvance: Advance;
+}) {
+  const initial = (): ProcurementTraceabilityInput => ({
+    manufacturer: line.manufacturer ?? "",
+    country: line.country ?? "",
+    quality_document_type: line.quality_document_type ?? "",
+    quality_document_number: line.quality_document_number ?? "",
+    quality_document_date: line.quality_document_date ?? null,
+    standard: line.standard ?? "",
+  });
+  const [draft, setDraft] = useState<ProcurementTraceabilityInput>(initial);
+  useEffect(() => { setDraft(initial()); }, [line.version]);
+
+  function field(name: keyof ProcurementTraceabilityInput, value: string) {
+    setDraft((current) => ({ ...current, [name]: name === "quality_document_date" ? value || null : value }));
+  }
+
+  function save(event: FormEvent) {
+    event.preventDefault();
+    void onAdvance(line, () => procurementApi.setTraceability(line.id, line.version, draft), `${line.legacy_id}: прослеживаемость сохранена`).catch(() => undefined);
+  }
+
+  return (
+    <details className="build-config">
+      <summary>Прослеживаемость: изготовитель, страна, документ качества</summary>
+      <form onSubmit={save}>
+        <div className="form-grid">
+          <label>Изготовитель<input value={draft.manufacturer} onChange={(e) => field("manufacturer", e.target.value)} /></label>
+          <label>Страна<input value={draft.country} onChange={(e) => field("country", e.target.value)} placeholder="по изготовителю" /></label>
+          <label>Тип док.<input value={draft.quality_document_type} onChange={(e) => field("quality_document_type", e.target.value)} /></label>
+          <label>№ док. качества<input value={draft.quality_document_number} onChange={(e) => field("quality_document_number", e.target.value)} /></label>
+          <label>Дата док. качества<input type="date" value={draft.quality_document_date ?? ""} onChange={(e) => field("quality_document_date", e.target.value)} /></label>
+          <label>Стандарт<input value={draft.standard} onChange={(e) => field("standard", e.target.value)} /></label>
+        </div>
+        <div className="card-footer"><small>Уходит в приёмку при оплате</small><button className="secondary small" disabled={disabled || busy}>Сохранить прослеживаемость</button></div>
+      </form>
+    </details>
   );
 }
 

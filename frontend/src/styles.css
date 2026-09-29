@@ -273,6 +273,11 @@ td small { margin-top: 4px; color: #7b857e; }
 .etk-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
 .etk-block { display: grid; align-content: start; gap: 6px; border-radius: 8px; padding: 10px; background: #f0f3f0; font-size: 12px; }
 .etk-block > span { display: grid; gap: 2px; border-top: 1px solid #dfe4df; padding-top: 5px; }
+.etk-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.etk-chips span { padding: 4px 10px; border-radius: 10px; background: #f0f3f0; border: 1px solid var(--border); font-size: 12.5px; font-weight: 600; }
+.etk-chips small { display: block; font-size: 10px; font-weight: 400; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .04em; }
+.etk-figure { margin-top: 12px; background: #fff; border: 1px solid var(--border); }
+.etk-fig svg { max-width: 760px; height: auto; }
 .etk-steps { display: grid; gap: 8px; margin: 12px 0 0; padding-left: 28px; }
 .etk-steps li { padding-left: 4px; white-space: pre-line; font-size: 12px; }
 .etk-steps li > span { margin-right: 8px; color: var(--primary); font-weight: 700; }
