@@ -32,7 +32,13 @@ from app.shared.persistence import (
 )
 
 from .application import StatusNotificationDue, SupplierOrder
-from .domain import ProcurementLine, ProcurementStatus, ReplacementDecision, designation_key
+from .domain import (
+    ProcurementLine,
+    ProcurementStatus,
+    ProcurementTraceability,
+    ReplacementDecision,
+    designation_key,
+)
 from .money import FactMoney
 
 
@@ -116,6 +122,12 @@ class ProcurementLineRow(Base):
     permission_number: Mapped[str | None] = mapped_column(String(32), index=True)
     permission_date: Mapped[Any | None] = mapped_column(Date)
     initiator_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    manufacturer: Mapped[str | None] = mapped_column(String(255))
+    country: Mapped[str | None] = mapped_column(String(128))
+    quality_document_type: Mapped[str | None] = mapped_column(String(128))
+    quality_document_number: Mapped[str | None] = mapped_column(String(128))
+    quality_document_date: Mapped[Any | None] = mapped_column(Date)
+    standard: Mapped[str | None] = mapped_column(String(255))
     # The last status the initiator was notified of (OwnerTick.gs notified_<id>); owned by the sweep.
     notified_status: Mapped[str | None] = mapped_column(String(32))
 
@@ -192,6 +204,12 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         permission_number=line.permission_number,
         permission_date=line.permission_date,
         initiator_id=line.initiator_id,
+        manufacturer=line.trace.manufacturer,
+        country=line.trace.country,
+        quality_document_type=line.trace.quality_document_type,
+        quality_document_number=line.trace.quality_document_number,
+        quality_document_date=line.trace.quality_document_date,
+        standard=line.trace.standard,
     )
 
 
@@ -269,6 +287,14 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
         permission_number=row.permission_number,
         permission_date=row.permission_date,
         initiator_id=row.initiator_id,
+        trace=ProcurementTraceability(
+            manufacturer=row.manufacturer,
+            country=row.country,
+            quality_document_type=row.quality_document_type,
+            quality_document_number=row.quality_document_number,
+            quality_document_date=row.quality_document_date,
+            standard=row.standard,
+        ),
     )
 
 

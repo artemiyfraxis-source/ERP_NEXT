@@ -598,3 +598,30 @@ it("offers the actual unit as a list", async () => {
   expect(unit.tagName).toBe("SELECT");
   await waitFor(() => expect(Array.from(unit.options).map((option) => option.value)).toEqual(["", "шт", "кг", "компл"]));
 });
+
+it("saves traceability of an own line: maker, country, quality document, standard", async () => {
+  const own: ProcurementLine = { ...line, status: "Готов к запросу", buyer: "Закупщик", supplier: "Поставщик" };
+  let body: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: [own] });
+    if (path.endsWith("/traceability") && init?.method === "PATCH") {
+      body = JSON.parse(String(init.body));
+      return json({ line: { ...own, version: 4, manufacturer: "Molex", country: "США" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.change(await screen.findByLabelText("Изготовитель"), { target: { value: "Molex" } });
+  fireEvent.change(screen.getByLabelText("№ док. качества"), { target: { value: "П-17" } });
+  fireEvent.change(screen.getByLabelText("Дата док. качества"), { target: { value: "2026-09-01" } });
+  fireEvent.change(screen.getByLabelText("Стандарт"), { target: { value: "ГОСТ 23587-96" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить прослеживаемость" }));
+
+  await waitFor(() => expect(body).toEqual({
+    version: 3, manufacturer: "Molex", country: "", quality_document_type: "", quality_document_number: "П-17",
+    quality_document_date: "2026-09-01", standard: "ГОСТ 23587-96",
+  }));
+});
