@@ -173,6 +173,30 @@ def test_tick_fills_empty_names_keeps_the_project_until_done_and_drops_it(sessio
     assert len(sites.calls) == 17
 
 
+def test_tick_without_a_single_name_does_not_hold_the_head_of_the_queue(sessions):
+    """Поиск elitan отдаёт в заголовке сам артикул: 17 таких ссылок раньше навсегда держали проект в голове."""
+    components = tuple(KitComponent(article=f"A-{n}", link=f"https://search.example/{n}") for n in range(17))
+    _save(sessions, _kitset(*components))
+    queue = KitsetNameQueue(sessions)
+    queue.enqueue("708К.4", NOW)
+    queue.enqueue("999К.1", NOW)
+
+    assert kitset_names_tick(NOW, sessions, FakeSites({f"https://search.example/{n}": f"A-{n}" for n in range(17)})) == 0
+    assert queue.items() == ["999К.1"]
+
+
+def test_one_shot_fill_enqueues_every_kitset_with_empty_names_and_fills_it_whole(sessions, monkeypatch):
+    from app.workflows import kitset_names as flow
+
+    components = tuple(KitComponent(article=f"A-{n}", link=f"https://shop.example/{n}") for n in range(17))
+    _save(sessions, _kitset(*components))
+    assert flow.enqueue_missing(sessions, NOW) == ["708К.4"]
+    sites = FakeSites({f"https://shop.example/{n}": f"Изделие номер {n}" for n in range(17)})
+    result = flow.fill_project_names("708К.4", lambda: flow.SqlAlchemyTechcardsUnitOfWork(sessions), sites, cap=100_000)
+    assert result.filled == 17 and _names(sessions) == [f"Изделие номер {n}" for n in range(17)]
+    assert flow.enqueue_missing(sessions, NOW) == []
+
+
 def test_tick_never_overwrites_a_name_typed_while_it_was_fetching(sessions):
     _save(sessions, _kitset(
         KitComponent(article="A-1", link="https://shop.example/a1"),
