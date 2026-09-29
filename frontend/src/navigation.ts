@@ -11,7 +11,7 @@ export type Section =
   | "receiving" | "stock" | "issues" | "handout" | "shipping"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
-export type BlockId = "prod" | "supply" | "stock" | "mgmt";
+export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "refs";
 
 export interface NavItem {
   id: Section;
@@ -30,11 +30,13 @@ export interface NavItem {
 }
 
 export const BLOCKS: Array<{ id: BlockId; icon: string; title: string; sub: string }> = [
-  { id: "prod", icon: "🏭", title: "Производство", sub: "проекты · база данных · планирование · задания" },
+  { id: "prod", icon: "🏭", title: "Производство", sub: "проекты · планирование · задания" },
   { id: "supply", icon: "🛒", title: "Снабжение", sub: "оформить · заявки · закупка" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
   { id: "stock", icon: "📦", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
   { id: "mgmt", icon: "📊", title: "Менеджмент", sub: "производственный план · сотрудники · доступы · журнал" },
+  // Reference books are not a production step (owner 29.09.2026): their own block, last in the menu.
+  { id: "refs", icon: "📚", title: "Справочники", sub: "база данных · шаблоны техкарт" },
 ];
 
 // ID-6: view grants open these sections read-only; the role sets mirror backend *_view_principal.
@@ -54,8 +56,8 @@ export const NAV: NavItem[] = [
   { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", block: "prod", within: "projects" },
   // «База данных» (owner, 29.09.2026): «Справочник» and «Шаблоны техкарт» are tabs of one section. Each tab keeps
   // its access key, so the card opens on either; ?section=tctemplates still lands on the templates tab.
-  { id: "references", label: "База данных", sub: "операции · оборудование · терминалы · коаксиал · провода · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "prod" },
-  { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "prod", within: "references" },
+  { id: "references", label: "База данных", sub: "операции · оборудование · терминалы · коаксиал · провода · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "refs" },
+  { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "refs", within: "references" },
   { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", roles: ["master", "prodhead", "management", "qc", "admin"], block: "prod" },
   { id: "myops", label: "Задания", sub: "мои операции", permission: "production", roles: ["staff", "master", "admin"], block: "prod" },
   // Снабжение. «Оформить заявку» and «Мои заявки» are sections of their own, not actions inside «Заявки»
