@@ -421,9 +421,11 @@ class Shipment:
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
 
     def set_requested(self, line_id: UUID, quantity: Decimal) -> Shipment:
-        """`shipItemSetQty_`: менеджер передумал — «Заказано» не ниже уже набранного."""
-        if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
-            raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
+        """`shipItemSetQty_`: менеджер передумал — «Заказано» не ниже уже набранного, в любом статусе.
+
+        Как в SUPPLYMAP, статус не проверяется: «Заказано» не двигает склад ГП (его двигает только набор),
+        поэтому правка закрытой или отменённой отправки регистр остатка не ломает.
+        """
         amount = _round2(Decimal(quantity))
         if not amount.is_finite() or amount <= 0:
             raise ShippingValidationError("Количество должно быть больше нуля")

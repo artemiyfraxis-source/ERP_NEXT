@@ -37,6 +37,22 @@ def test_requested_quantity_changes_after_creation_but_never_below_picked(shippi
     assert changed.json()["shipment"]["lines"][0]["shortage"] == "2"
 
 
+def test_requested_quantity_changes_on_cancelled_shipment_without_moving_stock(shipping_api):
+    client = shipping_api
+    good = _stocked(client)
+    shipment = _shipment(client, [{"good_id": good["id"], "quantity": "4"}], no_docs=True)
+    cancelled = client.post(f"/api/shipping/shipments/{shipment['id']}/cancel", json={"version": shipment["version"]}).json()["shipment"]
+    line = cancelled["lines"][0]
+    changed = client.put(f"/api/shipping/shipments/{shipment['id']}/lines/{line['id']}", json={"version": cancelled["version"], "quantity": "9"})
+    goods = client.get("/api/shipping/goods").json()["goods"]
+
+    # shipItemSetQty_ не смотрит на статус; склад ГП от «Заказано» не зависит.
+    assert changed.status_code == 200
+    assert changed.json()["shipment"]["status"] == "Отменена"
+    assert changed.json()["shipment"]["lines"][0]["requested"] == "9"
+    assert goods[0]["remaining"] == "6"
+
+
 def test_ship_closes_at_once_when_upd_is_filled_and_stays_shipped_otherwise(shipping_api):
     client = shipping_api
     good = _stocked(client, accepted="10")
