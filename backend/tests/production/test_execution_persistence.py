@@ -21,7 +21,6 @@ from app.modules.production.execution import (
     StartWorkCommand,
     SubmitWorkCommand,
     cancel_work,
-    close_box,
     confirm_box,
     decide_defect,
     start_work,
@@ -83,20 +82,23 @@ def execution_setup():
     return engine, sessions, factory, master, operator, task, source, now
 
 
-def test_execution_converts_reservation_into_append_only_output_and_consumption():
+def test_submission_closes_a_new_box_and_takes_pieces_from_the_input_box():
     engine, sessions, factory, master, operator, task, source, now = execution_setup()
     operation = task.operations[1]
     work = start_work(StartWorkCommand(
         task_id=task.id, operation_id=operation.id,
-        inputs=(WorkInput(source.id, Decimal("10")),), actor=operator, now=now,
+        box_numbers=(source.number,), actor=operator, now=now,
     ), factory())
     completed, output_box, output, defect = submit_work(SubmitWorkCommand(
         session_id=work.id, actor=operator, now=now + timedelta(minutes=10),
         good_quantity=Decimal("9"), defect_quantity=Decimal("1"),
         defect_character="Повреждение изоляции", defect_description="Надрез у контакта",
     ), factory())
-    closed = close_box(BoxCommand(output_box.id, output_box.version, operator, now), factory())
-    confirmed = confirm_box(BoxCommand(closed.id, closed.version, master, now), factory())
+    # prodWorkSubmit_: одна сдача — одна коробка, сразу «Закрыта оператором» с номером.
+    assert output_box.status is BoxStatus.OPERATOR_CLOSED
+    assert output_box.number == format_box_number(1)
+    assert output_box.quantity == Decimal("9")
+    confirmed = confirm_box(BoxCommand(output_box.id, output_box.version, master, now), factory())
 
     with factory() as uow:
         stored_source = uow.boxes.get(source.id)
@@ -124,11 +126,11 @@ def test_execution_converts_reservation_into_append_only_output_and_consumption(
     engine.dispose()
 
 
-def test_cancelling_current_work_releases_input_reservation():
+def test_starting_and_cancelling_work_reserves_nothing_in_input_boxes():
     engine, _sessions, factory, _master, operator, task, source, now = execution_setup()
     work = start_work(StartWorkCommand(
         task_id=task.id, operation_id=task.operations[1].id,
-        inputs=(WorkInput(source.id, Decimal("4")),), actor=operator, now=now,
+        box_numbers=(source.number,), actor=operator, now=now,
     ), factory())
     cancelled = cancel_work(SessionCommand(work.id, operator, now), factory())
 

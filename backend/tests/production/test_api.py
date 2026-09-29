@@ -353,7 +353,7 @@ def test_operator_starts_and_cancels_work_from_confirmed_previous_box(production
     )
     started = client.post(
         f"/api/production/tasks/{task['id']}/operations/{task['operations'][1]['id']}/work/start",
-        json={"inputs": [{"box_id": str(source.id), "quantity": "4"}]},
+        json={"inputs": [source.number]},
     )
     cancelled = client.post(f"/api/production/work/{started.json()['session']['id']}/cancel")
 
@@ -392,10 +392,9 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
     app.dependency_overrides[authenticated_principal] = operator
     started = client.post(
         f"/api/production/tasks/{task['id']}/operations/{task['operations'][1]['id']}/work/start",
-        json={"inputs": [{"box_id": str(source.id), "quantity": "10"}]},
+        json={"inputs": [source.number]},
     ).json()["session"]
     box = client.post(f"/api/production/work/{started['id']}/submit", json={"good_quantity": "10"}).json()["box"]
-    box = client.post(f"/api/production/boxes/{box['id']}/close", json={"version": box["version"]}).json()["box"]
     app.dependency_overrides[authenticated_principal] = master
     box = client.post(
         f"/api/production/boxes/{box['id']}/return", json={"version": box["version"], "reason": "Пересчитать"},
@@ -511,7 +510,7 @@ def test_task_list_reports_operation_fact_state_and_wip(production_api):
     )
     started = client.post(
         f"/api/production/tasks/{task['id']}/operations/{task['operations'][1]['id']}/work/start",
-        json={"inputs": [{"box_id": str(source.id), "quantity": "4"}]},
+        json={"inputs": [source.number]},
     ).json()["session"]
     client.post(f"/api/production/work/{started['id']}/submit", json={"good_quantity": "3", "defect_quantity": "1", "defect_character": "Обрыв", "defect_description": "обрыв жилы"})
     mine = client.get("/api/production/my").json()["tasks"]

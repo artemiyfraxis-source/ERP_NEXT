@@ -681,6 +681,7 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
   const [defectCharacter, setDefectCharacter] = useState("");
   const [defectDescription, setDefectDescription] = useState("");
   const [correcting, setCorrecting] = useState("");
+  const [shown, setShown] = useState<{ number: string; fixed: boolean } | null>(null);
   const session = execution.session;
   const task = session ? tasks.find((item) => item.id === session.task_id) : null;
   const operation = task?.operations.find((item) => item.id === session?.operation_id);
@@ -693,8 +694,13 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
         <label>Годные<input aria-label="Годные изделия" type="number" min="0" step="any" value={good} onChange={(event) => setGood(event.target.value)} /></label>
         <label>Брак<input aria-label="Брак" type="number" min="0" step="any" value={defect} onChange={(event) => setDefect(event.target.value)} /></label>
         {Number(defect) > 0 && <><label>Характер брака<input aria-label="Характер брака" value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label>Описание брака<textarea aria-label="Описание брака" value={defectDescription} onChange={(event) => setDefectDescription(event.target.value)} /></label></>}
-        <button className="primary" disabled={busy || !good || (Number(defect) > 0 && (!defectCharacter.trim() || !defectDescription.trim()))} onClick={() => void mutate(session.id, () => productionApi.submitWork(session.id, good, defect || "0", defectCharacter, defectDescription))}>Записать выработку</button>
-        <button className="link-button danger-link" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "cancel"))}>Отменить и снять резервы</button>
+        <button className="primary" disabled={busy || !good || (Number(defect) > 0 && (!defectCharacter.trim() || !defectDescription.trim()))} onClick={() => void mutate(session.id, async () => {
+          const result = await productionApi.submitWork(session.id, good, defect || "0", defectCharacter, defectDescription);
+          setShown({ number: result.box.number ?? "", fixed: false });
+          setGood(""); setDefect("0"); setDefectCharacter(""); setDefectDescription("");
+          return result;
+        })}>✅ Сдать</button>
+        <button className="link-button danger-link" disabled={busy} onClick={() => { if (window.confirm("Отменить начало? Время не запишется.")) void mutate(session.id, () => productionApi.workAction(session.id, "cancel")); }}>✖ Отменить начало</button>
       </div>
     </div>}
     {execution.boxes.length > 0 && <div className="panel execution-boxes">
@@ -705,22 +711,31 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
         <span>{box.quantity} шт · доступно {box.available}</span>
         <span className="status">{box.status}</span>
         {box.return_reason && <small className="danger-text">{box.return_reason}</small>}
-        {box.status === "Открыта" && <button className="secondary small" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "close", box.version))}>Закрыть коробку</button>}
-        {box.status === "Возвращена" && <>
-          <button className="secondary small" disabled={busy} onClick={() => setCorrecting(correcting === box.id ? "" : box.id)}>Исправить</button>
-          <button className="link-button" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "reopen", box.version))}>Доложить</button>
-        </>}
-        {box.status === "Возвращена" && correcting === box.id && <BoxCorrection box={box} busy={busy} mutate={mutate} />}
+        {box.status === "Возвращена" && <button className="secondary small" disabled={busy} onClick={() => setCorrecting(correcting === box.id ? "" : box.id)}>Исправить</button>}
+        {box.status === "Возвращена" && correcting === box.id && <BoxCorrection box={box} busy={busy} mutate={mutate} onDone={(number) => setShown({ number, fixed: true })} />}
       </div>)}</div>
     </div>}
+    {shown && <BoxNumberDialog number={shown.number} fixed={shown.fixed} close={() => setShown(null)} />}
   </>;
 }
 
+// prodBoxShow_: номер новой коробки крупно — его переписывают на коробку от руки.
+function BoxNumberDialog({ number, fixed, close }: { number: string; fixed: boolean; close: () => void }) {
+  const title = fixed ? "✅ Коробка исправлена" : "📦 Напиши на коробке";
+  return <div className="panel kit-modal box-dialog" role="dialog" aria-label={title}>
+    <h3>{title}</h3>
+    <p>{fixed ? "Коробка снова ждёт подтверждения мастера." : "Коробка закрыта и ждёт подтверждения мастера. Без номера её не возьмут дальше."}</p>
+    <div className="box-no">{number}</div>
+    <button className="primary" onClick={close}>Записал</button>
+  </div>;
+}
+
 // Correction replaces one output of a returned box (SUPPLYMAP `prodWorkFix_`); the box goes back to the master.
-function BoxCorrection({ box, busy, mutate }: {
+function BoxCorrection({ box, busy, mutate, onDone }: {
   box: ProductionBox;
   busy: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+  onDone?: (number: string) => void;
 }) {
   const [outputs, setOutputs] = useState<ProductionOutput[]>([]);
   const [outputId, setOutputId] = useState("");
@@ -751,13 +766,19 @@ function BoxCorrection({ box, busy, mutate }: {
     <label>Годные<input aria-label={`Годные в коробке ${box.number}`} type="number" min="0" step="any" value={good} onChange={(event) => setGood(event.target.value)} /></label>
     <label>Брак<input aria-label={`Брак в коробке ${box.number}`} type="number" min="0" step="any" value={defect} onChange={(event) => setDefect(event.target.value)} /></label>
     {newDefect && <><label>Характер брака<input aria-label={`Характер брака в коробке ${box.number}`} value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label>Описание брака<textarea aria-label={`Описание брака в коробке ${box.number}`} value={defectDescription} onChange={(event) => setDefectDescription(event.target.value)} /></label></>}
-    <button className="primary small" disabled={busy || invalid} onClick={() => void mutate(box.id, () => productionApi.correctBox(box.id, box.version, {
-      output_id: outputId, good_quantity: good, defect_quantity: defect || "0",
-      defect_character: defectCharacter, defect_description: defectDescription,
-    }))}>Записать исправление</button>
+    <button className="primary small" disabled={busy || invalid} onClick={() => void mutate(box.id, async () => {
+      const result = await productionApi.correctBox(box.id, box.version, {
+        output_id: outputId, good_quantity: good, defect_quantity: defect || "0",
+        defect_character: defectCharacter, defect_description: defectDescription,
+      });
+      onDone?.(result.box.number ?? box.number ?? "");
+      return result;
+    })}>Записать исправление</button>
   </div>;
 }
 
+// prodWorkStart_: первая операция начинается сразу (складские партии — по желанию), дальше оператор вводит номера
+// входных коробок с предыдущего этапа, подтверждённых мастером; штуки из них берутся при сдаче.
 function StartWorkForm({ task, operation, busy, mutate }: {
   task: ProductionTask;
   operation: ProductionOperation;
@@ -767,27 +788,28 @@ function StartWorkForm({ task, operation, busy, mutate }: {
   const [boxes, setBoxes] = useState<ProductionBox[]>([]);
   const [materials, setMaterials] = useState<ProductionMaterialSource[]>([]);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [numbers, setNumbers] = useState("");
   const [error, setError] = useState("");
+  const first = operation.position === 1;
   useEffect(() => {
     productionApi.inputs(task.id, operation.id)
       .then((result) => { setBoxes(result.boxes); setMaterials(result.materials); })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"));
   }, [task.id, operation.id, operation.position]);
-  const inputs = boxes.flatMap((box) => {
-    const quantity = quantities[box.id]?.trim();
-    return quantity && Number(quantity) > 0 ? [{ box_id: box.id, quantity }] : [];
-  });
+  const inputs = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
   const materialInputs = materials.flatMap((material) => {
     const quantity = quantities[material.fulfillment_line_id]?.trim();
     return quantity && Number(quantity) > 0 ? [{ fulfillment_line_id: material.fulfillment_line_id, quantity }] : [];
   });
-  const selectable = operation.position === 1 ? materials : boxes;
   return <div className="start-work">
     {error && <small className="danger-text">{error}</small>}
-    {!selectable.length && !error && operation.position > 1 && <small>Нет подтверждённых коробок предыдущего этапа.</small>}
-    {materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
-    {boxes.map((box) => <label key={box.id}>{box.number} · доступно {box.available}<input aria-label={`Количество из коробки ${box.number}`} type="number" min="0" max={box.available} step="any" value={quantities[box.id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [box.id]: event.target.value }))} /></label>)}
-    {(operation.position === 1 || selectable.length > 0) && <button className="primary small" disabled={busy || (operation.position > 1 && !inputs.length) || inputs.some((item) => Number(item.quantity) > Number(boxes.find((box) => box.id === item.box_id)?.available ?? 0)) || materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0))} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs))}>Начать операцию</button>}
+    {first && materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
+    {!first && <>
+      <small>Введи номера коробок, из которых берёшь детали (с этапа {operation.position - 1}, подтверждённые мастером). Несколько — через запятую или с новой строки.</small>
+      <label>Номера коробок<textarea aria-label="Номера коробок" rows={3} placeholder="000001-8" value={numbers} onChange={(event) => setNumbers(event.target.value)} /></label>
+      {boxes.length > 0 && <small>Подтверждённые: {boxes.map((box) => `${box.number} (${box.available} шт)`).join(", ")}</small>}
+    </>}
+    <button className="primary small" disabled={busy || (!first && !inputs.length) || materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0))} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs))}>Начать</button>
   </div>;
 }
 
