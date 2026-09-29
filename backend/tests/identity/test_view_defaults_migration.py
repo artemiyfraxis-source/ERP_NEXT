@@ -6,7 +6,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-from app.modules.identity.domain import ROLE_DEFAULTS, AccessMode
+from app.modules.identity.domain import ROLE_SEED, AccessMode
 
 MIGRATION_GRANTS = {
     ("buyer", "warehouse"),
@@ -35,7 +35,7 @@ def test_migration_grants_match_role_defaults():
     sections = {"procurement", "receiving", "warehouse"}
     defaults = {
         (role, section)
-        for role, access in ROLE_DEFAULTS.items()
+        for role, access in ROLE_SEED.items()
         for section, mode in access.items()
         if section in sections and mode is AccessMode.VIEW
     }
