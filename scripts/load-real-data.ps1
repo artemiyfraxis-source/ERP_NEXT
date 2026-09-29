@@ -47,4 +47,6 @@ Run -m app.modules.warehouse.import_stock --dir $data
 Write-Host '== Проекты'
 Run ..\scripts\projects_import.py apply (Join-Path $data 'projects.json') --login $Login --password $Password
 Run -m app.outbox_worker --once
+Write-Host '== Наименования комплектующих с сайтов поставщиков'
+Run -m app.workflows.kitset_names
 Write-Host "Готово: база $env:ERP_DATABASE_URL. Запустите API над ней (ERP_DATABASE_URL=$env:ERP_DATABASE_URL)."

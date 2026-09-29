@@ -60,6 +60,13 @@ for ($i = 0; $i -lt 60; $i++) {
   try { Invoke-RestMethod "http://127.0.0.1:$Port/api/health" | Out-Null; $ok = $true; break } catch { Start-Sleep 1 }
 }
 if (-not $ok) { throw "API не ответил на порту $Port" }
+# Наименования комплектующих с сайтов поставщиков (tcKitFetchNames): на ПК нет фонового outbox_worker, поэтому
+# разовый добор — фоном, сайт уже работает. Журнал: backend\names-fill.log.
+$env:ERP_DATABASE_URL = "sqlite+pysqlite:///$DbFile"
+Start-Process $py -ArgumentList '-X','utf8','-m','app.workflows.kitset_names' -WorkingDirectory $backend `
+  -WindowStyle Hidden -RedirectStandardOutput (Join-Path $backend 'names-fill.log') `
+  -RedirectStandardError (Join-Path $backend 'names-fill.err.log') | Out-Null
+Write-Host 'Наименования с сайтов поставщиков добираются фоном (backend\names-fill.log).'
 $head = git -C $root rev-parse HEAD
 $stamp = "$db.version"
 $prev = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { '' }

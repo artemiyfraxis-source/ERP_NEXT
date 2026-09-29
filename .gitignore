@@ -13,3 +13,4 @@ frontend/vite.config.d.ts
 .claude/worktrees/
 .claude/migrate.lock
 data/import/
+backend/names-fill*.log
