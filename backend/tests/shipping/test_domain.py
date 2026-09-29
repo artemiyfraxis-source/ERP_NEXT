@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.modules.shipping.domain import DeliveryTerms, FinishedGood, Shipment, ShipmentLine, ShipmentStatus, ShippingValidationError, UpdType
+from app.modules.shipping.domain import DeliveryTerms, FinishedGood, ProjectAssembly, Shipment, ShipmentLine, ShipmentStatus, ShippingValidationError, UpdType, plan_project_queue
 
 
 def good() -> FinishedGood:
@@ -143,3 +143,43 @@ def test_put_back_is_symmetric_to_take_and_never_exceeds_taken():
         taken.put_back(Decimal("4.01"))
     with pytest.raises(ShippingValidationError):
         taken.put_back(Decimal("0"))
+
+
+def test_project_queue_adds_one_row_per_new_kb_and_is_idempotent():
+    cards = [ProjectAssembly("КБ1", "Жгут", Decimal("40")), ProjectAssembly("КБ2", "Кабель", Decimal("5"), "A-2")]
+    first = plan_project_queue(cards, [])
+    assert [item.item_index for item in first.add] == ["КБ1", "КБ2"]
+    assert first.update == ()
+
+    existing = [good(), FinishedGood.create(project="591К.3", item_index="кб2", customer="", article="A-2", name="Кабель", ordered=Decimal("5"), unit="шт")]
+    again = plan_project_queue(cards, existing)
+    assert again.add == () and again.update == () and again.skipped == ()
+
+
+def test_project_queue_follows_run_until_something_ships():
+    changed = [ProjectAssembly("КБ1", "Жгут", Decimal("45"))]
+    accepted = good().accept(Decimal("6"), date(2026, 9, 22), "ГП.26.0000001")
+    plan = plan_project_queue(changed, [accepted])
+    assert [(item.item_index, run) for item, run in plan.update] == [("КБ1", Decimal("45"))]
+
+    shipped = accepted.take(Decimal("2"))
+    assert plan_project_queue(changed, [shipped]).update == ()
+    with pytest.raises(ShippingValidationError, match="уже отгружалась"):
+        shipped.reorder(Decimal("45"))
+
+
+def test_project_queue_ignores_blank_index_and_reports_kb_without_run():
+    plan = plan_project_queue([
+        ProjectAssembly("  ", "Без КБ", Decimal("3")),
+        ProjectAssembly("КБ3", "Без тиража", Decimal("0")),
+        ProjectAssembly("КБ4", "Дубль", Decimal("2")),
+        ProjectAssembly("кб4", "Дубль", Decimal("9")),
+    ], [])
+    assert [item.item_index for item in plan.add] == ["КБ4"]
+    assert plan.add[0].run == Decimal("2")
+    assert plan.skipped == ("КБ3",)
+
+
+def test_goods_with_movement_outlive_the_project_card():
+    assert not good().has_movement
+    assert good().accept(Decimal("1"), date(2026, 9, 22), "ГП.26.0000001").has_movement

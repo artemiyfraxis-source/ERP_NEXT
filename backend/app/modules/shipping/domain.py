@@ -95,11 +95,72 @@ class FinishedGood:
             raise ShippingValidationError("Нельзя отобрать больше остатка готовой продукции")
         return replace(self, shipped=self.shipped + amount, version=self.version + 1)
 
+    def reorder(self, ordered: Decimal) -> FinishedGood:
+        if self.shipped > 0:
+            raise ShippingValidationError("Позиция уже отгружалась: количество в заказе не меняется")
+        return replace(self, ordered=_positive(ordered, "Количество в заказе"), version=self.version + 1)
+
+    @property
+    def has_movement(self) -> bool:
+        """Accepted or shipped goods outlive the project card (`shipGpDropProject_`)."""
+        return self.accepted > 0 or self.shipped > 0
+
     def put_back(self, quantity: Decimal) -> FinishedGood:
         amount = _positive(quantity, "Количество возврата")
         if amount > self.shipped:
             raise ShippingValidationError("Возврат не может превышать отобранное количество")
         return replace(self, shipped=self.shipped - amount, version=self.version + 1)
+
+
+@dataclass(frozen=True)
+class ProjectAssembly:
+    """One КБ of the project card: what the finished-goods queue is built from."""
+
+    item_index: str
+    name: str
+    run: Decimal
+    article: str = ""
+
+
+@dataclass(frozen=True)
+class QueuePlan:
+    add: tuple[ProjectAssembly, ...]
+    update: tuple[tuple[FinishedGood, Decimal], ...]
+    skipped: tuple[str, ...]
+
+
+def _index_key(value: str | None) -> str:
+    return str(value or "").strip().upper()
+
+
+def plan_project_queue(assemblies: tuple[ProjectAssembly, ...] | list[ProjectAssembly], existing: list[FinishedGood] | tuple[FinishedGood, ...]) -> QueuePlan:
+    """`shipQueuePlan_`: a row per new КБ, the run follows the card until something ships.
+
+    Idempotent: queuing the same card twice adds and updates nothing. A КБ without an index is
+    ignored; a КБ without a positive run cannot become a finished-goods row and is reported.
+    """
+    by_index = {_index_key(good.item_index): good for good in existing}
+    add: list[ProjectAssembly] = []
+    update: list[tuple[FinishedGood, Decimal]] = []
+    skipped: list[str] = []
+    seen: set[str] = set()
+    for assembly in assemblies:
+        key = _index_key(assembly.item_index)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        run = Decimal(assembly.run or 0)
+        current = by_index.get(key)
+        if current is not None and current.shipped > 0:
+            continue
+        if not run.is_finite() or run <= 0:
+            skipped.append(assembly.item_index.strip())
+            continue
+        if current is None:
+            add.append(replace(assembly, item_index=assembly.item_index.strip(), run=run))
+        elif current.ordered.quantize(Decimal("0.01")) != run.quantize(Decimal("0.01")):
+            update.append((current, run))
+    return QueuePlan(add=tuple(add), update=tuple(update), skipped=tuple(skipped))
 
 
 @dataclass(frozen=True)

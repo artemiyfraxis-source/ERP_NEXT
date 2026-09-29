@@ -240,3 +240,40 @@ def test_auto_pick_on_creation_is_one_transaction_with_audit(shipping_api):
     assert shipment["pl_number"] == "PL591К.3-1"
     assert [line["picked"] for line in shipment["lines"]] == ["2", "0"]
     assert sorted(events) == ["shipping.created", "shipping.packed", "shipping.picked"]
+
+
+def test_project_queue_is_idempotent_and_drop_keeps_goods_with_movement(shipping_api):
+    client = shipping_api
+    card = {"project": "735К.1", "customer": "Заказчик", "assemblies": [
+        {"item_index": "КБ1", "name": "Жгут", "run": "10", "article": "A-1"},
+        {"item_index": "КБ2", "name": "", "run": "4", "article": "A-2"},
+        {"item_index": "КБ3", "name": "Кабель", "run": "2"},
+        {"item_index": "КБ4", "name": "Без тиража", "run": "0"},
+    ]}
+    first = client.post("/api/shipping/project-queue", json=card)
+    assert first.status_code == 200, first.text
+    assert first.json() == {"added": 3, "updated": 0, "skipped": ["КБ4"]}
+    assert client.post("/api/shipping/project-queue", json=card).json() == {"added": 0, "updated": 0, "skipped": ["КБ4"]}
+
+    goods = {item["item_index"]: item for item in client.get("/api/shipping/goods").json()["goods"]}
+    assert set(goods) == {"КБ1", "КБ2", "КБ3"}
+    assert goods["КБ1"]["ordered"] == "10" and goods["КБ1"]["customer"] == "Заказчик" and goods["КБ1"]["accepted"] == "0"
+    assert goods["КБ2"]["name"] == "A-2"
+
+    card["assemblies"][0]["run"] = "12"
+    assert client.post("/api/shipping/project-queue", json=card).json()["updated"] == 1
+    good = client.get("/api/shipping/goods").json()["goods"][0]
+    assert good["ordered"] == "12"
+
+    kb2 = goods["КБ2"]
+    accepted = client.post(f"/api/shipping/goods/{kb2['id']}/accept", json={"version": kb2["version"], "quantity": "1"})
+    assert accepted.status_code == 200, accepted.text
+    made = client.post("/api/shipping/shipments", json={
+        "receiver": "Получатель", "shipping_point": "Москва", "terms": "САМОВЫВОЗ",
+        "upd_type": "ЭДО", "lines": [{"good_id": goods["КБ3"]["id"], "quantity": "1"}],
+    })
+    assert made.status_code == 200, made.text
+
+    dropped = client.post("/api/shipping/project-queue/drop", json={"project": "735К.1"})
+    assert dropped.json() == {"deleted": 1, "kept": 2}
+    assert {item["item_index"] for item in client.get("/api/shipping/goods").json()["goods"]} == {"КБ2", "КБ3"}

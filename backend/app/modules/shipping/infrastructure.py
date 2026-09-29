@@ -117,6 +117,15 @@ class SqlAlchemyFinishedGoodsRepository:
             row = ShippingSequenceRow(name=key, value=0); self.session.add(row); self.session.flush()
         row.value += 1
         return f"ГП.{year % 100:02d}.{row.value:07d}"
+    def by_project(self, project: str) -> list[FinishedGood]:
+        rows = self.session.scalars(select(FinishedGoodRow).where(FinishedGoodRow.project == project).order_by(FinishedGoodRow.item_index))
+        return [_good(row) for row in rows]
+    def in_shipments(self, good_ids) -> set[UUID]:
+        if not good_ids: return set()
+        return set(self.session.scalars(select(ShipmentLineRow.finished_good_id).where(ShipmentLineRow.finished_good_id.in_(list(good_ids))).distinct()))
+    def remove(self, good_id: UUID) -> None:
+        row = self.session.get(FinishedGoodRow, good_id)
+        if row is not None: self.session.delete(row)
     def add(self, good: FinishedGood) -> None:
         row = self.session.get(FinishedGoodRow, good.id)
         if row is None:

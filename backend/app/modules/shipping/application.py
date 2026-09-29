@@ -18,7 +18,7 @@ from app.shared.notifications import (
     publish_notification,
 )
 
-from .domain import DeliveryTerms, FinishedGood, Shipment, ShipmentLine, ShippingValidationError, UpdType
+from .domain import DeliveryTerms, FinishedGood, ProjectAssembly, Shipment, ShipmentLine, ShippingValidationError, UpdType, plan_project_queue
 
 
 class ConcurrentShippingUpdate(RuntimeError):
@@ -31,6 +31,9 @@ class FinishedGoodsRepository(Protocol):
     def list(self, limit: int = 500) -> Sequence[FinishedGood]: ...
     def add(self, good: FinishedGood) -> None: ...
     def reserve_grn(self, year: int) -> str: ...
+    def by_project(self, project: str) -> Sequence[FinishedGood]: ...
+    def in_shipments(self, good_ids: Sequence[UUID]) -> set[UUID]: ...
+    def remove(self, good_id: UUID) -> None: ...
 
 
 class ShipmentRepository(Protocol):
@@ -67,6 +70,35 @@ class RegisterGoodCommand:
     note: str
     actor: Actor
     now: datetime
+
+
+@dataclass(frozen=True)
+class QueueProjectCommand:
+    project: str
+    customer: str
+    assemblies: tuple[ProjectAssembly, ...]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class QueueProjectResult:
+    added: int
+    updated: int
+    skipped: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DropProjectCommand:
+    project: str
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class DropProjectResult:
+    deleted: int
+    kept: int
 
 
 @dataclass(frozen=True)
@@ -166,6 +198,55 @@ def register_good(command: RegisterGoodCommand, uow: UnitOfWork) -> FinishedGood
         _audit(good.id, "shipping.good_registered", command.actor, command.now, {"project": good.project, "item_index": good.item_index}, uow)
         uow.commit()
         return good
+
+
+def queue_project(command: QueueProjectCommand, uow: UnitOfWork) -> QueueProjectResult:
+    """`shipQueueForProject_`: the project card puts one finished-goods row per КБ in the queue.
+
+    Called on project creation and on every «Обновить из расчёта», hence idempotent.
+    """
+    project = command.project.strip()
+    if not project:
+        raise ShippingValidationError("Не указан проект")
+    with uow:
+        plan = plan_project_queue(command.assemblies, list(uow.goods.by_project(project)))
+        for assembly in plan.add:
+            good = FinishedGood.create(
+                project=project, item_index=assembly.item_index, customer=command.customer,
+                article=assembly.article, name=assembly.name.strip() or assembly.article.strip() or assembly.item_index,
+                ordered=assembly.run, unit="шт",
+            )
+            uow.goods.add(good)
+            _audit(good.id, "shipping.good_queued", command.actor, command.now, {"project": project, "item_index": good.item_index, "ordered": str(good.ordered)}, uow)
+        for current, run in plan.update:
+            uow.goods.add(current.reorder(run))
+            _audit(current.id, "shipping.good_reordered", command.actor, command.now, {"from": str(current.ordered), "to": str(run)}, uow)
+        uow.commit()
+        return QueueProjectResult(added=len(plan.add), updated=len(plan.update), skipped=plan.skipped)
+
+
+def drop_project(command: DropProjectCommand, uow: UnitOfWork) -> DropProjectResult:
+    """`shipGpDropProject_`: the card is gone, rows without movement go with it.
+
+    Accepted or shipped goods stay: they are real products whose balance outlives the card. A row
+    already named in a shipment also stays, since the shipment line refers to it.
+    """
+    project = command.project.strip()
+    if not project:
+        return DropProjectResult(deleted=0, kept=0)
+    with uow:
+        goods = list(uow.goods.by_project(project))
+        referenced = uow.goods.in_shipments([good.id for good in goods])
+        deleted = kept = 0
+        for good in goods:
+            if good.has_movement or good.id in referenced:
+                kept += 1
+                continue
+            uow.goods.remove(good.id)
+            _audit(good.id, "shipping.good_dropped", command.actor, command.now, {"project": project, "item_index": good.item_index}, uow)
+            deleted += 1
+        uow.commit()
+        return DropProjectResult(deleted=deleted, kept=kept)
 
 
 def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:

@@ -15,12 +15,13 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, shipping_manager_principal, shipping_view_principal, shipping_warehouse_principal
 
 from .application import (
-    AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, RegisterGoodCommand,
+    AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand,
+    QueueProjectCommand, RegisterGoodCommand,
     RequestedGood, ShipmentCommand, UnitOfWork, UnpickCommand, UpdateDocumentsCommand,
-    accept_good, cancel_shipment, close_shipment, create_shipment, mark_shipped,
+    accept_good, cancel_shipment, close_shipment, create_shipment, drop_project, mark_shipped, queue_project,
     pack_shipment, pick_shipment, register_good, unpick_line, update_documents,
 )
-from .domain import DeliveryTerms, FinishedGood, Shipment, ShippingValidationError, UpdType
+from .domain import DeliveryTerms, FinishedGood, ProjectAssembly, Shipment, ShippingValidationError, UpdType
 
 
 router = APIRouter(prefix="/api/shipping", tags=["shipping"])
@@ -36,6 +37,23 @@ class GoodPayload(BaseModel):
     ordered: Quantity
     unit: str = Field(default="шт", min_length=1, max_length=64)
     note: str = Field(default="", max_length=5000)
+
+
+class AssemblyPayload(BaseModel):
+    item_index: str = Field(default="", max_length=255)
+    name: str = Field(default="", max_length=512)
+    run: Decimal = Field(default=Decimal("0"), max_digits=18, decimal_places=6)
+    article: str = Field(default="", max_length=255)
+
+
+class ProjectQueuePayload(BaseModel):
+    project: str = Field(min_length=1, max_length=255)
+    customer: str = Field(default="", max_length=512)
+    assemblies: list[AssemblyPayload] = Field(default_factory=list, max_length=1000)
+
+
+class ProjectDropPayload(BaseModel):
+    project: str = Field(min_length=1, max_length=255)
 
 
 class AcceptPayload(BaseModel):
@@ -152,6 +170,32 @@ def goods(
 ) -> dict:
     with uow_factory() as uow: rows = uow.goods.list(limit)
     return {"goods": [_good_result(good) for good in rows]}
+
+
+@router.post("/project-queue")
+def queue_project_goods(
+    payload: ProjectQueuePayload,
+    principal: Annotated[Principal, Depends(shipping_manager_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    result = _run(lambda: queue_project(QueueProjectCommand(
+        project=payload.project, customer=payload.customer,
+        assemblies=tuple(ProjectAssembly(item_index=item.item_index, name=item.name, run=item.run, article=item.article) for item in payload.assemblies),
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {"added": result.added, "updated": result.updated, "skipped": list(result.skipped)}
+
+
+@router.post("/project-queue/drop")
+def drop_project_goods(
+    payload: ProjectDropPayload,
+    principal: Annotated[Principal, Depends(shipping_manager_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    result = _run(lambda: drop_project(DropProjectCommand(project=payload.project, actor=principal.actor, now=now), uow_factory()))
+    return {"deleted": result.deleted, "kept": result.kept}
 
 
 @router.post("/goods")
