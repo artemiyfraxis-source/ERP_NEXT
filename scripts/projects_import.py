@@ -167,6 +167,19 @@ def shop_rows(grid: list[list[str]]) -> list[dict]:
     } for row in grid[header_index + 1:] if str(cell(row, number)).strip()]
 
 
+def shipped_projects(sheet: list[dict]) -> set[str]:
+    """Проекты листа цеха, у которых все строки «ОТГРУЖЕН». Владелец 29.09: отгруженное в ERP не переносить.
+    Частичная отгрузка (рядом есть живая строка) остаётся."""
+    from app.modules.production.plan import normalize_project_number as key
+
+    statuses: dict[str, list[str]] = {}
+    for row in sheet:
+        if key(row["no"]):
+            statuses.setdefault(key(row["no"]), []).append(
+                ",".join(shop_status(part) for part in str(row["status"] or "").split(",")))
+    return {k for k, values in statuses.items() if all("ОТГРУЖЕН" in value for value in values)}
+
+
 def shop_sync(sheet: list[dict], portal: list[dict]) -> dict:
     """Порт planShopSync_: записи журнала, которые приведут план к листу цеха. Чистая.
     portal — строки плана: {no, terminal, stage, kbs: [{index, status}], blocker: {type, text}|None,
@@ -276,6 +289,9 @@ def apply(args: argparse.Namespace) -> None:
     now = moscow_now()
     importer = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP", department="")
     report: dict[str, list[str]] = {"loaded": [], "failed": [], "created": []}
+    sheet = shop_rows(data["shop"])
+    shipped = shipped_projects(sheet)
+    sheet = [row for row in sheet if normalize_project_number(row["no"]) not in shipped]
     counts = {"journal": 0, "shop": 0}
 
     app.state.kitset_sheets_reader = SnapshotSheets(data["calcs"])
@@ -298,7 +314,9 @@ def apply(args: argparse.Namespace) -> None:
         kitsets.setdefault(row.get("№ ПРОЕКТА", ""), row)
     for number, row in kitsets.items():
         calc_id = spreadsheet_id(row.get("РАСЧЁТ", ""))
-        if not number or (normalize_project_number(number) in existing and not args.refresh):
+        if not number or normalize_project_number(number) in shipped:
+            continue
+        if normalize_project_number(number) in existing and not args.refresh:
             continue
         if calc_id not in data["calcs"]:
             report["failed"].append(f"{number}: расчёт не прочитан при снимке")
@@ -316,7 +334,7 @@ def apply(args: argparse.Namespace) -> None:
         registry = {item.project: item for item in uow.plan_projects.list()}
     for row in projects:
         project = normalize_project_number(row.get("№ ПРОЕКТА"))
-        if not project:
+        if not project or project in shipped:
             continue
         current = registry.get(project)
         registry[project] = PlanProjectSnapshot(
@@ -324,6 +342,8 @@ def apply(args: argparse.Namespace) -> None:
             opened_on=_day(row.get("ДАТА")) or (current.opened_on if current else None),
             deadline=_day(row.get("ДЕДЛАЙН")), status=row.get("СТАТУС", ""), terminal=False,
         )
+    for project in shipped:
+        registry.pop(project, None)  # заведённые прошлым прогоном — из реестра убрать
     replace_plan_projects(ReplacePlanProjectsCommand(tuple(registry.values()), importer, now), production())
 
     # 3. «Журнал проектов» — как есть, с датой и автором записи.
@@ -332,6 +352,8 @@ def apply(args: argparse.Namespace) -> None:
         for row in journal:
             project = normalize_project_number(row.get("№ ПРОЕКТА"))
             occurred = _moment(row.get("ДАТА"))
+            if project in shipped:
+                continue
             if not project or occurred is None:
                 report["failed"].append(f"журнал: строка без № или даты — {row}")
                 continue
@@ -353,7 +375,6 @@ def apply(args: argparse.Namespace) -> None:
         uow.commit()
 
     # 4. Сверка с листом цеха (diagPlanSyncFromSheet): недостающие — в реестр, затем записи журнала.
-    sheet = shop_rows(data["shop"])
     shop = Actor(id=uuid.uuid4(), name=f"план цеха {now.date().isoformat()}", department="")
 
     def portal() -> list[dict]:
@@ -400,6 +421,7 @@ def apply(args: argparse.Namespace) -> None:
           + (f", заведено в реестр: {', '.join(report['created'])}" if report["created"] else ""))
     if result["not_in_sheet"]:
         print("В плане, но нет в листе цеха: " + ", ".join(result["not_in_sheet"]))
+    print(f"Отгружено по листу цеха, не переносится: {len(shipped)}" + (f" ({', '.join(sorted(shipped))})" if shipped else ""))
     print(f"В плане цеха ERP: {len(rows)} проектов")
     for line in report["failed"]:
         print("ОШИБКА: " + line)
