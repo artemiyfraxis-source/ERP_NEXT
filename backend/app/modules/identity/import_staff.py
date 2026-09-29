@@ -24,7 +24,7 @@ import os
 import re
 import secrets
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -42,6 +42,8 @@ from .domain import (
     normalize_login,
     normalize_name,
     normalize_role,
+    normalize_site,
+    FULL_ACCESS_ROLES,
 )
 
 # ID-4/ID-8: the ERP id of an imported employee is fixed by e-mail, so the import is idempotent.
@@ -74,22 +76,32 @@ class SourceEmployee:
     name: str
     department: str
     role: str
+    site: str | None = None  # ЦАР / ЖУК; None — full-access roles (directors, технолог, снабжение) work across sites
 
 
-# Монтажники (installers), owner 2026-09-29: they are not in the SUPPLYMAP snapshot (new people), so the import adds
-# them itself, on the same run and with a PIN each — the master assigns operations to them, and the operator list is
-# every active employee (production has no role filter), so the role is «Сотрудник» (staff); department «Монтаж» puts them on the master board (MasterBoard.installers).
+# Монтажники (installers) and the Жуковский (ЖУК) participok, owner 2026-09-29: they are not in the SUPPLYMAP snapshot
+# (new people), so the import adds them itself, on the same run and with a PIN each — the master assigns operations to
+# them, and the operator list is every active employee (production has no role filter), so the role is «Сотрудник»
+# (staff); department «Монтаж» puts them on the master board (MasterBoard.installers). `site` splits the board by
+# participok: ЦАР (Москва, master's default) and ЖУК (Раменское/Жуковский, master Степан — his board shows only ЖУК).
 # Logins are transliterated; there are no real mailboxes yet (login is by name + PIN), the administrator can edit them.
 ADDITIONAL_STAFF: list[SourceEmployee] = [
-    SourceEmployee(email="rybkina.olga@fraxis.local", name="Рыбкина Ольга", department="Монтаж", role="staff"),
-    SourceEmployee(email="epifanov.ilya@fraxis.local", name="Епифанов Илья", department="Монтаж", role="staff"),
-    SourceEmployee(email="popov.ignat@fraxis.local", name="Попов Игнат", department="Монтаж", role="staff"),
-    SourceEmployee(email="bogorodskaya.elina@fraxis.local", name="Богородская Элина", department="Монтаж", role="staff"),
-    SourceEmployee(email="makarova.polina@fraxis.local", name="Макарова Полина", department="Монтаж", role="staff"),
-    SourceEmployee(email="naumova.elena@fraxis.local", name="Наумова Елена", department="Монтаж", role="staff"),
-    SourceEmployee(email="puzanov.aleksandr@fraxis.local", name="Пузанов Александр", department="Монтаж", role="staff"),
-    SourceEmployee(email="dumanskaya.anna@fraxis.local", name="Думанская Анна", department="Монтаж", role="staff"),
-    SourceEmployee(email="shilov.artem@fraxis.local", name="Шилов Артем", department="Монтаж", role="staff"),
+    # ЦАР — the nine installers of the Moscow participok.
+    SourceEmployee(email="rybkina.olga@fraxis.local", name="Рыбкина Ольга", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="epifanov.ilya@fraxis.local", name="Епифанов Илья", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="popov.ignat@fraxis.local", name="Попов Игнат", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="bogorodskaya.elina@fraxis.local", name="Богородская Элина", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="makarova.polina@fraxis.local", name="Макарова Полина", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="naumova.elena@fraxis.local", name="Наумова Елена", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="puzanov.aleksandr@fraxis.local", name="Пузанов Александр", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="dumanskaya.anna@fraxis.local", name="Думанская Анна", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="shilov.artem@fraxis.local", name="Шилов Артем", department="Монтаж", role="staff", site="ЦАР"),
+    # ЖУК — Жуковский participok: Степан is its master (distributes on his own board), the rest are installers.
+    SourceEmployee(email="stepan.zhuk@fraxis.local", name="Степан", department="Монтаж", role="master", site="ЖУК"),
+    SourceEmployee(email="zinger.anton@fraxis.local", name="Зингер Антон", department="Монтаж", role="staff", site="ЖУК"),
+    SourceEmployee(email="naumov.aleksandr@fraxis.local", name="Наумов Александр", department="Монтаж", role="staff", site="ЖУК"),
+    SourceEmployee(email="evseev.anton@fraxis.local", name="Евсеев Антон", department="Монтаж", role="staff", site="ЖУК"),
+    SourceEmployee(email="bezmenov.nikita@fraxis.local", name="Безменов Никита", department="Монтаж", role="staff", site="ЖУК"),
 ]
 
 
@@ -126,6 +138,19 @@ def _load_access_roles(path: Path) -> dict[str, str]:
     }
 
 
+def _infer_site(role: str, department: str) -> str | None:
+    """Site for a SUPPLYMAP row: full-access roles (directors, технолог, снабжение) span sites (None); otherwise read
+    the participok from the department text — «Жуковский»/ЖУК → ЖУК, «Царицыно»/ЦАР → ЦАР, else None."""
+    if role in FULL_ACCESS_ROLES:
+        return None
+    text = department.casefold()
+    if "жук" in text or "жуковск" in text:
+        return "ЖУК"
+    if "цар" in text or "царицын" in text:
+        return "ЦАР"
+    return None
+
+
 def read_source(source: Path) -> list[SourceEmployee]:
     config_path = source / CONFIG_RELATIVE
     if not config_path.is_file():
@@ -135,11 +160,14 @@ def read_source(source: Path) -> list[SourceEmployee]:
     people: list[SourceEmployee] = []
     for email, info in directory.items():
         raw_role = roles.get(email) or info.get("role") or "staff"  # access backup is fresher than the seed's role
+        role = ROLE_MAP.get(raw_role, "staff")
+        department = info.get("dept", "")
         people.append(SourceEmployee(
             email=email,
             name=info.get("name", "") or email,
-            department=info.get("dept", ""),
-            role=ROLE_MAP.get(raw_role, "staff"),
+            department=department,
+            role=role,
+            site=_infer_site(role, department),
         ))
     people.sort(key=lambda person: person.name.casefold())
     return people
@@ -176,13 +204,14 @@ def import_staff(
             name = normalize_name(person.name)
             department = normalize_department(person.department)
             role = normalize_role(person.role)
+            site = normalize_site(person.site)
             current = existing.get(email)
             if current is None:
                 pin = new_pin()
                 if apply:
                     user = IdentityUser(
                         id=staff_id(email), login=login, email=email, name=name,
-                        department=department, role=role, site=None, active=True,
+                        department=department, role=role, site=site, active=True,
                     )
                     # No password: only the PIN opens the door (SUPPLYMAP had PINs only).
                     uow.identity.add_user(user, hash_password(secrets.token_urlsafe(32)), {}, hash_pin(pin))
@@ -193,6 +222,13 @@ def import_staff(
                     uow.identity.set_pin(current.id, hash_pin(pin))
                 rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=pin,
                                         action="PIN перевыдан"))
+            elif current.department != department or current.site != site:
+                # Already imported, but the participok/department moved (ЖУК added, installers → «Монтаж»): update the
+                # department and site, keep the PIN, role and name (the administrator may have edited them by hand).
+                if apply:
+                    uow.identity.update_user(replace(current, department=department, site=site))
+                rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=None,
+                                        action="обновлён (отдел/площадка)"))
             else:
                 rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=None,
                                         action="пропущен (уже есть)"))
@@ -211,9 +247,10 @@ def _print_report(rows: list[ImportedRow], *, apply: bool) -> None:
         print(f"{row.name:<24} {row.login:<32} {row.role:<12} {pin:<8} {row.action}")
     created = sum(1 for row in rows if row.action == "создан")
     reissued = sum(1 for row in rows if row.action == "PIN перевыдан")
-    skipped = sum(1 for row in rows if row.pin is None)
+    updated = sum(1 for row in rows if row.action.startswith("обновлён"))
+    skipped = sum(1 for row in rows if row.action.startswith("пропущен"))
     print("-" * 84)
-    print(f"создано: {created}, PIN перевыдано: {reissued}, пропущено: {skipped}")
+    print(f"создано: {created}, PIN перевыдано: {reissued}, обновлено: {updated}, пропущено: {skipped}")
     if any(row.pin for row in rows):
         print("Раздайте PIN сотрудникам — вход по имени и PIN. Пароль не нужен.")
 

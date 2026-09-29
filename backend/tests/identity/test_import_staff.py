@@ -113,14 +113,22 @@ def test_role_map_covers_current_supplymap_roles():
 
 
 def test_installers_are_added_to_the_import(source):
-    # Монтажники (owner 2026-09-29) are not in SUPPLYMAP; the import adds them itself as staff in «Монтаж».
+    # Монтажники (owner 2026-09-29) are not in SUPPLYMAP; the import adds them itself in «Монтаж» — nine at ЦАР and,
+    # with the ЖУК participok added, master Степан plus four installers at ЖУК.
     everyone = all_source_staff(source)
     installers = [person for person in everyone if person in ADDITIONAL_STAFF]
-    assert len(installers) == 9
+    assert len(installers) == 14
     assert {"Рыбкина Ольга", "Шилов Артем", "Пузанов Александр"} <= {person.name for person in installers}
-    assert all(person.role == "staff" and person.department == "Монтаж" for person in installers)
+    assert all(person.department == "Монтаж" for person in installers)
+    car = [person for person in installers if person.site == "ЦАР"]
+    zhuk = [person for person in installers if person.site == "ЖУК"]
+    assert len(car) == 9 and all(person.role == "staff" for person in car)
+    assert {person.name for person in zhuk} == {"Степан", "Зингер Антон", "Наумов Александр", "Евсеев Антон", "Безменов Никита"}
+    stepan = next(person for person in zhuk if person.name == "Степан")
+    assert stepan.role == "master"  # Степан distributes on the ЖУК board
+    assert all(person.role == "staff" for person in zhuk if person.name != "Степан")
     # They join the SUPPLYMAP directory rather than replacing it.
-    assert len(everyone) == len(read_source(source)) + 9
+    assert len(everyone) == len(read_source(source)) + 14
 
 
 def test_installers_get_a_pin_and_can_log_in(source, sessions):
@@ -129,3 +137,35 @@ def test_installers_get_a_pin_and_can_log_in(source, sessions):
     assert olga.pin and olga.action == "создан"
     who = str(staff_id("rybkina.olga@fraxis.local"))
     assert login_with_pin(who, olga.pin, NOW, _uow(sessions)(), client_key="k").principal.email == "rybkina.olga@fraxis.local"
+
+
+def test_created_employees_carry_their_site(source, sessions):
+    import_staff(all_source_staff(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    with _uow(sessions)() as uow:
+        by_email = {user.email: user for user in uow.identity.all_users()}
+    assert by_email["rybkina.olga@fraxis.local"].site == "ЦАР"
+    assert by_email["stepan.zhuk@fraxis.local"].site == "ЖУК" and by_email["stepan.zhuk@fraxis.local"].role == "master"
+    assert by_email["zinger.anton@fraxis.local"].site == "ЖУК"
+    # A full-access SUPPLYMAP role spans sites — no participok.
+    assert by_email["ivan@example.test"].site is None
+
+
+def test_reimport_updates_department_and_site_but_keeps_pin(source, sessions):
+    # First run: an installer created in the old «Производство»/no-site shape (as Task 2 imported them).
+    old = [SourceEmployee(email="rybkina.olga@fraxis.local", name="Рыбкина Ольга", department="Производство", role="staff")]
+    rows = import_staff(old, _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    olga_pin = next(row for row in rows if row.name == "Рыбкина Ольга").pin
+
+    again = import_staff(all_source_staff(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    olga = next(row for row in again if row.name == "Рыбкина Ольга")
+    assert olga.action == "обновлён (отдел/площадка)" and olga.pin is None
+    with _uow(sessions)() as uow:
+        stored = next(user for user in uow.identity.all_users() if user.email == "rybkina.olga@fraxis.local")
+    assert stored.department == "Монтаж" and stored.site == "ЦАР"
+    # PIN untouched: the first one still opens the door.
+    who = str(staff_id("rybkina.olga@fraxis.local"))
+    assert login_with_pin(who, olga_pin, NOW, _uow(sessions)(), client_key="k").principal.email == "rybkina.olga@fraxis.local"
+
+    # A third run with nothing changed leaves the row alone.
+    third = import_staff(all_source_staff(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    assert next(row for row in third if row.name == "Рыбкина Ольга").action == "пропущен (уже есть)"
