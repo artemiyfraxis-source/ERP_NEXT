@@ -1649,3 +1649,162 @@ export const operationsApi = {
   },
   outbox: () => api<OutboxHealth>("/api/operations/outbox"),
 };
+
+/** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */
+export interface KitsetKbStage {
+  index: string;
+  status: string;
+  manual: boolean;
+  tc: boolean;
+  kit: boolean;
+  review: { value: string; text: string; who: string } | null;
+}
+
+export interface KitsetTile {
+  project: string;
+  customer: string;
+  calc_source: string;
+  updated_at: string;
+  updated_by: string;
+  assemblies: number;
+  lines: number;
+  kbs: string[];
+  status: string;
+  kb_stages: KitsetKbStage[];
+  blocker: string;
+}
+
+export interface KitsetLot {
+  lot_id: string | null;
+  warehouse: string;
+  grn: string;
+  package: string;
+}
+
+export interface KitsetComponent {
+  art: string;
+  type: string;
+  name: string;
+  link: string;
+  per: string;
+  scrap: string;
+  batch: string;
+  lot: KitsetLot | null;
+}
+
+export interface KitsetDocument {
+  id: string;
+  name: string;
+  size: number;
+  uploaded_at: string;
+  who: string;
+}
+
+export interface KitsetAssembly {
+  index: string;
+  name: string;
+  run: string;
+  item: string;
+  stage: KitsetKbStage | null;
+  techcard: { card_id: string; status: string; issued: boolean; stages: number; revision: number } | null;
+  kd: KitsetDocument[];
+  components: KitsetComponent[];
+}
+
+export interface KitsetCard {
+  project: string;
+  customer: string;
+  calc_source: string;
+  updated_at: string;
+  updated_by: string;
+  version: number;
+  status: string;
+  blocker: string;
+  stages: string[];
+  review_values: string[];
+  assemblies: KitsetAssembly[];
+}
+
+export interface KitsetLoadResult {
+  project: string;
+  assemblies: number;
+  lines: number;
+  erp_error: string;
+  ship_error: string;
+  ship_to_error: string;
+  deadline_error: string;
+}
+
+export interface KitsetSupplyLine {
+  art: string;
+  name: string;
+  kbs: string[];
+  need: string;
+  grn: string;
+  stage: string;
+  received: boolean;
+  rows: Array<{ where: string; status: string; source_id: string }>;
+}
+
+export interface KitsetStockLot {
+  lot_id: string;
+  warehouse: string;
+  grn: string;
+  package: string;
+  article: string;
+  name: string;
+  unit: string;
+  storage_location: string;
+  available: string;
+}
+
+export interface KitsetLineEdit {
+  index: string;
+  art: string;
+  per: string;
+  scrap: string;
+  name?: string;
+  link?: string;
+  lot?: KitsetLot | null;
+}
+
+export interface KitsetDeleteResult {
+  project: string;
+  deleted: number;
+  erp: Record<string, number>;
+  cards: { cards: number; revisions: number };
+  kd: number;
+  gp: { deleted: number; kept: number };
+}
+
+const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
+
+export const kitsetsApi = {
+  list: (sort = "upd") => api<{ items: KitsetTile[]; statuses: string[] }>(`/api/techcards/kitsets?sort=${encodeURIComponent(sort)}`),
+  get: (project: string) => api<KitsetCard>(kitsetPath(project)),
+  load: (payload: {
+    file_name: string;
+    content_b64: string;
+    number?: string;
+    deadline?: string | null;
+    ship?: { shipping_point: string; contact: string; phone: string } | null;
+  }) => api<{ res: KitsetLoadResult }>("/api/techcards/kitsets/load", { method: "POST", body: JSON.stringify(payload) }),
+  saveLines: (project: string, edits: KitsetLineEdit[]) =>
+    api<{ res: { updated: number } }>(`${kitsetPath(project)}/lines`, { method: "PUT", body: JSON.stringify({ edits }) }),
+  supply: (project: string) => api<{ lines: KitsetSupplyLine[] }>(`${kitsetPath(project)}/supply`),
+  lots: (query: string) => api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}`),
+  issue: (project: string, deadline: string) =>
+    api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; message: string }>(
+      `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
+    ),
+  remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
+  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string }) =>
+    api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
+  addDocument: (project: string, payload: { index: string; file_name: string; content_type: string; content_b64: string }) =>
+    api<{ res: KitsetDocument & { index: string } }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
+  documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
+  removeDocument: (project: string, id: string) =>
+    api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  openTechcard: (project: string, index: string) =>
+    api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
+};

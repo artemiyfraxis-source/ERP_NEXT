@@ -176,9 +176,11 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
         showLibrary ? techcardsApi.templates() : Promise.resolve({ items: [] as OperationCardSummary[], metadata: null }),
       ]);
       setCards((current) => current.length ? current : projectResult.items);
+      // «Проекты» → «Генератор»/«ТК КБn» открывают здесь карточку изделия: ?card=<id>; план — ?project=<№>.
+      const linked = new URLSearchParams(window.location.search).get("card") || "";
       const wanted = projectFilter.trim().toLocaleUpperCase("ru-RU");
       const first = projectResult.items.find((card) => !wanted || card.project.toLocaleUpperCase("ru-RU") === wanted) ?? projectResult.items[0];
-      setSelectedId((current) => current || first?.id || "");
+      setSelectedId((current) => current || (projectResult.items.some((card) => card.id === linked) ? linked : "") || first?.id || "");
       setTemplates(libraryResult.items);
       setLibraryCommit(libraryResult.metadata?.source_commit || "");
     } catch (reason) {

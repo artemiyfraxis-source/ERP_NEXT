@@ -29,6 +29,7 @@ import { NotificationsPage } from "./NotificationsPage";
 import { NotificationBell } from "./NotificationBell";
 import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
+import { ProjectsPage } from "./ProjectsPage";
 import { StaffPage } from "./StaffPage";
 import { AccessPage } from "./AccessPage";
 
@@ -162,7 +163,7 @@ export function App() {
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
         {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
-        {activeSection === "projects" && <LegacyFrame section="projects" scope="projects" title="Проекты" />}
+        {activeSection === "projects" && <ProjectsPage principal={principal} />}
         {activeSection === "calculation" && <LegacyFrame section="calc" scope="calculation" title="Расчёт и КП" />}
         {activeSection === "techcards" && <TechcardsPage principal={principal} view="projects" />}
         {activeSection === "tctemplates" && <TechcardsPage principal={principal} view="templates" />}

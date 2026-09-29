@@ -24,6 +24,7 @@ from .modules.references import api as references_api
 from .modules.operations import api as operations_api
 from .modules.requests import api as requests_api
 from .modules.techcards import api as techcards_api
+from .modules.techcards import kitset_api as kitsets_api
 from .shared.http_auth import techcards_view_principal
 
 app = FastAPI(
@@ -38,7 +39,11 @@ app.state.cookie_secure = os.getenv("ERP_COOKIE_SECURE", "1").strip().lower() no
 }
 app.state.legacy_bridge_secret = os.getenv("ERP_LEGACY_BRIDGE_SECRET", "")
 configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, not the first placement
-app.add_middleware(RequestBodyLimitMiddleware, max_bytes=1_048_576)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    max_bytes=1_048_576,
+    path_limits={"/api/techcards/kitsets": 30 * 1_048_576},
+)
 app.add_middleware(IdentitySessionMiddleware)
 app.add_middleware(
     SecurityHeadersMiddleware,
@@ -58,6 +63,7 @@ app.include_router(warehouse_api.router)
 app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
 app.include_router(production_plan_api.router)
+app.include_router(kitsets_api.router)
 app.include_router(shipping_api.router)
 app.include_router(references_api.router)
 app.include_router(operations_api.router)

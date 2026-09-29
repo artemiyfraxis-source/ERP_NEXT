@@ -64,6 +64,10 @@ myrequests_principal = require_section(
     detail="Раздел «Мои заявки» вам не открыт.",
 )
 techcards_view_principal = require_section("techcards", "view")
+# «Проекты» — карточки наборов (SUPPLYMAP erptechmap): просмотр читает, запись (загрузка, правка, удаление,
+# отправка на комплектацию, КД) — только с правом правки раздела (portalSectionEditGuard_).
+projects_view_principal = require_section("projects", "view", detail="Раздел «Проекты» вам не открыт.")
+projects_edit_principal = require_section("projects", "edit", detail="Раздел «Проекты» открыт только на просмотр.")
 techcards_edit_principal = require_section(
     "techcards",
     "edit",

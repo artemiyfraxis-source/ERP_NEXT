@@ -35,6 +35,7 @@ from app.modules.production.plan import (
 )
 from app.modules.requests.domain import Request
 from app.modules.shipping.domain import FinishedGood
+from app.modules.techcards.kitsets import Kitset
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
 
 
@@ -130,33 +131,19 @@ def _task_plan(tasks: Iterable[ProductionTask]) -> dict[str, ProjectTaskPlan]:
     return result
 
 
-def build_production_plan(
+def kit_stage_facts(
     *,
     cards: Iterable[ProjectTechcard],
     tasks: Iterable[ProductionTask],
     fulfillment: Iterable[FulfillmentRequest],
     goods: Iterable[FinishedGood],
-    requests: Iterable[Request],
-    procurement: Iterable[ProcurementLine],
-    projects: Iterable[PlanProjectSnapshot],
-    events: Iterable[PlanEvent],
-    today: date,
-) -> tuple[ProductionPlanRow, ...]:
-    cards = tuple(cards)
-    tasks = tuple(tasks)
-    fulfillment = tuple(fulfillment)
-    goods = tuple(goods)
-    events = tuple(events)
-    project_snapshots = {normalize_project_number(item.project): item for item in projects}
-    journal = summarize_journal(events)
-    marks = summarize_kit_marks(events)
-    supply = _safe("supply", lambda: _supply(requests, procurement))
-    task_plan = _safe("tasks", lambda: _task_plan(tasks))
+    marks: dict[str, KitMark],
+) -> tuple[dict[str, set[str]], dict[str, KitMark]]:
+    """`kitStageFacts_`: which КБ has an issued techcard, a picked kit, a running task, stock, shipment.
 
-    cards_by_project: dict[str, list[ProjectTechcard]] = {}
-    for card in cards:
-        cards_by_project.setdefault(normalize_project_number(card.project), []).append(card)
-
+    Shared by the production plan and the project kitset list (SUPPLYMAP portalKitsetList).
+    """
+    marks = dict(marks)
     facts: dict[str, set[str]] = {
         "tc": set(), "tc_project": set(), "kit": set(), "work": set(),
         "stock": set(), "shipped": set(),
@@ -195,9 +182,54 @@ def build_production_plan(
         if good.shipped > 0 and good.shipped >= need:
             facts["shipped"].add(key)
 
+    return facts, marks
+
+
+def build_production_plan(
+    *,
+    cards: Iterable[ProjectTechcard],
+    tasks: Iterable[ProductionTask],
+    fulfillment: Iterable[FulfillmentRequest],
+    goods: Iterable[FinishedGood],
+    requests: Iterable[Request],
+    procurement: Iterable[ProcurementLine],
+    projects: Iterable[PlanProjectSnapshot],
+    events: Iterable[PlanEvent],
+    today: date,
+    kitsets: Iterable[Kitset] = (),
+) -> tuple[ProductionPlanRow, ...]:
+    cards = tuple(cards)
+    tasks = tuple(tasks)
+    fulfillment = tuple(fulfillment)
+    goods = tuple(goods)
+    events = tuple(events)
+    project_snapshots = {normalize_project_number(item.project): item for item in projects}
+    journal = summarize_journal(events)
+    marks = summarize_kit_marks(events)
+    supply = _safe("supply", lambda: _supply(requests, procurement))
+    task_plan = _safe("tasks", lambda: _task_plan(tasks))
+
+    cards_by_project: dict[str, list[ProjectTechcard]] = {}
+    for card in cards:
+        cards_by_project.setdefault(normalize_project_number(card.project), []).append(card)
+
+    facts, marks = kit_stage_facts(
+        cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods, marks=marks,
+    )
+
+    # КБ проекта — из карточки набора (tcKitsetSyncErp_ → «Позиции проектов») и из карточек техкарт.
+    kit_indexes: dict[str, list[str]] = {}
+    for kitset in kitsets:
+        kit_indexes.setdefault(normalize_project_number(kitset.project), []).extend(
+            assembly.index for assembly in kitset.assemblies
+        )
+
     rows = []
     for project in project_snapshots.keys() | cards_by_project.keys():
         project_cards = cards_by_project.get(project, [])
+        item_indexes = list(dict.fromkeys(
+            [*kit_indexes.get(project, []), *(card.item_index for card in project_cards)]
+        ))
         snapshot = project_snapshots.get(project)
         project_journal = journal.get(project, ProjectJournal(None, None, ()))
         card_deadlines = [card.deadline for card in project_cards if card.deadline]
@@ -216,7 +248,7 @@ def build_production_plan(
         terminal = snapshot.status if snapshot and snapshot.terminal else ""
         stage = project_stage(
             project,
-            (card.item_index for card in project_cards),
+            item_indexes,
             facts,
             terminal,
             marks,

@@ -135,7 +135,11 @@ def production_plan(
         projects = tuple(uow.plan_projects.list())
     tasks = _safe_read("tasks", production_uow_factory, lambda uow: tuple(uow.production.list(limit=10_000)))
     events = _safe_read("journal", production_uow_factory, lambda uow: tuple(uow.plan_events.list()))
-    cards = _safe_read("kitsets", techcards_uow_factory, lambda uow: tuple(uow.techcards.list()))
+    cards = _safe_read("techcards", techcards_uow_factory, lambda uow: tuple(uow.techcards.list()))
+    kitsets = _safe_read(
+        "kitsets", techcards_uow_factory,
+        lambda uow: tuple(uow.kitsets.list()) if hasattr(uow, "kitsets") else (),
+    )
     fulfillment = _safe_read("fulfillment", fulfillment_uow_factory, lambda uow: tuple(uow.fulfillment.list(limit=10_000)))
     goods = _safe_read("goods", shipping_uow_factory, lambda uow: tuple(uow.goods.list(limit=10_000)))
     requests = _safe_read("requests", requests_uow_factory, lambda uow: tuple(uow.requests.recent(10_000)))
@@ -143,7 +147,7 @@ def production_plan(
     rows = build_production_plan(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods,
         requests=requests, procurement=procurement, projects=projects,
-        events=events, today=today,
+        events=events, today=today, kitsets=kitsets,
     )
     return {
         "blockers": list(PLAN_BLOCKERS), "stages": list(KIT_STAGES),

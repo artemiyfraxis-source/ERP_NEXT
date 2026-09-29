@@ -424,6 +424,36 @@ td small { margin-top: 4px; color: #7b857e; }
 .access-page select.access-set { border-color: var(--primary); font-weight: 600; }
 .access-page select.access-default { color: var(--muted-foreground); }
 
+/* «Проекты» — карточки наборов (SUPPLYMAP openKitsetHub / openKitsetCard). */
+.kit-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; font-size: 13px; }
+.kit-tiles .kit-tile { cursor: pointer; }
+.kit-tile-head { display: flex; align-items: baseline; gap: 8px; }
+.kit-tile-head .t-h { flex: 1; }
+.kit-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.kit-status, .kit-fact { border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; background: var(--accent); color: var(--muted-foreground); }
+.tone-ok, .kit-ok { color: #15803d; }
+.tone-warn { color: #a16207; }
+.tone-danger, .kit-bad { color: #b91c1c; }
+.tone-info { color: #1d4ed8; }
+.tone-neutral { color: #6b7280; }
+.kit-status.tone-prep, .kit-fact.tone-warn { background: #fdf3d8; color: #8a5a00; }
+.kit-status.tone-work { background: color-mix(in srgb, var(--primary) 12%, white); color: var(--primary); }
+.kit-status.tone-stock, .kit-fact.tone-ok { background: #e3f5e8; color: #15803d; }
+.kit-status.tone-done { background: #eceff0; color: #5f6b6d; }
+.kit-status.tone-danger, .kit-fact.tone-danger { background: #fde8e8; color: #b91c1c; }
+.kit-pane { margin: 8px 0 16px; }
+.panel.kit-pane, .panel.kit-modal { padding: 16px 18px; }
+.kit-modal { margin: 0 0 16px; display: grid; gap: 10px; }
+.kit-modal h3 { margin: 0; }
+.kit-spec { margin: 0 0 18px; }
+.kit-spec-table input { width: 100%; min-width: 60px; }
+.kit-link { display: flex; gap: 4px; align-items: center; }
+.kit-kd { display: flex; gap: 6px; align-items: center; }
+.kit-supply-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.kit-supply-count { padding: 14px 16px; display: grid; gap: 4px; }
+.kit-supply-count strong { font-size: 24px; }
+.kit-autosave { font-size: 12px; }
+
 /* DataTable: общая таблица разделов (поиск, фильтры, сортировка, чипы, группы, массовые действия). */
 .data-table { display: grid; gap: 10px; }
 .data-table .filters { margin-bottom: 0; }
