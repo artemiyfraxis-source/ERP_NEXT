@@ -48,7 +48,9 @@ from .application import (
     save_kp,
     save_procurement_facts,
     build_supplier_requests,
+    build_replacement_permission_sheet,
     supplier_order,
+    procurement_line,
     split_procurement_line,
     set_procurement_replacement,
     record_invoice,
@@ -355,6 +357,8 @@ def _line_result(line: ProcurementLine) -> dict:
         "replacement": line.replacement,
         "replacement_decision": line.replacement_decision.value if line.replacement_decision else None,
         "replacement_open": line.replacement_open,
+        "permission_number": line.permission_number,
+        "permission_date": line.permission_date.isoformat() if line.permission_date else None,
     }
 
 
@@ -687,6 +691,23 @@ def replacement(
             uow_factory(),
         )
     )
+
+
+@router.get("/{line_id}/replacement-permission")
+def replacement_permission(
+    line_id: UUID,
+    _principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    try:
+        line = procurement_line(line_id, uow_factory())
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    try:
+        sheet = build_replacement_permission_sheet(line)
+    except ProcurementValidationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"sheet": sheet.to_dict()}
 
 
 @router.post("/{line_id}/invoice")

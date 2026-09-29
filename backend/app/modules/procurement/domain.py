@@ -59,6 +59,9 @@ class ReplacementDecision(str, Enum):
     FORBIDDEN = "Запрещено"
 
 
+# «РАЗРЕШЕНИЕ НА ЗАМЕНУ»: DOC_TYPES.replacement (Config.gs:500-504) — prefix «РЗ», number «РЗ-ГГГГММДД-NN».
+PERMISSION_NUMBER_PREFIX = "РЗ"
+
 # ЗАМЕНА is edited by the buyer from «В работе» until the goods are paid for (agent decision, see ARCHITECTURE.md).
 REPLACEMENT_EDITABLE = frozenset(
     {
@@ -156,6 +159,8 @@ class ProcurementLine:
     order_date: date | None = None
     replacement: bool | None = None
     replacement_decision: ReplacementDecision | None = None
+    permission_number: str | None = None
+    permission_date: date | None = None
 
     @property
     def replacement_open(self) -> bool:
@@ -248,10 +253,17 @@ class ProcurementLine:
         replacement: bool,
         decision: ReplacementDecision | None,
         actor: Actor,
+        permission_number: str | None = None,
+        permission_date: date | None = None,
     ) -> ProcurementLine:
         """`applyReplacement_` / `applyReplacementDecision_` (Guards.gs): the buyer marks ЗАМЕНА by hand.
 
         Да waits for a decision (none yet = open); Нет clears the decision, as the sheet writes «—» there.
+
+        `permission_number`/`permission_date` are precomputed by the caller (numbering needs the
+        repository) and are only kept when the transition lands on «Разрешено» — any other outcome
+        voids «РАЗРЕШЕНИЕ НА ЗАМЕНУ» (`clearReplacementBlock_`, Guards.gs:632-637), same as ЗАМЕНА=Нет
+        or a decision changed away from «Разрешено».
         """
         self._require_owner(actor)
         if not replacement and decision is not None:
@@ -262,10 +274,13 @@ class ProcurementLine:
             raise ProcurementValidationError(
                 "Замену отмечают в работе у закупщика — от «В работе» до «В оплату»"
             )
+        keeps_permission = replacement and decision is ReplacementDecision.ALLOWED
         return replace(
             self,
             replacement=replacement,
             replacement_decision=decision,
+            permission_number=permission_number if keeps_permission else None,
+            permission_date=permission_date if keeps_permission else None,
             version=self.version + 1,
         )
 

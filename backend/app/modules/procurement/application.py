@@ -12,10 +12,12 @@ from zoneinfo import ZoneInfo
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
+from app.shared.print_sheet import PrintSheet
 
 from .domain import (
     KpEntry,
     MoneyEntry,
+    PERMISSION_NUMBER_PREFIX,
     ProcurementFacts,
     ProcurementLine,
     ProcurementStatus,
@@ -53,6 +55,7 @@ class ProcurementRepository(Protocol):
     def legacy_ids_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def ready_for_request(self) -> Sequence[ProcurementLine]: ...
     def order_numbers_with_prefix(self, prefix: str) -> Sequence[str]: ...
+    def permission_numbers_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def has_lines_for_request(self, source_request_id: UUID) -> bool: ...
     def revisions_for_designation(self, designation: str) -> Sequence[str]:
         """Revisions of every line whose НАЗНАЧЕНИЕ has the same `designation_key`."""
@@ -646,10 +649,69 @@ def supplier_order(order_number: str, uow: UnitOfWork) -> SupplierOrder:
     return order
 
 
+def procurement_line(line_id: UUID, uow: UnitOfWork) -> ProcurementLine:
+    """Read a single line, e.g. to render «РАЗРЕШЕНИЕ НА ЗАМЕНУ» (`_peek`'s non-CBR twin)."""
+    with uow:
+        current = uow.procurement.get(line_id)
+    if current is None:
+        raise KeyError(f"Procurement line not found: {line_id}")
+    return current
+
+
+# Печатный бланк (браузерная печать — app.shared.print_sheet, DOC-1). Порт docTemplateSpec_('replacement')
+# (SUPPLYMAP DocGen.gs:658-679); ИЗГОТОВИТЕЛЬ/СТРАНА с того же spec живут на партии склада в ERP_NEXT, а
+# не на строке закупки — опущены здесь (решено агентом, см. ARCHITECTURE.md) до отдельного переноса.
+REPLACEMENT_PERMISSION_CONCLUSION = (
+    "Применённый аналог годен к применению, требованиям конструкторской документации соответствует."
+)
+
+
+def build_replacement_permission_sheet(line: ProcurementLine) -> PrintSheet:
+    """«РАЗРЕШЕНИЕ НА ЗАМЕНУ №…»: exists only once РЕШ. ЗАМЕНЫ is «Разрешено» (`applyReplacementDecision_`,
+    Guards.gs:632-637) — any other outcome voids `permission_number`, so there is nothing to print."""
+    if line.replacement_decision is not ReplacementDecision.ALLOWED or not line.permission_number:
+        raise ProcurementValidationError(f"Замена по {line.legacy_id} не разрешена — печатать нечего")
+    quantity = f"{format(line.calculated_quantity.normalize(), 'f')} {line.calculated_unit}".strip()
+    when = line.permission_date.strftime("%d.%m.%Y") if line.permission_date else ""
+    return PrintSheet(
+        title=f"РАЗРЕШЕНИЕ НА ЗАМЕНУ {line.permission_number}",
+        subtitle=f"Дата: {when} · Назначение: {line.designation}",
+        columns=("Поле", "Значение"),
+        rows=(
+            ("Заменяется (артикул КД)", line.design_article or ""),
+            ("Применяется", line.site_name or ""),
+            ("Категория", line.category),
+            ("Кол-во", quantity),
+            ("Поставщик", line.supplier or ""),
+        ),
+        note=f"Заключение: {REPLACEMENT_PERMISSION_CONCLUSION}",
+        sign="ИСПОЛНИТЕЛЬ: ______________________        ЗАКАЗЧИК: ______________________",
+    )
+
+
 def set_procurement_replacement(command: SetReplacementCommand, uow: UnitOfWork) -> ProcurementLine:
     with uow:
         current = _load_versioned(command.line_id, command.expected_version, uow)
-        updated = current.set_replacement(command.replacement, command.decision, command.actor)
+        permission_number = current.permission_number
+        permission_date = current.permission_date
+        newly_allowed = (
+            command.replacement
+            and command.decision is ReplacementDecision.ALLOWED
+            and current.replacement_decision is not ReplacementDecision.ALLOWED
+        )
+        if newly_allowed:
+            # `generateDocFor_`/`nextSystemId_` (DocGen.gs:112-151, SystemId.gs:13): number once, on the
+            # transition into «Разрешено» — an unchanged «Разрешено» short-circuits above and never gets here.
+            permission_date = _moscow_day(command.now)
+            taken = list(uow.procurement.permission_numbers_with_prefix(PERMISSION_NUMBER_PREFIX))
+            permission_number = next_system_id(taken, permission_date, PERMISSION_NUMBER_PREFIX)
+        updated = current.set_replacement(
+            command.replacement,
+            command.decision,
+            command.actor,
+            permission_number=permission_number,
+            permission_date=permission_date,
+        )
         result = _save_transition(
             current,
             updated,
@@ -660,6 +722,7 @@ def set_procurement_replacement(command: SetReplacementCommand, uow: UnitOfWork)
             details={
                 "replacement": "Да" if updated.replacement else "Нет",
                 "decision": updated.replacement_decision.value if updated.replacement_decision else "",
+                "permission_number": updated.permission_number or "",
             },
         )
         if result != current:

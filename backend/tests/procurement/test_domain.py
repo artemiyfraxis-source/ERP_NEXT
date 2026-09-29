@@ -737,6 +737,36 @@ def test_replacement_is_set_only_by_owner_and_only_between_in_work_and_to_pay():
         shipped.set_replacement(True, None, buyer)
 
 
+def test_set_replacement_keeps_a_given_permission_number_only_when_allowed():
+    """The domain rule for «РАЗРЕШЕНИЕ НА ЗАМЕНУ»: numbering is the application's job, voiding is the
+    domain's — any outcome other than «Разрешено» drops what the caller passed in (`clearReplacementBlock_`,
+    Guards.gs:632-637)."""
+    buyer = Actor(name="Петров", department="Закупки")
+    line = ready_line(buyer)
+
+    allowed = line.set_replacement(
+        True, ReplacementDecision.ALLOWED, buyer,
+        permission_number="РЗ-20260929-01", permission_date=date(2026, 9, 29),
+    )
+    assert allowed.permission_number == "РЗ-20260929-01"
+    assert allowed.permission_date == date(2026, 9, 29)
+
+    forbidden = allowed.set_replacement(
+        True, ReplacementDecision.FORBIDDEN, buyer,
+        permission_number="РЗ-20260929-02", permission_date=date(2026, 9, 29),
+    )
+    assert forbidden.permission_number is None
+    assert forbidden.permission_date is None
+
+    reopened = ready_line(buyer).set_replacement(
+        True, ReplacementDecision.ALLOWED, buyer,
+        permission_number="РЗ-20260929-03", permission_date=date(2026, 9, 29),
+    )
+    cleared = reopened.set_replacement(False, None, buyer)
+    assert cleared.permission_number is None
+    assert cleared.permission_date is None
+
+
 def test_retry_of_formed_request_is_not_blocked_by_later_replacement():
     """The gate guards forming the order; an order already formed stays idempotent."""
     buyer = Actor(name="Петров", department="Закупки")

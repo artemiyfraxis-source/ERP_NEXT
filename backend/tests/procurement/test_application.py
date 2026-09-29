@@ -101,6 +101,13 @@ class FakeProcurementRepository:
     def order_numbers_with_prefix(self, prefix):
         return [number for number in self.orders if number.startswith(f"{prefix}-")]
 
+    def permission_numbers_with_prefix(self, prefix):
+        return [
+            item.permission_number
+            for item in self.items.values()
+            if item.permission_number and item.permission_number.startswith(f"{prefix}-")
+        ]
+
     def add_order(self, order):
         if order.order_number in self.orders:
             raise AssertionError(f"duplicate order number {order.order_number}")

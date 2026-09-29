@@ -112,6 +112,8 @@ class ProcurementLineRow(Base):
     order_date: Mapped[Any | None] = mapped_column(Date)
     replacement: Mapped[bool | None] = mapped_column(Boolean)
     replacement_decision: Mapped[str | None] = mapped_column(String(16))
+    permission_number: Mapped[str | None] = mapped_column(String(32), index=True)
+    permission_date: Mapped[Any | None] = mapped_column(Date)
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -183,6 +185,8 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         replacement_decision=(
             line.replacement_decision.value if line.replacement_decision else None
         ),
+        permission_number=line.permission_number,
+        permission_date=line.permission_date,
     )
 
 
@@ -257,6 +261,8 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
         replacement_decision=(
             ReplacementDecision(row.replacement_decision) if row.replacement_decision else None
         ),
+        permission_number=row.permission_number,
+        permission_date=row.permission_date,
     )
 
 
@@ -364,6 +370,13 @@ class SqlAlchemyProcurementRepository:
     def order_numbers_with_prefix(self, prefix: str) -> list[str]:
         statement = select(ProcurementSupplierOrderRow.order_number).where(
             ProcurementSupplierOrderRow.order_number.startswith(f"{prefix}-", autoescape=True)
+        )
+        return list(self.session.scalars(statement))
+
+    def permission_numbers_with_prefix(self, prefix: str) -> list[str]:
+        statement = select(ProcurementLineRow.permission_number).where(
+            ProcurementLineRow.permission_number.is_not(None),
+            ProcurementLineRow.permission_number.startswith(f"{prefix}-", autoescape=True),
         )
         return list(self.session.scalars(statement))
 

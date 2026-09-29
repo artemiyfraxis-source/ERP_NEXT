@@ -1298,3 +1298,29 @@ React-компонента. Исходный `frontend/src/PrintSheet.tsx` (ин
 - Оба построителя — чистые функции в `application.py` (входят `FulfillmentRequest` + `now`, выходят
   `PrintSheet`), эндпоинты только читают через `uow.fulfillment.get` без транзакции на запись; доступ
   — `fulfillment_view_principal`, как у остальных чтений раздела.
+
+**«РАЗРЕШЕНИЕ НА ЗАМЕНУ» (DOC-1, SUPPLYMAP DocGen.gs:658-679 `docTemplateSpec_('replacement')`,
+Guards.gs:604-637 `applyReplacement_`/`applyReplacementDecision_`) — решено агентом, проверить:**
+- Печатается через тот же общий контур, что и FF-8/WH-6 (`app/shared/print_sheet.py` `PrintSheet` +
+  `frontend/src/print.ts` `openPrintSheet`) — задача застала его уже добавленным на `main`, второй
+  механизм рядом не заводился. Строитель — чистая функция `build_replacement_permission_sheet`
+  (`procurement/application.py`): два столбца «Поле — Значение» (Заменяется/Применяется/Категория/
+  Кол-во/Поставщик), `note` — заключение («Применённый аналог годен к применению…», как в шаблоне
+  SUPPLYMAP), `sign` — строка ИСПОЛНИТЕЛЬ/ЗАКАЗЧИК. Эндпоинт `GET
+  /api/procurement/{id}/replacement-permission` — `procurement_edit_principal` (buyer/admin), как у
+  остальных операций замены в разделе; отдельного view-принципала у закупки нет.
+- ИЗГОТОВИТЕЛЬ/СТРАНА из `docTemplateSpec_('replacement')` не перенесены: в ERP_NEXT это поля партии
+  склада (`warehouse` domain), а не строки закупки, и у `ProcurementLine` источника для них нет —
+  появятся вместе с переносом соответствующей части приёмки/склада в закупку, если понадобится.
+- Номер и дата разрешения (`permission_number`/`permission_date`, миграция
+  `0037_procurement_replacement_permission`, после `0036_identity_departments`) — доменное правило
+  `ProcurementLine.set_replacement`, не механика печати: они присваиваются один раз при переходе
+  РЕШ. ЗАМЕНЫ в «Разрешено» (`next_system_id` с префиксом «РЗ», как `nextSystemId_`/`generateDocFor_` —
+  формат «РЗ-ГГГГММДД-NN»), а при любом другом исходе (Запрещено или ЗАМЕНА=Нет) обнуляются — прямой
+  перенос `clearReplacementBlock_`. Нумерация требует репозиторий, поэтому она считается в
+  `set_procurement_replacement` (`application.py`) и передаётся в чистый `set_replacement` уже готовым
+  числом; печатать нечего, пока `permission_number` пуст — `GET .../replacement-permission` отвечает
+  409 (`ProcurementValidationError`).
+- Кнопка «Печать «Разрешение на замену»…» на карточке закупки видна, пока `permission_number` не
+  пуст (то есть только при действующем «Разрешено») — сама себя прячет при «Запрещено»/«Нет», без
+  отдельного признака «документ аннулирован».

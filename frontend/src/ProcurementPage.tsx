@@ -8,6 +8,7 @@ import {
   type ProcurementLine,
   type SupplierOrder,
 } from "./api";
+import { openPrintSheet } from "./print";
 
 type FactsDraft = {
   supplier: string;
@@ -321,6 +322,7 @@ function ProcurementCard({
       {REPLACEMENT_STATUSES.has(line.status) && (
         <ReplacementControl line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
       )}
+      {line.permission_number && <ReplacementPermissionPrint line={line} />}
       {line.status === "Готов к запросу" && (
         <small className="hint">Поставщик: {line.supplier} — строка войдёт в запрос поставщику при формировании.</small>
       )}
@@ -487,6 +489,29 @@ function ReplacementControl({ line, busy, disabled, onAdvance }: {
           <option value="Запрещено">Да — Запрещено</option>
         </select>
       </label>
+    </div>
+  );
+}
+
+function ReplacementPermissionPrint({ line }: { line: ProcurementLine }) {
+  const [error, setError] = useState("");
+
+  async function print() {
+    setError("");
+    try {
+      const { sheet } = await procurementApi.replacementPermissionSheet(line.id);
+      openPrintSheet(sheet);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не удалось сформировать разрешение");
+    }
+  }
+
+  return (
+    <div className="inline-action">
+      <button type="button" className="secondary small" onClick={() => void print()}>
+        Печать «Разрешение на замену» {line.permission_number}
+      </button>
+      {error && <div className="error-banner" role="alert">{error}</div>}
     </div>
   );
 }

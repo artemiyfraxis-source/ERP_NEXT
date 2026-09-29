@@ -428,6 +428,8 @@ def test_open_replacement_blocks_supplier_request_until_allowed(procurement_api)
     ).json()["line"]
     assert allowed["replacement_decision"] == "Разрешено"
     assert allowed["replacement_open"] is False
+    assert allowed["permission_number"] == "РЗ-20260915-01"
+    assert allowed["permission_date"] == "2026-09-15"
 
     requested = client.post("/api/procurement/supplier-requests")
     assert requested.status_code == 200, requested.text
@@ -438,6 +440,62 @@ def test_open_replacement_blocks_supplier_request_until_allowed(procurement_api)
             select(AuditEventRow).where(AuditEventRow.event_type == "procurement.replacement_set")
         ).all()
         assert [event.details["decision"] for event in replacement_events] == ["", "Разрешено"]
+
+
+def test_replacement_permission_document_prints_once_allowed_and_voids_when_forbidden(procurement_api):
+    """DOC-1: «РАЗРЕШЕНИЕ НА ЗАМЕНУ» exists only while РЕШ. ЗАМЕНЫ is «Разрешено» (`applyReplacementDecision_`,
+    Guards.gs:632-645)."""
+    client, line, _sessions = procurement_api
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id)]})
+    ready = client.patch(
+        f"/api/procurement/{line.id}/facts",
+        json={
+            "version": taken.json()["lines"][0]["version"],
+            "supplier": "ООО Поставка",
+            "design_article": "КД-АРТ-001",
+            "site_name": "Разъём-аналог XYZ",
+            "actual_quantity": "2",
+            "actual_unit": "шт",
+        },
+    ).json()["line"]
+
+    not_ready = client.get(f"/api/procurement/{line.id}/replacement-permission")
+    assert not_ready.status_code == 409
+
+    opened = client.patch(
+        f"/api/procurement/{line.id}/replacement",
+        json={"version": ready["version"], "replacement": True},
+    ).json()["line"]
+    allowed = client.patch(
+        f"/api/procurement/{line.id}/replacement",
+        json={"version": opened["version"], "replacement": True, "decision": "Разрешено"},
+    ).json()["line"]
+
+    printed = client.get(f"/api/procurement/{line.id}/replacement-permission")
+    assert printed.status_code == 200
+    sheet = printed.json()["sheet"]
+    assert sheet["title"] == "РАЗРЕШЕНИЕ НА ЗАМЕНУ РЗ-20260915-01"
+    assert "RND.001" in sheet["subtitle"]
+    assert ("Заменяется (артикул КД)", "КД-АРТ-001") in [tuple(row) for row in sheet["rows"]]
+    assert ("Применяется", "Разъём-аналог XYZ") in [tuple(row) for row in sheet["rows"]]
+    assert ("Поставщик", "ООО Поставка") in [tuple(row) for row in sheet["rows"]]
+    assert ("Категория", "Общепром") in [tuple(row) for row in sheet["rows"]]
+    assert ("Кол-во", "2 шт") in [tuple(row) for row in sheet["rows"]]
+    assert "годен к применению" in sheet["note"]
+    assert "ИСПОЛНИТЕЛЬ" in sheet["sign"] and "ЗАКАЗЧИК" in sheet["sign"]
+
+    forbidden = client.patch(
+        f"/api/procurement/{line.id}/replacement",
+        json={"version": allowed["version"], "replacement": True, "decision": "Запрещено"},
+    ).json()["line"]
+    assert forbidden["permission_number"] is None
+    assert forbidden["permission_date"] is None
+
+    voided = client.get(f"/api/procurement/{line.id}/replacement-permission")
+    assert voided.status_code == 409
+
+    missing = client.get("/api/procurement/00000000-0000-0000-0000-000000000000/replacement-permission")
+    assert missing.status_code == 404
 
 
 def test_line_is_parked_approved_and_cancelled_through_api_with_audit(procurement_api):

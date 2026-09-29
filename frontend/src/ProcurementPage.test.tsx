@@ -56,6 +56,8 @@ const line: ProcurementLine = {
   replacement: null,
   replacement_decision: null,
   replacement_open: false,
+  permission_number: null,
+  permission_date: null,
 };
 
 function json(body: unknown) {
@@ -485,4 +487,44 @@ it("warns that an open replacement blocks the supplier order and saves the decis
 
   await waitFor(() => expect(replacementBody).toEqual({ version: 3, replacement: true, decision: "Разрешено" }));
   await waitFor(() => expect(screen.queryByText(/незакрытая замена/)).not.toBeInTheDocument());
+});
+
+it("DOC-1: prints «Разрешение на замену» once the decision is «Разрешено»", async () => {
+  const allowed: ProcurementLine = {
+    ...line,
+    status: "Готов к запросу",
+    buyer: "Закупщик",
+    supplier: "Поставщик",
+    design_article: "КД-АРТ-001",
+    site_name: "Аналог XYZ",
+    actual_quantity: "2",
+    actual_unit: "шт",
+    replacement: true,
+    replacement_decision: "Разрешено",
+    replacement_open: false,
+    permission_number: "РЗ-20260929-01",
+    permission_date: "2026-09-29",
+  };
+  const printedPaths: string[] = [];
+  const printWindow = { document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
+  vi.spyOn(window, "open").mockReturnValue(printWindow as unknown as Window);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    printedPaths.push(path);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: [allowed] });
+    if (path.endsWith("/replacement-permission")) return json({ sheet: {
+      title: "РАЗРЕШЕНИЕ НА ЗАМЕНУ РЗ-20260929-01", subtitle: "", columns: [], rows: [], note: "", sign: "",
+    } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const button = await screen.findByRole("button", { name: /Печать «Разрешение на замену» РЗ-20260929-01/ });
+
+  fireEvent.click(button);
+
+  await waitFor(() => expect(printedPaths).toContain(`/api/procurement/${allowed.id}/replacement-permission`));
+  await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
+  expect(printWindow.document.write.mock.calls[0][0]).toContain("РАЗРЕШЕНИЕ НА ЗАМЕНУ РЗ-20260929-01");
 });

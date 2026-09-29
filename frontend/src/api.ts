@@ -111,6 +111,8 @@ export interface ProcurementLine {
   replacement: boolean | null;
   replacement_decision: "Разрешено" | "Запрещено" | null;
   replacement_open: boolean;
+  permission_number: string | null;
+  permission_date: string | null;
 }
 
 export type MoneyDriver = "net" | "gross" | "vat" | "qty" | "sum";
@@ -1053,6 +1055,8 @@ export const procurementApi = {
       method: "PATCH",
       body: JSON.stringify({ version, replacement, decision }),
     }),
+  replacementPermissionSheet: (lineId: string) =>
+    api<{ sheet: PrintSheet }>(`/api/procurement/${lineId}/replacement-permission`),
   recordInvoice: (
     lineId: string,
     version: number,

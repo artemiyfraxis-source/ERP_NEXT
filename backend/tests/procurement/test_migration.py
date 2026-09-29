@@ -48,3 +48,20 @@ def test_replacement_migration_adds_nullable_columns_and_downgrade_removes_them(
 
     command.downgrade(config, "0034_warehouse_item_types")
     assert not columns & _columns(database_path)
+
+
+def test_replacement_permission_migration_adds_nullable_columns_and_downgrade_removes_them(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "procurement.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+    columns = {"permission_number", "permission_date"}
+
+    command.upgrade(config, "0036_identity_departments")
+    assert not columns & _columns(database_path)
+
+    command.upgrade(config, "0037_procurement_replacement_permission")
+    assert columns <= _columns(database_path)
+
+    command.downgrade(config, "0036_identity_departments")
+    assert not columns & _columns(database_path)
