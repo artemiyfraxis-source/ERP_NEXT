@@ -339,3 +339,37 @@ def test_issued_request_cannot_be_deleted(fulfillment_api):
         f"Заявка {body['number']} уже выдавалась (позиций с выдачей: 1). "
         "Удалять её нельзя — это документ проведённого списания. Оформи возврат."
     )
+
+
+def test_manual_request_reserves_picked_lots_at_creation_and_keeps_it_new(fulfillment_api):
+    client, lot, factory = fulfillment_api  # lot: Разъём, 6 шт available
+
+    def create():
+        return client.post(
+            "/api/issues",
+            headers={"Idempotency-Key": "issue-form-fifo"},
+            json={
+                "purpose": "48К.13",
+                "deadline": "2026-10-01",
+                "lines": [
+                    {"article": "", "name": "Разъём", "unit": "шт", "requirement": "4", "lot_id": str(lot.id)},
+                    {"article": "", "name": "Разъём", "unit": "шт", "requirement": "5", "lot_id": str(lot.id)},
+                ],
+            },
+        )
+
+    created = create()
+    retry = create()
+
+    assert created.status_code == 200, created.text
+    body = created.json()["request"]
+    assert retry.json()["request"]["id"] == body["id"]
+    # issueCreateTasks_: 4 from the lot, then the 2 left on it; the missing 3 wait as a row without a lot.
+    assert body["status"] == "Новая"
+    assert [(line["requirement"], line["reserved"], line["lot"] is not None) for line in body["lines"]] == [
+        ("4", "4", True), ("2", "2", True), ("3", "0", False),
+    ]
+    assert body["shortfall"] == "Разъём (ГРН не выбран): −3"
+    assert body["at_work"] is None
+    with factory() as uow:
+        assert uow.warehouse.get(lot.id).reserved == Decimal("6")

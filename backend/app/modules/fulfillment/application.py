@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -79,6 +79,9 @@ class CreateFulfillmentCommand:
     lines: tuple[FulfillmentLine, ...]
     actor: Actor
     now: datetime
+    # The lot each line is picked from (IssueForm → queueIssueRequest items {wh, grn, pkt, qty}); None — no lot,
+    # the line waits for a delivery. Empty — no line has a lot.
+    lot_ids: tuple[UUID | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,12 @@ def next_request_number(year: int, existing: Sequence[str]) -> str:
     return f"{prefix}{max(used, default=0) + 1:07d}"
 
 
+def _picked_lots(command: CreateFulfillmentCommand) -> tuple[UUID | None, ...]:
+    if command.lot_ids and len(command.lot_ids) != len(command.lines):
+        raise FulfillmentValidationError("Партии указаны не для каждой позиции")
+    return command.lot_ids or (None,) * len(command.lines)
+
+
 def _creation_fingerprint(command: CreateFulfillmentCommand) -> str:
     payload = {
         "purpose": str(command.purpose).strip(),
@@ -144,8 +153,9 @@ def _creation_fingerprint(command: CreateFulfillmentCommand) -> str:
                 "name": line.name,
                 "unit": line.unit,
                 "requirement": str(line.requirement),
+                **({"lot_id": str(lot_id)} if lot_id else {}),
             }
-            for line in command.lines
+            for line, lot_id in zip(command.lines, _picked_lots(command))
         ],
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -212,8 +222,32 @@ def create_fulfillment(
             lines=command.lines,
             created_at=command.now,
         )
+        # issueCreateTasks_: a line with a picked lot reserves min(need, БАЛАНС − РЕЗЕРВ) right away; what the lot
+        # does not cover becomes a row without a lot (waits for a delivery, shows in НЕДОБОР); a lot that is gone or
+        # empty leaves the whole line waiting. The request stays «Новая».
+        reserved = 0
+        for line, lot_id in zip(command.lines, _picked_lots(command)):
+            if lot_id is None:
+                continue
+            lot = uow.warehouse.get(lot_id)
+            give = min(line.requirement, lot.available) if lot is not None else Decimal("0")
+            if lot is None or give <= 0:
+                continue
+            snapshot = LotSnapshot(
+                lot_id=lot.id,
+                warehouse=lot.warehouse,
+                grn=lot.grn,
+                package=lot.package,
+                storage_location=lot.storage_location,
+            )
+            request = request.bind_line(line.id, snapshot, give, lot.unit, touch=False)
+            uow.warehouse.add(lot.reserve(give))
+            reserved += 1
+        request = replace(request, version=1)
         uow.fulfillment.add(request)
-        _audit(request, "fulfillment.created", command.actor, command.now, {"number": request.number}, uow)
+        _audit(request, "fulfillment.created", command.actor, command.now, {
+            "number": request.number, "reserved": reserved, "shortfall": request.shortfall,
+        }, uow)
         uow.commit()
         return request
 

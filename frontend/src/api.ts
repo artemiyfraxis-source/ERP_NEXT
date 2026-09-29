@@ -411,6 +411,8 @@ export interface FulfillmentRequest {
   handout_location: string | null;
   return_location: string | null;
   fully_reserved: boolean;
+  /** НЕДОБОР (issueShortText_): what a lot does not close yet. */
+  shortfall?: string;
   /** issueProjectOf_: the part of НАЗНАЧЕНИЕ before « · »; "" for a manual request. */
   project?: string;
   /** FF-4 stage dates by the first hit: В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА. */
@@ -442,6 +444,8 @@ export interface FulfillmentDraftLine {
   name: string;
   unit: string;
   requirement: string;
+  /** The picked warehouse lot (IssueForm FIFO pick); reserved when the request is created. */
+  lot_id?: string;
 }
 
 export interface ProductionOperator {

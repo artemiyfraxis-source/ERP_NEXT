@@ -62,6 +62,7 @@ class CreateLinePayload(BaseModel):
     name: str = Field(min_length=1, max_length=1024)
     unit: str = Field(min_length=1, max_length=32)
     requirement: Quantity
+    lot_id: UUID | None = None
 
 
 class CreatePayload(BaseModel):
@@ -137,6 +138,7 @@ def _result(request: FulfillmentRequest) -> dict:
         "handout_location": request.handout_location,
         "return_location": request.return_location,
         "fully_reserved": request.fully_reserved,
+        "shortfall": request.shortfall,
         "project": project_of(request.purpose),
         "at_work": _stamp(request.at_work),
         "at_picked": _stamp(request.at_picked),
@@ -217,11 +219,11 @@ def available_lots(
     q: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
     with uow_factory() as uow:
-        lots = uow.warehouse.list(limit=1000, query=q, include_zero=False)
+        lots = uow.warehouse.list(limit=5000, query=q, include_zero=False)
     candidates = [
         lot for lot in lots
         if lot.available > 0  # portalIssueStock: every lot with a balance, whatever its unit
-    ][:200]
+    ]  # portalIssueStock: the whole warehouse at once, the browser searches
     return {"lots": [{
         "id": str(lot.id),
         "warehouse": lot.warehouse,
@@ -291,6 +293,7 @@ def create(
                 unit=line.unit,
                 requirement=line.requirement,
             ) for line in payload.lines),
+            lot_ids=tuple(line.lot_id for line in payload.lines) if any(line.lot_id for line in payload.lines) else (),
             actor=principal.actor,
             now=now,
         ),

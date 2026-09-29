@@ -251,7 +251,10 @@ class FulfillmentRequest:
         lot: LotSnapshot,
         quantity: Decimal,
         unit: str | None = None,
+        *,
+        touch: bool = True,
     ) -> FulfillmentRequest:
+        """touch=False — the reserve made while the request is created (issueCreateTasks_): it stays «Новая»."""
         self._require_editable()
         updated: list[FulfillmentLine] = []
         found = False
@@ -268,8 +271,23 @@ class FulfillmentRequest:
             raise FulfillmentValidationError("Позиция заявки не найдена")
         # FF-3 (Issue.gs issueHeadSync_): the first bound lot moves «Новая» → «Недоукомплектован» and nothing else;
         # «Укомплектован» is a separate manual step (`mark_complete`) with the whole-kit gate.
-        status = FulfillmentStatus.UNDERFILLED if self.status is FulfillmentStatus.NEW else self.status
+        status = FulfillmentStatus.UNDERFILLED if touch and self.status is FulfillmentStatus.NEW else self.status
         return replace(self, lines=tuple(updated), status=status, version=self.version + 1)
+
+    @property
+    def shortfall(self) -> str:
+        """НЕДОБОР of the header (Issue.gs issueShortText_): what a lot does not close yet is what we wait for."""
+        def number(value: Decimal) -> str:
+            return format(value.quantize(Decimal("0.01")).normalize(), "f")
+
+        parts = []
+        for line in self.lines:
+            picked = line.issued if line.issued > 0 else line.reserved
+            if picked >= line.requirement:
+                continue
+            where = f" ({line.lot.grn})" if line.lot else " (ГРН не выбран)"
+            parts.append(f"{line.name}{where}: −{number(line.requirement - picked)}")
+        return "; ".join(parts)
 
     def open_lines(self) -> tuple[FulfillmentLine, ...]:
         """Lines a lot does not close yet (issueStatusSweep_: КОЛ-ВО < ПОТРЕБНОСТЬ)."""
