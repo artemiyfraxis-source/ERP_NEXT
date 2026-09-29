@@ -194,16 +194,16 @@ def test_quality_details_migration_adds_manufacturer_country_and_quality_documen
     config = Config(backend_root / "alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
 
-    command.upgrade(config, "0056_identity_explicit_access")
+    command.upgrade(config, "0058_shipping_upd_files")
     with sqlite3.connect(database_path) as connection:
         _insert(connection, "1", "Принято")
 
-    command.upgrade(config, "0057_receiving_quality_details")
+    command.upgrade(config, "0059_receiving_quality_details")
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT manufacturer, country, quality_document_number, quality_document_date FROM receiving_lines"
         ).fetchall() == [("", "", "", None)]
 
-    command.downgrade(config, "0056_identity_explicit_access")
+    command.downgrade(config, "0058_shipping_upd_files")
     with sqlite3.connect(database_path) as connection:
         assert "manufacturer" not in _columns(connection)
