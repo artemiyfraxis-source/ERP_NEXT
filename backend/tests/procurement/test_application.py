@@ -72,6 +72,7 @@ class FakeProcurementRepository:
     def __init__(self):
         self.items = {}
         self.orders = {}
+        self.documents = {}
 
     def by_source_idempotency_key(self, key):
         return next(
@@ -115,6 +116,12 @@ class FakeProcurementRepository:
 
     def get_order(self, order_number):
         return self.orders.get(order_number)
+
+    def add_order_document(self, document, content):
+        self.documents[document.order_number] = (document, content)
+
+    def get_order_document(self, order_number):
+        return self.documents.get(order_number)
 
 
 class FakeAppendOnlyRepository:

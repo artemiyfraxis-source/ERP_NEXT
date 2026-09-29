@@ -256,6 +256,8 @@ td small { margin-top: 4px; color: #7b857e; }
 .row-edit-form label { flex: 1 1 180px; }
 .row-edit-form > p { flex-basis: 100%; margin: 0; }
 .procurement-card .hint, .procurement-card .money-summary { display: block; margin: 10px 0 0; color: var(--muted-foreground); font-size: 12px; }
+.supplier-document { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.supplier-document a.secondary { text-decoration: none; }
 .procurement-card .supplier-letter { margin: 10px 0 0; white-space: pre-wrap; font-family: inherit; font-size: 12px; line-height: 1.5; color: var(--foreground); }
 .warehouse-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(390px, 1fr)); gap: 15px; }
 .stock-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 17px 0; }

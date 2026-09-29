@@ -20,6 +20,7 @@ from app.modules.procurement.application import (
     consume_procurement_requested,
     save_procurement_facts,
     supplier_order,
+    supplier_order_document,
     take_procurement_in_work,
 )
 from app.modules.procurement.domain import (
@@ -28,7 +29,10 @@ from app.modules.procurement.domain import (
     ProcurementValidationError,
     ReplacementDecision,
     SupplierRequestGroup,
+    ProcurementTraceability,
     create_line_from_requested,
+    date_supplier_segments,
+    delivery_receiver,
     group_supplier_requests,
     next_order_number,
     order_number,
@@ -36,6 +40,9 @@ from app.modules.procurement.domain import (
     position_paragraphs,
     supplier_reference,
     supplier_request_blockers,
+    supplier_request_document_html,
+    supplier_request_document_title,
+    supplier_request_folder,
     supplier_request_letter,
 )
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
@@ -203,6 +210,12 @@ def test_position_paragraphs_prefer_site_name_and_mark_quality_document():
     ]
 
 
+def test_position_paragraphs_name_the_quality_document_type():
+    typed = ready_line(1, quality_document="Да", trace=ProcurementTraceability(quality_document_type=" Паспорт "))
+
+    assert position_paragraphs([typed])[-1] == "\tДокумент по качеству: требуется (Паспорт)."
+
+
 def test_letter_carries_supplier_reference_positions_vat_and_address():
     group = SupplierRequestGroup("ООО Поставка", "Закупка", (ready_line(1),))
 
@@ -211,7 +224,39 @@ def test_letter_carries_supplier_reference_positions_vat_and_address():
     assert letter[0] == "ООО Поставка · REQ# 15.09.2026 - MR#RND.001 PO-001"
     assert "1. Наименование: Разъём" in letter
     assert "Работаем с НДС 22%. Карточка организации — во вложении." in letter
-    assert letter[-1] == "Адрес доставки: г. Москва, ул. 6-я Радиальная, д. 17."
+    assert letter[-2] == "Адрес доставки: г. Москва, ул. 6-я Радиальная, д. 17."
+    assert letter[-1] == "Контактное лицо для доставки: Гусев Алексей, тел. +79259647705."
+
+
+def test_delivery_contact_follows_the_point_or_the_default_receiver():
+    ramenskoe = "г. Раменское, ул. 100-й Свирской Дивизии, д. 52"
+    group = SupplierRequestGroup("ООО Поставка", "Закупка", (ready_line(1, delivery_point=ramenskoe),))
+
+    assert supplier_request_letter(group, "PO-001").split("\n")[-2:] == [
+        f"Адрес доставки: {ramenskoe}.",
+        "Контактное лицо для доставки: Малышев Степан, тел. +7 977 846 3541.",
+    ]
+    # receivers[g.ship] — точный ключ; иначе 'default'.
+    assert delivery_receiver("г. Тверь").name == "Гусев Алексей"
+    assert delivery_receiver(ramenskoe.upper()).name == "Гусев Алексей"
+
+
+# --- Document --------------------------------------------------------------------------------------
+
+
+def test_document_folder_is_year_month_supplier():
+    assert date_supplier_segments(date(2026, 9, 5), ' ООО "А/Б" ') == ["2026", "09 Сентябрь", "ООО А Б"]
+    assert date_supplier_segments(date(2027, 1, 31), "  ") == ["2027", "01 Январь", "Без поставщика"]
+    assert supplier_request_folder(date(2026, 9, 5), "ООО А") == "Запросы поставщикам/2026/09 Сентябрь/ООО А"
+    assert supplier_request_document_title("PO-007", date(2026, 9, 5)) == "PO-007 от 05.09.2026"
+
+
+def test_document_is_the_template_one_paragraph_per_line_escaped():
+    page = supplier_request_document_html("PO-001 от 05.09.2026", "ООО <А> · REQ#\n\n1. Наименование: X\n\tКол-во: 2 шт")
+
+    assert "<title>PO-001 от 05.09.2026</title>" in page
+    assert "<p>ООО &lt;А&gt; · REQ#</p><p>&nbsp;</p><p>1. Наименование: X</p><p>\tКол-во: 2 шт</p>" in page
+    assert "<script" not in page
 
 
 # --- Line transition -------------------------------------------------------------------------------
@@ -285,6 +330,12 @@ def test_build_issues_one_order_per_group_numbered_through_the_table():
         (a1.id, "PO-001"), (a2.id, "PO-001"), (b1.id, "PO-002"),
     ]
     assert "PO-001" in result.orders[0].letter and "2. Наименование" in result.orders[0].letter
+    meta, content = supplier_order_document("PO-001", uow)
+    assert (meta.file_name, meta.folder, meta.created_by) == (
+        "PO-001 от 16.09.2026.html", "Запросы поставщикам/2026/09 Сентябрь/ООО А", "Петров",
+    )
+    assert meta.size == len(content) and "2. Наименование" in content.decode("utf-8")
+    assert result.orders[0].document == meta
 
     make_ready(uow, 5, supplier="ООО А")
     again = build_supplier_requests(BuildSupplierRequestsCommand(actor=BUYER, now=now), uow)
@@ -349,8 +400,22 @@ def test_supplier_requests_endpoint_persists_orders_and_serves_the_letter(procur
     assert order.json()["order"]["line_ids"] == [str(second.id)]
     assert order.json()["order"]["letter"].startswith(f"ООО Б · REQ# 15.09.2026 - MR#RND.002 {numbers['ООО Б']}")
     assert client.get("/api/procurement/supplier-requests/PO-404").status_code == 404
+    document = order.json()["order"]["document"]
+    assert document["url"] == f"/api/procurement/supplier-requests/{numbers['ООО Б']}/document"
+    assert document["file_name"] == f"{numbers['ООО Б']} от 15.09.2026.html"
+    assert document["folder"] == "Запросы поставщикам/2026/09 Сентябрь/ООО Б"
+    assert body["orders"][0]["document"]["url"].endswith("/document")
+    file = client.get(document["url"])
+    assert file.status_code == 200
+    assert file.headers["content-type"].startswith("text/html")
+    assert file.headers["content-disposition"].startswith("inline; filename*=UTF-8''")
+    assert "Контактное лицо для доставки: Гусев Алексей, тел. +79259647705." in file.text
+    assert client.get("/api/procurement/supplier-requests/PO-404/document").status_code == 404
     mine = client.get("/api/procurement/mine").json()["lines"]
     assert {l["order_number"] for l in mine} == {"PO-001", "PO-002"}
+    assert {l["order_url"] for l in mine} == {
+        "/api/procurement/supplier-requests/PO-001/document", "/api/procurement/supplier-requests/PO-002/document",
+    }
 
     nothing = client.post("/api/procurement/supplier-requests")
     assert nothing.status_code == 422
@@ -388,3 +453,30 @@ def test_supplier_orders_migration_round_trip(tmp_path):
     assert state() == (True, True)
     command.downgrade(config, "0027_warehouse_location_as_is")
     assert state() == (False, False)
+
+
+def test_supplier_order_documents_migration_backfills_issued_orders(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "procurement.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+
+    command.upgrade(config, "0061_procurement_traceability")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO procurement_supplier_orders (order_number, order_date, supplier, task_type, delivery_point,"
+            " buyer_id, buyer_name, created_at, letter) VALUES ('PO-001', '2026-09-15', 'ООО А', 'Закупка', 'x',"
+            " '00000000000000000000000000000001', 'Петров', '2026-09-15 10:00:00', 'ООО А · REQ#\nДобрый день!')"
+        )
+    command.upgrade(config, "0062_procurement_supplier_order_documents")
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT file_name, folder, created_by, size, content FROM procurement_supplier_order_documents"
+        ).fetchone()
+    assert row[:3] == ("PO-001 от 15.09.2026.html", "Запросы поставщикам/2026/09 Сентябрь/ООО А", "Петров")
+    assert row[3] == len(row[4]) and "<p>Добрый день!</p>" in row[4].decode("utf-8")
+
+    command.downgrade(config, "0061_procurement_traceability")
+    with sqlite3.connect(database_path) as connection:
+        tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "procurement_supplier_order_documents" not in tables
