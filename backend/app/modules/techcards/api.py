@@ -49,7 +49,6 @@ from .application import (
     replace_operation_library,
 )
 
-from .domain.cut_lengths import CalcRow, CalcWire, cut_lengths_from_calc
 from .domain.coax import КоаксСборка
 from .domain.coax import Сторона as КоаксСторона
 from .domain.coax import построить_коакс
@@ -78,24 +77,6 @@ class ProjectTechcardPayload(BaseModel):
 
 class VersionPayload(BaseModel):
     version: int = Field(ge=1)
-
-
-class CutLengthWirePayload(BaseModel):
-    id: str = Field(min_length=1, max_length=255)
-    art: str = Field(default="", max_length=512)
-    name: str = Field(default="", max_length=512)
-
-
-class CutLengthCalcPayload(BaseModel):
-    code: str = Field(default="", max_length=255)
-    comp: str = Field(default="", max_length=512)
-    req: str = Field(default="", max_length=2000)
-    l: str = Field(default="", max_length=64)
-
-
-class CutLengthsPayload(BaseModel):
-    wires: list[CutLengthWirePayload] = Field(max_length=500)
-    calc_ops: list[CutLengthCalcPayload] = Field(max_length=2000)
 
 
 class RebuildTechcardPayload(VersionPayload):
@@ -489,19 +470,6 @@ def discard_project_etk_draft(
         now=now,
     ), uow_factory()))
     return _card_result(card)
-
-
-@router.post("/techcards/cut-lengths")
-def calc_cut_lengths(
-    payload: CutLengthsPayload,
-    _principal: Annotated[Principal, Depends(techcards_edit_principal)],
-) -> dict:
-    """Длины резки проводов из строк расчёта КБn (SUPPLYMAP calcCutLengths_, TcGenInline.html:2276)."""
-    lengths = cut_lengths_from_calc(
-        [CalcWire(id=item.id, art=item.art, name=item.name) for item in payload.wires],
-        [CalcRow(code=item.code, comp=item.comp, req=item.req, l_m=item.l) for item in payload.calc_ops],
-    )
-    return {"lengths": lengths}
 
 
 @router.put("/techcards/projects/{card_id}/operations/{operation_key}")

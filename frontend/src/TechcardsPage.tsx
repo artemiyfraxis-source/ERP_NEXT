@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
-import { TcGenerator, type BomItem } from "./TcGenerator";
+import { TcGenerator } from "./TcGenerator";
 import {
   kitsetsApi,
   techcardsApi,
+  type KitsetBom,
   type OperationCardDetail,
   type OperationCardSummary,
   type OperationRecordEdit,
@@ -333,7 +334,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     const project = projectFilter.trim().toLocaleUpperCase("ru-RU");
     return project ? cards.filter((card) => card.project.toLocaleUpperCase("ru-RU") === project) : cards;
   }, [cards, projectFilter]);
-  const [bom, setBom] = useState<BomItem[] | undefined>(undefined);
+  const [kit, setKit] = useState<{ data: KitsetBom | null; error: string }>({ data: null, error: "" });
   const cardColumns: DataColumn<ProjectTechcard>[] = [
     { key: "project", title: "Проект", value: (card) => card.project,
       render: (card) => <button className="link-button" onClick={() => setSelectedId(card.id)}><strong>{card.project}</strong></button> },
@@ -384,12 +385,14 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
     void techcardsApi.revisions(selected.id).then((result) => setRevisions(result.items)).catch(() => setRevisions([]));
   }, [selectedId, selected?.version]);
   useEffect(() => {
-    // SUPPLYMAP tcLoadBomFromKit: состав для генератора — из набора проекта; набора нет → ручной состав.
-    if (!selected) { setBom(undefined); return; }
+    // SUPPLYMAP portalTcGenData → tcLoadBomFromKit: состав из набора проекта + строки листа КБn расчёта;
+    // набора или сборки нет — генератор показывает ошибку.
+    setKit({ data: null, error: "" });
+    if (!selected) return;
     let live = true;
     void kitsetsApi.bom(selected.project, selected.item_index)
-      .then((result) => { if (live) setBom(result.components.map(({ art, name, type, qty }) => ({ art, name, type, qty }))); })
-      .catch(() => { if (live) setBom(undefined); });
+      .then((result) => { if (live) setKit({ data: result, error: "" }); })
+      .catch((reason) => { if (live) setKit({ data: null, error: reason instanceof Error ? reason.message : "Состав сборки не прочитан" }); });
     return () => { live = false; };
   }, [selected?.project, selected?.item_index]);
   useEffect(() => {
@@ -513,7 +516,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
         setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
       }} />
       {!operations(selected.document).length && <div className="empty">ЭТК ещё не собрана.</div>}
-      {canGenerate && <TcGenerator card={selected} bom={bom} busy={busy} onBuild={build} onDiscard={discardDraft} onConfig={(config) => { generatedConfig.current = config; }} />}
+      {canGenerate && <TcGenerator card={selected} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} onConfig={(config) => { generatedConfig.current = config; }} />}
       {canGenerate && <details className="build-config"><summary>JSON-конфигурация (для эксперта)</summary>
         <div className="form-actions"><button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button></div>
         <label>Config генератора SUPPLYMAP<textarea aria-label="Конфигурация автоматической сборки" rows={14} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>

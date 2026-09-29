@@ -8,6 +8,7 @@ techcards, the side effects report their own errors (`erpError`, `shipError`, �
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
@@ -114,6 +115,9 @@ def _audit(uow, project: str, event_type: str, actor: Actor, now: datetime, deta
     ))
 
 
+_log = logging.getLogger(__name__)
+
+
 class CalcSheetsReader(Protocol):
     """Google Sheets port: whole named sheets as display values plus the file title (see `google_sheets`)."""
 
@@ -129,6 +133,33 @@ def read_calc_by_link(url: str, reader: Callable[[], CalcSheetsReader]):
         raise KitsetValidationError(f"Не похоже на ссылку Google Таблицы: {link}")
     title, sheets = reader().read_sheets(spreadsheet_id, (PROJECT_SHEET, SPEC_SHEET))
     return parse_calc_sheets(sheets, title, link)
+
+
+def calc_ops_by_link(calc_source: str, index: str, reader: Callable[[], CalcSheetsReader]) -> list[dict[str, str]]:
+    """`tcCalcOps_(calcUrl, index)`: rows of the calculation's КБn sheet for the generator — from row 5, columns
+    A..H as the sheet shows them: {code: B, comp: C, n: D, l: E («L», м), req: H («Требования к задаче»)}, rows
+    without a code dropped. The estimator writes cut lengths and tinning there. A read failure must not stop the
+    generator: empty list, as in SUPPLYMAP."""
+    source = str(calc_source or "")
+    spreadsheet_id = spreadsheet_id_from_url(source) or source
+    name = str(index or "")
+    if not spreadsheet_id or not name:
+        return []
+    try:
+        _title, sheets = reader().read_sheets(spreadsheet_id, (name,))
+    except Exception as error:  # noqa: BLE001 — SUPPLYMAP logs a WARN and returns []
+        _log.warning("tcCalcOps_: %s", error)
+        return []
+    grid = sheets.get(name) or []
+    if len(grid) < 5:
+        return []
+
+    def clean(row: list[str], column: int) -> str:
+        return " ".join(str(row[column] if column < len(row) else "").split())
+
+    rows = [{"code": clean(row, 1), "comp": clean(row, 2), "n": clean(row, 3), "l": clean(row, 4), "req": clean(row, 7)}
+            for row in grid[4:]]
+    return [row for row in rows if row["code"]]
 
 
 def calc_sheets_reader(state: Any) -> CalcSheetsReader:
