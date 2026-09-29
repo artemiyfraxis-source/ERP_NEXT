@@ -1,6 +1,7 @@
 ﻿# Обновить локальную ERP (копия ERP_NEXT на ПК, база real.db) до свежего main, не трогая данные.
 # Запуск из корня копии: powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1
-# Шаги: копия базы в backend\<база>.bak, main, зависимости, миграции, сборка сайта, перезапуск API на порту.
+# Шаги: копия базы в backend\<база>.bak, main, зависимости, миграции, сотрудники (без --reset-pins),
+# сборка сайта, перезапуск API на порту.
 param([string]$DbFile = 'real.db', [int]$Port = 8022)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot\.."
@@ -29,6 +30,16 @@ Set-Location $backend
 $env:ERP_DATABASE_URL = "sqlite+pysqlite:///$DbFile"
 $env:ERP_COOKIE_SECURE = '0'
 & $py -m alembic upgrade head; Check 'alembic upgrade'
+
+Write-Host '== Сотрудники из SUPPLYMAP (выданные PIN не меняются, PIN получают только новые)'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$staff = & $py -X utf8 -m app.modules.identity.import_staff --apply
+if ($LASTEXITCODE -ne 0) { Write-Warning "Сотрудники не обновлены (ошибка выше)" }
+else {
+  $new = @($staff | Where-Object { "$_" -match ' создан\s*$' })
+  if ($new.Count) { Write-Host "Новые сотрудники, раздайте им PIN:"; $new | ForEach-Object { Write-Host "  $_" } }
+  else { Write-Host 'Новых сотрудников нет.' }
+}
 
 Write-Host '== Сборка сайта'
 Set-Location (Join-Path $root 'frontend')
