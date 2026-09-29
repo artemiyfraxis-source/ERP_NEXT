@@ -226,26 +226,23 @@ function KitTile({ item, statuses, canEdit, open, remove }: {
   </div>;
 }
 
-function CreateFromCalc({ close, done, number = "", source = "", title = "➕ Создать проект из расчёта" }: {
-  close: () => void; done: (project: string, note: string, bad: boolean) => void; number?: string; source?: string; title?: string;
+function CreateFromCalc({ close, done }: {
+  close: () => void; done: (project: string, note: string, bad: boolean) => void;
 }) {
-  const [url, setUrl] = useState(/^https?:\/\//i.test(source) ? source : "");
-  const [file, setFile] = useState<File | null>(null);
-  const [form, setForm] = useState({ number, deadline: "", shipping_point: "", contact: "", phone: "" });
+  const [url, setUrl] = useState("");
+  const [form, setForm] = useState({ number: "", deadline: "", shipping_point: "", contact: "", phone: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const refresh = !!number;
 
   async function submit() {
     if (busy) return;
-    if (!url.trim() && !file) { setError("Вставь ссылку на расчёт или выбери файл .xlsx"); return; }
+    if (!url.trim()) { setError("Вставь ссылку на расчёт"); return; }
     setBusy(true); setError("");
     try {
       const { res } = await kitsetsApi.load({
-        ...(url.trim() ? { url: url.trim() } : { file_name: file!.name, content_b64: await readFileBase64(file!) }),
-        number: form.number,
+        url: url.trim(), number: form.number,
         deadline: form.deadline || null,
-        ship: refresh ? null : { shipping_point: form.shipping_point, contact: form.contact, phone: form.phone },
+        ship: { shipping_point: form.shipping_point, contact: form.contact, phone: form.phone },
       });
       const problems = [
         res.erp_error && `реестр ERP: ${res.erp_error}`,
@@ -259,25 +256,21 @@ function CreateFromCalc({ close, done, number = "", source = "", title = "➕ С
     } finally { setBusy(false); }
   }
 
+  const title = "➕ Создать проект из расчёта";
   return <div className="panel kit-modal" role="dialog" aria-label={title}>
     <h3>{title}</h3>
-    <p className="page-sub">{refresh
-      ? "Расчёт перечитается по ссылке. Состав обновится, правки количеств, брака, наименований и ГРН сохранятся, статус и дедлайн не тронутся."
-      : "Нужна только ссылка на расчёт: номер проекта, заказчик, сборки и состав читаются из листов ЗКЗ и СПЯ. Проект заведётся в реестре ERP вместе с позициями. Если он уже есть — обновится состав, правки количеств сохранятся, статус и дедлайн не тронутся. Нет доступа к таблице — загрузи файл .xlsx (Файл → Скачать → Microsoft Excel)."}</p>
+    <p className="page-sub">Нужна только ссылка: номер проекта, заказчик, сборки и состав читаются из листов ЗКЗ и СПЯ. Проект заведётся в реестре ERP вместе с позициями. Если он уже есть — обновится состав, правки количеств сохранятся, статус и дедлайн не тронутся.</p>
     <div className="grid wide">
-      <label>Ссылка на расчёт<input aria-label="Ссылка на расчёт" value={url} placeholder="https://docs.google.com/spreadsheets/d/…" onChange={(event) => setUrl(event.target.value)} /></label>
-      <label>или файл расчёта (.xlsx)<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
-      {!refresh && <>
-        <label>№ проекта<input value={form.number} placeholder="пусто — возьмём из расчёта" onChange={(event) => setForm({ ...form, number: event.target.value })} /></label>
-        <label>Дедлайн<input type="date" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></label>
-        <label>Адрес отгрузки<input value={form.shipping_point} placeholder="можно позже — в «Отгрузке»" onChange={(event) => setForm({ ...form, shipping_point: event.target.value })} /></label>
-        <label>Контактное лицо<input value={form.contact} placeholder="кто принимает" onChange={(event) => setForm({ ...form, contact: event.target.value })} /></label>
-        <label>Телефон<input value={form.phone} placeholder="для связи" onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
-      </>}
+      <label>Ссылка на расчёт<input aria-label="Ссылка на расчёт" value={url} placeholder="https://docs.google.com/spreadsheets/…" onChange={(event) => setUrl(event.target.value)} /></label>
+      <label>№ проекта<input value={form.number} placeholder="пусто — возьмём из расчёта" onChange={(event) => setForm({ ...form, number: event.target.value })} /></label>
+      <label>Дедлайн<input type="date" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></label>
+      <label>Адрес отгрузки<input value={form.shipping_point} placeholder="можно позже — в окне «Отгрузить»" onChange={(event) => setForm({ ...form, shipping_point: event.target.value })} /></label>
+      <label>Контактное лицо<input value={form.contact} placeholder="кто принимает" onChange={(event) => setForm({ ...form, contact: event.target.value })} /></label>
+      <label>Телефон<input value={form.phone} placeholder="для связи" onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="page-actions">
-      <button className="primary" disabled={busy} onClick={() => void submit()}>{busy ? "Читаю расчёт…" : refresh ? "Обновить" : "Создать"}</button>
+      <button className="primary" disabled={busy} onClick={() => void submit()}>{busy ? "Читаю расчёт…" : "Создать"}</button>
       <button className="secondary" onClick={close}>Отмена</button>
     </div>
   </div>;
@@ -291,6 +284,18 @@ function KitsetCardView({ project, canEdit, back }: { project: string; canEdit: 
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+
+  /* kitRefresh: перечитать расчёт по сохранённой ссылке. Номер карточки передаётся явно: в ячейке расчёта он бывает
+     короче («720К.»), и обновление завело бы рядом вторую карточку. */
+  async function refresh() {
+    if (!card || refreshing) return;
+    setRefreshing(true); setError("");
+    try {
+      await kitsetsApi.load({ url: card.calc_source, number: card.project });
+      await load();
+    } catch (reason) { setError(message(reason, "Расчёт не прочитан")); }
+    finally { setRefreshing(false); }
+  }
 
   async function load() {
     try { setCard(await kitsetsApi.get(project)); }
@@ -331,16 +336,13 @@ function KitsetCardView({ project, canEdit, back }: { project: string; canEdit: 
 
   return <section className="page projects-page">
     <header className="page-head"><button className="secondary small" onClick={back}>← Назад</button><h1>📋 {card.project}</h1><span className="kit-status">{card.status}</span></header>
-    <p className="page-sub">{card.customer || "—"} · расчёт: {card.calc_source || "—"} · обновлено {new Date(card.updated_at).toLocaleString("ru-RU")} {card.updated_by}</p>
+    <p className="page-sub">{card.customer || "—"} · <a href={card.calc_source} target="_blank" rel="noopener">расчёт</a> · обновлено {new Date(card.updated_at).toLocaleString("ru-RU")} {card.updated_by}</p>
     <div className="page-actions">
-      {canEdit && <button className="secondary" onClick={() => setRefreshing(true)}>🔄 Обновить из расчёта</button>}
+      {canEdit && <button className="secondary" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "🔄 Обновить из расчёта"}</button>}
       {canEdit && <button className="secondary" onClick={() => void remove()}>🗑 Удалить карточку</button>}
       <button className="secondary" onClick={() => openSection("shipping", { ship_project: card.project })}>🚚 Отгрузить</button>
       {note && <span className="muted">{note}</span>}
     </div>
-    {refreshing && <CreateFromCalc number={card.project} source={card.calc_source} title="🔄 Обновить из расчёта" close={() => setRefreshing(false)} done={(_project, text, bad) => {
-      setRefreshing(false); if (bad) setError(text); else setNote(text); void load();
-    }} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="shipping-tabs" role="tablist">
       {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "secondary active" : "secondary"} onClick={() => setTab(key)}>{label}</button>)}
@@ -571,16 +573,18 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
       current={draftOf(picking.assembly, picking.component).lot}
       close={() => setPicking(null)}
       pick={(lot) => { edit(picking.assembly, picking.component, { lot }); void save(picking.assembly, picking.component, { lot }); setPicking(null); }} />}
-    <div className="kit-spec"><DataTable
-      rows={specRows}
-      columns={specColumns}
-      rowKey={({ assembly, component }) => key(assembly.index, component.art)}
-      groupBy={({ assembly }) => `${assembly.index} ${assembly.name} · кол-во ${assembly.run}`}
-      storageKey="kit-spec"
-      label="Спецификация проекта"
-      exportName={`Спецификация ${card.project}`}
-      emptyText="В сборках нет позиций."
-    /></div>
+    {card.assemblies.map((assembly) => <div key={assembly.index} className="kit-spec">
+      <p><strong>{assembly.index}</strong> {assembly.name} <span className="muted">кол-во {assembly.run}</span></p>
+      <DataTable
+        rows={specRows.filter((row) => row.assembly.index === assembly.index)}
+        columns={specColumns}
+        rowKey={({ component }) => key(assembly.index, component.art)}
+        storageKey="kit-spec"
+        label={`Спецификация ${assembly.index}`}
+        exportName={`Спецификация ${card.project} ${assembly.index}`}
+        emptyText="В сборке нет позиций."
+      />
+    </div>)}
   </div>;
 }
 

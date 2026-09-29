@@ -89,6 +89,25 @@ describe("ProjectsPage", () => {
     expect(body.content_b64).toBeUndefined();
   });
 
+  it("refreshes from the stored calculation link with the card's own number (kitRefresh)", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    const linked = { ...card, calc_source: "https://docs.google.com/spreadsheets/d/1AbC/edit" };
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/load") return json({ res: { project: "708К.4", assemblies: 1, lines: 2 } });
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(linked);
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    expect((await screen.findByRole("link", { name: "расчёт" })).getAttribute("href")).toBe(linked.calc_source);
+    fireEvent.click(screen.getByRole("button", { name: "🔄 Обновить из расчёта" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/techcards/kitsets/load")).toBe(true));
+    const [, init] = fetchMock.mock.calls.find(([url]) => String(url) === "/api/techcards/kitsets/load")!;
+    expect(JSON.parse(String(init?.body))).toEqual({ url: linked.calc_source, number: "708К.4" });
+  });
+
   it("hides writing controls for view-only access", async () => {
     render(<ProjectsPage principal={viewer} />);
     await screen.findByText("708К.4");

@@ -21,7 +21,7 @@ from app.shared.clock import moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
 from tests.factories import Actor
-from tests.techcards.xlsx_builder import calc_workbook
+from tests.techcards.calc_sheets import FakeSheets
 
 
 STATE = (
@@ -59,7 +59,9 @@ def kitset_api():
     with app.state.fulfillment_uow_factory() as uow:
         uow.warehouse.add(lot)
         uow.commit()
+    app.state.kitset_sheets_reader = FakeSheets()
     yield TestClient(app), lot
+    del app.state.kitset_sheets_reader
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
     app.dependency_overrides.pop(moscow_today, None)
@@ -68,12 +70,11 @@ def kitset_api():
     engine.dispose()
 
 
+CALC = "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit#gid=0"
+
+
 def _load(client, **extra):
-    return client.post("/api/techcards/kitsets/load", json={
-        "file_name": "708К.4 Расчет.xlsx",
-        "content_b64": base64.b64encode(calc_workbook()).decode(),
-        **extra,
-    })
+    return client.post("/api/techcards/kitsets/load", json={"url": CALC, **extra})
 
 
 def test_project_from_calculation_registers_plan_queue_and_addressee(kitset_api):
@@ -191,19 +192,6 @@ def test_view_only_reads_but_cannot_write(kitset_api):
     assert client.get("/api/techcards/kitsets").status_code == 403
 
 
-class _Sheets:
-    """Fake Google Sheets: ЗКЗ and СПЯ as display strings, like `values.batchGet` FORMATTED_VALUE."""
-
-    def __init__(self, sheets, error=None):
-        self.sheets, self.error, self.calls = sheets, error, []
-
-    def read_sheets(self, spreadsheet_id, names):
-        self.calls.append((spreadsheet_id, names))
-        if self.error:
-            raise self.error
-        return "708К.4.1 Расчет", {name: grid for name, grid in self.sheets.items() if name in names}
-
-
 LINK = "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit#gid=0"
 SHEETS = {
     "ЗКЗ": [
@@ -221,12 +209,9 @@ SHEETS = {
 def test_project_from_calculation_link_reads_google_sheet(kitset_api):
     """`tcReadCalcKitset_(calcUrl)`: ЗКЗ + СПЯ by link; the file title refines the number; link kept as РАСЧЁТ."""
     client, _lot = kitset_api
-    reader = _Sheets(SHEETS)
+    reader = FakeSheets(SHEETS, title="708К.4.1 Расчет")
     app.state.kitset_sheets_reader = reader
-    try:
-        response = client.post("/api/techcards/kitsets/load", json={"url": LINK})
-    finally:
-        del app.state.kitset_sheets_reader
+    response = client.post("/api/techcards/kitsets/load", json={"url": LINK})
     assert response.status_code == 200, response.text
     assert response.json()["res"]["project"] == "708К.4.1"
     assert reader.calls == [("1AbC-calc_id", ("ЗКЗ", "СПЯ"))]
@@ -241,10 +226,7 @@ def test_calculation_link_refusals(kitset_api):
     client, _lot = kitset_api
     assert client.post("/api/techcards/kitsets/load", json={"url": "https://example.test/x"}).status_code == 422
     assert client.post("/api/techcards/kitsets/load", json={}).status_code == 422
-    app.state.kitset_sheets_reader = _Sheets({}, CalcSheetError("Нет доступа к таблице расчёта", "access"))
-    try:
-        refused = client.post("/api/techcards/kitsets/load", json={"url": LINK})
-    finally:
-        del app.state.kitset_sheets_reader
+    app.state.kitset_sheets_reader = FakeSheets({}, error=CalcSheetError("Нет доступа к таблице расчёта", "access"))
+    refused = client.post("/api/techcards/kitsets/load", json={"url": LINK})
     assert refused.status_code == 422
     assert "Нет доступа" in refused.json()["detail"]

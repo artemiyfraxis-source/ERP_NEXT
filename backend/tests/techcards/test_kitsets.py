@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.modules.techcards.kitset_calc import calc_project_number, parse_calc
+from app.modules.techcards.kitset_calc import calc_project_number, parse_calc_sheets
 from app.modules.techcards.kitsets import (
     KitLot,
     KitsetValidationError,
@@ -17,7 +17,11 @@ from app.modules.techcards.kitsets import (
     supply_lines,
     write_from_calc,
 )
-from tests.techcards.xlsx_builder import build_xlsx, calc_workbook
+from tests.techcards.calc_sheets import calc_sheets, grid
+
+
+def parse(sheets, title="708К.4 Расчет"):
+    return parse_calc_sheets(sheets, title, "https://docs.google.com/spreadsheets/d/calc/edit")
 
 
 NOW = datetime(2026, 9, 29, 12, 0)
@@ -41,7 +45,7 @@ def test_calc_number_takes_file_name_only_when_it_refines_the_cell():
 
 
 def test_parse_calc_reads_zkz_assemblies_and_spa_composition():
-    data = parse_calc(calc_workbook(), "708К.4 Расчет.xlsx")
+    data = parse(calc_sheets())
     assert data.project == "708К.4"
     assert data.customer == "ООО Заказчик"
     assert [(a.index, a.name, a.run) for a in data.assemblies] == [
@@ -56,16 +60,14 @@ def test_parse_calc_reads_zkz_assemblies_and_spa_composition():
 
 
 def test_parse_calc_refuses_foreign_files():
-    with pytest.raises(KitsetValidationError, match="Не похоже"):
-        parse_calc(b"not a zip", "x.xlsx")
     with pytest.raises(KitsetValidationError, match="нет листа «ЗКЗ»"):
-        parse_calc(build_xlsx({"Лист1": [["a"]]}), "x.xlsx")
+        parse({"Лист1": grid([["a"]])}, "x")
     with pytest.raises(KitsetValidationError, match="Вкл. в расчет"):
-        parse_calc(build_xlsx({"ЗКЗ": [[], ["", "1К.1"], [], ["Индекс сборки", "Наименование сборки по чертежу", "Вкл. в расчет?"], ["КБ1", "x", 0]]}), "x.xlsx")
+        parse({"ЗКЗ": grid([[], ["", "1К.1"], [], ["Индекс сборки", "Наименование сборки по чертежу", "Вкл. в расчет?"], ["КБ1", "x", 0]])}, "x")
 
 
 def test_refresh_keeps_person_edits_and_lot_binding():
-    data = parse_calc(calc_workbook(), "708К.4.xlsx")
+    data = parse(calc_sheets(), "708К.4")
     first = write_from_calc(data, None, who="Технолог", now=NOW)
     lot = KitLot(lot_id=uuid4(), warehouse="ЦАР", grn="FRX.26.0000001")
     edited, count = first.with_edits([
@@ -91,7 +93,7 @@ def test_refresh_keeps_person_edits_and_lot_binding():
 
 
 def test_supply_takes_latest_stage_and_marks_stock_and_missing():
-    kitset = write_from_calc(parse_calc(calc_workbook(), "708К.4.xlsx"), None, who="Т", now=NOW)
+    kitset = write_from_calc(parse(calc_sheets(), "708К.4"), None, who="Т", now=NOW)
     kitset, _ = kitset.with_edits([{"index": "КБ2", "art": "43030-0007", "per": "8", "scrap": "5",
                                     "lot": {"warehouse": "ЦАР", "grn": "G-1"}}], who="Т", now=NOW)
     lines = {line.article: line for line in supply_lines(kitset, [
@@ -106,7 +108,7 @@ def test_supply_takes_latest_stage_and_marks_stock_and_missing():
 
 
 def test_issue_tasks_one_per_assembly_and_waiting_notes():
-    kitset = write_from_calc(parse_calc(calc_workbook(), "708К.4.xlsx"), None, who="Т", now=NOW)
+    kitset = write_from_calc(parse(calc_sheets(), "708К.4"), None, who="Т", now=NOW)
     kitset, _ = kitset.with_edits([{"index": "КБ2", "art": "43030-0007", "per": "8", "scrap": "0",
                                     "lot": {"warehouse": "ЦАР", "grn": "G-1"}}], who="Т", now=NOW)
     tasks = issue_tasks(kitset, {("G-1", "")})
