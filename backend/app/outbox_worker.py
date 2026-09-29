@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import threading
 import time
 
 from sqlalchemy.exc import IntegrityError
@@ -39,11 +40,17 @@ from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.shared.clock import moscow_now
 from app.workflows.supplier_directory import ReferencesSupplierDirectory
 from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
+from app.workflows.kitset_names import kitset_names_tick
 from app.workflows.owner_alerts import alert_on_dead_letters, daily_overdue_digest, quarantine_escalations
 
 # alertOnErrors_ ran once per owner tick (a minute); the worker loop turns every couple of seconds.
 ERROR_ALERT_INTERVAL_SECONDS = 60.0
 _last_error_alert = 0.0
+# tcKitNamesTick_ ran in the owner tail tick (ownerTailTick, once a minute) because it goes to supplier sites.
+# Here it gets its own thread for the same reason: 15 page fetches must not hold the outbox dispatch.
+TAIL_INTERVAL_SECONDS = 60.0
+_last_tail = float("-inf")
+_tail_thread: threading.Thread | None = None
 
 
 def dispatch_available(
@@ -196,6 +203,28 @@ def run_owner_jobs(sessions: sessionmaker[Session]) -> int:
     return done
 
 
+def run_tail_jobs(sessions: sessionmaker[Session]) -> int:
+    """OwnerTick.gs tail group: the kitset name fill from supplier sites. A failure is logged, never raised."""
+    try:
+        return int(kitset_names_tick(moscow_now(), sessions))
+    except Exception:  # noqa: BLE001 — one broken job must not stop the worker
+        logging.exception("Tail job kitset names failed; retrying next tick")
+        return 0
+
+
+def start_tail_jobs(sessions: sessionmaker[Session]) -> bool:
+    """Start the tail jobs on a background thread, at most once a minute and never two at a time."""
+    global _last_tail, _tail_thread
+    if _tail_thread is not None and _tail_thread.is_alive():
+        return False
+    if time.monotonic() - _last_tail < TAIL_INTERVAL_SECONDS:
+        return False
+    _last_tail = time.monotonic()
+    _tail_thread = threading.Thread(target=run_tail_jobs, args=(sessions,), name="owner-tail", daemon=True)
+    _tail_thread.start()
+    return True
+
+
 def drain_available(sessions: sessionmaker[Session], *, limit: int = 100) -> int:
     total = 0
     while True:
@@ -222,10 +251,12 @@ def main() -> None:
     try:
         if args.once:
             run_timers(sessions)
+            run_tail_jobs(sessions)
             drain_available(sessions, limit=args.limit)
             return
         while True:
             run_timers(sessions)
+            start_tail_jobs(sessions)
             dispatch_available(sessions, limit=args.limit)
             time.sleep(max(args.interval, 0.1))
     finally:

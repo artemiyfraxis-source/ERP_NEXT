@@ -76,6 +76,12 @@ def procurement_factory(request: Request):
     return _factory(request, "procurement_uow_factory")
 
 
+def _name_queue(request: Request):
+    """tcKitNamesEnqueue_: очередь фонового добора наименований (app.state.kitset_name_queue)."""
+    queue = getattr(request.app.state, "kitset_name_queue", None)
+    return queue.enqueue if queue is not None else None
+
+
 def _read(factory, reader, default=()):
     if factory is None:
         return default
@@ -210,7 +216,8 @@ def load(
         number=payload.number, deadline=payload.deadline,
         ship=payload.ship.model_dump() if payload.ship else {},
         actor=principal.actor, now=now,
-    ), techcards_factory(request), production_factory(request), shipping_factory(request)))
+    ), techcards_factory(request), production_factory(request), shipping_factory(request),
+        _name_queue(request)))
     return {"res": {
         "project": result.project, "assemblies": result.assemblies, "lines": result.lines,
         "erp": result.erp, "erp_error": result.erp_error, "ship": result.ship, "ship_error": result.ship_error,

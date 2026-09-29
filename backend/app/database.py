@@ -28,6 +28,7 @@ from .modules.operations.application import UnitOfWork as OperationsUnitOfWork
 from .modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from .modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from .modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from .workflows.kitset_names import KitsetNameQueue
 from .workflows.project_registry import PlanSnapshotProjectRegistry
 from .workflows.receiving_stock import WarehouseStockBalanceLookup
 from .workflows.procurement_stage import ProcurementLineStageLookup
@@ -117,6 +118,7 @@ def configure_database(app: FastAPI, database_url: str) -> Engine:
     app.state.procurement_stage_lookup = ProcurementLineStageLookup(app.state.procurement_uow_factory)
     app.state.procurement_supplier_directory = ReferencesSupplierDirectory(app.state.references_uow_factory)
     app.state.receiving_stock_lookup = WarehouseStockBalanceLookup(app.state.warehouse_uow_factory)
+    app.state.kitset_name_queue = KitsetNameQueue(sessionmaker(bind=engine, expire_on_commit=False, class_=Session))
     app.state.rack_layout_store = SqlAlchemyRackLayoutStore(sessionmaker(bind=engine, expire_on_commit=False, class_=Session))
     set_rack_layout_loader(app.state.rack_layout_store.load)
     return engine
