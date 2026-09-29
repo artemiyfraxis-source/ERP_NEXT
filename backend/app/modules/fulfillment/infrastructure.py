@@ -35,6 +35,12 @@ class FulfillmentRequestRow(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     handout_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     return_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # FF-4: stage dates by the first hit (SUPPLYMAP В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА).
+    at_work: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    at_picked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    at_issued: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    at_returned: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    at_closed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -118,6 +124,11 @@ class SqlAlchemyFulfillmentRepository:
             handout_location=row.handout_location,
             return_location=row.return_location,
             requester_id=row.requester_id,
+            at_work=row.at_work,
+            at_picked=row.at_picked,
+            at_issued=row.at_issued,
+            at_returned=row.at_returned,
+            at_closed=row.at_closed,
         )
 
     def get(self, request_id: UUID) -> FulfillmentRequest | None:
@@ -171,6 +182,11 @@ class SqlAlchemyFulfillmentRepository:
         row.status = request.status.value
         row.handout_location = request.handout_location
         row.return_location = request.return_location
+        row.at_work = request.at_work
+        row.at_picked = request.at_picked
+        row.at_issued = request.at_issued
+        row.at_returned = request.at_returned
+        row.at_closed = request.at_closed
         self.session.flush()
         existing = {
             line.id: line
@@ -201,6 +217,17 @@ class SqlAlchemyFulfillmentRepository:
             line_row.lot_storage_location = line.lot.storage_location if line.lot else None
         for stale in existing.values():
             self.session.delete(stale)
+
+
+    def delete(self, request_id: UUID) -> None:
+        for line in self.session.scalars(
+            select(FulfillmentLineRow).where(FulfillmentLineRow.request_id == request_id)
+        ):
+            self.session.delete(line)
+        row = self.session.get(FulfillmentRequestRow, request_id)
+        if row is not None:
+            self.session.delete(row)
+        self.session.flush()
 
 
 class SqlAlchemyFulfillmentUnitOfWork:

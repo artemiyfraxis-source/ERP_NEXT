@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -63,6 +64,7 @@ def test_receiver_binds_a_human_selected_lot_and_issues_only_the_complete_kit(fu
         headers={"Idempotency-Key": "kitset-35k-s-13-kb-1"},
         json={
             "purpose": "35К.С.13 / КБ-1",
+            "deadline": "2026-10-01",
             "lines": [{"article": "КД-1", "name": "Разъём", "unit": "шт", "requirement": "6"}],
         },
     )
@@ -72,9 +74,13 @@ def test_receiver_binds_a_human_selected_lot_and_issues_only_the_complete_kit(fu
         json={"version": body["version"], "lot_id": str(lot.id)},
     )
     bound_body = bound.json()["request"]
+    completed_kit = client.post(
+        f"/api/issues/{body['id']}/complete",
+        json={"version": bound_body["version"]},
+    )
     ready = client.post(
         f"/api/issues/{body['id']}/ready",
-        json={"version": bound_body["version"], "handout_location": "Полка выдачи 2"},
+        json={"version": completed_kit.json()["request"]["version"], "handout_location": "Полка выдачи 2"},
     )
     ready_body = ready.json()["request"]
     issued = client.post(
@@ -103,7 +109,9 @@ def test_receiver_binds_a_human_selected_lot_and_issues_only_the_complete_kit(fu
 
     assert created.status_code == 200, created.text
     assert bound.status_code == 200, bound.text
-    assert bound_body["status"] == "Укомплектован"
+    assert bound_body["status"] == "Недоукомплектован"
+    assert bound_body["at_work"] == "2026-09-22T12:00:00"
+    assert completed_kit.json()["request"]["status"] == "Укомплектован"
     assert ready.status_code == 200, ready.text
     assert issued.status_code == 200, issued.text
     assert issued_body["status"] == "КБ Выдана"
@@ -125,6 +133,7 @@ def test_print_and_return_sheet_endpoints(fulfillment_api):
         headers={"Idempotency-Key": "kitset-print-endpoint"},
         json={
             "purpose": "316К.14 / КБ-1",
+            "deadline": "2026-10-01",
             "lines": [{"article": "КД-1", "name": "Разъём", "unit": "шт", "requirement": "6"}],
         },
     )
@@ -145,9 +154,13 @@ def test_print_and_return_sheet_endpoints(fulfillment_api):
         json={"version": body["version"], "lot_id": str(lot.id)},
     )
     bound_body = bound.json()["request"]
+    completed_kit = client.post(
+        f"/api/issues/{body['id']}/complete",
+        json={"version": bound_body["version"]},
+    )
     ready = client.post(
         f"/api/issues/{body['id']}/ready",
-        json={"version": bound_body["version"], "handout_location": "Полка выдачи 2"},
+        json={"version": completed_kit.json()["request"]["version"], "handout_location": "Полка выдачи 2"},
     )
     ready_body = ready.json()["request"]
     issued = client.post(
@@ -186,3 +199,143 @@ def test_handout_requires_receiver_role(fulfillment_api):
     )
 
     assert response.status_code == 403
+
+
+def _create(client, key: str, purpose: str = "728К.2 · КБ1 · Кабельная сборка") -> dict:
+    response = client.post(
+        "/api/issues",
+        headers={"Idempotency-Key": key},
+        json={
+            "purpose": purpose,
+            "deadline": "2026-10-01",
+            "lines": [{"article": "КД-1", "name": "Разъём", "unit": "шт", "requirement": "6"}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["request"]
+
+
+def _as(roles: set[str], permissions: dict[str, str]) -> None:
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Кто-то", department="Склад"),
+        email="someone@example.test",
+        roles=frozenset(roles),
+        permissions=permissions,
+    )
+
+
+def test_deadline_is_required_by_the_api(fulfillment_api):
+    client, _, _ = fulfillment_api
+    response = client.post(
+        "/api/issues",
+        headers={"Idempotency-Key": "no-deadline"},
+        json={"purpose": "Ручная", "lines": [{"name": "Разъём", "unit": "шт", "requirement": "1"}]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Укажи дедлайн."
+
+
+def test_list_carries_project_and_rack_layout(fulfillment_api):
+    client, _, _ = fulfillment_api
+    _create(client, "project-card")
+
+    listed = client.get("/api/issues").json()
+
+    assert listed["requests"][0]["project"] == "728К.2"
+    assert listed["places"]["racks"] >= 1 and listed["places"]["slots"].startswith("ABC")
+
+
+def test_complete_is_refused_while_a_line_waits_for_a_lot(fulfillment_api):
+    client, _, _ = fulfillment_api
+    body = _create(client, "complete-gate")
+
+    refused = client.post(f"/api/issues/{body['id']}/complete", json={"version": body["version"]})
+
+    assert refused.status_code == 422
+    assert "не закрыто позиций — 1 (Разъём)" in refused.json()["detail"]
+
+
+def test_picker_sends_to_handout_with_a_rack_address(fulfillment_api):
+    client, lot, _ = fulfillment_api
+    body = _create(client, "ready-by-picker")
+    bound = client.post(
+        f"/api/issues/{body['id']}/lines/{body['lines'][0]['id']}/bind",
+        json={"version": body["version"], "lot_id": str(lot.id)},
+    ).json()["request"]
+    complete = client.post(f"/api/issues/{body['id']}/complete", json={"version": bound["version"]}).json()["request"]
+    _as({"engineer"}, {"fulfillment": "edit"})
+
+    partial = client.post(f"/api/issues/{body['id']}/ready", json={
+        "version": complete["version"], "place": {"rack": "12", "shelf": "с", "num": "", "slot": ""},
+    })
+    ready = client.post(f"/api/issues/{body['id']}/ready", json={
+        "version": complete["version"], "place": {"rack": "12", "shelf": "с", "num": "7", "slot": "b"},
+    })
+
+    assert partial.status_code == 422
+    assert partial.json()["detail"] == "Адрес неполный: нужны стеллаж, полка и № на полке."
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["request"]["status"] == "Готов к выдаче"
+    assert ready.json()["request"]["handout_location"] == "12C7B"
+    assert ready.json()["request"]["at_picked"] == "2026-09-22T12:00:00"
+
+
+def test_handout_closes_an_issued_request_without_return(fulfillment_api):
+    client, lot, _ = fulfillment_api
+    body = _create(client, "close-issued")
+    request = client.post(
+        f"/api/issues/{body['id']}/lines/{body['lines'][0]['id']}/bind",
+        json={"version": body["version"], "lot_id": str(lot.id)},
+    ).json()["request"]
+    for path, extra in (("complete", {}), ("ready", {"handout_location": "1A1"}), ("issue", {})):
+        request = client.post(f"/api/issues/{body['id']}/{path}", json={"version": request["version"], **extra}).json()["request"]
+
+    closed = client.post(f"/api/issues/{body['id']}/close", json={"version": request["version"]})
+
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["request"]["status"] == "Готово"
+    assert closed.json()["request"]["at_issued"] == closed.json()["request"]["at_closed"] == "2026-09-22T12:00:00"
+
+
+def test_only_admin_deletes_and_the_reserve_goes_back(fulfillment_api):
+    client, lot, factory = fulfillment_api
+    body = _create(client, "delete-me")
+    client.post(
+        f"/api/issues/{body['id']}/lines/{body['lines'][0]['id']}/bind",
+        json={"version": body["version"], "lot_id": str(lot.id)},
+    )
+    with factory() as uow:
+        assert uow.warehouse.get(lot.id).reserved == Decimal("6")
+
+    refused = client.delete(f"/api/issues/{body['id']}")
+    _as({"admin"}, {"fulfillment": "edit"})
+    deleted = client.delete(f"/api/issues/{body['id']}")
+
+    assert refused.status_code == 403
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["message"] == "Заявка удалена: позиций 1, снят резерв с 1 партий."
+    with factory() as uow:
+        assert uow.fulfillment.get(UUID(body["id"])) is None
+        assert uow.warehouse.get(lot.id).reserved == Decimal("0")
+    assert client.delete(f"/api/issues/{body['id']}").status_code == 404
+
+
+def test_issued_request_cannot_be_deleted(fulfillment_api):
+    client, lot, _ = fulfillment_api
+    body = _create(client, "delete-issued")
+    request = client.post(
+        f"/api/issues/{body['id']}/lines/{body['lines'][0]['id']}/bind",
+        json={"version": body["version"], "lot_id": str(lot.id)},
+    ).json()["request"]
+    for path, extra in (("complete", {}), ("ready", {"handout_location": "1A1"}), ("issue", {})):
+        request = client.post(f"/api/issues/{body['id']}/{path}", json={"version": request["version"], **extra}).json()["request"]
+    _as({"admin"}, {"fulfillment": "edit"})
+
+    refused = client.delete(f"/api/issues/{body['id']}")
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == (
+        f"Заявка {body['number']} уже выдавалась (позиций с выдачей: 1). "
+        "Удалять её нельзя — это документ проведённого списания. Оформи возврат."
+    )
