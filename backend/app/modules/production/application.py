@@ -39,6 +39,13 @@ class Operator:
     active: bool
     # Отдел из справочника сотрудников: «Монтаж» отбирает монтажников на экране мастера.
     department: str = ""
+    role: str = "staff"
+
+    @property
+    def installer(self) -> bool:
+        """Монтажник (владелец, 29.09: «тут только монтажники должны быть»): активный «Сотрудник» цеха — с площадкой
+        ЦАР/ЖУК или из отдела «Монтаж». Директора, мастера, снабжение и админ-учётки работу не получают."""
+        return self.active and self.role == "staff" and (bool(self.site) or "монтаж" in self.department.lower())
 
 
 @dataclass(frozen=True)
@@ -291,6 +298,8 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
             operator = uow.operators.get(operator_id)
             if operator is None or not operator.active:
                 raise ProductionValidationError("Оператора нет в справочнике сотрудников")
+            if not operator.installer and operator_id not in operation.operator_ids:
+                raise ProductionValidationError(f"{operator.name} не монтажник: работу назначают только монтажникам")
             names[operator_id] = operator.name
         # Площадка мастера (владелец, 29.09: в Жуковском распределяет свой мастер): мастер с площадкой ставит только
         # сотрудников своей площадки; без площадки (директор, технолог, снабжение) — всех. Уже стоящих не выгоняем.
@@ -422,7 +431,12 @@ def _auto_schedule(
     transfer_batch: int | None = None,
 ) -> tuple[ProductionTask, tuple[ScheduleVariant, ...]]:
     task = _task(command.task_id, command.expected_version, uow)
-    operators = tuple(item.id for item in uow.operators.list() if item.active)
+    # Авторасчёт берёт только монтажников; мастер площадки — только своей (как при ручном назначении).
+    assigner = uow.operators.get(command.actor.id)
+    operators = tuple(
+        item.id for item in uow.operators.list()
+        if item.installer and not (assigner is not None and assigner.site and item.site != assigner.site)
+    )
     skill_rows = tuple(uow.skills.list())
     skills: dict[str, dict[UUID, OperatorSkill]] = {}
     for item in skill_rows:

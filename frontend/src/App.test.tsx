@@ -289,7 +289,7 @@ it("NAV-1: home shows the blocks as tiles and a block shows its section cards in
 
   const main = await screen.findByRole("main");
   const tiles = within(main).getAllByRole("button").map((button) => button.getAttribute("aria-label"));
-  expect(tiles).toEqual(["Производство", "Снабжение", "Склад", "Менеджмент"]);
+  expect(tiles).toEqual(["Производство", "Снабжение", "Склад", "Менеджмент", "Справочники"]);
 
   fireEvent.click(within(main).getByRole("button", { name: "Снабжение" }));
 
@@ -300,7 +300,7 @@ it("NAV-1: home shows the blocks as tiles and a block shows its section cards in
   // Sidebar groups agree with the blocks.
   const nav = screen.getByRole("navigation", { name: "Основная навигация" });
   expect(within(nav).getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent))
-    .toEqual(["Производство", "Снабжение", "Склад", "Менеджмент"]);
+    .toEqual(["Производство", "Снабжение", "Склад", "Менеджмент", "Справочники"]);
 });
 
 it("NAV-1: a block with a single visible section opens that section directly", async () => {
