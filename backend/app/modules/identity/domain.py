@@ -141,7 +141,6 @@ ROLES = frozenset(
 # «Мои заявки» and «Выдача со списанием» have keys of their own (NAV-SECTIONS, SUPPLYMAP Portal.gs PORTAL_SECTIONS_).
 SECTION_LABELS: dict[str, str] = {
     "projects": "Проекты",
-    "calculation": "Расчёт и КП",
     # ID-3 (SUPPLYMAP PORTAL_SECTIONS_): templates, the generator, the reference book and the staff directory are
     # keys of their own (erptctpl, tcgen, erpref, staffdir), so e.g. only the generator can go to one technologist.
     "techcards": "Техкарты проектов",

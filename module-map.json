@@ -3,9 +3,6 @@
   "legacyIdField": "legacy_id",
   "modules": [
     { "id": "identity", "owner": "supplymap", "strategy": "native-rewrite", "routePrefixes": ["/api/auth"], "sources": ["Staff.gs", "Portal.gs:156-709"] },
-    { "id": "legacy-access", "owner": "supplymap", "strategy": "native-bridge", "routePrefixes": ["/api/legacy"], "sources": ["native Identity session", "contracts/legacy-projects.openapi.json"] },
-    { "id": "projects", "owner": "recovered-erp", "strategy": "legacy-preserve", "routePrefixes": ["/api/projects"], "sources": ["observed-openapi:/api/projects"] },
-    { "id": "calculation", "owner": "recovered-erp", "strategy": "legacy-preserve", "routePrefixes": ["/api/calc", "/api/docs", "/api/customers"], "sources": ["observed-openapi:/api/calc", "observed-openapi:/api/docs"] },
     { "id": "techcards", "owner": "supplymap", "strategy": "native-port", "implementedStage": "persistent-project-cards-native-etk-builder-cut-crimp-splices-connector-housings-operation-library-terminal-norms-and-grapher-import", "routePrefixes": ["/api/route", "/api/techcards"], "sources": ["feat/techmap-web-generator:techmap", "docs/briefs/electronic-techcards.md", "docs/briefs/vasily-merge.md", "TcBuild.gs", "TcGenerator.gs", "TcHousing.gs", "TcGrapher.gs", "TcRecord.gs", "TcRecordDb.gs", "TcOpsDb.gs", "_local/tooling/test/fixtures/tc-library.json", "_local/tooling/test/fixtures/etk", "ErpTechmap.gs"] },
     { "id": "requests", "owner": "supplymap", "strategy": "native-rewrite", "routePrefixes": ["/api/requests"], "sources": ["Forms.gs", "Imports.gs", "Pipeline.gs", "Guards.gs"] },
     { "id": "procurement", "owner": "supplymap", "strategy": "native-rewrite", "routePrefixes": ["/api/procurement"], "sources": ["Pipeline.gs", "SupplierRequest.gs", "Kp.gs", "Invoices.gs", "Currency.gs"] },

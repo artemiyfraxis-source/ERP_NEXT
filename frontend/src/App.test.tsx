@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { App, resolveLegacyUrl } from "./App";
+import { App } from "./App";
 import type { Principal } from "./api";
 
 const principal: Principal = {
@@ -271,21 +271,6 @@ it("does not pretend to log out when the server cannot revoke the session", asyn
   );
   expect(screen.getByText("Добрый день, Сотрудник")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Войти" })).not.toBeInTheDocument();
-});
-
-it("rejects a same-origin legacy ERP frame", () => {
-  expect(
-    resolveLegacyUrl("https://erp.example.test/legacy", "https://erp.example.test/", "projects", "grant"),
-  ).toBeNull();
-  expect(
-    resolveLegacyUrl("https://erp.example.test:8443", "https://erp.example.test/", "projects", "grant"),
-  ).toBeNull();
-  expect(
-    resolveLegacyUrl("https://legacy.example.test", "https://erp.example.test/", "projects", "grant"),
-  ).toBe("https://legacy.example.test/login?section=projects&ticket=grant");
-  expect(
-    resolveLegacyUrl("javascript:alert(1)", "https://erp.example.test/", "projects", "grant"),
-  ).toBeNull();
 });
 
 it("NAV-1: home shows the blocks as tiles and a block shows its section cards in order", async () => {

@@ -16,4 +16,3 @@ try {
 
 export const mainCheckout = main;
 export const supplymapRoot = process.env.SUPPLYMAP_SOURCE_REPOSITORY || join(main, "..", "SUPPLYMAP");
-export const recoveredRoot = process.env.ERP_RECOVERED_ROOT || join(main, "..", "ERP_RECOVERED");
