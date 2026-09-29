@@ -12,6 +12,7 @@ import {
   type KitsetTile,
   type Principal,
 } from "./api";
+import { DataTable, type DataColumn } from "./DataTable";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
    номер, заказчик, сборки с тиражом и состав каждой. Внутри — состав, снабжение, спецификация, генератор и
@@ -403,45 +404,56 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openTechcard }: {
     catch (reason) { setError(message(reason, "КД не отвязана")); }
   }
 
+  const columns: DataColumn<KitsetAssembly>[] = [
+    { key: "index", title: "КБ", value: (assembly) => assembly.index, render: (assembly) => <strong>{assembly.index}</strong> },
+    { key: "name", title: "Наименование", value: (assembly) => assembly.name, wrap: true },
+    { key: "run", title: "Кол-во", value: (assembly) => assembly.run, numeric: true },
+    { key: "positions", title: "Позиций", value: (assembly) => assembly.components.length, numeric: true },
+    { key: "kd", title: "КД", value: (assembly) => assembly.kd.map((document) => document.name).join(", "), render: (assembly) => <>
+      {assembly.kd.map((document) => <div key={document.id} className="kit-kd">
+        <a href={kitsetsApi.documentUrl(card.project, document.id)} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
+        {canEdit && <button className="link-button" title="Отвязать" onClick={() => void detach(document.id)}>✕</button>}
+      </div>)}
+      {canEdit && <button className="link-button" onClick={() => { setKdIndex(assembly.index); fileRef.current?.click(); }}>＋ файл</button>}
+    </> },
+    { key: "techcard", title: "Техкарта",
+      value: (assembly) => assembly.techcard ? `${assembly.techcard.issued ? "готова" : "черновик"} · ${assembly.techcard.stages} оп.` : "нет",
+      render: (assembly) => assembly.techcard
+        ? <button className="link-button" onClick={() => openTechcard(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} оп.</button>
+        : <span className="muted">нет</span> },
+    { key: "stage", title: "Этап", filter: true, value: (assembly) => assembly.stage?.status || "", render: (assembly) => canEdit
+      ? <select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => void markKb(assembly, "stage", event.target.value)}>
+        <option value="авто">авто: {assembly.stage?.manual ? "по фактам" : assembly.stage?.status || "—"}</option>
+        {card.stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+      </select>
+      : <>{assembly.stage?.status || "—"}{assembly.stage?.manual && <span className="muted" title="выставлен вручную"> ✍</span>}</> },
+    { key: "review", title: "Проверка ТК",
+      value: (assembly) => assembly.techcard?.issued ? (assembly.stage?.review?.value || "не проверена") : "",
+      render: (assembly) => {
+        const review = assembly.stage?.review || { value: "не проверена", text: "" };
+        return !assembly.techcard?.issued ? <span className="muted">—</span> : <>
+          {canEdit
+            ? <select aria-label={`Проверка ТК ${assembly.index}`} className={`tone-${REVIEW_TONE[review.value] || "neutral"}`} value={review.value} onChange={(event) => void markKb(assembly, "tcReview", event.target.value)}>
+              {card.review_values.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            : <span className={`tone-${REVIEW_TONE[review.value] || "neutral"}`}>{review.value}</span>}
+          {review.text && review.value === "с погрешностями" && <div className="t-sub">{review.text}</div>}
+        </>;
+      } },
+  ];
+
   return <div className="kit-pane">
     <p className="page-sub">Позиции проекта: сборки, их количество и приложенная КД. Состав каждой — на вкладке «Спецификация», техкарта собирается в «Генераторе».</p>
     <input ref={fileRef} type="file" hidden data-testid="kd-file" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
-    <div className="table-wrap"><table>
-      <thead><tr><th>КБ</th><th>Наименование</th><th>Кол-во</th><th>Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th></tr></thead>
-      <tbody>{card.assemblies.map((assembly) => {
-        const review = assembly.stage?.review || { value: "не проверена", text: "" };
-        return <tr key={assembly.index}>
-          <td><strong>{assembly.index}</strong></td>
-          <td>{assembly.name}</td>
-          <td className="num">{assembly.run}</td>
-          <td className="num">{assembly.components.length}</td>
-          <td>
-            {assembly.kd.map((document) => <div key={document.id} className="kit-kd">
-              <a href={kitsetsApi.documentUrl(card.project, document.id)} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
-              {canEdit && <button className="link-button" title="Отвязать" onClick={() => void detach(document.id)}>✕</button>}
-            </div>)}
-            {canEdit && <button className="link-button" onClick={() => { setKdIndex(assembly.index); fileRef.current?.click(); }}>＋ файл</button>}
-          </td>
-          <td>{assembly.techcard
-            ? <button className="link-button" onClick={() => openTechcard(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} оп.</button>
-            : <span className="muted">нет</span>}</td>
-          <td>{canEdit
-            ? <select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => void markKb(assembly, "stage", event.target.value)}>
-              <option value="авто">авто: {assembly.stage?.manual ? "по фактам" : assembly.stage?.status || "—"}</option>
-              {card.stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
-            </select>
-            : <>{assembly.stage?.status || "—"}{assembly.stage?.manual && <span className="muted" title="выставлен вручную"> ✍</span>}</>}</td>
-          <td>{!assembly.techcard?.issued ? <span className="muted">—</span> : <>
-            {canEdit
-              ? <select aria-label={`Проверка ТК ${assembly.index}`} className={`tone-${REVIEW_TONE[review.value] || "neutral"}`} value={review.value} onChange={(event) => void markKb(assembly, "tcReview", event.target.value)}>
-                {card.review_values.map((value) => <option key={value} value={value}>{value}</option>)}
-              </select>
-              : <span className={`tone-${REVIEW_TONE[review.value] || "neutral"}`}>{review.value}</span>}
-            {review.text && review.value === "с погрешностями" && <div className="t-sub">{review.text}</div>}
-          </>}</td>
-        </tr>;
-      })}</tbody>
-    </table></div>
+    <DataTable
+      rows={card.assemblies}
+      columns={columns}
+      rowKey={(assembly) => assembly.index}
+      storageKey="kit-sostav"
+      label="Состав проекта"
+      exportName={`Состав ${card.project}`}
+      emptyText="В проекте нет сборок."
+    />
   </div>;
 }
 
@@ -464,19 +476,28 @@ function SupplyTab({ project }: { project: string }) {
       {([["Принято на склад", received, "ok"], ["В работе снабжения", lines.length - missing - received - stock, "warn"], ["Со склада, без закупки", stock, "info"], ["Не заведено", missing, "danger"]] as Array<[string, number, string]>).map(([label, value, toneName]) =>
         <div key={label} className="panel kit-supply-count"><strong className={`tone-${toneName}`}>{value}</strong><span>{label}</span></div>)}
     </div>
-    <div className="table-wrap"><table>
-      <thead><tr><th>Артикул КД</th><th>Наименование</th><th>КБ</th><th>Нужно</th><th>Стадия</th><th>Строк</th></tr></thead>
-      <tbody>{lines.map((line) => <tr key={line.art}>
-        <td><strong>{line.art}</strong></td><td>{line.name}</td><td>{line.kbs.join(" · ")}</td>
-        <td className="num">{line.need}</td>
-        <td className={`tone-${tone(line)}`}>{line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}</td>
-        <td className="num">{line.rows.length || "—"}</td>
-      </tr>)}</tbody>
-    </table></div>
+    <DataTable
+      rows={lines}
+      columns={[
+        { key: "art", title: "Артикул КД", value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
+        { key: "name", title: "Наименование", value: (line) => line.name, wrap: true },
+        { key: "kbs", title: "КБ", value: (line) => line.kbs.join(" · ") },
+        { key: "need", title: "Нужно", value: (line) => line.need, numeric: true },
+        { key: "stage", title: "Стадия", filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
+          {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
+        </span> },
+        { key: "rows", title: "Строк", value: (line) => line.rows.length || "—", numeric: true },
+      ] satisfies DataColumn<KitsetSupplyLine>[]}
+      rowKey={(line) => line.art}
+      storageKey="kit-supply"
+      label="Снабжение проекта"
+      exportName={`Снабжение ${project}`}
+    />
   </div>;
 }
 
 type Draft = { per: string; scrap: string; name: string; link: string; lot: KitsetLot | null };
+type SpecRow = { assembly: KitsetAssembly; component: KitsetComponent };
 
 function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolean; setNote: (text: string) => void }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -504,6 +525,38 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
     } catch (reason) { setAutosave(`не сохранено: ${message(reason, "ошибка")}`); }
   }
 
+  const specRows: SpecRow[] = card.assemblies.flatMap((assembly) => assembly.components.map((component) => ({ assembly, component })));
+  const specColumns: DataColumn<SpecRow>[] = [
+    { key: "art", title: "Артикул КД", value: ({ component }) => component.art },
+    { key: "type", title: "Тип", filter: true, value: ({ component }) => component.type },
+    { key: "name", title: "Наименование", value: ({ assembly, component }) => draftOf(assembly, component).name,
+      render: ({ assembly, component }) => <input aria-label={`Наименование ${component.art}`} value={draftOf(assembly, component).name} disabled={!canEdit} onChange={(event) => edit(assembly, component, { name: event.target.value })} onBlur={() => void save(assembly, component)} /> },
+    { key: "link", title: "Ссылка", value: ({ assembly, component }) => draftOf(assembly, component).link, render: ({ assembly, component }) => {
+      const link = draftOf(assembly, component).link;
+      return <div className="kit-link">
+        <input aria-label={`Ссылка ${component.art}`} value={link} placeholder="—" disabled={!canEdit} onChange={(event) => edit(assembly, component, { link: event.target.value })} onBlur={() => void save(assembly, component)} />
+        {/^https?:\/\//i.test(link) && <a href={link} target="_blank" rel="noopener" title="Открыть">↗</a>}
+      </div>;
+    } },
+    { key: "per", title: "На 1 шт", numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).per,
+      render: ({ assembly, component }) => <input aria-label={`На 1 шт ${component.art}`} value={draftOf(assembly, component).per} disabled={!canEdit} onChange={(event) => edit(assembly, component, { per: event.target.value })} onBlur={() => void save(assembly, component)} /> },
+    { key: "scrap", title: "% брака", numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).scrap,
+      render: ({ assembly, component }) => <input aria-label={`% брака ${component.art}`} value={draftOf(assembly, component).scrap} disabled={!canEdit} onChange={(event) => edit(assembly, component, { scrap: event.target.value })} onBlur={() => void save(assembly, component)} /> },
+    { key: "batch", title: "На партию", numeric: true, value: ({ assembly, component }) => {
+      const draft = draftOf(assembly, component);
+      return kitBatch(draft.per, assembly.run, draft.scrap);
+    } },
+    { key: "lot", title: "ГРН склада", value: ({ assembly, component }) => {
+      const lot = draftOf(assembly, component).lot;
+      return lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "";
+    }, render: ({ assembly, component }) => {
+      const lot = draftOf(assembly, component).lot;
+      return <button className="secondary small" disabled={!canEdit} onClick={() => setPicking({ assembly, component })}>
+        {lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "📦 выбрать со склада"}
+      </button>;
+    } },
+  ];
+
   return <div className="kit-pane">
     <p className="page-sub">Артикул КД, тип и ссылка — из расчёта. Наименование — то, что закуплено под этот артикул КД, пустое — впиши сам. По типу генератор раскладывает состав по операциям. «На партию» = расход на штуку × кол-во с учётом брака. «ГРН склада» — с какой складской строки брать: выбери, и при отправке на комплектацию количество зарезервируется. Не выбрал — позиция всё равно уедет заявкой и будет ждать поставки, ГРН к ней подцепит кладовщик после приёмки. Правки сохраняются сами и переживают обновление из расчёта.</p>
     {canEdit
@@ -514,31 +567,16 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
       current={draftOf(picking.assembly, picking.component).lot}
       close={() => setPicking(null)}
       pick={(lot) => { edit(picking.assembly, picking.component, { lot }); void save(picking.assembly, picking.component, { lot }); setPicking(null); }} />}
-    {card.assemblies.map((assembly) => <div key={assembly.index} className="kit-spec">
-      <p><strong>{assembly.index}</strong> {assembly.name} <span className="muted">кол-во {assembly.run}</span></p>
-      <div className="table-wrap"><table className="kit-spec-table">
-        <thead><tr><th>Артикул КД</th><th>Тип</th><th>Наименование</th><th>Ссылка</th><th>На 1 шт</th><th>% брака</th><th>На партию</th><th>ГРН склада</th></tr></thead>
-        <tbody>{assembly.components.map((component) => {
-          const draft = draftOf(assembly, component);
-          const commit = () => void save(assembly, component);
-          return <tr key={component.art}>
-            <td>{component.art}</td>
-            <td>{component.type}</td>
-            <td><input aria-label={`Наименование ${component.art}`} value={draft.name} disabled={!canEdit} onChange={(event) => edit(assembly, component, { name: event.target.value })} onBlur={commit} /></td>
-            <td><div className="kit-link">
-              <input aria-label={`Ссылка ${component.art}`} value={draft.link} placeholder="—" disabled={!canEdit} onChange={(event) => edit(assembly, component, { link: event.target.value })} onBlur={commit} />
-              {/^https?:\/\//i.test(draft.link) && <a href={draft.link} target="_blank" rel="noopener" title="Открыть">↗</a>}
-            </div></td>
-            <td><input aria-label={`На 1 шт ${component.art}`} value={draft.per} disabled={!canEdit} onChange={(event) => edit(assembly, component, { per: event.target.value })} onBlur={commit} /></td>
-            <td><input aria-label={`% брака ${component.art}`} value={draft.scrap} disabled={!canEdit} onChange={(event) => edit(assembly, component, { scrap: event.target.value })} onBlur={commit} /></td>
-            <td className="num">{kitBatch(draft.per, assembly.run, draft.scrap)}</td>
-            <td><button className="secondary small" disabled={!canEdit} onClick={() => setPicking({ assembly, component })}>
-              {draft.lot?.grn ? `${draft.lot.grn}${draft.lot.package ? ` / ${draft.lot.package}` : ""}` : "📦 выбрать со склада"}
-            </button></td>
-          </tr>;
-        })}</tbody>
-      </table></div>
-    </div>)}
+    <div className="kit-spec"><DataTable
+      rows={specRows}
+      columns={specColumns}
+      rowKey={({ assembly, component }) => key(assembly.index, component.art)}
+      groupBy={({ assembly }) => `${assembly.index} ${assembly.name} · кол-во ${assembly.run}`}
+      storageKey="kit-spec"
+      label="Спецификация проекта"
+      exportName={`Спецификация ${card.project}`}
+      emptyText="В сборках нет позиций."
+    /></div>
   </div>;
 }
 
