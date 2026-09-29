@@ -17,6 +17,7 @@ from app.modules.requests.domain import (
     project_from_title,
     unit_for_type,
 )
+from app.main import app
 from app.modules.requests.infrastructure import RequestRow
 from tests.factories import Actor
 from tests.requests.test_application import FakeUnitOfWork
@@ -131,6 +132,17 @@ def test_import_draft_defaults_category_and_uses_designation_as_article():
     assert draft.purpose == "Обеспечение производства"
 
 
+def test_project_outside_the_number_format_does_not_block_the_import():
+    # Imports.gs:72-79 only warns about the project; RQ-4's format gate must not break the batch.
+    (draft,) = build_import_drafts(batch(item("DB-9M"), project="Расчёт насоса"))
+    (latin,) = build_import_drafts(batch(item("DB-9M"), project="591K.3"))
+
+    assert draft.project_reference is None
+    assert latin.project_reference is None
+    (canonical,) = build_import_drafts(batch(item("DB-9M"), project="591к.3"))
+    assert canonical.project_reference == "591К.3"
+
+
 def test_invalid_position_is_named_in_the_error():
     with pytest.raises(ValidationError, match="КОЛ-ВО должно быть больше нуля: DB-9M"):
         build_import_drafts(batch(item(quantity=Decimal("0"))))
@@ -222,6 +234,36 @@ def test_import_endpoint_creates_batch_and_is_idempotent(write_api):  # noqa: F8
     with sessions() as session:
         rows = session.execute(select(RequestRow.name, RequestRow.design_article, RequestRow.category)).all()
     assert sorted(rows) == [("DB-9M", "DB-9M", "ИП"), ("МГТФ 0,35", "МГТФ 0,35", "Общепром"), ("Разъём", None, "Общепром")]
+
+
+def test_import_endpoint_warns_about_an_unknown_project_but_creates_the_batch(write_api):  # noqa: F811
+    client, _engine, _sessions = write_api
+
+    class Registry:
+        def open_projects(self):
+            return ["2000К.1"]
+
+    app.state.project_registry = Registry()
+    try:
+        closed = client.post("/api/requests/import", json=import_payload(), headers={"Idempotency-Key": "imp-w1"})
+        free = client.post(
+            "/api/requests/import", json=import_payload(project="Насос"), headers={"Idempotency-Key": "imp-w2"}
+        )
+        known = client.post(
+            "/api/requests/import", json=import_payload(project="2000к"), headers={"Idempotency-Key": "imp-w3"}
+        )
+    finally:
+        del app.state.project_registry
+
+    assert closed.status_code == 201, closed.text
+    assert closed.json()["warnings"] == [
+        "Проект «591К.3» не найден в реестре открытых проектов — импорт не заблокирован (переходный период)"
+    ]
+    assert free.status_code == 201, free.text
+    assert "не в формате" in free.json()["warnings"][0]
+    assert {row["project_reference"] for row in free.json()["requests"]} == {None}
+    assert known.json()["warnings"] == []
+    assert {row["project_reference"] for row in known.json()["requests"]} == {"2000К.1"}
 
 
 def test_import_endpoint_reports_the_gate_and_writes_nothing(write_api):  # noqa: F811

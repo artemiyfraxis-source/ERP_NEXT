@@ -86,6 +86,23 @@ def ensure_projects_registered(
             )
 
 
+def import_project_warning(project: str | None, registered: Iterable[str] | None) -> str | None:
+    """`importRequests_` (Imports.gs:72-79): an unknown calc project is a warning, never a refusal."""
+    text = _text(project)
+    if not text:
+        return None
+    if not project_reference_valid(text):
+        return f"№ ПРОЕКТА «{text}» не в формате 591К.3 — проект записан только в назначение"
+    try:
+        ensure_projects_registered([text], registered)
+    except ValidationError:
+        return (
+            f"Проект «{normalize_project_reference(text)}» не найден в реестре открытых проектов — "
+            "импорт не заблокирован (переходный период)"
+        )
+    return None
+
+
 class RequestStatus(str, Enum):
     NEW = "Новый"
     IN_WORK = "В работе"
@@ -569,6 +586,10 @@ def build_import_drafts(payload: CalcImport) -> list[RequestDraft]:
         if item.planned_date is None:
             raise ValidationError(f"Не указана план. дата поступления: {item.name}")
 
+    # SUPPLYMAP's import never writes № ПРОЕКТА and never fails on the project (Imports.gs:72-79),
+    # so a calc project outside the RQ-4 format stays only in НАЗНАЧЕНИЕ instead of blocking the batch.
+    project = _text(payload.project)
+    project_reference = project if project_reference_valid(project) else None
     drafts: list[RequestDraft] = []
     for item in items:
         draft = RequestDraft(
@@ -581,7 +602,7 @@ def build_import_drafts(payload: CalcImport) -> list[RequestDraft]:
             quality_document=_text(item.quality_document),
             procurement_deadline=payload.procurement_deadline,
             planned_date=item.planned_date,
-            project_reference=_text(payload.project) or None,
+            project_reference=project_reference,
             category=_text(item.category) or DEFAULT_CATEGORY,
             design_article=item.name,
             link=item.link,

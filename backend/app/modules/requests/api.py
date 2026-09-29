@@ -44,6 +44,7 @@ from .domain import (
     build_import_drafts,
     calculate_line_sum,
     derive_priority,
+    import_project_warning,
     parse_calc_number,
     parse_zpk,
     project_from_title,
@@ -316,6 +317,7 @@ def import_requests(
     principal: Annotated[Principal, Depends(requests_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
+    projects: Annotated[ProjectRegistry | None, Depends(project_registry)],
 ) -> dict:
     """`importRequests_`: one batch, one `project.NNN`, never blocked by an unknown project."""
     try:
@@ -333,7 +335,11 @@ def import_requests(
         )
     except ValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return {"requests": [_request_result(request) for request in requests]}
+    warning = import_project_warning(data.project, projects.open_projects() if projects is not None else None)
+    return {
+        "requests": [_request_result(request) for request in requests],
+        "warnings": [warning] if warning else [],
+    }
 
 
 @router.post("/handoff", status_code=202)
