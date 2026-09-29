@@ -36,6 +36,7 @@ from .kitsets import (
     sort_kitsets,
     supply_lines,
 )
+from .etk_parts import use_article
 from .project_cards import TechcardValidationError
 
 
@@ -500,16 +501,6 @@ def bom(
             kitset.calc_source, assembly.index, lambda: flow.calc_sheets_reader(request.app.state),
         ),
     }
-
-
-def use_article(art: object, title: object) -> dict[str, str]:
-    """`kitUseArt_`: a code in the name that differs from the article is the article to apply (the estimator writes
-    the original over an analog there); Russian text with spaces is a name, not a code."""
-    import re
-
-    a, t = str(art or "").strip(), str(title or "").strip()
-    is_code = bool(t) and t != a and not (re.search(r"[а-яё]", t, re.I) and re.search(r"\s", t)) and not re.search(r"\s{2,}", t)
-    return {"art": t, "kd": a} if is_code and a else {"art": a or t, "kd": ""}
 
 
 class TechcardPayload(BaseModel):
