@@ -49,6 +49,7 @@ class ShipmentRepository(Protocol):
     def reserve_number(self, day: date) -> str: ...
     def document_sequence(self, project: str) -> int: ...
     def add(self, shipment: Shipment) -> None: ...
+    def open_for_project(self, project: str) -> Sequence[Shipment]: ...
 
 
 class ProjectAddresseeRepository(Protocol):
@@ -201,6 +202,12 @@ class UpdateDocumentsCommand(ShipmentCommand):
     upd_date: date | None
     upd_url: str
     track_number: str
+
+
+@dataclass(frozen=True)
+class EditHeadCommand(ShipmentCommand):
+    """Присланные поля шапки: значение — своё у отправки, пустое — снова из карточки проекта."""
+    fields: dict
 
 
 @dataclass(frozen=True)
@@ -377,7 +384,7 @@ def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment
             carrier=address.carrier, deadline=command.deadline, upd_type=address.upd_type,
             upd_number=command.upd_number, upd_date=command.upd_date, upd_url=command.upd_url,
             manager=command.actor.name, note=command.note, lines=tuple(lines),
-            manager_id=command.actor.id,
+            manager_id=command.actor.id, inherited=_unset_fields(command),
         )
         uow.shipments.add(shipment)
         _remember_addressees(shipment, command, uow)
@@ -391,6 +398,15 @@ def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment
             shipment = _pack(shipment, command.actor, command.now, uow)
         uow.commit()
         return shipment
+
+
+def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
+    """Поля адресата, не заданные в заявке: они и дальше идут за карточкой проекта."""
+    own = {
+        "receiver": command.receiver, "shipping_point": command.shipping_point, "contact": command.contact,
+        "phone": command.phone, "terms": command.terms, "carrier": command.carrier, "upd_type": command.upd_type,
+    }
+    return frozenset(key for key, value in own.items() if not (value.strip() if isinstance(value, str) else value))
 
 
 def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> tuple[Shipment, dict[UUID, Decimal]]:
@@ -460,6 +476,27 @@ def set_project_addressee(command: SetProjectAddresseeCommand, uow: UnitOfWork) 
         _audit(_addressee_id(project), "shipping.addressee_set", command.actor, command.now, {
             "project": project, "fields": sorted(command.fields),
         }, uow)
+        for shipment in uow.shipments.open_for_project(project):
+            followed = shipment.follow(updated)
+            if followed is not shipment:
+                uow.shipments.add(followed)
+                _audit(shipment.id, "shipping.head_followed_project", command.actor, command.now, {"project": project}, uow)
+        uow.commit()
+        return updated
+
+
+def _card(shipment: Shipment, uow: UnitOfWork) -> ProjectAddressee | None:
+    return uow.addressees.get(shipment.lines[0].project) if shipment.lines else None
+
+
+def edit_shipment_head(command: EditHeadCommand, uow: UnitOfWork) -> Shipment:
+    with uow:
+        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        updated = shipment.edit_head(command.fields, _card(shipment, uow))
+        if updated is shipment:
+            return shipment
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.head_edited", command.actor, command.now, {"fields": sorted(command.fields)}, uow)
         uow.commit()
         return updated
 
@@ -577,7 +614,7 @@ def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipme
         updated = shipment.update_documents(
             upd_type=command.upd_type, upd_number=command.upd_number,
             upd_date=command.upd_date, upd_url=command.upd_url,
-            track_number=command.track_number,
+            track_number=command.track_number, card=_card(shipment, uow),
         )
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.documents_updated", command.actor, command.now, {}, uow)
@@ -667,9 +704,10 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
     if addressee is None or not addressee.shipping_point:
         raise ShippingValidationError("Укажи адрес отгрузки в карточке проекта.")
     customer = next(iter(goods.values())).customer
+    # Адресат не копируется, а наследуется: правка карточки проекта дойдёт до этой отправки, пока она открыта.
     return create_shipment(CreateShipmentCommand(
-        customer=customer, receiver=addressee.receiver or customer or project,
-        shipping_point=addressee.shipping_point, contact=addressee.contact, phone=addressee.phone,
+        customer=customer, receiver="" if addressee.receiver or customer else project,
+        shipping_point="", contact="", phone="",
         terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="",
         note="", lines=tuple(lines), actor=command.actor, now=command.now, no_docs=True,
     ), uow)

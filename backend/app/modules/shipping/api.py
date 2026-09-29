@@ -19,11 +19,11 @@ from app.shared.stored_files import decode_upload, file_response
 
 from .application import (
     AttachUpdCommand, attach_upd_file,
-    AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand,
+    AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand,
     LayOutCommand, PackProjectCommand, QueueProjectCommand, RegisterGoodCommand, RequestedGood,
     SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand, UnitOfWork, UnpickCommand,
     UpdateDocumentsCommand, accept_good, cancel_shipment, close_shipment, create_shipment, drop_project,
-    lay_out_shipment, mark_shipped, pack_project, pack_shipment, pick_shipment, queue_project,
+    edit_shipment_head, lay_out_shipment, mark_shipped, pack_project, pack_shipment, pick_shipment, queue_project,
     register_good, set_project_addressee, set_requested, unpick_line, update_documents,
 )
 from .documents import build_delivery_note, build_packing_lists
@@ -141,6 +141,18 @@ class DocumentsPayload(VersionPayload):
     track_number: str = Field(default="", max_length=255)
 
 
+class HeadPayload(VersionPayload):
+    """Шапка отправки: приходят только правленые поля; пустое поле адресата — снова из карточки проекта."""
+    receiver: str | None = Field(default=None, max_length=512)
+    shipping_point: str | None = Field(default=None, max_length=1000)
+    contact: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=255)
+    terms: DeliveryTerms | None = None
+    carrier: str | None = Field(default=None, max_length=255)
+    deadline: date | None = None
+    note: str | None = Field(default=None, max_length=5000)
+
+
 class RequestedPayload(VersionPayload):
     quantity: Quantity
 
@@ -222,6 +234,7 @@ def _shipment_result(shipment: Shipment) -> dict:
         "shipped_at": shipment.shipped_at.isoformat() if shipment.shipped_at else None,
         "manager": shipment.manager, "note": shipment.note, "tk_note": shipment.tk_note,
         "places": len(shipment.boxes), "weight": total_gross(shipment.boxes),
+        "inherited": sorted(shipment.inherited),
         "boxes": [{
             "place": box.place, "kind": box.kind, "dims": box.dims, "net": box.net, "gross": box.gross,
             "seal": box.seal,
@@ -418,6 +431,15 @@ def documents(shipment_id: UUID, payload: DocumentsPayload, principal: Annotated
         shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
         upd_type=payload.upd_type, upd_number=payload.upd_number, upd_date=payload.upd_date,
         upd_url=payload.upd_url, track_number=payload.track_number,
+    ), uow_factory()))
+    return {"shipment": _shipment_result(shipment)}
+
+
+@router.put("/shipments/{shipment_id}/head")
+def head(shipment_id: UUID, payload: HeadPayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+    fields = {key: getattr(payload, key) for key in payload.model_fields_set if key != "version"}
+    shipment = _run(lambda: edit_shipment_head(EditHeadCommand(
+        shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now, fields=fields,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 

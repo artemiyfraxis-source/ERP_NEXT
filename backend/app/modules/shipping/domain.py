@@ -139,6 +139,8 @@ class FinishedGood:
 
 ADDRESSEE_CONTACT_FIELDS = ("shipping_point", "contact", "phone")
 ADDRESSEE_CARD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type")
+# Шапка отправки, которую правят руками (`SHIP_HEAD_FIELDS_` без УПД и трека — они в «Документах»).
+SHIPMENT_HEAD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "deadline", "note")
 # Реквизиты отгрузочной ведомости (форма 04.1) в карточке проекта: `SHIP_PROJ_COLS_` «ЗАКАЗ №» … «ВРЕМЯ РАБОТЫ».
 ADDRESSEE_REQUISITE_FIELDS = ("po", "contract", "spec", "invoice", "pays", "customer_address", "hours")
 
@@ -354,6 +356,9 @@ class Shipment:
     # «ПРИМЕЧАНИЯ ДЛЯ ТК» и места (`ОТГРУЗКА.МЕСТА`) из окна «Сформировать отгрузочные».
     tk_note: str = ""
     boxes: tuple[ShipmentBox, ...] = ()
+    # Поля адресата, не заданные в самой отправке: идут за карточкой проекта, пока отправка не закрыта
+    # (`shipHeadEff_` считает их при каждом чтении; ERP хранит итог и обновляет его при правке карточки).
+    inherited: frozenset[str] = frozenset()
 
     @classmethod
     def create(
@@ -362,6 +367,7 @@ class Shipment:
         carrier: str, deadline: date | None, upd_type: UpdType | None, upd_number: str,
         upd_date: date | None, upd_url: str, manager: str, note: str,
         lines: tuple[ShipmentLine, ...], manager_id: UUID | None = None,
+        inherited: frozenset[str] = frozenset(),
     ) -> Shipment:
         if not lines:
             raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
@@ -378,7 +384,7 @@ class Shipment:
             upd_url=str(upd_url or "").strip(), pl_number="", dn_number="",
             track_number="", packed_at=None, shipped_at=None,
             manager=_text(manager, "Менеджер"), note=str(note or "").strip(), lines=lines,
-            manager_id=manager_id,
+            manager_id=manager_id, inherited=frozenset(inherited) & frozenset(ADDRESSEE_CARD_FIELDS),
         )
 
     def pick(self, available: dict[UUID, Decimal], grns: dict[UUID, str]) -> tuple[Shipment, dict[UUID, Decimal]]:
@@ -426,15 +432,58 @@ class Shipment:
 
     def update_documents(
         self, *, upd_type: UpdType | None, upd_number: str, upd_date: date | None,
-        upd_url: str, track_number: str,
+        upd_url: str, track_number: str, card: ProjectAddressee | None = None,
     ) -> Shipment:
+        """Пустой тип УПД — из карточки проекта (`shipUpdEff_`); №, дата и файл у каждой отправки свои."""
         if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
             raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
-        return replace(
+        inherited = self.inherited - {"upd_type"} if upd_type is not None else self.inherited | {"upd_type"}
+        edited = replace(
             self, upd_type=upd_type, upd_number=str(upd_number or "").strip(),
             upd_date=upd_date, upd_url=str(upd_url or "").strip(),
-            track_number=str(track_number or "").strip(), version=self.version + 1,
+            track_number=str(track_number or "").strip(), inherited=inherited,
         )
+        return replace(edited._followed(card), version=self.version + 1)
+
+    def edit_head(self, fields: dict[str, object], card: ProjectAddressee | None) -> Shipment:
+        """`shipSetHead_`: менеджер или кладовщик правит шапку отправки. Присланное поле адресата с
+        значением — своё у отправки; пустое — снова из карточки проекта. Закрытую и отменённую не правим."""
+        if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+            raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
+        unknown = set(fields) - set(SHIPMENT_HEAD_FIELDS)
+        if unknown:
+            raise ShippingValidationError("Эти поля отправки править нельзя: " + ", ".join(sorted(unknown)))
+        inherited = set(self.inherited)
+        values: dict[str, object] = {}
+        for key, value in fields.items():
+            value = value.strip() if isinstance(value, str) else value
+            if key in ADDRESSEE_CARD_FIELDS and value in (None, ""):
+                inherited.add(key)
+                continue
+            inherited.discard(key)
+            values[key] = value
+        edited = replace(self, **values, inherited=frozenset(inherited))._followed(card)
+        if edited == self:
+            return self
+        if not edited.receiver:
+            raise ShippingValidationError("Получатель не может быть пустым")
+        return replace(edited, version=self.version + 1)
+
+    def follow(self, card: ProjectAddressee | None) -> Shipment:
+        """Карточка проекта изменилась: незаданные в отправке поля адресата берут её значения."""
+        if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+            return self
+        followed = self._followed(card)
+        return self if followed == self else replace(followed, version=self.version + 1)
+
+    def _followed(self, card: ProjectAddressee | None) -> Shipment:
+        values: dict[str, object] = {}
+        for key in self.inherited:
+            theirs = getattr(card, key) if card is not None else None
+            if key == "receiver":
+                theirs = theirs or self.customer or self.receiver  # как при заведении: заказчик вместо пустого
+            values[key] = theirs or (None if key in {"terms", "upd_type"} else "")
+        return replace(self, **values) if values else self
 
     def mark_shipped(self, day: date) -> Shipment:
         """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:

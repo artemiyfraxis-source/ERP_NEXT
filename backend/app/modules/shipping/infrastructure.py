@@ -72,6 +72,8 @@ class ShipmentRow(Base):
     manager_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
     note: Mapped[str] = mapped_column(Text(), nullable=False)
     tk_note: Mapped[str] = mapped_column(Text(), nullable=False, default="")
+    # Поля адресата из карточки проекта, через запятую (Shipment.inherited).
+    inherited_fields: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -193,6 +195,7 @@ class SqlAlchemyShipmentRepository:
             upd_url=row.upd_url, pl_number=row.pl_number, dn_number=row.dn_number,
             track_number=row.track_number, packed_at=row.packed_at, shipped_at=row.shipped_at,
             manager=row.manager, note=row.note, manager_id=row.manager_id, tk_note=row.tk_note or "",
+            inherited=frozenset(filter(None, (row.inherited_fields or "").split(","))),
             boxes=tuple(ShipmentBox(
                 place=box.place, kind=box.kind, dims=box.dims, net=box.net, gross=box.gross, seal=box.seal,
                 items=tuple(BoxItem(item["item_index"], Decimal(item["quantity"])) for item in json.loads(box.composition or "[]")),
@@ -209,6 +212,13 @@ class SqlAlchemyShipmentRepository:
     def list(self, limit: int = 200) -> list[Shipment]:
         rows = self.session.scalars(select(ShipmentRow).order_by(ShipmentRow.created_at.desc(), ShipmentRow.id.desc()).limit(limit))
         return [self._domain(row) for row in rows]
+    def open_for_project(self, project: str) -> list[Shipment]:
+        """Незакрытые отправки проекта (проект отправки — по первой позиции, `shipHeadEff_`)."""
+        ids = select(ShipmentLineRow.shipment_id).where(ShipmentLineRow.project == project)
+        rows = self.session.scalars(select(ShipmentRow).where(
+            ShipmentRow.id.in_(ids), ShipmentRow.status.not_in((ShipmentStatus.CLOSED.value, ShipmentStatus.CANCELLED.value)),
+        ).order_by(ShipmentRow.created_at, ShipmentRow.id))
+        return [shipment for shipment in map(self._domain, rows) if shipment.lines and shipment.lines[0].project == project]
     def reserve_number(self, day: date) -> str:
         stamp = day.strftime("%Y%m%d"); key = f"shipment-{stamp}"
         row = self.session.scalar(select(ShippingSequenceRow).where(ShippingSequenceRow.name == key).with_for_update())
@@ -236,6 +246,7 @@ class SqlAlchemyShipmentRepository:
             setattr(row, key, getattr(shipment, key))
         row.status = shipment.status.value; row.terms = shipment.terms.value if shipment.terms else None
         row.upd_type = shipment.upd_type.value if shipment.upd_type else None
+        row.inherited_fields = ",".join(sorted(shipment.inherited))
         existing = {line.id: line for line in self.session.scalars(select(ShipmentLineRow).where(ShipmentLineRow.shipment_id == shipment.id))}
         for position, line in enumerate(shipment.lines):
             stored = existing.pop(line.id, None)

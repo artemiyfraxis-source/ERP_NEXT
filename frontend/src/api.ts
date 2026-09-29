@@ -914,6 +914,8 @@ export interface Shipment {
   weight: string;
   boxes: ShipmentBox[];
   lines: ShipmentLine[];
+  /** Поля адресата, которые идут за карточкой проекта, пока отправка не закрыта. */
+  inherited: string[];
 }
 
 export interface ShipmentBox {
@@ -1959,6 +1961,10 @@ export const shippingApi = {
     method: "POST", body: JSON.stringify({ version, line_id: lineId }),
   }),
   documents: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/documents`, {
+    method: "PUT", body: JSON.stringify(payload),
+  }),
+  /** `shipSetHead_`: шапка отправки; приходят только правленые поля, пустое поле адресата — из карточки проекта. */
+  head: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/head`, {
     method: "PUT", body: JSON.stringify(payload),
   }),
   /** SH-4 `portalShipItemQty`: «Заказано» после создания, не ниже набранного. */
