@@ -236,6 +236,21 @@ $env:ERP_DATABASE_URL = 'postgresql+psycopg://USER:PASSWORD@HOST:5432/erp_next'
 переносятся. Повторный запуск с теми же данными ничего не создаёт и не меняет. Код выхода: 0 — всё сошлось,
 1 — есть отклонённые или расходящиеся строки, 2 — выгрузка не читается или не задан `ERP_DATABASE_URL`.
 
+Выгрузку можно взять прямо из Google, без clasp (только чтение, ключ сервисного аккаунта):
+`python ../scripts/stock_export_google.py --key <ключ.json> --out ../data/import`.
+
+### Проекты из SUPPLYMAP (реестр, наборы, журнал плана, лист цеха)
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe ..\scripts\projects_import.py snapshot --key <ключ.json> --out projects.json   # только чтение Google
+.\.venv\Scripts\python.exe ..\scripts\projects_import.py apply projects.json                              # в ERP_DATABASE_URL
+```
+
+`apply` заводит наборы «Создать проект из расчёта» по их ссылке РАСЧЁТ (расчёт берётся из снимка), переносит
+реестр «Проекты» и «Журнал проектов» SUPPLYMAP и сверяет план с листом цеха «ЗАГРУЗ» по правилам `planShopSync_`.
+Повторный запуск ничего не дублирует.
+
 ### Загрузка баз «Технологии» из зеркала (REF-MIRROR-LOAD, REF-MIRROR-ALL)
 
 Читает зеркало `_local/db/*.tsv` репозитория SUPPLYMAP (только чтение; путь — `--source` или
