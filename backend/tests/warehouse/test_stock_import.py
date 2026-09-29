@@ -261,21 +261,105 @@ def test_rerun_with_the_same_data_changes_nothing(tmp_path, database_url):
     assert snapshot(database_url) == before
 
 
-def test_rerun_with_changed_sheet_reports_and_keeps_the_lot(tmp_path, database_url):
+CHANGED_A1 = car_row(АРТИКУЛ="TEST-A1", НАИМЕНОВАНИЕ="Тестовая вилка", ТИП="Соединитель", ГРН="OLD.26.0000001",
+                     ПРИХОД="12", СПИСАНО="4", БАЛАНС="8", **{"МЕСТО ХРАНЕНИЯ": "3B2B"})
+
+
+def lot_events(database_url, event_type):
+    engine = build_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            return [dict(row) for row in connection.scalars(
+                select(AuditEventRow.details).where(AuditEventRow.event_type == event_type))]
+    finally:
+        engine.dispose()
+
+
+def test_rerun_tops_up_a_lot_erp_never_moved_to_the_sheet(tmp_path, database_url):
+    """«Грузим сейчас, потом догружаем»: an imported lot nobody touched in ERP follows Google on the next run."""
     run(write_export(tmp_path / "first"), database_url)
-    changed = [car_row(АРТИКУЛ="TEST-A1", НАИМЕНОВАНИЕ="Тестовая вилка", ТИП="Соединитель", ГРН="OLD.26.0000001",
-                       ПРИХОД="12", СПИСАНО="2", БАЛАНС="10", **{"МЕСТО ХРАНЕНИЯ": "3B2A"}), *CLEAN_CAR[1:]]
+    journal = [*CLEAN_JOURNAL, journal_row("OLD.26.0000001", "2", reason="Брак")]
+
+    export, result, check = run(write_export(tmp_path / "second", car=[CHANGED_A1, *CLEAN_CAR[1:]], journal=journal),
+                                database_url)
+
+    assert [(row.grn, [(field, was, now) for field, _, was, now in changes]) for row, changes in result.synced] == [
+        ("OLD.26.0000001", [("storage_location", "3B2A", "3B2B"), ("inbound", "10", "12"), ("written_off", "2", "4")]),
+    ]
+    assert not result.conflicts and len(result.unchanged) == 3 and check.ok
+    assert result.history_synced == 1 and result.history_for_existing_lots == 5
+    lots = {grn: (version, inbound, written_off, place) for grn, version, inbound, written_off, place
+            in snapshot(database_url)[0]}
+    assert lots["OLD.26.0000001"] == (3, Decimal("12"), Decimal("4"), "3B2B")
+    [event] = lot_events(database_url, "warehouse.legacy_synced")
+    assert event["reason"] == "догрузка из Google" and event["version"] == "3"
+    assert [(r.grn, r.quantity, r.reason) for r in journal_rows(database_url) if r.reason == "Брак"] == [
+        ("OLD.26.0000001", Decimal("2"), "Брак")]
+    assert "догрузка из Google ЦАР:2 OLD.26.0000001: МЕСТО ХРАНЕНИЯ 3B2A → 3B2B" in format_report(export, result, check)
+
+    before = snapshot(database_url), journal_rows(database_url)
+    _, again, _ = run(write_export(tmp_path / "third", car=[CHANGED_A1, *CLEAN_CAR[1:]], journal=journal), database_url)
+    assert not again.synced and not again.created and again.history_synced == 0
+    assert (snapshot(database_url), journal_rows(database_url)) == before
+
+
+def test_rerun_leaves_a_lot_erp_has_moved_and_reports_it(tmp_path, database_url):
+    from app.modules.warehouse.application import WriteOffCommand, write_off
+    from tests.factories import Actor
+
+    run(write_export(tmp_path / "first"), database_url)
+    engine = build_engine(database_url)
+    try:
+        uow = build_warehouse_uow_factory(engine)()
+        with uow:
+            lot = uow.warehouse.by_key("ЦАР", "OLD.26.0000001", "")
+        write_off(WriteOffCommand(lot_id=lot.id, expected_version=lot.version, quantity=Decimal("1"),
+                                  purpose="999К.1", reason="", actor=Actor(name="Кладовщик", department="Склад"), now=NOW),
+                  build_warehouse_uow_factory(engine)())
+    finally:
+        engine.dispose()
     before = snapshot(database_url)
 
-    export, result, check = run(write_export(tmp_path / "second", car=changed), database_url)
+    export, result, check = run(write_export(tmp_path / "second", car=[CHANGED_A1, *CLEAN_CAR[1:]]), database_url)
 
-    assert [(row.grn, reason) for row, reason in result.conflicts] == [("OLD.26.0000001", "расходится с ERP: ПРИХОД")]
-    assert not check.ok
-    assert [(line.grn, line.sheet_balance, line.erp_balance) for line in check.grn_mismatches] == [
-        ("OLD.26.0000001", Decimal("10"), Decimal("8"))
-    ]
-    assert snapshot(database_url) == before
+    assert not result.synced
+    [(row, reason)] = result.conflicts
+    assert row.grn == "OLD.26.0000001" and reason.startswith("в ERP уже были движения (событий 1, списаний и выдач 1)")
+    assert "ПРИХОД" in reason and not check.ok
+    assert snapshot(database_url)[0] == before[0]
     assert "не изменено ЦАР:2 OLD.26.0000001" in format_report(export, result, check)
+
+
+def test_dry_run_top_up_shows_the_difference_and_writes_nothing(tmp_path, database_url):
+    run(write_export(tmp_path / "first"), database_url)
+    before = snapshot(database_url)
+
+    export, result, check = run(write_export(tmp_path / "second", car=[CHANGED_A1, *CLEAN_CAR[1:]]), database_url,
+                                dry_run=True)
+
+    assert [row.grn for row, _ in result.synced] == ["OLD.26.0000001"] and not result.committed
+    assert snapshot(database_url) == before
+    report = format_report(export, result, check)
+    assert "ПРОБНЫЙ ПРОГОН" in report and "Изменений в ERP было бы: новых партий 0, приведено к Google 1" in report
+
+
+def test_lot_gone_from_the_sheet_is_reported_and_kept(tmp_path, database_url):
+    run(write_export(tmp_path / "first"), database_url)
+
+    export, result, check = run(write_export(tmp_path / "second", car=CLEAN_CAR[:2]), database_url)
+
+    assert [(lot.grn, lot.balance) for lot in result.missing_in_sheet] == [("OLD.26.0000003", Decimal("0"))]
+    assert "нет в листе, в ERP оставлена как есть: ЦАР OLD.26.0000003" in format_report(export, result, check)
+    assert "OLD.26.0000003" in [grn for grn, *_ in snapshot(database_url)[0]]
+
+
+def test_import_version_of_runs_before_the_top_up():
+    from app.modules.warehouse.application import _import_version
+
+    assert _import_version([("warehouse.legacy_imported", {"written_off": "2"})]) == 2
+    assert _import_version([("warehouse.legacy_imported", {"written_off": "0"})]) == 1
+    assert _import_version([("warehouse.legacy_imported", {"written_off": "2", "version": "2"}),
+                            ("warehouse.legacy_synced", {"version": "3"})]) == 3
 
 
 def test_rejected_rows_do_not_stop_the_import_and_show_in_reconciliation(tmp_path, database_url):
