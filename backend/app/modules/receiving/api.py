@@ -25,6 +25,7 @@ from .application import (
     inspect_receiving,
     open_vk_revision,
     place_receiving,
+    putaway_sheet,
     receiving_queue,
 )
 from .domain import (
@@ -150,6 +151,22 @@ def queue(
     return {
         "lines": [_result(line) for line in page],
         "next_cursor": str(page[-1].id) if len(lines) > limit else None,
+    }
+
+
+@router.get("/putaway-sheet")
+def putaway_sheet_endpoint(
+    _principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> dict:
+    """WH-6: «Лист перемещения на склад» — принятые позиции с ГРН, которым ещё не назначено место
+    (SUPPLYMAP Warehouse.gs:349-382 buildTransferSheet). Печатается кладовщиком, разносится по местам
+    от руки, потом каждая строка уходит через POST /{line_id}/place."""
+    lines = _run(lambda: putaway_sheet(uow_factory()))
+    return {
+        "generated_at": now.isoformat(),
+        "lines": [_result(line) for line in lines],
     }
 
 

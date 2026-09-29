@@ -229,6 +229,20 @@ class SqlAlchemyReceivingRepository:
         )
         return [_domain(row) for row in rows]
 
+    def awaiting_placement(self, limit: int = 500) -> list[ReceivingLine]:
+        """WH-6: «Принято», ещё без места и ещё не переданное на склад — putaway_sheet's source."""
+        rows = self.session.scalars(
+            select(ReceivingLineRow)
+            .where(
+                ReceivingLineRow.status == ReceivingStatus.ACCEPTED.value,
+                ReceivingLineRow.storage_location.is_(None),
+                ReceivingLineRow.warehouse_event_emitted.is_(False),
+            )
+            .order_by(ReceivingLineRow.created_at, ReceivingLineRow.id)
+            .limit(limit)
+        )
+        return [_domain(row) for row in rows]
+
     def all_grns(self) -> list[str]:
         return list(
             self.session.scalars(

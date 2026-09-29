@@ -1123,11 +1123,18 @@ export const procurementApi = {
     }),
 };
 
+export interface PutawaySheet {
+  generated_at: string;
+  lines: ReceivingLine[];
+}
+
 export const receivingApi = {
   list: (after?: string) =>
     api<{ lines: ReceivingLine[]; next_cursor: string | null }>(
       `/api/receiving${after ? `?after=${encodeURIComponent(after)}` : ""}`,
     ),
+  /** WH-6: «Принято» без места на складе — источник печатного «Листа перемещения на склад». */
+  putawaySheet: () => api<PutawaySheet>("/api/receiving/putaway-sheet"),
   inspect: (lineId: string, payload: Record<string, unknown>) =>
     api<{ line: ReceivingLine }>(`/api/receiving/${lineId}/inspect`, {
       method: "POST",

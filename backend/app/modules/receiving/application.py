@@ -34,6 +34,7 @@ class ReceivingRepository(Protocol):
         after_id: UUID | None = None,
     ) -> Sequence[ReceivingLine]: ...
     def waiting_inspected_by(self, day: date, limit: int = 200) -> Sequence[ReceivingLine]: ...
+    def awaiting_placement(self, limit: int = 500) -> Sequence[ReceivingLine]: ...
     def all_grns(self) -> Sequence[str]: ...
     def legacy_ids_starting_with(self, prefix: str) -> Sequence[str]: ...
     def add(self, line: ReceivingLine) -> None: ...
@@ -398,3 +399,12 @@ def receiving_queue(
         if after_id is not None and uow.receiving.get(after_id) is None:
             raise KeyError(f"Receiving cursor not found: {after_id}")
         return list(uow.receiving.queue(limit, after_id))
+
+
+def putaway_sheet(uow: UnitOfWork, *, limit: int = 500) -> list[ReceivingLine]:
+    """WH-6: строки «Принято» с ГРН, ещё не размещённые на складе — источник печатного «Листа
+    перемещения на склад» (SUPPLYMAP Warehouse.gs:349-382 buildTransferSheet). Место на складе
+    появляется у строки только через place_receiving, поэтому пустое storage_location и есть
+    признак «ждёт раскладки»."""
+    with uow:
+        return list(uow.receiving.awaiting_placement(limit))

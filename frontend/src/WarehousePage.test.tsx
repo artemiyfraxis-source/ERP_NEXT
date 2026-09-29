@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
-import type { WarehouseLot } from "./api";
+import type { ReceivingLine, WarehouseLot } from "./api";
 
 const lot: WarehouseLot = {
   id: "40000000-0000-0000-0000-000000000001",
@@ -35,7 +35,77 @@ function added(entered: WarehouseLot[], errors: Array<{ i: number; error: string
   return json({ added: entered.length, lots: entered, assigned: [], errors });
 }
 
+const putawayCandidate: ReceivingLine = {
+  id: "50000000-0000-0000-0000-000000000001",
+  legacy_id: "SM-20260921-01",
+  status: "Принято",
+  version: 2,
+  warehouse: "ЦАР",
+  article: "CON-001",
+  series: "",
+  name: "Разъём",
+  item_type: "Комплектующие",
+  purpose: "FRX.001",
+  supplier: "ООО Поставка",
+  ordered_quantity: "10",
+  unit: "шт",
+  quality_document_required: false,
+  shipping_document_url: "https://files.test/upd.pdf",
+  quality_document_url: null,
+  document_quantity: "10",
+  fact_quantity: "10",
+  expiry_date: null,
+  disposition: null,
+  verdict: "Годен",
+  nonconformities: [],
+  accepted_quantity: "10",
+  backorder_quantity: "0",
+  grn: "FRX.26.0000001",
+  package: "",
+  storage_location: null,
+  inspector: "Приёмщик",
+  warehouse_event_emitted: false,
+  inspected_on: "2026-09-21",
+};
+
 afterEach(() => vi.restoreAllMocks());
+
+it("warns instead of printing when nothing is waiting to be put away", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path === "/api/receiving/putaway-sheet") return json({ generated_at: "2026-09-29T10:00:00+03:00", lines: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "🖨 Лист перемещения" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Нет позиций для раскладки");
+  expect(screen.queryByText("ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД")).not.toBeInTheDocument();
+});
+
+it("prints a putaway sheet for accepted lots waiting for a shelf", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path === "/api/receiving/putaway-sheet") {
+      return json({ generated_at: "2026-09-29T10:00:00+03:00", lines: [putawayCandidate] });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "🖨 Лист перемещения" }));
+
+  const sheet = await screen.findByRole("region", { name: "ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД" });
+  expect(within(sheet).getByText("Разъём")).toBeInTheDocument();
+  expect(within(sheet).getByText("FRX.26.0000001")).toBeInTheDocument();
+  expect(within(sheet).getByText(/Разложил:/)).toBeInTheDocument();
+
+  fireEvent.click(within(sheet).getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("region", { name: "ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД" })).not.toBeInTheDocument();
+});
 
 it("writes off stock with its optimistic version and stated reason", async () => {
   let writeoff: Record<string, unknown> | undefined;

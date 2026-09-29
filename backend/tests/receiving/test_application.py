@@ -15,6 +15,7 @@ from app.modules.receiving.application import (
     inspect_receiving,
     open_vk_revision,
     place_receiving,
+    putaway_sheet,
     quarantine_overdue_waiting,
 )
 from app.modules.receiving.domain import InspectionInput, ReceivingStatus
@@ -45,6 +46,15 @@ class Repository:
             item
             for item in self.items.values()
             if item.status is ReceivingStatus.WAITING and item.inspected_on and item.inspected_on <= day
+        ][:limit]
+
+    def awaiting_placement(self, limit=500):
+        return [
+            item
+            for item in self.items.values()
+            if item.status is ReceivingStatus.ACCEPTED
+            and not item.storage_location
+            and not item.warehouse_event_emitted
         ][:limit]
 
     def all_grns(self):
@@ -306,6 +316,45 @@ def test_new_vk_rejects_a_stale_form():
     with pytest.raises(ConcurrentReceivingUpdate):
         _revise(uow, line, datetime(2026, 9, 22, 9, 0))
     assert uow.receiving.get(line.id) == inspected
+
+
+def test_putaway_sheet_lists_only_accepted_lines_without_a_place():
+    """WH-6: «Принято» без места на складе, ещё не переданное туда — и только это."""
+    uow = Uow()
+    unplaced = consume_receiving_expected(message(), uow)
+    unplaced = _inspect(uow, unplaced, datetime(2026, 9, 21, 11, 0))
+    assert unplaced.status is ReceivingStatus.ACCEPTED
+    assert unplaced.storage_location is None
+
+    waiting_line = consume_receiving_expected(
+        replace(message(), id=UUID("10000000-0000-0000-0000-000000000002"),
+                idempotency_key="procurement:two:receiving:v1",
+                payload={**message().payload, "legacy_id": "SM-20260921-02"}),
+        uow,
+    )
+    _inspect(uow, waiting_line, datetime(2026, 9, 21, 11, 0), shipping_document_url=None)  # -> «Ожидание»
+
+    already_placed = consume_receiving_expected(
+        replace(message(), id=UUID("10000000-0000-0000-0000-000000000003"),
+                idempotency_key="procurement:three:receiving:v1",
+                payload={**message().payload, "legacy_id": "SM-20260921-03"}),
+        uow,
+    )
+    already_placed = _inspect(uow, already_placed, datetime(2026, 9, 21, 11, 0))
+    place_receiving(
+        PlaceReceivingCommand(
+            line_id=already_placed.id,
+            expected_version=already_placed.version,
+            storage_location="1F4",
+            actor=Actor(name="Приёмщик", department="ОТК"),
+            now=datetime(2026, 9, 21, 11, 5),
+        ),
+        uow,
+    )
+
+    sheet = putaway_sheet(uow)
+
+    assert [line.id for line in sheet] == [unplaced.id]
 
 
 def test_backorder_is_requested_once_per_delivery_across_vk_revisions():

@@ -249,3 +249,48 @@ def test_document_date_without_historical_flag_keeps_today(receiving_api):
 
     assert response.status_code == 200, response.text
     assert response.json()["line"]["status"] == "Возврат"
+
+
+def test_putaway_sheet_shows_accepted_unplaced_lines_only(receiving_api):
+    """WH-6: печатный лист перемещения — только «Принято» без места; поставленное на место пропадает."""
+    client, line = receiving_api
+    base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+
+    empty = client.get("/api/receiving/putaway-sheet")
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["lines"] == []
+
+    accepted = client.post(
+        f"/api/receiving/{line.id}/inspect",
+        json={**base, "version": line.version, "shipping_document_url": "https://files.test/upd.pdf"},
+    )
+    assert accepted.json()["line"]["status"] == "Принято"
+
+    sheet = client.get("/api/receiving/putaway-sheet")
+    assert sheet.status_code == 200, sheet.text
+    body = sheet.json()
+    assert "generated_at" in body
+    assert [row["id"] for row in body["lines"]] == [str(line.id)]
+    assert body["lines"][0]["storage_location"] is None
+    assert body["lines"][0]["grn"] is not None
+
+    placed = client.post(
+        f"/api/receiving/{line.id}/place",
+        json={"version": accepted.json()["line"]["version"], "storage_location": "1F4"},
+    )
+    assert placed.status_code == 200, placed.text
+
+    after_placement = client.get("/api/receiving/putaway-sheet")
+    assert after_placement.json()["lines"] == []
+
+
+def test_putaway_sheet_requires_receiver_role(receiving_api):
+    client, _ = receiving_api
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Закупщик", department="Закупки"),
+        email="buyer@example.test",
+        roles=frozenset({"buyer"}),
+        permissions={"receiving": "edit"},
+    )
+
+    assert client.get("/api/receiving/putaway-sheet").status_code == 403

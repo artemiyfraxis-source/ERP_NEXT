@@ -1255,3 +1255,18 @@ SUPPLYMAP. Правило «хотя бы один администратор» 
 SUPPLYMAP, последняя правка выигрывает.
 
 Корпуса разъёмов (WH-4, SUPPLYMAP d88150d): DS1069 — аналог JST XH (1 слева, ступенька `ramp`), алиас-правило `BL2018P-nn → SMP-0nV-BC` (`ALIAS_RULES`) применяется после точных алиасов и до поиска семейства, как в `housingOf_`; «решено агентом — проверить».
+
+Лист перемещения на склад (WH-6, SUPPLYMAP Warehouse.gs:349-382 `buildTransferSheet`):
+данные «принято, без места» уже есть нативно в receiving — `ReceivingLine` со статусом
+«Принято», пустым `storage_location` и `warehouse_event_emitted=False` (место появляется
+только через `place_receiving`, а событие на склад уходит из `_emit_warehouse_if_ready`
+в тот же момент). Добавлен `GET /api/receiving/putaway-sheet` (принцип тот же
+`receiving_edit_principal`, роли receiver/admin), кнопка печати — на экране склада
+(`WarehousePage`), как просил конвейер, хотя данные родом из receiving; решено не заводить
+здесь кросс-модульный Protocol в духе fulfillment→warehouse ради одного read-only списка —
+фронтенд просто зовёт `receivingApi.putawaySheet()`. Колонка «№ партии» из SUPPLYMAP
+(отдельно от «Пакет») не перенесена: у `ReceivingLine` нет поля партии/лота — вся ветка
+прослеживаемости ГОСТ РВ (`gost-rv-traceability`) в ERP_NEXT ещё не портирована; появится
+поле — добавить колонку в `putaway_sheet`/`PrintSheet`. Печать — не Google Doc, а новый
+общий фронтенд-компонент `PrintSheet` (`@media print` прячет всё, кроме `.print-sheet`);
+FF-8 печатает бланки выдачи тем же компонентом. «решено агентом — проверить».
