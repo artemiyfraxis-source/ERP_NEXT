@@ -7,6 +7,9 @@ import { accessApi, type AccessMode, type AccessOverview, type AccessRow, type A
  *  role. An empty cell = «закрыто», as SUPPLYMAP has since 01.09.2026; the administrator has «полный» everywhere unless
  *  a cell says otherwise (`defaults`). */
 
+// Roles with full access to every section that cannot be reduced (owner 2026-09-29): технолог, специалист по
+// снабжению, директор производства, генеральный директор. Their columns show a locked «полный» and take no edits.
+const FULL_ACCESS_ROLES = new Set(["admin", "buyer", "prodhead", "management"]);
 const MODE_LABEL: Record<AccessSetting, string> = { none: "закрыт", view: "просмотр", edit: "полный" };
 const SETTINGS: AccessSetting[] = ["none", "view", "edit"];
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
@@ -140,6 +143,8 @@ export function AccessPage() {
       title: role.label,
       value: (section) => shown(roleModes({ ...data, matrix }, role.key)[section.key]),
       render: (section) => {
+        if (FULL_ACCESS_ROLES.has(role.key))
+          return <span className="access-pill access-edit access-set" title="Полный доступ всегда — урезать нельзя">полный 🔒</span>;
         const fallback = data.defaults[role.key]?.[section.key];
         const value = matrix[role.key]?.[section.key] ?? "";
         return <AccessCell
@@ -168,6 +173,8 @@ export function AccessPage() {
       key: "personal", title: "Исключение",
       value: (section) => personal[section.key] ? MODE_LABEL[personal[section.key]!] : "",
       render: (section) => {
+        if (FULL_ACCESS_ROLES.has(role))
+          return <span className="access-pill access-edit access-set" title="Полный доступ всегда — урезать нельзя">полный 🔒</span>;
         const value = personal[section.key] ?? "";
         return <AccessCell
           label={`Исключение: ${section.label}`}
@@ -186,8 +193,8 @@ export function AccessPage() {
     <p className="page-sub">
       Кто какие разделы видит. Раздел открыт, только если <b>выдан явно</b>: пустая ячейка — <b>закрыт</b>{" "}
       (у технолога-администратора пустая ячейка — <b>полный</b>), <b>просмотр</b> снимает правку. Персональное
-      исключение сильнее роли. Часть действий на сервере по-прежнему закреплена за ролями (например, правит закупку
-      только снабжение и технолог) — матрица их другой роли не откроет. «Доступы» всегда открыты администратору.
+      исключение сильнее роли. Технолог, снабжение, директор производства и генеральный директор всегда имеют полный
+      доступ ко всем разделам — их урезать нельзя. «Доступы» всегда открыты администратору.
     </p>
     <div className="shipping-tabs">
       <button className={tab === "roles" ? "secondary active" : "secondary"} onClick={() => setTab("roles")}>Роли × разделы</button>
@@ -197,6 +204,10 @@ export function AccessPage() {
     {notice && <div className="success-banner">{notice}</div>}
     {data && tab === "roles" && <>
       <Legend />
+      <p className="access-note">
+        Технолог, специалист по снабжению, директор производства и генеральный директор всегда имеют полный доступ ко
+        всем разделам — их колонки показаны как «полный 🔒» и не редактируются, урезать эти роли нельзя.
+      </p>
       <div className="access-matrix">
         <DataTable label="Матрица доступов" rows={data.sections} rowKey={(section) => section.key} columns={matrixColumns} emptyText="Разделов нет" />
       </div>

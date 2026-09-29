@@ -430,3 +430,19 @@ it("lets the master hand out operations of issued projects to installers and lau
     body: { techcard_id: "80000000-0000-0000-0000-000000000009", quantity: 5, deadline: "2026-10-10", fulfillment_request_id: null },
   }));
 });
+
+it("shows a site master only the installers of the own site", async () => {
+  masterFetch((path) => {
+    if (path === "/api/production/operators") return json({ viewer_site: "ЖУК", operators: [
+      { id: "10000000-0000-0000-0000-000000000002", name: "Рыбкина Ольга", site: "ЦАР", department: "Монтаж" },
+      { id: "10000000-0000-0000-0000-000000000005", name: "Зингер Антон", site: "ЖУК", department: "Монтаж" },
+    ] });
+    if (path === "/api/production/launchable") return json({ items: [] });
+    return null;
+  }, [task]);
+
+  render(<ProductionPage principal={principal} />);
+  expect(await screen.findByText("Зингер Антон", { selector: ".mb-person b" })).toBeInTheDocument();
+  expect(screen.queryByText("Рыбкина Ольга", { selector: ".mb-person b" })).not.toBeInTheDocument();
+  expect(screen.getByText("ЖУК · 1")).toBeInTheDocument();
+});

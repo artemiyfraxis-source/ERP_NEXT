@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request
 
+from app.modules.identity.domain import FULL_ACCESS_ROLES
+
 from .identity import Actor
 
 
@@ -43,7 +45,10 @@ def require_section(
     ) -> Principal:
         modes = [principal.permissions.get(key) for key in sections]
         allowed = "edit" in modes or (minimum == "view" and "view" in modes)
-        if roles is not None and not principal.roles.intersection(roles):
+        # A route's role list does not shut out a full-access role: an action bound to another role is open to them
+        # too, and their permissions are already edit everywhere (owner 2026-09-29). «Доступы» is gated separately.
+        if roles is not None and not principal.roles.intersection(roles) \
+                and not principal.roles.intersection(FULL_ACCESS_ROLES):
             allowed = False
         if not allowed:
             raise HTTPException(status_code=403, detail=detail)

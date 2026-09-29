@@ -41,22 +41,31 @@ NOW = datetime(2026, 9, 29, 12, 0)
 ADMIN_ID = UUID("40000000-0000-0000-0000-000000000001")
 SECOND_ADMIN_ID = UUID("40000000-0000-0000-0000-000000000002")
 BUYER_ID = UUID("40000000-0000-0000-0000-000000000003")
+RECEIVER_ID = UUID("40000000-0000-0000-0000-000000000004")  # a non-full-access role — the matrix still drives it
 
 
 # ── Domain ─────────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_an_empty_cell_is_closed_and_only_explicit_cells_open():
-    """SUPPLYMAP portalApplyAccess_ (01.09.2026): a section is open only when explicitly granted."""
-    assert role_permissions("buyer", {}) == {}
-    changed = role_permissions("buyer", {**ROLE_SEED["buyer"], "warehouse": AccessMode.NONE,
-                                         "shipping": AccessMode.VIEW, "procurement": AccessMode.VIEW})
+    """SUPPLYMAP portalApplyAccess_ (01.09.2026): a section is open only when explicitly granted (a non-full role)."""
+    assert role_permissions("receiver", {}) == {}
+    changed = role_permissions("receiver", {**ROLE_SEED["receiver"], "warehouse": AccessMode.NONE,
+                                            "procurement": AccessMode.EDIT})
     assert changed == {
         "newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT,
-        "requests": AccessMode.EDIT, "procurement": AccessMode.VIEW, "erpref": AccessMode.VIEW,
-        "shipping": AccessMode.VIEW,
+        "receiving": AccessMode.EDIT, "fulfillment": AccessMode.EDIT, "handout": AccessMode.EDIT,
+        "shipping": AccessMode.EDIT, "procurement": AccessMode.EDIT, "erpref": AccessMode.VIEW,
     }
     assert role_permissions("unknown", {"requests": AccessMode.EDIT}) == {"requests": AccessMode.EDIT}
+
+
+def test_full_access_roles_ignore_the_matrix_and_are_never_reduced():
+    """Owner 2026-09-29: admin, buyer, prodhead, management have every section on edit no matter the matrix."""
+    everything = {section: AccessMode.EDIT for section in SECTION_LABELS}
+    for role in ("admin", "buyer", "prodhead", "management"):
+        assert role_permissions(role, {}) == everything
+        assert role_permissions(role, {"warehouse": AccessMode.NONE, "staffdir": AccessMode.NONE}) == everything
 
 
 def test_none_never_leaks_into_permissions():
@@ -88,6 +97,7 @@ def access_api():
     with sessions() as session:
         provision_user(session, _user(ADMIN_ID, "admin", "admin"), hash_password("admin-password"))
         provision_user(session, _user(BUYER_ID, "buyer", "buyer"), hash_password("buyer-password"))
+        provision_user(session, _user(RECEIVER_ID, "receiver", "receiver"), hash_password("recv-password"))
         seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
         session.commit()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
@@ -128,35 +138,40 @@ def test_only_admin_opens_access(access_api):
     body = _client("admin", "admin-password").get("/api/auth/access").json()
     assert [section["key"] for section in body["sections"]] == list(SECTION_LABELS)
     assert {"key": "buyer", "label": "Специалист по снабжению"} in body["roles"]
-    assert body["defaults"]["buyer"] == {}  # an empty cell is closed…
-    assert body["defaults"]["admin"] == {section: "edit" for section in SECTION_LABELS}  # …except for the admin
-    assert body["matrix"]["buyer"] == {section: mode.value for section, mode in ROLE_SEED["buyer"].items()}
+    # A full-access role (buyer) is «полный» everywhere by default; a non-full role (receiver) has an empty (closed) row.
+    assert body["defaults"]["receiver"] == {}
+    assert body["defaults"]["buyer"] == {section: "edit" for section in SECTION_LABELS}
+    assert body["defaults"]["admin"] == {section: "edit" for section in SECTION_LABELS}
+    assert body["matrix"]["receiver"] == {section: mode.value for section, mode in ROLE_SEED["receiver"].items()}
     assert "admin" not in body["matrix"]
-    assert [(user["login"], user["access"]) for user in body["users"]] == [("admin", {}), ("buyer", {})]
+    assert [(user["login"], user["access"]) for user in body["users"]] == [
+        ("admin", {}), ("buyer", {}), ("receiver", {}),
+    ]
 
 
 def test_matrix_change_reaches_the_next_request_and_a_cleared_cell_falls_back(access_api):
+    # A non-full-access role (receiver) is driven by the matrix; a full-access role would ignore it.
     admin = _client("admin", "admin-password")
-    buyer = _client("buyer", "buyer-password")
-    assert buyer.get("/api/auth/me").json()["permissions"]["warehouse"] == "view"
+    receiver = _client("receiver", "recv-password")
+    assert receiver.get("/api/auth/me").json()["permissions"]["warehouse"] == "edit"
 
     saved = admin.put("/api/auth/access/roles", json={"matrix": {
-        "buyer": {"warehouse": "none", "shipping": "view", "procurement": ""},
+        "receiver": {"warehouse": "none", "shipping": "view", "procurement": ""},
     }})
     assert saved.status_code == 200, saved.text
-    assert saved.json()["matrix"] == {"buyer": {"warehouse": "none", "shipping": "view"}}
-    permissions = buyer.get("/api/auth/me").json()["permissions"]
+    assert saved.json()["matrix"] == {"receiver": {"warehouse": "none", "shipping": "view"}}
+    permissions = receiver.get("/api/auth/me").json()["permissions"]
     assert permissions == {"shipping": "view"}  # an empty cell is closed, the other roles' rows are gone too
 
-    [event] = [item for item in _events(access_api, "identity.role_access_saved") if item.details["role"] == "buyer"]
+    [event] = [item for item in _events(access_api, "identity.role_access_saved") if item.details["role"] == "receiver"]
     assert event.actor_id == ADMIN_ID
     changes = json.loads(event.details["changes"])
-    assert changes["shipping"] == ["", "view"] and changes["warehouse"] == ["view", "none"]
-    assert changes["procurement"] == ["edit", ""]
+    assert changes["shipping"] == ["edit", "view"] and changes["warehouse"] == ["edit", "none"]
+    assert changes["procurement"] == ["view", ""]
 
-    # Clearing the whole row closes everything for the role.
+    # Clearing the whole row closes everything for a non-full role.
     assert admin.put("/api/auth/access/roles", json={"matrix": {}}).status_code == 200
-    assert buyer.get("/api/auth/me").json()["permissions"] == {}
+    assert receiver.get("/api/auth/me").json()["permissions"] == {}
     with access_api() as session:
         assert session.scalars(select(IdentityRoleAccessRow)).first() is None
 
@@ -180,56 +195,52 @@ def test_unknown_role_section_or_mode_is_refused(access_api, matrix):
 
 
 @pytest.mark.parametrize("mode", ["none", "view"])
-def test_admin_role_cannot_close_access_to_itself(access_api, mode):
+def test_a_full_access_role_stays_full_when_the_matrix_tries_to_close_it(access_api, mode):
+    # Owner 2026-09-29: admin (a full-access role) is non-reducible. The matrix write is accepted but changes nothing.
     admin = _client("admin", "admin-password")
-    response = admin.put("/api/auth/access/roles", json={"matrix": {"admin": {"staffdir": mode}}})
-    assert response.status_code == 409
-    assert "хотя бы один администратор" in response.json()["detail"]
-    assert admin.get("/api/auth/access").status_code == 200
+    assert admin.put("/api/auth/access/roles", json={"matrix": {"admin": {"staffdir": mode}}}).status_code == 200
+    assert admin.get("/api/auth/staff").status_code == 200
+    assert admin.get("/api/auth/me").json()["permissions"]["staffdir"] == "edit"
 
 
-def test_admin_matrix_may_close_staffdir_while_one_admin_keeps_it_personally(access_api):
-    _add_second_admin(access_api)
+def test_a_full_access_role_ignores_a_personal_exception(access_api):
+    # A personal «none» on a full-access user (buyer) is accepted but does not take the section away.
     admin = _client("admin", "admin-password")
-    assert admin.put(f"/api/auth/access/users/{SECOND_ADMIN_ID}", json={"access": {"staffdir": "edit"}}).status_code == 200
-    assert admin.put("/api/auth/access/roles", json={"matrix": {"admin": {"staffdir": "none"}}}).status_code == 200
-    assert admin.get("/api/auth/staff").status_code == 403
-    assert admin.get("/api/auth/access").status_code == 200  # «Доступы» is always the administrator's
-    second = _client("admin2", "admin2-password")
-    assert second.get("/api/auth/staff").status_code == 200
-    # …and that last keeper cannot drop the exception or step down.
-    assert second.put(f"/api/auth/access/users/{SECOND_ADMIN_ID}", json={"access": {}}).status_code == 409
-    body = {"name": "Admin2", "department": "ИТ", "role": "buyer", "site": "", "active": True}
-    assert second.put(f"/api/auth/staff/{SECOND_ADMIN_ID}", json=body).status_code == 409
-    assert second.post(f"/api/auth/users/{SECOND_ADMIN_ID}/deactivate").status_code == 409
+    assert admin.put(f"/api/auth/access/users/{BUYER_ID}", json={
+        "access": {"warehouse": "none", "staffdir": "none"},
+    }).status_code == 200
+    perms = _client("buyer", "buyer-password").get("/api/auth/me").json()["permissions"]
+    assert perms == {section: "edit" for section in SECTION_LABELS}
 
 
 def test_personal_exception_is_stronger_than_the_role(access_api):
+    # A non-full role (receiver): the personal exception overrides the role (full-access roles would ignore it).
     admin = _client("admin", "admin-password")
-    buyer = _client("buyer", "buyer-password")
-    response = admin.put(f"/api/auth/access/users/{BUYER_ID}", json={"access": {
-        "procurement": "view", "requests": "none", "shipping": "edit", "warehouse": "",
+    receiver = _client("receiver", "recv-password")
+    response = admin.put(f"/api/auth/access/users/{RECEIVER_ID}", json={"access": {
+        "warehouse": "none", "receiving": "view", "procurement": "edit", "handout": "",
     }})
     assert response.status_code == 200, response.text
-    assert response.json()["access"] == {"procurement": "view", "requests": "none", "shipping": "edit"}
-    assert buyer.get("/api/auth/me").json()["permissions"] == {
-        "newrequest": "edit", "myrequests": "edit",  # «Заявки» closed, filing and own rows stay (NAV-SECTIONS)
-        "procurement": "view", "shipping": "edit", "warehouse": "view", "erpref": "view",
+    assert response.json()["access"] == {"warehouse": "none", "receiving": "view", "procurement": "edit"}
+    assert receiver.get("/api/auth/me").json()["permissions"] == {
+        "newrequest": "edit", "myrequests": "edit",  # filing and own rows stay (NAV-SECTIONS)
+        "receiving": "view", "fulfillment": "edit", "handout": "edit", "shipping": "edit",
+        "procurement": "edit", "erpref": "view",  # warehouse taken away, receiving downgraded, procurement raised
     }
     [event] = _events(access_api, "identity.user_access_saved")
-    assert event.aggregate_id == BUYER_ID and event.details["login"] == "buyer"
+    assert event.aggregate_id == RECEIVER_ID and event.details["login"] == "receiver"
     assert json.loads(event.details["changes"]) == {
-        "procurement": ["", "view"], "requests": ["", "none"], "shipping": ["", "edit"],
+        "warehouse": ["", "none"], "receiving": ["", "view"], "procurement": ["", "edit"],
     }
     listed = {user["login"]: user["access"] for user in admin.get("/api/auth/access").json()["users"]}
-    assert listed["buyer"] == {"procurement": "view", "requests": "none", "shipping": "edit"}
+    assert listed["receiver"] == {"warehouse": "none", "receiving": "view", "procurement": "edit"}
 
     # The same exceptions again change nothing and write no audit; an empty set removes them.
-    admin.put(f"/api/auth/access/users/{BUYER_ID}", json={"access": {
-        "procurement": "view", "requests": "none", "shipping": "edit",
+    admin.put(f"/api/auth/access/users/{RECEIVER_ID}", json={"access": {
+        "warehouse": "none", "receiving": "view", "procurement": "edit",
     }})
     assert len(_events(access_api, "identity.user_access_saved")) == 1
-    assert admin.put(f"/api/auth/access/users/{BUYER_ID}", json={"access": {}}).status_code == 200
+    assert admin.put(f"/api/auth/access/users/{RECEIVER_ID}", json={"access": {}}).status_code == 200
     with access_api() as session:
         assert session.scalars(select(IdentityUserAccessRow)).first() is None
 
@@ -296,10 +307,12 @@ def test_migration_folds_seeded_defaults_back_without_changing_anyones_access(tm
         ("buyer", "references"): "none",  # closed before, stays closed
         ("management", "warehouse"): "edit",  # the administrator's change stays
     }
-    staffed = role_permissions("buyer", {**ROLE_SEED["buyer"], "erpref": AccessMode.NONE})  # as 0046 wrote it
+    # A non-full role's row is interpreted as saved (a full-access role would be edit everywhere regardless).
+    staffed = role_permissions("receiver", {**ROLE_SEED["receiver"], "erpref": AccessMode.NONE})
     assert {section: mode.value for section, mode in staffed.items()} == {
         "newrequest": "edit", "myrequests": "edit",  # NAV-SECTIONS defaults, not stored
-        "requests": "edit", "procurement": "edit", "warehouse": "view",
+        "receiving": "edit", "warehouse": "edit", "fulfillment": "edit", "handout": "edit",
+        "shipping": "edit", "procurement": "view",
     }
 
     command.downgrade(config, "0039_notification_recipients")

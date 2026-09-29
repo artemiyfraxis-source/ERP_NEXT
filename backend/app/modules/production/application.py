@@ -292,6 +292,18 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
             if operator is None or not operator.active:
                 raise ProductionValidationError("Оператора нет в справочнике сотрудников")
             names[operator_id] = operator.name
+        # Площадка мастера (владелец, 29.09: в Жуковском распределяет свой мастер): мастер с площадкой ставит только
+        # сотрудников своей площадки; без площадки (директор, технолог, снабжение) — всех. Уже стоящих не выгоняем.
+        assigner = uow.operators.get(command.actor.id)
+        if assigner is not None and assigner.site:
+            strangers = [
+                names[operator_id] for operator_id in command.operator_ids
+                if operator_id not in operation.operator_ids and uow.operators.get(operator_id).site != assigner.site
+            ]
+            if strangers:
+                raise ProductionValidationError(
+                    f"Площадка {assigner.site}: назначать можно только своих сотрудников, не {', '.join(strangers)}"
+                )
         skills: dict[str, dict[UUID, OperatorSkill]] = {}
         for item in uow.skills.list():
             skills.setdefault(item.operation_code, {})[item.operator_id] = item

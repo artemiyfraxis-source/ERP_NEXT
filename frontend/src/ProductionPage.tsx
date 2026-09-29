@@ -27,6 +27,7 @@ import { MasterBoard } from "./MasterBoard";
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
+  const [viewerSite, setViewerSite] = useState("");
   const [execution, setExecution] = useState<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>({ session: null, boxes: [] });
   const [boxes, setBoxes] = useState<ProductionBox[]>([]);
   const [defects, setDefects] = useState<ProductionDefect[]>([]);
@@ -67,6 +68,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       ]);
       setTasks(taskResult.tasks);
       setOperators(operatorResult.operators);
+      setViewerSite((operatorResult as { viewer_site?: string }).viewer_site ?? "");
       if (mine) setExecution(executionResult as { session: ProductionWorkSession | null; boxes: ProductionBox[] });
       else setBoxes(executionResult.boxes);
       setDefects(defectResult.defects);
@@ -134,7 +136,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       task={selectedTask}
       initialOperationId={selectedOperationId}
       tasks={tasks}
-      operators={operators}
+      operators={ownSite(operators, viewerSite, selectedTask)}
       skills={skills}
       holidays={holidays}
       week={week}
@@ -145,7 +147,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       back={() => { setSelectedTaskId(""); setSelectedOperationId(""); }}
     />}
     {!mine && !selectedTask && loaded && canOverview && <MasterBoard
-      tasks={tasks} operators={operators} skills={skills} absences={absences}
+      tasks={tasks} operators={operators} site={viewerSite} skills={skills} absences={absences}
       canEdit={canEdit} busy={busy} mutate={mutate}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
@@ -370,6 +372,13 @@ function LaunchForm({ tasks, busy, mutate, close }: {
       <div className="form-actions"><button className="primary" disabled={busy || !/^\d+$/.test(quantity.trim()) || Number(quantity) <= 0} onClick={() => void submit()}>Запустить</button></div>
     </>}
   </div>;
+}
+
+// Мастер площадки ставит только своих (назначенных раньше оставляем, чтобы были видны); без площадки — всех.
+function ownSite(operators: ProductionOperator[], site: string, task: ProductionTask | null) {
+  if (!site) return operators;
+  const assigned = new Set(task?.operations.flatMap((operation) => operation.operator_ids) ?? []);
+  return operators.filter((operator) => operator.site === site || assigned.has(operator.id));
 }
 
 // tcKitItemId_: изделие задания в SUPPLYMAP — проект + индекс КБ в верхнем регистре.

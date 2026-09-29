@@ -71,8 +71,8 @@ def test_receiving_requires_receiver_role(receiving_api):
     client, _ = receiving_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Закупщик", department="Закупки"),
-        email="buyer@example.test",
-        roles=frozenset({"buyer"}),
+        email="estimator@example.test",
+        roles=frozenset({"estimator"}),
         permissions={"receiving": "edit"},
     )
 
@@ -286,9 +286,9 @@ def test_putaway_sheet_shows_accepted_unplaced_lines_only(receiving_api):
 def test_putaway_sheet_requires_receiver_role(receiving_api):
     client, _ = receiving_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=Actor(name="Закупщик", department="Закупки"),
-        email="buyer@example.test",
-        roles=frozenset({"buyer"}),
+        actor=Actor(name="Сметчик", department="КБ"),
+        email="estimator@example.test",
+        roles=frozenset({"estimator"}),
         permissions={"receiving": "edit"},
     )
 
