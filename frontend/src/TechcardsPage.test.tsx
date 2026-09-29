@@ -40,35 +40,23 @@ function json(body: unknown, status = 200) {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("creates a persistent project card", async () => {
-  let payload: unknown;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+it("opens only the linked techcard from the project card, without a creation form", async () => {
+  window.history.replaceState({}, "", `/?section=techcards&card=${card.id}`);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/techcards/projects" && init?.method === "POST") {
-      payload = JSON.parse(String(init.body));
-      return json(card, 201);
-    }
-    if (path === "/api/techcards/projects") return json({ items: [] });
+    if (path === "/api/techcards/projects") return json({ items: [card, { ...card, id: "other", project: "P-200" }] });
     if (path === "/api/techcards/templates") return json({ metadata: null, items: [] });
     if (path.endsWith("/revisions")) return json({ items: [] });
-    throw new Error(`Unexpected request: ${path}`);
+    return json({});
   });
 
-  render(<TechcardsPage principal={engineer} />);
-  fireEvent.change(screen.getByLabelText("Проект"), { target: { value: "P-100" } });
-  fireEvent.change(screen.getByLabelText("Индекс изделия"), { target: { value: "01" } });
-  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Жгут" } });
-  fireEvent.click(screen.getByRole("button", { name: "Создать карточку" }));
-
-  await waitFor(() => expect(payload).toEqual({
-    project: "P-100",
-    item_index: "01",
-    product_name: "Жгут",
-    source_calculation: "",
-    deadline: null,
-  }));
-  expect(await screen.findByText("Карточка проекта создана")).toBeInTheDocument();
-  expect(screen.getByText("Черновик")).toBeInTheDocument();
+  render(<TechcardsPage principal={engineer} view="projects" />);
+  expect(await screen.findByRole("heading", { name: "Техкарта 01" })).toBeInTheDocument();
+  expect(screen.queryByText("Новая карточка изделия")).toBeNull();
+  expect(screen.queryByText("P-200")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "← P-100" }));
+  expect(window.location.search).toBe("?section=projects&project=P-100");
+  window.history.replaceState({}, "", "/");
 });
 
 it("automatically builds and issues an electronic techcard", async () => {

@@ -144,6 +144,30 @@ describe("ProjectsPage", () => {
     expect(JSON.parse(String(init?.body))).toEqual({ url: linked.calc_source, number: "708К.4" });
   });
 
+  it("opens the assembly techcard right inside the project card, as SUPPLYMAP does", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    const etk = {
+      id: "tc-1", version: 1, project: "708К.4", item_index: "КБ1", product_name: "Жгут питания", source_calculation: "",
+      deadline: null, status: "Черновик", revision: 0, document: null, manual_operation_keys: [],
+      created_at: "2026-09-29T10:00:00", updated_at: "2026-09-29T10:00:00", issued_at: null,
+    };
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/techcards/КБ1") return json({ card_id: "tc-1" });
+      if (url === "/api/techcards/projects") return json({ items: [etk] });
+      if (url.endsWith("/revisions")) return json({ items: [] });
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", techcards: "edit" } }} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Генератор" }));
+    fireEvent.click(screen.getByRole("button", { name: "КБ1" }));
+    expect(await screen.findByText(/ЭТК ещё не собрана/)).toBeTruthy();
+    expect(screen.getByText("708К.4 · КБ1")).toBeTruthy();
+    expect(window.location.search).toBe("?section=projects");
+  });
+
   it("hides writing controls for view-only access", async () => {
     render(<ProjectsPage principal={viewer} />);
     await screen.findByText("708К.4");
