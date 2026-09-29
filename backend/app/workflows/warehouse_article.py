@@ -95,6 +95,42 @@ def _field(fields: Mapping[str, str], *names: str) -> str:
     return next((str(fields.get(name) or "").strip() for name in names if fields.get(name)), "")
 
 
+_SERIES_LIST_SPLIT = re.compile(r"\s*[,;]\s*")
+
+
+def _split_list(value: str) -> tuple[str, ...]:
+    return tuple(part for part in _SERIES_LIST_SPLIT.split(str(value or "").strip()) if part)
+
+
+def _terminals_by_series(terminals: Iterable[Mapping[str, str]]) -> tuple[Mapping[str, str], ...]:
+    """Stock05.gs stock05TerBySeries_ (SUPPLYMAP fb6c798, DRIFT-fb6c798): a БД.ТЕР contact row's
+    series may be a comma/semicolon-separated list of connector series it fits («NVR, NV, VB, VHR»).
+    Expand into one record per series; the product name for a series is the longest product name the
+    series key starts with (one product name in the row → all series get it; none matches → the whole
+    original product text, unsplit)."""
+    out: list[Mapping[str, str]] = []
+    for fields in terminals:
+        series_list = _split_list(_field(fields, "terSeries", "series"))
+        if len(series_list) <= 1:
+            out.append(fields)
+            continue
+        product_list = _split_list(_field(fields, "terComponent", "product"))
+        whole_product = _field(fields, "terComponent", "product")
+        for series in series_list:
+            series_key = _article_key(series)
+            if len(product_list) == 1:
+                product = product_list[0]
+            else:
+                candidates = sorted(
+                    (item for item in product_list if series_key.startswith(_article_key(item))),
+                    key=len, reverse=True,
+                )
+                product = candidates[0] if candidates else ""
+            out.append({**fields, "terSeries": series, "series": series,
+                        "terComponent": product or whole_product, "product": product or whole_product})
+    return tuple(out)
+
+
 def _without_manufacturer(value: object) -> str:
     return re.sub(
         r"^(Molex|JST|Hirose|JAE|TE|Amphenol|Connfly)\s+", "", str(value or ""),
@@ -263,7 +299,7 @@ def infer_article_identity(
         return by_rule
 
     matching_series = sorted((
-        fields for fields in terminals
+        fields for fields in _terminals_by_series(terminals)
         if _field(fields, "terComponent", "product")
         and len(_article_key(_field(fields, "terSeries", "series"))) >= 4
         and key.startswith(_article_key(_field(fields, "terSeries", "series")))

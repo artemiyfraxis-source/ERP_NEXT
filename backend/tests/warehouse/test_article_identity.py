@@ -1,5 +1,5 @@
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
-from app.workflows.warehouse_article import infer_article_identity
+from app.workflows.warehouse_article import _terminals_by_series, infer_article_identity
 
 
 def record(tab: TechOperationTab, **fields: str) -> TechOperationRecord:
@@ -211,3 +211,56 @@ def test_article_identity_keeps_unknown_and_database_answers():
     assert _names("SMA-JWB2", "N-C58P", "SMA-KE174", "RHT-612-0646", "", records=records) == [
         "SMA-male R/A LMR-100", "N-male RG-58", "SMA-female RG-174", None, None,
     ]
+
+
+# DRIFT-fb6c798 (SUPPLYMAP Stock05.gs stock05TerBySeries_): a БД.ТЕР contact fits several connector
+# families, so «Series» is a comma/semicolon list — real БД.ТЕР rows (JST SVH-21T-P1.1, SSHL-002T-P0.2).
+def test_terminals_by_series_expands_multi_series_rows_picking_longest_prefix_product():
+    jst_svh21 = {"terArticle": "SVH-21T-P1.1", "terSeries": "NVR, NV, VB, VHR", "terComponent": "NV, VB, VH",
+                 "terType": "Female"}
+    jst_sshl002 = {"terArticle": "SSHL-002T-P0.2", "terSeries": "GHDR, GHR", "terComponent": "GHD, GH",
+                   "terType": "Female"}
+    single = {"terArticle": "430310001", "terSeries": "43020, 43640", "terComponent": "Micro-Fit 3.0",
+              "terType": "Male"}
+    unsplit = {"terArticle": "T-DS1071-SC600", "terSeries": "single-series-only", "terComponent": "one-product",
+               "terType": "Female"}
+
+    expanded = _terminals_by_series((jst_svh21, jst_sshl002, single, unsplit))
+
+    by_svh21 = {row["series"]: row["product"] for row in expanded if row["terArticle"] == "SVH-21T-P1.1"}
+    assert by_svh21 == {"NVR": "NV", "NV": "NV", "VB": "VB", "VHR": "VH"}
+
+    by_sshl002 = {row["series"]: row["product"] for row in expanded if row["terArticle"] == "SSHL-002T-P0.2"}
+    assert by_sshl002 == {"GHDR": "GHD", "GHR": "GH"}
+
+    # A row with several series but one product (no comma): every series gets that same product.
+    by_single = {row["series"]: row["product"] for row in expanded if row["terArticle"] == "430310001"}
+    assert by_single == {"43020": "Micro-Fit 3.0", "43640": "Micro-Fit 3.0"}
+
+    # A single-series row is untouched (not split, not copied).
+    assert unsplit in expanded
+
+
+def test_terminals_by_series_falls_back_to_whole_list_when_no_product_prefix_matches():
+    row = {"terArticle": "X", "terSeries": "AAAA, BBBB", "terComponent": "ZZZZ, YYYY"}
+
+    expanded = _terminals_by_series((row,))
+
+    assert {r["series"]: r["product"] for r in expanded} == {
+        "AAAA": "ZZZZ, YYYY", "BBBB": "ZZZZ, YYYY",
+    }
+
+
+def test_article_identity_resolves_multi_series_terminal_row_by_prefix():
+    records = (
+        record(
+            TechOperationTab.TERMINAL,
+            terArticle="SSHL-002T-P0.2", terSeries="GHDR, GHR", terComponent="GHD, GH", terType="Female",
+        ),
+    )
+
+    ghdr = infer_article_identity("GHDR002", records)
+    ghr = infer_article_identity("GHR002", records)
+
+    assert ghdr.series == "GHD"
+    assert ghr.series == "GH"
