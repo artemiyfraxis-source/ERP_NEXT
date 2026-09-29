@@ -14,10 +14,15 @@
     "account and client login throttling",
     "admin-only staff directory: create and edit employee name, department, site, role, active",
     "at least one active administrator remains",
-    "department list = saved list + departments in use, without role-like values"
+    "department list = saved list + departments in use, without role-like values",
+    "PIN login: pick yourself in the list of active staff + 6-8 digit PIN, e-mail as the fallback",
+    "same answer for an unknown employee and a wrong PIN; PIN attempts count toward the login limits",
+    "empty PIN on the first sign-in issues a new PIN once (reveal mode on, never seen, never admin)",
+    "administrator sets the PIN in the staff directory and sees whether one is assigned",
+    "admin mode: GOD_MODE_EMAIL only, per session, 6 h, effective role admin, audited"
   ],
   "intentionalSecurityUpgrades": [
-    "Argon2id password hashes replace fast SHA-256 PIN hashes",
+    "Argon2id PIN and password hashes replace fast SHA-256 PIN hashes",
     "opaque HttpOnly SameSite session cookie replaces localStorage token",
     "CSRF token required for cookie-authenticated writes",
     "absolute session lifetime limits sliding renewal"

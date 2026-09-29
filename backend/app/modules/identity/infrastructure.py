@@ -25,7 +25,7 @@ from app.shared.persistence import Base
 from app.shared.persistence import SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.clock import as_utc
 
-from .application import IdentitySession
+from .application import IdentitySession, PinRecord
 from .domain import ROLE_SEED, AccessMode, IdentityUser, normalize_login
 
 
@@ -40,6 +40,8 @@ class IdentityUserRow(Base):
     role: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     site: Mapped[str | None] = mapped_column(String(64))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # portal_seen_<email> (Portal.gs portalMarkSeen_): the first successful sign-in; closes «узнать PIN».
+    seen_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityCredentialRow(Base):
@@ -51,6 +53,8 @@ class IdentityCredentialRow(Base):
         primary_key=True,
     )
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    # portal_pin_<email>: the PIN (6–8 digits) as an Argon2id hash; empty — no PIN assigned.
+    pin_hash: Mapped[str | None] = mapped_column(String(512))
 
 
 class IdentityIdentifierRow(Base):
@@ -102,6 +106,8 @@ class IdentitySessionRow(Base):
     expires_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     absolute_expires_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), index=True)
+    # portal_admin_<token>: «Режим админа» of this session is on until this moment.
+    admin_mode_until: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityDepartmentRow(Base):
@@ -112,6 +118,15 @@ class IdentityDepartmentRow(Base):
 
     position: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class IdentitySettingRow(Base):
+    """Identity switches the owner flips at run time (SUPPLYMAP ScriptProperties), e.g. `pin_reveal`."""
+
+    __tablename__ = "identity_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
 class IdentityLoginThrottleRow(Base):
@@ -149,6 +164,7 @@ def _session_domain(row: IdentitySessionRow) -> IdentitySession:
         expires_at=as_utc(row.expires_at),
         absolute_expires_at=as_utc(row.absolute_expires_at),
         revoked_at=as_utc(row.revoked_at) if row.revoked_at is not None else None,
+        admin_mode_until=as_utc(row.admin_mode_until) if row.admin_mode_until is not None else None,
     )
 
 
@@ -336,9 +352,9 @@ class SqlAlchemyIdentityRepository:
         ) is not None
 
     def add_user(
-        self, user: IdentityUser, password_hash: str, role_access: dict[str, AccessMode]
+        self, user: IdentityUser, password_hash: str, role_access: dict[str, AccessMode], pin_hash: str | None = None,
     ) -> None:
-        provision_user(self.session, user, password_hash, role_access=role_access)
+        provision_user(self.session, user, password_hash, role_access=role_access, pin_hash=pin_hash)
 
     def update_user(self, user: IdentityUser) -> None:
         row = self.session.get(IdentityUserRow, user.id)
@@ -410,6 +426,68 @@ class SqlAlchemyIdentityRepository:
         )
 
 
+    # ── PIN and «Режим админа» ──
+
+    def pin_record(self, who: str) -> PinRecord | None:
+        """`who` = the employee id from the login list, or an e-mail / login (portalLoginEmail_)."""
+        value = str(who or "").strip()
+        if not value:
+            return None
+        user_row = None
+        try:
+            user_row = self.session.get(IdentityUserRow, UUID(value))
+        except ValueError:
+            identifier = self.session.get(IdentityIdentifierRow, value.casefold())
+            if identifier is not None:
+                user_row = self.session.get(IdentityUserRow, identifier.user_id)
+        if user_row is None:
+            return None
+        credential = self.session.get(IdentityCredentialRow, user_row.id)
+        return PinRecord(
+            user=_user_domain(user_row),
+            pin_hash=credential.pin_hash if credential is not None else None,
+            seen=user_row.seen_at is not None,
+        )
+
+    def set_pin(self, user_id: UUID, pin_hash: str) -> None:
+        row = self.session.get(IdentityCredentialRow, user_id)
+        if row is None:
+            raise KeyError(f"Identity user not found: {user_id}")
+        row.pin_hash = pin_hash
+
+    def pin_set_ids(self) -> set[UUID]:
+        return set(self.session.scalars(
+            select(IdentityCredentialRow.user_id).where(IdentityCredentialRow.pin_hash.is_not(None))
+        ))
+
+    def mark_seen(self, user_id: UUID, now) -> None:
+        row = self.session.get(IdentityUserRow, user_id)
+        if row is not None and row.seen_at is None:
+            row.seen_at = now
+
+    def setting(self, key: str) -> str | None:
+        row = self.session.get(IdentitySettingRow, key)
+        return None if row is None else row.value
+
+    def set_setting(self, key: str, value: str | None) -> None:
+        row = self.session.get(IdentitySettingRow, key)
+        if value is None:
+            if row is not None:
+                self.session.delete(row)
+        elif row is None:
+            self.session.add(IdentitySettingRow(key=key, value=value))
+        else:
+            row.value = value
+
+    def set_admin_mode(self, session_id: UUID, until) -> bool:
+        result = self.session.execute(
+            update(IdentitySessionRow)
+            .where(IdentitySessionRow.id == session_id, IdentitySessionRow.revoked_at.is_(None))
+            .values(admin_mode_until=until)
+        )
+        return result.rowcount == 1
+
+
 class SqlAlchemyIdentityUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -459,6 +537,7 @@ def provision_user(
     *,
     role_access: dict[str, AccessMode] | None = None,
     user_access: dict[str, AccessMode] | None = None,
+    pin_hash: str | None = None,
 ) -> None:
     login = normalize_login(user.login)
     email = normalize_login(user.email)
@@ -476,7 +555,7 @@ def provision_user(
     )
     for identifier in {login, email}:
         session.add(IdentityIdentifierRow(identifier=identifier, user_id=user.id))
-    session.add(IdentityCredentialRow(user_id=user.id, password_hash=password_hash))
+    session.add(IdentityCredentialRow(user_id=user.id, password_hash=password_hash, pin_hash=pin_hash))
     _seed_role_access(session, user.role.strip(), role_access or {})
     for section, mode in (user_access or {}).items():
         session.add(IdentityUserAccessRow(user_id=user.id, section=section, mode=mode.value))

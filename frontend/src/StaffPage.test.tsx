@@ -5,8 +5,8 @@ import type { StaffDirectory } from "./api";
 
 const DIRECTORY: StaffDirectory = {
   users: [
-    { id: "u1", login: "admin", email: "admin@example.test", name: "Админов", department: "ИТ", role: "admin", site: "", active: true },
-    { id: "u2", login: "buyer@example.test", email: "buyer@example.test", name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true },
+    { id: "u1", login: "admin", email: "admin@example.test", name: "Админов", department: "ИТ", role: "admin", site: "", active: true, pin_set: true },
+    { id: "u2", login: "buyer@example.test", email: "buyer@example.test", name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, pin_set: false },
   ],
   departments: ["ИТ", "Снабжение"],
   roles: [{ key: "admin", label: "Технолог" }, { key: "buyer", label: "Специалист по снабжению" }, { key: "master", label: "Мастер" }],
@@ -46,7 +46,7 @@ it("lists employees with role labels and creates a new one with a password", asy
 
   await waitFor(() => expect(created).toEqual({
     login: "", email: "new@example.test", name: "Новиков", department: "Снабжение", role: "master", site: "ЖУК",
-    password: "first-password",
+    password: "first-password", pin: "",
   }));
   expect(await screen.findByText("Сотрудник Новиков заведён, вход — new@example.test")).toBeInTheDocument();
 });
@@ -69,7 +69,7 @@ it("edits an employee, keeps the password when the field is empty and shows the 
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 
   await waitFor(() => expect(updates).toEqual([
-    { name: "Админов", department: "ИТ", role: "admin", site: "", active: false, password: null },
+    { name: "Админов", department: "ИТ", role: "admin", site: "", active: false, password: null, pin: null },
   ]));
   expect(await screen.findByRole("alert")).toHaveTextContent("Нужен хотя бы один администратор");
 });
@@ -101,4 +101,29 @@ it("saves the department list and renames a department", async () => {
     { path: "/api/auth/departments", body: { departments: ["ИТ", "Снабжение", "Цех"] } },
     { path: "/api/auth/departments/rename", body: { source: "Снабжение", target: "Отдел снабжения" } },
   ]);
+});
+
+it("shows the PIN status and sets a new PIN (portalStaffGet pinSet, portalStaffSave pin)", async () => {
+  const updates: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/auth/staff/u2" && init?.method === "PUT") {
+      updates.push(JSON.parse(String(init.body)));
+      return json({ user: { ...DIRECTORY.users[1], pin_set: true } });
+    }
+    if (path === "/api/auth/staff") return json(DIRECTORY);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<StaffPage />);
+  expect(await screen.findByText("✓ назначен")).toBeInTheDocument();
+  expect(screen.getByText("✗ нет")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Править Закупкин" }));
+  fireEvent.change(screen.getByLabelText("Новый PIN"), { target: { value: "7654321" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
+
+  await waitFor(() => expect(updates).toEqual([
+    { name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, password: null, pin: "7654321" },
+  ]));
+  expect(await screen.findByText("Сохранено: Закупкин, PIN назначен")).toBeInTheDocument();
 });
