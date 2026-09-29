@@ -6,8 +6,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0055_shipping_optional_terms"
-down_revision: str | None = "0054_warehouse_rack_layout"
+revision: str = "0057_shipping_optional_terms"
+down_revision: str | None = "0056_identity_explicit_access"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
