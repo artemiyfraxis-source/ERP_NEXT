@@ -19,6 +19,7 @@ from app.shared.http_auth import (
     fulfillment_handout_principal,
     fulfillment_view_principal,
 )
+from app.shared.print_sheet import PrintSheet
 
 from .application import (
     BindLotCommand,
@@ -32,6 +33,8 @@ from .application import (
     UnbindLotCommand,
     VersionedFulfillmentCommand,
     bind_lot,
+    build_issue_print_sheet,
+    build_issue_return_sheet,
     cancel_fulfillment,
     complete_return,
     create_fulfillment,
@@ -198,6 +201,43 @@ def available_lots(
         "storage_location": lot.storage_location,
         "available": _number(lot.available),
     } for lot in candidates]}
+
+
+def _print_response(
+    request_id: UUID,
+    uow_factory: Callable[[], UnitOfWork],
+    now: datetime,
+    build: Callable[[FulfillmentRequest, datetime], PrintSheet],
+) -> dict:
+    with uow_factory() as uow:
+        request = uow.fulfillment.get(request_id)
+        if request is None:
+            raise HTTPException(status_code=404, detail="Заявка на выдачу не найдена")
+        try:
+            sheet = build(request, now)
+        except FulfillmentValidationError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"sheet": sheet.to_dict()}
+
+
+@router.get("/{request_id}/print")
+def print_issue(
+    request_id: UUID,
+    _principal: Annotated[Principal, Depends(fulfillment_view_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    return _print_response(request_id, uow_factory, now, build_issue_print_sheet)
+
+
+@router.get("/{request_id}/return-sheet")
+def print_return_sheet(
+    request_id: UUID,
+    _principal: Annotated[Principal, Depends(fulfillment_view_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    return _print_response(request_id, uow_factory, now, build_issue_return_sheet)
 
 
 @router.post("")

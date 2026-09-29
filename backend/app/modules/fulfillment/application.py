@@ -18,6 +18,7 @@ from app.modules.warehouse.domain import (
 )
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
+from app.shared.print_sheet import PrintSheet
 
 from .domain import (
     FulfillmentLine,
@@ -384,3 +385,77 @@ def cancel_fulfillment(
         _audit(updated, "fulfillment.cancelled", command.actor, command.now, {}, uow)
         uow.commit()
         return updated
+
+
+def _display_number(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+# Печатные бланки (браузерная печать — см. app.shared.print_sheet). Портированы из SUPPLYMAP
+# Issue.gs: buildIssueDoc_ (295-308) и buildIssueReturnDoc (572-587). Чтение, без транзакции.
+
+def build_issue_print_sheet(request: FulfillmentRequest, now: datetime) -> PrintSheet:
+    """«Заявка на выдачу №…»: строка на позицию, «Нужно» (requirement) отдельно от «Набрать»
+    (issued, пока не выдано — reserved); позиция без партии ждёт поставки и уходит в «недобор»."""
+    columns = (
+        "№", "Артикул КД", "Наименование", "ГРН", "Пакет", "Нужно", "Набрать", "Ед.",
+        "Место хранения", "✓",
+    )
+    rows: list[tuple[str, ...]] = []
+    waiting_names: list[str] = []
+    for index, line in enumerate(request.lines, start=1):
+        grn = line.lot.grn if line.lot else "— ждём поставки —"
+        package = line.lot.package if line.lot else ""
+        place = line.lot.storage_location if line.lot else ""
+        picked = line.issued if line.issued > 0 else line.reserved
+        rows.append((
+            str(index), line.article or "", line.name, grn, package,
+            _display_number(line.requirement), _display_number(picked), line.unit, place, "",
+        ))
+        if line.lot is None:
+            waiting_names.append(line.name)
+    note = f"НЕДОБОР (на складе не хватило): {', '.join(waiting_names)}" if waiting_names else ""
+    subtitle = (
+        f"Дата: {now.strftime('%d.%m.%Y %H:%M')} · Заявитель: {request.requester or '—'} · "
+        f"Назначение: {request.purpose or '—'} · "
+        f"Дедлайн: {request.deadline.strftime('%d.%m.%Y') if request.deadline else '—'}"
+    )
+    return PrintSheet(
+        title=f"ЗАЯВКА НА ВЫДАЧУ {request.number}",
+        subtitle=subtitle,
+        columns=columns,
+        rows=tuple(rows),
+        note=note,
+        sign="Набрал: ______________    Выдал: ______________    Получил: ______________    Дата: ________",
+    )
+
+
+def build_issue_return_sheet(request: FulfillmentRequest, now: datetime) -> PrintSheet:
+    """«Лист возврата по заявке №…»: только выданные позиции, столбцы возврата/брака пустые —
+    заполняются от руки при физической раскладке, до цифрового `complete_return`."""
+    if not any(line.issued > 0 for line in request.lines):
+        raise FulfillmentValidationError("По заявке ещё нет выданных позиций")
+    columns = (
+        "№", "Наименование", "ГРН", "Пакет", "Выдано", "Возвр.", "Брак в.", "Брак н.",
+        "Место хранения", "✓ / новое место",
+    )
+    rows: list[tuple[str, ...]] = []
+    index = 0
+    for line in request.lines:
+        if line.issued <= 0:
+            continue
+        index += 1
+        grn = line.lot.grn if line.lot else ""
+        package = line.lot.package if line.lot else ""
+        place = line.lot.storage_location if line.lot else ""
+        rows.append((
+            str(index), line.name, grn, package, _display_number(line.issued),
+            "", "", "", place, "",
+        ))
+    return PrintSheet(
+        title=f"ЛИСТ ВОЗВРАТА ПО ЗАЯВКЕ {request.number}",
+        subtitle=f"Сформирован: {now.strftime('%d.%m.%Y %H:%M')}",
+        columns=columns,
+        rows=tuple(rows),
+        sign="Разложил: ______________________        Дата: ______________",
+    )

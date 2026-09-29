@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 
@@ -12,6 +13,8 @@ from app.modules.fulfillment.application import (
     ReturnDisposition,
     VersionedFulfillmentCommand,
     bind_lot,
+    build_issue_print_sheet,
+    build_issue_return_sheet,
     cancel_fulfillment,
     complete_return,
     create_fulfillment,
@@ -309,3 +312,62 @@ def test_lot_unit_must_match_requirement_unit():
         )
 
     assert uow.warehouse.get(warehouse_lot.id).reserved == Decimal("0")
+
+
+def test_print_sheet_marks_shortage_and_return_sheet_lists_only_issued_lines():
+    lot = stock("6", "0000004")  # покрывает требование 6 целиком — без остатка-«недобора» на этой строке
+    uow = Uow(lot)
+    actor = Actor(name="Технолог", department="КБ")
+    now = datetime(2026, 9, 29, 9, 0)
+    created = create_fulfillment(
+        CreateFulfillmentCommand(
+            idempotency_key="kitset:print-sheet",
+            purpose="316К.14 / КБ-1",
+            deadline=None,
+            lines=(
+                FulfillmentLine.create(article="КД-9", name="Разъём", unit="шт", requirement=Decimal("6")),
+                FulfillmentLine.create(article="", name="Кабель без партии", unit="м", requirement=Decimal("3")),
+            ),
+            actor=actor,
+            now=now,
+        ),
+        uow,
+    )
+
+    before_binding = build_issue_print_sheet(created, now)
+    assert before_binding.title == f"ЗАЯВКА НА ВЫДАЧУ {created.number}"
+    assert before_binding.columns[:3] == ("№", "Артикул КД", "Наименование")
+    assert before_binding.rows[0] == ("1", "КД-9", "Разъём", "— ждём поставки —", "", "6", "0", "шт", "", "")
+    assert "Разъём" in before_binding.note and "Кабель без партии" in before_binding.note
+
+    bound = bind_lot(
+        BindLotCommand(
+            request_id=created.id,
+            expected_version=created.version,
+            line_id=created.lines[0].id,
+            lot_id=lot.id,
+            actor=actor,
+            now=now,
+        ),
+        uow,
+    )
+    after_binding = build_issue_print_sheet(bound, now)
+    bound_row = next(row for row in after_binding.rows if row[1] == "КД-9")
+    assert bound_row[3] == lot.grn
+    assert bound_row[6] == "6"  # «Набрать» = резерв, ещё не выдано
+    assert "Разъём" not in after_binding.note
+    assert "Кабель без партии" in after_binding.note
+
+    with pytest.raises(FulfillmentValidationError, match="ещё нет выданных"):
+        build_issue_return_sheet(bound, now)
+
+    # Строку без партии полностью укомплектовать нельзя в этом сценарии — вместо полного цикла
+    # «Готов к выдаче → выдать» ставим позицию с партией в «выдано» напрямую, как это уже делает
+    # `issue_fulfillment` внутри одной транзакции. Лист возврата должен видеть только её.
+    issued_line = bound.lines[0].mark_issued()
+    manually_issued = replace(bound, lines=(issued_line, bound.lines[1]))
+    return_sheet = build_issue_return_sheet(manually_issued, now)
+    assert len(return_sheet.rows) == 1
+    assert return_sheet.rows[0][1] == "Разъём"
+    assert return_sheet.rows[0][4] == "6"
+    assert return_sheet.title == f"ЛИСТ ВОЗВРАТА ПО ЗАЯВКЕ {manually_issued.number}"

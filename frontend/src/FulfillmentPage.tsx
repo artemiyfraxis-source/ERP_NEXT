@@ -6,6 +6,7 @@ import {
   type FulfillmentRequest,
   type Principal,
 } from "./api";
+import { openPrintSheet } from "./print";
 
 export function FulfillmentPage({ principal }: { principal: Principal }) {
   const [requests, setRequests] = useState<FulfillmentRequest[]>([]);
@@ -79,7 +80,20 @@ function FulfillmentCard({ request, lots, canEdit, canHandout, busy, mutate }: {
 }) {
   const [handoutLocation, setHandoutLocation] = useState(request.handout_location ?? "");
   const [returnLocation, setReturnLocation] = useState(request.return_location ?? "");
+  const [printError, setPrintError] = useState("");
   const closed = ["КБ Выдана", "КБ Возвращена", "Готово", "Отменена"].includes(request.status);
+  const hasIssuedLines = request.lines.some((line) => Number(line.issued) > 0);
+
+  async function print(load: () => Promise<{ sheet: Parameters<typeof openPrintSheet>[0] }>) {
+    setPrintError("");
+    try {
+      const { sheet } = await load();
+      openPrintSheet(sheet);
+    } catch (reason) {
+      setPrintError(reason instanceof Error ? reason.message : "Не удалось сформировать бланк");
+    }
+  }
+
   return (
     <article className="panel fulfillment-card">
       <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><span className="status">{request.status}</span></div>
@@ -91,7 +105,10 @@ function FulfillmentCard({ request, lots, canEdit, canHandout, busy, mutate }: {
         {canHandout && request.status === "Готов к выдаче" && <button className="primary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.issue(request.id, request.version))}>Выдать комплект</button>}
         {canHandout && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button></>}
         {canEdit && !closed && <button className="link-button danger-link" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
+        <button className="secondary small" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>
+        {hasIssuedLines && <button className="secondary small" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
       </div>
+      {printError && <div className="error-banner" role="alert">{printError}</div>}
       {canHandout && request.status === "КБ Возвращена" && <ReturnForm request={request} busy={busy} mutate={mutate} />}
     </article>
   );

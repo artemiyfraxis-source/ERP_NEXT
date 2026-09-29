@@ -118,6 +118,59 @@ def test_receiver_binds_a_human_selected_lot_and_issues_only_the_complete_kit(fu
         assert uow.warehouse.get(lot.id).storage_location == "2A1"
 
 
+def test_print_and_return_sheet_endpoints(fulfillment_api):
+    client, lot, _ = fulfillment_api
+    created = client.post(
+        "/api/issues",
+        headers={"Idempotency-Key": "kitset-print-endpoint"},
+        json={
+            "purpose": "316К.14 / КБ-1",
+            "lines": [{"article": "КД-1", "name": "Разъём", "unit": "шт", "requirement": "6"}],
+        },
+    )
+    body = created.json()["request"]
+
+    not_issued_yet = client.get(f"/api/issues/{body['id']}/return-sheet")
+    assert not_issued_yet.status_code == 409
+
+    printed = client.get(f"/api/issues/{body['id']}/print")
+    assert printed.status_code == 200, printed.text
+    sheet = printed.json()["sheet"]
+    assert sheet["title"] == f"ЗАЯВКА НА ВЫДАЧУ {body['number']}"
+    assert sheet["rows"][0][3] == "— ждём поставки —"
+    assert "Разъём" in sheet["note"]
+
+    bound = client.post(
+        f"/api/issues/{body['id']}/lines/{body['lines'][0]['id']}/bind",
+        json={"version": body["version"], "lot_id": str(lot.id)},
+    )
+    bound_body = bound.json()["request"]
+    ready = client.post(
+        f"/api/issues/{body['id']}/ready",
+        json={"version": bound_body["version"], "handout_location": "Полка выдачи 2"},
+    )
+    ready_body = ready.json()["request"]
+    issued = client.post(
+        f"/api/issues/{body['id']}/issue",
+        json={"version": ready_body["version"]},
+    )
+    issued_body = issued.json()["request"]
+
+    printed_after_issue = client.get(f"/api/issues/{body['id']}/print")
+    assert printed_after_issue.json()["sheet"]["rows"][0][6] == "6"  # «Набрать» = выдано после проводки
+    assert printed_after_issue.json()["sheet"]["note"] == ""
+
+    return_sheet = client.get(f"/api/issues/{body['id']}/return-sheet")
+    assert return_sheet.status_code == 200, return_sheet.text
+    return_body = return_sheet.json()["sheet"]
+    assert return_body["title"] == f"ЛИСТ ВОЗВРАТА ПО ЗАЯВКЕ {body['number']}"
+    assert return_body["rows"][0][4] == "6"
+    assert issued_body["status"] == "КБ Выдана"
+
+    missing = client.get("/api/issues/10000000-0000-0000-0000-000000000001/print")
+    assert missing.status_code == 404
+
+
 def test_handout_requires_receiver_role(fulfillment_api):
     client, _, _ = fulfillment_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(

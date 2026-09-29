@@ -339,6 +339,15 @@ export interface FulfillmentLine {
   };
 }
 
+export interface PrintSheet {
+  title: string;
+  subtitle: string;
+  columns: string[];
+  rows: string[][];
+  note: string;
+  sign: string;
+}
+
 export interface FulfillmentRequest {
   id: string;
   number: string;
@@ -1238,6 +1247,8 @@ export const fulfillmentApi = {
     `/api/issues${after ? `?after=${encodeURIComponent(after)}` : ""}`,
   ),
   lots: () => api<{ lots: FulfillmentLot[] }>("/api/issues/lots"),
+  printSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/print`),
+  returnSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/return-sheet`),
   bind: (requestId: string, lineId: string, version: number, lotId: string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/bind`, {
       method: "POST",

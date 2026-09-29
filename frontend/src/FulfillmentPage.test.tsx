@@ -118,6 +118,32 @@ it("does not load lots or show editing actions to a view-only production role", 
   expect(screen.queryByRole("button", { name: "Отменить заявку" })).not.toBeInTheDocument();
 });
 
+it("prints the issue sheet and, once something is issued, offers the return sheet too", async () => {
+  const printedPaths: string[] = [];
+  const printWindow = { document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
+  vi.spyOn(window, "open").mockReturnValue(printWindow as unknown as Window);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    printedPaths.push(path);
+    if (path === "/api/issues") return json({ requests: [request], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path.endsWith("/print")) return json({ sheet: {
+      title: "ЗАЯВКА НА ВЫДАЧУ FRX-ISS-26-0001", subtitle: "", columns: [], rows: [], note: "", sign: "",
+    } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} />);
+  expect(await screen.findByRole("button", { name: "Печать заявки" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Печать листа возврата" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Печать заявки" }));
+
+  await waitFor(() => expect(printedPaths).toContain(`/api/issues/${request.id}/print`));
+  await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
+  expect(printWindow.document.write.mock.calls[0][0]).toContain("ЗАЯВКА НА ВЫДАЧУ FRX-ISS-26-0001");
+});
+
 it("records good return and both defect quantities for every issued line", async () => {
   let payload: unknown;
   const returnedRequest: FulfillmentRequest = {
@@ -150,6 +176,7 @@ it("records good return and both defect quantities for every issued line", async
   });
 
   render(<FulfillmentPage principal={principal} />);
+  expect(await screen.findByRole("button", { name: "Печать листа возврата" })).toBeInTheDocument();
   fireEvent.change(await screen.findByLabelText("Годное Разъём"), { target: { value: "2" } });
   fireEvent.change(screen.getByLabelText("Брак возвращён Разъём"), { target: { value: "1" } });
   fireEvent.change(screen.getByLabelText("Брак не возвращён Разъём"), { target: { value: "0.5" } });
