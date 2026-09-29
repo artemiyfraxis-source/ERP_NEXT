@@ -1742,7 +1742,7 @@ export const productionApi = {
   inputs: (taskId: string, operationId: string) =>
     api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
-  startWork: (taskId: string, operationId: string, inputs: Array<{ box_id: string; quantity: string }>, materials: Array<{ fulfillment_line_id: string; quantity: string }> = []) =>
+  startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = []) =>
     api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start`, {
       method: "POST", body: JSON.stringify({ inputs, materials }),
     }),
@@ -1752,7 +1752,7 @@ export const productionApi = {
     api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit`, {
       method: "POST", body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
     }),
-  boxAction: (boxId: string, action: "close" | "reopen" | "confirm", version: number) =>
+  boxAction: (boxId: string, action: "confirm", version: number) =>
     api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/${action}`, {
       method: "POST", body: JSON.stringify({ version }),
     }),

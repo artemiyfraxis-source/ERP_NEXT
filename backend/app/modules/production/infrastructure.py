@@ -237,6 +237,7 @@ class ProductionWorkInputRow(Base):
     session_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_work_sessions.id", ondelete="CASCADE"), primary_key=True)
     box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), primary_key=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
 
 class ProductionWorkMaterialInputRow(Base):
@@ -717,7 +718,7 @@ class SqlAlchemyWorkRepository:
     def inputs(self, session_id: UUID) -> list[WorkInput]:
         rows = self.session.scalars(select(ProductionWorkInputRow).where(
             ProductionWorkInputRow.session_id == session_id,
-        ).order_by(ProductionWorkInputRow.box_id))
+        ).order_by(ProductionWorkInputRow.position, ProductionWorkInputRow.box_id))
         return [WorkInput(row.box_id, row.quantity) for row in rows]
 
     def material_inputs(self, session_id: UUID) -> list[MaterialInput]:
@@ -741,8 +742,8 @@ class SqlAlchemyWorkRepository:
 
     def add_inputs(self, session_id: UUID, inputs: tuple[WorkInput, ...]) -> None:
         self.session.add_all(ProductionWorkInputRow(
-            session_id=session_id, box_id=item.box_id, quantity=item.quantity,
-        ) for item in inputs)
+            session_id=session_id, box_id=item.box_id, quantity=item.quantity, position=index,
+        ) for index, item in enumerate(inputs))
 
     def add_material_inputs(self, session_id: UUID, inputs: tuple[MaterialInput, ...]) -> None:
         self.session.add_all(ProductionWorkMaterialInputRow(

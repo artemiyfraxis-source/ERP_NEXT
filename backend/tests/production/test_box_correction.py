@@ -133,29 +133,30 @@ def test_increase_takes_the_difference_from_the_same_input_box_or_fails_whole():
     engine, sessions, factory, master, operator, task, source, now = execution_setup()
     box, output, _ = _submit(factory, operator, task, now, good="8", inputs=(WorkInput(source.id, Decimal("8")),))
     returned = _close_and_return(factory, master, operator, box, now)
-    # Another submission takes the last two pieces of the input box.
-    _submit(factory, operator, task, now, good="2", inputs=(WorkInput(source.id, Decimal("2")),))
+    with factory() as uow:  # последнюю штуку первой коробки забрало другое задание
+        stored = uow.boxes.get(source.id)
+        uow.boxes.save(replace(stored, consumed=Decimal("9"), version=stored.version + 1))
+        uow.commit()
 
     with pytest.raises(ProductionValidationError, match="Больше, чем в задании"):
         _correct(factory, operator, returned, output, now, good="11")
-    with pytest.raises(ProductionValidationError, match="Добрать 2 шт не из чего: во входных коробках 0 шт"):
+    with pytest.raises(ProductionValidationError, match="Добрать 2 шт не из чего: во входных коробках 1 шт"):
         _correct(factory, operator, returned, output, now, good="10")
     with factory() as uow:
         untouched = uow.boxes.get(box.id)
         untouched_source = uow.boxes.get(source.id)
     assert untouched.status is BoxStatus.RETURNED
     assert untouched.version == returned.version
-    assert untouched_source.consumed == Decimal("10")
-    assert untouched_source.status is BoxStatus.CONSUMED
-    assert _count(sessions, ProductionOutputRow) == 2
+    assert untouched_source.consumed == Decimal("9")
+    assert _count(sessions, ProductionOutputRow) == 1
 
-    corrected, _correction, _ = _correct(factory, operator, returned, output, now, good="7")
+    corrected, _correction, _ = _correct(factory, operator, returned, output, now, good="9")
     with factory() as uow:
         stored_source = uow.boxes.get(source.id)
-    assert corrected.quantity == Decimal("7")
-    assert stored_source.consumed == Decimal("9")
-    assert stored_source.status is BoxStatus.CONFIRMED
-    assert _transferred(sessions, source.id, box.id) == Decimal("7")
+    assert corrected.quantity == Decimal("9")
+    assert stored_source.consumed == Decimal("10")
+    assert stored_source.status is BoxStatus.CONSUMED
+    assert _transferred(sessions, source.id, box.id) == Decimal("9")
     engine.dispose()
 
 def test_repeated_correction_targets_the_latest_output_and_counts_once():
@@ -371,7 +372,7 @@ def test_first_operation_limit_counts_only_active_outputs_and_materials_stay_con
     )
     returned = _close_and_return(factory, master, operator, box, now)
 
-    with pytest.raises(ProductionValidationError, match="превышает количество"):
+    with pytest.raises(ProductionValidationError, match="Больше, чем в задании"):
         _correct(factory, operator, returned, output, now, good="11")
     _correct(factory, operator, returned, output, now, good="6")
     with factory() as uow:
