@@ -460,10 +460,13 @@ export function ProjectEtk({ card, principal, onChange }: { card: ProjectTechcar
     if (busy) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const updated = await techcardsApi.autoBuild(card.id, card.version, config);
+      let updated = await techcardsApi.autoBuild(card.id, card.version, config);
+      // Как SUPPLYMAP «Создать техкарты»: собранная ТК сразу выдана, отдельного шага утверждения нет.
+      const issueNow = canEdit && updated.status === "Черновик" && !!updated.document;
+      if (issueNow) updated = await techcardsApi.issue(updated.id, updated.version);
       onChange(updated);
       const warningCount = warnings(updated.document).length;
-      setNotice(`${card.status === "Выдана" ? "ЭТК пересобрана новой ревизией" : "Черновик ЭТК собран"}${warningCount ? ` · предупреждений: ${warningCount}` : ""}`);
+      setNotice(`${card.status === "Выдана" ? "ЭТК пересобрана новой ревизией" : issueNow ? "ЭТК создана и выдана, ревизия 1" : "Черновик ЭТК собран — выдаёт технолог"}${warningCount ? ` · предупреждений: ${warningCount}` : ""}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "ЭТК не собрана");
     } finally { setBusy(false); }
@@ -513,14 +516,14 @@ export function ProjectEtk({ card, principal, onChange }: { card: ProjectTechcar
         onChange(updated);
         setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
       }} />
-      {!operations(card.document).length && <div className="etk-empty">ЭТК ещё не собрана — заполни генератор ниже и нажми «Создать техкарты».</div>}
-      {canGenerate && <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} onConfig={(config) => { generatedConfig.current = config; }} />}
-      {canGenerate && <details className="build-config"><summary>JSON-конфигурация (для эксперта)</summary>
+      {!operations(card.document).length && <div className="etk-empty">ЭТК ещё не собрана — заполни генератор ниже и нажми «Создать».</div>}
+      {canGenerate && <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} onConfig={(config) => { generatedConfig.current = config; }} more={<details className="build-config"><summary>JSON-конфигурация (для эксперта)</summary>
         <div className="form-actions"><button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button></div>
         <label>Config генератора SUPPLYMAP<textarea aria-label="Конфигурация автоматической сборки" rows={14} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
-        <div className="form-actions"><button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК автоматически</button></div>
-      </details>}
-      {canEdit && card.status === "Черновик" && card.document && <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button></div>}
+        <div className="form-actions"><button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК по JSON</button></div>
+      </details>} />}
+      {/* Без генератора (только право «Техкарты проектов») — выдать черновик, собранный кем-то другим. */}
+      {!canGenerate && canEdit && card.status === "Черновик" && card.document && <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button></div>}
       <div className="panel-heading"><strong>Журнал ревизий</strong><span>{revisions.length}</span></div>
       {revisions.map((revision) => <div className="panel-heading" key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span>{revision.actor_name} · {new Date(revision.occurred_at).toLocaleString("ru-RU")}</span></div>)}
       {!revisions.length && <div className="etk-empty">Выданных ревизий пока нет.</div>}

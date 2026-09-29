@@ -239,7 +239,7 @@ def test_retransfer_is_an_explicit_flag_and_refused_for_a_new_request(write_api)
         assert session.scalar(select(func.count()).select_from(OutboxMessageRow)) == 2
 
 
-def test_create_rejects_project_outside_open_registry_and_stores_canonical_number(write_api):
+def test_create_accepts_project_outside_open_registry_and_stores_canonical_number(write_api):
     client, _, _ = write_api
 
     class Registry:
@@ -248,7 +248,7 @@ def test_create_rejects_project_outside_open_registry_and_stores_canonical_numbe
 
     app.state.project_registry = Registry()
     try:
-        rejected = client.post(
+        unregistered = client.post(
             "/api/requests",
             headers={"Idempotency-Key": "create:project:closed"},
             json={"requests": [{**request_payload(), "project_reference": "48К.13"}]},
@@ -266,8 +266,8 @@ def test_create_rejects_project_outside_open_registry_and_stores_canonical_numbe
     finally:
         del app.state.project_registry
 
-    assert rejected.status_code == 422
-    assert "48К.13" in rejected.json()["detail"]
+    assert unregistered.status_code == 201
+    assert unregistered.json()["requests"][0]["project_reference"] == "48К.13"
     assert latin.status_code == 422
     assert "№ ПРОЕКТА" in latin.json()["detail"]
     assert accepted.status_code == 201
