@@ -1287,7 +1287,7 @@ export interface EmployeeUpdate {
 export const staffApi = {
   directory: () => api<StaffDirectory>("/api/auth/staff"),
   create: (payload: EmployeeCreate) =>
-    api<{ user: Employee }>("/api/auth/staff", { method: "POST", body: JSON.stringify(payload) }),
+    api<{ user: Employee; pin: string }>("/api/auth/staff", { method: "POST", body: JSON.stringify(payload) }),
   update: (id: string, payload: EmployeeUpdate) =>
     api<{ user: Employee }>(`/api/auth/staff/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }),
   saveDepartments: (departments: string[]) =>
