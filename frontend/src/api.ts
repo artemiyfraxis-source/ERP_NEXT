@@ -1241,26 +1241,6 @@ export const accessApi = {
     }),
 };
 
-export const legacyApi = {
-  grant: (scope: "projects" | "calculation") =>
-    api<{ grant: string; expires_at: string; scope: string }>("/api/legacy/grant", {
-      method: "POST",
-      body: JSON.stringify({ scope }),
-    }),
-  exchange: async (base: string, grant: string) => {
-    const endpoint = new URL("/_erp_bridge/exchange", base);
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "X-ERP-Legacy-Grant": grant },
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new ApiError(payload.detail ?? `HTTP ${response.status}`, response.status);
-    }
-    return response.json() as Promise<{ ticket: string }>;
-  },
-};
-
 export const requestsApi = {
   schema: () => api<RequestSchema>("/api/requests/schema"),
   list: (q = "") =>

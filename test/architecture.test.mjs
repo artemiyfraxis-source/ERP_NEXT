@@ -8,9 +8,6 @@ import { supplymapRoot } from "../scripts/sibling-paths.mjs";
 
 const root = join(import.meta.dirname, "..");
 const moduleMap = JSON.parse(await readFile(join(root, "module-map.json"), "utf8"));
-const legacyContract = JSON.parse(
-  await readFile(join(root, "contracts", "legacy-projects.openapi.json"), "utf8"),
-);
 
 function requirementIdentity(line) {
   const requirement = line.split("#", 1)[0].trim();
@@ -28,45 +25,13 @@ test("every module has one explicit owner", () => {
   const ids = moduleMap.modules.map(({ id }) => id);
   assert.equal(new Set(ids).size, ids.length);
   for (const module of moduleMap.modules) {
-    assert.ok(["recovered-erp", "supplymap"].includes(module.owner));
+    assert.equal(module.owner, "supplymap");
   }
-});
-
-test("only Projects and Calculation remain legacy-owned", () => {
-  const legacy = moduleMap.modules
-    .filter(({ owner }) => owner === "recovered-erp")
-    .map(({ id }) => id)
-    .sort();
-  assert.deepEqual(legacy, ["calculation", "projects"]);
 });
 
 test("System ID is retained only as a legacy identifier", () => {
   assert.equal(moduleMap.architecture, "modular-monolith");
   assert.equal(moduleMap.legacyIdField, "legacy_id");
-});
-
-test("legacy contract cannot absorb non-project ERP modules", () => {
-  const prefixes = legacyContract["x-owned-prefixes"];
-  const paths = Object.keys(legacyContract.paths);
-  assert.ok(paths.length > 0);
-  assert.ok(
-    paths.every((path) =>
-      prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)),
-    ),
-  );
-  assert.equal(paths.some((path) => path.startsWith("/api/purchase")), false);
-  assert.equal(paths.some((path) => path.startsWith("/api/stock")), false);
-
-  const nativePrefixes = moduleMap.modules
-    .filter(({ owner }) => owner === "supplymap")
-    .flatMap(({ routePrefixes = [] }) => routePrefixes);
-  assert.equal(
-    prefixes.some((legacy) =>
-      nativePrefixes.some((native) => legacy === native || legacy.startsWith(`${native}/`)),
-    ),
-    false,
-    "legacy and native route ownership overlaps",
-  );
 });
 
 test("techcards import records the exact source commit", async () => {

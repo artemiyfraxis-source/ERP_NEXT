@@ -1045,11 +1045,7 @@ def skills(
                 route_from_document(card.document) for card in techcards.techcards.list()
                 if card.status is TechcardStatus.ISSUED
             ]
-        with uow_factory() as uow:
-            launched_codes = [(operation.code, operation.stage) for task in uow.production.list(limit=10_000) for operation in task.operations]
-    else:
-        launched_codes = []
-    codes = operation_codes(routes, [*((item.operation_code, "") for item in rows), *launched_codes])
+    codes = operation_codes(routes, [(item.operation_code, "") for item in rows])
     return {"operation_codes": codes, "skills": [{
         "operator_id": str(item.operator_id), "operation_code": item.operation_code,
         "allowed": item.allowed, "stars": item.stars,

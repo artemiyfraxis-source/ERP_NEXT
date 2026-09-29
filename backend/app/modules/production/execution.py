@@ -211,11 +211,12 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
             raise ProductionValidationError("Сначала завершите или отмените текущую работу")
         task, operation = _task_operation(command.task_id, command.operation_id, command.actor, uow)
         if operation.position == 1:
-            if command.inputs or not command.materials:
-                raise ProductionValidationError("Для первой операции укажите выданные складские партии")
-            if task.fulfillment_request_id is None:
+            # SUPPLYMAP начинает первый этап без выданного комплекта; выданные партии — по желанию, для родословной.
+            if command.inputs:
+                raise ProductionValidationError("Первая операция не берёт коробки предыдущего этапа")
+            if command.materials and task.fulfillment_request_id is None:
                 raise ProductionValidationError("Задание не связано с заявкой выдачи")
-            if uow.materials.request_status(task.fulfillment_request_id) is not FulfillmentStatus.ISSUED:
+            if command.materials and uow.materials.request_status(task.fulfillment_request_id) is not FulfillmentStatus.ISSUED:
                 raise ProductionValidationError("Комплект по заявке ещё не выдан в производство")
             if len({item.fulfillment_line_id for item in command.materials}) != len(command.materials):
                 raise ProductionValidationError("Одна позиция выдачи указана дважды")
@@ -315,8 +316,6 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
         if operation.position > 1 and good + defect != input_total:
             raise ProductionValidationError("Годные плюс брак должны совпадать с количеством входа")
         if operation.position == 1:
-            if not materials:
-                raise ProductionValidationError("У работы нет выданных складских партий")
             produced = uow.outputs.total_for_operation(operation.id)
             if produced + good + defect > Decimal(task.quantity):
                 raise ProductionValidationError("Выработка превышает количество производственного задания")

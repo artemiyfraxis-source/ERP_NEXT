@@ -274,7 +274,8 @@ def test_production_plan_rejects_note_for_unknown_project(production_api):
     assert response.json()["detail"] == "Проект не найден в реестре."
 
 
-def test_manual_techcard_project_appears_from_snapshot_without_fake_card(production_api):
+def test_bare_registry_project_without_kits_or_journal_is_not_in_the_plan(production_api):
+    # PP-1, ProdPlan.gs prodPlanData_: строка реестра без состава и без журнала в план не попадает.
     client, _operator_id = production_api
     saved = client.put("/api/production/plan/projects-snapshot", json={"projects": [{
         "project": "714К.", "customer": "Заказчик", "opened_on": "2026-09-01",
@@ -284,22 +285,7 @@ def test_manual_techcard_project_appears_from_snapshot_without_fake_card(product
 
     assert saved.status_code == 200, saved.text
     assert loaded.status_code == 200, loaded.text
-    assert loaded.json()["rows"] == [{
-        "project": "714К.1",
-        "customer": "Заказчик",
-        "opened_on": "2026-09-01",
-        "deadline": None,
-        "days_left": None,
-        "stage": "ТК готова",
-        "terminal": False,
-        "stage_manual": False,
-        "kits": [],
-        "supply": None,
-        "plan": None,
-        "blocker": None,
-        "last": None,
-        "events": [],
-    }]
+    assert loaded.json()["rows"] == []
 
 
 def test_stage_mark_without_kb_sets_stage_of_project_without_kits(production_api):
@@ -547,6 +533,7 @@ def test_production_plan_survives_a_failing_source(production_api):
     client.put("/api/production/plan/projects-snapshot", json={"projects": [{
         "project": "714К.", "customer": "Заказчик", "status": "Новый", "terminal": False,
     }]})
+    client.post("/api/production/plan/events", json={"project": "714К.", "kind": "note", "text": "в работе"})
 
     def broken():
         raise RuntimeError("источник недоступен")
@@ -561,3 +548,31 @@ def test_production_plan_survives_a_failing_source(production_api):
 
     assert loaded.status_code == 200, loaded.text
     assert [row["project"] for row in loaded.json()["rows"]] == ["714К.1"]
+
+
+def test_first_operation_starts_and_submits_without_an_issued_kit(production_api):
+    # SUPPLYMAP начинает первый этап без выданного комплекта: складские партии — по желанию.
+    client, operator_id = production_api
+    task = launch_from_card(
+        client, "no-kit-v1", "591K.3", "КБ-1", 10, [("", "Подготовка", 0, 0)],
+    ).json()["task"]
+    operation = task["operations"][0]
+    assigned = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{operation['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(operator_id)]},
+    )
+    assert assigned.status_code == 200, assigned.text
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=operator_id, name="Оператор", department="Производство"),
+        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+    )
+
+    started = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{operation['id']}/work/start", json={},
+    )
+    assert started.status_code == 200, started.text
+    submitted = client.post(
+        f"/api/production/work/{started.json()['session']['id']}/submit",
+        json={"good_quantity": "3", "defect_quantity": "0"},
+    )
+    assert submitted.status_code == 200, submitted.text
