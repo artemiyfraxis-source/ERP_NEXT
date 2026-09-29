@@ -189,3 +189,62 @@ def test_view_only_reads_but_cannot_write(kitset_api):
     assert client.delete("/api/techcards/kitsets/708К.4").status_code == 403
     app.dependency_overrides[authenticated_principal] = _principal({"techcards": "edit"})
     assert client.get("/api/techcards/kitsets").status_code == 403
+
+
+class _Sheets:
+    """Fake Google Sheets: ЗКЗ and СПЯ as display strings, like `values.batchGet` FORMATTED_VALUE."""
+
+    def __init__(self, sheets, error=None):
+        self.sheets, self.error, self.calls = sheets, error, []
+
+    def read_sheets(self, spreadsheet_id, names):
+        self.calls.append((spreadsheet_id, names))
+        if self.error:
+            raise self.error
+        return "708К.4.1 Расчет", {name: grid for name, grid in self.sheets.items() if name in names}
+
+
+LINK = "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit#gid=0"
+SHEETS = {
+    "ЗКЗ": [
+        ["Название проекта", ""], ["Номер", "708К.4"], ["Заказчик", "ООО Заказчик"], [],
+        ["№", "Индекс сборки", "Наименование сборки по чертежу", "Кол-во 1", "Вкл. в расчет?"],
+        ["1", "кб1", "Жгут питания", "10", "1"],
+    ],
+    "СПЯ": [
+        ["Сборка", "Артикул КД", "Тип", "Наименование", "Кол-во на комплект", "Ссылка"],
+        ["КБ1", "UL1007 22AWG", "Провод", "", "1,5", ""],
+    ],
+}
+
+
+def test_project_from_calculation_link_reads_google_sheet(kitset_api):
+    """`tcReadCalcKitset_(calcUrl)`: ЗКЗ + СПЯ by link; the file title refines the number; link kept as РАСЧЁТ."""
+    client, _lot = kitset_api
+    reader = _Sheets(SHEETS)
+    app.state.kitset_sheets_reader = reader
+    try:
+        response = client.post("/api/techcards/kitsets/load", json={"url": LINK})
+    finally:
+        del app.state.kitset_sheets_reader
+    assert response.status_code == 200, response.text
+    assert response.json()["res"]["project"] == "708К.4.1"
+    assert reader.calls == [("1AbC-calc_id", ("ЗКЗ", "СПЯ"))]
+    card = client.get("/api/techcards/kitsets/708К.4.1").json()
+    assert card["calc_source"] == LINK
+    assert [item["art"] for item in card["assemblies"][0]["components"]] == ["UL1007 22AWG"]
+
+
+def test_calculation_link_refusals(kitset_api):
+    from app.modules.requests.application import CalcSheetError
+
+    client, _lot = kitset_api
+    assert client.post("/api/techcards/kitsets/load", json={"url": "https://example.test/x"}).status_code == 422
+    assert client.post("/api/techcards/kitsets/load", json={}).status_code == 422
+    app.state.kitset_sheets_reader = _Sheets({}, CalcSheetError("Нет доступа к таблице расчёта", "access"))
+    try:
+        refused = client.post("/api/techcards/kitsets/load", json={"url": LINK})
+    finally:
+        del app.state.kitset_sheets_reader
+    assert refused.status_code == 422
+    assert "Нет доступа" in refused.json()["detail"]
