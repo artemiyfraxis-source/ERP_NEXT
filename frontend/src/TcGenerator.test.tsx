@@ -129,3 +129,14 @@ it("resets hand-typed times to БД.ОП on the next form change, as renderOpsCa
   fireEvent.change(screen.getByLabelText("Длина по чертежу"), { target: { value: "200" } });
   expect(prep()).toHaveValue(30);
 });
+
+it("has one main button: «Создать» before the first issue, «Пересобрать» after", async () => {
+  mockApi();
+  const { unmount } = render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+  expect(await screen.findByRole("button", { name: "Создать" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Удалить созданные" })).not.toBeInTheDocument();
+  unmount();
+  render(<TcGenerator card={{ ...card, status: "Выдана", revision: 1 }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+  expect(await screen.findByRole("button", { name: "Пересобрать" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Создать" })).not.toBeInTheDocument();
+});

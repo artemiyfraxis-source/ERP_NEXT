@@ -361,7 +361,7 @@ export function GeneratorPane({ card, principal, onChange, onDone }: {
       }
       onChange(updated);
       const warningCount = warnings(updated.document).length;
-      setNotice(`${rebuilt ? `Техкарта пересобрана · ревизия ${updated.revision}` : updated.status === "Выдана" ? "Техкарта создана" : "Черновик ЭТК собран"}${warningCount ? ` · предупреждений: ${warningCount}` : ""}`);
+      setNotice(`${rebuilt ? `Техкарта пересобрана · ревизия ${updated.revision}` : updated.status === "Выдана" ? "Техкарта создана" : "Черновик ЭТК собран — выдаёт технолог"}${warningCount ? ` · предупреждений: ${warningCount}` : ""}`);
       onDone?.(updated);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "ЭТК не собрана");

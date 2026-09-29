@@ -429,7 +429,9 @@ describe("RequestsPage", () => {
     const names = screen.getAllByLabelText(/Наименование/);
     expect(names).toHaveLength(2);
     fireEvent.change(names[0], { target: { value: "Разъём" } });
-    fireEvent.change(screen.getByLabelText("Цель (проект)"), { target: { value: "2000К.1" } });
+    // Ручной ввод: номер не из реестра вписывается как есть, реестр только подсказывает.
+    expect(screen.getByRole("combobox", { name: "Цель (проект)" })).toHaveAttribute("list", "request-projects");
+    fireEvent.change(screen.getByLabelText("Цель (проект)"), { target: { value: "48К.13" } });
     fireEvent.change(screen.getByLabelText("Категория"), { target: { value: "ОП" } });
     fireEvent.change(screen.getAllByLabelText("Артикул КД")[0], { target: { value: "АБВГ.123" } });
     fireEvent.change(screen.getAllByLabelText("Цена с НДС")[0], { target: { value: "120" } });
@@ -444,8 +446,8 @@ describe("RequestsPage", () => {
     const [, init] = fetchMock.mock.calls.find(([reqInput, reqInit]) => String(reqInput) === "/api/requests" && reqInit?.method === "POST")!;
     const body = JSON.parse(String(init?.body));
     expect(body.requests).toHaveLength(2);
-    expect(body.requests[0]).toMatchObject({ name: "Разъём", project_reference: "2000К.1", category: "ОП", quality_document: "Да", design_article: "АБВГ.123", price_with_vat: "120" });
-    expect(body.requests[1]).toMatchObject({ name: "Кабель", project_reference: "2000К.1", category: "ОП", quality_document: "Да", delivery_point: "Москва" });
+    expect(body.requests[0]).toMatchObject({ name: "Разъём", project_reference: "48К.13", category: "ОП", quality_document: "Да", design_article: "АБВГ.123", price_with_vat: "120" });
+    expect(body.requests[1]).toMatchObject({ name: "Кабель", project_reference: "48К.13", category: "ОП", quality_document: "Да", delivery_point: "Москва" });
     expect(await screen.findByText("Создано заявок: 2 (REQ-1, REQ-2)")).toBeInTheDocument();
   });
 
