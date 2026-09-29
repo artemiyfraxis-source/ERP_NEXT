@@ -251,6 +251,18 @@ function firstMissing(positions: Draft[]): string {
    (`/import/parse`) stays only as a fallback when the server has no Google key.
    NAV-SECTIONS: filing takes `newrequest` (the form here and inside «Заявки»), own rows take `myrequests`, every row
    takes `requests` — so «Оформить заявку» never asks for the whole list. */
+/** ?calc_url=<ссылка на расчёт>&calc_project=<№> — один раз при открытии, затем убирается из адреса. */
+function readCalcPreset(): { url: string; project: string } | null {
+  const url = new URL(window.location.href);
+  const calc = (url.searchParams.get("calc_url") || "").trim();
+  if (!calc) return null;
+  const project = (url.searchParams.get("calc_project") || "").trim();
+  url.searchParams.delete("calc_url");
+  url.searchParams.delete("calc_project");
+  window.history.replaceState({}, "", url);
+  return { url: calc, project };
+}
+
 export function RequestsPage({ principal, view }: { principal: Principal; view?: "create" | "mine" }) {
   const creationKey = useRef(crypto.randomUUID());
   const batchKey = useRef(crypto.randomUUID());
@@ -292,6 +304,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const [calcQuality, setCalcQuality] = useState<Record<string, string>>({});
   const [calcPlanned, setCalcPlanned] = useState<Record<string, string>>({});
   const [calcError, setCalcError] = useState("");
+  // «Оформить заявку из расчёта» в карточке проекта: ссылка и № проекта приходят в адресе (?calc_url=&calc_project=).
+  const calcPreset = useRef<ReturnType<typeof readCalcPreset> | undefined>(undefined);
+  if (calcPreset.current === undefined) calcPreset.current = readCalcPreset();
 
   const projects = schema?.projects ?? [];
 
@@ -330,6 +345,15 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       setMineLoading(false);
     }
   }
+
+  useEffect(() => {
+    const preset = calcPreset.current;
+    if (view !== "create" || !preset) return;
+    setCreateMode("calc");
+    setCalcUrl(preset.url);
+    loadCalc(preset.url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (view === "mine") {
@@ -492,7 +516,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
      bulk-set Ед.изм/Документ качества/План. дата per row, create the selected positions. ── */
   /* rcCalcLoad → rcCalcRender: every row starts «Общепром», so its Документ качества pre-fills «Нет»
      (rcCalcApplyCatRule); Ед.изм comes pre-filled by type and stays editable. */
-  function showCalcPreview(preview: CalcImportPreview) {
+  function showCalcPreview(loaded: CalcImportPreview) {
+    const preview = calcPreset.current?.project ? { ...loaded, project: calcPreset.current.project } : loaded;
     setCalcWarnings(preview.warnings ?? []);
     if (!preview.items.length) {
       setCalcError("Позиций не найдено");
@@ -507,9 +532,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     setCalcPlanned({});
   }
 
-  function loadCalc() {
+  function loadCalc(fromUrl?: string) {
     setCalcError("");
-    const url = calcUrl.trim();
+    const url = (fromUrl ?? calcUrl).trim();
     if (!url) {
       setCalcError("Вставь ссылку");
       return;
@@ -818,13 +843,13 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               <div className="import-panel">
                 <p className="page-sub">Вставь ссылку на Google-таблицу расчёта — позиции листа ЗКП станут заявками.</p>
                 <div className="form-grid">
-                  <label className="wide">Ссылка на расчёт<input type="text" placeholder="https://docs.google.com/spreadsheets/d/…" value={calcUrl} onChange={(e) => setCalcUrl(e.target.value)} /></label>
+                  <label className="wide">Ссылка на расчёт<input type="text" placeholder="https://docs.google.com/spreadsheets/d/…" value={calcUrl} onChange={(e) => { calcPreset.current = null; setCalcUrl(e.target.value); }} /></label>
                   <label>Назначение (на всю пачку) *<select value={calcPurpose} onChange={(e) => setCalcPurpose(e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
                   <label>Дедлайн (на всю пачку) *<input type="date" value={calcDeadline} onChange={(e) => setCalcDeadline(e.target.value)} /></label>
                   <label className="wide">Точка отгрузки (на всю пачку) *<select value={calcPoint} onChange={(e) => setCalcPoint(e.target.value)}><option value="">— выбери адрес —</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
                 </div>
                 <div className="form-actions">
-                  <button type="button" className="secondary" disabled={calcLoading} onClick={loadCalc}>{calcLoading ? "Читаю…" : "Загрузить"}</button>
+                  <button type="button" className="secondary" disabled={calcLoading} onClick={() => loadCalc()}>{calcLoading ? "Читаю…" : "Загрузить"}</button>
                 </div>
                 <details>
                   <summary>Сервер не читает Google? Вставить диапазон листа ЗКП вручную</summary>
