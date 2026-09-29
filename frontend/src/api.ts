@@ -1600,6 +1600,7 @@ export const techcardsApi = {
 
 export const operationsApi = {
   notifications: () => api<{ notifications: NotificationItem[]; unread: number }>("/api/notifications"),
+  unread: () => api<{ unread: number }>("/api/notifications/unread"),
   markRead: (ids: string[] = []) => api<{ unread: number }>("/api/notifications/read", {
     method: "POST",
     body: JSON.stringify({ ids }),
