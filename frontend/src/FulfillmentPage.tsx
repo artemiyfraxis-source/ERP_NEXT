@@ -455,6 +455,11 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
     }
   }
 
+  // issMove_: every stage move is confirmed with what it does; handing out writes stock off and only a return undoes it.
+  function move(status: string, hint: string, operation: () => Promise<unknown>) {
+    if (window.confirm(`Заявка ${request.number} → ${status}\n\n${hint}`)) void mutate(request.id, operation);
+  }
+
   function remove() {
     const sure = window.confirm(`Удалить заявку ${request.number}? Строки заявки исчезнут совсем — это не «Отменена», в архив она не уедет. Резерв вернётся складу.`);
     if (sure) void mutate(request.id, () => fulfillmentApi.remove(request.id));
@@ -470,11 +475,11 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
         {request.lines.map((line) => <FulfillmentLineRow key={line.id} request={request} line={line} lots={lots} canEdit={canPick} busy={busy} mutate={mutate} />)}
       </tbody></table></div>
       <div className="fulfillment-actions">
-        {canPick && ["Новая", "Недоукомплектован"].includes(request.status) && !waiting.length && <button className="secondary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.complete(request.id, request.version))}>Укомплектован</button>}
+        {canPick && ["Новая", "Недоукомплектован"].includes(request.status) && !waiting.length && <button className="secondary" disabled={busy} onClick={() => move("Укомплектован", "Комплект собран полностью. Отдать его в цех — отдельной кнопкой «Отправить на выдачу».", () => fulfillmentApi.complete(request.id, request.version))}>Укомплектован</button>}
         {canPick && request.status === "Укомплектован" && !sending && <button className="secondary" disabled={busy} onClick={() => setSending(true)}>Отправить на выдачу</button>}
-        {canHandout && showGive && request.status === "Готов к выдаче" && <button className="primary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.issue(request.id, request.version))}>Выдать комплект</button>}
-        {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
-        {canEdit && !closed && <button className="link-button danger-link" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
+        {canHandout && showGive && request.status === "Готов к выдаче" && <button className="primary" disabled={busy} onClick={() => move("КБ Выдана", "Количество спишется со склада (резерв → списано), заявка станет выданной. Отменить это можно только возвратом.", () => fulfillmentApi.issue(request.id, request.version))}>Выдать комплект</button>}
+        {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => move("Готово", "Заявка закроется и уйдёт в архив.", () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
+        {canEdit && !closed && <button className="link-button danger-link" disabled={busy} onClick={() => move("Отменена", "Резерв освободится, заявка уйдёт в архив.", () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
         <button className="secondary small" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>
         {hasIssuedLines && <button className="secondary small" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
         {isAdmin && <button className="link-button danger-link" disabled={busy} onClick={remove}>Удалить заявку</button>}

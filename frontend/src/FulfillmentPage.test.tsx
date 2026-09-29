@@ -346,6 +346,7 @@ it("marks the kit complete once every line is closed and sends it to handout wit
     throw new Error(`Unexpected request: ${path}`);
   });
 
+  vi.spyOn(window, "confirm").mockReturnValue(true);
   render(<FulfillmentPage principal={{ ...principal, roles: ["engineer"], permissions: { fulfillment: "edit" } }} />);
   await expand("FRX-ISS-26-0001");
   expect(await screen.findByText("Взята в работу")).toBeInTheDocument();
@@ -376,11 +377,36 @@ it("closes an issued request without return on the handout screen", async () => 
     throw new Error(`Unexpected request: ${path}`);
   });
 
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<FulfillmentPage principal={principal} mode="give" />);
   await expand("FRX-ISS-26-0001");
+  // issMove_: every stage move asks first; «Отмена» in the dialog leaves the request as it is.
   fireEvent.click(await screen.findByRole("button", { name: "Готово" }));
+  expect(confirm).toHaveBeenCalledWith("Заявка FRX-ISS-26-0001 → Готово\n\nЗаявка закроется и уйдёт в архив.");
+  expect(closed).toBe("");
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Готово" }));
 
   await waitFor(() => expect(closed).toBe(`/api/issues/${request.id}/close`));
+});
+
+it("warns that handing the kit out writes the stock off before it does", async () => {
+  const posts: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") { posts.push(path); return json({ request }); }
+    if (path === "/api/issues") return json({ requests: [{ ...request, status: "Готов к выдаче", handout_location: "1B3", lines: [boundLine] }], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  await expand("FRX-ISS-26-0001");
+  fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
+
+  expect(confirm.mock.calls[0][0]).toContain("Количество спишется со склада");
+  await waitFor(() => expect(posts).toEqual([`/api/issues/${request.id}/issue`]));
 });
 
 it("lets only the administrator delete a request", async () => {
