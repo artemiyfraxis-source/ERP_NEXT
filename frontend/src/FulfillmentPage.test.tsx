@@ -11,7 +11,7 @@ const principal: Principal = {
     department: "Склад",
   },
   roles: ["receiver"],
-  permissions: { fulfillment: "edit" },
+  permissions: { fulfillment: "edit", handout: "edit" },
 };
 
 const request: FulfillmentRequest = {

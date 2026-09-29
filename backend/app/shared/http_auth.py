@@ -24,17 +24,21 @@ def authenticated_principal(request: Request) -> Principal:
 
 
 def require_section(
-    section: str,
+    section: str | tuple[str, ...],
     minimum: Literal["view", "edit"],
     *,
     roles: frozenset[str] | None = None,
     detail: str = "Недостаточно прав для раздела",
 ):
+    """A tuple of sections passes when ANY of them grants `minimum` (SUPPLYMAP portalIssueGuard_ without a section:
+    the fulfillment list is readable from «Запросы на комплектацию» or «Выдача со списанием»)."""
+    sections = (section,) if isinstance(section, str) else section
+
     def dependency(
         principal: Annotated[Principal, Depends(authenticated_principal)],
     ) -> Principal:
-        mode = principal.permissions.get(section)
-        allowed = mode == "edit" or (minimum == "view" and mode == "view")
+        modes = [principal.permissions.get(key) for key in sections]
+        allowed = "edit" in modes or (minimum == "view" and "view" in modes)
         if roles is not None and not principal.roles.intersection(roles):
             allowed = False
         if not allowed:
@@ -44,8 +48,21 @@ def require_section(
     return dependency
 
 
+# NAV-SECTIONS (SUPPLYMAP Portal.gs PORTAL_SECTIONS_, owner 27.08.2026): filing and one's own rows have sections of
+# their own, so «Заявки» (`requests`: every row) can be closed to a rank-and-file employee without taking them away.
 requests_view_principal = require_section("requests", "view")
-requests_edit_principal = require_section("requests", "edit")
+# The form's reference data (schema, validate) serves «Оформить заявку» and the form inside «Заявки».
+requests_form_principal = require_section(("newrequest", "requests"), "view")
+newrequest_principal = require_section(
+    "newrequest",
+    "edit",
+    detail="Раздел «Оформить заявку» вам не открыт.",
+)
+myrequests_principal = require_section(
+    "myrequests",
+    "view",
+    detail="Раздел «Мои заявки» вам не открыт.",
+)
 techcards_view_principal = require_section("techcards", "view")
 techcards_edit_principal = require_section(
     "techcards",
@@ -104,8 +121,10 @@ warehouse_journal_principal = require_section(
     roles=frozenset({"admin"}),
     detail="Журнал склада доступен только администратору.",
 )
+# Picking reserves, handout writes off: two sections over one request (SUPPLYMAP Issue.gs portalIssueGuard_, owner
+# 02.09.2026). Reading the shared list takes either key; each write takes its own (NAV-SECTIONS).
 fulfillment_view_principal = require_section(
-    "fulfillment",
+    ("fulfillment", "handout"),
     "view",
     roles=frozenset({"engineer", "receiver", "prodhead", "master", "admin"}),
 )
@@ -115,9 +134,10 @@ fulfillment_edit_principal = require_section(
     roles=frozenset({"engineer", "receiver", "admin"}),
 )
 fulfillment_handout_principal = require_section(
-    "fulfillment",
+    "handout",
     "edit",
     roles=frozenset({"receiver", "admin"}),
+    detail="Раздел «Выдача со списанием» вам не открыт на правку.",
 )
 production_view_principal = require_section(
     "production",

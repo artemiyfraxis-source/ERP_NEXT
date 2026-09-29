@@ -45,8 +45,16 @@ class AccessMode(str, Enum):
 # without a migration. Before NAV-ACCESS the defaults were copied into the table (migration 0040 folds them back).
 # View grants on procurement / receiving / warehouse (ID-6) follow SUPPLYMAP's role sets (Portal.gs portalButtons_):
 # buyer → склад, receiver → закупка, prodhead/management → закупка+приёмка+склад, master/staff → приёмка+склад.
+# NAV-SECTIONS: «Оформить заявку» (`newrequest`) and «Мои заявки» (`myrequests`) are open to every role, as in
+# SUPPLYMAP («Оформлять могут все роли»), so «Заявки» (`requests`) can be closed without taking filing away.
+# «Выдача со списанием» (`handout`) is apart from picking (`fulfillment`): picking reserves, handout writes off, and
+# the two can go to different people. handout: edit where SUPPLYMAP's role sets have it (receiver, admin), view where
+# the role reads fulfillment today (engineer, prodhead, master) so their «Выдача» card stays (решено агентом — проверить).
+_EVERYONE = {"newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT}
 ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
     "admin": {
+        **_EVERYONE,
+        "handout": AccessMode.EDIT,
         "identity": AccessMode.EDIT,
         "projects": AccessMode.EDIT,
         "calculation": AccessMode.EDIT,
@@ -62,38 +70,51 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
         "operations": AccessMode.EDIT,
     },
     "buyer": {
+        **_EVERYONE,
         "requests": AccessMode.EDIT,
         "procurement": AccessMode.EDIT,
         "warehouse": AccessMode.VIEW,
         "references": AccessMode.VIEW,
     },
     "receiver": {
+        **_EVERYONE,
         "receiving": AccessMode.EDIT,
         "warehouse": AccessMode.EDIT,
         "fulfillment": AccessMode.EDIT,
+        "handout": AccessMode.EDIT,
         "shipping": AccessMode.EDIT,
         "procurement": AccessMode.VIEW,
         "references": AccessMode.VIEW,
     },
-    "engineer": {"fulfillment": AccessMode.EDIT, "references": AccessMode.VIEW},
+    "engineer": {
+        **_EVERYONE,
+        "fulfillment": AccessMode.EDIT,
+        "handout": AccessMode.VIEW,
+        "references": AccessMode.VIEW,
+    },
     "prodhead": {
+        **_EVERYONE,
         "procurement": AccessMode.VIEW,
         "receiving": AccessMode.VIEW,
         "warehouse": AccessMode.VIEW,
         "fulfillment": AccessMode.VIEW,
+        "handout": AccessMode.VIEW,
         "production": AccessMode.VIEW,
         "shipping": AccessMode.VIEW,
         "references": AccessMode.VIEW,
     },
     "master": {
+        **_EVERYONE,
         "receiving": AccessMode.VIEW,
         "warehouse": AccessMode.VIEW,
         "fulfillment": AccessMode.VIEW,
+        "handout": AccessMode.VIEW,
         "production": AccessMode.EDIT,
         "shipping": AccessMode.VIEW,
         "references": AccessMode.VIEW,
     },
     "management": {
+        **_EVERYONE,
         "procurement": AccessMode.VIEW,
         "receiving": AccessMode.VIEW,
         "warehouse": AccessMode.VIEW,
@@ -102,16 +123,17 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
         "references": AccessMode.VIEW,
         "operations": AccessMode.VIEW,
     },
-    "pm": {"shipping": AccessMode.EDIT, "references": AccessMode.VIEW},
+    "pm": {**_EVERYONE, "shipping": AccessMode.EDIT, "references": AccessMode.VIEW},
     "staff": {
+        **_EVERYONE,
         "requests": AccessMode.EDIT,
         "receiving": AccessMode.VIEW,
         "warehouse": AccessMode.VIEW,
         "production": AccessMode.VIEW,
         "references": AccessMode.VIEW,
     },
-    "estimator": {"references": AccessMode.VIEW},
-    "qc": {"production": AccessMode.EDIT, "references": AccessMode.VIEW},
+    "estimator": {**_EVERYONE, "references": AccessMode.VIEW},
+    "qc": {**_EVERYONE, "production": AccessMode.EDIT, "references": AccessMode.VIEW},
 }
 ROLES = frozenset(
     {
@@ -129,19 +151,22 @@ ROLES = frozenset(
     }
 )
 # Sections the «Доступы» matrix manages, in portal block order (Производство · Снабжение · Склад · Менеджмент).
-# One ERP key can cover several SUPPLYMAP cards: `requests` = оформить + мои + заявки, `fulfillment` = набор +
-# выдача, `production` = планирование + задания + план (own keys — NAV-SECTIONS).
+# One ERP key can cover several SUPPLYMAP cards: `production` = планирование + задания + план. «Оформить заявку»,
+# «Мои заявки» and «Выдача со списанием» have keys of their own (NAV-SECTIONS, SUPPLYMAP Portal.gs PORTAL_SECTIONS_).
 SECTION_LABELS: dict[str, str] = {
     "projects": "Проекты",
     "calculation": "Расчёт и КП",
     "techcards": "Техкарты и шаблоны",
     "references": "Справочник",
     "production": "Планирование, задания, производственный план",
-    "requests": "Заявки (оформить · мои · все)",
+    "newrequest": "Оформить заявку",
+    "myrequests": "Мои заявки",
+    "requests": "Заявки",
     "procurement": "Лист закупки",
     "receiving": "Приёмка",
     "warehouse": "Склад",
-    "fulfillment": "Комплектация и выдача",
+    "fulfillment": "Запросы на комплектацию (набор)",
+    "handout": "Выдача со списанием",
     "shipping": "Отгрузка",
     "identity": "Сотрудники и доступы",
     "operations": "Системный журнал",

@@ -14,8 +14,10 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.http_auth import (
     Principal,
     authenticated_principal,
+    myrequests_principal,
+    newrequest_principal,
     procurement_edit_principal,
-    requests_edit_principal,
+    requests_form_principal,
     requests_view_principal,
 )
 from app.shared.clock import moscow_now, moscow_today
@@ -150,7 +152,7 @@ def procurement_stage_lookup(request: WebRequest) -> ProcurementStageLookup | No
 
 @router.get("/schema")
 def request_schema(
-    _principal: Annotated[Principal, Depends(requests_view_principal)],
+    _principal: Annotated[Principal, Depends(requests_form_principal)],
 ) -> dict:
     return {
         "required": list(REQUIRED_FIELDS),
@@ -169,7 +171,7 @@ def request_schema(
 @router.post("/validate")
 def validate_request(
     payload: ValidateRequestInput,
-    _principal: Annotated[Principal, Depends(requests_view_principal)],
+    _principal: Annotated[Principal, Depends(requests_form_principal)],
     today: Annotated[date, Depends(moscow_today)],
 ) -> dict:
     try:
@@ -256,7 +258,7 @@ def list_requests(
 
 @router.get("/mine")
 def my_requests(
-    principal: Annotated[Principal, Depends(requests_view_principal)],
+    principal: Annotated[Principal, Depends(myrequests_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
     stages: Annotated[ProcurementStageLookup | None, Depends(procurement_stage_lookup)],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -284,7 +286,7 @@ def create_requests(
         str,
         Header(alias="Idempotency-Key", min_length=1, max_length=255),
     ],
-    principal: Annotated[Principal, Depends(requests_edit_principal)],
+    principal: Annotated[Principal, Depends(newrequest_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
     projects: Annotated[ProjectRegistry | None, Depends(project_registry)],
@@ -312,7 +314,7 @@ def _calc_number(value: str) -> str | None:
 @router.post("/import/parse")
 def parse_calculation(
     payload: CalcGridInput,
-    _principal: Annotated[Principal, Depends(requests_edit_principal)],
+    _principal: Annotated[Principal, Depends(newrequest_principal)],
 ) -> dict:
     """`extractFromCalc` without opening the sheet: the calculation module hands over the grid."""
     grid = [[cell or "" for cell in row[:20]] for row in payload.grid]
@@ -344,7 +346,7 @@ def import_requests(
         str,
         Header(alias="Idempotency-Key", min_length=1, max_length=255),
     ],
-    principal: Annotated[Principal, Depends(requests_edit_principal)],
+    principal: Annotated[Principal, Depends(newrequest_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(unit_of_work_factory)],
     projects: Annotated[ProjectRegistry | None, Depends(project_registry)],

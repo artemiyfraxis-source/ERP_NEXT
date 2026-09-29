@@ -19,7 +19,7 @@ def fixed_server_date():
         actor=Actor(name="Иванов", department="РНД"),
         email="ivanov@example.test",
         roles=frozenset({"employee"}),
-        permissions={"requests": "view"},
+        permissions={"requests": "view", "myrequests": "view"},
     )
     yield
     app.dependency_overrides.pop(moscow_today, None)

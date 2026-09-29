@@ -51,16 +51,18 @@ export const NAV: NavItem[] = [
   { id: "myops", label: "Задания", sub: "мои операции", permission: "production", roles: ["staff", "master", "admin"], block: "prod" },
   // Снабжение. «Оформить заявку» and «Мои заявки» are sections of their own, not actions inside «Заявки»
   // (SUPPLYMAP Portal.gs PORTAL_SECTIONS_, owner 27.08.2026): a rank-and-file user needs the form and own rows.
-  { id: "newrequest", label: "Оформить заявку", sub: "новая позиция вручную", permission: "requests", minimum: "edit", block: "supply" },
-  { id: "myrequests", label: "Мои заявки", sub: "мои позиции и на каком они этапе", permission: "requests", block: "supply" },
+  // NAV-SECTIONS: each has its own access key, so «Заявки» can be closed without taking them away.
+  { id: "newrequest", label: "Оформить заявку", sub: "вручную · из Excel · из расчёта", permission: "newrequest", minimum: "edit", block: "supply" },
+  { id: "myrequests", label: "Мои заявки", sub: "мои позиции и на каком они этапе", permission: "myrequests", block: "supply" },
   { id: "requests", label: "Заявки", sub: "проверить и передать в закупку", permission: "requests", block: "supply" },
   { id: "procurement", label: "Лист закупки", sub: "работа и взять в работу", permission: "procurement", roles: ["buyer", "receiver", "prodhead", "management", "admin"], block: "supply" },
   // Склад
   { id: "receiving", label: "Приёмка", sub: "входной контроль и оприходование", permission: "receiving", roles: ["receiver", "prodhead", "management", "master", "staff", "admin"], block: "stock" },
   { id: "stock", label: "Склад", sub: "остатки · внести · переместить", permission: "warehouse", roles: ["receiver", "buyer", "prodhead", "management", "master", "staff", "admin"], block: "stock" },
-  // Picking only reserves, handout writes off: two sections over one request (SUPPLYMAP, owner 02.09.2026).
+  // Picking only reserves, handout writes off: two sections over one request (SUPPLYMAP, owner 02.09.2026), each with
+  // its own access key (NAV-SECTIONS) so picking and writing off can go to different people.
   { id: "issues", label: "Запросы на комплектацию", sub: "заявки под КБ · набрать комплект", permission: "fulfillment", roles: FULFILLMENT_ROLES, block: "stock" },
-  { id: "handout", label: "Выдача со списанием", sub: "передать в цех · списать со склада", permission: "fulfillment", roles: FULFILLMENT_ROLES, block: "stock" },
+  { id: "handout", label: "Выдача со списанием", sub: "передать в цех · списать со склада", permission: "handout", roles: FULFILLMENT_ROLES, block: "stock" },
   { id: "shipping", label: "Отгрузка", sub: "готовая продукция · отправки", permission: "shipping", roles: ["pm", "receiver", "master", "prodhead", "management", "admin"], block: "stock" },
   // Менеджмент
   { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", roles: ["master", "prodhead", "management", "admin"], block: "mgmt" },

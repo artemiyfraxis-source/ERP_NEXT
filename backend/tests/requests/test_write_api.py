@@ -47,7 +47,7 @@ def write_api():
         actor=Actor(name="Иванов", department="РНД"),
         email="ivanov@example.test",
         roles=frozenset({"employee"}),
-        permissions={"requests": "edit"},
+        permissions={"newrequest": "edit", "myrequests": "edit", "requests": "view"},
     )
     app.dependency_overrides[moscow_now] = lambda: datetime(2026, 9, 15, 10, 30)
     yield TestClient(app), engine, sessions
@@ -150,7 +150,7 @@ def test_mine_lists_only_own_requests_newest_first_with_default_stage(write_api)
         actor=Actor(name="Петров", department="Закупки"),
         email="petrov@example.test",
         roles=frozenset({"employee"}),
-        permissions={"requests": "edit"},
+        permissions={"newrequest": "edit"},
     )
     client.post(
         "/api/requests",
@@ -161,7 +161,7 @@ def test_mine_lists_only_own_requests_newest_first_with_default_stage(write_api)
         actor=Actor(name="Иванов", department="РНД"),
         email="ivanov@example.test",
         roles=frozenset({"employee"}),
-        permissions={"requests": "view"},
+        permissions={"myrequests": "view"},
     )
 
     first_page = client.get("/api/requests/mine", params={"limit": 1, "offset": 0})

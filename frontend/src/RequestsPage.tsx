@@ -133,7 +133,9 @@ function tsvToGrid(text: string): string[][] {
    RQ-IMPORT-UI: «Оформить заявку» offers the same three ways as SUPPLYMAP's openCreate (Вручную / Вставить из
    Excel / Из расчёта); «Из расчёта» has the operator paste the ЗКП range instead of a Google Sheets link — this
    repo has no Sheets access, only RQ-5's `/api/requests/import/*` over an already-extracted grid
-   (решено агентом — проверить). */
+   (решено агентом — проверить).
+   NAV-SECTIONS: filing takes `newrequest` (the form here and inside «Заявки»), own rows take `myrequests`, every row
+   takes `requests` — so «Оформить заявку» never asks for the whole list. */
 export function RequestsPage({ principal, view }: { principal: Principal; view?: "create" | "mine" }) {
   const creationKey = useRef(crypto.randomUUID());
   const batchKey = useRef(crypto.randomUUID());
@@ -143,7 +145,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const canEdit = principal.permissions.requests === "edit";
+  const canEdit = principal.permissions.newrequest === "edit";
   const canHandoff =
     principal.permissions.procurement === "edit" &&
     principal.roles.some((role) => role === "buyer" || role === "admin");
@@ -174,9 +176,12 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const rowCount = view === "mine" ? mineTotal : shown.length;
 
   async function reload() {
-    const [nextSchema, result] = await Promise.all([requestsApi.schema(), requestsApi.list()]);
+    const [nextSchema, result] = await Promise.all([
+      requestsApi.schema(),
+      view === "create" ? Promise.resolve(null) : requestsApi.list(),
+    ]);
     setSchema(nextSchema);
-    setRows(result.requests);
+    if (result) setRows(result.requests);
     setDraft((current) => ({
       ...current,
       purpose: current.purpose || nextSchema.purposes[0] || "",

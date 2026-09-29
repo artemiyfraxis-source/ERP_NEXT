@@ -11,7 +11,7 @@ const principal: Principal = {
     department: "Закупки",
   },
   roles: ["buyer"],
-  permissions: { requests: "edit", procurement: "edit" },
+  permissions: { newrequest: "edit", myrequests: "edit", requests: "edit", procurement: "edit" },
 };
 
 const schema: RequestSchema = {
@@ -209,6 +209,23 @@ describe("RequestsPage", () => {
   });
 
   it("NAV-1: «Оформить заявку» shows the form without the request table", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests") return json({ requests: [row] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    // NAV-SECTIONS: `newrequest` alone opens the form; the shared list (`requests`) is not even asked for.
+    render(<RequestsPage principal={{ ...principal, roles: ["staff"], permissions: { newrequest: "edit" } }} view="create" />);
+
+    expect(await screen.findByRole("button", { name: "Создать заявку" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Оформить заявку", level: 1 })).toBeInTheDocument();
+    expect(screen.queryByText("REQ-1")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/requests")).toBe(false);
+  });
+
+  it("NAV-SECTIONS: «Заявки» shows the form only with `newrequest`, not with `requests: edit`", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/requests/schema") return json(schema);
@@ -216,11 +233,10 @@ describe("RequestsPage", () => {
       throw new Error(`Unexpected request: ${path}`);
     });
 
-    render(<RequestsPage principal={principal} view="create" />);
+    render(<RequestsPage principal={{ ...principal, roles: ["buyer"], permissions: { requests: "edit" } }} />);
 
-    expect(await screen.findByRole("button", { name: "Создать заявку" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Оформить заявку", level: 1 })).toBeInTheDocument();
-    expect(screen.queryByText("REQ-1")).not.toBeInTheDocument();
+    expect(await screen.findByText("Только просмотр")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Создать заявку" })).not.toBeInTheDocument();
   });
 
   it("RQ-IMPORT-UI: «Вставить из Excel» recognizes pasted headers and creates the whole batch", async () => {

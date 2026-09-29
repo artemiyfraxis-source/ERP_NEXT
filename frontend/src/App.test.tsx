@@ -288,7 +288,10 @@ it("rejects a same-origin legacy ERP frame", () => {
 it("NAV-1: home shows the blocks as tiles and a block shows its section cards in order", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({
     ...principal,
-    permissions: { requests: "edit", receiving: "view", warehouse: "view", production: "view", references: "view" },
+    permissions: {
+      newrequest: "edit", myrequests: "edit", requests: "edit", receiving: "view", warehouse: "view", production: "view",
+      references: "view",
+    },
   }));
 
   render(<App />);
@@ -341,7 +344,7 @@ it("NAV-1: handout is its own route and shows only requests waiting for the shop
   const base = { id: "i1", version: 1, number: "FRX-ISS-1", purpose: "КБ1", requester: "Инженер", lines: [] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({ ...principal, roles: ["master"], permissions: { fulfillment: "view" } });
+    if (path === "/api/auth/me") return json({ ...principal, roles: ["master"], permissions: { handout: "view" } });
     if (path === "/api/issues") return json({ requests: [
       { ...base, id: "i1", number: "FRX-ISS-1", status: "Новая" },
       { ...base, id: "i2", number: "FRX-ISS-2", status: "Готов к выдаче" },

@@ -69,6 +69,9 @@ def test_cli_rejects_cross_field_identifier_collision(monkeypatch, admin_databas
 
 def test_operational_roles_include_receiving_and_warehouse_permissions():
     assert ROLE_DEFAULTS["receiver"] == {
+        "newrequest": AccessMode.EDIT,
+        "myrequests": AccessMode.EDIT,
+        "handout": AccessMode.EDIT,
         "receiving": AccessMode.EDIT,
         "warehouse": AccessMode.EDIT,
         "fulfillment": AccessMode.EDIT,

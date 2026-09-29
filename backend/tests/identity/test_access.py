@@ -49,6 +49,7 @@ def test_matrix_sits_on_top_of_role_defaults():
     changed = role_permissions("buyer", {"warehouse": AccessMode.NONE, "shipping": AccessMode.VIEW,
                                          "procurement": AccessMode.VIEW})
     assert changed == {
+        "newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT,
         "requests": AccessMode.EDIT, "procurement": AccessMode.VIEW, "references": AccessMode.VIEW,
         "shipping": AccessMode.VIEW,
     }
@@ -123,7 +124,10 @@ def test_only_admin_opens_access(access_api):
     body = _client("admin", "admin-password").get("/api/auth/access").json()
     assert [section["key"] for section in body["sections"]] == list(SECTION_LABELS)
     assert {"key": "buyer", "label": "Специалист по снабжению"} in body["roles"]
-    assert body["defaults"]["buyer"] == {"requests": "edit", "procurement": "edit", "warehouse": "view", "references": "view"}
+    assert body["defaults"]["buyer"] == {
+        "newrequest": "edit", "myrequests": "edit",
+        "requests": "edit", "procurement": "edit", "warehouse": "view", "references": "view",
+    }
     assert body["matrix"] == {}  # nothing changed yet — every role follows ROLE_DEFAULTS
     assert [(user["login"], user["access"]) for user in body["users"]] == [("admin", {}), ("buyer", {})]
 
@@ -149,6 +153,7 @@ def test_matrix_change_reaches_the_next_request_and_a_cleared_cell_falls_back(ac
     # Clearing the whole row brings the role back to ROLE_DEFAULTS, not to «closed».
     assert admin.put("/api/auth/access/roles", json={"matrix": {}}).status_code == 200
     assert buyer.get("/api/auth/me").json()["permissions"] == {
+        "newrequest": "edit", "myrequests": "edit",
         "requests": "edit", "procurement": "edit", "warehouse": "view", "references": "view",
     }
     with access_api() as session:
@@ -206,6 +211,7 @@ def test_personal_exception_is_stronger_than_the_role(access_api):
     assert response.status_code == 200, response.text
     assert response.json()["access"] == {"procurement": "view", "requests": "none", "shipping": "edit"}
     assert buyer.get("/api/auth/me").json()["permissions"] == {
+        "newrequest": "edit", "myrequests": "edit",  # «Заявки» closed, filing and own rows stay (NAV-SECTIONS)
         "procurement": "view", "shipping": "edit", "warehouse": "view", "references": "view",
     }
     [event] = _events(access_api, "identity.user_access_saved")
@@ -290,6 +296,7 @@ def test_migration_folds_seeded_defaults_back_without_changing_anyones_access(tm
     }
     staffed = role_permissions("buyer", {"references": AccessMode.NONE})
     assert {section: mode.value for section, mode in staffed.items()} == {
+        "newrequest": "edit", "myrequests": "edit",  # NAV-SECTIONS defaults, not stored
         "requests": "edit", "procurement": "edit", "warehouse": "view",
     }
 

@@ -35,7 +35,8 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const canEdit = principal.permissions.fulfillment === "edit" && principal.roles.some((role) => ["engineer", "receiver", "admin"].includes(role));
-  const canHandout = principal.permissions.fulfillment === "edit" && principal.roles.some((role) => ["receiver", "admin"].includes(role));
+  // NAV-SECTIONS: handing out writes off stock and has its own key; picking (reserve) stays on `fulfillment`.
+  const canHandout = principal.permissions.handout === "edit" && principal.roles.some((role) => ["receiver", "admin"].includes(role));
 
   const screen = mode ? MODES[mode] : null;
   const stages = archive ? ARCHIVE : screen?.stages;

@@ -13,8 +13,8 @@ function layout(principal: Principal) {
 }
 
 const ALL_EDIT = Object.fromEntries(
-  ["identity", "projects", "calculation", "techcards", "requests", "procurement", "receiving", "warehouse",
-    "fulfillment", "production", "shipping", "references", "operations"].map((key) => [key, "edit" as AccessMode]),
+  ["identity", "projects", "calculation", "techcards", "newrequest", "myrequests", "requests", "procurement",
+    "receiving", "warehouse", "fulfillment", "handout", "production", "shipping", "references", "operations"].map((key) => [key, "edit" as AccessMode]),
 );
 
 it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order", () => {
@@ -31,9 +31,10 @@ it("shows the administrator every block with SUPPLYMAP's cards in order, ERP-onl
 });
 
 // Permissions below mirror backend identity ROLE_DEFAULTS for each role.
+const OWN = { newrequest: "edit", myrequests: "edit" } as const;
 it("gives a rank-and-file employee the request form, own rows and read-only stock", () => {
   expect(layout(as("staff", {
-    requests: "edit", receiving: "view", warehouse: "view", production: "view", references: "view",
+    ...OWN, requests: "edit", receiving: "view", warehouse: "view", production: "view", references: "view",
   }))).toEqual({
     "Производство": ["Справочник", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки"],
@@ -44,7 +45,7 @@ it("gives a rank-and-file employee the request form, own rows and read-only stoc
 
 it("gives the buyer the whole supply block and the stock view", () => {
   expect(layout(as("buyer", {
-    requests: "edit", procurement: "edit", warehouse: "view", references: "view",
+    ...OWN, requests: "edit", procurement: "edit", warehouse: "view", references: "view",
   }))).toEqual({
     "Производство": ["Справочник"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
@@ -55,10 +56,11 @@ it("gives the buyer the whole supply block and the stock view", () => {
 
 it("gives the storekeeper picking and handout as two sections", () => {
   expect(layout(as("receiver", {
-    receiving: "edit", warehouse: "edit", fulfillment: "edit", shipping: "edit", procurement: "view", references: "view",
+    ...OWN, receiving: "edit", warehouse: "edit", fulfillment: "edit", handout: "edit", shipping: "edit",
+    procurement: "view", references: "view",
   }))).toEqual({
     "Производство": ["Справочник"],
-    "Снабжение": ["Лист закупки"],
+    "Снабжение": ["Оформить заявку", "Мои заявки", "Лист закупки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Уведомления"],
   });
@@ -66,16 +68,29 @@ it("gives the storekeeper picking and handout as two sections", () => {
 
 it("gives the shop master planning, tasks and the production plan", () => {
   expect(layout(as("master", {
-    receiving: "view", warehouse: "view", fulfillment: "view", production: "edit", shipping: "view", references: "view",
+    ...OWN, receiving: "view", warehouse: "view", fulfillment: "view", handout: "view", production: "edit", shipping: "view", references: "view",
   }))).toEqual({
     "Производство": ["Справочник", "Ресурсное планирование", "Задания"],
+    "Снабжение": ["Оформить заявку", "Мои заявки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
   });
 });
 
-it("hides «Оформить заявку» from a view-only grant on requests", () => {
-  expect(layout(as("staff", { requests: "view" }))["Снабжение"]).toEqual(["Мои заявки", "Заявки"]);
+it("hides «Оформить заявку» from a view-only grant on newrequest", () => {
+  expect(layout(as("staff", { newrequest: "view", myrequests: "edit", requests: "view" }))["Снабжение"])
+    .toEqual(["Мои заявки", "Заявки"]);
+});
+
+it("NAV-SECTIONS: closing «Заявки» keeps the form and own rows", () => {
+  expect(layout(as("staff", OWN))["Снабжение"]).toEqual(["Оформить заявку", "Мои заявки"]);
+  // «Заявки» no longer opens the other two.
+  expect(layout(as("staff", { requests: "edit" }))["Снабжение"]).toEqual(["Заявки"]);
+});
+
+it("NAV-SECTIONS: picking and handout open by their own keys", () => {
+  expect(layout(as("receiver", { fulfillment: "edit" }))["Склад"]).toEqual(["Запросы на комплектацию"]);
+  expect(layout(as("receiver", { handout: "edit" }))["Склад"]).toEqual(["Выдача со списанием"]);
 });
 
 it("hides a block with no section the principal may open", () => {

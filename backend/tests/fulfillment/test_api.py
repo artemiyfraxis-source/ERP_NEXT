@@ -31,7 +31,7 @@ def fulfillment_api():
         actor=Actor(name="Кладовщик", department="Склад"),
         email="receiver@example.test",
         roles=frozenset({"receiver"}),
-        permissions={"fulfillment": "edit"},
+        permissions={"fulfillment": "edit", "handout": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: datetime(2026, 9, 22, 12, 0)
     lot = StockLot.create(
@@ -177,7 +177,7 @@ def test_handout_requires_receiver_role(fulfillment_api):
         actor=Actor(name="Технолог", department="КБ"),
         email="engineer@example.test",
         roles=frozenset({"engineer"}),
-        permissions={"fulfillment": "edit"},
+        permissions={"fulfillment": "edit", "handout": "edit"},
     )
 
     response = client.post(

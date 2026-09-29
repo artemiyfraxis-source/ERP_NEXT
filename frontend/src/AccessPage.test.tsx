@@ -105,3 +105,31 @@ it("edits one person's exceptions against what the role gives", async () => {
   await waitFor(() => expect(saved).toEqual([{ access: { warehouse: "view" } }]));
   expect(await screen.findByText("Исключения сохранены: Закупкин")).toBeInTheDocument();
 });
+
+it("NAV-SECTIONS: shows «Оформить заявку», «Мои заявки» and «Выдача со списанием» as sections of their own", async () => {
+  const overview: AccessOverview = {
+    ...OVERVIEW,
+    sections: [
+      { key: "newrequest", label: "Оформить заявку" }, { key: "myrequests", label: "Мои заявки" },
+      { key: "requests", label: "Заявки" }, { key: "fulfillment", label: "Запросы на комплектацию (набор)" },
+      { key: "handout", label: "Выдача со списанием" },
+    ],
+    defaults: {
+      admin: { newrequest: "edit", myrequests: "edit", requests: "edit", fulfillment: "edit", handout: "edit" },
+      buyer: { newrequest: "edit", myrequests: "edit", requests: "edit" },
+    },
+    matrix: {},
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/access") return json(overview);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(<AccessPage />);
+  const filing = await screen.findByLabelText("Оформить заявку · Специалист по снабжению") as HTMLSelectElement;
+  expect(within(filing).getByRole("option", { name: "как задумано: полный" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Мои заявки · Специалист по снабжению")).toBeInTheDocument();
+  const handout = screen.getByLabelText("Выдача со списанием · Специалист по снабжению") as HTMLSelectElement;
+  expect(within(handout).getByRole("option", { name: "как задумано: закрыт" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Выдача со списанием · Технолог")).toBeInTheDocument();
+});
