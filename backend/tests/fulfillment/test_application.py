@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -16,6 +16,7 @@ from app.modules.fulfillment.application import (
     build_issue_print_sheet,
     build_issue_return_sheet,
     cancel_fulfillment,
+    complete_kit,
     complete_return,
     create_fulfillment,
     issue_fulfillment,
@@ -126,7 +127,7 @@ def test_human_lot_binding_and_whole_kit_issue_are_one_stock_transaction():
         CreateFulfillmentCommand(
             idempotency_key="kitset:591K.3:KB-1:v1",
             purpose="591К.3 / КБ-1",
-            deadline=None,
+            deadline=date(2026, 10, 1),
             lines=(
                 FulfillmentLine.create(
                     article="КД-001",
@@ -144,7 +145,7 @@ def test_human_lot_binding_and_whole_kit_issue_are_one_stock_transaction():
         CreateFulfillmentCommand(
             idempotency_key="kitset:591K.3:KB-1:v1",
             purpose="591К.3 / КБ-1",
-            deadline=None,
+            deadline=date(2026, 10, 1),
             lines=(FulfillmentLine.create(article="КД-001", name="Разъём", unit="шт", requirement=Decimal("10")),),
             actor=actor,
             now=now,
@@ -162,7 +163,7 @@ def test_human_lot_binding_and_whole_kit_issue_are_one_stock_transaction():
         ),
         uow,
     )
-    complete = bind_lot(
+    bound_all = bind_lot(
         BindLotCommand(
             request_id=partial.id,
             expected_version=partial.version,
@@ -173,6 +174,8 @@ def test_human_lot_binding_and_whole_kit_issue_are_one_stock_transaction():
         ),
         uow,
     )
+    assert bound_all.status is FulfillmentStatus.UNDERFILLED
+    complete = complete_kit(VersionedFulfillmentCommand(bound_all.id, bound_all.version, actor, now), uow)
     ready = mark_ready(
         MarkReadyCommand(
             request_id=complete.id,
@@ -247,6 +250,7 @@ def test_human_lot_binding_and_whole_kit_issue_are_one_stock_transaction():
         "fulfillment.created",
         "fulfillment.lot_bound",
         "fulfillment.lot_bound",
+        "fulfillment.completed",
         "fulfillment.ready",
         "fulfillment.issued",
         "fulfillment.returned",
@@ -262,7 +266,7 @@ def test_cancel_retry_is_read_only():
         CreateFulfillmentCommand(
             idempotency_key="kitset:retry",
             purpose="КБ-2",
-            deadline=None,
+            deadline=date(2026, 10, 1),
             lines=(FulfillmentLine.create(article="", name="Кабель", unit="м", requirement=Decimal("2")),),
             actor=actor,
             now=now,
@@ -274,7 +278,7 @@ def test_cancel_retry_is_read_only():
             CreateFulfillmentCommand(
                 idempotency_key="  kitset:retry  ",
                 purpose="Другая КБ",
-                deadline=None,
+                deadline=date(2026, 10, 1),
                 lines=(FulfillmentLine.create(article="", name="Кабель", unit="м", requirement=Decimal("2")),),
                 actor=actor,
                 now=now,
@@ -303,7 +307,7 @@ def test_lot_unit_must_match_requirement_unit():
         CreateFulfillmentCommand(
             idempotency_key="kitset:unit-mismatch",
             purpose="КБ-3",
-            deadline=None,
+            deadline=date(2026, 10, 1),
             lines=(FulfillmentLine.create(article="", name="Смола", unit="кг", requirement=Decimal("5")),),
             actor=actor,
             now=now,
@@ -336,7 +340,7 @@ def test_print_sheet_marks_shortage_and_return_sheet_lists_only_issued_lines():
         CreateFulfillmentCommand(
             idempotency_key="kitset:print-sheet",
             purpose="316К.14 / КБ-1",
-            deadline=None,
+            deadline=date(2026, 10, 1),
             lines=(
                 FulfillmentLine.create(article="КД-9", name="Разъём", unit="шт", requirement=Decimal("6")),
                 FulfillmentLine.create(article="", name="Кабель без партии", unit="м", requirement=Decimal("3")),

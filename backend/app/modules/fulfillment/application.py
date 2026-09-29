@@ -39,6 +39,7 @@ class FulfillmentRepository(Protocol):
     def numbers(self, year: int) -> Sequence[str]: ...
     def list(self, limit: int = 200, after_id: UUID | None = None) -> Sequence[FulfillmentRequest]: ...
     def add(self, request: FulfillmentRequest) -> None: ...
+    def delete(self, request_id: UUID) -> None: ...
 
 
 class WarehouseRepository(Protocol):
@@ -240,7 +241,7 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
             package=lot.package,
             storage_location=lot.storage_location,
         )
-        updated = request.bind_line(line.id, snapshot, quantity)
+        updated = request.bind_line(line.id, snapshot, quantity).stamped(command.now)
         uow.warehouse.add(lot.reserve(quantity))
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity)}, uow)
@@ -257,7 +258,7 @@ def unbind_lot(command: UnbindLotCommand, uow: UnitOfWork) -> FulfillmentRequest
         lot = uow.warehouse.get(line.lot.lot_id)
         if lot is None:
             raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
-        updated = request.unbind_line(line.id)
+        updated = request.unbind_line(line.id).stamped(command.now)
         uow.warehouse.add(lot.release_reserve(line.reserved))
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.lot_unbound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(line.reserved)}, uow)
@@ -268,7 +269,7 @@ def unbind_lot(command: UnbindLotCommand, uow: UnitOfWork) -> FulfillmentRequest
 def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_ready(command.handout_location)
+        updated = request.mark_ready(command.handout_location).stamped(command.now)
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.ready", command.actor, command.now, {"handout_location": updated.handout_location}, uow)
         # Issue.gs:459-474: the requester learns the kit is ready and where to pick it up.
@@ -294,7 +295,7 @@ def issue_fulfillment(
 ) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_issued()
+        updated = request.mark_issued().stamped(command.now)
         lots: dict[UUID, StockLot] = {}
         for line in request.lines:
             if line.lot is None:
@@ -333,7 +334,7 @@ def issue_fulfillment(
 def mark_returned(command: MarkReturnedCommand, uow: UnitOfWork) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_returned(command.return_location)
+        updated = request.mark_returned(command.return_location).stamped(command.now)
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.returned", command.actor, command.now, {
             "return_location": updated.return_location,
@@ -355,7 +356,7 @@ def complete_return(command: CompleteReturnCommand, uow: UnitOfWork) -> Fulfillm
                 line.defective_missing,
             )
             for line in command.lines
-        })
+        }).stamped(command.now)
         original_by_id = {line.id: line for line in request.lines}
         for disposition in command.lines:
             original = original_by_id[disposition.line_id]
@@ -390,6 +391,7 @@ def cancel_fulfillment(
         updated = request.cancel()
         if updated == request:
             return request
+        updated = updated.stamped(command.now)
         for line in request.lines:
             if line.lot is None or line.reserved <= 0:
                 continue
@@ -401,6 +403,72 @@ def cancel_fulfillment(
         _audit(updated, "fulfillment.cancelled", command.actor, command.now, {}, uow)
         uow.commit()
         return updated
+
+
+def complete_kit(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    """FF-3: «Укомплектован» is pressed by the picker (PortalApp ISS_ACT_LABEL_ «✅ Укомплектован»)."""
+    with uow:
+        request = _versioned(command.request_id, command.expected_version, uow)
+        updated = request.mark_complete().stamped(command.now)
+        uow.fulfillment.add(updated)
+        _audit(updated, "fulfillment.completed", command.actor, command.now, {}, uow)
+        uow.commit()
+        return updated
+
+
+def close_issued(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    """«КБ Выдана» → «Готово» without a return (ISS_MODES_.give.next); the write-off already happened at issue."""
+    with uow:
+        request = _versioned(command.request_id, command.expected_version, uow)
+        updated = request.close_issued().stamped(command.now)
+        uow.fulfillment.add(updated)
+        _audit(updated, "fulfillment.closed", command.actor, command.now, {}, uow)
+        uow.commit()
+        return updated
+
+
+@dataclass(frozen=True)
+class DeleteFulfillmentCommand:
+    request_id: UUID
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class DeletedFulfillment:
+    number: str
+    lines: int
+    freed: int
+
+
+def delete_fulfillment(command: DeleteFulfillmentCommand, uow: UnitOfWork) -> DeletedFulfillment:
+    """FF-5, Issue.gs issueDelete_: an issued position forbids deleting (it is the write-off document); every
+    reserve goes back to its lot; the request and its lines disappear. The administrator gate lives in the API."""
+    with uow:
+        request = uow.fulfillment.get(command.request_id)
+        if request is None:
+            raise KeyError(f"Fulfillment request not found: {command.request_id}")
+        issued = [line for line in request.lines if line.issued > 0]
+        if issued:
+            raise FulfillmentValidationError(
+                f"Заявка {request.number} уже выдавалась (позиций с выдачей: {len(issued)}). "
+                "Удалять её нельзя — это документ проведённого списания. Оформи возврат."
+            )
+        freed = 0
+        for line in request.lines:
+            if line.lot is None or line.reserved <= 0:
+                continue
+            lot = uow.warehouse.get(line.lot.lot_id)
+            if lot is None:
+                raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
+            uow.warehouse.add(lot.release_reserve(line.reserved))
+            freed += 1
+        uow.fulfillment.delete(request.id)
+        _audit(request, "fulfillment.deleted", command.actor, command.now, {
+            "number": request.number, "lines": len(request.lines), "freed": freed,
+        }, uow)
+        uow.commit()
+        return DeletedFulfillment(number=request.number, lines=len(request.lines), freed=freed)
 
 
 def _display_number(value: Decimal) -> str:

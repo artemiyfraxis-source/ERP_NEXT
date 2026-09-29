@@ -24,6 +24,13 @@ class FulfillmentStatus(str, Enum):
     CANCELLED = "Отменена"
 
 
+def project_of(purpose: str) -> str:
+    """SUPPLYMAP issueProjectOf_: the project is the first part of НАЗНАЧЕНИЕ «728К.2 · КБ1 · …»; a manual request
+    without « · » has no project → ''."""
+    parts = str(purpose or "").split(" · ")
+    return parts[0].strip() if len(parts) > 1 else ""
+
+
 def _positive(value: Decimal, label: str) -> Decimal:
     normalized = Decimal(value)
     if not normalized.is_finite() or normalized <= 0:
@@ -169,6 +176,13 @@ class FulfillmentRequest:
     return_location: str | None = None
     # ЗАЯВИТЕЛЬ as a user: «готова к получению» goes to this id; None = the name matched nobody.
     requester_id: UUID | None = None
+    # FF-4 (SUPPLYMAP ISSUE_SHEET В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА): the first time the request
+    # reached the stage; set once by `stamped`, never moved back (issueStatusSweep_ writes only an empty cell).
+    at_work: datetime | None = None
+    at_picked: datetime | None = None
+    at_issued: datetime | None = None
+    at_returned: datetime | None = None
+    at_closed: datetime | None = None
 
     @classmethod
     def create(
@@ -184,6 +198,9 @@ class FulfillmentRequest:
         created_at: datetime,
         requester_id: UUID | None = None,
     ) -> FulfillmentRequest:
+        # FF-1: Issue.gs:121, 919 — a request without a deadline is refused.
+        if deadline is None or not str(deadline).strip():
+            raise FulfillmentValidationError("Укажи дедлайн.")
         if not lines:
             raise FulfillmentValidationError("Для сборки без состава заявка не создаётся")
         if len({line.id for line in lines}) != len(lines):
@@ -245,12 +262,53 @@ class FulfillmentRequest:
                 updated.append(remainder)
         if not found:
             raise FulfillmentValidationError("Позиция заявки не найдена")
-        status = (
-            FulfillmentStatus.COMPLETE
-            if all(line.covered for line in updated)
-            else FulfillmentStatus.UNDERFILLED
-        )
+        # FF-3 (Issue.gs issueHeadSync_): the first bound lot moves «Новая» → «Недоукомплектован» and nothing else;
+        # «Укомплектован» is a separate manual step (`mark_complete`) with the whole-kit gate.
+        status = FulfillmentStatus.UNDERFILLED if self.status is FulfillmentStatus.NEW else self.status
         return replace(self, lines=tuple(updated), status=status, version=self.version + 1)
+
+    def open_lines(self) -> tuple[FulfillmentLine, ...]:
+        """Lines a lot does not close yet (issueStatusSweep_: КОЛ-ВО < ПОТРЕБНОСТЬ)."""
+        return tuple(line for line in self.lines if not line.covered)
+
+    def mark_complete(self) -> FulfillmentRequest:
+        """«Укомплектован» by hand (ISS_MODES_.pick.next: from «Новая» and «Недоукомплектован»). The gate is
+        issueStatusSweep_'s: while a line is not closed by a lot the status would roll back — refuse instead."""
+        if self.status not in {FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED}:
+            raise FulfillmentValidationError(f"Из статуса «{self.status.value}» в «Укомплектован» не переводят")
+        waiting = self.open_lines()
+        if waiting:
+            names = ", ".join(line.name for line in waiting[:3])
+            raise FulfillmentValidationError(
+                f"Комплект не собран: не закрыто позиций — {len(waiting)} ({names})"
+            )
+        return replace(self, status=FulfillmentStatus.COMPLETE, version=self.version + 1)
+
+    def close_issued(self) -> FulfillmentRequest:
+        """«Готово» straight from «КБ Выдана» (ISS_MODES_.give.next): the kit is used up, nothing comes back.
+        Issue.gs sweep only stamps ЗАКРЫТА; every issued quantity stays consumed."""
+        if self.status is not FulfillmentStatus.ISSUED:
+            raise FulfillmentValidationError("Закрыть без возврата можно только выданный комплект")
+        return replace(self, status=FulfillmentStatus.DONE, version=self.version + 1)
+
+    def stamped(self, now: datetime) -> FulfillmentRequest:
+        """FF-4: stage dates by the first hit (issueStatusSweep_ 431-493, issueHeadSync_): В РАБОТУ at
+        «Недоукомплектован»/«Укомплектован» (and at «Готов к выдаче» if still empty), НАБРАНА at «Готов к выдаче»,
+        ВЫДАНА, ВОЗВРАЩЕНА, ЗАКРЫТА at «Готово»/«Отменена». A filled date is never overwritten."""
+        status = self.status
+        changes: dict[str, datetime] = {}
+        if status in {FulfillmentStatus.UNDERFILLED, FulfillmentStatus.COMPLETE, FulfillmentStatus.READY}:
+            if self.at_work is None:
+                changes["at_work"] = now
+        if status is FulfillmentStatus.READY and self.at_picked is None:
+            changes["at_picked"] = now
+        if status is FulfillmentStatus.ISSUED and self.at_issued is None:
+            changes["at_issued"] = now
+        if status is FulfillmentStatus.RETURNED and self.at_returned is None:
+            changes["at_returned"] = now
+        if status in {FulfillmentStatus.DONE, FulfillmentStatus.CANCELLED} and self.at_closed is None:
+            changes["at_closed"] = now
+        return replace(self, **changes) if changes else self
 
     def unbind_line(self, line_id: UUID) -> FulfillmentRequest:
         self._require_editable()
