@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   kitsetsApi,
+  techcardsApi,
   type KitsetAssembly,
   type KitsetCard,
   type KitsetComponent,
@@ -11,9 +12,11 @@ import {
   type KitsetSupplyLine,
   type KitsetTile,
   type Principal,
+  type ProjectTechcard,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
+import { ProjectEtk } from "./TechcardsPage";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
    номер, заказчик, сборки с тиражом и состав каждой. Внутри — состав, снабжение, спецификация, генератор и
@@ -77,14 +80,22 @@ export function kitBatch(per: string, run: string, scrap: string) {
   return Math.round(num(per) * num(run) * (1 + num(scrap) / 100) * 100) / 100;
 }
 
-/** Техкарта сборки открывается в «Техкарты проектов»: ссылка ?section=techcards&card=<id>. */
-function openTechcardScreen(cardId: string) {
-  const url = new URL(window.location.href);
-  url.searchParams.set("section", "techcards");
-  url.searchParams.delete("block");
-  url.searchParams.set("card", cardId);
-  window.history.pushState({}, "", url);
-  window.dispatchEvent(new PopStateEvent("popstate"));
+/** ЭТК сборки внутри карточки проекта (вкладки «Генератор» и «ТК КБn»), как в SUPPLYMAP: владелец работает с ТК
+    конкретного проекта из его карточки. Отдельного экрана со всеми техкартами больше нет. */
+function EtkPane({ cardId, principal, changed }: { cardId: string; principal: Principal; changed: () => void }) {
+  const [etk, setEtk] = useState<ProjectTechcard | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    setEtk(null); setError("");
+    void techcardsApi.list()
+      .then((result) => { if (live) { const found = result.items.find((item) => item.id === cardId); found ? setEtk(found) : setError("Техкарта не найдена"); } })
+      .catch((reason) => { if (live) setError(message(reason, "Техкарта не открылась")); });
+    return () => { live = false; };
+  }, [cardId]);
+  if (error) return <div className="error-banner" role="alert">{error}</div>;
+  if (!etk) return <div className="empty">Загрузка техкарты…</div>;
+  return <ProjectEtk card={etk} principal={principal} onChange={(updated) => { setEtk(updated); changed(); }} />;
 }
 
 function openSection(section: string, extra: Record<string, string> = {}) {
@@ -114,7 +125,7 @@ export function ProjectsPage({ principal }: { principal: Principal }) {
   const canEdit = principal.permissions.projects === "edit";
   const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).get("project") || "");
   const canRequest = principal.permissions.newrequest === "edit";
-  if (open) return <KitsetCardView project={open} canEdit={canEdit} canRequest={canRequest} back={() => setOpen("")} />;
+  if (open) return <KitsetCardView project={open} principal={principal} canEdit={canEdit} canRequest={canRequest} back={() => setOpen("")} />;
   return <KitsetHub canEdit={canEdit} user={principal.user.id} openProject={setOpen} />;
 }
 
@@ -243,7 +254,8 @@ function CreateFromCalc({ close, done }: {
 
 type Tab = "sostav" | "supply" | "spec" | "gen" | `tc:${string}`;
 
-function KitsetCardView({ project, canEdit, canRequest, back }: { project: string; canEdit: boolean; canRequest: boolean; back: () => void }) {
+function KitsetCardView({ project, principal, canEdit, canRequest, back }: { project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: () => void }) {
+  const [etkId, setEtkId] = useState("");
   const [card, setCard] = useState<KitsetCard | null>(null);
   const [tab, setTab] = useState<Tab>("sostav");
   const [error, setError] = useState("");
@@ -284,7 +296,7 @@ function KitsetCardView({ project, canEdit, canRequest, back }: { project: strin
 
   async function openTechcard(index: string) {
     setError("");
-    try { openTechcardScreen((await kitsetsApi.openTechcard(project, index)).card_id); }
+    try { setEtkId((await kitsetsApi.openTechcard(project, index)).card_id); setTab("gen"); }
     catch (reason) { setError(message(reason, "Не удалось открыть техкарту")); }
   }
 
@@ -319,19 +331,19 @@ function KitsetCardView({ project, canEdit, canRequest, back }: { project: strin
     {tab === "supply" && <SupplyTab project={card.project} />}
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} />}
     {tab === "gen" && <div className="panel kit-pane">
-      <p className="page-sub">Выбери сборку — откроется её техкарта: сборка ЭТК по составу этой сборки, выдача и ревизии.</p>
-      <div className="shipping-tabs">{card.assemblies.map((assembly) => <button key={assembly.index} className="secondary" onClick={() => void openTechcard(assembly.index)}>{assembly.index}</button>)}</div>
+      <p className="page-sub">Выбери сборку — ниже откроется её техкарта: сборка ЭТК по составу этой сборки, выдача и ревизии.</p>
+      <div className="shipping-tabs">{card.assemblies.map((assembly) => {
+        const active = Boolean(etkId) && assembly.techcard?.card_id === etkId;
+        return <button key={assembly.index} aria-pressed={active} className={active ? "secondary active" : "secondary"} onClick={() => void openTechcard(assembly.index)}>{assembly.index}</button>;
+      })}</div>
+      {etkId && <EtkPane key={etkId} cardId={etkId} principal={principal} changed={() => void load()} />}
     </div>}
     {tab.startsWith("tc:") && (() => {
       const assembly = card.assemblies.find((item) => `tc:${item.index}` === tab);
       if (!assembly?.techcard) return <div className="empty">Сборка не найдена.</div>;
       return <div className="panel kit-pane">
         <p><strong>{assembly.index}</strong> {assembly.name} <span className="muted">кол-во {assembly.run} · операций {assembly.techcard.stages} · ревизия {assembly.techcard.revision} · {assembly.techcard.status}</span></p>
-        <p className="page-sub">Электронную ТК правят в её карточке («Править» на операции), каждая правка поднимает ревизию; пересборка сохраняет ручные правки.</p>
-        <div className="page-actions">
-          <button className="primary" onClick={() => openTechcardScreen(assembly.techcard!.card_id)}>Открыть ЭТК</button>
-          <button className="secondary" onClick={() => void openTechcard(assembly.index)}>Пересобрать</button>
-        </div>
+        <EtkPane key={assembly.techcard.card_id} cardId={assembly.techcard.card_id} principal={principal} changed={() => void load()} />
       </div>;
     })()}
   </section>;

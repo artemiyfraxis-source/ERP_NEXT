@@ -446,13 +446,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           {([["inner", "Между разъёмами (+L+)"], ["outer", "От краёв разъёмов (−L−)"], ["cut", "Длина реза по КД (без припуска)"]] as const).map(([value, label]) =>
             <label key={value}><input type="radio" name={`measureMode-${card.id}`} checked={S.measureMode === value} onChange={() => update({ measureMode: value })} /> {label}</label>)}
         </div>
-        {!S.advancedLength && <label className="field-label">Длина по чертежу, мм<input aria-label="Длина по чертежу" type="number" min={1} placeholder="—" value={S.sharedLengthText}
+        {!S.advancedLength && <label className="field-label len">Длина по чертежу, мм<input aria-label="Длина по чертежу" type="number" min={1} placeholder="—" value={S.sharedLengthText}
           onChange={(event) => update({ sharedLengthText: event.target.value, drawingLength: parseDecimal_(event.target.value) || 0 })} /></label>}
         {!S.advancedLength && cut.tone !== "none" && <div className={cut.tone === "warn" ? "cut-info warn" : "cut-info"}><small>{cut.formula}</small><div>Длина реза: <strong>{cut.value}</strong></div></div>}
         {!S.wires.length && <div className="empty">Нет кабелей</div>}
         {S.wires.map((w, n) => {
           const cores = gen.wireCores_(w);
-          return <div className="wire-entry" key={w.idx}>
+          return <div className={`wire-entry${S.advancedLength ? " adv" : ""}${cores > 1 || !!w.cores ? " cores" : ""}`} key={w.idx}>
             <label className="field-label">Кабель {n + 1}{selectComps(wireOptions, w.compId, (id) => update((current) => updateWire(current, w.idx, { compId: id })), `Кабель ${n + 1}`, "— выберите —")}</label>
             {S.advancedLength && <label className="field-label">Длина по чертежу, мм<input type="number" min={1} value={w.length || ""} onChange={(event) => update((current) => updateWire(current, w.idx, { length: parseDecimal_(event.target.value) || 0 }))} /></label>}
             <label className="field-label">Кол-во<input aria-label={`Кол-во кабеля ${n + 1}`} type="number" min={1} value={w.qty || 1} onChange={(event) => update((current) => updateWire(current, w.idx, { qty: parseDecimal_(event.target.value) || 1 }))} /></label>
@@ -466,11 +466,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <button className="btn-add" onClick={() => update((current) => ({ ...current, wires: [...current.wires, { idx: current.nextWireIdx, compId: "", length: 0, qty: 1 }], nextWireIdx: current.nextWireIdx + 1 }))}>+ Добавить кабель</button>
       </div>
 
-      {(["A", "B"] as Side[]).map((side) => <div key={side}>
+      <div className="ep-sides">{(["A", "B"] as Side[]).map((side) => <div key={side}>
         <h3>Сторона {sideRu_(side)} — разъёмы</h3>
         {gen.endpointsOnSide_(side).length ? gen.endpointsOnSide_(side).map(endpointCard) : <div className="empty small">Разъёмов нет — добавьте кнопкой ниже</div>}
         {complex && <button className="btn-add" onClick={() => update((current) => addEndpoint(current, side))}>+ Разъём (сторона {sideRu_(side)})</button>}
-      </div>)}
+      </div>)}</div>
 
       {active.some(gen.isJacketedCable_) && <label className="toggle-row"><input type="checkbox" checked={S.rotor} onChange={(event) => update({ rotor: event.target.checked })} /> Роторный станок — многожильный кабель разделывается при резке (оболочка и жилы)</label>}
       {crimpSides.length > 0 && <label className="toggle-row"><input type="checkbox" checked={gen.crimpCutEnabled_()} onChange={(event) => update({ crimpCut: event.target.checked, crimpCutManual: true })} /> Обжим на автомате при резке (CUT_WIRE+1crimp) — сторона
@@ -580,9 +580,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {S.tab === "coax" && <div className="tab-coax">
       <h3>Коакс-кабель</h3>
       <div className="gcard">
-        <label className="field-label">Длина кабеля по чертежу, мм<input aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value } }))} /></label>
+        <label className="field-label len">Длина кабеля по чертежу, мм<input aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value } }))} /></label>
         <label className="toggle-row"><input type="checkbox" checked={S.coax.tutEnabled} onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: event.target.checked } }))} /> ТУТ на концах</label>
-        <label className="field-label">Длина ТУТ, мм<input type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></label>
+        <label className="field-label len">Длина ТУТ, мм<input type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></label>
       </div>
       <h3>Сторона А — разъём (из BOM)</h3>
       {coaxSideBlock("A")}
@@ -619,8 +619,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       })}
     </div>
 
-    <label className="toggle-row"><input type="checkbox" checked={S.materialsSheet} onChange={(event) => update({ materialsSheet: event.target.checked })} /> Свод материалов (отдельный лист)</label>
-    <div className="form-actions">
+    <div className="gen-actions">
+      <label className="toggle-row"><input type="checkbox" checked={S.materialsSheet} onChange={(event) => update({ materialsSheet: event.target.checked })} /> Свод материалов (отдельный лист)</label>
       <button className="secondary" disabled={busy || !card.document} onClick={() => void deleteGenerated()}>Удалить созданные</button>
       <button className="primary" disabled={busy} onClick={() => void generate()}>Создать техкарты</button>
     </div>

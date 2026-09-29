@@ -430,6 +430,114 @@ function TemplateDetail({ template, op, canEdit, canEditOp, onOpSaved, onBack, o
   </article>;
 }
 
+/** Электронная ТК сборки: генератор, сборка, выдача и ревизии. Живёт в карточке проекта (вкладки «Генератор» и
+    «ТК КБn»), как в SUPPLYMAP: с ТК работают из проекта, отдельного списка техкарт там нет. */
+export function ProjectEtk({ card, principal, onChange }: { card: ProjectTechcard; principal: Principal; onChange: (card: ProjectTechcard) => void }) {
+  const [revisions, setRevisions] = useState<TechcardRevision[]>([]);
+  const [configText, setConfigText] = useState("{}");
+  const generatedConfig = useRef<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [kit, setKit] = useState<{ data: KitsetBom | null; error: string }>({ data: null, error: "" });
+  const canEdit = principal.permissions.techcards === "edit";
+  const canGenerate = Boolean(principal.permissions.tcgen);
+  useEffect(() => {
+    setConfigText(JSON.stringify(defaultConfig(card), null, 2));
+    void techcardsApi.revisions(card.id).then((result) => setRevisions(result.items)).catch(() => setRevisions([]));
+  }, [card.id, card.version]);
+  useEffect(() => {
+    // SUPPLYMAP portalTcGenData → tcLoadBomFromKit: состав из набора проекта + строки листа КБn расчёта;
+    // набора или сборки нет — генератор показывает ошибку.
+    setKit({ data: null, error: "" });
+    let live = true;
+    void kitsetsApi.bom(card.project, card.item_index)
+      .then((result) => { if (live) setKit({ data: result, error: "" }); })
+      .catch((reason) => { if (live) setKit({ data: null, error: reason instanceof Error ? reason.message : "Состав сборки не прочитан" }); });
+    return () => { live = false; };
+  }, [card.project, card.item_index]);
+  async function build(config: Record<string, unknown>) {
+    if (busy) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const updated = await techcardsApi.autoBuild(card.id, card.version, config);
+      onChange(updated);
+      const warningCount = warnings(updated.document).length;
+      setNotice(`${card.status === "Выдана" ? "ЭТК пересобрана новой ревизией" : "Черновик ЭТК собран"}${warningCount ? ` · предупреждений: ${warningCount}` : ""}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "ЭТК не собрана");
+    } finally { setBusy(false); }
+  }
+
+  async function autoBuild() {
+    let config: Record<string, unknown>;
+    try {
+      config = JSON.parse(configText) as Record<string, unknown>;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Конфигурация содержит неверный JSON");
+      return;
+    }
+    await build(config);
+  }
+
+  async function discardDraft() {
+    if (busy) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      onChange(await techcardsApi.discardDraft(card.id, card.version));
+      setNotice("Черновик ЭТК удалён");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Черновик не удалён");
+    } finally { setBusy(false); }
+  }
+
+  async function issue() {
+    if (busy) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      onChange(await techcardsApi.issue(card.id, card.version));
+      setNotice("ЭТК выдана, ревизия 1 зафиксирована");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "ЭТК не выдана");
+    } finally { setBusy(false); }
+  }
+
+  return <>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {notice && <div className="success-banner">{notice}</div>}
+    <article className="panel project-etk">
+      <div className="panel-heading"><strong>{card.project} · {card.item_index}</strong><span>{card.status} · ревизия {card.revision || "—"}</span></div>
+      {warnings(card.document).map((warning) => <div className="warning-inline" key={warning}>{warning}</div>)}
+      <TopologyView value={topology(card.document)} />
+      <EtkView key={card.id} card={card} canEdit={canEdit} revisions={revisions} onSaved={(updated) => {
+        onChange(updated);
+        setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
+      }} />
+      {!operations(card.document).length && <div className="etk-empty">ЭТК ещё не собрана — заполни генератор ниже и нажми «Создать техкарты».</div>}
+      {canGenerate && <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} onConfig={(config) => { generatedConfig.current = config; }} />}
+      {canGenerate && <details className="build-config"><summary>JSON-конфигурация (для эксперта)</summary>
+        <div className="form-actions"><button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button></div>
+        <label>Config генератора SUPPLYMAP<textarea aria-label="Конфигурация автоматической сборки" rows={14} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
+        <div className="form-actions"><button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК автоматически</button></div>
+      </details>}
+      {canEdit && card.status === "Черновик" && card.document && <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button></div>}
+      <div className="panel-heading"><strong>Журнал ревизий</strong><span>{revisions.length}</span></div>
+      {revisions.map((revision) => <div className="panel-heading" key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span>{revision.actor_name} · {new Date(revision.occurred_at).toLocaleString("ru-RU")}</span></div>)}
+      {!revisions.length && <div className="etk-empty">Выданных ревизий пока нет.</div>}
+    </article>
+  </>;
+}
+
+/** «← проект»: назад в карточку проекта, откуда открыли ЭТК. */
+function backToProject(project: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("section", "projects");
+  url.searchParams.delete("card");
+  url.searchParams.set("project", project);
+  window.history.pushState({}, "", url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 /** NAV-1: «Техкарты проектов» and «Шаблоны техкарт» are separate sections, as in SUPPLYMAP; without `view` both show.
     `embedded`: the templates view as a tab of «База данных» — the tab bar is the heading. */
 export function TechcardsPage({ principal, view, embedded = false }: { principal: Principal; view?: "projects" | "templates"; embedded?: boolean }) {
@@ -448,11 +556,8 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const [selectedId, setSelectedId] = useState("");
   // ?project= — opened as «Карточка проекта» from the production plan: only that project's cards.
   const [projectFilter, setProjectFilter] = useState(() => new URLSearchParams(window.location.search).get("project") ?? "");
-  const [revisions, setRevisions] = useState<TechcardRevision[]>([]);
-  const [form, setForm] = useState({ project: "", item_index: "", product_name: "", source_calculation: "", deadline: "" });
-  const [configText, setConfigText] = useState("{}");
-  const generatedConfig = useRef<Record<string, unknown> | null>(null);
-  const [busy, setBusy] = useState(false);
+  // ?card= — ЭТК открыта из карточки проекта (вкладки «Генератор» / «ТК КБn»): как в SUPPLYMAP, видна только она.
+  const [linkedCard] = useState(() => new URLSearchParams(window.location.search).get("card") ?? "");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   // ID-3: the matrix alone decides — «Техкарты проектов» edit for cards, «Генератор техкарт» (tcgen) for the builder.
@@ -464,7 +569,6 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     const project = projectFilter.trim().toLocaleUpperCase("ru-RU");
     return project ? cards.filter((card) => card.project.toLocaleUpperCase("ru-RU") === project) : cards;
   }, [cards, projectFilter]);
-  const [kit, setKit] = useState<{ data: KitsetBom | null; error: string }>({ data: null, error: "" });
   const cardColumns: DataColumn<ProjectTechcard>[] = [
     { key: "project", title: "Проект", value: (card) => card.project,
       render: (card) => <button className="link-button" onClick={() => setSelectedId(card.id)}><strong>{card.project}</strong></button> },
@@ -525,22 +629,6 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     void referencesApi.techOperations("op", "", 5000).then((result) => setOpRows(result.records)).catch(() => undefined);
   }, [showLibrary, principal.permissions.erpref]);
   useEffect(() => {
-    if (!selected) { setRevisions([]); return; }
-    setConfigText(JSON.stringify(defaultConfig(selected), null, 2));
-    void techcardsApi.revisions(selected.id).then((result) => setRevisions(result.items)).catch(() => setRevisions([]));
-  }, [selectedId, selected?.version]);
-  useEffect(() => {
-    // SUPPLYMAP portalTcGenData → tcLoadBomFromKit: состав из набора проекта + строки листа КБn расчёта;
-    // набора или сборки нет — генератор показывает ошибку.
-    setKit({ data: null, error: "" });
-    if (!selected) return;
-    let live = true;
-    void kitsetsApi.bom(selected.project, selected.item_index)
-      .then((result) => { if (live) setKit({ data: result, error: "" }); })
-      .catch((reason) => { if (live) setKit({ data: null, error: reason instanceof Error ? reason.message : "Состав сборки не прочитан" }); });
-    return () => { live = false; };
-  }, [selected?.project, selected?.item_index]);
-  useEffect(() => {
     setEditingTemplate(false);
     if (!selectedTemplateId) { setTemplateDetail(null); return; }
     void techcardsApi.template(selectedTemplateId).then(setTemplateDetail).catch(() => setTemplateDetail(null));
@@ -560,85 +648,16 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     setCards((current) => current.map((card) => card.id === updated.id ? updated : card));
   }
 
-  async function createCard() {
-    if (busy) return;
-    setBusy(true); setError(""); setNotice("");
-    try {
-      const created = await techcardsApi.create({ ...form, deadline: form.deadline || null });
-      setCards((current) => [...current, created]);
-      setSelectedId(created.id);
-      setForm({ project: "", item_index: "", product_name: "", source_calculation: "", deadline: "" });
-      setNotice("Карточка проекта создана");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Карточка не создана");
-    } finally { setBusy(false); }
-  }
-
-  async function build(config: Record<string, unknown>) {
-    if (!selected || busy) return;
-    setBusy(true); setError(""); setNotice("");
-    try {
-      const updated = await techcardsApi.autoBuild(selected.id, selected.version, config);
-      replaceCard(updated);
-      const warningCount = warnings(updated.document).length;
-      setNotice(`${selected.status === "Выдана" ? "ЭТК пересобрана новой ревизией" : "Черновик ЭТК собран"}${warningCount ? ` · предупреждений: ${warningCount}` : ""}`);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "ЭТК не собрана");
-    } finally { setBusy(false); }
-  }
-
-  async function autoBuild() {
-    let config: Record<string, unknown>;
-    try {
-      config = JSON.parse(configText) as Record<string, unknown>;
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Конфигурация содержит неверный JSON");
-      return;
-    }
-    await build(config);
-  }
-
-  async function discardDraft() {
-    if (!selected || busy) return;
-    setBusy(true); setError(""); setNotice("");
-    try {
-      replaceCard(await techcardsApi.discardDraft(selected.id, selected.version));
-      setNotice("Черновик ЭТК удалён");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Черновик не удалён");
-    } finally { setBusy(false); }
-  }
-
-  async function issue() {
-    if (!selected || busy) return;
-    setBusy(true); setError(""); setNotice("");
-    try {
-      replaceCard(await techcardsApi.issue(selected.id, selected.version));
-      setNotice("ЭТК выдана, ревизия 1 зафиксирована");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "ЭТК не выдана");
-    } finally { setBusy(false); }
-  }
-
   return <section className={embedded ? "techcards-page embedded" : "page techcards-page"}>
     {showProjects ? <>
-    <header className="page-head"><h1>Техкарты проектов</h1><span className="page-count">{cards.length}</span></header>
-    <p className="page-sub">ЭТК собирается сервером из конфигурации изделия и снимка библиотеки операций; выданные версии остаются неизменяемыми.</p>
+    {linkedCard && selected ? <header className="page-head">
+      <button className="secondary small" onClick={() => backToProject(selected.project)}>← {selected.project}</button>
+      <h1>Техкарта {selected.item_index}</h1>
+    </header> : <header className="page-head"><h1>Техкарты проектов</h1><span className="page-count">{cards.length}</span></header>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {projectFilter && <div className="plan-acts"><span>Проект {projectFilter}</span><button className="secondary small" onClick={() => setProjectFilter("")}>Все проекты</button></div>}
-    {canEdit && <article className="panel">
-      <div className="panel-heading"><strong>Новая карточка изделия</strong></div>
-      <div className="form-grid">
-        <label>Проект<input aria-label="Проект" value={form.project} onChange={(event) => setForm({ ...form, project: event.target.value })} /></label>
-        <label>Индекс изделия<input aria-label="Индекс изделия" value={form.item_index} onChange={(event) => setForm({ ...form, item_index: event.target.value })} /></label>
-        <label>Наименование<input aria-label="Наименование" value={form.product_name} onChange={(event) => setForm({ ...form, product_name: event.target.value })} /></label>
-        <label>Исходный расчёт<input aria-label="Исходный расчёт" value={form.source_calculation} onChange={(event) => setForm({ ...form, source_calculation: event.target.value })} /></label>
-        <label>Срок<input aria-label="Срок" type="date" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></label>
-      </div>
-      <div className="form-actions"><button className="primary" disabled={busy || !form.project || !form.item_index || !form.product_name} onClick={() => void createCard()}>Создать карточку</button></div>
-    </article>}
-    <DataTable
+    {!(linkedCard && selected) && <DataTable
       rows={shownCards}
       columns={cardColumns}
       rowKey={(card) => card.id}
@@ -650,27 +669,9 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
         { label: "Выданные", test: (card) => card.status === "Выдана" },
       ]}
       rowClassName={(card) => (selectedId === card.id ? "selected" : "")}
-      emptyText={projectFilter ? `Карточек проекта ${projectFilter} нет.` : cards.length ? "Ничего не найдено." : "Карточек проектов пока нет."}
-    />
-    {selected && <article className="panel project-etk">
-      <div className="panel-heading"><strong>{selected.project} · {selected.item_index}</strong><span>{selected.status} · ревизия {selected.revision || "—"}</span></div>
-      {warnings(selected.document).map((warning) => <div className="warning-inline" key={warning}>{warning}</div>)}
-      <TopologyView value={topology(selected.document)} />
-      <EtkView key={selected.id} card={selected} canEdit={canEdit} revisions={revisions} onSaved={(updated) => {
-        replaceCard(updated);
-        setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
-      }} />
-      {!operations(selected.document).length && <div className="empty">ЭТК ещё не собрана.</div>}
-      {canGenerate && <TcGenerator card={selected} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} onConfig={(config) => { generatedConfig.current = config; }} />}
-      {canGenerate && <details className="build-config"><summary>JSON-конфигурация (для эксперта)</summary>
-        <div className="form-actions"><button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button></div>
-        <label>Config генератора SUPPLYMAP<textarea aria-label="Конфигурация автоматической сборки" rows={14} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
-      </details>}
-      {(canEdit || canGenerate) && <div className="form-actions">{canGenerate && <button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК автоматически</button>}{canEdit && selected.status === "Черновик" && selected.document && <button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}</div>}
-      <div className="panel-heading"><strong>Журнал ревизий</strong><span>{revisions.length}</span></div>
-      {revisions.map((revision) => <div className="panel-heading" key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span>{revision.actor_name} · {new Date(revision.occurred_at).toLocaleString("ru-RU")}</span></div>)}
-      {!revisions.length && <div className="empty">Выданных ревизий пока нет.</div>}
-    </article>}
+      emptyText={projectFilter ? `Карточек проекта ${projectFilter} нет.` : cards.length ? "Ничего не найдено." : "Техкарт пока нет: их заводит «Генератор» в карточке проекта."}
+    />}
+    {selected && <ProjectEtk card={selected} principal={principal} onChange={replaceCard} />}
     </> : <>
     {!embedded && <header className="page-head"><h1>Шаблоны техкарт</h1></header>}
     {error && <div className="error-banner" role="alert">{error}</div>}
