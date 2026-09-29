@@ -306,6 +306,13 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
             if names:
                 pairs.append(f"{index + 1}) {' + '.join(names)}")
         fields["twist"] = {"pitch": twist.get("pitch") or "", "pairs": "\n".join(pairs), "count": len(pairs) or 1}
+    if operation_type == "coaxStrip":
+        # SUPPLYMAP TcBuild.gs etkFields_: размеры разделки стороны (L1–L3, D1–D3 из БД.КОАКС) для эскиза etkDrawCoax_.
+        coax = config.get("coax") if isinstance(config.get("coax"), Mapping) else {}
+        side = coax.get("sideB" if op.get("side") == "B" else "sideA")
+        side = side if isinstance(side, Mapping) else {}
+        fields["coax"] = {"cable": coax.get("cableArt") or "", "connector": side.get("article") or "", **{
+            key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
     wires = _wires(op, config)
     if _kind(op) or operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         pin_values = op.get("pins") if isinstance(op.get("pins"), list) else []

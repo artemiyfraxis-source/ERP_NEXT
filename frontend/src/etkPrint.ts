@@ -1,8 +1,9 @@
 // Печатная форма электронной ТК (SUPPLYMAP PortalApp.html etkPrintHtml_ / etkPrint_): титул с маршрутом и
 // журналом ревизий, затем по листу на операцию — шапка документа, безопасность, комплектующие, полуфабрикат,
-// оснастка, ход операции, дефекты, результат, время, подписи. Идёт через общий контракт print.ts.
-// Эскизы (etkDraw*) и схема жгута в печать не попадают: в ERP они рисуются React-компонентами, не SVG-строкой.
+// оснастка, ход операции, дефекты, эскиз, результат, время, подписи. Идёт через общий контракт print.ts.
+// Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*).
 import type { ProjectTechcard, TechcardRevision } from "./api";
+import { etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import type { PrintBlock, PrintPage } from "./print";
 
 type Row = Record<string, unknown>;
@@ -59,11 +60,13 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(document.kit) };
   const revision = card.revision || 1;
   const operations = rows(document.operations);
+  const harness = etkDrawHarness(document.topology as EtkTopologyData | undefined);
   const cover: PrintPage = {
     title: "Технологическая карта сборки",
     subtitle: `${text(kit.name)} · ${text(kit.project)} ${text(kit.index)} · ревизия ${revision}`,
     blocks: [
       ...head(kit, revision, ""),
+      ...(harness ? [{ heading: "Схема жгута" }, { figure: harness }] as PrintBlock[] : []),
       { heading: "Маршрут" },
       { table: {
         columns: ["№", "Код", "Операция", "Разъём / сторона", "Время операции, с", "Подгот., с"],
@@ -121,6 +124,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           rows: rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text), text(step.tolerance)]),
         } },
         { text: text(opCard.defects) },
+        { figure: etkFigure(operation) },
         { table: {
           columns: ["№", text(operation.result_label) || "Результат", "Норма", "Факт / брак", "Ед."],
           rows: numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", text(item.unit)]),
