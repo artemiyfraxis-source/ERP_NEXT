@@ -225,10 +225,11 @@ def build_production_plan(
         )
 
     rows = []
-    # ProdPlan.gs prodPlanData_: строки плана — только проекты реестра «Проекты»; карточка ТК без строки
-    # реестра в план не попадает. Строку реестра без КБ ERP показывает: у ручных ТК (714К.) набора в ERP нет,
-    # а в SUPPLYMAP он есть и проект в плане виден.
+    # ProdPlan.gs prodPlanData_: только проект реестра «Проекты», у которого есть состав (КБ) или записи
+    # журнала; голая строка реестра и карточка ТК без строки реестра в план не попадают.
     for project in sorted(project_snapshots):
+        if not (kit_indexes.get(project) or cards_by_project.get(project) or journal.get(project)):
+            continue
         project_cards = cards_by_project.get(project, [])
         item_indexes = list(dict.fromkeys(
             [*kit_indexes.get(project, []), *(card.item_index for card in project_cards)]
