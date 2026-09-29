@@ -409,7 +409,37 @@ export interface FulfillmentRequest {
   handout_location: string | null;
   return_location: string | null;
   fully_reserved: boolean;
+  /** issueProjectOf_: the part of НАЗНАЧЕНИЕ before « · »; "" for a manual request. */
+  project?: string;
+  /** FF-4 stage dates by the first hit: В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА. */
+  at_work?: string | null;
+  at_picked?: string | null;
+  at_issued?: string | null;
+  at_returned?: string | null;
+  at_closed?: string | null;
   lines: FulfillmentLine[];
+}
+
+/** Rack layout for the handout address (SUPPLYMAP issueCardResp_ `places.config`). */
+export interface FulfillmentPlaces {
+  racks: number;
+  shelves: number;
+  per_rack: Record<string, number>;
+  slots: string;
+}
+
+export interface FulfillmentPlace {
+  rack: string;
+  shelf: string;
+  num: string;
+  slot: string;
+}
+
+export interface FulfillmentDraftLine {
+  article: string;
+  name: string;
+  unit: string;
+  requirement: string;
 }
 
 export interface ProductionOperator {
@@ -1423,9 +1453,29 @@ export const warehouseApi = {
 };
 
 export const fulfillmentApi = {
-  list: (after?: string) => api<{ requests: FulfillmentRequest[]; next_cursor: string | null }>(
+  list: (after?: string) => api<{ requests: FulfillmentRequest[]; next_cursor: string | null; places?: FulfillmentPlaces }>(
     `/api/issues${after ? `?after=${encodeURIComponent(after)}` : ""}`,
   ),
+  create: (
+    payload: { purpose: string; deadline: string; lines: FulfillmentDraftLine[] },
+    idempotencyKey: string,
+  ) => api<{ request: FulfillmentRequest }>("/api/issues", {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  complete: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  close: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/close`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  remove: (requestId: string) =>
+    api<{ message: string }>(`/api/issues/${requestId}`, { method: "DELETE" }),
   lots: () => api<{ lots: FulfillmentLot[] }>("/api/issues/lots"),
   printSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/print`),
   returnSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/return-sheet`),
@@ -1439,10 +1489,11 @@ export const fulfillmentApi = {
       method: "DELETE",
       body: JSON.stringify({ version }),
     }),
-  ready: (requestId: string, version: number, handoutLocation: string) =>
+  /** Either a rack address (the server glues the code, placeCode_) or a free-text place. */
+  ready: (requestId: string, version: number, place: FulfillmentPlace | string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/ready`, {
       method: "POST",
-      body: JSON.stringify({ version, handout_location: handoutLocation }),
+      body: JSON.stringify(typeof place === "string" ? { version, handout_location: place } : { version, place }),
     }),
   issue: (requestId: string, version: number) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/issue`, {
