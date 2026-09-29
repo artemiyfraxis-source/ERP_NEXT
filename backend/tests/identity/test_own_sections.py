@@ -109,8 +109,11 @@ def test_own_rows_take_myrequests_and_every_row_takes_requests(as_principal):
     assert client.get("/api/requests").status_code == 403
 
 
-HANDOUT_ROUTES = ["ready", "issue", "returned", "complete-return"]
+# FF-2: «Готов к выдаче» and «Укомплектован» are the picker's (Issue.gs portalIssueStatus); «Готово» — handout's.
+HANDOUT_ROUTES = ["issue", "returned", "complete-return", "close"]
 PICK_ROUTES = [
+    ("POST", f"/api/issues/{ANY_ID}/ready"),
+    ("POST", f"/api/issues/{ANY_ID}/complete"),
     ("POST", f"/api/issues/{ANY_ID}/lines/{ANY_ID}/bind"),
     ("DELETE", f"/api/issues/{ANY_ID}/lines/{ANY_ID}/bind"),
     ("POST", f"/api/issues/{ANY_ID}/cancel"),

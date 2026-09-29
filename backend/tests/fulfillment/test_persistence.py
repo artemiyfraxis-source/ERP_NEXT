@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import create_engine
@@ -47,7 +47,7 @@ def test_request_and_stock_reservation_persist_in_one_database_transaction():
     created = create_fulfillment(CreateFulfillmentCommand(
         idempotency_key="kitset:35К.С.13:КБ-1",
         purpose="35К.С.13 / КБ-1",
-        deadline=None,
+        deadline=date(2026, 10, 1),
         lines=(FulfillmentLine.create(article="КД-1", name="Разъём", unit="шт", requirement=Decimal("6")),),
         actor=actor,
         now=now,
@@ -68,7 +68,8 @@ def test_request_and_stock_reservation_persist_in_one_database_transaction():
         held_elsewhere = uow.fulfillment.reserved_on_lot(created.id)
 
     assert stored == bound
-    assert stored.status is FulfillmentStatus.COMPLETE
+    assert stored.status is FulfillmentStatus.UNDERFILLED
+    assert stored.at_work == bound.at_work is not None
     assert stored_lot.reserved == Decimal("6")
     # SK-7: the warehouse row edit may not put РЕЗЕРВ under what kitting holds on the lot.
     assert (held_by_kitting, held_elsewhere) == (Decimal("6"), Decimal("0"))
