@@ -75,11 +75,35 @@ def test_creates_row_needs_a_filled_field_and_rejects_view_only_bases(references
     assert len(references_api.get("/api/references/tech-operations", params={"tab": "mat"}).json()["records"]) == 1
 
 
-def test_editing_requires_admin_role(references_api):
+def test_erpref_edit_opens_editing_to_any_role(references_api):
+    """SUPPLYMAP PortalRef.gs portalSectionEditGuard_(token, 'erpref'): the section decides, not the role (ID-3)."""
+    record = _seed_record(references_api)
+    actor = Actor(id=UUID("10000000-0000-0000-0000-000000000003"), name="Технолог", department="КБ")
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=actor, email="tech@example.test", roles=frozenset({"engineer"}), permissions={"erpref": "edit"},
+    )
+
+    patch = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={"edits": [{"field": "Марка", "old": "МГТФ", "value": "X"}]})
+    snapshot = references_api.put("/api/references/tech-operations/snapshot", json={"schema_version": 14, "records": []})
+
+    assert patch.status_code == 200
+    assert snapshot.status_code == 403  # whole-base loads stay the administrator's tool
+
+
+def test_bases_tiles_carry_record_counts(references_api):
+    _seed_record(references_api)
+    tiles = {item["id"]: item for item in references_api.get("/api/references/bases").json()["bases"]}
+
+    assert tiles["prov"]["count"] == 1 and tiles["op"]["count"] == 0
+    assert tiles["prov"]["icon"] and tiles["prov"]["sub"]
+    assert tiles["tk_templates"]["count"] is None
+
+
+def test_editing_needs_erpref_edit(references_api):
     record = _seed_record(references_api)
     actor = Actor(id=UUID("10000000-0000-0000-0000-000000000002"), name="Кладовщик", department="ERP")
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=actor, email="viewer@example.test", roles=frozenset({"receiver"}), permissions={"references": "view"},
+        actor=actor, email="viewer@example.test", roles=frozenset({"receiver"}), permissions={"erpref": "view"},
     )
 
     patch = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={"edits": [{"field": "Марка", "old": "МГТФ", "value": "X"}]})

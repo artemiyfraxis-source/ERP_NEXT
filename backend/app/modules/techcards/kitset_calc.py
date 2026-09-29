@@ -145,12 +145,16 @@ def calc_project_number(cell: object, title: object) -> str:
 
 
 def parse_calc(content: bytes, file_name: str) -> CalcKitset:
-    """Весь расчёт одним проходом: проект, заказчик, сборки со своим составом."""
-    sheets = read_xlsx(content)
+    """Расчёт файлом .xlsx (запасной путь без Google)."""
+    title = re.sub(r"\.xlsx$", "", str(file_name or "").strip(), flags=re.I)
+    return parse_calc_sheets(read_xlsx(content), title, str(file_name or "").strip())
+
+
+def parse_calc_sheets(sheets: dict[str, list[list[str]]], title: str, source: str) -> CalcKitset:
+    """Весь расчёт одним проходом: проект, заказчик, сборки со своим составом. `source` — ссылка или имя файла."""
     zkz = sheets.get(PROJECT_SHEET)
     if zkz is None:
         raise KitsetValidationError(f"В расчёте нет листа «{PROJECT_SHEET}»")
-    title = re.sub(r"\.xlsx$", "", str(file_name or "").strip(), flags=re.I)
     project = calc_project_number(_cell(zkz, 1, 1), title)
     if not project:
         raise KitsetValidationError(f"В расчёте пуст номер проекта ({PROJECT_SHEET}!B2)")
@@ -219,7 +223,7 @@ def parse_calc(content: bytes, file_name: str) -> CalcKitset:
     return CalcKitset(
         project=project,
         customer=customer,
-        calc_source=str(file_name or "").strip(),
+        calc_source=source,
         assemblies=tuple(
             KitAssembly(index=item["index"], name=item["name"], run=item["run"], components=tuple(item["components"]))
             for item in assemblies

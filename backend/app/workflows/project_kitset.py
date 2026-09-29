@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 from uuid import UUID, uuid4
 
 from app.modules.fulfillment.application import (
@@ -45,7 +45,8 @@ from app.modules.production.plan_application import (
     add_plan_event,
     replace_plan_projects,
 )
-from app.modules.requests.domain import Request
+from app.modules.requests.application import CalcSheetError
+from app.modules.requests.domain import Request, spreadsheet_id_from_url
 from app.modules.shipping.application import (
     DropProjectCommand,
     QueueProjectCommand,
@@ -57,6 +58,7 @@ from app.modules.shipping.application import (
 )
 from app.modules.shipping.domain import FinishedGood, ProjectAssembly
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
+from app.modules.techcards.kitset_calc import PROJECT_SHEET, SPEC_SHEET, parse_calc_sheets
 from app.modules.techcards.kitsets import (
     CalcKitset,
     KitDocument,
@@ -110,6 +112,34 @@ def _audit(uow, project: str, event_type: str, actor: Actor, now: datetime, deta
         id=uuid4(), aggregate_id=actor.id, event_type=event_type, actor=actor, occurred_at=now,
         details={"project": project, **details},
     ))
+
+
+class CalcSheetsReader(Protocol):
+    """Google Sheets port: whole named sheets as display values plus the file title (see `google_sheets`)."""
+
+    def read_sheets(self, spreadsheet_id: str, names: tuple[str, ...]) -> tuple[str, dict[str, list[list[str]]]]: ...
+
+
+def read_calc_by_link(url: str, reader: Callable[[], CalcSheetsReader]):
+    """`tcReadCalcKitset_(calcUrl)`: the calculation by its Google Sheets link — ЗКЗ and СПЯ as the sheet shows
+    them; the file title refines the project number; the link is kept as the card's «РАСЧЁТ»."""
+    link = str(url or "").strip()
+    spreadsheet_id = spreadsheet_id_from_url(link)
+    if not spreadsheet_id:
+        raise KitsetValidationError(f"Не похоже на ссылку Google Таблицы: {link}")
+    title, sheets = reader().read_sheets(spreadsheet_id, (PROJECT_SHEET, SPEC_SHEET))
+    return parse_calc_sheets(sheets, title, link)
+
+
+def calc_sheets_reader(state: Any) -> CalcSheetsReader:
+    """Tests put a fake on ``app.state.kitset_sheets_reader``; otherwise the service-account adapter from env
+    (the same key «Из расчёта» in «Заявках» uses). Raises `CalcSheetError` (kind ``config``) without a key."""
+    reader = getattr(state, "kitset_sheets_reader", None)
+    if reader is not None:
+        return reader
+    from app.modules.requests.google_sheets import reader_from_env
+
+    return reader_from_env()
 
 
 def load_kitset(

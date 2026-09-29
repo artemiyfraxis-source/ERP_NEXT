@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { accessApi, type AccessMode, type AccessOverview, type AccessRow, type AccessSetting } from "./api";
 
 /** NAV-ACCESS «Доступы» (SUPPLYMAP Portal.gs portalAccessGet/portalAccessSave, PortalApp.html openAccessHub and the
- *  per-person «Доступ» of «Сотрудники»): the role × section matrix on top of what each role has by default, and
- *  personal exceptions that are stronger than the role. An empty cell = «как задумано ролью», not «закрыто». */
+ *  per-person «Доступ» of «Сотрудники»): the role × section matrix and personal exceptions that are stronger than the
+ *  role. An empty cell = «закрыто», as SUPPLYMAP has since 01.09.2026; the administrator has «полный» everywhere unless
+ *  a cell says otherwise (`defaults`). */
 
 const MODE_LABEL: Record<AccessSetting, string> = { none: "закрыт", view: "просмотр", edit: "полный" };
 const SETTINGS: AccessSetting[] = ["none", "view", "edit"];
@@ -11,7 +12,7 @@ const errorText = (reason: unknown, fallback: string) => reason instanceof Error
 
 type Tab = "roles" | "people";
 
-/** The role's sections as the server computes them: defaults with the saved matrix on top (none closes). */
+/** The role's sections as the server computes them: explicit cells (the admin starts from «полный»), none closes. */
 export function roleModes(data: AccessOverview, role: string): Partial<Record<string, AccessMode>> {
   const result: Partial<Record<string, AccessMode>> = { ...(data.defaults[role] ?? {}) };
   for (const [section, mode] of Object.entries(data.matrix[role] ?? {})) {
@@ -92,10 +93,10 @@ export function AccessPage() {
   return <section className="page access-page">
     <header className="page-head"><h1>Доступы</h1></header>
     <p className="page-sub">
-      Кто какие разделы видит. Пустая ячейка — <b>как задумано ролью</b> (подсказка показывает, что это значит);
-      <b> закрыт</b> прячет раздел и на сервере, <b>просмотр</b> снимает правку. Персональное исключение сильнее роли.
-      Часть действий на сервере по-прежнему закреплена за ролями (например, правит закупку только снабжение и
-      технолог) — матрица их другой роли не откроет. Хотя бы один администратор всегда сохраняет «Доступы».
+      Кто какие разделы видит. Раздел открыт, только если <b>выдан явно</b>: пустая ячейка — <b>закрыт</b>
+      (у технолога-администратора пустая ячейка — <b>полный</b>), <b>просмотр</b> снимает правку. Персональное
+      исключение сильнее роли. Часть действий на сервере по-прежнему закреплена за ролями (например, правит закупку
+      только снабжение и технолог) — матрица их другой роли не откроет. «Доступы» всегда открыты администратору.
     </p>
     <div className="shipping-tabs">
       <button className={tab === "roles" ? "secondary active" : "secondary"} onClick={() => setTab("roles")}>Роли × разделы</button>
@@ -119,7 +120,7 @@ export function AccessPage() {
                   value={value}
                   onChange={(event) => setMatrix({ ...matrix, [role.key]: withCell(matrix[role.key] ?? {}, section.key, event.target.value) })}
                 >
-                  <option value="">как задумано: {fallback}</option>
+                  <option value="">пусто: {fallback}</option>
                   {SETTINGS.map((mode) => <option key={mode} value={mode}>{MODE_LABEL[mode]}</option>)}
                 </select>
               </td>;
