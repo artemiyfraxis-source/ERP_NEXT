@@ -296,6 +296,53 @@ td small { margin-top: 4px; color: #7b857e; }
 .template-table td small { display: block; margin-top: 3px; color: var(--muted-foreground); }
 .template-detail { margin-top: 14px; }
 .template-detail p { margin: 12px 0 0; white-space: pre-line; font-size: 12px; }
+/* ЭТК: навигатор по операциям (SUPPLYMAP renderEtk_) и «Шаблоны техкарт» как лист ТК (openTcRecords/renderCard). */
+.etk-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0; }
+.etk-head span { color: var(--muted-foreground); font-size: 12px; }
+.etk-wrap { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.etk-nav-route { display: grid; gap: 4px; }
+.etk-nav-route button { display: flex; gap: 8px; align-items: flex-start; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 12px; }
+.etk-nav-route button.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.etk-nav-route small { display: block; color: var(--muted-foreground); }
+.etk-no { font-weight: 800; color: var(--primary); }
+.etk-main { display: grid; gap: 12px; min-width: 0; }
+.etk-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
+.etk-kicker button { margin-left: auto; }
+.etk-nav { display: flex; justify-content: space-between; gap: 10px; }
+.tr-edited { color: #8a5a00; }
+.tr-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+.tr-chips button { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font-size: 12.5px; }
+.tr-chips button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+.tr-group h3 { margin: 16px 0 8px; font-size: 15px; }
+.tr-group h3 span, .tr-block h4 span { color: var(--muted-foreground); font-weight: 400; }
+.tr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.tr-card { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; }
+.tr-card:hover { border-color: var(--primary); }
+.tr-name { font-weight: 600; font-size: 13px; }
+.tr-first { color: var(--muted-foreground); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tr-meta { color: var(--muted-foreground); font-size: 11.5px; }
+.tr-paper { display: grid; gap: 12px; }
+.tr-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.tr-head > div { display: grid; gap: 2px; }
+.tr-head small, .tr-sec-h { color: var(--muted-foreground); font-size: 11px; text-transform: uppercase; }
+.tr-block { display: grid; gap: 6px; font-size: 12px; }
+.tr-block h4 { margin: 0; font-size: 13px; }
+.tr-block textarea { width: 100%; }
+.tr-sec { display: grid; gap: 4px; margin-bottom: 6px; }
+.tr-tool { display: flex; gap: 8px; font-size: 12px; }
+.tr-tool small { display: block; color: var(--muted-foreground); }
+.tr-n { min-width: 18px; color: var(--primary); font-weight: 700; }
+.tr-inv { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #e0efed; color: #00554f; font-size: 11px; }
+.tr-steps td small { display: block; color: var(--muted-foreground); }
+.tr-steps tr.ctl td { background: #f6f9ee; }
+.pre-line { white-space: pre-line; }
+.tr-foot { color: var(--muted-foreground); font-size: 12px; }
+.tr-erow { display: grid; gap: 6px; align-items: start; margin-bottom: 6px; }
+.tr-tool-e { grid-template-columns: 130px minmax(0, 2fr) 90px minmax(0, 1fr) 70px 60px auto; }
+.tr-step-e { grid-template-columns: 24px 110px minmax(0, 3fr) minmax(0, 1fr) auto; }
+.tr-step-e.ctl { background: #f6f9ee; }
+.tr-rowbtn { display: flex; gap: 2px; }
+.tr-rowbtn button { padding: 2px 6px; }
 
 /* NAV-1: home = block tiles, block page = section tiles (SUPPLYMAP .tiles/.tile). */
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
@@ -390,6 +437,7 @@ td small { margin-top: 4px; color: #7b857e; }
   .operation-assign { grid-column: auto; }
   .operations-metrics, .operations-failures > div { grid-template-columns: 1fr; }
   .etk-flow { grid-template-columns: 1fr; }
+  .etk-wrap, .tr-head, .tr-tool-e, .tr-step-e { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
   .plan-note-text { grid-column: auto; }
 }
