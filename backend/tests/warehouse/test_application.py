@@ -234,26 +234,26 @@ def test_manual_stock_input_gets_old_grns_and_one_audit_event_per_lot():
 def test_whole_location_move_preserves_slots_and_skips_empty_lots():
     uow = Uow(message())
     first = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
-    first = replace(first, storage_location="18C3A")
+    first = replace(first, storage_location="12C3A")
     second = replace(
         first, id=UUID("30000000-0000-0000-0000-000000000010"),
-        grn="FRX.26.0000010", storage_location="18C3B",
+        grn="FRX.26.0000010", storage_location="12C3B",
     )
     empty = replace(
         first, id=UUID("30000000-0000-0000-0000-000000000011"),
-        grn="FRX.26.0000011", storage_location="18C3C", written_off=first.inbound,
+        grn="FRX.26.0000011", storage_location="12C3C", written_off=first.inbound,
     )
     for item in (first, second, empty):
         uow.warehouse.add(item)
 
     moved = move_location(MoveLocationCommand(
-        warehouse="ЦАР", source_location="18C3", target_location="20B5",
+        warehouse="ЦАР", source_location="12C3", target_location="15B5",
         actor=Actor(name="Кладовщик", department="Склад"),
         now=datetime(2026, 9, 22, 12, 0),
     ), uow)
 
-    assert [item.storage_location for item in moved] == ["20B5A", "20B5B"]
-    assert uow.warehouse.get(empty.id).storage_location == "18C3C"
+    assert [item.storage_location for item in moved] == ["15B5A", "15B5B"]
+    assert uow.warehouse.get(empty.id).storage_location == "12C3C"
     assert [event.event_type for event in uow.audit.items[-2:]] == [
         "warehouse.location_moved", "warehouse.location_moved",
     ]
@@ -262,23 +262,23 @@ def test_whole_location_move_preserves_slots_and_skips_empty_lots():
 def test_whole_location_move_leaves_old_addresses_and_lots_without_a_place():
     uow = Uow(message())
     first = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
-    first = replace(first, storage_location="18C3")
+    first = replace(first, storage_location="12C3")
     others = [
         replace(first, id=UUID(f"30000000-0000-0000-0000-00000000002{index}"),
                 grn=f"OLD.25.000002{index}", storage_location=location)
-        for index, location in enumerate(("", "A-01", "18C3Д"))
+        for index, location in enumerate(("", "A-01", "12C3Д"))
     ]
     for item in (first, *others):
         uow.warehouse.add(item)
 
     moved = move_location(MoveLocationCommand(
-        warehouse="ЦАР", source_location="18C3", target_location="20B5",
+        warehouse="ЦАР", source_location="12C3", target_location="15B5",
         actor=Actor(name="Кладовщик", department="Склад"),
         now=datetime(2026, 9, 22, 12, 0),
     ), uow)
 
-    assert [item.storage_location for item in moved] == ["20B5"]
-    assert [uow.warehouse.get(item.id).storage_location for item in others] == ["", "A-01", "18C3Д"]
+    assert [item.storage_location for item in moved] == ["15B5"]
+    assert [uow.warehouse.get(item.id).storage_location for item in others] == ["", "A-01", "12C3Д"]
 
 
 def _transfer(uow, lot, warehouse, place=""):
@@ -578,3 +578,36 @@ def test_writeoff_without_a_purpose_is_refused_with_the_supplymap_text(purpose):
     assert uow.commits == commits
     assert uow.warehouse.get(lot.id).written_off == Decimal("0")
     assert uow.audit.items[-1].event_type == "warehouse.received"
+
+
+def test_whole_location_move_takes_stock_out_of_a_place_the_layout_lost_but_not_into_one():
+    uow = Uow(message())
+    first = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    first = replace(first, storage_location="20B5A")
+    uow.warehouse.add(first)
+    actor = Actor(name="Кладовщик", department="Склад")
+
+    with pytest.raises(WarehouseValidationError, match="Места 18C3 нет: проверь номер стеллажа и полку."):
+        move_location(MoveLocationCommand(
+            warehouse="ЦАР", source_location="20B5", target_location="18C3",
+            actor=actor, now=datetime(2026, 9, 22, 12, 0),
+        ), uow)
+    moved = move_location(MoveLocationCommand(
+        warehouse="ЦАР", source_location="20B5", target_location="12C3",
+        actor=actor, now=datetime(2026, 9, 22, 12, 0),
+    ), uow)
+
+    assert [item.storage_location for item in moved] == ["12C3A"]
+
+
+def test_quick_entry_refuses_a_place_the_rack_layout_does_not_have():
+    uow = Uow(message())
+    with pytest.raises(WarehouseValidationError, match="Места 18A1 нет"):
+        add_manual_stock(AddManualStockCommand(
+            items=(ManualStockItem(
+                warehouse="ЦАР", name="Разъём", item_type="Комплектующие", purpose="Склад", unit="шт",
+                quantity=Decimal("1"), storage_location="18A1",
+            ),),
+            actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
+        ), uow)
+    assert uow.commits == 0

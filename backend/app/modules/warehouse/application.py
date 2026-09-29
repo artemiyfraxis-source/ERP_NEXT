@@ -22,6 +22,7 @@ from .domain import (
     lot_row_changes,
     normalize_location,
     normalize_location_as_is,
+    normalize_location_code,
 )
 from .stock_export import LegacyStockRow, LegacyWriteOffRow
 
@@ -689,7 +690,7 @@ def move_location(command: MoveLocationCommand, uow: UnitOfWork) -> list[StockLo
     warehouse = str(command.warehouse or "").strip()
     if warehouse not in {"ЦАР", "ЖУК"}:
         raise WarehouseValidationError("Неизвестный склад")
-    source = normalize_location(command.source_location)
+    source = normalize_location_code(command.source_location)
     target = normalize_location(command.target_location)
     if not storage_location_has_slot(source) and storage_location_has_slot(target):
         raise WarehouseValidationError("Место целиком переносится без ячейки")

@@ -1,6 +1,11 @@
-"""Shared physical storage-address value object."""
+"""Shared physical storage-address value object and the rack layout it must fit."""
 
+import json
+import os
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from functools import cache
 
 
 # Rack 1..99, shelf A..Z, number 1..999, optional slot A..Z. Leading zeros are read and dropped
@@ -11,17 +16,115 @@ _HOMOGLYPHS = str.maketrans({
     "К": "K", "М": "M", "О": "O", "Р": "P", "Т": "T", "Х": "X",
 })
 STORAGE_LOCATION_MAX_LENGTH = 255
+SHELF_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+PLACE_MAX_NUMBER = 999  # SUPPLYMAP STOCK05_PLACE_MAX_NUM_: packages that fit on one shelf
+RACK_LAYOUT_ENV = "ERP_WAREHOUSE_RACK_LAYOUT"
 
 
-def _parse(value: str) -> tuple[str, str, str, str] | None:
+def _parse(value: str, max_number: int = PLACE_MAX_NUMBER) -> tuple[str, str, str, str] | None:
     normalized = re.sub(r"\s+", "", str(value or "").upper()).translate(_HOMOGLYPHS)
     match = _PLACE.fullmatch(normalized)
     if match is None:
         return None
     rack, number = int(match.group(1)), int(match.group(3))
-    if rack < 1 or not 1 <= number <= 999:
+    if rack < 1 or not 1 <= number <= max_number:
         return None
     return str(rack), match.group(2), str(number), match.group(4) or ""
+
+
+@dataclass(frozen=True)
+class RackLayout:
+    """SUPPLYMAP Stock05.gs `stock05_places` (Script Properties): how many racks the warehouse has,
+    how many shelves (letters from A) a rack has, and racks with their own shelf count."""
+
+    racks: int = 17  # STOCK05_RACKS_DEFAULT_ (owner, 2026-08-26)
+    shelves: int = 26  # STOCK05_SHELVES_DEFAULT_: A..Z (owner, 2026-09-22; was 7)
+    per_rack: Mapping[int, int] = field(default_factory=dict)
+
+    def shelves_in(self, rack: int) -> int:
+        return self.per_rack.get(rack, self.shelves)
+
+
+DEFAULT_RACK_LAYOUT = RackLayout()
+
+
+def rack_layout_from_config(config: Mapping[str, object]) -> RackLayout:
+    """Validate a layout as SUPPLYMAP stock05PlacesSave_ does. A per-rack count equal to the common one is
+    dropped, so changing the common count reaches every rack that has no real override."""
+    if not isinstance(config, Mapping):
+        raise ValueError("Раскладка стеллажей — объект {racks, shelves, perRack}.")
+
+    def whole(value: object) -> int:
+        try:
+            return int(float(value))  # Math.floor(Number(v)) for the positive values that pass
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    racks = whole(config.get("racks", DEFAULT_RACK_LAYOUT.racks))
+    shelves = whole(config.get("shelves", DEFAULT_RACK_LAYOUT.shelves))
+    letters = len(SHELF_LETTERS)
+    if not 1 <= racks <= 99:
+        raise ValueError("Стеллажей должно быть от 1 до 99.")
+    if not 1 <= shelves <= letters:
+        raise ValueError(f"Полок должно быть от 1 до {letters} (буквы A…Z).")
+    raw_per_rack = config.get("perRack") or {}
+    if not isinstance(raw_per_rack, Mapping):
+        raise ValueError("perRack — объект {номер стеллажа: полок}.")
+    per_rack: dict[int, int] = {}
+    for key, value in raw_per_rack.items():
+        rack, count = whole(key), whole(value)
+        if not 1 <= rack <= racks:
+            raise ValueError(f"Стеллажа №{key} нет (всего {racks}).")
+        if not 1 <= count <= letters:
+            raise ValueError(f"Стеллаж {rack}: полок должно быть от 1 до {letters}.")
+        if count != shelves:
+            per_rack[rack] = count
+    return RackLayout(racks=racks, shelves=shelves, per_rack=per_rack)
+
+
+@cache
+def configured_rack_layout() -> RackLayout:
+    """The layout of this installation: `ERP_WAREHOUSE_RACK_LAYOUT` as SUPPLYMAP JSON
+    {"racks": 17, "shelves": 26, "perRack": {"5": 12}}, otherwise the SUPPLYMAP defaults. A broken value
+    stops the app instead of silently falling back: a wrong layout rejects real places or lets typos in.
+    RuntimeError, not ValueError: a setup fault must not read as a refused place (and poison an outbox message)."""
+    raw = os.getenv(RACK_LAYOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_RACK_LAYOUT
+    try:
+        config = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{RACK_LAYOUT_ENV}: не JSON ({error.msg}).") from error
+    try:
+        return rack_layout_from_config(config)
+    except ValueError as error:
+        raise RuntimeError(f"{RACK_LAYOUT_ENV}: {error}") from error
+
+
+def storage_location_fits(value: str, layout: RackLayout) -> bool:
+    """SUPPLYMAP placeFits_: the rack exists, the shelf is in that rack, № on the shelf ≤ 999. A slot is any
+    letter A..Z (STOCK05_SLOTS_ = 26). An empty place or an old address is not a rack code: nothing to fit."""
+    parts = _parse(value, max_number=9999)
+    if parts is None:
+        return True
+    rack, shelf, number, _slot = parts
+    return (
+        int(rack) <= layout.racks
+        and SHELF_LETTERS.index(shelf) < layout.shelves_in(int(rack))
+        and int(number) <= PLACE_MAX_NUMBER
+    )
+
+
+def existing_storage_location(value: str, layout: RackLayout | None = None) -> str:
+    """A rack code that must exist in the layout (receipt, quick entry, move) — Stock05.gs 751-752, 845, 933.
+    A number past 999 reads as a code and is refused as a missing place, as placeParse_ + placeFits_ do."""
+    parts = _parse(value, max_number=9999)
+    if parts is None:
+        raise ValueError("Место хранения должно иметь вид 1F4, 17C120 или 12C7B")
+    code = "".join(parts)
+    if not storage_location_fits(code, layout or configured_rack_layout()):
+        raise ValueError(f"Места {code} нет: проверь номер стеллажа и полку.")
+    return code
 
 
 def normalize_storage_location(value: str) -> str:

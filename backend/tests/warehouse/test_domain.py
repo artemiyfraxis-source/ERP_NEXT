@@ -104,14 +104,14 @@ def test_whole_lot_move_changes_location_but_not_quantities():
     assert moved.written_off == Decimal("0")
 
 
-@pytest.mark.parametrize("location", ["", "0A1", "100A1", "1A0", "1A1000", "1Д1", "1-А-1"])
+@pytest.mark.parametrize("location", ["", "0A1", "100A1", "1A0", "1A01000", "1Д1", "1-А-1"])
 def test_storage_location_uses_rack_shelf_number_code(location):
     with pytest.raises(WarehouseValidationError, match="Место хранения"):
         lot().move(location)
 
 
 def test_storage_location_accepts_all_shelves_and_optional_slot():
-    assert lot().move("18z3х").storage_location == "18Z3X"
+    assert lot().move("17z3х").storage_location == "17Z3X"
 
 
 @pytest.mark.parametrize(
@@ -282,11 +282,31 @@ def test_manual_correction_writes_an_old_address_or_clears_the_place():
     assert cleared.balance == initial.balance
 
 
-@pytest.mark.parametrize("current", ["", "A-01", "18C3Д", "18C3 угол"])
+@pytest.mark.parametrize("current", ["", "A-01", "12C3Д", "12C3 угол"])
 def test_empty_place_and_old_address_never_move_with_a_rack_place(current):
-    assert remap_storage_location(current, "18C3", "20B5") is None
+    assert remap_storage_location(current, "12C3", "15B5") is None
     assert not storage_location_has_slot(current)
-    assert remap_storage_location("18c03b", "18C3", "20B5") == "20B5B"
+    assert remap_storage_location("12c03b", "12C3", "15B5") == "15B5B"
+
+
+@pytest.mark.parametrize("location", ["18A1", "1A1000"])
+def test_lot_goes_only_to_a_place_that_exists_in_the_rack_layout(location):
+    with pytest.raises(WarehouseValidationError, match=f"Места {location} нет: проверь номер стеллажа и полку."):
+        lot().move(location)
+    with pytest.raises(WarehouseValidationError, match=f"Места {location} нет"):
+        lot().transfer("ЖУК", location)
+
+
+def test_old_data_and_manual_correction_keep_a_place_outside_the_rack_layout():
+    old = StockLot.create(
+        warehouse="ЦАР", grn="OLD.25.0000001", package="", name="Разъём", item_type="Комплектующие",
+        purpose="RND", unit="шт", quantity=Decimal("1"), storage_location="20b5",
+        source_receiving_ids=("supplymap-import:ЦАР:OLD.25.0000001:",), location_as_is=True,
+    )
+    assert old.storage_location == "20B5"
+    assert old.move("20B5") is old
+    assert lot().correct_location("20B5").storage_location == "20B5"
+    assert old.move("1F4").storage_location == "1F4"
 
 
 def test_repeated_receipt_keeps_a_lot_without_a_place():

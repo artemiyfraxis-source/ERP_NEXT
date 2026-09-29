@@ -28,6 +28,7 @@ from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
 from app.modules.operations.application import PoisonNotificationMessage, dispatch_next_notification
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from app.shared.clock import moscow_now
+from app.shared.warehouse_location import configured_rack_layout
 
 
 def dispatch_available(
@@ -147,6 +148,7 @@ def main() -> None:
     database_url = os.getenv("ERP_DATABASE_URL")
     if not database_url:
         raise SystemExit("Set ERP_DATABASE_URL before starting the worker")
+    configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, not a receipt
 
     engine = build_engine(database_url)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)

@@ -261,11 +261,11 @@ def test_manual_stock_rejects_whitespace_article_even_with_a_name(warehouse_api)
 def test_receiver_moves_a_whole_location_and_preserves_each_slot(warehouse_api):
     client, first = warehouse_api
     factory = app.state.warehouse_uow_factory
-    first = first.move("18C3A")
+    first = first.move("12C3A")
     second = StockLot.create(
         warehouse="ЦАР", grn="FRX.26.0000002", package="", name="Контакт",
         item_type="Комплектующие", purpose="FRX.001", unit="шт",
-        quantity=Decimal("5"), storage_location="18C3B",
+        quantity=Decimal("5"), storage_location="12C3B",
         source_receiving_ids=("20000000-0000-0000-0000-000000000002",),
     )
     with factory() as uow:
@@ -274,17 +274,17 @@ def test_receiver_moves_a_whole_location_and_preserves_each_slot(warehouse_api):
         uow.commit()
 
     response = client.post("/api/stock/locations/move", json={
-        "warehouse": "ЦАР", "source_location": "18C3", "target_location": "20B5",
+        "warehouse": "ЦАР", "source_location": "12C3", "target_location": "15B5",
     })
 
     assert response.status_code == 200, response.text
-    assert [item["storage_location"] for item in response.json()["lots"]] == ["20B5A", "20B5B"]
+    assert [item["storage_location"] for item in response.json()["lots"]] == ["15B5A", "15B5B"]
 
 
 def test_whole_location_move_leaves_old_addresses_and_lots_without_a_place(warehouse_api):
     client, first = warehouse_api
     factory = app.state.warehouse_uow_factory
-    first = first.move("18C3")
+    first = first.move("12C3")
     others = [
         StockLot.create(
             warehouse="ЦАР", grn=f"OLD.25.000000{index}", package="", article="CON-OLD", name="",
@@ -292,7 +292,7 @@ def test_whole_location_move_leaves_old_addresses_and_lots_without_a_place(wareh
             storage_location=location, source_receiving_ids=(f"import:ЦАР:{index}",),
             location_as_is=True,
         )
-        for index, location in enumerate(("", "A-01", "18C3Д", "18C3 угол"))
+        for index, location in enumerate(("", "A-01", "12C3Д", "12C3 угол"))
     ]
     with factory() as uow:
         for lot in (first, *others):
@@ -300,14 +300,14 @@ def test_whole_location_move_leaves_old_addresses_and_lots_without_a_place(wareh
         uow.commit()
 
     response = client.post("/api/stock/locations/move", json={
-        "warehouse": "ЦАР", "source_location": "18C3", "target_location": "20B5",
+        "warehouse": "ЦАР", "source_location": "12C3", "target_location": "15B5",
     })
 
     assert response.status_code == 200, response.text
-    assert [item["storage_location"] for item in response.json()["lots"]] == ["20B5"]
+    assert [item["storage_location"] for item in response.json()["lots"]] == ["15B5"]
     with factory() as uow:
         assert [uow.warehouse.get(lot.id).storage_location for lot in others] == [
-            "", "A-01", "18C3Д", "18C3 угол",
+            "", "A-01", "12C3Д", "12C3 угол",
         ]
 
 

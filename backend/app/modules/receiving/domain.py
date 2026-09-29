@@ -15,7 +15,7 @@ from app.shared.document_url import normalize_document_url
 from app.shared.events import OutboxMessage
 from app.shared.identity import Actor
 from app.shared.unit_mass import mass_per_unit
-from app.shared.warehouse_location import normalize_storage_location
+from app.shared.warehouse_location import existing_storage_location
 
 
 class ReceivingValidationError(ValueError):
@@ -286,7 +286,7 @@ class ReceivingLine:
         if self.status is not ReceivingStatus.ACCEPTED:
             raise ReceivingValidationError("Разместить на складе можно только принятую позицию")
         try:
-            normalized = normalize_storage_location(location)
+            normalized = existing_storage_location(location)
         except ValueError as error:
             raise ReceivingValidationError(str(error)) from error
         if normalized == self.storage_location:

@@ -11,6 +11,7 @@
     "writeoff return cannot exceed prior writeoff",
     "physical storage addresses use rack shelf number and optional slot code",
     "an empty place and an old address are legal lot places: old data and the manual correction keep them as is, leading zeros of a rack code are dropped, regular entry, moves and receiving still need a rack code, and a whole-location move never takes them",
+    "a rack code stock goes to must exist in the rack layout: rack within the rack count, shelf within that rack's shelves, number up to 999; the place stock leaves, an empty place and an old address are not checked",
     "whole-location moves preserve slots and skip zero-balance lots",
     "article is the primary stock identity while name is an optional description",
     "manufacturer series is distinct from the internal GRN",

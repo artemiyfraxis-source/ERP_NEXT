@@ -209,3 +209,13 @@ def test_unknown_purpose_requires_narrow_manual_grn_prefix():
         existing_grns=(),
         manual_grn_prefix="PPM",
     ).grn == "PPM.26.0000001"
+
+
+def test_receiving_places_only_where_the_rack_layout_has_a_place():
+    inspected = create_line_from_expected(expected_message()).inspect(
+        inspection(), Actor(name="Приёмщик", department="ОТК"), existing_grns=(),
+    )
+
+    with pytest.raises(ReceivingValidationError, match="Места 18A1 нет: проверь номер стеллажа и полку."):
+        inspected.place("18A1")
+    assert inspected.place("17A1").storage_location == "17A1"

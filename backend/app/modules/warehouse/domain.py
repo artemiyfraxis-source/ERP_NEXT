@@ -8,7 +8,11 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from app.shared.warehouse_location import normalize_storage_location, storage_location_as_is
+from app.shared.warehouse_location import (
+    existing_storage_location,
+    normalize_storage_location,
+    storage_location_as_is,
+)
 
 
 WAREHOUSES = ("ЦАР", "ЖУК")
@@ -19,6 +23,15 @@ class WarehouseValidationError(ValueError):
 
 
 def normalize_location(value: str) -> str:
+    """A place the stock goes to: a rack code that exists in the rack layout (SK-9)."""
+    try:
+        return existing_storage_location(value)
+    except ValueError as error:
+        raise WarehouseValidationError(str(error)) from error
+
+
+def normalize_location_code(value: str) -> str:
+    """A place stock is taken from: only the code format. A place that left the layout still empties."""
     try:
         return normalize_storage_location(value)
     except ValueError as error:

@@ -12,6 +12,7 @@ from .modules.legacy_access import api as legacy_access_api
 from .modules.identity.middleware import IdentitySessionMiddleware
 from .shared.http_limits import RequestBodyLimitMiddleware
 from .shared.security_headers import SecurityHeadersMiddleware
+from .shared.warehouse_location import configured_rack_layout
 from .modules.procurement import api as procurement_api
 from .modules.receiving import api as receiving_api
 from .modules.warehouse import api as warehouse_api
@@ -36,6 +37,7 @@ app.state.cookie_secure = os.getenv("ERP_COOKIE_SECURE", "1").strip().lower() no
     "no",
 }
 app.state.legacy_bridge_secret = os.getenv("ERP_LEGACY_BRIDGE_SECRET", "")
+configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, not the first placement
 app.add_middleware(RequestBodyLimitMiddleware, max_bytes=1_048_576)
 app.add_middleware(IdentitySessionMiddleware)
 app.add_middleware(
