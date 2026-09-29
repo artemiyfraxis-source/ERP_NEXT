@@ -103,6 +103,7 @@ class CreateShipmentCommand:
     lines: tuple[RequestedGood, ...]
     actor: Actor
     now: datetime
+    no_docs: bool = False
 
 
 @dataclass(frozen=True)
@@ -199,26 +200,49 @@ def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment
         )
         uow.shipments.add(shipment)
         _audit(shipment.id, "shipping.created", command.actor, command.now, {"number": shipment.number}, uow)
+        # Shipment.gs shipRequestCreate_: набор сразу при заведении, затем PL/DN → «Упакована»;
+        # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт.
+        shipment, taken = _pick(shipment, command.actor, command.now, uow)
+        if taken and not command.no_docs:
+            shipment = _pack(shipment, command.actor, command.now, uow)
         uow.commit()
         return shipment
+
+
+def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> tuple[Shipment, dict[UUID, Decimal]]:
+    goods = {line.finished_good_id: uow.goods.get(line.finished_good_id) for line in shipment.lines}
+    if any(good is None for good in goods.values()):
+        raise ShippingValidationError("Позиция готовой продукции больше не существует")
+    typed = {good_id: good for good_id, good in goods.items() if good is not None}
+    updated, taken = shipment.pick(
+        {good_id: good.remaining for good_id, good in typed.items()},
+        {good_id: good.grn or "" for good_id, good in typed.items()},
+    )
+    for good_id, quantity in taken.items():
+        uow.goods.add(typed[good_id].take(quantity))
+    if taken:
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.picked", actor, now, {str(key): str(value) for key, value in taken.items()}, uow)
+    return updated, taken
+
+
+def _pack(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> Shipment:
+    projects = sorted({line.project for line in shipment.lines if line.picked > 0})
+    if len(projects) == 1:
+        suffix = f"{projects[0]}-{uow.shipments.document_sequence(projects[0])}"
+    else:
+        suffix = shipment.number
+    updated = shipment.pack(f"PL{suffix}", f"DN{suffix}", now.date())
+    uow.shipments.add(updated)
+    _audit(shipment.id, "shipping.packed", actor, now, {"pl": updated.pl_number, "dn": updated.dn_number}, uow)
+    return updated
 
 
 def pick_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
         shipment = _shipment(command.shipment_id, command.expected_version, uow)
-        goods = {line.finished_good_id: uow.goods.get(line.finished_good_id) for line in shipment.lines}
-        if any(good is None for good in goods.values()):
-            raise ShippingValidationError("Позиция готовой продукции больше не существует")
-        typed = {good_id: good for good_id, good in goods.items() if good is not None}
-        updated, taken = shipment.pick(
-            {good_id: good.remaining for good_id, good in typed.items()},
-            {good_id: good.grn or "" for good_id, good in typed.items()},
-        )
-        for good_id, quantity in taken.items():
-            uow.goods.add(typed[good_id].take(quantity))
+        updated, taken = _pick(shipment, command.actor, command.now, uow)
         if taken:
-            uow.shipments.add(updated)
-            _audit(shipment.id, "shipping.picked", command.actor, command.now, {str(key): str(value) for key, value in taken.items()}, uow)
             uow.commit()
         return updated
 
@@ -240,14 +264,7 @@ def unpick_line(command: UnpickCommand, uow: UnitOfWork) -> Shipment:
 def pack_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
         shipment = _shipment(command.shipment_id, command.expected_version, uow)
-        projects = sorted({line.project for line in shipment.lines if line.picked > 0})
-        if len(projects) == 1:
-            suffix = f"{projects[0]}-{uow.shipments.document_sequence(projects[0])}"
-        else:
-            suffix = shipment.number
-        updated = shipment.pack(f"PL{suffix}", f"DN{suffix}", command.now.date())
-        uow.shipments.add(updated)
-        _audit(shipment.id, "shipping.packed", command.actor, command.now, {"pl": updated.pl_number, "dn": updated.dn_number}, uow)
+        updated = _pack(shipment, command.actor, command.now, uow)
         uow.commit()
         return updated
 

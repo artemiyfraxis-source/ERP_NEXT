@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -11,7 +11,7 @@ from app.main import app
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import create_schema
+from app.shared.persistence import AuditEventRow, create_schema
 from tests.factories import Actor
 
 
@@ -47,10 +47,7 @@ def test_finished_good_partial_shipment_and_close_gates(shipping_api):
         "upd_type": "ЭДО", "lines": [{"good_id": good["id"], "quantity": "10"}],
     })
     shipment = made.json()["shipment"]
-    picked = client.post(f"/api/shipping/shipments/{shipment['id']}/pick", json={"version": shipment["version"]})
-    shipment = picked.json()["shipment"]
-    packed = client.post(f"/api/shipping/shipments/{shipment['id']}/pack", json={"version": shipment["version"]})
-    shipment = packed.json()["shipment"]
+    assert shipment["status"] == "Упакована"
     shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
     shipment = shipped.json()["shipment"]
     rejected = client.post(f"/api/shipping/shipments/{shipment['id']}/close", json={"version": shipment["version"]})
@@ -90,11 +87,13 @@ def _stocked_good(client, item_index: str, quantity: str) -> dict:
 
 
 def _picked_shipment(client, lines: list[tuple[dict, str]]) -> dict:
+    # SH-1: creation picks at once; no_docs stops at «Собрана», the state these tests start from.
     shipment = client.post("/api/shipping/shipments", json={
         "receiver": "Получатель", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
-        "lines": [{"good_id": good["id"], "quantity": quantity} for good, quantity in lines],
+        "no_docs": True, "lines": [{"good_id": good["id"], "quantity": quantity} for good, quantity in lines],
     }).json()["shipment"]
-    return client.post(f"/api/shipping/shipments/{shipment['id']}/pick", json={"version": shipment["version"]}).json()["shipment"]
+    assert shipment["status"] == "Собрана"
+    return shipment
 
 
 def _goods(client) -> dict[str, dict]:
@@ -155,3 +154,89 @@ def test_shipped_goods_stay_shipped_when_cancel_is_refused(shipping_api):
     assert refused.status_code == 422
     assert unpick.status_code == 422
     assert _goods(client)[good["id"]]["shipped"] == "5"
+
+
+def _good_with_stock(client, *, project="591К.3", item_index="КБ1", accepted="6"):
+    good = client.post("/api/shipping/goods", json={
+        "project": project, "item_index": item_index, "name": "Жгут", "ordered": "40", "unit": "шт",
+    }).json()["good"]
+    if accepted:
+        good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": accepted}).json()["good"]
+    return good
+
+
+def _create(client, lines, **extra):
+    return client.post("/api/shipping/shipments", json={
+        "receiver": "Получатель", "shipping_point": "Москва", "terms": "САМОВЫВОЗ",
+        "upd_type": "ЭДО", "lines": lines, **extra,
+    })
+
+
+def test_creating_shipment_picks_available_stock_and_packs_documents_at_once(shipping_api):
+    client = shipping_api
+    good = _good_with_stock(client)
+
+    made = _create(client, [{"good_id": good["id"], "quantity": "4"}])
+    shipment = made.json()["shipment"]
+    stock = client.get("/api/shipping/goods").json()["goods"][0]
+
+    assert made.status_code == 200
+    assert shipment["status"] == "Упакована"
+    assert shipment["lines"][0]["picked"] == "4"
+    assert shipment["lines"][0]["grn"] == "ГП.26.0000001"
+    assert shipment["pl_number"] == "PL591К.3-1"
+    assert shipment["dn_number"] == "DN591К.3-1"
+    assert shipment["packed_at"] == "2026-09-22"
+    assert stock["shipped"] == "4"
+    assert stock["remaining"] == "2"
+
+
+def test_no_docs_shipment_stops_assembled_and_warehouse_packs_later(shipping_api):
+    client = shipping_api
+    good = _good_with_stock(client)
+
+    shipment = _create(client, [{"good_id": good["id"], "quantity": "10"}], no_docs=True).json()["shipment"]
+    packed = client.post(f"/api/shipping/shipments/{shipment['id']}/pack", json={"version": shipment["version"]})
+
+    assert shipment["status"] == "Собрана"
+    assert shipment["pl_number"] == ""
+    assert shipment["lines"][0]["picked"] == "6"
+    assert shipment["lines"][0]["shortage"] == "4"
+    assert packed.status_code == 200
+    assert packed.json()["shipment"]["status"] == "Упакована"
+
+
+def test_shipment_without_finished_stock_stays_new_and_is_picked_after_intake(shipping_api):
+    client = shipping_api
+    good = _good_with_stock(client, accepted="")
+
+    shipment = _create(client, [{"good_id": good["id"], "quantity": "3"}]).json()["shipment"]
+    assert shipment["status"] == "Новая"
+    assert shipment["lines"][0]["picked"] == "0"
+    assert shipment["pl_number"] == ""
+
+    good = client.get("/api/shipping/goods").json()["goods"][0]
+    client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "5"})
+    picked = client.post(f"/api/shipping/shipments/{shipment['id']}/pick", json={"version": shipment["version"]})
+
+    assert picked.status_code == 200
+    assert picked.json()["shipment"]["status"] == "Собрана"
+    assert picked.json()["shipment"]["lines"][0]["picked"] == "3"
+
+
+def test_auto_pick_on_creation_is_one_transaction_with_audit(shipping_api):
+    client = shipping_api
+    first = _good_with_stock(client, item_index="КБ1")
+    second = _good_with_stock(client, project="592К.1", item_index="КБ2", accepted="")
+
+    shipment = _create(client, [
+        {"good_id": first["id"], "quantity": "2"}, {"good_id": second["id"], "quantity": "1"},
+    ]).json()["shipment"]
+    uow = app.state.shipping_uow_factory()
+    with uow:
+        events = [row.event_type for row in uow.session.scalars(select(AuditEventRow).where(AuditEventRow.aggregate_id == UUID(shipment["id"])))]
+
+    assert shipment["status"] == "Упакована"
+    assert shipment["pl_number"] == "PL591К.3-1"
+    assert [line["picked"] for line in shipment["lines"]] == ["2", "0"]
+    assert sorted(events) == ["shipping.created", "shipping.packed", "shipping.picked"]

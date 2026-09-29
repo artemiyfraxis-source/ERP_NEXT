@@ -38,6 +38,21 @@ describe("ShippingPage", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/shipping/shipments", expect.objectContaining({ method: "POST" })));
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === "/api/shipping/shipments" && init?.method === "POST");
     expect(JSON.parse(String(call?.[1]?.body)).lines).toEqual([{ good_id: "g1", quantity: "10" }]);
+    expect(JSON.parse(String(call?.[1]?.body)).no_docs).toBe(false);
+  });
+
+  it("sends no_docs when the manager wants the request only assembled", async () => {
+    render(<ShippingPage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ Заявка на отгрузку" }));
+    fireEvent.change(screen.getByLabelText("Получатель"), { target: { value: "Получатель" } });
+    fireEvent.change(screen.getByLabelText("Точка отгрузки"), { target: { value: "Москва" } });
+    fireEvent.change(screen.getByLabelText("Заказать 591К.3 КБ1"), { target: { value: "2" } });
+    fireEvent.click(screen.getByLabelText("Без отгрузочных документов (только набрать)"));
+    fireEvent.click(screen.getByRole("button", { name: "Создать заявку" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/shipping/shipments", expect.objectContaining({ method: "POST" })));
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === "/api/shipping/shipments" && init?.method === "POST");
+    expect(JSON.parse(String(call?.[1]?.body)).no_docs).toBe(true);
   });
 
   it("shows ready-goods balance", async () => {

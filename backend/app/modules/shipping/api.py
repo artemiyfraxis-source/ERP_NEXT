@@ -63,6 +63,7 @@ class ShipmentPayload(BaseModel):
     upd_date: date | None = None
     upd_url: str = Field(default="", max_length=5000)
     note: str = Field(default="", max_length=5000)
+    no_docs: bool = False
     lines: list[ShipmentLinePayload] = Field(min_length=1, max_length=500)
 
 
