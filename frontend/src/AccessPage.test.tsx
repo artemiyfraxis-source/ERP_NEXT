@@ -3,17 +3,19 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AccessPage, roleModes } from "./AccessPage";
 import type { AccessOverview } from "./api";
 
+// admin (Технолог) is a full-access role — its column is locked; receiver (Кладовщик) is driven by the matrix and is
+// the role the editing tests target.
 const OVERVIEW: AccessOverview = {
   sections: [{ key: "requests", label: "Заявки" }, { key: "warehouse", label: "Склад" }, { key: "staffdir", label: "Сотрудники" }],
-  roles: [{ key: "admin", label: "Технолог" }, { key: "buyer", label: "Специалист по снабжению" }],
+  roles: [{ key: "admin", label: "Технолог" }, { key: "receiver", label: "Кладовщик" }],
   defaults: {
     admin: { requests: "edit", warehouse: "edit", staffdir: "edit" },
-    buyer: { requests: "edit", warehouse: "view" },
+    receiver: { requests: "edit", warehouse: "view" },
   },
-  matrix: { buyer: { warehouse: "none" } },
+  matrix: { receiver: { warehouse: "none" } },
   users: [
     { id: "u1", login: "admin", name: "Админов", role: "admin", active: true, access: {} },
-    { id: "u2", login: "buyer", name: "Закупкин", role: "buyer", active: true, access: { staffdir: "view" } },
+    { id: "u2", login: "receiver", name: "Кладовкин", role: "receiver", active: true, access: { staffdir: "view" } },
   ],
 };
 
@@ -24,8 +26,8 @@ function json(body: unknown, status = 200) {
 afterEach(() => vi.restoreAllMocks());
 
 it("computes a role's sections as defaults with the matrix on top", () => {
-  expect(roleModes(OVERVIEW, "buyer")).toEqual({ requests: "edit" });
-  expect(roleModes({ ...OVERVIEW, matrix: { buyer: { staffdir: "view", requests: "view" } } }, "buyer"))
+  expect(roleModes(OVERVIEW, "receiver")).toEqual({ requests: "edit" });
+  expect(roleModes({ ...OVERVIEW, matrix: { receiver: { staffdir: "view", requests: "view" } } }, "receiver"))
     .toEqual({ requests: "view", warehouse: "view", staffdir: "view" });
   expect(roleModes(OVERVIEW, "admin")).toEqual(OVERVIEW.defaults.admin);
 });
@@ -43,9 +45,9 @@ it("shows the role default in an empty cell and saves the whole matrix", async (
   });
 
   render(<AccessPage />);
-  const warehouse = await screen.findByLabelText("Склад · Специалист по снабжению") as HTMLSelectElement;
+  const warehouse = await screen.findByLabelText("Склад · Кладовщик") as HTMLSelectElement;
   expect(warehouse.value).toBe("none");
-  const requests = screen.getByLabelText("Заявки · Специалист по снабжению") as HTMLSelectElement;
+  const requests = screen.getByLabelText("Заявки · Кладовщик") as HTMLSelectElement;
   expect(requests.value).toBe("");
   expect(within(requests).getByRole("option", { name: "полный (по умолч.)" })).toBeInTheDocument();
 
@@ -55,24 +57,21 @@ it("shows the role default in an empty cell and saves the whole matrix", async (
   fireEvent.change(requests, { target: { value: "view" } });
   fireEvent.click(save);
 
-  await waitFor(() => expect(saved).toEqual([{ matrix: { buyer: { requests: "view" } } }]));
+  await waitFor(() => expect(saved).toEqual([{ matrix: { receiver: { requests: "view" } } }]));
   expect(await screen.findByText(/Доступы ролей сохранены/)).toBeInTheDocument();
 });
 
-it("shows the server's refusal to lock every administrator out", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path === "/api/auth/access/roles" && init?.method === "PUT") {
-      return json({ detail: "Нужен хотя бы один администратор с доступом к «Сотрудникам» и «Доступам»" }, 409);
-    }
-    if (path === "/api/auth/access") return json(OVERVIEW);
-    throw new Error(`Unexpected request: ${path}`);
+it("locks the full-access role columns so they cannot be reduced", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/access") return json(OVERVIEW);
+    throw new Error(`Unexpected request: ${String(input)}`);
   });
 
   render(<AccessPage />);
-  fireEvent.change(await screen.findByLabelText("Сотрудники · Технолог"), { target: { value: "none" } });
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить доступы ролей" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("хотя бы один администратор");
+  // The note names the four always-full roles, and the admin (Технолог) column has no editable cell — only a lock.
+  expect(await screen.findByText(/всегда имеют полный доступ ко всем разделам/)).toBeInTheDocument();
+  expect(screen.queryByLabelText("Сотрудники · Технолог")).toBeNull();
+  expect(screen.getAllByText("полный 🔒").length).toBeGreaterThan(0);
 });
 
 it("edits one person's exceptions against what the role gives", async () => {
@@ -90,10 +89,10 @@ it("edits one person's exceptions against what the role gives", async () => {
   render(<AccessPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Исключения по сотрудникам" }));
   const person = screen.getByLabelText("Сотрудник");
-  expect(within(person).getByRole("option", { name: "Закупкин · Специалист по снабжению · исключений: 1" })).toBeInTheDocument();
+  expect(within(person).getByRole("option", { name: "Кладовкин · Кладовщик · исключений: 1" })).toBeInTheDocument();
   fireEvent.change(person, { target: { value: "u2" } });
 
-  const table = within(screen.getByRole("region", { name: "Исключения: Закупкин" })).getByRole("table");
+  const table = within(screen.getByRole("region", { name: "Исключения: Кладовкин" })).getByRole("table");
   const warehouseRow = within(table).getByText("Склад").closest("tr")!;
   expect(within(warehouseRow).getByText("закрыт", { selector: "span" })).toBeInTheDocument(); // the matrix closed it for the role
   expect((screen.getByLabelText("Исключение: Сотрудники") as HTMLSelectElement).value).toBe("view");
@@ -103,7 +102,7 @@ it("edits one person's exceptions against what the role gives", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Сохранить исключения" }));
 
   await waitFor(() => expect(saved).toEqual([{ access: { warehouse: "view" } }]));
-  expect(await screen.findByText("Исключения сохранены: Закупкин")).toBeInTheDocument();
+  expect(await screen.findByText("Исключения сохранены: Кладовкин")).toBeInTheDocument();
 });
 
 it("NAV-SECTIONS: shows «Оформить заявку», «Мои заявки» and «Выдача со списанием» as sections of their own", async () => {
@@ -116,7 +115,7 @@ it("NAV-SECTIONS: shows «Оформить заявку», «Мои заявки
     ],
     defaults: {
       admin: { newrequest: "edit", myrequests: "edit", requests: "edit", fulfillment: "edit", handout: "edit" },
-      buyer: { newrequest: "edit", myrequests: "edit", requests: "edit" },
+      receiver: { newrequest: "edit", myrequests: "edit", requests: "edit" },
     },
     matrix: {},
   };
@@ -126,10 +125,9 @@ it("NAV-SECTIONS: shows «Оформить заявку», «Мои заявки
   });
 
   render(<AccessPage />);
-  const filing = await screen.findByLabelText("Оформить заявку · Специалист по снабжению") as HTMLSelectElement;
+  const filing = await screen.findByLabelText("Оформить заявку · Кладовщик") as HTMLSelectElement;
   expect(within(filing).getByRole("option", { name: "полный (по умолч.)" })).toBeInTheDocument();
-  expect(screen.getByLabelText("Мои заявки · Специалист по снабжению")).toBeInTheDocument();
-  const handout = screen.getByLabelText("Выдача со списанием · Специалист по снабжению") as HTMLSelectElement;
+  expect(screen.getByLabelText("Мои заявки · Кладовщик")).toBeInTheDocument();
+  const handout = screen.getByLabelText("Выдача со списанием · Кладовщик") as HTMLSelectElement;
   expect(within(handout).getByRole("option", { name: "—" })).toBeInTheDocument();
-  expect(screen.getByLabelText("Выдача со списанием · Технолог")).toBeInTheDocument();
 });

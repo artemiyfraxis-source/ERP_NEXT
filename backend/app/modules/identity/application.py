@@ -18,6 +18,7 @@ from .domain import (
     ROLE_LABELS,
     AccessMode,
     can_admin_mode,
+    FULL_ACCESS_ROLES,
     hash_pin,
     new_pin,
     IdentityUser,
@@ -190,7 +191,10 @@ def _principal(
     # portalSession_: in «Режим админа» the effective role is admin (its matrix row + the person's own exceptions,
     # portalAccessFor_('admin', email)); the stored role stays as it is.
     role = "admin" if admin_mode else user.role
-    effective = effective_permissions(role_permissions(role, role_access), user_access)
+    base = role_permissions(role, role_access)
+    # A full-access role cannot be reduced: neither the matrix (already ignored in role_permissions) nor a personal
+    # exception lowers it, so its personal overlay is skipped entirely (owner 2026-09-29).
+    effective = base if role in FULL_ACCESS_ROLES else effective_permissions(base, user_access)
     return Principal(
         actor=Actor(id=user.id, name=user.name or user.email, department=user.department),
         email=user.email,

@@ -45,6 +45,6 @@ def test_putaway_sheet_is_storekeeper_work(receiving_api):  # noqa: F811
 
 def test_role_outside_the_section_cannot_read(receiving_api):  # noqa: F811
     client, _ = receiving_api
-    as_viewer("buyer", "receiving")
+    as_viewer("estimator", "receiving")  # estimator is neither in the receiving role list nor a full-access role
 
     assert client.get("/api/receiving").status_code == 403

@@ -59,8 +59,10 @@ def identity_database():
                 login="petrov",
                 email="petrov@example.test",
                 name="Петров",
-                department="Закупки",
-                role="buyer",
+                department="Склад",
+                # A non-full-access role, so the matrix and personal exceptions still drive the permissions here
+                # (buyer/prodhead/management/admin are full access and ignore both since 2026-09-29).
+                role="receiver",
                 site=None,
                 active=True,
             ),
@@ -93,13 +95,17 @@ def test_login_resolve_logout_and_server_owned_principal(identity_database):
 
     assert resolved is not None
     assert resolved.principal.actor.id == USER_ID
-    # Stored rows sit on top of ROLE_DEFAULTS (NAV-ACCESS): the buyer's default view grants come along.
+    # Stored rows drive a non-full role (NAV-ACCESS): the receiver's seed cells plus this user's own stored grants.
     assert resolved.principal.permissions == {
         "newrequest": "edit",
         "myrequests": "edit",
         "requests": "edit",
+        "receiving": "edit",
+        "warehouse": "edit",
+        "fulfillment": "edit",
+        "handout": "edit",
+        "shipping": "edit",
         "procurement": "edit",
-        "warehouse": "view",
         "erpref": "view",
     }
     assert result.session_token not in resolved.session.token_hash
@@ -197,8 +203,10 @@ def test_user_override_removes_permission_and_deactivation_revokes_session(ident
         uow_factory(),
         client_key="client:test",
     )
+    # The personal «none» on procurement takes it away (receiver is a non-full role, so exceptions still apply).
     assert result.principal.permissions == {
-        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "warehouse": "view", "erpref": "view",
+        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "receiving": "edit", "warehouse": "edit",
+        "fulfillment": "edit", "handout": "edit", "shipping": "edit", "erpref": "view",
     }
 
     with identity_database() as session:

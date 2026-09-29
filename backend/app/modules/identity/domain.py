@@ -162,11 +162,19 @@ SECTION_LABELS: dict[str, str] = {
     "staffdir": "Сотрудники",
     "operations": "Системный журнал",
 }
-# What an EMPTY cell means (`role_permissions`): closed for every role, except that the administrator has every
-# section on edit unless the matrix or a personal exception says otherwise (ID-5, SUPPLYMAP portalAdminAccess_,
-# 14.09.2026) — a new section needs no entry anywhere.
+# Roles that always have full access to every section and cannot be reduced (owner, 2026-09-29: технолог = admin,
+# специалист по снабжению = buyer, директор производства = prodhead, генеральный директор = management — «полный
+# доступ всегда»). For them an empty cell, a matrix `none` and a personal exception are all ignored: `role_permissions`
+# returns edit everywhere and `_principal` skips the personal overlay, so nobody can accidentally take a section away.
+# `require_section` also lets them past a route's role list, so an action bound to another role is open to them too.
+# «Доступы» (the access-matrix editor, access_admin_principal) stays admin-only, so the guarantee cannot be edited away
+# from these roles (решено агентом — проверить).
+FULL_ACCESS_ROLES = frozenset({"admin", "buyer", "prodhead", "management"})
+# What an EMPTY cell means (`role_permissions`): closed for every role, except the full-access roles above, which have
+# every section on edit no matter what the matrix or a personal exception says (ID-5, SUPPLYMAP portalAdminAccess_,
+# 14.09.2026, extended 2026-09-29) — a new section needs no entry anywhere.
 ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
-    "admin": {section: AccessMode.EDIT for section in SECTION_LABELS},
+    role: {section: AccessMode.EDIT for section in SECTION_LABELS} for role in FULL_ACCESS_ROLES
 }
 
 
@@ -267,8 +275,10 @@ def _overlay(base: dict[str, AccessMode], overrides: dict[str, AccessMode]) -> d
 
 
 def role_permissions(role: str, overrides: dict[str, AccessMode]) -> dict[str, AccessMode]:
-    """The role's sections: the «Доступы» matrix row (view/edit open, `none` or empty closes); the administrator
-    starts from «edit everywhere» (ROLE_DEFAULTS)."""
+    """The role's sections: the «Доступы» matrix row (view/edit open, `none` or empty closes); the full-access roles
+    start from «edit everywhere» (ROLE_DEFAULTS) and ignore the matrix entirely — their access cannot be reduced."""
+    if role in FULL_ACCESS_ROLES:
+        return {section: AccessMode.EDIT for section in SECTION_LABELS}
     return _overlay(ROLE_DEFAULTS.get(role, {}), overrides)
 
 

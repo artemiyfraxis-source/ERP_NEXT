@@ -7,28 +7,39 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-from app.modules.identity.domain import ROLE_DEFAULTS, ROLE_SEED, ROLES, SECTION_LABELS, AccessMode, role_permissions
+from app.modules.identity.domain import (
+    FULL_ACCESS_ROLES,
+    ROLE_DEFAULTS,
+    ROLE_SEED,
+    ROLES,
+    SECTION_LABELS,
+    AccessMode,
+    role_permissions,
+)
 from tests.identity.test_access import _client, access_api  # noqa: F401  (fixture)
 
 
-def test_only_the_administrator_has_anything_without_a_cell():
-    for role in ROLES - {"admin"}:
+def test_only_full_access_roles_have_anything_without_a_cell():
+    # Full-access roles (admin, buyer, prodhead, management) are edit everywhere; every other role's empty cell closes.
+    for role in ROLES - FULL_ACCESS_ROLES:
         assert role_permissions(role, {}) == {}, role
-    assert role_permissions("admin", {}) == {section: AccessMode.EDIT for section in SECTION_LABELS}
-    assert set(ROLE_DEFAULTS) == {"admin"}
+    for role in FULL_ACCESS_ROLES:
+        assert role_permissions(role, {}) == {section: AccessMode.EDIT for section in SECTION_LABELS}, role
+    assert set(ROLE_DEFAULTS) == FULL_ACCESS_ROLES
 
 
 def test_newrequest_follows_the_matrix(access_api):  # noqa: F811
+    # A non-full-access role (receiver) follows the matrix; a full-access role would keep filing regardless.
     admin = _client("admin", "admin-password")
-    buyer = _client("buyer", "buyer-password")
-    assert buyer.post("/api/requests", json={}).status_code != 403
+    receiver = _client("receiver", "recv-password")
+    assert receiver.post("/api/requests", json={}).status_code != 403
 
     matrix = admin.get("/api/auth/access").json()["matrix"]
-    matrix["buyer"].pop("newrequest")  # an emptied cell closes filing
+    matrix["receiver"].pop("newrequest")  # an emptied cell closes filing
     assert admin.put("/api/auth/access/roles", json={"matrix": matrix}).status_code == 200
 
-    assert "newrequest" not in buyer.get("/api/auth/me").json()["permissions"]
-    assert buyer.post("/api/requests", json={}).status_code == 403
+    assert "newrequest" not in receiver.get("/api/auth/me").json()["permissions"]
+    assert receiver.post("/api/requests", json={}).status_code == 403
 
 
 def _config(database_path: Path) -> Config:

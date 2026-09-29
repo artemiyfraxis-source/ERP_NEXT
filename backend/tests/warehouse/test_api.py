@@ -60,12 +60,13 @@ def warehouse_api():
 
 
 def test_warehouse_writes_require_receiver_role(warehouse_api):
-    """ID-6: a buyer reads the stock (SUPPLYMAP «Склад — просмотр»), but only the storekeeper or admin writes."""
+    """ID-6: a master reads the stock (SUPPLYMAP «Склад — просмотр»), but only the storekeeper or admin writes.
+    (buyer/prodhead/management are full-access since 2026-09-29, so a non-full role is used here.)"""
     client, lot = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=Actor(name="Закупщик", department="Закупки"),
-        email="buyer@example.test",
-        roles=frozenset({"buyer"}),
+        actor=Actor(name="Мастер", department="Цех"),
+        email="master@example.test",
+        roles=frozenset({"master"}),
         permissions={"warehouse": "edit"},
     )
 
@@ -403,9 +404,9 @@ def test_long_old_address_is_kept_but_regular_move_rejects_it(warehouse_api):
 def test_location_correction_needs_the_warehouse_receiver_or_admin(warehouse_api):
     client, lot = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=Actor(name="Закупщик", department="Закупки"),
-        email="buyer@example.test",
-        roles=frozenset({"buyer"}),
+        actor=Actor(name="Сметчик", department="КБ"),
+        email="estimator@example.test",
+        roles=frozenset({"estimator"}),
         permissions={"warehouse": "edit"},
     )
 

@@ -40,6 +40,7 @@ from app.shared.persistence import AuditEventRow, create_schema
 NOW = datetime(2026, 9, 29, 10, 0)
 ADMIN_ID = UUID("30000000-0000-0000-0000-000000000001")
 BUYER_ID = UUID("30000000-0000-0000-0000-000000000002")
+RECEIVER_ID = UUID("30000000-0000-0000-0000-000000000003")  # a non-full-access role, for the «refused» cases
 
 
 # ── Domain ─────────────────────────────────────────────────────────────────────────────────────────
@@ -93,6 +94,9 @@ def staff_api():
                        role_access=ROLE_DEFAULTS["admin"])
         provision_user(session, _user(BUYER_ID, "buyer", "buyer", "Снабжение"), hash_password("buyer-password"),
                        role_access=ROLE_SEED["buyer"])
+        # No department, so it perturbs no department-list assertion; it exists only for the «refused» cases.
+        provision_user(session, _user(RECEIVER_ID, "receiver", "receiver", ""), hash_password("recv-password"),
+                       role_access=ROLE_SEED["receiver"])
         seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
         session.commit()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
@@ -126,11 +130,13 @@ NEW = {
 
 
 def test_only_admin_opens_the_directory(staff_api):
-    assert _client("buyer", "buyer-password").get("/api/auth/staff").status_code == 403
+    # A non-full-access role is refused; a full-access role (buyer) may open it (owner 2026-09-29).
+    assert _client("receiver", "recv-password").get("/api/auth/staff").status_code == 403
+    assert _client("buyer", "buyer-password").get("/api/auth/staff").status_code == 200
     assert TestClient(app).get("/api/auth/staff").status_code == 401
 
     body = _client("admin", "admin-password").get("/api/auth/staff").json()
-    assert [user["login"] for user in body["users"]] == ["admin", "buyer"]
+    assert [user["login"] for user in body["users"]] == ["admin", "buyer", "receiver"]
     assert body["departments"] == ["ИТ", "Снабжение"]
     assert {"key": "admin", "label": "Технолог"} in body["roles"]
     assert [site["code"] for site in body["sites"]] == ["ЦАР", "ЖУК", "АДМ"]
@@ -203,7 +209,9 @@ def test_create_refuses_bad_or_duplicate_rows(staff_api, change, status):
 
 
 def test_create_is_refused_to_non_admin_and_without_csrf(staff_api):
-    assert _client("buyer", "buyer-password").post("/api/auth/staff", json=NEW).status_code == 403
+    # A full-access role (buyer) may create; a non-full-access role is refused (owner 2026-09-29).
+    assert _client("buyer", "buyer-password").post("/api/auth/staff", json=NEW).status_code == 201
+    assert _client("receiver", "recv-password").post("/api/auth/staff", json=NEW).status_code == 403
     admin = _client("admin", "admin-password")
     del admin.headers["X-CSRF-Token"]
     assert admin.post("/api/auth/staff", json=NEW).status_code == 403
@@ -288,7 +296,7 @@ def test_department_list_keeps_departments_in_use_and_drops_roles(staff_api):
     assert admin.get("/api/auth/staff").json()["departments"] == ["Бухгалтерия", "ИТ", "Снабжение", "цех"]
     [event] = _events(staff_api, "identity.departments_saved")
     assert event.actor_id == ADMIN_ID
-    assert _client("buyer", "buyer-password").put("/api/auth/departments", json={"departments": []}).status_code == 403
+    assert _client("receiver", "recv-password").put("/api/auth/departments", json={"departments": []}).status_code == 403
 
 
 def test_department_rename_moves_employees(staff_api):
