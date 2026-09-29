@@ -40,6 +40,9 @@ from .domain import (
     next_system_id,
     supplier_reference,
     supplier_request_blockers,
+    supplier_request_document_html,
+    supplier_request_document_title,
+    supplier_request_folder,
     supplier_request_letter,
     split_line,
 )
@@ -89,6 +92,8 @@ class ProcurementRepository(Protocol):
     def add(self, line: ProcurementLine) -> None: ...
     def add_order(self, order: SupplierOrder) -> None: ...
     def get_order(self, order_number: str) -> SupplierOrder | None: ...
+    def add_order_document(self, document: SupplierOrderDocument, content: bytes) -> None: ...
+    def get_order_document(self, order_number: str) -> tuple[SupplierOrderDocument, bytes] | None: ...
 
 
 class SupplierDirectory(Protocol):
@@ -246,6 +251,22 @@ class SaveProcurementFactsCommand:
 
 
 @dataclass(frozen=True)
+class SupplierOrderDocument:
+    """Файл документа запроса в хранилище ERP (SUPPLYMAP: копия шаблона-Google Doc в папке год/месяц/поставщик)."""
+
+    order_number: str
+    file_name: str
+    folder: str
+    content_type: str
+    size: int
+    created_by: str
+    created_at: datetime
+
+
+SUPPLIER_ORDER_DOCUMENT_TYPE = "text/html; charset=utf-8"
+
+
+@dataclass(frozen=True)
 class SupplierOrder:
     """An issued supplier request: № ЗАКАЗА, ДАТА ЗАКАЗА and the letter (SUPPLYMAP's Google Doc)."""
 
@@ -258,6 +279,8 @@ class SupplierOrder:
     created_at: datetime
     letter: str
     line_ids: tuple[UUID, ...]
+    # Документ запроса; None — заказ выдан до хранения документов (его ссылка «ЗАКАЗ» пуста).
+    document: SupplierOrderDocument | None = None
 
 
 @dataclass(frozen=True)
@@ -800,6 +823,18 @@ def _issue_order(
         )
         for line in group.lines
     ]
+    letter = supplier_request_letter(group, number)
+    title = supplier_request_document_title(number, order_date)
+    content = supplier_request_document_html(title, letter).encode("utf-8")
+    document = SupplierOrderDocument(
+        order_number=number,
+        file_name=f"{title}.html",
+        folder=supplier_request_folder(order_date, group.supplier),
+        content_type=SUPPLIER_ORDER_DOCUMENT_TYPE,
+        size=len(content),
+        created_by=command.actor.name,
+        created_at=command.now,
+    )
     order = SupplierOrder(
         order_number=number,
         order_date=order_date,
@@ -808,10 +843,12 @@ def _issue_order(
         delivery_point=group.delivery_point,
         buyer=command.actor,
         created_at=command.now,
-        letter=supplier_request_letter(group, number),
+        letter=letter,
         line_ids=tuple(line.id for line in group.lines),
+        document=document,
     )
     uow.procurement.add_order(order)
+    uow.procurement.add_order_document(document, content)
     return order, sent
 
 
@@ -821,6 +858,15 @@ def supplier_order(order_number: str, uow: UnitOfWork) -> SupplierOrder:
     if order is None:
         raise KeyError(f"Supplier order not found: {order_number}")
     return order
+
+
+def supplier_order_document(order_number: str, uow: UnitOfWork) -> tuple[SupplierOrderDocument, bytes]:
+    """Файл документа запроса (ссылка «ЗАКАЗ» строк заказа)."""
+    with uow:
+        found = uow.procurement.get_order_document(order_number)
+    if found is None:
+        raise KeyError(f"Supplier order document not found: {order_number}")
+    return found
 
 
 def procurement_line(line_id: UUID, uow: UnitOfWork) -> ProcurementLine:

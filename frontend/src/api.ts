@@ -97,6 +97,14 @@ export interface SupplierOrder {
   buyer: string;
   letter: string;
   line_ids: string[];
+  /** Документ запроса в хранилище ERP (SUPPLYMAP: Google Doc из шаблона в папке год/месяц/поставщик). */
+  document?: SupplierOrderDocument | null;
+}
+
+export interface SupplierOrderDocument {
+  url: string;
+  file_name: string;
+  folder: string;
 }
 
 export interface SupplierRequestsResult {
@@ -137,6 +145,8 @@ export interface ProcurementLine {
   supplier_request_reference: string | null;
   order_number: string | null;
   order_date: string | null;
+  /** «ЗАКАЗ»: ссылка на документ запроса поставщику. */
+  order_url?: string | null;
   expected_arrival: string | null;
   invoice_url: string | null;
   paid_at: string | null;

@@ -312,7 +312,10 @@ it("forms supplier requests for ready lines in one batch and shows the letters",
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
     if (path === "/api/procurement/mine") {
       return json({
-        lines: [formed ? { ...ready, status: "Жду счет", order_number: "PO-001", order_date: "2026-09-16" } : ready],
+        lines: [formed ? {
+          ...ready, status: "Жду счет", order_number: "PO-001", order_date: "2026-09-16",
+          order_url: "/api/procurement/supplier-requests/PO-001/document",
+        } : ready],
         next_cursor: null,
       });
     }
@@ -323,6 +326,11 @@ it("forms supplier requests for ready lines in one batch and shows the letters",
           order_number: "PO-001", order_date: "2026-09-16", supplier: "ООО А", task_type: "Закупка",
           delivery_point: "Москва", buyer: "Закупщик", letter: "ООО А · REQ# 16.09.2026 - MR#D-1 PO-001",
           line_ids: [ready.id],
+          document: {
+            url: "/api/procurement/supplier-requests/PO-001/document",
+            file_name: "PO-001 от 16.09.2026.html",
+            folder: "Запросы поставщикам/2026/09 Сентябрь/ООО А",
+          },
         }],
         lines: [],
         skipped: [],
@@ -339,6 +347,12 @@ it("forms supplier requests for ready lines in one batch and shows the letters",
   expect(await screen.findByText("Сформировано запросов: 1; строк других закупщиков не тронуто: 2")).toBeInTheDocument();
   expect(screen.getByText("ООО А · REQ# 16.09.2026 - MR#D-1 PO-001")).toBeInTheDocument();
   expect(await screen.findByText("Заказ PO-001 от 2026-09-16")).toBeInTheDocument();
+  expect(screen.getByText("Запросы поставщикам/2026/09 Сентябрь/ООО А/PO-001 от 16.09.2026.html")).toBeInTheDocument();
+  const links = screen.getAllByRole("link", { name: "Открыть документ" });
+  expect(links.map((link) => link.getAttribute("href"))).toEqual([
+    "/api/procurement/supplier-requests/PO-001/document", "/api/procurement/supplier-requests/PO-001/document",
+  ]);
+  expect(screen.getAllByRole("button", { name: "Печать" })).toHaveLength(2);
   expect(screen.getByRole("button", { name: "Сформировать запросы поставщикам" })).toBeDisabled();
 });
 
