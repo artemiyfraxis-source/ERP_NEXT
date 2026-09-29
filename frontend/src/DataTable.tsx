@@ -274,9 +274,11 @@ export function DataTable<T>({
               <input type="checkbox" aria-label={`Выбрать ${key}`} checked={selected.has(key)} onChange={(event) => toggleRow(key, event.target.checked)} />
             </td>
           )}
-          {visible.map((column) => (
-            <td key={column.key} className={column.numeric ? "num" : column.wrap ? "text" : undefined}>
-              {column.render ? column.render(row) : column.value(row) ?? ""}
+          {visible.map((column, index) => (
+            <td key={column.key} className={[column.numeric ? "num" : column.wrap ? "text" : "", index === 0 ? "key" : ""].join(" ").trim() || undefined}>
+              {column.wrap
+                ? <div className="cell-wrap">{column.render ? column.render(row) : column.value(row) ?? ""}</div>
+                : column.render ? column.render(row) : column.value(row) ?? ""}
             </td>
           ))}
         </tr>
@@ -334,7 +336,7 @@ export function DataTable<T>({
         </div>
       )}
       <div className="table-wrap">
-        <table className="grid wide">
+        <table className={selectable ? "grid wide selectable" : "grid wide"}>
           <thead>
             <tr>
               {selectable && <th><input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} /></th>}
