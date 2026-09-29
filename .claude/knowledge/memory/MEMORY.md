@@ -1,3 +1,16 @@
+- [ERP_NEXT hub](erp-next-hub.md) — START HERE: map of every note below (Obsidian graph root)
+- [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, batch access asks
+- [Launch plan](launch-plan.md) — server 01.10, five blocks by 05.10, second wave 05–09.10, cutover
+- [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, LAN + Tailscale, push.ps1
+- [Staff and sites](staff-and-sites.md) — ЦАР/ЖУК fitters, masters, full-access roles, PIN
+- [SUPPLYMAP parity](supplymap-parity.md) — «всё как в SUPPLYMAP», deliberate differences, out of scope
 - [SUPPLYMAP domain decisions](supplymap-domain-decisions.md) — owner decisions that bind the port live in SUPPLYMAP memory; which note to read per area
+- Modules: [projects](module-projects.md) · [techcards](module-techcards.md) · [reference DB](module-reference-db.md) · [warehouse](module-warehouse.md) · [fulfillment](module-fulfillment.md) · [production](module-production.md) · [shipping](module-shipping.md) · [procurement](module-procurement.md)
+- [Google wiring](google-wiring.md) — read-only, being left; service account, KD folder, key location
+- [Deferred by owner](deferred-by-owner.md) — traceability, boxes/defects section
+- [Agent decisions to review](runlog-decisions.md) — «решено агентом — проверить» from RUNLOG, tagged by module
+- [Cloud threads setup](cloud-threads-setup.md) — cwd above three repos, no repo hooks/plugins, manual drift report
+- [Merge gotchas](erp-merge-gotchas.md) — CRLF conflicts, shallow SUPPLYMAP, Python 3.12, parallel merges
+- [Local demo](erp-local-demo.md) — owner's PC demo over Remote Control, ports, Auto-mode limits
 - [Gate red without failures](gate-red-without-failures.md) — pytest-current symlink exit 1 (fixed by conftest basetemp); drift tests blind for 9 of 11 modules
 - [Windows Python CRLF](windows-python-crlf.md) — Python text-mode writes CRLF into the LF-only repo; use newline=""
