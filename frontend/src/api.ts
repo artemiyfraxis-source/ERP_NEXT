@@ -772,7 +772,43 @@ export interface Shipment {
   shipped_at: string | null;
   manager: string;
   note: string;
+  tk_note: string;
+  places: number;
+  weight: string;
+  boxes: ShipmentBox[];
   lines: ShipmentLine[];
+}
+
+export interface ShipmentBox {
+  place: number;
+  kind: string;
+  dims: string;
+  net: string;
+  gross: string;
+  seal: string;
+  items: Array<{ item_index: string; quantity: string }>;
+}
+
+/** Карточка отгрузки проекта (`ОТГРУЗКА.ПРОЕКТЫ`): адресат, доставка, тип УПД и реквизиты DN. */
+export interface ProjectAddressee {
+  project: string;
+  version: number;
+  receiver: string;
+  shipping_point: string;
+  contact: string;
+  phone: string;
+  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
+  carrier: string;
+  upd_type: "ЭДО" | "БУМАГА" | null;
+  updated_by: string;
+  updated_at: string | null;
+  po: string;
+  contract: string;
+  spec: string;
+  invoice: string;
+  pays: string;
+  customer_address: string;
+  hours: string;
 }
 
 export interface ReferencePair {
@@ -1661,14 +1697,14 @@ export const shippingApi = {
   registerGood: (payload: Record<string, unknown>) => api<{ good: FinishedGood }>("/api/shipping/goods", {
     method: "POST", body: JSON.stringify(payload),
   }),
-  accept: (goodId: string, version: number, quantity: string) => api<{ good: FinishedGood }>(`/api/shipping/goods/${goodId}/accept`, {
-    method: "POST", body: JSON.stringify({ version, quantity }),
+  accept: (goodId: string, version: number, quantity: string, receivedAt?: string) => api<{ good: FinishedGood }>(`/api/shipping/goods/${goodId}/accept`, {
+    method: "POST", body: JSON.stringify(receivedAt ? { version, quantity, received_at: receivedAt } : { version, quantity }),
   }),
   create: (payload: Record<string, unknown>) => api<{ shipment: Shipment }>("/api/shipping/shipments", {
     method: "POST", body: JSON.stringify(payload),
   }),
   action: (shipmentId: string, action: "pick" | "pack" | "ship" | "close" | "cancel", version: number) =>
-    api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/${action}`, {
+    api<{ shipment: Shipment; closed?: boolean; why?: string }>(`/api/shipping/shipments/${shipmentId}/${action}`, {
       method: "POST", body: JSON.stringify({ version }),
     }),
   unpick: (shipmentId: string, version: number, lineId: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/unpick`, {
@@ -1676,6 +1712,23 @@ export const shippingApi = {
   }),
   documents: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/documents`, {
     method: "PUT", body: JSON.stringify(payload),
+  }),
+  /** SH-4 `portalShipItemQty`: «Заказано» после создания, не ниже набранного. */
+  setRequested: (shipmentId: string, version: number, lineId: string, quantity: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/lines/${lineId}`, {
+    method: "PUT", body: JSON.stringify({ version, quantity }),
+  }),
+  /** `portalShipDocs`: короба и примечания для ТК; первый раз — ещё и «Упакована» с номерами PL/DN. */
+  boxes: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/boxes`, {
+    method: "PUT", body: JSON.stringify(payload),
+  }),
+  print: (shipmentId: string, document: "pl" | "dn") => api<{ sheets: PrintSheet[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
+  addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
+  saveAddressee: (payload: Record<string, unknown>) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-addressee", {
+    method: "PUT", body: JSON.stringify(payload),
+  }),
+  /** `portalShipPack`: «Упаковать» отмеченное в карточке проекта. */
+  projectPack: (project: string, lines: Array<{ good_id: string; quantity: string }>) => api<{ shipment: Shipment }>("/api/shipping/project-pack", {
+    method: "POST", body: JSON.stringify({ project, lines }),
   }),
 };
 
