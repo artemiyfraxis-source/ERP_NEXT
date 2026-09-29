@@ -31,12 +31,14 @@ from .application import (
     ChangeProjectTechcardCommand,
     AutoBuildProjectTechcardCommand,
     CreateProjectTechcardCommand,
+    EditOperationRecordCommand,
     EditTechcardOperationCommand,
     RebuildProjectTechcardCommand,
     ReplaceOperationLibraryCommand,
     UnitOfWork,
     create_project_techcard,
     auto_build_project_techcard,
+    edit_operation_record,
     edit_project_operation,
     issue_project_techcard,
     rebuild_project_techcard,
@@ -83,6 +85,34 @@ class AutoBuildTechcardPayload(VersionPayload):
 
 class EditOperationPayload(VersionPayload):
     operation: dict[str, Any]
+
+
+class RecordStepPayload(BaseModel):
+    kind: str = Field(default="", max_length=32)
+    text: str = Field(default="", max_length=10_000)
+    tolerance: str = Field(default="", max_length=1_000)
+
+
+class RecordToolPayload(BaseModel):
+    section: str = Field(default="", max_length=64)
+    name: str = Field(default="", max_length=1_000)
+    inventory_number: str = Field(default="", max_length=255)
+    program: str = Field(default="", max_length=255)
+    parameters: str = Field(default="", max_length=1_000)
+    norm: str = Field(default="", max_length=255)
+    unit: str = Field(default="", max_length=64)
+
+
+class OperationRecordPayload(BaseModel):
+    """SUPPLYMAP tcCardEditForm_ → portalTcRecordSave: name, safety (without the form heading), defects, steps,
+    tooling. Empty rows are dropped server-side (tcRecordNormalize_)."""
+
+    name: str = Field(default="", max_length=512)
+    safety: str = Field(default="", max_length=10_000)
+    defects: str = Field(default="", max_length=20_000)
+    revision: str = Field(default="", max_length=255)
+    steps: list[RecordStepPayload] = Field(default_factory=list, max_length=200)
+    tooling: list[RecordToolPayload] = Field(default_factory=list, max_length=200)
 
 
 class OperationLibraryPayload(BaseModel):
@@ -155,7 +185,30 @@ def _revision_result(revision: TechcardRevision) -> dict:
     }
 
 
-def _operation_card_result(card: OperationCardTemplate, *, detail: bool = False) -> dict:
+def _operation_norms(references_factory: Callable[[], ReferencesUnitOfWork] | None) -> dict[str, dict[str, str]] | None:
+    """БД.ОП by operation code → time norms (SUPPLYMAP tcRecordsForPortal_: «Время Операции», «Время подготовки,
+    сек»; the first row of a code wins). None — the references snapshot is not loaded, so «нет норм» is unknown."""
+    if references_factory is None:
+        return None
+    with references_factory() as references_uow:
+        if references_uow.tech_operations.metadata() is None:
+            return None
+        records = references_uow.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000)
+    norms: dict[str, dict[str, str]] = {}
+    for record in records:
+        code = str(record.fields.get("opNumber") or "").strip()
+        if code and code not in norms:
+            norms[code] = {
+                "operation_seconds": str(record.fields.get("tOp") or ""),
+                "setup_seconds": str(record.fields.get("tPrep") or ""),
+            }
+    return norms
+
+
+def _operation_card_result(
+    card: OperationCardTemplate, *, detail: bool = False, norms: dict[str, dict[str, str]] | None = None,
+) -> dict:
+    controls = sum(1 for step in card.steps if step.kind == "Контроль")
     result = {
         "id": card.source_id,
         "code": card.code,
@@ -164,7 +217,14 @@ def _operation_card_result(card: OperationCardTemplate, *, detail: bool = False)
         "name": card.name,
         "category": card.category,
         "steps": len(card.steps),
+        "controls": controls,
         "tooling": len(card.tooling),
+        "first_step": card.steps[0].text if card.steps else "",
+        "step_text": " ".join(step.text for step in card.steps),
+        "norms": None if norms is None else norms.get(card.code),
+        "norms_known": norms is not None,
+        "changed_at": card.changed_at.isoformat() if card.changed_at else None,
+        "changed_by": card.changed_by,
     }
     if detail:
         result["document"] = card.document()
@@ -189,16 +249,21 @@ def import_grapher_export(
 @router.get("/techcards/templates")
 def operation_card_templates(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
 ) -> dict:
     with uow_factory() as uow:
         cards = uow.operation_cards.list()
         metadata = uow.operation_cards.metadata()
+    norms = _operation_norms(references_factory)
     return {
         "metadata": None if metadata is None else {
             **metadata,
             "imported_at": metadata["imported_at"].isoformat(),
         },
-        "items": [_operation_card_result(card) for card in cards],
+        "items": [_operation_card_result(card, norms=norms) for card in cards],
     }
 
 
@@ -206,12 +271,16 @@ def operation_card_templates(
 def operation_card_template(
     source_id: str,
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
 ) -> dict:
     with uow_factory() as uow:
         card = uow.operation_cards.get(source_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Карточка операции не найдена")
-    return _operation_card_result(card, detail=True)
+    return _operation_card_result(card, detail=True, norms=_operation_norms(references_factory))
 
 
 @router.put("/techcards/templates/supplymap-library")
@@ -221,13 +290,43 @@ def import_operation_card_templates(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
 ) -> dict:
-    count = _run(lambda: replace_operation_library(ReplaceOperationLibraryCommand(
+    result = _run(lambda: replace_operation_library(ReplaceOperationLibraryCommand(
         source_commit=payload.sourceCommit,
         templates=tuple(payload.templates),
         actor=principal.actor,
         now=now,
     ), uow_factory()))
-    return {"templates": count, "source_commit": payload.sourceCommit.lower()}
+    return {
+        "templates": result.templates,
+        "source_commit": payload.sourceCommit.lower(),
+        "kept_edited": list(result.kept_edited),
+    }
+
+
+@router.put("/techcards/templates/{source_id}")
+def edit_operation_card_template(
+    source_id: str,
+    payload: OperationRecordPayload,
+    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
+) -> dict:
+    try:
+        card = _run(lambda: edit_operation_record(EditOperationRecordCommand(
+            source_id=source_id,
+            record=payload.model_dump(),
+            actor=principal.actor,
+            now=now,
+        ), uow_factory()))
+    except HTTPException as error:
+        if error.status_code == 404:
+            raise HTTPException(status_code=404, detail="Карточка операции не найдена") from error
+        raise
+    return _operation_card_result(card, detail=True, norms=_operation_norms(references_factory))
 
 
 @router.get("/techcards/projects")
