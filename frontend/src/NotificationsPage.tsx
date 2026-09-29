@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { operationsApi, type NotificationItem } from "./api";
+import { NOTIFICATIONS_CHANGED } from "./NotificationBell";
 
 export function NotificationsPage() {
   const [items, setItems] = useState<NotificationItem[]>([]);
@@ -29,6 +30,7 @@ export function NotificationsPage() {
     try {
       const result = await operationsApi.markRead(ids);
       setUnread(result.unread);
+      window.dispatchEvent(new CustomEvent(NOTIFICATIONS_CHANGED, { detail: result.unread }));
       setItems((current) => current.map((item) => !ids.length || ids.includes(item.id) ? { ...item, read: true } : item));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось отметить уведомление");
