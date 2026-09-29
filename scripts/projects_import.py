@@ -429,6 +429,43 @@ def apply(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def drop_shipped(args: argparse.Namespace) -> None:
+    """Убрать из уже загруженной базы проекты, отгруженные по листу цеха снимка (владелец 29.09: отгруженное не
+    нужно). Набор уходит каскадом, как «Удалить проект» в карточке; без набора — строка реестра. Повторный запуск
+    ничего не меняет; сотрудники, склад и остальное не трогаются."""
+    if not os.getenv("ERP_DATABASE_URL"):
+        raise SystemExit("Задайте ERP_DATABASE_URL")
+    from app.main import app
+    from app.modules.production.plan import normalize_project_number
+    from app.modules.production.plan_application import ReplacePlanProjectsCommand, replace_plan_projects
+    from app.shared.clock import moscow_now
+    from app.shared.identity import Actor
+    from app.workflows.project_kitset import delete_kitset
+
+    snapshot = Path(args.snapshot)
+    if not snapshot.exists():
+        print(f"Снимка {snapshot} нет — отгруженные не проверялись")
+        return
+    shipped = shipped_projects(shop_rows(json.loads(snapshot.read_text(encoding="utf-8"))["shop"]))
+    actor = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP: отгруженное не переносится", department="")
+    now = moscow_now()
+    state = app.state
+    with state.techcards_uow_factory() as uow:
+        kitsets = [item.project for item in uow.kitsets.list() if normalize_project_number(item.project) in shipped]
+    for project in kitsets:
+        delete_kitset(project, actor, now, state.techcards_uow_factory, state.production_uow_factory,
+                      getattr(state, "shipping_uow_factory", None))
+    with state.production_uow_factory() as uow:
+        projects = list(uow.plan_projects.list())
+    kept = [item for item in projects if normalize_project_number(item.project) not in shipped]
+    if len(kept) != len(projects):
+        replace_plan_projects(ReplacePlanProjectsCommand(tuple(kept), actor, now), state.production_uow_factory())
+    removed = sorted({normalize_project_number(p) for p in kitsets}
+                     | {item.project for item in projects if item not in kept})
+    print(f"Отгружено по листу цеха: {len(shipped)}; убрано из базы: {len(removed)}"
+          + (f" ({', '.join(removed)}, наборов {len(kitsets)})" if removed else ""))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -442,8 +479,10 @@ def main() -> None:
     run.add_argument("--login", default="preview")
     run.add_argument("--password", default="Preview-2026!")
     run.add_argument("--refresh", action="store_true", help="перечитать расчёт и у уже заведённых карточек")
+    drop = sub.add_parser("drop-shipped", help="убрать из базы проекты, отгруженные по листу цеха снимка")
+    drop.add_argument("snapshot")
     args = parser.parse_args()
-    (snapshot if args.command == "snapshot" else apply)(args)
+    {"snapshot": snapshot, "apply": apply, "drop-shipped": drop_shipped}[args.command](args)
 
 
 if __name__ == "__main__":
