@@ -185,8 +185,13 @@ $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = 'C:\secrets\erp-calc-reader.json'
 проекта КД не трогает — как `tcKitsetDelete`. Запись идёт от того же сервисного аккаунта
 (`ERP_GOOGLE_SERVICE_ACCOUNT_JSON`, в проекте Google Cloud включить Google Drive API), корень — ID папки
 «Проекты» в `ERP_KD_DRIVE_FOLDER_ID` (из ссылки `drive.google.com/drive/folders/<ID>`). У сервисного аккаунта
-нет своего места на Диске, поэтому папка должна лежать на общем диске, а `client_email` аккаунта — быть
-его участником с ролью «Менеджер контента». Без ключа или папки вложение и отвязка отвечают `503` с подсказкой.
+нет своего места на Диске, поэтому в общий диск он пишет только как «Менеджер контента».
+
+Папка «Проекты» SUPPLYMAP лежит в обычном «Моём диске» владельца — туда сервисный аккаунт файл не запишет. Для
+неё задаётся `ERP_KD_DRIVE_OAUTH_JSON` — JSON `authorized_user` (`client_id`, `client_secret`, `refresh_token`,
+по желанию `account`) аккаунта-владельца с доступом `https://www.googleapis.com/auth/drive`: ERP пишет от его
+имени, как GAS-приложение. Существующие папки ERP находит по имени (`tcFolderKey_`) и дублей не создаёт. Без
+ключа или папки вложение и отвязка отвечают `503` с подсказкой.
 
 ```powershell
 $env:ERP_KD_DRIVE_FOLDER_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz'
