@@ -14,6 +14,14 @@ export function toneOf(status: string, statuses: string[]) {
   return "prep";
 }
 
+/** Сколько КБ с выданной ТК и сколько из них без отметки проверки — те же числа, что в бейджах «ТК ✓» и «не проверено». */
+export function tcProgress(item: KitsetTile) {
+  const kbs = item.kb_stages;
+  const tc = kbs.filter((kb) => kb.tc).length;
+  const unreviewed = kbs.filter((kb) => kb.tc && !(kb.review?.value && kb.review.value !== "не проверена")).length;
+  return { total: kbs.length, tc, unreviewed };
+}
+
 // `extra` — строка экрана мастера (ДЛ, операции без исполнителя, к запуску); без `remove` корзины нет.
 export function KitTile({ item, statuses, canEdit, open, remove, extra }: {
   item: KitsetTile; statuses: string[]; canEdit: boolean; open: () => void; remove?: () => void; extra?: ReactNode;
@@ -23,10 +31,8 @@ export function KitTile({ item, statuses, canEdit, open, remove, extra }: {
   const reviews = kbs.map((kb) => kb.review?.value);
   const ok = reviews.filter((value) => value === "проверена").length;
   const bad = reviews.filter((value) => value === "с погрешностями").length;
-  const total = kbs.length;
-  const tc = kbs.filter((kb) => kb.tc).length;
+  const { total, tc, unreviewed } = tcProgress(item);
   const kit = kbs.filter((kb) => kb.kit).length;
-  const unreviewed = kbs.filter((kb) => kb.tc && !(kb.review?.value && kb.review.value !== "не проверена")).length;
   const index = statuses.indexOf(item.status);
   const late = index >= statuses.indexOf("В работе") && index < statuses.indexOf("Отгружено");
   const facts: Array<[string, string, string]> = [];

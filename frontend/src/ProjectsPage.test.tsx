@@ -72,6 +72,42 @@ describe("ProjectsPage", () => {
     expect(localStorage.getItem("kitFilt")).toBe("В работе");
   });
 
+  it("hides shipped projects by default and projects with ready or checked techcards on request, per user", async () => {
+    const stage = (tc: boolean, review: string | null) => ({ index: "КБ1", status: "Новый", manual: false, tc, kit: false, review: review ? { value: review, text: "", who: "" } : null });
+    const more = [
+      ...tiles,
+      { ...tiles[1], project: "500К.1", status: "Отгружено", blocker: "", kb_stages: [stage(true, "проверена")] },
+      { ...tiles[1], project: "600К.1", status: "Новый", blocker: "", kb_stages: [stage(true, null)] },
+      { ...tiles[1], project: "610К.1", status: "Новый", blocker: "", kb_stages: [stage(true, "с погрешностями")] },
+    ];
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => String(input).startsWith("/api/techcards/kitsets?sort=")
+      ? json({ items: more, statuses }) : base(input, init));
+    const { unmount } = render(<ProjectsPage principal={editor} />);
+    expect(await screen.findByText("708К.4")).toBeTruthy();
+    expect(screen.queryByText("500К.1")).toBeNull();
+    expect(screen.getByText("показано 4 из 5")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Скрыть с проверенными ТК"));
+    expect(screen.queryByText("610К.1")).toBeNull();
+    expect(screen.getByText("600К.1")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Скрыть с готовыми ТК"));
+    expect(screen.queryByText("600К.1")).toBeNull();
+    expect(screen.getByText("показано 2 из 5")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Скрыть отгруженные"));
+    fireEvent.click(screen.getByLabelText("Скрыть с готовыми ТК"));
+    fireEvent.click(screen.getByLabelText("Скрыть с проверенными ТК"));
+    expect(screen.getByText("500К.1")).toBeTruthy();
+    expect(localStorage.getItem("kitHide.shipped.u1")).toBe("0");
+    fireEvent.click(screen.getByLabelText("Скрыть с готовыми ТК"));
+    unmount();
+    render(<ProjectsPage principal={editor} />);
+    expect(await screen.findByText("708К.4")).toBeTruthy();
+    expect(screen.getByLabelText<HTMLInputElement>("Скрыть отгруженные").checked).toBe(false);
+    expect(screen.getByLabelText<HTMLInputElement>("Скрыть с готовыми ТК").checked).toBe(true);
+    expect(screen.queryByText("500К.1")).toBeNull();
+  });
+
   it("creates a project from the calculation link, as SUPPLYMAP does", async () => {
     const fetchMock = vi.mocked(fetch);
     const base = fetchMock.getMockImplementation()!;
