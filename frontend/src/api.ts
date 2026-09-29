@@ -2021,11 +2021,6 @@ export const techcardsApi = {
       method: "DELETE",
       body: JSON.stringify({ version }),
     }),
-  cutLengths: (wires: Array<{ id: string; art: string; name: string }>, calcOps: Array<{ code: string; comp: string; req?: string; l?: string }>) =>
-    api<{ lengths: Record<string, number> }>("/api/techcards/cut-lengths", {
-      method: "POST",
-      body: JSON.stringify({ wires, calc_ops: calcOps.map((op) => ({ code: op.code, comp: op.comp, req: op.req || "", l: op.l || "" })) }),
-    }),
 };
 
 export const operationsApi = {
@@ -2172,6 +2167,13 @@ export interface KitsetDeleteResult {
 
 const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
 
+/** `tcLoadBomFromKit`: состав сборки для генератора и строки листа КБn расчёта (`tcCalcOps_`). */
+export type KitsetBom = {
+  project: string; index: string; name: string; run: string; part_qty: string; calc_source: string;
+  components: Array<{ id: string; type: string; name: string; art: string; kd: string; qty: number | string }>;
+  calc_ops: Array<{ code: string; comp: string; n: string; l: string; req: string }>;
+};
+
 export const kitsetsApi = {
   list: (sort = "upd") => api<{ items: KitsetTile[]; statuses: string[] }>(`/api/techcards/kitsets?sort=${encodeURIComponent(sort)}`),
   get: (project: string) => api<KitsetCard>(kitsetPath(project)),
@@ -2185,7 +2187,7 @@ export const kitsetsApi = {
     api<{ res: { updated: number } }>(`${kitsetPath(project)}/lines`, { method: "PUT", body: JSON.stringify({ edits }) }),
   supply: (project: string) => api<{ lines: KitsetSupplyLine[] }>(`${kitsetPath(project)}/supply`),
   bom: (project: string, index: string) =>
-    api<{ components: Array<{ id: string; type: string; name: string; art: string; kd: string; qty: number }> }>(
+    api<KitsetBom>(
       `${kitsetPath(project)}/bom/${encodeURIComponent(index)}`,
     ),
   lots: (query: string) => api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}`),

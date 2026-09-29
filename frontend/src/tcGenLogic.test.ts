@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { applyCalcLengths, initState, makeGen, parseCalcTsv, updateEndpoint, type GenData } from "./tcGenLogic";
+import { initState, makeGen, updateEndpoint, type GenData } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -87,10 +87,26 @@ it("coax kit opens the КОАКС tab and orders angled side B before the second
 
 it("takes cut lengths from the calc sheet rows when the name has none", () => {
   const D = data(interboard, "Жгут XHP");
-  const rows = parseCalcTsv("Код\tКомплектующее\tn\tL\tТребования\nCUT_WIRE\tМГТФ 0,12\t2\t0,16\tL=150мм\nSDR_tin\t\t\t\tL=3");
-  expect(rows).toHaveLength(2);
-  const S = applyCalcLengths({ ...D, calcOps: rows }, initState(D), { w: 150 });
+  const calcOps = [
+    { code: "CUT_WIRE", comp: "МГТФ 0,12", n: "2", l: "0,16", req: "L=150мм" },
+    { code: "SDR_tin", comp: "", n: "", l: "", req: "L=3" },
+  ];
+  const S = initState({ ...D, calcOps });
   expect(S.drawingLength).toBe(150);
   expect(S.lenFromCalc).toBe(true);
-  expect((makeGen(D, S).buildConfig() as any).wires[0].length).toBe(160);
+  expect((makeGen({ ...D, calcOps }, S).buildConfig() as any).wires[0].length).toBe(160);
+});
+
+it("keeps the auto-picked template after the first show (renderOpsCard selectedTemplates)", () => {
+  const D = data(interboard, "Жгут XHP 150мм");
+  const S = initState(D);
+  const g = makeGen(D, S);
+  const prs = g.getActiveOps().find((op) => op.type === "prsTerm")!;
+  const first = g.templateIdFor(prs);
+  const stuck = g.stickTemplates();
+  expect(stuck?.[prs.opKey]).toBe(first);
+  const S2 = { ...S, selectedTemplates: stuck! };
+  const D2 = { ...D, templates: [{ id: "other", title: "PRS_TERMINAL_2.50 | Другой (А)", category: "Опрессовка терминалов" }, ...D.templates] };
+  expect(makeGen(D2, S2).templateIdFor(prs)).toBe(first);
+  expect(makeGen(D2, S2).stickTemplates()).toBeNull();
 });

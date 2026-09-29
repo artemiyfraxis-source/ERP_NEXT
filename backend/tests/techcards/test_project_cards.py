@@ -232,19 +232,3 @@ def test_discard_draft_api_removes_built_document(project_techcards_api):
     assert discarded.status_code == 200
     assert discarded.json()["document"] is None
     assert discarded.json()["status"] == "Черновик"
-
-
-def test_cut_lengths_api_matches_calc_rows(project_techcards_api):
-    response = project_techcards_api.post("/api/techcards/cut-lengths", json={
-        "wires": [
-            {"id": "w1", "art": "МГТФ 0,12", "name": "Провод МГТФ 0,12"},
-            {"id": "w2", "art": "ParLan U/UTP Cat5e 2х2х0,48", "name": ""},
-        ],
-        "calc_ops": [
-            {"code": "CUT_WIRE", "comp": "МГТФ 0,12", "req": "L=160мм + SHF-001T", "l": ""},
-            {"code": "CUT_WIRE", "comp": "U/UTP 2x2x0,48", "req": "", "l": "0,25"},
-            {"code": "PRS_TERMINAL", "comp": "МГТФ 0,12", "req": "L=999мм", "l": ""},
-        ],
-    })
-    assert response.status_code == 200
-    assert response.json() == {"lengths": {"w1": 160.0, "w2": 250}}
