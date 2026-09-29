@@ -47,7 +47,7 @@ it("shows the role default in an empty cell and saves the whole matrix", async (
   expect(warehouse.value).toBe("none");
   const requests = screen.getByLabelText("Заявки · Специалист по снабжению") as HTMLSelectElement;
   expect(requests.value).toBe("");
-  expect(within(requests).getByRole("option", { name: "пусто: полный" })).toBeInTheDocument();
+  expect(within(requests).getByRole("option", { name: "полный (по умолч.)" })).toBeInTheDocument();
 
   const save = screen.getByRole("button", { name: "Сохранить доступы ролей" });
   expect(save).toBeDisabled();
@@ -93,9 +93,9 @@ it("edits one person's exceptions against what the role gives", async () => {
   expect(within(person).getByRole("option", { name: "Закупкин · Специалист по снабжению · исключений: 1" })).toBeInTheDocument();
   fireEvent.change(person, { target: { value: "u2" } });
 
-  const table = screen.getByRole("table", { name: "Исключения: Закупкин" });
+  const table = within(screen.getByRole("region", { name: "Исключения: Закупкин" })).getByRole("table");
   const warehouseRow = within(table).getByText("Склад").closest("tr")!;
-  expect(within(warehouseRow).getByText("закрыт")).toBeInTheDocument(); // the matrix closed it for the role
+  expect(within(warehouseRow).getByText("закрыт", { selector: "span" })).toBeInTheDocument(); // the matrix closed it for the role
   expect((screen.getByLabelText("Исключение: Сотрудники") as HTMLSelectElement).value).toBe("view");
 
   fireEvent.change(screen.getByLabelText("Исключение: Склад"), { target: { value: "view" } });
@@ -127,9 +127,9 @@ it("NAV-SECTIONS: shows «Оформить заявку», «Мои заявки
 
   render(<AccessPage />);
   const filing = await screen.findByLabelText("Оформить заявку · Специалист по снабжению") as HTMLSelectElement;
-  expect(within(filing).getByRole("option", { name: "пусто: полный" })).toBeInTheDocument();
+  expect(within(filing).getByRole("option", { name: "полный (по умолч.)" })).toBeInTheDocument();
   expect(screen.getByLabelText("Мои заявки · Специалист по снабжению")).toBeInTheDocument();
   const handout = screen.getByLabelText("Выдача со списанием · Специалист по снабжению") as HTMLSelectElement;
-  expect(within(handout).getByRole("option", { name: "пусто: закрыт" })).toBeInTheDocument();
+  expect(within(handout).getByRole("option", { name: "—" })).toBeInTheDocument();
   expect(screen.getByLabelText("Выдача со списанием · Технолог")).toBeInTheDocument();
 });
