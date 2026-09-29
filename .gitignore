@@ -4,8 +4,13 @@ __pycache__/
 backend/.venv/
 backend/.env
 backend/*.db
+backend/*.db.bak
+backend/*.db.version
+backend/*.pid
+backend/*.log
 backend/*.sqlite*
 frontend/dist/
+frontend/dist-next/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
@@ -13,3 +18,4 @@ frontend/vite.config.d.ts
 .claude/worktrees/
 .claude/migrate.lock
 data/import/
+backend/names-fill*.log
