@@ -18,6 +18,10 @@ export interface RequestSchema {
   delivery_points: string[];
   units: string[];
   categories: string[];
+  /** `purposeProjects_`: open registry projects for the ЦЕЛЬ dropdown (empty = registry unavailable). */
+  projects?: string[];
+  /** ТИП combobox options (REQUEST_FORM_FIELDS «ТИП»). */
+  item_types?: string[];
 }
 
 export interface RequestRow {
@@ -40,6 +44,20 @@ export interface RequestRow {
   unit: string;
   priority: string;
   planned_date: string;
+  procurement_deadline?: string;
+  quality_document?: string;
+  design_article?: string | null;
+  link?: string | null;
+  price?: string | null;
+  price_with_vat?: string | null;
+  line_sum?: string | null;
+  comment?: string | null;
+  /** «Мои заявки» only: the purchase-sheet columns the initiator sees (via Procurement's read port). */
+  buyer?: string | null;
+  supplier?: string | null;
+  order_number?: string | null;
+  expected_arrival?: string | null;
+  procurement_sum?: string | null;
 }
 
 export interface MineRequestsResult {
@@ -1061,11 +1079,14 @@ export const legacyApi = {
 
 export const requestsApi = {
   schema: () => api<RequestSchema>("/api/requests/schema"),
-  list: () => api<{ requests: RequestRow[] }>("/api/requests"),
+  list: (q = "") =>
+    api<{ requests: RequestRow[] }>(q ? `/api/requests?q=${encodeURIComponent(q)}` : "/api/requests"),
   /** RQ-MINE: server-side filter by the authenticated initiator, paginated (replaces the client-side
    *  name match over the latest 200 rows). */
-  mine: (limit: number, offset: number) =>
-    api<MineRequestsResult>(`/api/requests/mine?limit=${limit}&offset=${offset}`),
+  mine: (limit: number, offset: number, q = "") =>
+    api<MineRequestsResult>(
+      `/api/requests/mine?limit=${limit}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
   create: (request: Record<string, unknown>, idempotencyKey: string) =>
     api<{ requests: RequestRow[] }>("/api/requests", {
       method: "POST",

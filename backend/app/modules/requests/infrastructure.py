@@ -16,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    or_,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
@@ -176,6 +177,35 @@ def _request_domain(row: RequestRow) -> Request:
     )
 
 
+_SEARCH_COLUMNS = (
+    RequestRow.legacy_id,
+    RequestRow.designation,
+    RequestRow.status,
+    RequestRow.actor_name,
+    RequestRow.purpose,
+    RequestRow.project_reference,
+    RequestRow.delivery_point,
+    RequestRow.name,
+    RequestRow.item_type,
+    RequestRow.category,
+    RequestRow.design_article,
+    RequestRow.priority,
+    RequestRow.comment,
+)
+
+
+def _search_filter(search: str) -> list:
+    """Portal search box (`renderView`): a substring anywhere in the row, case-insensitive.
+
+    ILIKE folds Cyrillic on PostgreSQL; SQLite (tests/preview) folds ASCII only.
+    """
+    text = search.strip()
+    if not text:
+        return []
+    pattern = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    return [or_(*(column.ilike(pattern, escape="\\") for column in _SEARCH_COLUMNS))]
+
+
 class SqlAlchemyRequestRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -224,27 +254,32 @@ class SqlAlchemyRequestRepository:
         row = self.session.get(RequestRow, request_id)
         return _request_domain(row) if row is not None else None
 
-    def recent(self, limit: int) -> list[Request]:
+    def recent(self, limit: int, search: str = "") -> list[Request]:
         statement = (
             select(RequestRow)
+            .where(*_search_filter(search))
             .order_by(RequestRow.created_at.desc(), RequestRow.creation_index)
             .limit(limit)
         )
         return [_request_domain(row) for row in self.session.scalars(statement)]
 
-    def by_initiator(self, actor_id: UUID, limit: int, offset: int) -> list[Request]:
+    def by_initiator(
+        self, actor_id: UUID, limit: int, offset: int, search: str = ""
+    ) -> list[Request]:
         statement = (
             select(RequestRow)
-            .where(RequestRow.actor_id == actor_id)
+            .where(RequestRow.actor_id == actor_id, *_search_filter(search))
             .order_by(RequestRow.created_at.desc(), RequestRow.creation_index.desc())
             .limit(limit)
             .offset(offset)
         )
         return [_request_domain(row) for row in self.session.scalars(statement)]
 
-    def count_by_initiator(self, actor_id: UUID) -> int:
+    def count_by_initiator(self, actor_id: UUID, search: str = "") -> int:
         statement = (
-            select(func.count()).select_from(RequestRow).where(RequestRow.actor_id == actor_id)
+            select(func.count())
+            .select_from(RequestRow)
+            .where(RequestRow.actor_id == actor_id, *_search_filter(search))
         )
         return int(self.session.scalar(statement) or 0)
 
