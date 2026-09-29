@@ -73,6 +73,7 @@ class ReplaceSnapshotCommand:
     actor: Actor
     now: datetime
     declared_tabs: tuple[TechOperationTab, ...] = ()
+    keep_other_tabs: bool = False  # partial load (mirror ПРОВ/МАТ): every tab not in the payload stays as it is
 
 
 def _audit(event_type: str, actor: Actor, now: datetime, details: dict, uow: UnitOfWork) -> None:
@@ -114,7 +115,7 @@ def replace_snapshot(command: ReplaceSnapshotCommand, uow: UnitOfWork) -> int:
     ) for item in command.records)
     # БД.ПРОВ / БД.МАТ are replaced only when the snapshot carries them (rows or an explicit table).
     present = {item.tab for item in command.records} | set(command.declared_tabs)
-    keep_tabs = tuple(tab for tab in SHEET_TABLE_TABS if tab not in present)
+    keep_tabs = tuple(tab for tab in (tuple(TechOperationTab) if command.keep_other_tabs else SHEET_TABLE_TABS) if tab not in present)
     with uow:
         uow.tech_operations.replace(
             records, keep_tabs=keep_tabs, schema_version=command.schema_version,

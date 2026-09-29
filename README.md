@@ -175,6 +175,22 @@ $env:ERP_DATABASE_URL = 'postgresql+psycopg://USER:PASSWORD@HOST:5432/erp_next'
 переносятся. Повторный запуск с теми же данными ничего не создаёт и не меняет. Код выхода: 0 — всё сошлось,
 1 — есть отклонённые или расходящиеся строки, 2 — выгрузка не читается или не задан `ERP_DATABASE_URL`.
 
+### Загрузка БД.ПРОВ и БД.МАТ из зеркала (REF-MIRROR-LOAD)
+
+Читает `_local/db/БД.ПРОВ.tsv` и `БД.МАТ.tsv` из репозитория SUPPLYMAP (только чтение; путь —
+`--source` или `SUPPLYMAP_SOURCE_REPOSITORY`, иначе соседняя папка `SUPPLYMAP`) и заменяет эти две базы в
+снимке справочников; остальные базы «Технологий» не трогаются. Оба файла обязательны.
+
+```powershell
+cd backend
+$env:ERP_DATABASE_URL = 'sqlite:///preview.db'
+.\.venv\Scripts\python.exe -m app.modules.references.load_mirror --dry-run
+.\.venv\Scripts\python.exe -m app.modules.references.load_mirror
+```
+
+`--dry-run` печатает число строк в зеркале и в снимке по каждой таблице и ничего не пишет. Код выхода: 0 —
+готово, 2 — файла нет или он не таблица, либо не задан `ERP_DATABASE_URL`.
+
 ## Комплектация и выдача в цех
 
 Нативный раздел `/api/issues` создаёт заявку на комплект даже при отсутствии
