@@ -9,4 +9,5 @@ metadata:
 - Architecture tests need full SUPPLYMAP history; `--depth 1` gives false «Not a valid commit name» → `git fetch --unshallow` ([[cloud-threads-setup]]).
 - `backend/.venv` must be Python 3.12 (3.11 fails collecting tests on f-strings): `uv venv -p /usr/bin/python3.12 backend/.venv`.
 - Several sessions merge in parallel: pull main, renumber your migration after the head, `alembic heads` = 1, full `npm run check`, merge with `expectedHeadSha` → [[owner-working-rules]].
+- After a conflicted merge, list every unmerged file (`git diff --name-only --diff-filter=U`) and `git grep -nE '^(<<<<<<<|=======|>>>>>>>)( |$)'` before `git add -A`: `npm run check` does not read `deploy/*.sh` or `.ps1`, so markers there ship green (#118 broke `deploy/load-real-data.sh`, #120 fixed it). `bash -n deploy/*.sh` catches it.
 Hub: [[erp-next-hub]].
