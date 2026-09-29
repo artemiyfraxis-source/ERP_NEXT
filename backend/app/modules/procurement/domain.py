@@ -52,6 +52,24 @@ class ProcurementStatus(str, Enum):
     CANCELLED = "Отменено"
 
 
+class ReplacementDecision(str, Enum):
+    """РЕШ. ЗАМЕНЫ: the decision on a substitute the supplier offers instead of the requested item."""
+
+    ALLOWED = "Разрешено"
+    FORBIDDEN = "Запрещено"
+
+
+# ЗАМЕНА is edited by the buyer from «В работе» until the goods are paid for (agent decision, see ARCHITECTURE.md).
+REPLACEMENT_EDITABLE = frozenset(
+    {
+        ProcurementStatus.IN_WORK,
+        ProcurementStatus.READY,
+        ProcurementStatus.AWAITING_INVOICE,
+        ProcurementStatus.TO_PAY,
+    }
+)
+
+
 @dataclass(frozen=True)
 class ProcurementFacts:
     supplier: str | None | _Unset = UNSET
@@ -136,6 +154,13 @@ class ProcurementLine:
     invoice_date: date | None = None
     order_number: str | None = None
     order_date: date | None = None
+    replacement: bool | None = None
+    replacement_decision: ReplacementDecision | None = None
+
+    @property
+    def replacement_open(self) -> bool:
+        """`zamOpen` (SupplierRequest.gs): ЗАМЕНА = Да without the decision «Разрешено»."""
+        return self.replacement is True and self.replacement_decision is not ReplacementDecision.ALLOWED
 
     def pay_missing(self, expected_arrival: date | None = None) -> list[str]:
         return pay_gate_missing(
@@ -215,6 +240,32 @@ class ProcurementLine:
             order_date=order_date,
             supplier_request_reference=_text(reference) or number,
             status=ProcurementStatus.AWAITING_INVOICE,
+            version=self.version + 1,
+        )
+
+    def set_replacement(
+        self,
+        replacement: bool,
+        decision: ReplacementDecision | None,
+        actor: Actor,
+    ) -> ProcurementLine:
+        """`applyReplacement_` / `applyReplacementDecision_` (Guards.gs): the buyer marks ЗАМЕНА by hand.
+
+        Да waits for a decision (none yet = open); Нет clears the decision, as the sheet writes «—» there.
+        """
+        self._require_owner(actor)
+        if not replacement and decision is not None:
+            raise ProcurementValidationError("Решение по замене ставится только при ЗАМЕНА = Да")
+        if self.replacement == replacement and self.replacement_decision == decision:
+            return self
+        if self.status not in REPLACEMENT_EDITABLE:
+            raise ProcurementValidationError(
+                "Замену отмечают в работе у закупщика — от «В работе» до «В оплату»"
+            )
+        return replace(
+            self,
+            replacement=replacement,
+            replacement_decision=decision,
             version=self.version + 1,
         )
 
@@ -772,6 +823,8 @@ def supplier_request_blockers(group: SupplierRequestGroup) -> str | None:
         return f"{group.supplier}: нет адреса отгрузки"
     if any(line.actual_quantity is None or not _text(line.actual_unit) for line in group.lines):
         return f"{tag}: не заполнены КОЛ-ВО/ЕД.ИЗМ (факт) — не сформирован"
+    if any(line.replacement_open for line in group.lines):
+        return f"{tag}: есть незакрытая замена (нет решения «Разрешено») — не сформирован"
     return None
 
 

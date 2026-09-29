@@ -31,7 +31,7 @@ from app.shared.persistence import (
 )
 
 from .application import SupplierOrder
-from .domain import ProcurementLine, ProcurementStatus, designation_key
+from .domain import ProcurementLine, ProcurementStatus, ReplacementDecision, designation_key
 from .money import FactMoney
 
 
@@ -110,6 +110,8 @@ class ProcurementLineRow(Base):
     invoice_date: Mapped[Any | None] = mapped_column(Date)
     order_number: Mapped[str | None] = mapped_column(String(32), index=True)
     order_date: Mapped[Any | None] = mapped_column(Date)
+    replacement: Mapped[bool | None] = mapped_column(Boolean)
+    replacement_decision: Mapped[str | None] = mapped_column(String(16))
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -177,6 +179,10 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         invoice_date=line.invoice_date,
         order_number=line.order_number,
         order_date=line.order_date,
+        replacement=line.replacement,
+        replacement_decision=(
+            line.replacement_decision.value if line.replacement_decision else None
+        ),
     )
 
 
@@ -247,6 +253,10 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
         invoice_date=row.invoice_date,
         order_number=row.order_number,
         order_date=row.order_date,
+        replacement=row.replacement,
+        replacement_decision=(
+            ReplacementDecision(row.replacement_decision) if row.replacement_decision else None
+        ),
     )
 
 

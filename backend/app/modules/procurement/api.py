@@ -31,6 +31,7 @@ from .application import (
     BuildSupplierRequestsCommand,
     SupplierOrder,
     SplitProcurementLineCommand,
+    SetReplacementCommand,
     RecordInvoiceCommand,
     ReplaceInvoiceCommand,
     MarkProcurementPaidCommand,
@@ -49,6 +50,7 @@ from .application import (
     build_supplier_requests,
     supplier_order,
     split_procurement_line,
+    set_procurement_replacement,
     record_invoice,
     replace_invoice,
     mark_procurement_paid,
@@ -64,6 +66,7 @@ from .domain import (
     ProcurementFacts,
     ProcurementLine,
     ProcurementValidationError,
+    ReplacementDecision,
 )
 from .exchange_rates import CbrExchangeRates
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
@@ -127,6 +130,12 @@ class ProcurementFactsInput(BaseModel):
             if name != "version"
         }
         return ProcurementFacts(**values)
+
+
+class ReplacementInput(BaseModel):
+    version: int = Field(ge=1)
+    replacement: bool
+    decision: Literal["Разрешено", "Запрещено"] | None = None
 
 
 class InvoiceInput(BaseModel):
@@ -343,6 +352,9 @@ def _line_result(line: ProcurementLine) -> dict:
         "invoice_date": line.invoice_date.isoformat() if line.invoice_date else None,
         "pay_missing": line.pay_missing(),
         "is_backorder": line.is_backorder,
+        "replacement": line.replacement,
+        "replacement_decision": line.replacement_decision.value if line.replacement_decision else None,
+        "replacement_open": line.replacement_open,
     }
 
 
@@ -652,6 +664,29 @@ def supplier_request_order(
         return {"order": _order_result(supplier_order(order_number, uow_factory()))}
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.patch("/{line_id}/replacement")
+def replacement(
+    line_id: UUID,
+    payload: ReplacementInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    return _transition(
+        lambda: set_procurement_replacement(
+            SetReplacementCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                replacement=payload.replacement,
+                decision=ReplacementDecision(payload.decision) if payload.decision else None,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
 
 
 @router.post("/{line_id}/invoice")

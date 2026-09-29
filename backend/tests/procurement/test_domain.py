@@ -10,6 +10,7 @@ from app.modules.procurement.domain import (
     ProcurementFacts,
     ProcurementStatus,
     ProcurementValidationError,
+    ReplacementDecision,
     create_backorder_line,
     create_line_from_requested,
     designation_key,
@@ -653,3 +654,92 @@ def test_retransfer_line_keeps_payload_but_takes_given_id_and_revision():
     assert line.revision == "C"
     assert line.status is ProcurementStatus.NEW
     assert line.designation == "RND.001"
+
+
+def ready_line(buyer: Actor):
+    return (
+        create_line_from_requested(requested_message())
+        .take_in_work(buyer)
+        .update_facts(
+            ProcurementFacts(supplier="ООО Поставка", actual_quantity=Decimal("2"), actual_unit="шт"),
+            buyer,
+        )
+    )
+
+
+def test_new_line_has_no_replacement_and_is_not_blocked():
+    line = create_line_from_requested(requested_message())
+
+    assert line.replacement is None
+    assert line.replacement_decision is None
+    assert line.replacement_open is False
+
+
+@pytest.mark.parametrize("decision", [None, ReplacementDecision.FORBIDDEN])
+def test_replacement_without_allowed_decision_is_open(decision):
+    """`zamOpen` (SupplierRequest.gs:194-195): ЗАМЕНА = Да without «Разрешено»; the gate is on the group."""
+    buyer = Actor(name="Петров", department="Закупки")
+    line = ready_line(buyer).set_replacement(True, decision, buyer)
+
+    assert line.replacement_open is True
+    assert line.status is ProcurementStatus.READY
+
+
+def test_allowed_or_cancelled_replacement_is_not_open():
+    buyer = Actor(name="Петров", department="Закупки")
+    allowed = ready_line(buyer).set_replacement(True, ReplacementDecision.ALLOWED, buyer)
+    no_replacement = ready_line(buyer).set_replacement(True, None, buyer).set_replacement(False, None, buyer)
+
+    assert allowed.replacement_open is False
+    assert no_replacement.replacement is False
+    assert no_replacement.replacement_open is False
+
+
+def test_replacement_no_clears_decision_and_rejects_a_decision_without_replacement():
+    buyer = Actor(name="Петров", department="Закупки")
+    line = ready_line(buyer).set_replacement(True, ReplacementDecision.ALLOWED, buyer)
+
+    cleared = line.set_replacement(False, None, buyer)
+
+    assert cleared.replacement_decision is None
+    with pytest.raises(ProcurementValidationError, match="ЗАМЕНА = Да"):
+        cleared.set_replacement(False, ReplacementDecision.ALLOWED, buyer)
+
+
+def test_replacement_is_idempotent_and_bumps_version_only_on_change():
+    buyer = Actor(name="Петров", department="Закупки")
+    line = ready_line(buyer)
+
+    marked = line.set_replacement(True, None, buyer)
+
+    assert marked.version == line.version + 1
+    assert marked.set_replacement(True, None, buyer) == marked
+
+
+def test_replacement_is_set_only_by_owner_and_only_between_in_work_and_to_pay():
+    buyer = Actor(name="Петров", department="Закупки")
+    new_line = create_line_from_requested(requested_message())
+
+    with pytest.raises(ProcurementValidationError, match="свои строки"):
+        new_line.take_in_work(buyer).set_replacement(True, None, Actor(name="Сидоров", department="Закупки"))
+    with pytest.raises(ProcurementValidationError, match="свои строки"):
+        new_line.set_replacement(True, None, buyer)
+
+    awaiting = awaiting_invoice(buyer).set_replacement(True, ReplacementDecision.ALLOWED, buyer)
+    assert awaiting.replacement_decision is ReplacementDecision.ALLOWED
+    shipped = (
+        awaiting_invoice(buyer)
+        .update_money(RUB_ENTRY, None, buyer)
+        .record_invoice("https://files.test/invoice.pdf", date(2026, 9, 30), buyer)
+        .mark_paid(buyer, datetime(2026, 9, 22, 12, 0))
+    )
+    with pytest.raises(ProcurementValidationError, match="«В работе»"):
+        shipped.set_replacement(True, None, buyer)
+
+
+def test_retry_of_formed_request_is_not_blocked_by_later_replacement():
+    """The gate guards forming the order; an order already formed stays idempotent."""
+    buyer = Actor(name="Петров", department="Закупки")
+    requested = awaiting_invoice(buyer).set_replacement(True, None, buyer)
+
+    assert requested.send_supplier_request("PO-001", date(2026, 9, 22), "REQ-2026-1", buyer) == requested

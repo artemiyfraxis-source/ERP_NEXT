@@ -318,11 +318,17 @@ function ProcurementCard({
         <label className="wide">Ссылка<input type="url" value={draft.link} onChange={(e) => field("link", e.target.value)} placeholder="https://…" /></label>
       </div>
       <div className="card-footer"><small>Версия {line.version} · план {line.planned_date}</small><button className="primary small" disabled={disabled}>{busy ? "Сохраняем…" : "Сохранить"}</button></div></form>}
+      {REPLACEMENT_STATUSES.has(line.status) && (
+        <ReplacementControl line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
+      )}
       {line.status === "Готов к запросу" && (
         <small className="hint">Поставщик: {line.supplier} — строка войдёт в запрос поставщику при формировании.</small>
       )}
       {line.order_number && (
         <small className="hint">Заказ {line.order_number} от {line.order_date}</small>
+      )}
+      {line.status === "Готов к запросу" && line.replacement_open && (
+        <small className="hint">Есть незакрытая замена — заказ этого поставщика не сформируется до решения «Разрешено».</small>
       )}
       {line.status === "Жду счет" && (
         <>
@@ -440,6 +446,48 @@ function SplitAction({ line, busy, disabled, onAdvance }: {
       <label>Раздробить по поставщикам, копий<input type="number" min="1" max="30" step="1" required value={copies} onChange={(event) => setCopies(event.target.value)} /></label>
       <button className="secondary small" disabled={disabled}>{busy ? "Дробим…" : "Раздробить"}</button>
     </form>
+  );
+}
+
+const REPLACEMENT_STATUSES = new Set(["В работе", "Готов к запросу", "Жду счет", "В оплату"]);
+
+type ReplacementChoice = "" | "no" | "open" | "Разрешено" | "Запрещено";
+
+function replacementChoice(line: ProcurementLine): ReplacementChoice {
+  if (line.replacement === null) return "";
+  if (!line.replacement) return "no";
+  return line.replacement_decision ?? "open";
+}
+
+function ReplacementControl({ line, busy, disabled, onAdvance }: {
+  line: ProcurementLine;
+  busy: boolean;
+  disabled: boolean;
+  onAdvance: Advance;
+}) {
+  function choose(choice: ReplacementChoice) {
+    if (!choice || choice === replacementChoice(line)) return;
+    const replacement = choice !== "no";
+    const decision = choice === "Разрешено" || choice === "Запрещено" ? choice : null;
+    void onAdvance(
+      line,
+      () => procurementApi.setReplacement(line.id, line.version, replacement, decision),
+      `${line.legacy_id}: замена — ${replacement ? decision ?? "ждём решения" : "нет"}`,
+    ).catch(() => undefined);
+  }
+
+  return (
+    <div className="inline-action">
+      <label>Замена
+        <select value={replacementChoice(line)} disabled={disabled || busy} onChange={(event) => choose(event.target.value as ReplacementChoice)}>
+          <option value="" disabled>не отмечено</option>
+          <option value="no">Нет</option>
+          <option value="open">Да — ждём решения</option>
+          <option value="Разрешено">Да — Разрешено</option>
+          <option value="Запрещено">Да — Запрещено</option>
+        </select>
+      </label>
+    </div>
   );
 }
 

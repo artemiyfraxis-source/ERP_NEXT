@@ -21,6 +21,7 @@ from .domain import (
     ProcurementStatus,
     ProcurementValidationError,
     SupplierRequestGroup,
+    ReplacementDecision,
     create_backorder_line,
     create_line_from_requested,
     group_supplier_requests,
@@ -158,6 +159,16 @@ class SupplierRequestsResult:
     lines: list[ProcurementLine]
     skipped: list[str]
     other_buyer: int
+
+
+@dataclass(frozen=True)
+class SetReplacementCommand:
+    line_id: UUID
+    expected_version: int
+    replacement: bool
+    decision: ReplacementDecision | None
+    actor: Actor
+    now: datetime
 
 
 @dataclass(frozen=True)
@@ -633,6 +644,27 @@ def supplier_order(order_number: str, uow: UnitOfWork) -> SupplierOrder:
     if order is None:
         raise KeyError(f"Supplier order not found: {order_number}")
     return order
+
+
+def set_procurement_replacement(command: SetReplacementCommand, uow: UnitOfWork) -> ProcurementLine:
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.set_replacement(command.replacement, command.decision, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.replacement_set",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={
+                "replacement": "Да" if updated.replacement else "Нет",
+                "decision": updated.replacement_decision.value if updated.replacement_decision else "",
+            },
+        )
+        if result != current:
+            uow.commit()
+        return result
 
 
 def record_invoice(command: RecordInvoiceCommand, uow: UnitOfWork) -> ProcurementLine:

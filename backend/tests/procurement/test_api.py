@@ -379,6 +379,67 @@ def test_backorder_is_confirmed_through_api_with_version_check(procurement_api, 
     assert (confirmed.json()["line"]["status"], confirmed.json()["line"]["expected_arrival"]) == ("В пути", "2026-10-01")
 
 
+def test_open_replacement_blocks_supplier_request_until_allowed(procurement_api):
+    client, line, sessions = procurement_api
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id)]})
+    ready = client.patch(
+        f"/api/procurement/{line.id}/facts",
+        json={
+            "version": taken.json()["lines"][0]["version"],
+            "supplier": "ООО Поставка",
+            "actual_quantity": "2",
+            "actual_unit": "шт",
+        },
+    ).json()["line"]
+    assert ready["replacement"] is None
+    assert ready["replacement_open"] is False
+
+    opened = client.patch(
+        f"/api/procurement/{line.id}/replacement",
+        json={"version": ready["version"], "replacement": True},
+    )
+    assert opened.status_code == 200, opened.text
+    opened_line = opened.json()["line"]
+    assert opened_line["replacement"] is True
+    assert opened_line["replacement_decision"] is None
+    assert opened_line["replacement_open"] is True
+
+    blocked = client.post("/api/procurement/supplier-requests")
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["orders"] == []
+    assert blocked.json()["skipped"] == [
+        "ООО Поставка (Закупка): есть незакрытая замена (нет решения «Разрешено») — не сформирован"
+    ]
+
+    garbage = client.patch(
+        f"/api/procurement/{line.id}/replacement",
+        json={"version": opened_line["version"], "replacement": True, "decision": "Может быть"},
+    )
+    assert garbage.status_code == 422
+    stale = client.patch(
+        f"/api/procurement/{line.id}/replacement",
+        json={"version": ready["version"], "replacement": True, "decision": "Разрешено"},
+    )
+    assert stale.status_code == 409
+
+    allowed = client.patch(
+        f"/api/procurement/{line.id}/replacement",
+        json={"version": opened_line["version"], "replacement": True, "decision": "Разрешено"},
+    ).json()["line"]
+    assert allowed["replacement_decision"] == "Разрешено"
+    assert allowed["replacement_open"] is False
+
+    requested = client.post("/api/procurement/supplier-requests")
+    assert requested.status_code == 200, requested.text
+    assert [order["order_number"] for order in requested.json()["orders"]] == ["PO-001"]
+    assert requested.json()["lines"][0]["status"] == "Жду счет"
+    with sessions() as session:
+        replacement_events = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "procurement.replacement_set")
+        ).all()
+        assert [event.details["decision"] for event in replacement_events] == ["", "Разрешено"]
+
+
 def test_line_is_parked_approved_and_cancelled_through_api_with_audit(procurement_api):
     client, line, sessions = procurement_api
     version = awaiting_invoice(client, line)

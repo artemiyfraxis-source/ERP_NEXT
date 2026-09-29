@@ -26,6 +26,7 @@ from app.modules.procurement.domain import (
     ProcurementFacts,
     ProcurementStatus,
     ProcurementValidationError,
+    ReplacementDecision,
     SupplierRequestGroup,
     create_line_from_requested,
     group_supplier_requests,
@@ -124,6 +125,50 @@ def test_blockers_mirror_the_legacy_skips():
     assert "КОЛ-ВО/ЕД.ИЗМ (факт)" in supplier_request_blockers(
         SupplierRequestGroup("ООО Поставка", "Закупка", (good, replace(good, actual_unit=""))),
     )
+
+
+# PR-8 — SupplierRequest.gs:235-239: an open ЗАМЕНА keeps the whole supplier + type order unformed.
+@pytest.mark.parametrize("decision", [None, ReplacementDecision.FORBIDDEN])
+def test_open_replacement_blocks_the_whole_group(decision):
+    good = ready_line(1)
+    open_line = ready_line(2).set_replacement(True, decision, BUYER)
+
+    assert supplier_request_blockers(SupplierRequestGroup("ООО Поставка", "Закупка", (good, open_line))) == (
+        "ООО Поставка (Закупка): есть незакрытая замена (нет решения «Разрешено») — не сформирован"
+    )
+
+
+def test_allowed_replacement_does_not_block_the_group():
+    allowed = ready_line(1).set_replacement(True, ReplacementDecision.ALLOWED, BUYER)
+    withdrawn = ready_line(2).set_replacement(True, None, BUYER).set_replacement(False, None, BUYER)
+
+    assert supplier_request_blockers(SupplierRequestGroup("ООО Поставка", "Закупка", (allowed, withdrawn))) is None
+
+
+def test_build_skips_the_group_with_open_replacement_and_forms_the_others():
+    uow = FakeUnitOfWork()
+    now = datetime(2026, 9, 22, 10, 0)
+    lines = [consume_procurement_requested(requested_message(i), uow) for i in (1, 2, 3)]
+    for line, supplier in zip(lines, ("ООО А", "ООО А", "ООО Б")):
+        taken = take_procurement_in_work(TakeProcurementInWorkCommand(line_ids=(line.id,), actor=BUYER, now=now), uow)[0]
+        save_procurement_facts(
+            SaveProcurementFactsCommand(
+                line_id=taken.id,
+                facts=ProcurementFacts(supplier=supplier, actual_quantity=Decimal("2"), actual_unit="шт"),
+                expected_version=taken.version,
+                actor=BUYER,
+                now=now,
+            ),
+            uow,
+        )
+    blocked = uow.procurement.get(lines[1].id)
+    uow.procurement.add(blocked.set_replacement(True, None, BUYER))
+
+    result = build_supplier_requests(BuildSupplierRequestsCommand(actor=BUYER, now=now), uow)
+
+    assert [order.supplier for order in result.orders] == ["ООО Б"]
+    assert result.skipped == ["ООО А (Закупка): есть незакрытая замена (нет решения «Разрешено») — не сформирован"]
+    assert {uow.procurement.get(line.id).status for line in lines[:2]} == {ProcurementStatus.READY}
 
 
 def test_delivery_point_is_the_first_non_empty_of_the_group():

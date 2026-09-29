@@ -108,6 +108,9 @@ export interface ProcurementLine {
   invoice_date: string | null;
   pay_missing: string[];
   is_backorder: boolean;
+  replacement: boolean | null;
+  replacement_decision: "Разрешено" | "Запрещено" | null;
+  replacement_open: boolean;
 }
 
 export type MoneyDriver = "net" | "gross" | "vat" | "qty" | "sum";
@@ -978,6 +981,16 @@ export const procurementApi = {
     }),
   buildSupplierRequests: () =>
     api<SupplierRequestsResult>("/api/procurement/supplier-requests", { method: "POST" }),
+  setReplacement: (
+    lineId: string,
+    version: number,
+    replacement: boolean,
+    decision: "Разрешено" | "Запрещено" | null,
+  ) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/replacement`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, replacement, decision }),
+    }),
   recordInvoice: (
     lineId: string,
     version: number,

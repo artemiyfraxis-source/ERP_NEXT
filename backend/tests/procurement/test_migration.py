@@ -31,3 +31,20 @@ def test_money_migration_adds_nullable_money_and_downgrade_removes_it(tmp_path):
 
     command.downgrade(config, "0023_production_plan_kit_marks")
     assert not MONEY_COLUMNS & _columns(database_path)
+
+
+def test_replacement_migration_adds_nullable_columns_and_downgrade_removes_them(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "procurement.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+    columns = {"replacement", "replacement_decision"}
+
+    command.upgrade(config, "0034_warehouse_item_types")
+    assert not columns & _columns(database_path)
+
+    command.upgrade(config, "0035_procurement_replacement")
+    assert columns <= _columns(database_path)
+
+    command.downgrade(config, "0034_warehouse_item_types")
+    assert not columns & _columns(database_path)

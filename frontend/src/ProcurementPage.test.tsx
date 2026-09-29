@@ -53,6 +53,9 @@ const line: ProcurementLine = {
   invoice_date: null,
   pay_missing: ["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)", "НАИМЕНОВАНИЕ (Счет)", "ОЖИД. ДАТА"],
   is_backorder: false,
+  replacement: null,
+  replacement_decision: null,
+  replacement_open: false,
 };
 
 function json(body: unknown) {
@@ -448,4 +451,38 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
   expect(rows[0]).toMatchObject({ line_id: awaiting.id, version: 3, actual_quantity: "3", price: "100", vat_rate: "20", driver: "net", expected_arrival: "2026-10-01" });
   expect(rows[1]).toMatchObject({ line_id: other.id, version: 5, actual_quantity: "2", expected_arrival: "2026-10-01" });
   expect(await screen.findByText("Заказ PO-001: КП сохранено по 2 строкам, счёт передан в оплату")).toBeInTheDocument();
+});
+
+it("warns that an open replacement blocks the supplier order and saves the decision", async () => {
+  const ready: ProcurementLine = {
+    ...line,
+    status: "Готов к запросу",
+    buyer: "Закупщик",
+    supplier: "Поставщик",
+    actual_quantity: "2",
+    actual_unit: "шт",
+    replacement: true,
+    replacement_open: true,
+  };
+  let current = ready;
+  let replacementBody: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: [current] });
+    if (path.endsWith("/replacement") && init?.method === "PATCH") {
+      replacementBody = JSON.parse(String(init.body));
+      current = { ...ready, version: 4, replacement_decision: "Разрешено", replacement_open: false };
+      return json({ line: current });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  expect(await screen.findByText(/незакрытая замена/)).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Замена"), { target: { value: "Разрешено" } });
+
+  await waitFor(() => expect(replacementBody).toEqual({ version: 3, replacement: true, decision: "Разрешено" }));
+  await waitFor(() => expect(screen.queryByText(/незакрытая замена/)).not.toBeInTheDocument());
 });
