@@ -370,7 +370,7 @@ SUPPLYMAP (`PUR_STATUS_OFFLINE`, `Config.gs:58-61`; `statusRegressed_`, `Guards.
 лежит в `procurement_supplier_orders.letter`. Файл отдаётся `GET /api/procurement/supplier-requests/{№}/document`
 (inline). Ссылка на него есть в заказе (`document.url`) и в каждой строке заказа (`order_url`, колонка «ЗАКАЗ»).
 В UI у карточки заказа и в строке — «Открыть документ» и «Печать». Миграция
-`0062_procurement_supplier_order_documents` собирает документы уже выданным заказам из их `letter`.
+`0065_procurement_supplier_order_documents` собирает документы уже выданным заказам из их `letter`.
 
 **Отступления — решено агентом, проверить (PR-3, 2026-09-28; документ — 2026-09-29):**
 - *Формат документа.* Вместо Google Doc — HTML-файл с вёрсткой шаблона (Arial 11, абзацы, поля 2,54 см, A4):

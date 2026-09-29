@@ -468,7 +468,7 @@ def test_supplier_order_documents_migration_backfills_issued_orders(tmp_path):
             " buyer_id, buyer_name, created_at, letter) VALUES ('PO-001', '2026-09-15', 'ООО А', 'Закупка', 'x',"
             " '00000000000000000000000000000001', 'Петров', '2026-09-15 10:00:00', 'ООО А · REQ#\nДобрый день!')"
         )
-    command.upgrade(config, "0062_procurement_supplier_order_documents")
+    command.upgrade(config, "0065_procurement_supplier_order_documents")
     with sqlite3.connect(database_path) as connection:
         row = connection.execute(
             "SELECT file_name, folder, created_by, size, content FROM procurement_supplier_order_documents"
