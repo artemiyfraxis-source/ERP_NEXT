@@ -21,7 +21,7 @@ import {
   type ProductionTask,
   type ProductionWorkSession,
 } from "./api";
-import { Gantt, type GanttRow } from "./Gantt";
+import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
@@ -516,10 +516,10 @@ function AssignCard({ task, operation, tasks, operators, skills, holidays, week,
       site = operator.site;
       rows.push({ key: `site:${site}`, label: <b>{site || "Без площадки"}</b>, bars: [] });
     }
-    const bars = live.flatMap((item) => item.operations
+    const bars: GanttBar[] = live.flatMap((item) => item.operations
       .filter((other) => !(item.id === task.id && other.id === operation.id) && other.operator_ids.includes(operator.id))
       .map((other) => ({
-        start: other.planned_start, finish: other.planned_finish, tone: "busy" as const,
+        start: other.planned_start, finish: other.planned_finish, tone: "busy",
         text: `${item.number} · ${other.position}`,
         title: `${item.number} · этап ${other.position} ${other.stage}: ${formatDate(other.planned_start)} – ${formatDate(other.planned_finish)}`,
       })));
