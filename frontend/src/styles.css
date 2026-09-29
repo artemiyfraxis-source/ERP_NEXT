@@ -79,7 +79,12 @@ h3 { font-size: 15px; font-weight: 600; }
 .readonly-panel h2 { color: #17211b; }
 .form-grid, .facts-grid { padding: 0 20px 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 16px; }
 /* On a wide screen a form lays its fields out in more columns instead of stretching each field. */
-@media (min-width: 1600px) { .form-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); } }
+/* On a wide screen a form lays its fields out in four even columns; `half` fields take two of them, so rows close
+   without holes. Below that, two columns. */
+@media (min-width: 1600px) {
+  .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .form-grid > .half, .form-grid > .wide.half { grid-column: span 2; }
+}
 label { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
 /* A field inside a label keeps normal text, not the label's weight. */
 label input, label select, label textarea { color: var(--foreground); font-size: 14px; font-weight: 400; }
@@ -409,7 +414,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .section-tile { min-height: 96px; }
 .tile .chip { justify-self: start; padding: 3px 8px; border-radius: 999px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; }
 .back-link { margin-bottom: 10px; padding: 0; }
-.single-layout { display: grid; gap: 20px; max-width: 1400px; }
+.single-layout { display: grid; gap: 20px; }
 
 .plan-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0 10px; }
 .plan-filters .active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
