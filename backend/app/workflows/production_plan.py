@@ -179,7 +179,8 @@ def kit_stage_facts(
         need = good.ordered or good.accepted
         if good.accepted > 0 and good.accepted >= need:
             facts["stock"].add(key)
-        if good.shipped > 0 and good.shipped >= need:
+        # Этап «Отгружено» — по уехавшему (`sent`), не по отобранному: упакованное ещё на складе (решено агентом 30.09).
+        if good.sent > 0 and good.sent >= need:
             facts["shipped"].add(key)
 
     return facts, marks

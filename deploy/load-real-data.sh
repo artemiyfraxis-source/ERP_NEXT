@@ -5,6 +5,7 @@
 #       new lots are created, lots ERP never moved follow Google («догрузка из Google»), moved lots are reported
 #   deploy/load-real-data.sh kd        # КД проектов с Google Диска в базу (Диск только читается)
 #   deploy/load-real-data.sh projects  # re-read projects (idempotent: nothing is duplicated)
+#   deploy/load-real-data.sh shipped   # re-read «ЗАГРУЗ» only: shipped projects out, partial shipments → finished goods
 #   deploy/load-real-data.sh techcards # ТК: выданные в SUPPLYMAP → ERP, остальным сборкам — ЭТК генератором
 #       (отгруженные и ХОЛД не трогаются; повтор собирает только то, чего ещё нет)
 # Secrets the owner reads afterwards: $ERP_HOME/config/admin.txt, $ERP_HOME/config/staff-pins.txt (chmod 600).
@@ -40,6 +41,9 @@ case "${1:-}" in
     cli sh -c "python ../scripts/projects_import.py snapshot --key $key --out /app/data/import/projects.json && \
                ERP_COOKIE_SECURE=0 python ../scripts/projects_import.py apply /app/data/import/projects.json --login '$login' --password '$password'" || ok_or_report
     ;;
+  shipped)  # отгруженное по листу цеха: полностью отгруженные прочь, частичные — «отгружено до ERP» (apply делает то же)
+    cli python ../scripts/projects_import.py drop-shipped /app/data/import/projects.json --key $key || ok_or_report
+    ;;
   kd)  # старые КД с Google Диска → в базу (Диск только читается); повтор докачивает недостающее
     cli python -m app.modules.techcards.import_kd_from_drive --apply || ok_or_report
     ;;
@@ -57,5 +61,5 @@ case "${1:-}" in
                  python -m app.modules.warehouse.import_stock --dir /app/data/import" || ok_or_report
     fi
     ;;
-  *) echo "usage: $0 base|projects|kd|techcards|stock [--yes]" >&2; exit 2 ;;
+  *) echo "usage: $0 base|projects|shipped|kd|techcards|stock [--yes]" >&2; exit 2 ;;
 esac

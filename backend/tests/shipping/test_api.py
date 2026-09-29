@@ -154,6 +154,20 @@ def test_shipped_goods_stay_shipped_when_cancel_is_refused(shipping_api):
     assert refused.status_code == 422
     assert unpick.status_code == 422
     assert _goods(client)[good["id"]]["shipped"] == "5"
+    assert _goods(client)[good["id"]]["sent"] == "5"
+
+
+def test_packed_goods_are_not_sent_until_the_shipment_leaves(shipping_api):
+    client = shipping_api
+    good = _stocked_good(client, "КБ1", "5")
+    shipment = _picked_shipment(client, [(good, "3")])
+    packed = client.post(f"/api/shipping/shipments/{shipment['id']}/pack", json={"version": shipment["version"]}).json()["shipment"]
+    before = _goods(client)[good["id"]]
+    client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": packed["version"]})
+    after = _goods(client)[good["id"]]
+
+    assert (before["shipped"], before["sent"]) == ("3", "0")
+    assert (after["shipped"], after["sent"], after["remaining"]) == ("3", "3", "2")
 
 
 def _good_with_stock(client, *, project="591К.3", item_index="КБ1", accepted="6"):
