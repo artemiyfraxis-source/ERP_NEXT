@@ -275,19 +275,24 @@ class SqlAlchemyOperationCardRepository:
             row.document = self._domain(row).document()
         return len(rows)
 
+    def edited_records(self) -> list[str]:
+        """SUPPLYMAP tcRecordsSync report.editedInPortal: «КОД (ИЗМЕНЕНО, КЕМ)» for every record edited in the portal,
+        one per operation code."""
+        rows = self.session.scalars(
+            select(OperationCardTemplateRow).where(OperationCardTemplateRow.edited_at.is_not(None))
+            .order_by(OperationCardTemplateRow.code, OperationCardTemplateRow.side, OperationCardTemplateRow.id)
+        )
+        found: dict[str, str] = {}
+        for row in rows:
+            found.setdefault(row.code, f"{row.code} ({row.edited_at.strftime('%d.%m.%Y %H:%M')}, {row.edited_by or ''})")
+        return list(found.values())
+
     def replace(
         self, cards: tuple[OperationCardTemplate, ...], *, source_commit: str, imported_at: datetime,
-    ) -> tuple[str, ...]:
-        """Replace the snapshot whole, but keep ERP edits: a code edited here keeps its edit over the fresh snapshot
-        (SUPPLYMAP tcRecordsSync / tcRecordResyncFromTemplate refuse to overwrite a record with ИЗМЕНЕНО).
-        Returns the codes whose edits were kept."""
-        kept = {
-            row.code: (row.edited, row.edited_at, row.edited_by)
-            for row in self.session.scalars(
-                select(OperationCardTemplateRow).where(OperationCardTemplateRow.edited_at.is_not(None))
-            )
-        }
-        # Шаблон-лист, сохранённый в ERP из черновика, снимок не затирает: ERP-версия остаётся (как правка записи).
+    ) -> None:
+        """Replace the snapshot whole (SUPPLYMAP tcRecordsSync rewrites БД.ОП-ТК with an empty ИЗМЕНЕНО): edits made
+        in ERP are dropped. Refusing when there are edits is the application's job."""
+        # Шаблон-лист, сохранённый в ERP из черновика, снимок не затирает: ERP-версия остаётся.
         saved = set(self.session.scalars(
             select(OperationCardTemplateRow.id).where(OperationCardTemplateRow.saved_at.is_not(None))
         ))
@@ -311,9 +316,6 @@ class SqlAlchemyOperationCardRepository:
             ],
             source_commit=source_commit,
             imported_at=imported_at,
-            edited=kept[card.code][0] if card.code in kept else None,
-            edited_at=kept[card.code][1] if card.code in kept else None,
-            edited_by=kept[card.code][2] if card.code in kept else None,
         ) for card in cards if card.source_id not in saved)
         snapshot = self.session.get(OperationCardSnapshotRow, "current")
         if snapshot is None:
@@ -322,7 +324,6 @@ class SqlAlchemyOperationCardRepository:
         snapshot.source_commit = source_commit
         snapshot.imported_at = imported_at
         snapshot.template_count = len(cards)
-        return tuple(sorted(code for code in kept if any(card.code == code for card in cards)))
 
     # ── Шаблоны-листы: каталог и черновики (SUPPLYMAP TcTemplates.gs) ──
 

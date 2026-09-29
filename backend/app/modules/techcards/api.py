@@ -37,6 +37,7 @@ from .application import (
     EditOperationRecordCommand,
     EditTechcardOperationCommand,
     RebuildProjectTechcardCommand,
+    OperationLibraryEditedError,
     ReplaceOperationLibraryCommand,
     UnitOfWork,
     create_project_techcard,
@@ -133,6 +134,7 @@ class OperationRecordPayload(BaseModel):
 class OperationLibraryPayload(BaseModel):
     sourceCommit: str = Field(min_length=40, max_length=40)
     templates: list[dict[str, Any]] = Field(min_length=1, max_length=500)
+    force: bool = False
 
 
 class TemplateDraftOpenPayload(BaseModel):
@@ -179,6 +181,8 @@ def optional_references_uow_factory(request: Request) -> Callable[[], References
 def _run(operation):
     try:
         return operation()
+    except OperationLibraryEditedError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except TechcardValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
@@ -411,11 +415,12 @@ def import_operation_card_templates(
         templates=tuple(payload.templates),
         actor=principal.actor,
         now=now,
+        force=payload.force,
     ), uow_factory()))
     return {
         "templates": result.templates,
         "source_commit": payload.sourceCommit.lower(),
-        "kept_edited": list(result.kept_edited),
+        "overwritten_edited": list(result.overwritten_edited),
     }
 
 
