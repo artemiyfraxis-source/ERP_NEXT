@@ -76,6 +76,10 @@ techcards_edit_principal = require_section(
     "techcards", "edit", detail="Раздел «Техкарты проектов» открыт вам только на просмотр.",
 )
 tctemplates_view_principal = require_section("erptctpl", "view", detail="Раздел «Шаблоны техкарт» вам не открыт.")
+# ErpTechmap.gs portalTcRecordSave: portalSectionEditGuard_(token, 'erptctpl') — правка записи операции.
+tctemplates_edit_principal = require_section(
+    "erptctpl", "edit", detail="Раздел «Шаблоны техкарт» открыт вам только на просмотр.",
+)
 # Loading the SUPPLYMAP operation library is the administrator's tool (sync script), on top of `erptctpl` edit.
 tctemplates_admin_principal = require_section(
     "erptctpl", "edit", roles=frozenset({"admin"}), detail="Загрузка библиотеки шаблонов — только администратору.",

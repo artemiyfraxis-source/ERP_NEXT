@@ -323,6 +323,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
   const [notice, setNotice] = useState("");
   // ID-3: the matrix alone decides — «Техкарты проектов» edit for cards, «Генератор техкарт» (tcgen) for the builder.
   const canEdit = principal.permissions.techcards === "edit";
+  const canEditTemplates = principal.permissions.erptctpl === "edit";
   const canGenerate = Boolean(principal.permissions.tcgen);
   const selected = useMemo(() => cards.find((card) => card.id === selectedId) ?? null, [cards, selectedId]);
   const [bom, setBom] = useState<BomItem[] | undefined>(undefined);
@@ -507,7 +508,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
       hint="Правки пишутся в библиотеку ERP и попадают в ТК проектов при следующей сборке; при обновлении снимка SUPPLYMAP правленая карточка сохраняется. Пустые шаги и строки оснастки при сохранении отбрасываются, номера проставятся сами."
       onCancel={() => setEditingTemplate(false)}
       onSave={saveTemplate}
-    /> : <TemplateDetail template={templateDetail} canEdit={canEdit} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
+    /> : <TemplateDetail template={templateDetail} canEdit={canEditTemplates} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
     <div className="toolbar"><input aria-label="Поиск шаблона" placeholder="Поиск по коду, названию, тексту шага…" value={templateQuery} onChange={(event) => setTemplateQuery(event.target.value)} /></div>
     <div className="tr-chips">
       <button className={templateCategory ? "" : "on"} onClick={() => setTemplateCategory("")}>Все · {records.length}</button>

@@ -297,7 +297,7 @@ def test_engineer_edits_operation_record_as_supplymap_normalizes_it(operation_li
     })
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=UUID("30000000-0000-0000-0000-000000000010"), name="Инженер", department="Производство"),
-        email="engineer@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "edit"},
+        email="engineer@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "edit", "erptctpl": "edit"},
     )
 
     saved = operation_library_api.put("/api/techcards/templates/sdr-a", json=EDIT)
@@ -340,13 +340,13 @@ def test_operation_record_edit_rejects_empty_record_and_unknown_card(operation_l
     assert missing.status_code == 404
 
 
-def test_operation_record_edit_needs_techcards_edit(operation_library_api):
+def test_operation_record_edit_needs_templates_edit(operation_library_api):
     operation_library_api.put("/api/techcards/templates/supplymap-library", json={
         "sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")],
     })
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=UUID("30000000-0000-0000-0000-000000000011"), name="Мастер", department="Производство"),
-        email="master@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "view"},
+        email="master@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "edit", "erptctpl": "view"},
     )
 
     assert operation_library_api.put("/api/techcards/templates/one", json=EDIT).status_code == 403

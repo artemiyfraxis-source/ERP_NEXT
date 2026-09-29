@@ -23,7 +23,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
-    tctemplates_view_principal,
+    tctemplates_edit_principal, tctemplates_view_principal,
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab, gost_awg_map
@@ -330,7 +330,7 @@ def import_operation_card_templates(
 def edit_operation_card_template(
     source_id: str,
     payload: OperationRecordPayload,
-    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    principal: Annotated[Principal, Depends(tctemplates_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
     references_factory: Annotated[
