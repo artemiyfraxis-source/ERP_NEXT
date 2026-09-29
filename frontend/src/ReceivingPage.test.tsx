@@ -43,7 +43,12 @@ function json(body: unknown) {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
+
+/** Очередь — таблица; форма строки открывается кликом по строке. */
+async function openRow(legacyId = "SM-20260921-01") {
+  fireEvent.click(await screen.findByText(legacyId));
+}
 
 it("submits document URLs and optimistic version without browser-owned presence flags", async () => {
   let inspection: Record<string, unknown> | undefined;
@@ -58,6 +63,7 @@ it("submits document URLs and optimistic version without browser-owned presence 
   });
 
   render(<ReceivingPage />);
+  await openRow();
   fireEvent.change(await screen.findByLabelText("Ссылка на УПД/М-15"), {
     target: { value: "https://files.test/upd.pdf" },
   });
@@ -91,10 +97,11 @@ it("sends the УПД date for a historical receipt so the verdict uses it", asyn
   });
 
   render(<ReceivingPage />);
+  await openRow();
   fireEvent.change(await screen.findByLabelText("Ссылка на УПД/М-15"), {
     target: { value: "https://files.test/upd.pdf" },
   });
-  expect(screen.queryByLabelText("Дата УПД/М-15")).toBeNull();
+  expect(screen.getByLabelText("Дата УПД/М-15")).not.toBeRequired();
   fireEvent.click(screen.getByLabelText("Историческая приёмка: срок годности сверяется с датой УПД"));
   fireEvent.change(screen.getByLabelText("Дата УПД/М-15"), { target: { value: "2026-02-10" } });
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
@@ -119,6 +126,7 @@ it("sends the weighed mass and prefills the sample it was weighed with on repeat
   });
 
   render(<ReceivingPage />);
+  await openRow();
   expect(await screen.findByLabelText("Масса 100 шт, г")).toHaveValue("0.123");
   fireEvent.change(screen.getByLabelText("Масса 10 шт, г"), { target: { value: "0,5" } });
   fireEvent.change(screen.getByLabelText("Ссылка на УПД/М-15"), { target: { value: "https://files.test/upd.pdf" } });
@@ -149,6 +157,7 @@ it("keeps persisted documents and manual defects during repeated control", async
   });
 
   render(<ReceivingPage />);
+  await openRow();
   expect(await screen.findByLabelText("Ссылка на УПД/М-15")).toHaveValue(
     "https://files.test/upd.pdf",
   );
@@ -174,6 +183,7 @@ it("shows that a paid shortfall went back to procurement as a backorder", async 
   });
 
   render(<ReceivingPage />);
+  await openRow();
 
   expect(await screen.findByText("Недовоз 2.5 шт — оплаченный остаток ушёл в закупку дозавозом")).toBeInTheDocument();
 });
@@ -184,7 +194,7 @@ it("opens a new incoming-control revision only for a line with a held act", asyn
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/receiving") return json({ lines: revision ? [{ ...inspected, status: "Архив ВК", version: 4 }] : [inspected, { ...line, id: "other" }] });
+    if (path === "/api/receiving") return json({ lines: revision ? [{ ...inspected, status: "Архив ВК", version: 4 }] : [inspected, { ...line, id: "other", legacy_id: "SM-20260921-02" }] });
     if (path.endsWith("/vk-revision") && init?.method === "POST") {
       revision = JSON.parse(String(init.body));
       return json({ archived: { ...inspected, status: "Архив ВК" }, line });
@@ -193,6 +203,9 @@ it("opens a new incoming-control revision only for a line with a held act", asyn
   });
 
   render(<ReceivingPage />);
+  await openRow("SM-20260921-02");
+  expect(screen.queryByRole("button", { name: "Провести новый ВК" })).toBeNull();
+  await openRow("SM-20260921-01");
   const buttons = await screen.findAllByRole("button", { name: "Провести новый ВК" });
   expect(buttons).toHaveLength(1);
   fireEvent.click(buttons[0]);
@@ -280,4 +293,78 @@ it("hides the supplier return in view mode", async () => {
 
   await screen.findByText(/SM-20260921-01/);
   expect(screen.queryByRole("button", { name: "Возврат поставщику" })).toBeNull();
+});
+
+it("RC-13: splits a delivery into manufacturer batches, each with its own quantity and series", async () => {
+  let inspection: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [line] });
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      inspection = JSON.parse(String(init.body));
+      return json({ line: { ...line, grn: "FRX.26.0000001" }, lines: [{ ...line, grn: "FRX.26.0000001" }, { ...line, legacy_id: "SM-20260921-01-П2", grn: "FRX.26.0000002" }] });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  await openRow();
+  fireEvent.change(await screen.findByLabelText("Ссылка на УПД/М-15"), { target: { value: "https://files.test/upd.pdf" } });
+  fireEvent.change(screen.getByLabelText("№ УПД/М-15"), { target: { value: "УПД-512" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ партия" }));
+  fireEvent.change(screen.getByLabelText("Партия 1: по УПД"), { target: { value: "6" } });
+  fireEvent.change(screen.getByLabelText("Партия 1: серия"), { target: { value: "A1" } });
+  fireEvent.change(screen.getByLabelText("Партия 2: по УПД"), { target: { value: "4" } });
+  fireEvent.change(screen.getByLabelText("Партия 2: серия"), { target: { value: "B2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Провести ВК по партиям (2)" }));
+
+  await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
+    document_number: "УПД-512",
+    batches: [
+      expect.objectContaining({ document_quantity: "6", series: "A1" }),
+      expect.objectContaining({ document_quantity: "4", series: "B2" }),
+    ],
+  })));
+  expect(await screen.findByText(/Присвоены ГРН: SM-20260921-01 — FRX.26.0000001; SM-20260921-01-П2 — FRX.26.0000002/)).toBeInTheDocument();
+});
+
+it("RC-8: unpacks an accepted line into packages before placement", async () => {
+  const accepted: ReceivingLine = { ...line, status: "Принято", verdict: "Годен", grn: "FRX.26.0000001", fact_quantity: "10", version: 3 };
+  let body: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [accepted] });
+    if (path.endsWith("/unpack") && init?.method === "POST") {
+      body = JSON.parse(String(init.body));
+      return json({ lines: [{ ...accepted, package: "1", fact_quantity: "7" }, { ...accepted, legacy_id: "SM-20260921-01-П2", package: "2", fact_quantity: "3" }] });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  await openRow();
+  fireEvent.click(await screen.findByRole("button", { name: "Разукомплектовать на пакеты" }));
+  fireEvent.change(screen.getByLabelText("Пакет 1"), { target: { value: "7" } });
+  fireEvent.change(screen.getByLabelText("Пакет 2"), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Разукомплектовать (сумма = 10)" }));
+
+  await waitFor(() => expect(body).toEqual({ version: 3, quantities: ["7", "3"] }));
+  expect(await screen.findByText(/Разукомплектовано: SM-20260921-01 — пакет 1, 7 шт; SM-20260921-01-П2 — пакет 2, 3 шт/)).toBeInTheDocument();
+});
+
+it("filters the queue by status preset and searches by words", async () => {
+  const accepted = { ...line, id: "20000000-0000-0000-0000-000000000002", legacy_id: "SM-20260921-02", status: "Принято", name: "Провод МГТФ" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/receiving") return json({ lines: [line, accepted], next_cursor: null });
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(<ReceivingPage />);
+  await screen.findByText("SM-20260921-02");
+  fireEvent.click(screen.getByRole("button", { name: /^Принято, не разложено/ }));
+  expect(screen.queryByText("SM-20260921-01")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /^Все/ }));
+  fireEvent.change(screen.getByLabelText("Поиск: Очередь приёмки"), { target: { value: "мгтф" } });
+  expect(screen.queryByText("SM-20260921-01")).toBeNull();
+  expect(screen.getByText("SM-20260921-02")).toBeInTheDocument();
 });

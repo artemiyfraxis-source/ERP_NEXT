@@ -201,6 +201,14 @@ export interface ReceivingLine {
   revision_of_id?: string | null;
   nonconformity_description?: string;
   supplier_returns?: number;
+  order_number?: string;
+  expected_arrival?: string | null;
+  document_number?: string;
+  document_date?: string | null;
+  document_name?: string;
+  inspection_note?: string;
+  manufacture_date?: string | null;
+  split_of_id?: string | null;
 }
 
 /** RC-6: принятая позиция в форме возврата поставщику и что по её ГРН лежит на складе. */
@@ -1260,7 +1268,7 @@ export const receivingApi = {
   /** WH-6: «Принято» без места на складе — печатный бланк через тот же механизм, что FF-8 (print.ts). */
   putawaySheet: () => api<{ sheet: PrintSheet }>("/api/receiving/putaway-sheet"),
   inspect: (lineId: string, payload: Record<string, unknown>) =>
-    api<{ line: ReceivingLine }>(`/api/receiving/${lineId}/inspect`, {
+    api<{ line: ReceivingLine; lines?: ReceivingLine[] }>(`/api/receiving/${lineId}/inspect`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -1268,6 +1276,12 @@ export const receivingApi = {
     api<{ line: ReceivingLine }>(`/api/receiving/${lineId}/place`, {
       method: "POST",
       body: JSON.stringify({ version, storage_location: storageLocation }),
+    }),
+  /** RC-8 «Разукомплектовка (пакеты)»: принятая строка делится на пакеты с общим ГРН до раскладки. */
+  unpack: (lineId: string, version: number, quantities: string[]) =>
+    api<{ lines: ReceivingLine[] }>(`/api/receiving/${lineId}/unpack`, {
+      method: "POST",
+      body: JSON.stringify({ version, quantities }),
     }),
   openVkRevision: (lineId: string, version: number) =>
     api<{ archived: ReceivingLine; line: ReceivingLine }>(`/api/receiving/${lineId}/vk-revision`, {

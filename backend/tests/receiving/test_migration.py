@@ -139,3 +139,29 @@ def test_supplier_return_migration_adds_description_and_counter_with_defaults(tm
     command.downgrade(config, "0042_shipping_project_addressees")
     with sqlite3.connect(database_path) as connection:
         assert "supplier_returns" not in _columns(connection)
+
+
+def test_document_details_migration_adds_columns_and_lets_batches_share_the_procurement_line(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "receiving.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+
+    command.upgrade(config, "0043_receiving_supplier_returns")
+    with sqlite3.connect(database_path) as connection:
+        _insert(connection, "1", "Принято")
+
+    command.upgrade(config, "0044_receiving_document_details")
+    with sqlite3.connect(database_path) as connection:
+        assert {
+            "order_number", "expected_arrival", "document_number", "document_date", "document_name",
+            "inspection_note", "manufacture_date", "split_of_id",
+        } <= _columns(connection)
+        index = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'ux_receiving_live_procurement_line'"
+        ).fetchone()[0]
+        assert "split_of_id IS NULL" in index
+
+    command.downgrade(config, "0043_receiving_supplier_returns")
+    with sqlite3.connect(database_path) as connection:
+        assert "split_of_id" not in _columns(connection)

@@ -1,11 +1,46 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { receivingApi, type ReceivingLine } from "./api";
+import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
 
 const MANUAL_CHECKS = [
   "Механическое повреждение / брак",
   "Не тот товар (несоответствие счету)",
 ];
+
+const COLUMNS: DataColumn<ReceivingLine>[] = [
+  { key: "legacy_id", title: "System ID", value: (line) => line.legacy_id },
+  { key: "name", title: "Наименование", value: (line) => [line.article, line.name].filter(Boolean).join(" · "), wrap: true },
+  { key: "supplier", title: "Поставщик", value: (line) => line.supplier, filter: true },
+  { key: "order", title: "№ заказа", value: (line) => line.order_number ?? "" },
+  { key: "expected", title: "Ожид. дата", value: (line) => line.expected_arrival ?? "" },
+  { key: "purpose", title: "Назначение", value: (line) => line.purpose, filter: true },
+  { key: "ordered", title: "Заказано", value: (line) => line.ordered_quantity, numeric: true, render: (line) => `${line.ordered_quantity} ${line.unit}` },
+  { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <span className="status">{line.status}</span> },
+  { key: "grn", title: "ГРН", value: (line) => line.grn ? `${line.grn}${line.package ? ` / ${line.package}` : ""}` : "" },
+  { key: "location", title: "Место", value: (line) => line.storage_location ?? "" },
+  { key: "warehouse", title: "Склад", value: (line) => line.warehouse, filter: true, hidden: true },
+  { key: "series", title: "Серия", value: (line) => line.series, hidden: true },
+  { key: "document", title: "УПД", value: (line) => [line.document_number, line.document_date].filter(Boolean).join(" от "), hidden: true },
+  { key: "fact", title: "Факт", value: (line) => line.fact_quantity ?? "", numeric: true, hidden: true },
+  { key: "verdict", title: "Вердикт", value: (line) => line.verdict ?? "", filter: true, hidden: true },
+];
+
+const PRESETS: DataPreset<ReceivingLine>[] = [
+  { label: "В пути", test: (line) => line.status === "В пути" },
+  { label: "Ожидание", test: (line) => line.status === "Ожидание" },
+  { label: "Карантин", test: (line) => line.status === "Карантин" },
+  { label: "Принято, не разложено", test: (line) => line.status === "Принято" && !line.warehouse_event_emitted },
+  { label: "На складе", test: (line) => line.warehouse_event_emitted },
+  { label: "Возврат", test: (line) => line.status === "Возврат" },
+  { label: "Архив ВК", test: (line) => line.status === "Архив ВК" },
+];
+
+const GROUPS: Record<string, ((line: ReceivingLine) => string) | undefined> = {
+  "": undefined,
+  supplier: (line) => line.supplier || "Без поставщика",
+  order: (line) => line.order_number ? `Заказ ${line.order_number}` : "Без номера заказа",
+};
 
 /** `readOnly` — «режим просмотра» (ID-6): the queue is read; no inspection, placement or new ВК
  *  (SUPPLYMAP: «Приёмка — просмотр» has no canReceive). */
@@ -16,6 +51,8 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [returning, setReturning] = useState(false);
+  const [group, setGroup] = useState("");
+  const [notice, setNotice] = useState("");
 
   async function reload(after?: string) {
     if (loading || busy) return;
@@ -41,7 +78,9 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     setBusy(line.id);
     setError("");
     try {
-      await receivingApi.inspect(line.id, { version: line.version, ...payload });
+      const done = await receivingApi.inspect(line.id, { version: line.version, ...payload });
+      const assigned = (done.lines ?? [done.line]).filter((item) => item.grn);
+      if (assigned.length) setNotice(`Присвоены ГРН: ${assigned.map((item) => `${item.legacy_id} — ${item.grn}`).join("; ")}`);
       const result = await receivingApi.list();
       setLines(result.lines);
       setNextCursor(result.next_cursor);
@@ -67,6 +106,36 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       throw reason;
     } finally {
       setBusy("");
+    }
+  }
+
+  async function unpack(line: ReceivingLine, quantities: string[]) {
+    if (busy || loading) return;
+    setBusy(line.id);
+    setError("");
+    try {
+      const result = await receivingApi.unpack(line.id, line.version, quantities);
+      setNotice(`Разукомплектовано: ${result.lines.map((item) => `${item.legacy_id} — пакет ${item.package}, ${item.fact_quantity} ${item.unit}`).join("; ")}`);
+      const fresh = await receivingApi.list();
+      setLines(fresh.lines);
+      setNextCursor(fresh.next_cursor);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Разукомплектовка не выполнена");
+      throw reason;
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /** «Скопировать ГРН»: список присвоенных ГРН — как SUPPLYMAP показывает их после «Внести» для маркировки. */
+  async function copyGrns(selected: ReceivingLine[]) {
+    const text = selected.filter((line) => line.grn).map((line) => `${line.legacy_id}\t${line.grn}${line.package ? ` / ${line.package}` : ""}`).join("\n");
+    if (!text) { setNotice("У выбранных строк ещё нет ГРН"); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice(`ГРН скопированы (${text.split("\n").length})`);
+    } catch {
+      setNotice(text);
     }
   }
 
@@ -98,9 +167,22 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {returning && <SupplierReturnPanel onDone={() => void reload()} onClose={() => setReturning(false)} />}
-      <div className="queue-summary"><span><strong>{lines.length}</strong> позиций</span><span><strong>{lines.filter((line) => line.status === "Принято").length}</strong> принято</span></div>
-      <section className="work-list">
-        {lines.map((line) => (
+      {notice && <div className="success-banner" role="status">{notice}</div>}
+      <DataTable
+        rows={lines}
+        columns={COLUMNS}
+        rowKey={(line) => line.id}
+        storageKey="receiving"
+        label="Очередь приёмки"
+        presets={PRESETS}
+        groupBy={GROUPS[group]}
+        exportName="Приёмка"
+        emptyText={loading ? "Загружаем…" : "Поставок для приёмки пока нет."}
+        bulkActions={[{ label: "Скопировать ГРН", run: copyGrns, disabled: (rows) => !rows.some((line) => line.grn) }]}
+        toolbar={(
+          <label className="inline-select">Группировать<select value={group} onChange={(event) => setGroup(event.target.value)}><option value="">нет</option><option value="supplier">по поставщику</option><option value="order">по заказу</option></select></label>
+        )}
+        renderDetail={(line) => (
           <ReceivingCard
             key={`${line.id}:${line.version}`}
             line={line}
@@ -108,12 +190,12 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
             disabled={Boolean(busy) || loading}
             onInspect={inspect}
             onPlace={place}
+            onUnpack={unpack}
             onOpenVkRevision={openVkRevision}
             readOnly={readOnly}
           />
-        ))}
-        {!lines.length && !loading && <div className="panel empty">Поставок для приёмки пока нет.</div>}
-      </section>
+        )}
+      />
       {nextCursor && <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload(nextCursor)}>Показать ещё</button>}
     </section>
   );
@@ -125,6 +207,7 @@ function ReceivingCard({
   disabled,
   onInspect,
   onPlace,
+  onUnpack,
   onOpenVkRevision,
   readOnly,
 }: {
@@ -133,6 +216,7 @@ function ReceivingCard({
   disabled: boolean;
   onInspect: (line: ReceivingLine, payload: Record<string, unknown>) => Promise<void>;
   onPlace: (line: ReceivingLine, location: string) => Promise<void>;
+  onUnpack: (line: ReceivingLine, quantities: string[]) => Promise<void>;
   onOpenVkRevision: (line: ReceivingLine) => Promise<void>;
   readOnly: boolean;
 }) {
@@ -147,7 +231,15 @@ function ReceivingCard({
   );
   const [prefix, setPrefix] = useState("");
   const [historical, setHistorical] = useState(false);
-  const [documentDate, setDocumentDate] = useState("");
+  const [documentDate, setDocumentDate] = useState(line.document_date ?? "");
+  const [documentNumber, setDocumentNumber] = useState(line.document_number ?? "");
+  const [documentName, setDocumentName] = useState(line.document_name ?? "");
+  const [manufactureDate, setManufactureDate] = useState(line.manufacture_date ?? "");
+  const [note, setNote] = useState(line.inspection_note ?? "");
+  const [description, setDescription] = useState("");
+  // RC-13: партии изготовителя одной поставки; пусто — обычная приёмка одной строкой.
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [packages, setPackages] = useState<string[]>([]);
   const [series, setSeries] = useState(line.series);
   // МАССА 1 ШТ: any one of 1/10/100 pieces; the server prefills the one it was likely weighed with.
   const [mass, setMass] = useState(line.mass_fields ?? { mass_1: "", mass_10: "", mass_100: "" });
@@ -156,8 +248,8 @@ function ReceivingCard({
   function submitInspection(event: FormEvent) {
     event.preventDefault();
     void onInspect(line, {
-      fact_quantity: fact,
-      document_quantity: documentQty,
+      fact_quantity: fact || null,
+      document_quantity: documentQty || null,
       shipping_document_url: shippingDocument.trim() || null,
       quality_document_url: qualityDocument.trim() || null,
       expiry_date: expiry || null,
@@ -167,12 +259,36 @@ function ReceivingCard({
       series: series.trim(),
       ...mass,
       historical,
-      document_date: historical && documentDate ? documentDate : null,
+      document_date: documentDate || null,
+      document_number: documentNumber.trim(),
+      document_name: documentName.trim(),
+      manufacture_date: manufactureDate || null,
+      note: note.trim(),
+      nonconformity_description: description.trim(),
+      ...(batches.length >= 2 ? { batches: batches.map((batch) => ({
+        document_quantity: batch.document_quantity || null,
+        fact_quantity: batch.fact_quantity || null,
+        series: batch.series.trim(),
+        expiry_date: batch.expiry_date || null,
+        manufacture_date: batch.manufacture_date || null,
+      })) } : {}),
     }).catch(() => undefined);
   }
 
   const inspectable = !readOnly && ["В пути", "Ожидание", "Карантин"].includes(line.status);
   const placeable = !readOnly && line.status === "Принято" && !line.warehouse_event_emitted;
+  const unpackable = placeable && Boolean(line.grn) && !line.package && !line.storage_location;
+  const batchMode = batches.length >= 2;
+
+  function startBatches() {
+    setBatches((current) => current.length
+      ? [...current, emptyBatch()]
+      : [{ ...emptyBatch(), document_quantity: documentQty, fact_quantity: fact, series, expiry_date: expiry, manufacture_date: manufactureDate }, emptyBatch()]);
+  }
+
+  function editBatch(index: number, patch: Partial<Batch>) {
+    setBatches((current) => current.map((batch, position) => position === index ? { ...batch, ...patch } : batch));
+  }
   const revisable = !readOnly && Boolean(line.verdict) && line.status !== "Архив ВК" && !line.warehouse_event_emitted;
   return (
     <article className="panel receiving-card">
@@ -182,14 +298,21 @@ function ReceivingCard({
       </div>
       {line.nonconformities.length > 0 && <p className="nonconformity">{line.nonconformities.join(" · ")}</p>}
       {line.nonconformity_description && <p className="nonconformity">{line.nonconformity_description}</p>}
+      {(line.document_number || line.inspection_note) && <p className="hint">{[line.document_number && `УПД ${line.document_number}${line.document_date ? ` от ${line.document_date}` : ""}`, line.inspection_note].filter(Boolean).join(" · ")}</p>}
       {Number(line.backorder_quantity) > 0 && <p className="nonconformity">Недовоз {line.backorder_quantity} {line.unit} — оплаченный остаток ушёл в закупку дозавозом</p>}
       {inspectable && (
         <form onSubmit={submitInspection}>
           <div className="facts-grid">
-            <label>Количество по УПД/М-15<input type="number" min="0.000001" step="any" required value={documentQty} onChange={(event) => setDocumentQty(event.target.value)} /></label>
-            <label>Фактическое количество<input type="number" min="0.000001" step="any" required value={fact} onChange={(event) => setFact(event.target.value)} /></label>
-            <label>Срок годности<input type="date" value={expiry} onChange={(event) => setExpiry(event.target.value)} /></label>
-            <label>Серия изготовителя<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
+            <label>№ УПД/М-15<input value={documentNumber} onChange={(event) => setDocumentNumber(event.target.value)} /></label>
+            <label>Дата УПД/М-15<input type="date" required={historical} value={documentDate} onChange={(event) => setDocumentDate(event.target.value)} /></label>
+            <label className="wide">Наименование по УПД<input value={documentName} onChange={(event) => setDocumentName(event.target.value)} /></label>
+            {!batchMode && <>
+              <label title="Можно заполнить только одно из двух количеств — второе примется равным ему.">Количество по УПД/М-15<input type="number" min="0.000001" step="any" required={!fact} value={documentQty} onChange={(event) => setDocumentQty(event.target.value)} /></label>
+              <label>Фактическое количество<input type="number" min="0.000001" step="any" required={!documentQty} value={fact} onChange={(event) => setFact(event.target.value)} /></label>
+              <label>Срок годности<input type="date" value={expiry} onChange={(event) => setExpiry(event.target.value)} /></label>
+              <label>Дата изготовления<input type="date" value={manufactureDate} onChange={(event) => setManufactureDate(event.target.value)} /></label>
+              <label>Серия изготовителя<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
+            </>}
             <label title="Вес ОДНОЙ штуки. Для крупного: разъём, катушка, корпус.">Масса 1 шт, г<input inputMode="decimal" value={mass.mass_1} onChange={(event) => setMass((current) => ({ ...current, mass_1: event.target.value }))} /></label>
             <label title="Вес ДЕСЯТИ штук — система поделит на 10. Клеммы, наконечники, крепёж.">Масса 10 шт, г<input inputMode="decimal" value={mass.mass_10} onChange={(event) => setMass((current) => ({ ...current, mass_10: event.target.value }))} /></label>
             <label title="Вес СТА штук — самый точный способ для мелочи. Хватит любого ОДНОГО из трёх полей.">Масса 100 шт, г<input inputMode="decimal" value={mass.mass_100} onChange={(event) => setMass((current) => ({ ...current, mass_100: event.target.value }))} /></label>
@@ -198,10 +321,32 @@ function ReceivingCard({
             <label>Решение<select value={disposition} onChange={(event) => setDisposition(event.target.value)}><option value="">Ещё не принято</option><option>Изолятор</option><option>Использование по разрешению</option><option>Возврат поставщику</option></select></label>
             <label>Идентификатор ГРН<select value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">Автоматически</option><option>CSM</option><option>PPM</option></select></label>
             <label className="check-field"><input type="checkbox" checked={historical} onChange={(event) => setHistorical(event.target.checked)} />Историческая приёмка: срок годности сверяется с датой УПД</label>
-            {historical && <label>Дата УПД/М-15<input type="date" required value={documentDate} onChange={(event) => setDocumentDate(event.target.value)} /></label>}
+            <label className="wide">Примечание<input value={note} onChange={(event) => setNote(event.target.value)} /></label>
+            <label className="wide">Описание несоответствия<input value={description} onChange={(event) => setDescription(event.target.value)} /></label>
             <fieldset className="check-field wide"><legend>Несоответствия ручной проверки</legend>{MANUAL_CHECKS.map((item) => <label key={item}><input type="checkbox" checked={manual.includes(item)} onChange={(event) => setManual((current) => event.target.checked ? [...current, item] : current.filter((value) => value !== item))} />{item}</label>)}</fieldset>
           </div>
-          <button className="primary small" disabled={disabled}>{busy ? "Проводим…" : "Провести входной контроль"}</button>
+          {batchMode && (
+            <table className="batches">
+              <thead><tr><th>Партия</th><th>По УПД</th><th>Факт</th><th>Серия</th><th>Срок годности</th><th>Дата изготовления</th><th /></tr></thead>
+              <tbody>
+                {batches.map((batch, index) => (
+                  <tr key={index}>
+                    <td>{index + 1}</td>
+                    <td><input aria-label={`Партия ${index + 1}: по УПД`} type="number" min="0.000001" step="any" required={!batch.fact_quantity} value={batch.document_quantity} onChange={(event) => editBatch(index, { document_quantity: event.target.value })} /></td>
+                    <td><input aria-label={`Партия ${index + 1}: факт`} type="number" min="0.000001" step="any" required={!batch.document_quantity} value={batch.fact_quantity} onChange={(event) => editBatch(index, { fact_quantity: event.target.value })} /></td>
+                    <td><input aria-label={`Партия ${index + 1}: серия`} value={batch.series} onChange={(event) => editBatch(index, { series: event.target.value })} /></td>
+                    <td><input aria-label={`Партия ${index + 1}: срок годности`} type="date" value={batch.expiry_date} onChange={(event) => editBatch(index, { expiry_date: event.target.value })} /></td>
+                    <td><input aria-label={`Партия ${index + 1}: дата изготовления`} type="date" value={batch.manufacture_date} onChange={(event) => editBatch(index, { manufacture_date: event.target.value })} /></td>
+                    <td><button type="button" className="secondary small" onClick={() => setBatches((current) => current.length > 2 ? current.filter((_, position) => position !== index) : [])}>✕</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="header-actions">
+            {!line.grn && <button type="button" className="secondary small" disabled={disabled} onClick={startBatches}>+ партия</button>}
+            <button className="primary small" disabled={disabled}>{busy ? "Проводим…" : batchMode ? `Провести ВК по партиям (${batches.length})` : "Провести входной контроль"}</button>
+          </div>
         </form>
       )}
       {placeable && (
@@ -210,6 +355,18 @@ function ReceivingCard({
           <button className="primary small" disabled={disabled}>{busy ? "Передаём…" : "Передать на склад"}</button>
         </form>
       )}
+      {unpackable && (packages.length ? (
+        <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onUnpack(line, packages).then(() => setPackages([])).catch(() => undefined); }}>
+          {packages.map((value, index) => (
+            <label key={index}>Пакет {index + 1}<input aria-label={`Пакет ${index + 1}`} type="number" min="0.000001" step="any" required value={value} onChange={(event) => setPackages((current) => current.map((item, position) => position === index ? event.target.value : item))} /></label>
+          ))}
+          <button type="button" className="secondary small" onClick={() => setPackages((current) => [...current, ""])}>+ пакет</button>
+          <button className="primary small" disabled={disabled}>{busy ? "Делим…" : `Разукомплектовать (сумма = ${line.fact_quantity})`}</button>
+          <button type="button" className="secondary small" onClick={() => setPackages([])}>Отмена</button>
+        </form>
+      ) : (
+        <button className="secondary small" disabled={disabled} onClick={() => setPackages([line.fact_quantity ?? "", ""])}>Разукомплектовать на пакеты</button>
+      ))}
       {revisable && (
         <button className="secondary small" disabled={disabled} onClick={() => void onOpenVkRevision(line)}>Провести новый ВК</button>
       )}
@@ -217,4 +374,16 @@ function ReceivingCard({
       {line.warehouse_event_emitted && <div className="success-banner">Передано на склад: {line.grn} · {line.storage_location}</div>}
     </article>
   );
+}
+
+interface Batch {
+  document_quantity: string;
+  fact_quantity: string;
+  series: string;
+  expiry_date: string;
+  manufacture_date: string;
+}
+
+function emptyBatch(): Batch {
+  return { document_quantity: "", fact_quantity: "", series: "", expiry_date: "", manufacture_date: "" };
 }
