@@ -306,7 +306,7 @@ def auto_build_project_etk(
         with references_factory() as references_uow:
             metadata = references_uow.tech_operations.metadata()
             records = references_uow.tech_operations.list(
-                tab=TechOperationTab.TERMINAL, query="", limit=500,
+                tab=TechOperationTab.TERMINAL, query="", limit=10_000,
             ) if metadata and metadata["schema_version"] == TECH_SNAPSHOT_SCHEMA_VERSION else ()
             gost_awg = gost_awg_map(references_uow.references.list())
         if metadata and metadata["schema_version"] == TECH_SNAPSHOT_SCHEMA_VERSION:

@@ -7,7 +7,7 @@ from app.modules.references.domain import TechOperationTab
 from app.modules.references.load_mirror import ACTOR, MirrorLoadError, format_report, load_mirror, read_mirror
 from app.modules.references.technology import import_supplymap_snapshot, parse_spr_kab_tsv
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
-from tests.references.test_load_mirror import NOW, mirror, rows, uow  # noqa: F401  (fixtures/helpers)
+from tests.references.test_load_mirror import NOW, mirror, rows, sessions, uow  # noqa: F401  (fixtures/helpers)
 
 COAX = "Кабель\tD1\tD2\tD3\nRG-316\t0,5\t1,48\t1,95\nRG-6\t1,02\t4,57\nRG-142\t0,94\t3,00\t3,95\nRG-142\t0,94\t3,00\t3,95\n"
 AWG = "AWG\tГОСТ\tØ жилы\tМГТФ\n22\t0,35\t0,64\t1,2\n1/0\t50\t8,25\t—\n"
@@ -86,12 +86,13 @@ def test_api_refuses_to_edit_or_create_in_spr_kab(references_api):
 
 def test_mirror_reads_spr_kab_when_present_and_skips_it_when_absent(tmp_path):
     source = mirror(tmp_path)
-    assert set(read_mirror(source)) == {"prov", "mat"}
+    assert set(read_mirror(source).tables) == {"ob", "op", "ter", "coax", "prov", "mat"}
 
     (source / "_local" / "db" / "СПР.КАБ.tsv").write_text(SHEET, encoding="utf-8", newline="")
-    tables = read_mirror(source)
+    tables = read_mirror(source).tables
 
-    assert {tab: len(items) for tab, items in tables.items()} == {"prov": 2, "mat": 1, "kab_coax": 4, "kab_awg": 2}
+    assert {tab: len(items) for tab, items in tables.items() if tab.startswith(("prov", "mat", "kab"))} == {
+        "prov": 2, "mat": 1, "kab_coax": 4, "kab_awg": 2}
 
 
 def test_broken_spr_kab_file_is_an_error(tmp_path):
@@ -102,7 +103,7 @@ def test_broken_spr_kab_file_is_an_error(tmp_path):
         read_mirror(source)
 
 
-def test_load_replaces_spr_kab_keeps_other_tabs_and_dry_run_reports_counts(tmp_path, uow):  # noqa: F811
+def test_load_replaces_spr_kab_and_dry_run_reports_counts(tmp_path, uow):  # noqa: F811
     replace_snapshot(ReplaceSnapshotCommand(
         schema_version=14, source_updated_at=None, actor=ACTOR, now=NOW,
         records=(TechRecordInput(TechOperationTab.TERMINAL, "T1", "t1", "БД.ТЕР", "T1", {"a": "1"}),
@@ -121,4 +122,4 @@ def test_load_replaces_spr_kab_keeps_other_tabs_and_dry_run_reports_counts(tmp_p
 
     assert rows(uow, TechOperationTab.KAB_COAX) == ["RG-316", "RG-6", "RG-142", "RG-142"]
     assert rows(uow, TechOperationTab.KAB_AWG) == ["22", "1/0"]
-    assert rows(uow, TechOperationTab.TERMINAL) == ["T1"]
+    assert "T1" not in rows(uow, TechOperationTab.TERMINAL)  # БД.ТЕР now comes from the mirror too (REF-MIRROR-ALL)

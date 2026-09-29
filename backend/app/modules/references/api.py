@@ -158,7 +158,7 @@ def resolve_terminal_norm(
 ) -> dict:
     with uow_factory() as uow:
         metadata = uow.tech_operations.metadata()
-        records = uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=500)
+        records = uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)
     if metadata is None or metadata["schema_version"] != TECH_SNAPSHOT_SCHEMA_VERSION:
         raise HTTPException(
             status_code=409,

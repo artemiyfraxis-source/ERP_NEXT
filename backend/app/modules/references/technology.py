@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from math import log
 import re
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Sequence
 
 
 WIRE_AWG_MM2 = {
@@ -448,10 +448,21 @@ def _column_letter(index: int) -> str:
     return name
 
 
+_MIRROR_ESCAPE = re.compile(r"\\(\\|t|n)")
+_MIRROR_UNESCAPE = {"\\": "\\", "t": "\t", "n": "\n"}
+
+
+def parse_mirror_rows(text: str) -> list[list[str]]:
+    """Mirror TSV (SUPPLYMAP `db.mjs` `toTsv`): file line = sheet row, cells split by TAB; inside a cell the
+    backslash, TAB and line break are escaped (`\\\\`, `\\t`, `\\n`); trailing empty cells are trimmed."""
+    lines = str(text or "").lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return [[_MIRROR_ESCAPE.sub(lambda match: _MIRROR_UNESCAPE[match.group(1)], cell) for cell in line.split("\t")]
+            for line in lines]
+
+
 def parse_mirror_tsv(text: str) -> dict[str, object]:
     """Mirror `_local/db/<sheet>.tsv` (header row 1) → the `tables` entry of the snapshot payload."""
-    lines = str(text or "").lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    rows = [line.split("\t") for line in lines]
+    rows = parse_mirror_rows(text)
     return {"header": rows[0] if rows and rows[0] != [""] else [], "formulaCols": [], "rows": rows[1:]}
 
 
@@ -461,8 +472,7 @@ def parse_spr_kab_tsv(text: str) -> dict[str, dict[str, object]]:
     The sheet holds two tables one under another with blank rows between them and no common header: the coax
     table (header `Кабель / D1 / D2 / D3`) on top, the AWG table below, its header starting with the cell
     `AWG`. Cells stay as displayed (decimal commas, «—»)."""
-    lines = str(text or "").lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    rows = [line.split("\t") for line in lines]
+    rows = parse_mirror_rows(text)
     awg_at = next((i for i, row in enumerate(rows) if row and row[0].strip().casefold() == "awg"), None)
     if awg_at is None:
         raise ValueError(f"В {SPR_KAB_SHEET} нет шапки таблицы AWG (строка, начинающаяся с «AWG»)")
@@ -511,6 +521,130 @@ def import_sheet_table(tab: str, table: object) -> tuple[ImportedTechnologyRecor
             sort_key=f"{number:05d}" if tab in KAB_TABLES else display, fields=fields,
         ))
     return tuple(records)
+
+
+# The four bases the GAS exporter reads by header (SUPPLYMAP TcConfig.gs `TECHOPS_DB_APP.tabs`, in `tabOrder`):
+# tab → (sheet, header row number).
+TECH_SHEETS = {"ob": ("БД.ОБ", 2), "op": ("БД.ОП", 2), "ter": ("БД.ТЕР", 1), "coax": ("БД.КОАКС", 2)}
+
+
+@dataclass(frozen=True)
+class _SchemaField:
+    key: str
+    aliases: tuple[str, ...]
+    store: bool = False
+    pattern: str = ""  # fallback regex over the normalized headers
+
+
+def _join_parts(*parts: str) -> str:
+    return " | ".join(part for part in parts if part.strip())
+
+
+# SUPPLYMAP TcOpsDb.gs `DB_SCHEMA` — the only place that says which column becomes which record field.
+_TECH_SCHEMA = {
+    "ob": ((
+        _SchemaField("baseValue", ("для базы", "длябазы")),
+        _SchemaField("obType", ("тип", "type", "категория", "category", "группа"), store=True),
+    ), lambda v: v["baseValue"], lambda v: v["baseValue"],
+        lambda v: f"{v['obType']} {v['baseValue']}" if v["obType"] else v["baseValue"]),
+    "op": ((
+        _SchemaField("opNumber", ("номер", "number"), store=True),
+        _SchemaField("opName", ("название", "name"), store=True),
+        _SchemaField("tOp", ("время операции", "время операции, сек", "время операции сек"), store=True),
+        _SchemaField("tPrep", ("время подготовки, сек", "время подготовки сек", "время подготовки"), store=True),
+        _SchemaField("tMachine", ("время машины, сек/оп; сек/м", "время машины сек/оп; сек/м", "время машины"), store=True),
+    ), lambda v: _join_parts(v["opName"], v["opNumber"]), lambda v: v["opNumber"] + " " + v["opName"],
+        lambda v: v["opName"] or v["opNumber"]),
+    "ter": ((
+        _SchemaField("terManufacturer", ("производитель", "бренд", "manufacturer"), store=True),
+        _SchemaField("terSeries", ("series", "серия разъемов", "серия"), store=True),
+        _SchemaField("terComponent", ("product name", "productname", "комплектующая"), store=True),
+        _SchemaField("connType", ("тип разъёма", "тип разъема")),
+        _SchemaField("terType", ("тип контакта", "тип конт.", "тип конт"), store=True),
+        _SchemaField("artISL", ("артикул (контакта isl)", "артикул контакта isl")),
+        _SchemaField("artSAG", ("артикул (контакт sag)", "артикул контакт sag")),
+        _SchemaField("terArticle", ("артикул контакта (reel)", "артикул контакта", "артикул"), store=True),
+        _SchemaField("terLPlus", ("l+", "l+ в мм", "l+(мм)", "l +"), store=True, pattern=r"^l\s*\+"),
+        _SchemaField("terLMinus", ("l-", "l−", "l–", "l—", "l- в мм", "l-(мм)", "l −", "l -"), store=True,
+                     pattern=r"^l\s*[-−–—]"),
+        _SchemaField("terStep", ("шаг разъема", "шаг разъёма", "шаг", "pitch", "step", "шаг ленты", "шаг контакта"),
+                     store=True, pattern=r"^шаг"),
+        _SchemaField("terApplicator", ("аппликатор", "applicator", "applikator"), store=True),
+        _SchemaField("terStrip", ("длина зачистки", "длина зачистки, мм", "зачистка", "длина снятия изоляции",
+                                  "strip length", "strip"), store=True, pattern=r"зачист|strip"),
+        _SchemaField("terCrimpHeight", ("высота обжима проводника , мм", "высота обжима проводника, мм",
+                                        "высота обжима проводника", "crimp height conductor", "crimp height"), store=True),
+        _SchemaField("terPullForceMin", ("усилие обрыва контакта, n", "усилие обрыва контакта n",
+                                         "усилие обрыва контакта от, n", "усилие обрыва контакта от n",
+                                         "усилие обрыва от, n", "усилие обрыва от", "pull force min", "pull test min",
+                                         "pull-off force min"), store=True),
+        _SchemaField("terPullForceMax", ("усилие обрыва контакта до, n", "усилие обрыва контакта до n",
+                                         "усилие обрыва до, n", "усилие обрыва до", "pull force max", "pull test max",
+                                         "pull-off force max"), store=True),
+    ), lambda v: _join_parts(v["terManufacturer"], v["terSeries"], v["terComponent"]),
+        lambda v: " ".join(v[key] for key in ("terManufacturer", "terSeries", "terComponent", "connType", "terType",
+                                              "artISL", "artSAG")),
+        None),  # no sortKey for ter, as in GAS
+    "coax": ((
+        _SchemaField("coaxArticle", ("артикул",), store=True),
+        _SchemaField("coaxType", ("тип/серия", "тип / серия", "тип серия"), store=True),
+        _SchemaField("coaxMfr", ("производитель", "бренд", "manufacturer"), store=True),
+        _SchemaField("supplier", ("поставщик", "supplier")),
+        _SchemaField("coaxWire", ("провод",), store=True),
+        _SchemaField("program", ("программа",)),
+    ), lambda v: _join_parts(v["coaxType"], v["coaxWire"], v["supplier"]),
+        lambda v: " ".join(v[key] for key in ("coaxArticle", "coaxType", "coaxMfr", "supplier", "coaxWire", "program")),
+        lambda v: f"{v['coaxWire']} {v['coaxType']} {v['coaxMfr']} {v['coaxArticle']}"),
+}
+
+
+def _normalize_header(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").lower()).strip()
+
+
+def sheet_snapshot_records(tab: str, rows: Sequence[Sequence[object]]) -> tuple[list[str], list[dict[str, object]]]:
+    """One base sheet (display values, sheet rows from 1) → `(columnHeaders, records)` exactly as the GAS exporter
+    builds them (SUPPLYMAP TcOpsDb.gs `fetchTechOperationsSnapshotFromSource_` + `buildRecordFromSchema_`): header
+    at the tab's fixed row, each field resolved once by alias then regex, rows without display text skipped, and
+    `exportValues` = every named column of the row. The result goes through `import_supplymap_snapshot` unchanged."""
+    sheet, header_row = TECH_SHEETS[tab]
+    fields, display, search, sort_key = _TECH_SCHEMA[tab]
+    if len(rows) < 2 or len(rows) < header_row:
+        return [], []
+    header = list(rows[header_row - 1])
+    header_map: dict[str, int] = {}
+    for index, name in enumerate(header):
+        if _normalize_header(name):
+            header_map[_normalize_header(name)] = index  # last duplicate wins, as in GAS
+    named = [(str(name or "").strip(), index) for index, name in enumerate(header) if str(name or "").strip()]
+    resolved = {}
+    for field in fields:
+        index = next((header_map[_normalize_header(alias)] for alias in field.aliases
+                      if _normalize_header(alias) in header_map), -1)
+        if index < 0 and field.pattern:
+            index = next((header_map[key] for key in header_map if re.search(field.pattern, key)), -1)
+        resolved[field.key] = index
+
+    def cell(row: Sequence[object], index: int) -> str:
+        return str(row[index] if 0 <= index < len(row) and row[index] is not None else "").strip()
+
+    records = []
+    for row in rows[header_row:]:
+        values = {field.key: cell(row, resolved[field.key]) for field in fields}
+        text = display(values)
+        if not text:
+            continue
+        record: dict[str, object] = {
+            "tabKey": tab, "displayText": text,
+            "normalizedSearch": re.sub(r"\s+", "", search(values).lower()),
+            "exportValues": [cell(row, index) for _name, index in named],
+            "sourceSheet": sheet,
+        }
+        if sort_key is not None:
+            record["sortKey"] = sort_key(values)
+        record.update({field.key: values[field.key] for field in fields if field.store})
+        records.append(record)
+    return [name for name, _index in named], records
 
 
 def _range_indexes(headers: Iterable[object]) -> dict[str, int]:
