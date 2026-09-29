@@ -669,3 +669,7 @@
 ## 2026-09-29 · по просьбе владельца · знания проекта — графом в Obsidian
 - Заметки проекта с `[[ссылками]]` лежат в `.claude/knowledge/memory` (вход — `erp-next-hub.md`): модули, решения владельца, запуск, сервер, сотрудники, Google, решения агентов из RUNLOG (`runlog-decisions.md`).
 - Решено агентом — проверить: заметки положены в память ERP_NEXT, а не в claude-brain. По правилу самого хранилища (claude-brain README, memory-topology) проектное хранится в репо проекта, а `mount-memories.ps1` подключает эту папку в Obsidian как `projects/ERP_NEXT` — граф один. Тексты заметок по-английски (language-policy), русские термины как есть.
+
+## 2026-09-29 · по просьбе владельца · Obsidian через MCP
+- Решено агентом — проверить: MCP Obsidian («Local REST API with MCP») подключается только к Claude Code на ПК владельца: `claude mcp add --transport http --scope user obsidian http://127.0.0.1:27123/mcp --header "Authorization: Bearer <API key>"`. Облачные треды до 127.0.0.1 не достают. Выставлять хранилище наружу туннелем (Tailscale Funnel / Cloudflare) под коннектор claude.ai не стали: коннектор не передаёт постоянный Bearer-ключ, а без ключа хранилище открыто всем. Облачные треды читают и пишут те же заметки через git: claude-brain и `.claude/knowledge/memory` (в Obsidian это `projects/ERP_NEXT`).
+- Ключ API был виден на скриншоте в чате. Владельцу перевыпустить его в плагине и после этого заново выполнить команду выше.
