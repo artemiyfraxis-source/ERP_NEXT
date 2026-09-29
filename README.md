@@ -251,6 +251,9 @@ cd backend
 реестр «Проекты» и «Журнал проектов» SUPPLYMAP и сверяет план с листом цеха «ЗАГРУЗ» по правилам `planShopSync_`.
 Повторный запуск ничего не дублирует.
 
+Всё вместе на чистой базе (справочники, библиотека техкарт, склад, проекты):
+`powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key <ключ.json> -Db real.db`.
+
 ### Загрузка баз «Технологии» из зеркала (REF-MIRROR-LOAD, REF-MIRROR-ALL)
 
 Читает зеркало `_local/db/*.tsv` репозитория SUPPLYMAP (только чтение; путь — `--source` или
