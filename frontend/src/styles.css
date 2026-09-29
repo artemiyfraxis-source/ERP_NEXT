@@ -478,7 +478,7 @@ td small { margin-top: 4px; color: #7b857e; }
 .kit-modal { margin: 0 0 16px; display: grid; gap: 10px; }
 .kit-modal h3 { margin: 0; }
 .kit-spec { margin: 0 0 18px; }
-.kit-spec-table input { width: 100%; min-width: 60px; }
+.kit-spec input { width: 100%; min-width: 60px; }
 .kit-link { display: flex; gap: 4px; align-items: center; }
 .kit-kd { display: flex; gap: 6px; align-items: center; }
 .kit-supply-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 14px; }
