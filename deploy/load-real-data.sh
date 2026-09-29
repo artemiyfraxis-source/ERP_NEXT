@@ -5,7 +5,12 @@
 #       new lots are created, lots ERP never moved follow Google («догрузка из Google»), moved lots are reported
 #   deploy/load-real-data.sh kd        # КД проектов с Google Диска в базу (Диск только читается)
 #   deploy/load-real-data.sh projects  # re-read projects (idempotent: nothing is duplicated)
+<<<<<<< HEAD
 #   deploy/load-real-data.sh shipped   # re-read «ЗАГРУЗ» only: shipped projects out, partial shipments → finished goods
+=======
+#   deploy/load-real-data.sh techcards # ТК: выданные в SUPPLYMAP → ERP, остальным сборкам — ЭТК генератором
+#       (отгруженные и ХОЛД не трогаются; повтор собирает только то, чего ещё нет)
+>>>>>>> origin/main
 # Secrets the owner reads afterwards: $ERP_HOME/config/admin.txt, $ERP_HOME/config/staff-pins.txt (chmod 600).
 set -euo pipefail
 export ERP_HOME=${ERP_HOME:-/opt/erp}
@@ -33,6 +38,7 @@ case "${1:-}" in
     cli python -m app.modules.techcards.seed_library
     "$0" projects  # in-process API call: the login cookie stays inside the container, so Secure is off there only
     "$0" kd
+    "$0" techcards
     ;;
   projects)
     cli sh -c "python ../scripts/projects_import.py snapshot --key $key --out /app/data/import/projects.json && \
@@ -44,6 +50,10 @@ case "${1:-}" in
   kd)  # старые КД с Google Диска → в базу (Диск только читается); повтор докачивает недостающее
     cli python -m app.modules.techcards.import_kd_from_drive --apply || ok_or_report
     ;;
+  techcards)
+    cli python -m app.workflows.techcards_all supplymap || ok_or_report
+    cli python -m app.workflows.techcards_all generate || ok_or_report
+    ;;
   stock)
     if [ "${2:-}" != "--yes" ]; then
       cli sh -c "python ../scripts/stock_export_google.py --key $key --out /app/data/import && \
@@ -54,5 +64,9 @@ case "${1:-}" in
                  python -m app.modules.warehouse.import_stock --dir /app/data/import" || ok_or_report
     fi
     ;;
+<<<<<<< HEAD
   *) echo "usage: $0 base|projects|shipped|kd|stock [--yes]" >&2; exit 2 ;;
+=======
+  *) echo "usage: $0 base|projects|kd|techcards|stock [--yes]" >&2; exit 2 ;;
+>>>>>>> origin/main
 esac

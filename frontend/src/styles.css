@@ -778,10 +778,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tcgen .ep-sides h3 { margin-top: 4px; }
 .tcgen .gen-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .tcgen .gen-actions .toggle-row { margin-right: auto; }
-.tcgen .gen-more { font-size: 12px; }
-.tcgen .gen-more summary { cursor: pointer; color: var(--muted-foreground); font-weight: 600; }
-.tcgen .gen-more[open] { display: grid; gap: 8px; justify-items: start; }
-.tcgen .gen-more .build-config { width: 100%; }
 
 /* Шаблоны-листы БД.ТК: каталог и сетка черновика */
 .nowrap { white-space: nowrap; }
@@ -953,3 +949,73 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .update-banner { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; gap: 12px; align-items: flex-start; width: min(560px, calc(100vw - 32px)); max-height: 40vh; overflow: auto; padding: 10px 14px; border: 1px solid var(--border, #e3e5eb); border-radius: 10px; background: var(--card, #fff); box-shadow: 0 6px 24px rgba(0, 0, 0, .12); font-size: 13px; }
 .update-banner-body { flex: 1; min-width: 0; }
 .update-banner ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted-foreground); }
+
+/* Карточка проекта — как в SUPPLYMAP (kitCardRender_): строка «заказчик · расчёт · обновлено», небольшие кнопки,
+   сегментные вкладки и простая таблица «Состав» с кликом по строке. */
+.kit-card .page-head { margin-bottom: 6px; }
+.kit-meta { margin: 0 0 10px; color: var(--muted-foreground); font-size: 12.5px; }
+.kit-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
+.kit-actions .secondary.small { border-radius: 999px; padding: 6px 14px; font-weight: 500; }
+.seg-tabs { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 4px; margin: 0 0 12px; border-radius: 12px; background: #e9eeee; }
+.seg-tabs button { border: 0; border-radius: 9px; padding: 7px 14px; background: transparent; color: #4b5a58; font-size: 13px; font-weight: 600; }
+.seg-tabs button:hover { color: var(--foreground); }
+.seg-tabs button.on { background: var(--card); color: var(--primary); box-shadow: 0 1px 3px rgba(0, 26, 24, .12); }
+.kit-sostav table { font-size: 12.5px; }
+.kit-sostav th, .kit-sostav td { padding: 8px 12px; }
+.kit-sostav thead th { background: #0e6f68; color: #fff; font-weight: 600; letter-spacing: .04em; }
+.kit-sostav tbody tr { cursor: pointer; }
+.kit-sostav tbody tr:hover td { background: color-mix(in srgb, var(--primary) 6%, white); }
+.kit-sostav td.wrap { white-space: normal; min-width: 260px; }
+.kit-sostav th.num, .kit-sostav td.num { text-align: right; }
+.kit-sostav select { width: auto; min-width: 130px; padding: 3px 6px; font-size: 12.5px; border-radius: 6px; }
+.kit-sostav .link-button { padding: 0; }
+.kit-file { border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; background: var(--card); font-size: 12px; }
+
+/* ТК КБn — компактно (владелец 29.09 «модуль ТК перегружен»): одна строка о карте с действиями, схема жгута один
+   раз SVG-картинкой, маршрут слева, операция справа без вложенных панелей; журнал ревизий свёрнут. */
+.etk-sheet { display: grid; gap: 12px; }
+.etk-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.etk-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-right: auto; font-size: 14px; }
+.etk-title .muted { font-size: 12.5px; }
+.etk-schema { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 8px 12px; }
+.etk-schema summary, .etk-revs summary, .etk-warnings summary, .gen-more summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.etk-harness { display: flex; justify-content: center; overflow-x: auto; }
+.etk-harness svg { max-width: 760px; width: 100%; height: auto; }
+.etk-warnings { border-radius: 10px; padding: 8px 12px; color: #74451f; background: #fff3dd; font-size: 12.5px; }
+.etk-warnings > div { margin-top: 4px; white-space: pre-line; }
+.etk-revs { font-size: 12.5px; }
+.etk-revs > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.etk-sheet .etk-wrap { grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); }
+.etk-sheet .etk-nav-route button { padding: 8px 10px; font-size: 13px; }
+.etk-op { display: grid; gap: 14px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.etk-op-head { display: flex; align-items: flex-start; gap: 12px; }
+.etk-op-head > div { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.etk-op-head h3 { margin: 0; font-size: 18px; font-weight: 600; }
+.etk-op-head .etk-conn { color: var(--muted-foreground); font-weight: 500; }
+.etk-op-head small { color: var(--muted-foreground); font-size: 12px; }
+.etk-op-head code { color: #0e6f68; font-weight: 600; }
+.etk-op .etk-chips { margin: 0; }
+.etk-op .etk-flow { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 0; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.etk-op .etk-block { border-radius: 0; background: none; padding: 10px 12px; font-size: 12.5px; border-left: 1px solid var(--border); }
+.etk-op .etk-block:first-child { border-left: 0; }
+.etk-op .etk-block > strong { font-size: 11px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; }
+.etk-op .etk-block > span { border-top: 0; padding-top: 0; }
+.etk-sec h4 { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+.etk-op .etk-steps { margin: 0; gap: 6px; padding-left: 22px; }
+.etk-op .etk-steps li { font-size: 13px; line-height: 1.45; }
+.etk-op .etk-steps li.ctl { padding: 4px 8px; border-left: 3px solid #d93025; background: #fdf4f4; border-radius: 0 6px 6px 0; }
+.etk-op .etk-steps li > span { color: #b91c1c; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.etk-op .etk-fig { display: flex; justify-content: center; border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
+.etk-op .housing-view { margin: 0; background: none; border: 1px solid var(--border); }
+.etk-op .tr-tooling { font-size: 13px; }
+@media (max-width: 1100px) { .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
+
+/* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
+.seg-tabs.sub { margin-bottom: 8px; }
+.gen-pane { display: grid; gap: 10px; }
+.tcgen .gen-actions { align-items: flex-start; margin-top: 10px; }
+.tcgen .gen-actions > .primary { min-width: 160px; }
+.gen-more { margin-right: auto; display: grid; gap: 8px; color: var(--muted-foreground); }
+.gen-more[open] { color: var(--foreground); }
+.gen-more > .secondary { justify-self: start; }
+.gen-more .build-config { margin: 0; padding: 0; border: 0; min-width: min(640px, 70vw); }

@@ -15,8 +15,6 @@ $py = Join-Path $backend '.venv\Scripts\python.exe'
 $Key = (Resolve-Path $Key).Path
 $data = Join-Path $root 'data\import'
 New-Item -ItemType Directory -Force $data | Out-Null
-# Путь к ключу (не сам ключ) — для update-local.ps1: он перечитывает лист цеха «ЗАГРУЗ» при каждом обновлении.
-Set-Content (Join-Path $data 'google-key.path') $Key -Encoding UTF8
 Set-Location $backend
 $env:ERP_DATABASE_URL = if ($DatabaseUrl) { $DatabaseUrl } else { "sqlite+pysqlite:///$DbFile" }
 $env:ERP_COOKIE_SECURE = '0'
@@ -51,4 +49,11 @@ Run ..\scripts\projects_import.py apply (Join-Path $data 'projects.json') --logi
 Run -m app.outbox_worker --once
 Write-Host '== Наименования комплектующих с сайтов поставщиков'
 Run -m app.workflows.kitset_names
+Write-Host '== Техкарты: выданные в SUPPLYMAP и ЭТК генератором (генератору нужен npm run build:tcgen в frontend)'
+Set-Content (Join-Path $backend 'google-key.path') $Key  # update-local.ps1 берёт ключ отсюда
+$env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = $Key
+foreach ($step in 'supplymap', 'generate') {
+    & $py -X utf8 -m app.workflows.techcards_all $step
+    if ($LASTEXITCODE -gt 1) { Write-Warning "Техкарты ($step) не сделаны (ошибка выше)" }
+}
 Write-Host "Готово: база $env:ERP_DATABASE_URL. Запустите API над ней (ERP_DATABASE_URL=$env:ERP_DATABASE_URL)."
