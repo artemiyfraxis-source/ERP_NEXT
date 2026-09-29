@@ -210,6 +210,8 @@ td small { margin-top: 4px; color: #7b857e; }
 .reference-fields { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .reference-fields span { display: grid; gap: 2px; }
 .reference-fields small { color: var(--muted-foreground); font-size: 9px; text-transform: uppercase; }
+.reference-tiles { margin-bottom: 14px; }
+.reference-tiles .tile { min-height: 0; }
 .notification-list { display: grid; gap: 12px; margin-top: 16px; }
 .notification-card { padding: 17px 19px; }
 .notification-card.unread { border-left: 3px solid var(--primary); }

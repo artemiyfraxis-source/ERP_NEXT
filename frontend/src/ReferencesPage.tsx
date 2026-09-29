@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   referencesApi,
   type Principal,
+  type ReferenceBase,
   type ReferenceMaps,
   type ReferencePair,
   type TechOperationRecord,
@@ -23,6 +24,10 @@ const TECH_TABS: Array<{ id: TechOperationTab; label: string }> = [
 ];
 // СПР.КАБ — только просмотр (как в портале SUPPLYMAP): таблица как на листе, без правки и «+ Запись».
 const VIEW_ONLY_TABS: TechOperationTab[] = ["kab_coax", "kab_awg"];
+// Tile of a base (SUPPLYMAP portalRefList / REF_BASES_) → the tab it opens; БД.ТК templates live in «Шаблоны техкарт».
+const BASE_TAB: Record<string, TechOperationTab | undefined> = {
+  op: "op", ob: "ob", ter: "ter", coax: "coax", prov: "prov", mat: "mat", spr_kab: "kab_coax",
+};
 
 export function ReferencesPage({ principal }: { principal: Principal }) {
   const [pageTab, setPageTab] = useState<PageTab>("maps");
@@ -35,8 +40,14 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
+  const [bases, setBases] = useState<ReferenceBase[]>([]);
   const viewOnly = VIEW_ONLY_TABS.includes(techTab);
-  const canEdit = principal.permissions.references === "edit" && principal.roles.includes("admin") && !viewOnly;
+  // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
+  const canEdit = principal.permissions.erpref === "edit" && !viewOnly;
+  // Maps (Portal.gs portalSaveReferences): supplier/country — the buyer's (portalCanWork_), ГОСТ→AWG — «Справочник».
+  const canEditSuppliers = Boolean(maps.can_edit?.suppliers);
+  const canEditGost = Boolean(maps.can_edit?.gost_awg);
+  const canSaveMaps = canEditSuppliers || canEditGost;
 
   async function loadMaps() {
     try {
@@ -57,14 +68,23 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
     }
   }
 
+  async function loadBases() {
+    try {
+      setBases((await referencesApi.bases()).bases);
+    } catch {
+      setBases([]);  // tiles are a summary; the tabs below still open every base
+    }
+  }
+
   useEffect(() => { void loadMaps(); }, []);
+  useEffect(() => { if (pageTab === "operations") void loadBases(); }, [pageTab]);
   useEffect(() => { if (pageTab === "operations") void loadTech(); }, [pageTab, techTab]);
 
   async function saveMaps() {
     if (busy) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      setMaps(await referencesApi.saveMaps(maps));
+      setMaps(await referencesApi.saveMaps({ suppliers: maps.suppliers, countries: maps.countries, gost_awg: maps.gost_awg }));
       setNotice("Справочники сохранены целиком");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Справочники не сохранены");
@@ -118,13 +138,31 @@ export function ReferencesPage({ principal }: { principal: Principal }) {
     {notice && <div className="success-banner">{notice}</div>}
     {pageTab === "maps" ? <>
       <div className="reference-columns">
-        <MapEditor title="Домен поставщика → поставщик" keyLabel="Домен или ссылка" valueLabel="Поставщик" rows={maps.suppliers} disabled={!canEdit} onChange={(suppliers) => setMaps({ ...maps, suppliers })} />
-        <MapEditor title="Изготовитель → страна" keyLabel="Изготовитель" valueLabel="Страна" rows={maps.countries} disabled={!canEdit} onChange={(countries) => setMaps({ ...maps, countries })} />
-        <MapEditor title="ГОСТ-сечение → AWG (СПР.КАБ)" keyLabel="Сечение ГОСТ, мм²" valueLabel="AWG" rows={maps.gost_awg} disabled={!canEdit} onChange={(gost_awg) => setMaps({ ...maps, gost_awg })} />
+        <MapEditor title="Домен поставщика → поставщик" keyLabel="Домен или ссылка" valueLabel="Поставщик" rows={maps.suppliers} disabled={!canEditSuppliers} onChange={(suppliers) => setMaps({ ...maps, suppliers })} />
+        <MapEditor title="Изготовитель → страна" keyLabel="Изготовитель" valueLabel="Страна" rows={maps.countries} disabled={!canEditSuppliers} onChange={(countries) => setMaps({ ...maps, countries })} />
+        <MapEditor title="ГОСТ-сечение → AWG (СПР.КАБ)" keyLabel="Сечение ГОСТ, мм²" valueLabel="AWG" rows={maps.gost_awg} disabled={!canEditGost} onChange={(gost_awg) => setMaps({ ...maps, gost_awg })} />
       </div>
-      {canEdit && <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveMaps()}>Сохранить справочники</button></div>}
-      {loaded && !maps.suppliers.length && !maps.countries.length && !maps.gost_awg.length && !canEdit && <div className="empty">Карты соответствий пока не заполнены.</div>}
+      {canSaveMaps && <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveMaps()}>Сохранить справочники</button></div>}
+      {canSaveMaps && <p className="page-sub">Пустые строки при сохранении отбрасываются.</p>}
+      {loaded && !maps.suppliers.length && !maps.countries.length && !maps.gost_awg.length && !canSaveMaps && <div className="empty">Карты соответствий пока не заполнены.</div>}
     </> : <>
+      {bases.length > 0 && <div className="tiles reference-tiles">{bases.map((base) => {
+        const tab = BASE_TAB[base.id];
+        return <button
+          key={base.id}
+          className="tile"
+          disabled={!tab}
+          title={tab ? undefined : "Шаблоны открываются в разделе «Шаблоны техкарт»"}
+          onClick={() => { if (tab) setTechTab(tab); }}
+        >
+          <span className="tile-icon" aria-hidden="true">{base.icon}</span>
+          <span className="tile-body">
+            <span className="t-h">{base.label}</span>
+            <span className="t-sub">{base.sub}{base.editable ? "" : " · только просмотр"}</span>
+          </span>
+          {base.count !== null && <span className="tile-count" aria-label={`Записей: ${base.count}`}>{base.count}</span>}
+        </button>;
+      })}</div>}
       <div className="filters reference-filters">
         <div className="shipping-tabs">{TECH_TABS.map((tab) => <button key={tab.id} className={techTab === tab.id ? "secondary active" : "secondary"} onClick={() => setTechTab(tab.id)}>{tab.label}</button>)}</div>
         <input className="search" aria-label="Поиск по базе техопераций" placeholder="Код, название, инструмент…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void loadTech(); }} />

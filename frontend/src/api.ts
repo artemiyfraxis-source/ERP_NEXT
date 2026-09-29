@@ -733,6 +733,18 @@ export interface ReferenceMaps {
   suppliers: ReferencePair[];
   countries: ReferencePair[];
   gost_awg: ReferencePair[];
+  /** Which maps this user may change: supplier/country — «Лист закупки» on edit, ГОСТ→AWG — «Справочник» on edit. */
+  can_edit?: { suppliers: boolean; gost_awg: boolean };
+}
+
+/** A tile of «Справочник» (SUPPLYMAP portalRefList): a base with its record count. */
+export interface ReferenceBase {
+  id: string;
+  label: string;
+  editable: boolean;
+  icon: string;
+  sub: string;
+  count: number | null;
 }
 
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
@@ -920,7 +932,22 @@ export const identityApi = {
       body: JSON.stringify({ login, password }),
     }),
   logout: () => api<void>("/api/auth/logout", { method: "POST" }),
+  profile: () => api<OwnProfile>("/api/auth/profile"),
+  changePassword: (current: string, next: string) =>
+    api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
 };
+
+/** The signed-in employee as the header shows them (SUPPLYMAP portalState_: role, department, site). */
+export interface OwnProfile {
+  name: string;
+  login: string;
+  email: string;
+  department: string;
+  role: string;
+  role_label: string;
+  site: string;
+  site_label: string;
+}
 
 /** ID-8 «Сотрудники»: the directory as the administrator sees it. No password ever comes back. */
 export interface Employee {
@@ -1541,6 +1568,7 @@ export const shippingApi = {
 };
 
 export const referencesApi = {
+  bases: () => api<{ bases: ReferenceBase[] }>("/api/references/bases"),
   maps: () => api<ReferenceMaps>("/api/references/maps"),
   saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
     method: "PUT",

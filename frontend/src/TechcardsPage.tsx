@@ -156,7 +156,9 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const canEdit = principal.permissions.techcards === "edit" && principal.roles.some((role) => role === "engineer" || role === "admin");
+  // ID-3: the matrix alone decides — «Техкарты проектов» edit for cards, «Генератор техкарт» (tcgen) for the builder.
+  const canEdit = principal.permissions.techcards === "edit";
+  const canGenerate = Boolean(principal.permissions.tcgen);
   const selected = useMemo(() => cards.find((card) => card.id === selectedId) ?? null, [cards, selectedId]);
   const filteredTemplates = useMemo(() => {
     const query = templateQuery.trim().toLocaleLowerCase("ru-RU");
@@ -306,7 +308,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
       <div className="etk-route">{operations(selected.document).map((operation, index) => <EtkOperationCard operation={operation} key={`${operation.code}:${operation.connector}:${index}`} />)}</div>
       <TopologyView value={topology(selected.document)} />
       {!operations(selected.document).length && <div className="empty">ЭТК ещё не собрана.</div>}
-      {canEdit && <details className="build-config"><summary>Конфигурация автоматической сборки</summary>
+      {canGenerate && <details className="build-config"><summary>Конфигурация автоматической сборки</summary>
         <div className="grapher-import">
           <label>Экспорт TECHMAP-GRAPHER<input aria-label="Экспорт TECHMAP-GRAPHER" type="file" accept=".json,.zip,.techmap-project.zip" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importGrapher(file); }} /></label>
           {grapher && <div className="grapher-harnesses">{grapher.harnesses.map((harness) => <div key={harness.designation}>
@@ -317,7 +319,7 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
         </div>
         <label>Config генератора SUPPLYMAP<textarea aria-label="Конфигурация автоматической сборки" rows={14} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
       </details>}
-      {canEdit && <div className="form-actions"><button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК автоматически</button>{selected.status === "Черновик" && selected.document && <button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}</div>}
+      {(canEdit || canGenerate) && <div className="form-actions">{canGenerate && <button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК автоматически</button>}{canEdit && selected.status === "Черновик" && selected.document && <button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}</div>}
       <div className="panel-heading"><strong>Журнал ревизий</strong><span>{revisions.length}</span></div>
       {revisions.map((revision) => <div className="panel-heading" key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span>{revision.actor_name} · {new Date(revision.occurred_at).toLocaleString("ru-RU")}</span></div>)}
       {!revisions.length && <div className="empty">Выданных ревизий пока нет.</div>}
