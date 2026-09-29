@@ -130,6 +130,9 @@ class ProjectTechcard:
     def edit_operation(self, key: str, operation: dict[str, Any], now: datetime) -> ProjectTechcard:
         if self.document is None:
             raise TechcardValidationError("Электронная техкарта ещё не собрана")
+        if self.status is not TechcardStatus.ISSUED:
+            # SUPPLYMAP portalEtkSaveOp: ЭТК-файл появляется только при выдаче, до неё «Электронной ТК нет».
+            raise TechcardValidationError("Электронной ТК нет — правка операции возможна после выдачи ЭТК")
         updated_operation = deepcopy(operation)
         if operation_key(updated_operation) != key:
             raise TechcardValidationError("Код и сторона операции при правке не меняются")
@@ -140,9 +143,8 @@ class ProjectTechcard:
         operations[indexes[0]] = updated_operation
         document = deepcopy(self.document)
         document["operations"] = operations
-        revision = self.revision + 1 if self.status is TechcardStatus.ISSUED else self.revision
         return replace(
-            self, document=document, revision=revision,
+            self, document=document, revision=self.revision + 1,
             manual_operation_keys=tuple(dict.fromkeys((*self.manual_operation_keys, key))),
             version=self.version + 1, updated_at=now,
         )

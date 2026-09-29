@@ -73,8 +73,11 @@ def test_project_techcard_rejects_duplicate_operations_and_key_change():
 
     built = _card().rebuild(_document(), NOW)
     key = operation_key(built.document["operations"][0])
+    with pytest.raises(TechcardValidationError, match="Электронной ТК нет"):
+        built.edit_operation(key, {**built.document["operations"][0], "name": "Правка"}, NOW)
+    issued = built.issue(NOW)
     with pytest.raises(TechcardValidationError, match="не меняются"):
-        built.edit_operation(key, {"code": "99", "connector": "A"}, NOW)
+        issued.edit_operation(key, {"code": "99", "connector": "A"}, NOW)
 
 
 @pytest.fixture()
@@ -120,7 +123,10 @@ def test_project_techcard_api_persists_revisions(project_techcards_api):
     )
     assert issued.status_code == 200
     key = operation_key(issued.json()["document"]["operations"][0])
-    operation = {**issued.json()["document"]["operations"][0], "name": "Ручная правка"}
+    operation = {**issued.json()["document"]["operations"][0], "name": "Ручная правка", "card": {
+        "name": "Обработка A", "safety": "", "defects": "", "tooling": [],
+        "steps": [{"kind": "Операция", "text": "Обработать", "tolerance": ""}],
+    }}
 
     edited = project_techcards_api.put(
         f"/api/techcards/projects/{card['id']}/operations/{key}",
@@ -232,3 +238,26 @@ def test_discard_draft_api_removes_built_document(project_techcards_api):
     assert discarded.status_code == 200
     assert discarded.json()["document"] is None
     assert discarded.json()["status"] == "Черновик"
+
+
+def test_project_etk_operation_edit_refuses_operation_without_card(project_techcards_api):
+    """SUPPLYMAP etkApplyOpEdit_: «У операции N нет карточки»; an unissued draft has no ЭТК to edit yet."""
+    card = project_techcards_api.post("/api/techcards/projects", json={
+        "project": "P-102", "item_index": "01", "product_name": "Жгут", "source_calculation": "",
+    }).json()
+    built = project_techcards_api.put(
+        f"/api/techcards/projects/{card['id']}/etk", json={"version": card["version"], "document": _document()},
+    ).json()
+    operation = built["document"]["operations"][0]
+    url = f"/api/techcards/projects/{card['id']}/operations/{operation_key(operation)}"
+
+    with_card = {**operation, "card": {"name": "X", "safety": "", "defects": "", "tooling": [],
+                                       "steps": [{"kind": "Операция", "text": "Шаг", "tolerance": ""}]}}
+    draft = project_techcards_api.put(url, json={"version": built["version"], "operation": with_card})
+    issued = project_techcards_api.post(
+        f"/api/techcards/projects/{card['id']}/issue", json={"version": built["version"]},
+    ).json()
+    no_card = project_techcards_api.put(url, json={"version": issued["version"], "operation": operation})
+
+    assert draft.status_code == 422 and "Электронной ТК нет" in draft.json()["detail"]
+    assert no_card.status_code == 422 and "нет карточки" in no_card.json()["detail"]
