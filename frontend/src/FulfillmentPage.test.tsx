@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { FulfillmentPage, lotSimilarity } from "./FulfillmentPage";
+import { FulfillmentPage } from "./FulfillmentPage";
 import type { FulfillmentRequest, Principal } from "./api";
 
 const principal: Principal = {
@@ -64,7 +64,7 @@ async function expand(number: string) {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("binds a lot picked from the searchable list, the similar lot on top", async () => {
+it("opens the lot search already filtered by the position name and binds the picked lot", async () => {
   let bindPayload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -73,7 +73,6 @@ it("binds a lot picked from the searchable list, the similar lot on top", async 
       { id: "40000000-0000-0000-0000-000000000003", warehouse: "ЖУК", grn: "FRX.26.0000003", package: "", article: "", name: "Болт", unit: "шт", storage_location: "2A1", available: "9" },
       { id: "40000000-0000-0000-0000-000000000001", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", article: "CON-001", name: "Разъём", unit: "шт", storage_location: "1F4", available: "10" },
       { id: "40000000-0000-0000-0000-000000000002", warehouse: "ЦАР", grn: "FRX.26.0000002", package: "", article: "", name: "Разъём угловой", unit: "шт", storage_location: "", available: "3" },
-      { id: "40000000-0000-0000-0000-000000000004", warehouse: "ЦАР", grn: "FRX.26.0000004", package: "", article: "", name: "Разъём", unit: "м", storage_location: "", available: "3" },
     ] });
     if (path.endsWith("/bind") && init?.method === "POST") {
       bindPayload = JSON.parse(String(init.body));
@@ -86,23 +85,19 @@ it("binds a lot picked from the searchable list, the similar lot on top", async 
   await expand("FRX-ISS-26-0001");
   fireEvent.click(await screen.findByRole("button", { name: "Выбрать ГРН" }));
 
+  expect(screen.getByLabelText("Поиск партии для Разъём")).toHaveValue("Разъём");
   const picks = screen.getAllByRole("button", { name: /^Выбрать FRX/ }).map((button) => button.getAttribute("aria-label"));
-  expect(picks).toEqual(["Выбрать FRX.26.0000001", "Выбрать FRX.26.0000002", "Выбрать FRX.26.0000003"]);
+  expect(picks).toEqual(["Выбрать FRX.26.0000001", "Выбрать FRX.26.0000002"]);
   expect(screen.getByText("меньше нужного")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Поиск партии для Разъём"), { target: { value: "" } });
+  expect(screen.getAllByRole("button", { name: /^Выбрать FRX/ })).toHaveLength(3);
   fireEvent.change(screen.getByLabelText("Поиск партии для Разъём"), { target: { value: "угловой" } });
-  expect(screen.getAllByRole("button", { name: /^Выбрать FRX/ })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Выбрать FRX.26.0000002" }));
 
   await waitFor(() => expect(bindPayload).toEqual({
     version: 3,
     lot_id: "40000000-0000-0000-0000-000000000002",
   }));
-});
-
-it("ranks the same article above a name match", () => {
-  const line = { article: "CON-001", name: "Разъём" };
-  expect(lotSimilarity(line, { article: "CON-001", name: "Вилка" })).toBeGreaterThan(lotSimilarity(line, { article: "", name: "Разъём" }));
-  expect(lotSimilarity(line, { article: "", name: "Болт" })).toBe(0);
 });
 
 it("does not load lots or show editing actions to a view-only production role", async () => {

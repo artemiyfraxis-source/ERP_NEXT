@@ -74,19 +74,6 @@ function day(value?: string | null) {
   return match ? `${match[3]}.${match[2]}.${match[1]}` : value ?? "";
 }
 
-/** How much a warehouse lot looks like the line (openStockPick «похожие наверх»): the same article first, then
-    the share of the line's name words found in the lot's name. 0 — nothing in common. */
-export function lotSimilarity(line: Pick<FulfillmentLine, "article" | "name">, lot: Pick<FulfillmentLot, "article" | "name">) {
-  const norm = (value: string) => String(value ?? "").toLocaleLowerCase("ru").replace(/ё/g, "е").trim();
-  let score = 0;
-  if (norm(line.article) && norm(line.article) === norm(lot.article ?? "")) score += 100;
-  if (norm(line.name) && norm(line.name) === norm(lot.name)) score += 50;
-  const words = norm(line.name).split(/[\s,.;:()«»"/\\-]+/).filter((word) => word.length >= 2);
-  const lotName = norm(lot.name);
-  if (words.length) score += Math.round((words.filter((word) => lotName.includes(word)).length / words.length) * 40);
-  return score;
-}
-
 export function FulfillmentPage({ principal, mode }: { principal: Principal; mode?: keyof typeof MODES }) {
   const [archive, setArchive] = useState(false);
   const [showReady, setShowReady] = useState(false);
@@ -415,32 +402,27 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
   </>;
 }
 
-/* stockPick_ / portalIssueStock: the whole warehouse with a balance, searched by words; lots that look like the
-   position go to the top and are marked — a missed automatic match is no dead end. The unit must match: a lot in
-   other units cannot be reserved against the requirement (ERP bind rule). */
+/* stockPick_ / portalIssueStock: the whole warehouse with a balance, searched by words (stockPickMatch_: наименование,
+   ГРН, пакет, место, склад, единица). The first opening is already filtered by the position's name — usually what is
+   needed is on screen at once; if not, the person erases the words and searches their own way. */
 function LotPicker({ line, lots, busy, onPick }: {
   line: FulfillmentLine;
   lots: FulfillmentLot[];
   busy: boolean;
   onPick: (lotId: string) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const unit = line.unit.trim().toLocaleLowerCase("ru");
-  const ranked = useMemo(() => lots
-    .filter((lot) => lot.unit.trim().toLocaleLowerCase("ru") === unit)
-    .map((lot, index) => ({ lot, index, score: lotSimilarity(line, lot) }))
-    .sort((a, b) => b.score - a.score || a.index - b.index), [lots, line, unit]);
-  const found = ranked.filter(({ lot }) => matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query));
+  const [query, setQuery] = useState(line.name);
+  const found = lots.filter((lot) => matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query));
   const need = Number(line.requirement);
   return <div className="lot-picker">
-    <input className="search" type="search" aria-label={`Поиск партии для ${line.name}`} placeholder="поиск: артикул · наименование · ГРН · место" value={query} onChange={(event) => setQuery(event.target.value)} />
-    {!found.length && <div className="empty">{ranked.length ? `По запросу ничего нет. Сотри слова — покажется весь склад (${ranked.length} строк).` : "На складе нет партий с остатком в этих единицах."}</div>}
+    <input className="search" type="search" aria-label={`Поиск партии для ${line.name}`} placeholder="поиск: вилка usb · 3B4 · ГРН-2026 …" value={query} onChange={(event) => setQuery(event.target.value)} />
+    {!found.length && <div className="empty">{lots.length ? `По запросу ничего нет. Сотри слова — покажется весь склад (${lots.length} строк).` : "На складе нет ни одной строки с остатком."}</div>}
     {found.length > 0 && <table className="grid wide"><thead><tr><th>Наименование</th><th>ГРН</th><th className="num">Доступно</th><th /></tr></thead><tbody>
-      {found.slice(0, 300).map(({ lot, score }) => {
+      {found.slice(0, 300).map((lot) => {
         const low = need > 0 && Number(lot.available) < need;
         return <tr key={lot.id}>
-          <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span>{score > 0 && <span className="status">похоже</span>}<small>{lot.warehouse} / {lot.storage_location || "без места"}</small></td>
-          <td>{lot.grn}{lot.package ? ` · пакет ${lot.package}` : ""}</td>
+          <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span><small>{lot.storage_location || "без места"}</small></td>
+          <td>{lot.grn}<small>{lot.warehouse}{lot.package ? ` · пакет ${lot.package}` : ""}</small></td>
           <td className="num">{lot.available} {lot.unit}{low && <small>меньше нужного</small>}</td>
           <td><button className="secondary small" disabled={busy} aria-label={`Выбрать ${lot.grn}`} onClick={() => onPick(lot.id)}>Выбрать</button></td>
         </tr>;
