@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
@@ -17,6 +17,7 @@ from app.shared.unit_mass import mass_per_unit, parse_number
 from app.shared.warehouse_location import remap_storage_location, storage_location_has_slot
 
 from .domain import (
+    WAREHOUSES,
     StockLot,
     WarehouseValidationError,
     lot_row_changes,
@@ -163,12 +164,12 @@ class MoveLocationCommand:
 
 @dataclass(frozen=True)
 class ManualStockItem:
-    warehouse: str
+    warehouse: str  # empty → the first warehouse (ЦАР), as stock05NormItem_
     name: str
     item_type: str
-    purpose: str
-    unit: str
-    quantity: Decimal
+    purpose: str  # empty → «Склад»
+    unit: str  # empty → «шт»
+    quantity: Decimal | str | float | int | None  # read per row as icrNum_; the row is refused if not > 0
     storage_location: str
     article: str = ""
     series: str = ""
@@ -191,6 +192,38 @@ class AddManualStockCommand:
     items: tuple[ManualStockItem, ...]
     actor: Actor
     now: datetime
+
+
+MANUAL_STOCK_LIMIT = 200  # STOCK05_ADD_LIMIT_ (Stock05.gs:15)
+MANUAL_STOCK_DEFAULT_UNIT = "шт"  # STOCK05_DEFAULT_UNIT_
+MANUAL_STOCK_DEFAULT_PURPOSE = "Склад"  # STOCK05_DEFAULT_PURPOSE_
+_MANUAL_GRN_PENDING = "OLD.pending"  # a row is checked before its number is reserved
+_QUANTITY_STEP = Decimal("0.000001")  # Numeric(18, 6) of the stock columns
+_QUANTITY_LIMIT = Decimal("1e12")
+
+
+@dataclass(frozen=True)
+class ManualStockAssigned:
+    i: int  # 0-based index of the row in the request, as stock05Add_ reports it
+    lot: StockLot
+
+
+@dataclass(frozen=True)
+class ManualStockRowError:
+    i: int  # 0-based; the screen shows i + 1
+    error: str
+
+
+@dataclass(frozen=True)
+class ManualStockResult:
+    """stock05Add_: bad rows are skipped and reported, the good ones are entered."""
+
+    assigned: tuple[ManualStockAssigned, ...]
+    errors: tuple[ManualStockRowError, ...]
+
+    @property
+    def lots(self) -> list[StockLot]:
+        return [row.lot for row in self.assigned]
 
 
 def _lot_from_payload(payload: dict) -> StockLot:
@@ -297,38 +330,78 @@ def edited_unit_mass(text: str) -> Decimal | None:
         raise WarehouseValidationError(str(error)) from error
 
 
-def add_manual_stock(command: AddManualStockCommand, uow: UnitOfWork) -> list[StockLot]:
+def _manual_quantity(value: object) -> Decimal:
+    if isinstance(value, Decimal):
+        quantity = value
+    else:
+        number = parse_number(value)
+        quantity = Decimal("NaN") if math.isnan(number) or math.isinf(number) else Decimal(repr(number))
+    if quantity.is_nan() or quantity <= 0:
+        raise WarehouseValidationError("кол-во должно быть больше нуля")
+    if quantity >= _QUANTITY_LIMIT:
+        raise WarehouseValidationError("кол-во слишком большое")
+    if quantity != quantity.quantize(_QUANTITY_STEP):
+        raise WarehouseValidationError("кол-во — не больше 6 знаков после запятой")
+    return quantity
+
+
+def _manual_lot(item: ManualStockItem) -> StockLot:
+    """One quick-entry row → a lot without its number yet (stock05NormItem_ + placeFits_, Stock05.gs:74-109,
+    744-757). SUPPLYMAP texts where it has them; the rest are ERP's own lot checks."""
+    article, name = item.article.strip(), item.name.strip()
+    if not article and not name:
+        raise WarehouseValidationError("пустой артикул")
+    quantity = _manual_quantity(item.quantity)
+    warehouse = item.warehouse.strip() or WAREHOUSES[0]
+    if warehouse not in WAREHOUSES:
+        raise WarehouseValidationError(f"неизвестный склад «{warehouse}»")
+    if not str(item.storage_location or "").strip():
+        raise WarehouseValidationError("укажи стеллаж, полку и № на полке")
+    return StockLot.create(
+        warehouse=warehouse,
+        grn=_MANUAL_GRN_PENDING,
+        package="",
+        name=name,
+        item_type=item.item_type,
+        purpose=item.purpose.strip() or MANUAL_STOCK_DEFAULT_PURPOSE,
+        unit=item.unit.strip() or MANUAL_STOCK_DEFAULT_UNIT,
+        quantity=quantity,
+        storage_location=item.storage_location,
+        source_receiving_ids=(f"manual:{uuid4()}",),
+        article=article,  # empty → the name (StockLot.create, Warehouse.gs:522)
+        series=item.series,
+        unit_mass_g=_manual_unit_mass(item),
+        expiry_date=item.expiry_date,
+        manufacturer=item.manufacturer,
+        description=item.description,
+        storage_conditions=item.storage_conditions,
+        datasheet=item.datasheet,
+        certificate=item.certificate,
+    )
+
+
+def add_manual_stock(command: AddManualStockCommand, uow: UnitOfWork) -> ManualStockResult:
+    """Quick entry (stock05Add_, Stock05.gs:734-794): every row is checked on its own; a bad row is skipped and
+    reported as {i, error}, the good ones get consecutive OLD numbers and are committed together."""
     if not command.items:
         raise WarehouseValidationError("Добавьте хотя бы одну позицию")
-    if len(command.items) > 100:
-        raise WarehouseValidationError("За раз можно внести не больше 100 позиций")
+    if len(command.items) > MANUAL_STOCK_LIMIT:
+        raise WarehouseValidationError(f"За раз не больше {MANUAL_STOCK_LIMIT} позиций.")
+    good: list[tuple[int, StockLot]] = []
+    errors: list[ManualStockRowError] = []
+    for index, item in enumerate(command.items):
+        try:
+            good.append((index, _manual_lot(item)))
+        except WarehouseValidationError as error:
+            errors.append(ManualStockRowError(i=index, error=str(error)))
+    if not good:
+        return ManualStockResult(assigned=(), errors=tuple(errors))
     with uow:
-        first = uow.warehouse.reserve_manual_numbers(command.now.year, len(command.items))
-        lots = []
-        for offset, item in enumerate(command.items):
+        first = uow.warehouse.reserve_manual_numbers(command.now.year, len(good))
+        assigned = []
+        for offset, (index, draft) in enumerate(good):
             grn = f"OLD.{command.now.year % 100:02d}.{first + offset:07d}"
-            source_id = f"manual:{uuid4()}"
-            lot = StockLot.create(
-                warehouse=item.warehouse,
-                grn=grn,
-                package="",
-                name=item.name,
-                item_type=item.item_type,
-                purpose=item.purpose,
-                unit=item.unit,
-                quantity=item.quantity,
-                storage_location=item.storage_location,
-                source_receiving_ids=(source_id,),
-                article=item.article,
-                series=item.series,
-                unit_mass_g=_manual_unit_mass(item),
-                expiry_date=item.expiry_date,
-                manufacturer=item.manufacturer,
-                description=item.description,
-                storage_conditions=item.storage_conditions,
-                datasheet=item.datasheet,
-                certificate=item.certificate,
-            )
+            lot = replace(draft, grn=grn)
             uow.warehouse.add(lot)
             uow.audit.add(
                 AuditEvent(
@@ -339,14 +412,14 @@ def add_manual_stock(command: AddManualStockCommand, uow: UnitOfWork) -> list[St
                     occurred_at=command.now,
                     details={
                         "grn": grn,
-                        "quantity": str(item.quantity),
+                        "quantity": _audit_value(lot.inbound),
                         "storage_location": lot.storage_location,
                     },
                 )
             )
-            lots.append(lot)
+            assigned.append(ManualStockAssigned(i=index, lot=lot))
         uow.commit()
-        return lots
+        return ManualStockResult(assigned=tuple(assigned), errors=tuple(errors))
 
 
 LotKey = tuple[str, str, str]

@@ -32,7 +32,6 @@ def test_manual_stock_with_passport_is_listed_with_it(warehouse_api):  # noqa: F
 
 
 @pytest.mark.parametrize(("extra", "status", "detail"), [
-    ({"mass_1": "1e13"}, 422, "Масса 1 шт слишком большая"),
     ({"expiry_date": "31.12.2030"}, 422, None),
     ({"manufacturer": "x" * 256}, 422, None),
     ({"mass_100": "x" * 65}, 422, None),
@@ -45,6 +44,17 @@ def test_manual_stock_rejects_a_bad_passport(warehouse_api, extra, status, detai
     assert response.status_code == status, response.text
     if detail:
         assert response.json()["detail"] == detail
+
+
+def test_manual_stock_mass_beyond_the_column_is_the_row_error(warehouse_api):  # noqa: F811
+    client, _ = warehouse_api
+
+    response = client.post("/api/stock/batches", json={"items": [{**ITEM, "mass_1": "1e13"}]})
+
+    assert response.status_code == 200, response.text
+    assert (response.json()["added"], response.json()["errors"]) == (
+        0, [{"i": 0, "error": "Масса 1 шт слишком большая"}],
+    )
 
 
 def test_manual_stock_ignores_an_unreadable_mass_as_supplymap_does(warehouse_api):  # noqa: F811

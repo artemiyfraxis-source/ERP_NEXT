@@ -99,6 +99,8 @@ th, td { padding: 11px 14px; border-bottom: 1px solid var(--border); text-align:
 .manual-stock-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .manual-stock-head h2 { font-size: 16px; font-weight: 500; }
 .manual-stock-grid { display: grid; grid-template-columns: 2fr repeat(6, minmax(110px, 1fr)); gap: 10px; align-items: end; margin-bottom: 14px; }
+.manual-stock-rows { margin-bottom: 12px; }
+.manual-stock-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 td small, td strong { display: block; }
 td small { margin-top: 4px; color: #7b857e; }
 .status { display: inline-flex; border-radius: 999px; padding: 5px 9px; color: #315240; background: #e3eee6; font-size: 11px; font-weight: 800; }

@@ -221,7 +221,7 @@ def test_manual_stock_input_gets_old_grns_and_one_audit_event_per_lot():
             now=datetime(2026, 9, 22, 12, 0),
         ),
         uow,
-    )
+    ).lots
 
     assert [lot.grn for lot in lots] == ["OLD.26.0000001", "OLD.26.0000002"]
     assert [event.event_type for event in uow.audit.items] == [
@@ -450,19 +450,22 @@ def test_receipt_of_a_grn_that_sits_in_the_other_warehouse_opens_its_own_lot():
     assert "storage_location_from" not in uow.audit.items[-1].details
 
 
-@pytest.mark.parametrize("location", ["", "A-01"])
-def test_manual_stock_still_needs_a_full_rack_address(location):
+@pytest.mark.parametrize(("location", "error"), [
+    ("", "укажи стеллаж, полку и № на полке"),
+    ("A-01", "Место хранения должно иметь вид 1F4, 17C120 или 12C7B"),
+])
+def test_manual_stock_still_needs_a_full_rack_address(location, error):
     uow = Uow(message())
 
-    with pytest.raises(WarehouseValidationError, match="Место хранения"):
-        add_manual_stock(AddManualStockCommand(
-            items=(ManualStockItem(
-                warehouse="ЦАР", name="Разъём", item_type="", purpose="Склад", unit="шт",
-                quantity=Decimal("1"), storage_location=location,
-            ),),
-            actor=Actor(name="Кладовщик", department="Склад"),
-            now=datetime(2026, 9, 22, 12, 0),
-        ), uow)
+    result = add_manual_stock(AddManualStockCommand(
+        items=(ManualStockItem(
+            warehouse="ЦАР", name="Разъём", item_type="", purpose="Склад", unit="шт",
+            quantity=Decimal("1"), storage_location=location,
+        ),),
+        actor=Actor(name="Кладовщик", department="Склад"),
+        now=datetime(2026, 9, 22, 12, 0),
+    ), uow)
+    assert [(row.i, row.error) for row in result.errors] == [(0, error)]
     assert uow.commits == 0
 
 
@@ -602,12 +605,12 @@ def test_whole_location_move_takes_stock_out_of_a_place_the_layout_lost_but_not_
 
 def test_quick_entry_refuses_a_place_the_rack_layout_does_not_have():
     uow = Uow(message())
-    with pytest.raises(WarehouseValidationError, match="Места 18A1 нет"):
-        add_manual_stock(AddManualStockCommand(
-            items=(ManualStockItem(
-                warehouse="ЦАР", name="Разъём", item_type="Комплектующие", purpose="Склад", unit="шт",
-                quantity=Decimal("1"), storage_location="18A1",
-            ),),
-            actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
-        ), uow)
+    result = add_manual_stock(AddManualStockCommand(
+        items=(ManualStockItem(
+            warehouse="ЦАР", name="Разъём", item_type="Комплектующие", purpose="Склад", unit="шт",
+            quantity=Decimal("1"), storage_location="18A1",
+        ),),
+        actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
+    ), uow)
+    assert [row.error for row in result.errors] == ["Места 18A1 нет: проверь номер стеллажа и полку."]
     assert uow.commits == 0

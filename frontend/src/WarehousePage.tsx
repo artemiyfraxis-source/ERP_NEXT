@@ -1,5 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { warehouseApi, type WarehouseLot, type WarehouseLotPassport, type WarehouseRowEdit } from "./api";
+import {
+  warehouseApi,
+  type WarehouseAddResult,
+  type WarehouseLot,
+  type WarehouseLotPassport,
+  type WarehouseManualItem,
+  type WarehouseRowEdit,
+} from "./api";
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
   mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
@@ -115,16 +122,19 @@ export function WarehousePage() {
         busy={Boolean(busy) || loading}
         knownLots={lots}
         onCancel={() => setAdding(false)}
-        onAdded={async (item) => {
+        onAdded={async (items) => {
           requestVersion.current += 1;
           setBusy("manual");
           setError("");
           try {
-            await warehouseApi.add([item]);
-            setAdding(false);
-            await reload();
+            const result = await warehouseApi.add(items);
+            // Rows with an error stay in the form; the rest are entered (SK-10, stock05Add_).
+            if (!result.errors.length) setAdding(false);
+            if (result.added) await reload();
+            return result;
           } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Не удалось внести позицию");
+            setError(reason instanceof Error ? reason.message : "Не удалось внести позиции");
+            return null;
           } finally {
             setBusy("");
           }
@@ -258,18 +268,11 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
   busy: boolean;
   knownLots: WarehouseLot[];
   onCancel: () => void;
-  onAdded: (item: {
-    warehouse: string;
-    article: string;
-    series: string;
-    name: string;
-    item_type: string;
-    purpose: string;
-    unit: string;
-    quantity: string;
-    storage_location: string;
-  } & Partial<WarehouseLotPassport>) => Promise<void>;
+  onAdded: (items: WarehouseManualItem[]) => Promise<WarehouseAddResult | null>;
 }) {
+  // Rows put aside with «В список» and rows the server did not accept (with the reason).
+  const [rows, setRows] = useState<Array<{ item: WarehouseManualItem; error: string }>>([]);
+  const [report, setReport] = useState("");
   const [passport, setPassport] = useState<WarehouseLotPassport>(EMPTY_PASSPORT);
   const passportField = (field: keyof WarehouseLotPassport) => ({
     value: passport[field] ?? "",
@@ -323,43 +326,68 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
     };
   }, [article, knownLots]);
 
+  const currentItem = (): WarehouseManualItem | null => {
+    if (!article.trim() && !name.trim() && !quantity.trim()) return null;
+    return {
+      warehouse,
+      article: article.trim(),
+      series: series.trim(),
+      name: name.trim(),
+      item_type: itemType.trim(),
+      purpose: purpose.trim(),
+      unit: unit.trim(),
+      quantity,
+      storage_location: storageLocation.trim(),
+      // Only what was filled: an empty passport keeps the plain quick-entry payload.
+      ...Object.fromEntries(Object.entries(passport).filter(([, value]) => String(value ?? "").trim())),
+    };
+  };
+  // The next row keeps the warehouse, purpose, unit and place — a pass over the stock goes shelf by shelf.
+  const clearRow = () => {
+    setArticle(""); setName(""); setSeries(""); setItemType(""); setQuantity("");
+    setPassport(EMPTY_PASSPORT); setArticleSource("");
+  };
+  const pending = rows.length + (currentItem() ? 1 : 0);
+
   return (
-    <form className="panel manual-stock-form" onSubmit={async (event) => {
+    <form className="panel manual-stock-form" noValidate onSubmit={async (event) => {
       event.preventDefault();
       if (submitting) return;
+      const current = currentItem();
+      const items = [...rows.map((row) => row.item), ...(current ? [current] : [])];
+      if (!items.length) {
+        setReport("Добавьте хотя бы одну позицию");
+        return;
+      }
       setSubmitting(true);
       try {
-        await onAdded({
-          warehouse,
-          article: article.trim(),
-          series: series.trim(),
-          name: name.trim(),
-          item_type: itemType.trim(),
-          purpose: purpose.trim(),
-          unit: unit.trim(),
-          quantity,
-          storage_location: storageLocation.trim(),
-          // Only what was filled: an empty passport keeps the plain quick-entry payload.
-          ...Object.fromEntries(Object.entries(passport).filter(([, value]) => String(value ?? "").trim())),
-        });
+        const result = await onAdded(items);
+        if (!result) return;
+        if (current) clearRow();
+        const refused = result.errors.map(({ i, error }) => ({ item: items[i], error: `${i + 1} — ${error}` }));
+        setRows(refused);
+        // SUPPLYMAP wording (PortalApp.html: «Записано: N. Не приняты строки (M): i+1 — ошибка; …»).
+        setReport(`Записано: ${result.added}` + (refused.length
+          ? `. Не приняты строки (${refused.length}): ${refused.map((row) => row.error).join("; ")}`
+          : ". Можно продолжать."));
       } finally {
         setSubmitting(false);
       }
     }}>
       <div className="manual-stock-head"><h2>Быстрый ввод</h2><button type="button" className="link-button" onClick={onCancel}>Отмена</button></div>
       <div className="manual-stock-grid">
-        <label>Артикул<input required value={article} onChange={(event) => {
+        <label>Артикул<input value={article} onChange={(event) => {
           setArticleSource("");
           setArticle(event.target.value);
         }} /></label>
         <label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
         <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
         <label>Тип<input value={itemType} onChange={(event) => setItemType(event.target.value)} /></label>
-        <label>Количество<input aria-label="Количество для внесения" type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-        <label>Единица<input required value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
+        <label>Количество<input aria-label="Количество для внесения" type="number" min="0.000001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+        <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
         <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
-        <label>Назначение<input required value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
-        <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" required value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>
+        <label>Назначение<input value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
+        <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>
       </div>
       <details className="manual-stock-passport">
         <summary>Паспорт партии — необязательно</summary>
@@ -377,7 +405,29 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
         </div>
       </details>
       {articleSource && <p className="page-sub" role="status">{articleSource}</p>}
-      <button className="primary" disabled={busy || submitting}>{submitting ? "Вносим…" : "Внести"}</button>
+      {rows.length > 0 && <table className="grid compact manual-stock-rows" aria-label="Позиции к внесению">
+        <thead><tr><th>Артикул</th><th>Наименование</th><th className="num">Кол-во</th><th>Место</th><th>Склад</th><th>Не принята</th><th /></tr></thead>
+        <tbody>{rows.map((row, index) => <tr key={index}>
+          <td>{row.item.article || "—"}</td>
+          <td>{row.item.name || "—"}</td>
+          <td className="num">{row.item.quantity || "—"} {row.item.unit}</td>
+          <td>{row.item.storage_location || "—"}</td>
+          <td>{row.item.warehouse}</td>
+          <td className="danger-text">{row.error}</td>
+          <td><button type="button" className="link-button" aria-label="Убрать строку" onClick={() => setRows((current) => current.filter((_, other) => other !== index))}>×</button></td>
+        </tr>)}</tbody>
+      </table>}
+      {report && <p className="page-sub" role="log">{report}</p>}
+      <div className="manual-stock-actions">
+        <button type="button" className="secondary" disabled={busy || submitting} onClick={() => {
+          const current = currentItem();
+          if (!current) return;
+          setRows((existing) => [...existing, { item: current, error: "" }]);
+          clearRow();
+          setReport("");
+        }}>+ В список</button>
+        <button className="primary" disabled={busy || submitting}>{submitting ? "Вносим…" : pending > 1 ? `Внести (${pending})` : "Внести"}</button>
+      </div>
     </form>
   );
 }

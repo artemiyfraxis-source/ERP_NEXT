@@ -18,6 +18,7 @@ from app.modules.references.domain import TechOperationTab
 from app.workflows.warehouse_article import infer_article_identity
 
 from .application import (
+    MANUAL_STOCK_LIMIT,
     AddManualStockCommand,
     ConcurrentWarehouseUpdate,
     CorrectLotLocationCommand,
@@ -140,15 +141,18 @@ class MoveLocationPayload(BaseModel):
 
 
 class ManualStockInput(BaseModel):
-    warehouse: str = Field(pattern="^(ЦАР|ЖУК)$")
-    article: str = Field(min_length=1, max_length=1024, pattern=r"\S")
+    """A quick-entry row. Only the shape and the column lengths are checked here — a bad value in a row is
+    the row's error (`errors[{i, error}]`), not the batch's (SK-10, Stock05.gs:744-757)."""
+
+    warehouse: str = Field(default="", max_length=8)  # empty → ЦАР
+    article: str = Field(default="", max_length=1024)  # empty → the name (Warehouse.gs:522)
     series: str = Field(default="", max_length=255)
     name: str = Field(default="", max_length=1024)
     item_type: str = Field(default="", max_length=255)
-    purpose: str = Field(default="Склад", min_length=1, max_length=128)
-    unit: str = Field(default="шт", min_length=1, max_length=32)
-    quantity: Quantity
-    storage_location: str = Field(min_length=3, max_length=16)
+    purpose: str = Field(default="", max_length=128)  # empty → «Склад»
+    unit: str = Field(default="", max_length=32)  # empty → «шт»
+    quantity: Annotated[str, Field(max_length=64)] | int | float | None = None
+    storage_location: str = Field(default="", max_length=64)
     # Lot passport (SK-6), all optional. МАССА 1 ШТ: weight of 1, 10 or 100 pieces, grams, as typed.
     mass_1: MassInput = None
     mass_10: MassInput = None
@@ -162,7 +166,7 @@ class ManualStockInput(BaseModel):
 
 
 class ManualStockPayload(BaseModel):
-    items: list[ManualStockInput] = Field(min_length=1, max_length=100)
+    items: list[ManualStockInput] = Field(min_length=1, max_length=MANUAL_STOCK_LIMIT)
 
 
 def warehouse_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -293,17 +297,17 @@ def add_batches(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
 ) -> dict:
     try:
-        lots = add_manual_stock(
+        result = add_manual_stock(
             AddManualStockCommand(
                 items=tuple(
                     ManualStockItem(
                         warehouse=item.warehouse,
-                        article=item.article.strip(),
+                        article=item.article,
                         series=item.series.strip(),
-                        name=item.name.strip(),
+                        name=item.name,
                         item_type=item.item_type.strip(),
-                        purpose=item.purpose.strip(),
-                        unit=item.unit.strip(),
+                        purpose=item.purpose,
+                        unit=item.unit,
                         quantity=item.quantity,
                         storage_location=item.storage_location,
                         mass_1=item.mass_1,
@@ -327,7 +331,25 @@ def add_batches(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
         raise HTTPException(status_code=409, detail="Конкурентное изменение: повторите ввод") from error
-    return {"lots": [_result(lot) for lot in lots]}
+    # stock05Add_ answer: {added, errors:[{i, error}], assigned:[{i, grn, …}]}; i is the 0-based row index.
+    return {
+        "added": len(result.assigned),
+        "lots": [_result(row.lot) for row in result.assigned],
+        "assigned": [
+            {
+                "i": row.i,
+                "id": str(row.lot.id),
+                "grn": row.lot.grn,
+                "article": row.lot.article,
+                "quantity": _number(row.lot.inbound),
+                "unit": row.lot.unit,
+                "storage_location": row.lot.storage_location,
+                "warehouse": row.lot.warehouse,
+            }
+            for row in result.assigned
+        ],
+        "errors": [{"i": row.i, "error": row.error} for row in result.errors],
+    }
 
 
 @router.post("/batches/{lot_id}/writeoff")

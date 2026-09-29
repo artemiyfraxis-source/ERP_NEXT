@@ -211,6 +211,27 @@ export interface WarehouseLotPassport extends UnitMassFields {
   certificate: string;
 }
 
+/** A quick-entry row («Внести позиции»); empty article → the name, empty unit/purpose → «шт»/«Склад». */
+export type WarehouseManualItem = {
+  warehouse: string;
+  article: string;
+  series: string;
+  name: string;
+  item_type: string;
+  purpose: string;
+  unit: string;
+  quantity: string;
+  storage_location: string;
+} & Partial<WarehouseLotPassport>;
+
+/** Quick-entry answer (SK-10, stock05Add_): bad rows are skipped; `i` is the 0-based index of the sent row. */
+export interface WarehouseAddResult {
+  added: number;
+  lots: WarehouseLot[];
+  assigned: Array<{ i: number; id: string; grn: string; article: string; quantity: string; unit: string; storage_location: string; warehouse: string }>;
+  errors: Array<{ i: number; error: string }>;
+}
+
 /** Editable fields of a stock row (SK-7); ГРН, пакет and склад are the row key and are not here. */
 export type WarehouseRowEdit = Partial<Record<
   | "article" | "series" | "name" | "item_type" | "unit" | "purpose" | "storage_location"
@@ -975,17 +996,7 @@ export const warehouseApi = {
   articleInfo: (article: string) => api<{ info: WarehouseArticleInfo | null }>(
     `/api/stock/article-info?q=${encodeURIComponent(article)}`,
   ),
-  add: (items: Array<{
-    warehouse: string;
-    article: string;
-    series: string;
-    name: string;
-    item_type: string;
-    purpose: string;
-    unit: string;
-    quantity: string;
-    storage_location: string;
-  } & Partial<WarehouseLotPassport>>) => api<{ lots: WarehouseLot[] }>("/api/stock/batches", {
+  add: (items: WarehouseManualItem[]) => api<WarehouseAddResult>("/api/stock/batches", {
     method: "POST",
     body: JSON.stringify({ items }),
   }),

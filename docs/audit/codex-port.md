@@ -184,7 +184,7 @@ HEAD совпадают; в `Portal.gs` после пина появилась �
 - Выдача резерва одним действием уменьшает резерв и баланс — `test_reserved_issue_reduces_reserve_and_physical_balance_atomically`.
 - Адрес «стеллаж + полка + номер + ячейка», перенос места с сохранением ячеек и пропуском нулевых — `test_storage_location_uses_rack_shelf_number_code`, `test_whole_location_move_preserves_slots_and_skips_empty_lots`.
 - Артикул — идентичность партии; повторный приход суммирует и не затирает артикул; миграция name → article без изменения количеств — `test_article_identifies_stock_while_name_is_optional_legacy_description`, `test_legacy_name_becomes_article_and_repeated_receipt_updates_series`, `test_article_migration_moves_legacy_name_and_downgrade_restores_identity`.
-- Правки партии требуют версию — `test_lot_can_move_and_writeoff_but_stale_update_is_rejected`; ручной ввод требует артикул и даёт ГРН `OLD.YY.NNNNNNN` — `test_manual_stock_input_gets_old_grns_and_one_audit_event_per_lot`.
+- Правки партии требуют версию — `test_lot_can_move_and_writeoff_but_stale_update_is_rejected`; ручной ввод требует артикул или наименование (АРТИКУЛ = наименование), пропускает плохие строки с `errors[{i, error}]` и даёт ГРН `OLD.YY.NNNNNNN` (**SK-10, 2026-09-29**, `test_quick_entry.py`) — `test_manual_stock_input_gets_old_grns_and_one_audit_event_per_lot`.
 - Подсказки по артикулу заполняют только пустые поля — `test_article_identity_uses_terminal_series_and_connector_family`.
 
 **Вне заявленного объёма:** `unpackSumOk_` (`Schema.gs:551`) — зона receiving, см. RC-8.

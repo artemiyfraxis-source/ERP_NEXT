@@ -31,6 +31,10 @@ function json(body: unknown) {
   });
 }
 
+function added(entered: WarehouseLot[], errors: Array<{ i: number; error: string }> = []) {
+  return json({ added: entered.length, lots: entered, assigned: [], errors });
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 it("writes off stock with its optimistic version and stated reason", async () => {
@@ -229,7 +233,7 @@ it("adds a manually counted lot through the live stock route", async () => {
     }
     if (path === "/api/stock/batches" && init?.method === "POST") {
       payload = JSON.parse(String(init.body));
-      return json({ lots: [lot] });
+      return added([lot]);
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -269,7 +273,7 @@ it("sends the filled lot passport with a manual entry and shows it in the lot op
     }
     if (path === "/api/stock/batches" && init?.method === "POST") {
       payload = JSON.parse(String(init.body));
-      return json({ lots: [weighed] });
+      return added([weighed]);
     }
     if (path.startsWith("/api/stock/article-info")) return json({ info: null });
     throw new Error(`Unexpected request: ${path}`);
@@ -296,6 +300,51 @@ it("sends the filled lot passport with a manual entry and shows it in the lot op
   expect(screen.getByLabelText("Паспорт партии")).toHaveTextContent(
     "Масса 1 шт: 0.048 г · Годен до 01.05.2030 · Производитель: Molex · Условия хранения: Сухо · Сертификат: РОСС RU.0001",
   );
+});
+
+it("enters a list of rows and keeps the refused ones with the reason (SK-10)", async () => {
+  let payload: { items: Array<Record<string, unknown>> } | undefined;
+  let reloads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) {
+      reloads += 1;
+      return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    }
+    if (path === "/api/stock/batches" && init?.method === "POST") {
+      payload = JSON.parse(String(init.body));
+      return added([lot], [{ i: 1, error: "кол-во должно быть больше нуля" }]);
+    }
+    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Корпус" } });
+  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "3" } });
+  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "2A1" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ В список" }));
+
+  expect(screen.getByLabelText("Наименование")).toHaveValue("");
+  expect(screen.getByLabelText("Место хранения для внесения")).toHaveValue("2A1");
+  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "CON-002" } });
+  fireEvent.change(screen.getByLabelText("Количество для внесения"), { target: { value: "0" } });
+  const before = reloads;
+  fireEvent.click(screen.getByRole("button", { name: "Внести (2)" }));
+
+  await waitFor(() => expect(payload?.items).toHaveLength(2));
+  expect(payload?.items[0]).toMatchObject({ article: "", name: "Корпус", quantity: "3", storage_location: "2A1" });
+  expect(payload?.items[1]).toMatchObject({ article: "CON-002", quantity: "0" });
+  expect(await screen.findByRole("log")).toHaveTextContent(
+    "Записано: 1. Не приняты строки (1): 2 — кол-во должно быть больше нуля",
+  );
+  const refused = within(screen.getByRole("table", { name: "Позиции к внесению" })).getAllByRole("row");
+  expect(refused).toHaveLength(2);
+  expect(refused[1]).toHaveTextContent("CON-002");
+  expect(refused[1]).toHaveTextContent("2 — кол-во должно быть больше нуля");
+  expect(screen.getByRole("button", { name: "Внести" })).toBeInTheDocument();
+  await waitFor(() => expect(reloads).toBeGreaterThan(before));  // one row was entered → the list reloads
 });
 
 it("fills name, series, and type from the current article catalog", async () => {

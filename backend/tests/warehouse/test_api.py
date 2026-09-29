@@ -247,17 +247,6 @@ def test_receiver_can_add_manually_counted_stock(warehouse_api):
     assert response.json()["lots"][0]["series"] == "BATCH-7"
 
 
-def test_manual_stock_rejects_whitespace_article_even_with_a_name(warehouse_api):
-    client, _ = warehouse_api
-
-    response = client.post("/api/stock/batches", json={"items": [{
-        "warehouse": "ЦАР", "article": "   ", "name": "Разъём",
-        "quantity": "1", "storage_location": "2A1",
-    }]})
-
-    assert response.status_code == 422
-
-
 def test_receiver_moves_a_whole_location_and_preserves_each_slot(warehouse_api):
     client, first = warehouse_api
     factory = app.state.warehouse_uow_factory
