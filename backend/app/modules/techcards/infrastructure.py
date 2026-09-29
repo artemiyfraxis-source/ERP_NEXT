@@ -13,6 +13,7 @@ from app.shared.persistence import Base, SqlAlchemyAuditRepository
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .project_cards import ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
+from .template_sheets import TemplateDraft
 
 
 class ProjectTechcardRow(Base):
@@ -79,6 +80,28 @@ class OperationCardTemplateRow(Base):
     edited: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     edited_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Шаблон-лист, сохранённый в ERP из черновика (SUPPLYMAP _TC_LIBRARY: описание, updatedAt).
+    description: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
+    saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    saved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class OperationCardDraftRow(Base):
+    """Черновик шаблона-листа (SUPPLYMAP лист «Черновик — <название>» в файле-хранилище)."""
+
+    __tablename__ = "techcard_operation_template_drafts"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(600), nullable=False, unique=True)
+    existing_template_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    category: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text(), nullable=False)
+    rows: Mapped[list] = mapped_column(JSON, nullable=False)
+    images: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class OperationCardSnapshotRow(Base):
@@ -264,7 +287,12 @@ class SqlAlchemyOperationCardRepository:
                 select(OperationCardTemplateRow).where(OperationCardTemplateRow.edited_at.is_not(None))
             )
         }
-        self.session.execute(delete(OperationCardTemplateRow))
+        # Шаблон-лист, сохранённый в ERP из черновика, снимок не затирает: ERP-версия остаётся (как правка записи).
+        saved = set(self.session.scalars(
+            select(OperationCardTemplateRow.id).where(OperationCardTemplateRow.saved_at.is_not(None))
+        ))
+        self.session.execute(delete(OperationCardTemplateRow).where(OperationCardTemplateRow.saved_at.is_(None)))
+        self.session.flush()
         self.session.add_all(OperationCardTemplateRow(
             id=card.source_id,
             code=card.code,
@@ -286,7 +314,7 @@ class SqlAlchemyOperationCardRepository:
             edited=kept[card.code][0] if card.code in kept else None,
             edited_at=kept[card.code][1] if card.code in kept else None,
             edited_by=kept[card.code][2] if card.code in kept else None,
-        ) for card in cards)
+        ) for card in cards if card.source_id not in saved)
         snapshot = self.session.get(OperationCardSnapshotRow, "current")
         if snapshot is None:
             snapshot = OperationCardSnapshotRow(name="current")
@@ -295,6 +323,113 @@ class SqlAlchemyOperationCardRepository:
         snapshot.imported_at = imported_at
         snapshot.template_count = len(cards)
         return tuple(sorted(code for code in kept if any(card.code == code for card in cards)))
+
+    # ── Шаблоны-листы: каталог и черновики (SUPPLYMAP TcTemplates.gs) ──
+
+    def sheets(self) -> list[OperationCardTemplateRow]:
+        """Каталог шаблонов-листов (SUPPLYMAP readCatalog_ → tcTemplateCatalogForPortal)."""
+        return list(self.session.scalars(select(OperationCardTemplateRow).order_by(
+            OperationCardTemplateRow.category, OperationCardTemplateRow.title, OperationCardTemplateRow.id,
+        )))
+
+    def sheet(self, source_id: str) -> OperationCardTemplateRow | None:
+        return self.session.get(OperationCardTemplateRow, source_id)
+
+    def save_sheet(
+        self, card: OperationCardTemplate, *, description: str, saved_at: datetime, saved_by: str,
+    ) -> bool:
+        """SUPPLYMAP upsertCatalogRecord_ + writeRangeToStore_: блок и строка каталога пишутся целиком.
+        Правка записи (ИЗМЕНЕНО) шаблона не трогается — пересохранение листа её не сбрасывает.
+        Returns True when the template was created."""
+        row = self.session.get(OperationCardTemplateRow, card.source_id)
+        created = row is None
+        if row is None:
+            snapshot = self.session.get(OperationCardSnapshotRow, "current")
+            sibling = self.session.scalars(select(OperationCardTemplateRow).where(
+                OperationCardTemplateRow.code == card.code, OperationCardTemplateRow.edited_at.is_not(None),
+            )).first()
+            row = OperationCardTemplateRow(
+                id=card.source_id,
+                source_commit=snapshot.source_commit if snapshot is not None else "",
+                imported_at=saved_at,
+                # Одна запись на код (tcRecordsByCode_): новый блок кода с правленой записью получает ту же правку.
+                edited=sibling.edited if sibling is not None else None,
+                edited_at=sibling.edited_at if sibling is not None else None,
+                edited_by=sibling.edited_by if sibling is not None else None,
+            )
+            self.session.add(row)
+        row.code = card.code
+        row.side = card.side
+        row.title = card.title
+        row.name = card.name
+        row.category = card.category
+        row.description = description
+        row.raw_rows = [list(item) for item in card.raw_rows]
+        row.images = [
+            {"row": image.row, "col": image.col, "driveFileId": image.drive_file_id,
+             "width": image.width, "height": image.height}
+            for image in card.images
+        ]
+        row.saved_at = saved_at
+        row.saved_by = saved_by
+        domain = self._domain(row)
+        row.name = domain.name
+        row.document = domain.document()
+        return created
+
+    def delete_sheet(self, source_id: str) -> OperationCardTemplateRow | None:
+        """SUPPLYMAP deleteTemplateImpl_: строка каталога и блок уходят целиком."""
+        row = self.session.get(OperationCardTemplateRow, source_id)
+        if row is not None:
+            self.session.delete(row)
+        return row
+
+    @staticmethod
+    def _draft(row: OperationCardDraftRow) -> TemplateDraft:
+        return TemplateDraft(
+            id=row.id, name=row.name, existing_template_id=row.existing_template_id or "",
+            title=row.title, category=row.category, description=row.description,
+            rows=tuple(tuple(str(cell) for cell in item) for item in row.rows),
+            images=tuple(dict(item) for item in row.images),
+            created_at=row.created_at, created_by=row.created_by, updated_at=row.updated_at,
+        )
+
+    def drafts(self) -> list[TemplateDraft]:
+        return [self._draft(row) for row in self.session.scalars(
+            select(OperationCardDraftRow).order_by(OperationCardDraftRow.created_at, OperationCardDraftRow.name)
+        )]
+
+    def draft(self, draft_id: UUID) -> TemplateDraft | None:
+        row = self.session.get(OperationCardDraftRow, draft_id)
+        return self._draft(row) if row is not None else None
+
+    def draft_by_name(self, name: str) -> TemplateDraft | None:
+        row = self.session.scalars(select(OperationCardDraftRow).where(OperationCardDraftRow.name == name)).first()
+        return self._draft(row) if row is not None else None
+
+    def put_draft(self, draft: TemplateDraft) -> None:
+        row = self.session.get(OperationCardDraftRow, draft.id)
+        if row is None:
+            row = OperationCardDraftRow(id=draft.id)
+            self.session.add(row)
+        row.name = draft.name
+        row.existing_template_id = draft.existing_template_id or None
+        row.title = draft.title
+        row.category = draft.category
+        row.description = draft.description
+        row.rows = [list(item) for item in draft.rows]
+        row.images = [dict(item) for item in draft.images]
+        row.created_at = draft.created_at
+        row.created_by = draft.created_by
+        row.updated_at = draft.updated_at
+
+    def delete_draft(self, draft_id: UUID) -> bool:
+        row = self.session.get(OperationCardDraftRow, draft_id)
+        if row is None:
+            return False
+        self.session.delete(row)
+        self.session.flush()
+        return True
 
     def metadata(self) -> dict | None:
         row = self.session.get(OperationCardSnapshotRow, "current")
