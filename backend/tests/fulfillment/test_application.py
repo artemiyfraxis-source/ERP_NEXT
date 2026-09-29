@@ -78,6 +78,7 @@ class Uow:
     def __init__(self, *lots):
         self.fulfillment = Fulfillments()
         self.warehouse = Lots(*lots)
+        self.writeoffs = Audit()
         self.audit = Audit()
         self.commits = 0
 

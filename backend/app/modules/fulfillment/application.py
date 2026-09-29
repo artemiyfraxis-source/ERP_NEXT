@@ -10,7 +10,12 @@ import json
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
-from app.modules.warehouse.domain import StockLot
+from app.modules.warehouse.domain import (
+    ISSUE_WRITEOFF_AUTHOR,
+    StockLot,
+    WriteOffEntry,
+    issue_writeoff_reason,
+)
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
@@ -54,6 +59,7 @@ class AppendOnlyRepository(Protocol):
 class UnitOfWork(Protocol):
     fulfillment: FulfillmentRepository
     warehouse: WarehouseRepository
+    writeoffs: AppendOnlyRepository  # the warehouse СПИСАНИЕ journal
     audit: AppendOnlyRepository
 
     def __enter__(self): ...
@@ -272,13 +278,35 @@ def issue_fulfillment(
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
         updated = request.mark_issued()
+        lots: dict[UUID, StockLot] = {}
         for line in request.lines:
             if line.lot is None:
                 raise FulfillmentValidationError("У позиции не выбрана партия")
-            lot = uow.warehouse.get(line.lot.lot_id)
+            lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
             if lot is None:
                 raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
-            uow.warehouse.add(lot.issue_reserved(line.reserved))
+            lots[lot.id] = lot.issue_reserved(line.reserved)
+            uow.warehouse.add(lots[lot.id])
+        # Issue.gs:475-502: one СПИСАНИЕ row per issued position, ОСТАТОК ПОСЛЕ = the lot balance once the
+        # whole request is posted (two positions on one lot both show the final balance).
+        for line in request.lines:
+            if line.reserved <= 0:
+                continue
+            lot = lots[line.lot.lot_id]
+            uow.writeoffs.add(WriteOffEntry.for_lot(
+                lot,
+                kind="issue",
+                quantity=line.reserved,
+                name=line.name,
+                reason=issue_writeoff_reason(request.number),
+                purpose="",
+                author=ISSUE_WRITEOFF_AUTHOR,
+                actor_id=command.actor.id,
+                actor_name=command.actor.name,
+                occurred_at=command.now,
+                remaining_after=lot.balance,
+                source_key=f"fulfillment-issue:{line.id}",
+            ))
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.issued", command.actor, command.now, {"lines": len(updated.lines)}, uow)
         uow.commit()

@@ -11,6 +11,7 @@ from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
+from app.shared.clock import MOSCOW
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
 from app.shared.unit_mass import mass_per_unit, parse_number
@@ -20,12 +21,13 @@ from .domain import (
     WAREHOUSES,
     StockLot,
     WarehouseValidationError,
+    WriteOffEntry,
     lot_row_changes,
     normalize_location,
     normalize_location_as_is,
     normalize_location_code,
 )
-from .stock_export import LegacyStockRow, LegacyWriteOffRow
+from .stock_export import LegacyStockRow, LegacyWriteOffRow, parse_quantity
 
 
 SYSTEM_ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
@@ -70,6 +72,7 @@ class AppendOnlyRepository(Protocol):
 
 class UnitOfWork(Protocol):
     warehouse: WarehouseRepository
+    writeoffs: AppendOnlyRepository  # the СПИСАНИЕ journal (SK-13)
     audit: AppendOnlyRepository
     outbox: OutboxRepository
 
@@ -486,6 +489,41 @@ def _legacy_lot(row: LegacyStockRow) -> StockLot:
     return lot.write_off(row.written_off) if row.written_off > 0 else lot
 
 
+def legacy_writeoff_date(text: str, fallback: datetime) -> datetime:
+    """ДАТА of a СПИСАНИЕ row as the sheet shows it («dd.MM.yyyy», maybe with a time; SUPPLYMAP writes Moscow
+    time) → a Moscow datetime. Unreadable → `fallback` (the import time); the sheet text stays in the audit."""
+    value = str(text or "").strip()
+    for pattern in ("%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M", "%d.%m.%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value, pattern).replace(tzinfo=MOSCOW)
+        except ValueError:
+            continue
+    return fallback
+
+
+def _legacy_remaining(text: str) -> Decimal | None:
+    try:
+        return parse_quantity(text) if str(text or "").strip() else None
+    except ValueError:
+        return None
+
+
+def _journal_legacy_writeoff(
+    writeoff: LegacyWriteOffRow, lot: StockLot, command: ImportLegacyStockCommand, uow: UnitOfWork
+) -> None:
+    """A СПИСАНИЕ row of the export becomes a journal row as it was: history, it moves no quantity."""
+    if writeoff.quantity <= 0:
+        return
+    entry = WriteOffEntry.for_lot(
+        lot, kind="legacy", quantity=writeoff.quantity, reason=writeoff.reason, purpose=writeoff.purpose,
+        author=writeoff.author, actor_id=command.actor.id, actor_name=command.actor.name,
+        occurred_at=legacy_writeoff_date(writeoff.date, command.now),
+        remaining_after=_legacy_remaining(writeoff.remaining_after), posted=writeoff.is_posted,
+        source_key=f"supplymap-writeoff:{command.source}:{writeoff.row_number}",
+    )
+    uow.writeoffs.add(replace(entry, unit=writeoff.unit or lot.unit))
+
+
 def import_legacy_stock(command: ImportLegacyStockCommand, uow: UnitOfWork) -> LegacyStockImportResult:
     """Create-only and idempotent: a key already in ERP is compared and reported, never changed.
 
@@ -495,7 +533,7 @@ def import_legacy_stock(command: ImportLegacyStockCommand, uow: UnitOfWork) -> L
     """
     result = LegacyStockImportResult()
     with uow:
-        created_ids: dict[LotKey, UUID] = {}
+        created_lots: dict[LotKey, StockLot] = {}
         existing_keys: set[LotKey] = set()
         for row in command.lots:
             existing = uow.warehouse.by_key(*row.key)
@@ -522,21 +560,21 @@ def import_legacy_stock(command: ImportLegacyStockCommand, uow: UnitOfWork) -> L
                     "written_off": str(lot.written_off), "storage_location": lot.storage_location,
                 },
             ))
-            created_ids[row.key] = lot.id
+            created_lots[row.key] = lot
             result.created.append(row)
             if row.reserved > 0:
                 result.reserve_not_transferred.append(row)
 
         for writeoff in command.writeoffs:
-            lot_id = created_ids.get(writeoff.key)
-            if lot_id is None:
+            lot = created_lots.get(writeoff.key)
+            if lot is None:
                 if writeoff.key in existing_keys:
                     result.history_for_existing_lots += 1
                 else:
                     result.history_without_lot.append(writeoff)
                 continue
             uow.audit.add(AuditEvent(
-                id=uuid4(), aggregate_id=lot_id, event_type="warehouse.legacy_writeoff_history",
+                id=uuid4(), aggregate_id=lot.id, event_type="warehouse.legacy_writeoff_history",
                 actor=command.actor, occurred_at=command.now,
                 details={
                     "source": command.source, "row": str(writeoff.row_number), "date": writeoff.date,
@@ -545,6 +583,7 @@ def import_legacy_stock(command: ImportLegacyStockCommand, uow: UnitOfWork) -> L
                     "remaining_after": writeoff.remaining_after,
                 },
             ))
+            _journal_legacy_writeoff(writeoff, lot, command, uow)
             result.history_imported += 1
 
         # ERP hands out manual OLD.YY.NNNNNNN numbers from its own sequence; it must start after the
@@ -588,6 +627,11 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
         current = _versioned(command.lot_id, command.expected_version, uow)
         updated = current.write_off(command.quantity)
         uow.warehouse.add(updated)
+        uow.writeoffs.add(WriteOffEntry.for_lot(
+            updated, kind="writeoff", quantity=command.quantity, reason=reason, purpose=purpose,
+            author=command.actor.name, actor_id=command.actor.id, actor_name=command.actor.name,
+            occurred_at=command.now, remaining_after=updated.balance,
+        ))
         uow.audit.add(
             AuditEvent(
                 id=uuid4(), aggregate_id=updated.id, event_type="warehouse.written_off",
@@ -629,6 +673,11 @@ def return_writeoff(command: ReturnWriteOffCommand, uow: UnitOfWork) -> StockLot
             )
         updated = current.return_writeoff(command.quantity)
         uow.warehouse.add(updated)
+        uow.writeoffs.add(WriteOffEntry.for_lot(
+            updated, kind="return", quantity=command.quantity, reason=reason, purpose=source,
+            author=command.actor.name, actor_id=command.actor.id, actor_name=command.actor.name,
+            occurred_at=command.now, remaining_after=updated.balance,
+        ))
         uow.audit.add(
             AuditEvent(
                 id=uuid4(), aggregate_id=updated.id, event_type="warehouse.writeoff_returned",

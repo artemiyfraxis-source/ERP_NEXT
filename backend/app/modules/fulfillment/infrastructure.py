@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
+from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, LotSnapshot
@@ -211,6 +211,7 @@ class SqlAlchemyFulfillmentUnitOfWork:
         self.session = self.session_factory()
         self.fulfillment = SqlAlchemyFulfillmentRepository(self.session)
         self.warehouse = SqlAlchemyWarehouseRepository(self.session)
+        self.writeoffs = SqlAlchemyWriteOffJournal(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 

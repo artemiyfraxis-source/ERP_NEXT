@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from app.database import build_engine, build_warehouse_uow_factory
 from app.modules.warehouse import import_stock
 from app.modules.warehouse.import_stock import format_report, reconcile, run_import
-from app.modules.warehouse.infrastructure import StockLotRow, WarehouseSequenceRow
+from app.modules.warehouse.infrastructure import StockLotRow, WarehouseSequenceRow, WriteOffEntryRow
 from app.modules.warehouse.stock_export import StockExportError, parse_quantity, read_stock_export
 from app.shared.persistence import AuditEventRow
 
@@ -203,6 +203,43 @@ def test_import_creates_lots_that_reconcile_to_the_unit(tmp_path, database_url):
     _, audit, sequences = snapshot(database_url)
     assert audit == 4 + 5
     assert sequences == {"manual:2026": 3, "manual:2025": 9}
+
+
+def journal_rows(database_url):
+    engine = build_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            return connection.execute(
+                select(WriteOffEntryRow.grn, WriteOffEntryRow.kind, WriteOffEntryRow.quantity, WriteOffEntryRow.reason,
+                       WriteOffEntryRow.purpose, WriteOffEntryRow.author, WriteOffEntryRow.posted,
+                       WriteOffEntryRow.remaining_after, WriteOffEntryRow.occurred_at, WriteOffEntryRow.source_key)
+                .order_by(WriteOffEntryRow.source_key)
+            ).all()
+    finally:
+        engine.dispose()
+
+
+def test_imported_writeoff_rows_become_rows_of_the_writeoff_journal_once(tmp_path, database_url):
+    """SK-13: the СПИСАНИЕ rows of lots created by the import land in the journal as they were, moving no stock."""
+    directory = write_export(tmp_path / "export")
+    run(directory, database_url)
+
+    rows = journal_rows(database_url)
+    assert [(r.grn, r.quantity, r.reason, r.posted) for r in rows] == [
+        ("OLD.26.0000001", Decimal("3"), "Выдача в производство", True),
+        ("OLD.26.0000001", Decimal("1"), "Возврат: не израсходовано", True),
+        ("OLD.26.0000002", Decimal("0.75"), "Выдача в производство", True),
+        ("OLD.26.0000003", Decimal("5"), "Выдача в производство", True),
+        ("OLD.26.0000003", Decimal("5"), "Выдача в производство", False),
+    ]
+    for row in rows:
+        assert (row.kind, row.purpose, row.author, row.remaining_after) == ("legacy", "999К.1", "Тестовый Кладовщик", None)
+        assert row.occurred_at.date().isoformat() == "2026-09-01"
+        assert row.source_key.startswith("supplymap-writeoff:SUPPLYMAP ")
+
+    run(directory, database_url)
+
+    assert journal_rows(database_url) == rows
 
 
 def test_rerun_with_the_same_data_changes_nothing(tmp_path, database_url):

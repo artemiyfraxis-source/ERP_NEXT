@@ -5,15 +5,15 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, func, or_, select
+from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.warehouse_location import storage_location_has_slot
 
-from .domain import StockLot
+from .domain import StockLot, WriteOffEntry
 
 
 class StockLotRow(Base):
@@ -48,6 +48,69 @@ class StockLotRow(Base):
     certificate: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class WriteOffEntryRow(Base):
+    """The СПИСАНИЕ journal: append-only, one row per movement of one lot (SK-13)."""
+
+    __tablename__ = "warehouse_writeoffs"
+    __table_args__ = (
+        UniqueConstraint("source_key", name="uq_warehouse_writeoffs_source_key"),
+        Index("ix_warehouse_writeoffs_occurred_at", "occurred_at"),
+        Index("ix_warehouse_writeoffs_lot_id", "lot_id"),
+        Index("ix_warehouse_writeoffs_grn", "grn"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    lot_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False)
+    package: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(1024), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(String(512), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(512), nullable=False)
+    author: Mapped[str] = mapped_column(String(255), nullable=False)
+    posted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    remaining_after: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_key: Mapped[str | None] = mapped_column(String(255))
+
+
+def _writeoff_domain(row: WriteOffEntryRow) -> WriteOffEntry:
+    return WriteOffEntry(**{column.name: getattr(row, column.name) for column in WriteOffEntryRow.__table__.columns})
+
+
+class SqlAlchemyWriteOffJournal:
+    """Append-only. A movement already journalled under the same `source_key` is not written again."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, entry: WriteOffEntry) -> None:
+        if entry.source_key is not None and self.by_source_key(entry.source_key) is not None:
+            return
+        self.session.add(WriteOffEntryRow(**{
+            column.name: getattr(entry, column.name) for column in WriteOffEntryRow.__table__.columns
+        }))
+
+    def by_source_key(self, source_key: str) -> WriteOffEntry | None:
+        self.session.flush()
+        row = self.session.scalar(select(WriteOffEntryRow).where(WriteOffEntryRow.source_key == source_key))
+        return _writeoff_domain(row) if row is not None else None
+
+    def for_lot(self, lot_id: UUID) -> list[WriteOffEntry]:
+        self.session.flush()
+        rows = self.session.scalars(
+            select(WriteOffEntryRow)
+            .where(WriteOffEntryRow.lot_id == lot_id)
+            .order_by(WriteOffEntryRow.occurred_at, WriteOffEntryRow.id)
+        )
+        return [_writeoff_domain(row) for row in rows]
 
 
 class WarehouseSequenceRow(Base):
@@ -254,6 +317,7 @@ class SqlAlchemyWarehouseUnitOfWork:
         self.committed = False
         self.session = self.session_factory()
         self.warehouse = SqlAlchemyWarehouseRepository(self.session)
+        self.writeoffs = SqlAlchemyWriteOffJournal(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

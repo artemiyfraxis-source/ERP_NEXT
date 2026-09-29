@@ -106,6 +106,7 @@ class Outbox:
 class Uow:
     def __init__(self, message):
         self.warehouse = Lots()
+        self.writeoffs = Audit()
         self.audit = Audit()
         self.outbox = Outbox(message)
         self.commits = 0
@@ -614,3 +615,35 @@ def test_quick_entry_refuses_a_place_the_rack_layout_does_not_have():
     ), uow)
     assert [row.error for row in result.errors] == ["Места 18A1 нет: проверь номер стеллажа и полку."]
     assert uow.commits == 0
+
+
+def test_writeoff_and_its_return_are_rows_of_the_writeoff_journal():
+    """SK-13: the СПИСАНИЕ journal gets a row per movement, ОСТАТОК ПОСЛЕ = the lot balance after it."""
+    uow = Uow(message())
+    written = _written_lot(uow)
+    returned = _return(uow, written, "3", source="  Иванов ", reason="из производства")
+
+    writeoff, back = uow.writeoffs.items
+    clerk = Actor(name="Кладовщик", department="Склад")
+    assert (writeoff.kind, writeoff.quantity, writeoff.reason, writeoff.purpose) == ("writeoff", 4, "Выдача", "FRX.001")
+    assert (writeoff.remaining_after, writeoff.occurred_at) == (Decimal("6"), datetime(2026, 9, 22, 12, 0))
+    assert (back.kind, back.quantity, back.reason, back.purpose) == ("return", 3, "Возврат: из производства", "Иванов")
+    assert back.remaining_after == returned.balance == Decimal("9")
+    for row in (writeoff, back):
+        assert (row.lot_id, row.warehouse, row.grn, row.package, row.unit) == (
+            written.id, written.warehouse, written.grn, written.package, written.unit,
+        )
+        assert (row.author, row.actor_id, row.actor_name, row.posted) == (clerk.name, clerk.id, clerk.name, True)
+        assert row.source_key is None
+
+
+def test_a_refused_writeoff_or_return_leaves_no_journal_row():
+    uow = Uow(message())
+    written = _written_lot(uow)
+
+    with pytest.raises(WarehouseValidationError):
+        _return(uow, written, "5")
+    with pytest.raises(WarehouseValidationError):
+        _write_off(uow, uow.warehouse.get(written.id), "", "Выдача")
+
+    assert [row.kind for row in uow.writeoffs.items] == ["writeoff"]

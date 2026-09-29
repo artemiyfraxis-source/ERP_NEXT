@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -419,4 +419,94 @@ class StockLot:
             inbound=self.inbound + amount,
             source_receiving_ids=(*self.source_receiving_ids, source),
             version=self.version + 1,
+        )
+
+
+# The СПИСАНИЕ journal (SUPPLYMAP Config.gs:182 WAREHOUSE_WRITEOFF_COLS): ДАТА, СКЛАД, ГРН, ПАКЕТ, НАИМЕНОВАНИЕ,
+# КОЛ-ВО, ЕД.ИЗМ, ОСНОВАНИЕ, НАЗНАЧЕНИЕ, КТО СПИСАЛ, ПРОВЕДЕНО, ОСТАТОК ПОСЛЕ. One row per movement of one lot; a
+# return is a row whose ОСНОВАНИЕ starts with «Возврат» (writeoffIsReturn_), КОЛ-ВО stays positive.
+WRITEOFF_KINDS = (
+    "writeoff",  # manual write-off of a lot (Stock05.gs stock05Writeoff_)
+    "return",  # manual return of a write-off to its lot (Stock05.gs stock05Return_)
+    "issue",  # kitting request handed out, «КБ Выдана» (Issue.gs:475-502)
+    "legacy",  # a SUPPLYMAP СПИСАНИЕ row brought in by the stock import (WH-IMPORT)
+)
+ISSUE_WRITEOFF_AUTHOR = "выдача по заявке"  # КТО СПИСАЛ of an issue row (Issue.gs:500)
+
+
+def issue_writeoff_reason(request_number: str) -> str:
+    """ОСНОВАНИЕ of an issue row: «Выдача » + the request number (Issue.gs:499)."""
+    return f"Выдача {str(request_number).strip()}"
+
+
+@dataclass(frozen=True)
+class WriteOffEntry:
+    """One append-only row of the warehouse write-off journal (СПИСАНИЕ).
+
+    `occurred_at` is ДАТА (ERP keeps the time as well), `remaining_after` is ОСТАТОК ПОСЛЕ — the lot balance
+    (ПРИХОД − СПИСАНО) once the movement is posted, None when it is not known. `source_key` is unique: the same
+    movement cannot be journalled twice."""
+
+    id: UUID
+    occurred_at: datetime
+    kind: str
+    lot_id: UUID | None
+    warehouse: str
+    grn: str
+    package: str
+    name: str
+    quantity: Decimal
+    unit: str
+    reason: str
+    purpose: str
+    author: str
+    posted: bool
+    remaining_after: Decimal | None
+    actor_id: UUID
+    actor_name: str
+    source_key: str | None = None
+
+    @classmethod
+    def for_lot(
+        cls,
+        lot: StockLot,
+        *,
+        kind: str,
+        quantity: Decimal,
+        reason: str,
+        purpose: str,
+        author: str,
+        actor_id: UUID,
+        actor_name: str,
+        occurred_at: datetime,
+        remaining_after: Decimal | None,
+        posted: bool = True,
+        source_key: str | None = None,
+        name: str | None = None,
+    ) -> WriteOffEntry:
+        """`name` — НАИМЕНОВАНИЕ when the movement names the item itself (an issue position); else the lot's."""
+        if kind not in WRITEOFF_KINDS:
+            raise WarehouseValidationError(f"Неизвестный вид строки списания: {kind}")
+        amount = Decimal(quantity)
+        if amount <= 0:
+            raise WarehouseValidationError("Количество в строке списания должно быть больше нуля")
+        return cls(
+            id=uuid4(),
+            occurred_at=occurred_at,
+            kind=kind,
+            lot_id=lot.id,
+            warehouse=lot.warehouse,
+            grn=lot.grn,
+            package=lot.package,
+            name=(lot.name if name is None else str(name).strip()),
+            quantity=amount,
+            unit=lot.unit,
+            reason=str(reason or "").strip(),
+            purpose=str(purpose or "").strip(),
+            author=str(author or "").strip(),
+            posted=posted,
+            remaining_after=remaining_after,
+            actor_id=actor_id,
+            actor_name=str(actor_name or "").strip(),
+            source_key=source_key,
         )

@@ -13,6 +13,7 @@
     "human-binds-specific-lot",
     "requirement-and-reservation-are-distinct",
     "whole-kit-is-issued-atomically",
-    "warehouse-lot-selection-displays-article-before-description"
+    "warehouse-lot-selection-displays-article-before-description",
+    "issue-journals-one-writeoff-row-per-issued-position"
   ]
 }
