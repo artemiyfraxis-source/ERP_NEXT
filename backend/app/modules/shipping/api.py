@@ -18,14 +18,16 @@ from app.shared.http_auth import (
 
 from .application import (
     AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand,
-    PackProjectCommand, QueueProjectCommand, RegisterGoodCommand, RequestedGood,
+    LayOutCommand, PackProjectCommand, QueueProjectCommand, RegisterGoodCommand, RequestedGood,
     SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand, UnitOfWork, UnpickCommand,
     UpdateDocumentsCommand, accept_good, cancel_shipment, close_shipment, create_shipment, drop_project,
-    mark_shipped, pack_project, pack_shipment, pick_shipment, queue_project,
+    lay_out_shipment, mark_shipped, pack_project, pack_shipment, pick_shipment, queue_project,
     register_good, set_project_addressee, set_requested, unpick_line, update_documents,
 )
+from .documents import build_delivery_note, build_packing_lists
 from .domain import (
-    DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShippingValidationError, UpdType,
+    ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment,
+    ShippingValidationError, UpdType, total_gross,
 )
 
 
@@ -107,6 +109,13 @@ class AddresseePayload(BaseModel):
     terms: DeliveryTerms | None = None
     carrier: str | None = Field(default=None, max_length=255)
     upd_type: UpdType | None = None
+    po: str | None = Field(default=None, max_length=255)
+    contract: str | None = Field(default=None, max_length=255)
+    spec: str | None = Field(default=None, max_length=255)
+    invoice: str | None = Field(default=None, max_length=255)
+    pays: str | None = Field(default=None, max_length=255)
+    customer_address: str | None = Field(default=None, max_length=5000)
+    hours: str | None = Field(default=None, max_length=255)
 
 
 class ProjectPackPayload(BaseModel):
@@ -132,6 +141,25 @@ class DocumentsPayload(VersionPayload):
 
 class RequestedPayload(VersionPayload):
     quantity: Quantity
+
+
+class BoxItemPayload(BaseModel):
+    item_index: str = Field(max_length=255)
+    quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
+
+
+class BoxPayload(BaseModel):
+    kind: str = Field(default="", max_length=255)
+    dims: str = Field(default="", max_length=255)
+    net: str = Field(default="", max_length=64)
+    gross: str = Field(default="", max_length=64)
+    seal: str = Field(default="", max_length=255)
+    items: list[BoxItemPayload] = Field(default_factory=list, max_length=500)
+
+
+class BoxesPayload(VersionPayload):
+    boxes: list[BoxPayload] = Field(max_length=30)
+    tk_note: str = Field(default="", max_length=5000)
 
 
 def shipping_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -165,6 +193,7 @@ def _addressee_result(addressee: ProjectAddressee) -> dict:
         "upd_type": addressee.upd_type.value if addressee.upd_type else None,
         "updated_by": addressee.updated_by,
         "updated_at": addressee.updated_at.isoformat() if addressee.updated_at else None,
+        **{key: getattr(addressee, key) for key in ADDRESSEE_REQUISITE_FIELDS},
     }
 
 
@@ -182,7 +211,13 @@ def _shipment_result(shipment: Shipment) -> dict:
         "dn_number": shipment.dn_number, "track_number": shipment.track_number,
         "packed_at": shipment.packed_at.isoformat() if shipment.packed_at else None,
         "shipped_at": shipment.shipped_at.isoformat() if shipment.shipped_at else None,
-        "manager": shipment.manager, "note": shipment.note,
+        "manager": shipment.manager, "note": shipment.note, "tk_note": shipment.tk_note,
+        "places": len(shipment.boxes), "weight": total_gross(shipment.boxes),
+        "boxes": [{
+            "place": box.place, "kind": box.kind, "dims": box.dims, "net": box.net, "gross": box.gross,
+            "seal": box.seal,
+            "items": [{"item_index": item.item_index, "quantity": _number(item.quantity)} for item in box.items],
+        } for box in shipment.boxes],
         "lines": [{
             "id": str(line.id), "good_id": str(line.finished_good_id),
             "project": line.project, "item_index": line.item_index, "article": line.article,
@@ -391,6 +426,36 @@ def change_requested(shipment_id: UUID, line_id: UUID, payload: RequestedPayload
         actor=principal.actor, now=now,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
+
+
+@router.put("/shipments/{shipment_id}/boxes")
+def lay_out(shipment_id: UUID, payload: BoxesPayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+    shipment = _run(lambda: lay_out_shipment(LayOutCommand(
+        shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
+        boxes=tuple(box.model_dump() for box in payload.boxes), tk_note=payload.tk_note,
+    ), uow_factory()))
+    return {"shipment": _shipment_result(shipment)}
+
+
+@router.get("/shipments/{shipment_id}/print")
+def print_documents(
+    shipment_id: UUID,
+    document: Annotated[str, Query(pattern="^(pl|dn)$")],
+    _principal: Annotated[Principal, Depends(shipping_view_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """PL (лист на каждый короб) или DN — по актуальным данным отправки; повторная печать = перевыпуск."""
+    with uow_factory() as uow:
+        shipment = uow.shipments.get(shipment_id)
+        if shipment is None:
+            raise HTTPException(status_code=404, detail="Отгрузка не найдена")
+        project = uow.addressees.get(shipment.lines[0].project) if shipment.lines else None
+    try:
+        sheets = build_packing_lists(shipment) if document == "pl" else [build_delivery_note(shipment, project, now)]
+    except ShippingValidationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"sheets": [sheet.to_dict() for sheet in sheets]}
 
 
 @router.post("/shipments/{shipment_id}/close")

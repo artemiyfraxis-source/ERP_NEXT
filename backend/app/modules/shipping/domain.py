@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+import re
 from uuid import UUID, uuid4
 
 
@@ -114,6 +115,8 @@ class FinishedGood:
 
 ADDRESSEE_CONTACT_FIELDS = ("shipping_point", "contact", "phone")
 ADDRESSEE_CARD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "upd_type")
+# Реквизиты отгрузочной ведомости (форма 04.1) в карточке проекта: `SHIP_PROJ_COLS_` «ЗАКАЗ №» … «ВРЕМЯ РАБОТЫ».
+ADDRESSEE_REQUISITE_FIELDS = ("po", "contract", "spec", "invoice", "pays", "customer_address", "hours")
 
 
 @dataclass(frozen=True)
@@ -131,6 +134,13 @@ class ProjectAddressee:
     upd_type: UpdType | None = None
     updated_by: str = ""
     updated_at: datetime | None = None
+    po: str = ""
+    contract: str = ""
+    spec: str = ""
+    invoice: str = ""
+    pays: str = ""
+    customer_address: str = ""
+    hours: str = ""
 
     @classmethod
     def empty(cls, project: str) -> ProjectAddressee:
@@ -148,7 +158,7 @@ class ProjectAddressee:
 
     def edit(self, fields: dict) -> ProjectAddressee:
         """Card edit (`shipProjectSet_(…, replace)`, `shipProjShipFields_`): a sent field replaces, empty erases."""
-        unknown = set(fields) - set(ADDRESSEE_CARD_FIELDS)
+        unknown = set(fields) - set(ADDRESSEE_CARD_FIELDS) - set(ADDRESSEE_REQUISITE_FIELDS)
         if unknown:
             raise ShippingValidationError("Неизвестное поле адресата: " + ", ".join(sorted(unknown)))
         changes = {}
@@ -162,7 +172,7 @@ class ProjectAddressee:
         return replace(self, **changes)
 
     def differs(self, other: ProjectAddressee) -> bool:
-        return any(getattr(self, key) != getattr(other, key) for key in ADDRESSEE_CARD_FIELDS)
+        return any(getattr(self, key) != getattr(other, key) for key in ADDRESSEE_CARD_FIELDS + ADDRESSEE_REQUISITE_FIELDS)
 
 
 @dataclass(frozen=True)
@@ -315,6 +325,9 @@ class Shipment:
     lines: tuple[ShipmentLine, ...]
     # МЕНЕДЖЕР as a user: the track number goes to this id; None = the name matched nobody (→ all pm).
     manager_id: UUID | None = None
+    # «ПРИМЕЧАНИЯ ДЛЯ ТК» и места (`ОТГРУЗКА.МЕСТА`) из окна «Сформировать отгрузочные».
+    tk_note: str = ""
+    boxes: tuple[ShipmentBox, ...] = ()
 
     @classmethod
     def create(
@@ -428,6 +441,12 @@ class Shipment:
             raise ShippingValidationError("Позиция отгрузки не найдена")
         return replace(self, lines=tuple(updated), version=self.version + 1)
 
+    def lay_out(self, boxes: tuple[ShipmentBox, ...], tk_note: str) -> Shipment:
+        """`portalShipDocs`: раскладка по коробам и примечания для ТК перед сборкой PL/DN."""
+        if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+            raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
+        return replace(self, boxes=boxes, tk_note=str(tk_note or "").strip(), version=self.version + 1)
+
     def close(self) -> Shipment:
         if self.status != ShipmentStatus.SHIPPED:
             raise ShippingValidationError("Закрыть можно только отгруженную заявку")
@@ -464,3 +483,107 @@ def _plain(value: Decimal) -> str:
     text = format(Decimal(value).normalize(), "f")
     return text
 
+
+@dataclass(frozen=True)
+class BoxItem:
+    item_index: str
+    quantity: Decimal
+
+
+@dataclass(frozen=True)
+class ShipmentBox:
+    """Одно место отправки (`ОТГРУЗКА.МЕСТА`): вид упаковки, габариты, вес текстом «12,5», пломба, состав."""
+
+    place: int
+    kind: str = "Короб"
+    dims: str = ""
+    net: str = ""
+    gross: str = ""
+    seal: str = ""
+    items: tuple[BoxItem, ...] = ()
+
+
+@dataclass(frozen=True)
+class PackedItem:
+    item_index: str
+    quantity: Decimal
+    article: str
+    name: str
+    unit: str
+    grn: str
+
+
+def packed_by_index(lines: tuple[ShipmentLine, ...] | list[ShipmentLine]) -> list[PackedItem]:
+    """`shipPackedByIndex_`: набранное по КБ, две строки одной КБ складываются, порядок — как в отправке."""
+    order: list[str] = []
+    by: dict[str, PackedItem] = {}
+    for line in lines:
+        if not line.picked > 0:
+            continue
+        current = by.get(line.item_index)
+        if current is None:
+            order.append(line.item_index)
+            by[line.item_index] = PackedItem(line.item_index, _round2(line.picked), line.article, line.name, line.unit or "шт", line.grn or "")
+        else:
+            by[line.item_index] = replace(current, quantity=_round2(current.quantity + line.picked))
+    return [by[key] for key in order]
+
+
+_WEIGHT = re.compile(r"^\d+(,\d+)?$")
+
+
+def check_boxes(packed: list[PackedItem], boxes: list[dict]) -> tuple[ShipmentBox, ...]:
+    """`shipBoxesCheck_`: каждая КБ разложена ровно на упакованное, пустых коробов нет, вес — число."""
+    need = {item.item_index: _round2(item.quantity) for item in packed}
+    got = {key: Decimal("0") for key in need}
+    if not boxes:
+        raise ShippingValidationError("Нет ни одного короба.")
+    out: list[ShipmentBox] = []
+    for number, raw in enumerate(boxes, start=1):
+        items: list[BoxItem] = []
+        for entry in raw.get("items") or []:
+            index = str(entry.get("item_index") or "").strip()
+            try:
+                quantity = _round2(Decimal(str(entry.get("quantity") or 0).replace(",", ".")))
+            except ArithmeticError:
+                quantity = Decimal("0")
+            if not quantity > 0:
+                continue
+            if index not in need:
+                raise ShippingValidationError(f"BXN {number}: {index} нет в отправке.")
+            got[index] = _round2(got[index] + quantity)
+            items.append(BoxItem(index, quantity))
+        if not items:
+            raise ShippingValidationError(f"BXN {number} пустой — убери короб или положи в него позиции.")
+        net = str(raw.get("net") or "").strip().replace(".", ",", 1)
+        gross = str(raw.get("gross") or "").strip().replace(".", ",", 1)
+        if net and not _WEIGHT.match(net):
+            raise ShippingValidationError(f"BXN {number}: вес нетто — число в кг, например 12,5.")
+        if gross and not _WEIGHT.match(gross):
+            raise ShippingValidationError(f"BXN {number}: вес брутто — число в кг, например 13,6.")
+        out.append(ShipmentBox(
+            place=number, kind=str(raw.get("kind") or "").strip() or "Короб", dims=str(raw.get("dims") or "").strip(),
+            net=net, gross=gross, seal=str(raw.get("seal") or "").strip(), items=tuple(items),
+        ))
+    missing = [key for key in need if got[key] != need[key]]
+    if missing:
+        raise ShippingValidationError("Разложено не всё упакованное: " + "; ".join(
+            f"{key} — {_plain(got[key])} из {_plain(need[key])}" for key in missing) + ".")
+    return tuple(out)
+
+
+def default_boxes(packed: list[PackedItem]) -> tuple[ShipmentBox, ...]:
+    """Раскладки нет — один короб со всем упакованным (`shipBuildDocs_`)."""
+    return (ShipmentBox(place=1, items=tuple(BoxItem(item.item_index, item.quantity) for item in packed)),)
+
+
+def total_gross(boxes: tuple[ShipmentBox, ...]) -> str:
+    """`shipTotalGross_`: сумма брутто; хоть у одного короба пусто — пусто."""
+    if not boxes:
+        return ""
+    total = Decimal("0")
+    for box in boxes:
+        if not box.gross.strip():
+            return ""
+        total += Decimal(box.gross.replace(",", "."))
+    return _plain(_round2(total)).replace(".", ",")

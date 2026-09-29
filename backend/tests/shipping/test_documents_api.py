@@ -1,4 +1,4 @@
-"""«Заказано» после создания, «Отгружено» с авто-закрытием и «Упаковать» из карточки проекта."""
+"""PL/DN, короба, «Заказано», «Отгружено» с авто-закрытием и «Упаковать» из карточки проекта."""
 
 from tests.shipping.test_api import shipping_api  # noqa: F401 — fixture
 
@@ -54,6 +54,58 @@ def test_ship_closes_at_once_when_upd_is_filled_and_stays_shipped_otherwise(ship
     assert "№ УПД" in shipped["why"]
 
 
+def test_boxes_are_checked_pack_the_shipment_and_print_pl_per_box_and_one_dn(shipping_api):
+    client = shipping_api
+    first = _stocked(client, item_index="КБ1", accepted="10")
+    second = _stocked(client, item_index="КБ2", accepted="5")
+    client.put("/api/shipping/project-addressee", json={"project": "591К.3", "po": "PO-7", "hours": "9-18"})
+    shipment = _shipment(client, [{"good_id": first["id"], "quantity": "10"}, {"good_id": second["id"], "quantity": "5"}], no_docs=True)
+    url = f"/api/shipping/shipments/{shipment['id']}/boxes"
+    short = client.put(url, json={"version": shipment["version"], "boxes": [{"items": [{"item_index": "КБ1", "quantity": "10"}]}]})
+    bad_weight = client.put(url, json={"version": shipment["version"], "boxes": [
+        {"gross": "тяжёлый", "items": [{"item_index": "КБ1", "quantity": "10"}, {"item_index": "КБ2", "quantity": "5"}]}]})
+    laid = client.put(url, json={"version": shipment["version"], "tk_note": "Не кантовать", "boxes": [
+        {"kind": "Короб", "dims": "30х30х30", "net": "12", "gross": "12.5", "items": [{"item_index": "КБ1", "quantity": "10"}]},
+        {"kind": "Пакет", "gross": "1,5", "items": [{"item_index": "КБ2", "quantity": "5"}]},
+    ]})
+    packed = laid.json()["shipment"]
+    pl = client.get(f"/api/shipping/shipments/{shipment['id']}/print", params={"document": "pl"}).json()["sheets"]
+    dn = client.get(f"/api/shipping/shipments/{shipment['id']}/print", params={"document": "dn"}).json()["sheets"]
+
+    assert "Разложено не всё упакованное: КБ2 — 0 из 5" in short.json()["detail"]
+    assert "вес брутто" in bad_weight.json()["detail"]
+    assert packed["status"] == "Упакована" and packed["pl_number"] == "PL591К.3-1"
+    assert packed["places"] == 2 and packed["weight"] == "14" and packed["tk_note"] == "Не кантовать"
+    assert [box["gross"] for box in packed["boxes"]] == ["12,5", "1,5"]
+    assert len(pl) == 2
+    assert pl[0]["rows"] == [["КБ1", "A-КБ1", "Жгут КБ1", "10", "шт", "ГП.26.0000001"]]
+    assert "BXN 2 / 2" in pl[1]["subtitle"]
+    assert dn[0]["rows"][1] == ["КБ2", "A-КБ2", "Жгут КБ2", "5", "шт", "PL591К.3-1", "BXN 2"]
+    assert "Заказ №: PO-7" in dn[0]["subtitle"] and "Спецификация №: 591К.3" in dn[0]["subtitle"]
+    assert "Примечания для ТК: Не кантовать" in dn[0]["subtitle"]
+    assert "☑ УПД передана посредством ЭДО" in dn[0]["note"] and "Общий вес (брутто), кг: 14" in dn[0]["note"]
+
+    # Перевыпуск: номера сохраняются, короба заменяются.
+    again = client.put(url, json={"version": packed["version"], "boxes": [
+        {"items": [{"item_index": "КБ1", "quantity": "10"}, {"item_index": "КБ2", "quantity": "5"}]}]}).json()["shipment"]
+    assert again["pl_number"] == "PL591К.3-1" and again["places"] == 1 and again["weight"] == ""
+
+
+def test_print_needs_documents_and_defaults_to_one_box(shipping_api):
+    client = shipping_api
+    good = _stocked(client, accepted="4")
+    assembled = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], no_docs=True)
+    packed = _shipment(client, [{"good_id": good["id"], "quantity": "1"}])
+
+    refused = client.get(f"/api/shipping/shipments/{assembled['id']}/print", params={"document": "pl"})
+    default = client.get(f"/api/shipping/shipments/{packed['id']}/print", params={"document": "pl"})
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "Сначала сформируйте отгрузочные документы"
+    assert default.status_code == 200
+    assert "BXN 1 / 1" in default.json()["sheets"][0]["subtitle"]
+
+
 def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(shipping_api):
     client = shipping_api
     good = _stocked(client, accepted="6")
@@ -73,3 +125,4 @@ def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(s
     assert shipment["receiver"] == "Заказчик" and shipment["shipping_point"] == "Склад заказчика"
     assert shipment["lines"][0]["requested"] == "6" and shipment["lines"][0]["picked"] == "6"
     assert [row["project"] for row in addressees] == ["591К.3"]
+    assert addressees[0]["po"] == ""

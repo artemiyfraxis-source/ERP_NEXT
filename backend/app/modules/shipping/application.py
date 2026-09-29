@@ -20,7 +20,7 @@ from app.shared.notifications import (
 
 from .domain import (
     DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
-    ShippingValidationError, UpdType, effective_address, plan_project_queue,
+    ShippingValidationError, UpdType, check_boxes, effective_address, packed_by_index, plan_project_queue,
 )
 
 
@@ -187,6 +187,12 @@ class UpdateDocumentsCommand(ShipmentCommand):
 class SetRequestedCommand(ShipmentCommand):
     line_id: UUID
     quantity: Decimal
+
+
+@dataclass(frozen=True)
+class LayOutCommand(ShipmentCommand):
+    boxes: tuple[dict, ...]
+    tk_note: str
 
 
 @dataclass(frozen=True)
@@ -537,6 +543,23 @@ def set_requested(command: SetRequestedCommand, uow: UnitOfWork) -> Shipment:
         _audit(shipment.id, "shipping.requested_changed", command.actor, command.now, {
             "line_id": str(command.line_id), "quantity": str(command.quantity),
         }, uow)
+        uow.commit()
+        return updated
+
+
+def lay_out_shipment(command: LayOutCommand, uow: UnitOfWork) -> Shipment:
+    """«Сформировать отгрузочные» / «Перевыпустить» (`portalShipDocs`): короба и примечания для ТК.
+
+    Документов ещё нет — переход в «Упакована» с номерами PL/DN; есть — номера сохраняются.
+    """
+    with uow:
+        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        boxes = check_boxes(packed_by_index(shipment.lines), list(command.boxes))
+        updated = shipment.lay_out(boxes, command.tk_note)
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.boxes_laid_out", command.actor, command.now, {"places": len(boxes)}, uow)
+        if not updated.pl_number:
+            updated = _pack(updated, command.actor, command.now, uow)
         uow.commit()
         return updated
 

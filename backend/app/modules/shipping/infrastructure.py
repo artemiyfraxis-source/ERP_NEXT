@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -12,7 +14,10 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
-from .domain import DeliveryTerms, FinishedGood, ProjectAddressee, Shipment, ShipmentLine, ShipmentStatus, UpdType
+from .domain import (
+    ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, ProjectAddressee, Shipment, ShipmentBox,
+    ShipmentLine, ShipmentStatus, UpdType,
+)
 
 
 class FinishedGoodRow(Base):
@@ -65,7 +70,22 @@ class ShipmentRow(Base):
     manager: Mapped[str] = mapped_column(String(255), nullable=False)
     manager_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
     note: Mapped[str] = mapped_column(Text(), nullable=False)
+    tk_note: Mapped[str] = mapped_column(Text(), nullable=False, default="")
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class ShipmentBoxRow(Base):
+    """One place of a shipment (`ОТГРУЗКА.МЕСТА`); composition is JSON [{item_index, quantity}]."""
+
+    __tablename__ = "shipment_boxes"
+    shipment_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), primary_key=True)
+    place: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(255), nullable=False)
+    dims: Mapped[str] = mapped_column(String(255), nullable=False)
+    net: Mapped[str] = mapped_column(String(64), nullable=False)
+    gross: Mapped[str] = mapped_column(String(64), nullable=False)
+    seal: Mapped[str] = mapped_column(String(255), nullable=False)
+    composition: Mapped[str] = mapped_column(Text(), nullable=False)
 
 
 class ShipmentLineRow(Base):
@@ -99,6 +119,13 @@ class ProjectAddresseeRow(Base):
     upd_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    po: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    contract: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    spec: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    invoice: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    pays: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    customer_address: Mapped[str] = mapped_column(Text(), nullable=False, default="")
+    hours: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -164,7 +191,11 @@ class SqlAlchemyShipmentRepository:
             upd_type=UpdType(row.upd_type), upd_number=row.upd_number, upd_date=row.upd_date,
             upd_url=row.upd_url, pl_number=row.pl_number, dn_number=row.dn_number,
             track_number=row.track_number, packed_at=row.packed_at, shipped_at=row.shipped_at,
-            manager=row.manager, note=row.note, manager_id=row.manager_id,
+            manager=row.manager, note=row.note, manager_id=row.manager_id, tk_note=row.tk_note or "",
+            boxes=tuple(ShipmentBox(
+                place=box.place, kind=box.kind, dims=box.dims, net=box.net, gross=box.gross, seal=box.seal,
+                items=tuple(BoxItem(item["item_index"], Decimal(item["quantity"])) for item in json.loads(box.composition or "[]")),
+            ) for box in self.session.scalars(select(ShipmentBoxRow).where(ShipmentBoxRow.shipment_id == row.id).order_by(ShipmentBoxRow.place))),
             lines=tuple(ShipmentLine(
                 id=line.id, finished_good_id=line.finished_good_id, project=line.project,
                 item_index=line.item_index, article=line.article, name=line.name,
@@ -199,7 +230,7 @@ class SqlAlchemyShipmentRepository:
             "number", "version", "created_at", "customer", "receiver", "shipping_point",
             "contact", "phone", "carrier", "deadline", "upd_number", "upd_date", "upd_url",
             "pl_number", "dn_number", "track_number", "packed_at", "shipped_at", "manager", "note",
-            "manager_id",
+            "manager_id", "tk_note",
         ):
             setattr(row, key, getattr(shipment, key))
         row.status = shipment.status.value; row.terms = shipment.terms.value; row.upd_type = shipment.upd_type.value
@@ -211,6 +242,18 @@ class SqlAlchemyShipmentRepository:
             stored.position = position
             for key in ("finished_good_id", "project", "item_index", "article", "name", "requested", "picked", "unit", "grn"):
                 setattr(stored, key, getattr(line, key))
+        boxes = {box.place: box for box in self.session.scalars(select(ShipmentBoxRow).where(ShipmentBoxRow.shipment_id == shipment.id))}
+        for box in shipment.boxes:
+            stored_box = boxes.pop(box.place, None)
+            if stored_box is None:
+                stored_box = ShipmentBoxRow(shipment_id=shipment.id, place=box.place); self.session.add(stored_box)
+            stored_box.kind = box.kind; stored_box.dims = box.dims; stored_box.net = box.net
+            stored_box.gross = box.gross; stored_box.seal = box.seal
+            stored_box.composition = json.dumps(
+                [{"item_index": item.item_index, "quantity": format(item.quantity, "f")} for item in box.items], ensure_ascii=False,
+            )
+        for stale in boxes.values():
+            self.session.delete(stale)
 
 
 class SqlAlchemyProjectAddresseeRepository:
@@ -225,6 +268,7 @@ class SqlAlchemyProjectAddresseeRepository:
             terms=DeliveryTerms(row.terms) if row.terms else None, carrier=row.carrier,
             upd_type=UpdType(row.upd_type) if row.upd_type else None,
             updated_by=row.updated_by, updated_at=row.updated_at,
+            **{key: getattr(row, key) or "" for key in ADDRESSEE_REQUISITE_FIELDS},
         )
     def list(self) -> list[ProjectAddressee]:
         return [self.get(project) for project in self.session.scalars(select(ProjectAddresseeRow.project).order_by(ProjectAddresseeRow.project))]
@@ -232,7 +276,7 @@ class SqlAlchemyProjectAddresseeRepository:
         row = self.session.get(ProjectAddresseeRow, addressee.project)
         if row is None:
             row = ProjectAddresseeRow(project=addressee.project); self.session.add(row)
-        for key in ("version", "receiver", "shipping_point", "contact", "phone", "carrier", "updated_by", "updated_at"):
+        for key in ("version", "receiver", "shipping_point", "contact", "phone", "carrier", "updated_by", "updated_at", *ADDRESSEE_REQUISITE_FIELDS):
             setattr(row, key, getattr(addressee, key))
         row.terms = addressee.terms.value if addressee.terms else None
         row.upd_type = addressee.upd_type.value if addressee.upd_type else None
