@@ -113,6 +113,7 @@ export interface ProcurementLine {
   request_date: string;
   initiator: string;
   department: string;
+  task_type?: string;
   designation: string;
   project_reference: string | null;
   priority: string;
@@ -1154,6 +1155,30 @@ export const procurementApi = {
     api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
       `/api/procurement/in-work${after ? `?after=${encodeURIComponent(after)}` : ""}`,
     ),
+  // Весь лист закупки: все статусы и закупщики, поиск и отбор на сервере, страницы по курсору.
+  sheet: (filters: { q?: string; status?: string; buyer?: string }, after?: string) => {
+    const params = new URLSearchParams();
+    if (filters.q) params.set("q", filters.q);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.buyer) params.set("buyer", filters.buyer);
+    if (after) params.set("after", after);
+    const query = params.toString();
+    return api<{ lines: ProcurementLine[]; next_cursor: string | null; buyers: string[] }>(
+      `/api/procurement/lines${query ? `?${query}` : ""}`,
+    );
+  },
+  // PR-11 portalPurchaseBySupplier: открытые строки всех закупщиков и порядок этапов.
+  bySupplier: () => api<{ lines: ProcurementLine[]; stages: string[] }>("/api/procurement/by-supplier"),
+  meta: () => api<{ units: string[]; statuses: string[] }>("/api/procurement/meta"),
+  // portalMarkPaid: «Оплачено → В пути» пачкой, только строки со счётом.
+  markPaidBatch: (items: { line_id: string; version: number }[]) =>
+    api<{
+      lines: ProcurementLine[];
+      done: number;
+      already: number;
+      no_invoice: string[];
+      failed: { legacy_id: string; error: string }[];
+    }>("/api/procurement/paid", { method: "POST", body: JSON.stringify({ items }) }),
   take: (lineIds: string[]) =>
     api<{ lines: ProcurementLine[] }>("/api/procurement/take", {
       method: "POST",
