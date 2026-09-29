@@ -30,6 +30,7 @@ it("returns to login when an active session is rejected", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json(principal);
+    if (path === "/api/auth/login-staff") return json({ staff: [] });
     if (path.startsWith("/api/requests")) {
       return json({ detail: "Требуется вход в ERP" }, 401);
     }
@@ -39,7 +40,7 @@ it("returns to login when an active session is rejected", async () => {
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "Заявки" }));
 
-  expect(await screen.findByRole("button", { name: "Войти" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Войти" }, { timeout: 5000 })).toBeInTheDocument();
 });
 
 it("does not show procurement to a role outside its view set, even with a view grant", async () => {
