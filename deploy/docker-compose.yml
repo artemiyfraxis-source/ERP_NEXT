@@ -1,4 +1,4 @@
-# Production stack on one VPS: PostgreSQL + API (serves the site) + outbox worker + Caddy (HTTPS) + nightly backups.
+# Production stack on one Ubuntu machine: PostgreSQL + API (serves the site) + outbox worker + Caddy (HTTPS) + nightly backups.
 # Always run through deploy/erp.sh: it passes --env-file ${ERP_HOME}/config/.env (see README.md).
 # Layout on the server (ERP_HOME=/opt/erp): app/ (this repo), config/.env + config/secrets/, supplymap/, import/, backups/.
 name: erp
@@ -29,7 +29,7 @@ services:
     env_file: ${ERP_HOME:-/opt/erp}/config/.env
     environment:
       ERP_DATABASE_URL: postgresql+psycopg://erp:${POSTGRES_PASSWORD}@db:5432/erp
-      ERP_COOKIE_SECURE: "1"
+      ERP_COOKIE_SECURE: ${ERP_COOKIE_SECURE:-1}
       SUPPLYMAP_SOURCE_REPOSITORY: /opt/supplymap
     volumes:
       - ${ERP_HOME:-/opt/erp}/config/secrets:/run/erp-secrets:ro
@@ -58,7 +58,7 @@ services:
     image: caddy:2
     restart: unless-stopped
     depends_on: [api]
-    ports: ["80:80", "443:443"]
+    ports: ["80:80", "${ERP_HTTPS_PUBLISH:-443}:443"]
     environment:
       ERP_DOMAIN: ${ERP_DOMAIN:?set ERP_DOMAIN in deploy/.env}
     volumes:

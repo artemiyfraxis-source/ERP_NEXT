@@ -45,7 +45,9 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [adding, setAdding] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveLot, setMoveLot] = useState<WarehouseLot | null>(null);
-  const [groupBy, setGroupBy] = useState<"" | "type" | "place" | "name" | "series">("");
+  const [groupBy, setGroupBy] = useState<"" | "type" | "place" | "name" | "series">("series");
+  const [flat, setFlat] = useState(false);
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "article", desc: false });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [panel, setPanel] = useState<"" | "types" | "import" | "journal" | "racks">("");
   const [journalQuery, setJournalQuery] = useState("");
@@ -57,7 +59,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   // что и FF-8 (frontend/src/print.ts): backend строит PrintSheet, окно печати открывает print.ts.
   const [putawayBusy, setPutawayBusy] = useState(false);
   const requestVersion = useRef(0);
-  const groupedLots = useMemo(() => warehouseGroups(lots, groupBy), [lots, groupBy]);
+  const groupedLots = useMemo(() => warehouseGroups(lots, groupBy, sort), [lots, groupBy, sort]);
 
   async function loadAllLots() {
     const loaded: WarehouseLot[] = [];
@@ -137,35 +139,36 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         <h1>Склад</h1>
         <span className="page-count">{total}</span>
       </header>
-      <p className="page-sub">Остатки партиями: одна поставка — одна партия со своим номером.</p>
-      <p className="page-sub">Остаток считается из движений, поэтому на вопрос «почему столько» отвечает история, а не догадка.</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
-      {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="action-row">
+        {!readOnly && <button className="primary compact" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>}
+        <button className="secondary compact" aria-pressed={flat} onClick={() => setFlat((value) => !value)}>{flat ? "Остатки по позициям" : "Таблица склада"}</button>
         {!readOnly && <>
-        <button className="primary compact" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>
+        <button className="secondary compact" onClick={() => setPanel((value) => value === "racks" ? "" : "racks")}>Стеллажи</button>
         <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => { setMoveLot(null); setMoveOpen(true); }}>↔ Переместить</button>
-        <button className="secondary compact" onClick={() => setPanel((value) => value === "types" ? "" : "types")}>Справочник типов</button>
+        <button className="secondary compact" onClick={() => setPanel((value) => value === "types" ? "" : "types")}>Типы</button>
         <button className="secondary compact" disabled={Boolean(busy)} onClick={() => {
           setError("");
           downloadStockTable().catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось выгрузить."));
         }}>Выгрузить</button>
         <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>Загрузить правки</button>
-        <button className="secondary compact" onClick={() => setPanel((value) => value === "racks" ? "" : "racks")}>Раскладка</button>
         </>}
         {admin && <button className="secondary compact" onClick={() => { setJournalQuery(""); setPanel((value) => value === "journal" ? "" : "journal"); }}>Журнал склада</button>}
         {!readOnly && <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>Лист перемещения</button>}
+        <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
       </div>
-      <div className="filters table-toolbar">
-        <input className="search stock-search" aria-label="Поиск по складу" placeholder="Поиск: артикул, серия, место, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
+      {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
+      <p className="page-sub stock-hint">Остатки склада. Ищи по артикулу, наименованию, серии, месту или ГРН — слова можно в любом порядке. «Списать» снимает количество с партии (выдача в производство, брак, недостача), «Вернуть» кладёт назад неизрасходованное — не больше, чем с партии списано. Открой наименование — его партии идут карточками, действия кнопками в каждой.</p>
+      {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
+      <div className="filters table-toolbar stock-toolbar">
+        <input className="search stock-search" aria-label="Поиск по складу" placeholder="поиск: резистор 6-1 …" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />показывать нулевые</label>
+        <label className="inline-select">группировать<select aria-label="Группировка склада" value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
+          <option value="">нет</option><option value="type">по типу</option><option value="place">по месту (полка)</option><option value="name">по наименованию</option><option value="series">по серии</option>
+        </select></label>
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
         </select>
-        <select aria-label="Группировка склада" value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
-          <option value="">Без группировки</option><option value="type">По типу</option><option value="place">По месту (полка)</option><option value="name">По наименованию</option><option value="series">По серии</option>
-        </select>
-        <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />С нулевым остатком</label>
-        <button className="secondary compact toolbar-end" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
       </div>
       <datalist id="warehouse-item-types">{typeChoices.map((type) => <option key={type} value={type} />)}</datalist>
       {panel === "types" && <ItemTypesPanel
@@ -219,9 +222,18 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         mutate={mutate}
         onClose={() => setMoveOpen(false)}
       />}
-      <div className="table-wrap">
+      {flat ? <div className="table-wrap">
+        <table className="grid wide compact stock-table" aria-label="Таблица склада">
+          <thead><tr><th>Тип</th><th>ГРН</th><th className="num">Остаток</th><th className="num">Доступно</th><th>Место</th><th>Серия</th><th>Артикул</th><th>Наименование</th><th>Назначение</th><th>Склад</th></tr></thead>
+          <tbody>{lots.map((lot) => <tr key={lot.id}>
+            <td>{lot.item_type || "—"}</td><td>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</td><td className="num"><strong>{lot.balance} {lot.unit}</strong></td><td className="num">{lot.available}</td><td>{lot.storage_location || "—"}</td><td>{lot.series || "—"}</td><td className="text">{lot.article || "—"}</td><td className="text">{lot.name || "—"}</td><td>{lot.purpose || "—"}</td><td>{lot.warehouse}</td>
+          </tr>)}</tbody>
+        </table>
+      </div> : <div className="table-wrap">
         <table className="grid wide compact stock-table">
-          <thead><tr><th>Тип</th><th>Партия</th><th className="num">Остаток</th><th className="num">Доступно</th><th>Ед.</th><th>Место</th><th>Серия</th><th>Артикул</th><th>Наименование</th><th>Назначение</th><th>Склад</th><th /></tr></thead>
+          <thead><tr>{SORT_COLUMNS.map(([key, label]) => <th key={key} className={key === "balance" || key === "lots" ? "num" : undefined} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : undefined}>
+            <button type="button" className="th-sort" onClick={() => setSort((current) => ({ key, desc: current.key === key ? !current.desc : false }))}>{label}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}</button>
+          </th>)}</tr></thead>
           <tbody>{groupedLots.map((group) => <ArticleGroup
             key={group.key}
             group={group}
@@ -239,8 +251,8 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
             readOnly={readOnly}
           />)}</tbody>
         </table>
-      </div>
-      {!lots.length && !loading && <div className="empty">{includeZero ? "Склад пуст." : "Позиций с остатком нет. Включите «С нулевым остатком», чтобы увидеть израсходованные партии."}</div>}
+      </div>}
+      {!lots.length && !loading && <div className="empty">{includeZero ? "Склад пуст." : "Позиций с остатком нет. Включите «показывать нулевые», чтобы увидеть израсходованные партии."}</div>}
     </section>
   );
 }
@@ -268,7 +280,35 @@ function shelf(location: string) {
   return location.replace(/\s+/g, "").toUpperCase().match(/^(\d+[A-ZА-Я])/)?.[1] ?? location;
 }
 
-function warehouseGroups(lots: WarehouseLot[], groupBy: "" | "type" | "place" | "name" | "series"): WarehouseGroup[] {
+type SortKey = "type" | "grn" | "balance" | "lots" | "place" | "series" | "article" | "name" | "warehouse";
+
+const SORT_COLUMNS: Array<[SortKey, string]> = [
+  ["type", "Тип"], ["grn", "ГРН"], ["balance", "Остаток"], ["lots", "Партий"], ["place", "Места"],
+  ["series", "Серия"], ["article", "Артикул"], ["name", "Наименование"], ["warehouse", "Склад"],
+];
+
+function sortValue(item: WarehouseArticle, key: SortKey): string | number {
+  switch (key) {
+    case "type": return distinct(item.lots, "item_type");
+    case "grn": return distinct(item.lots, "grn");
+    case "balance": return Number(quantity(item.lots, "balance"));
+    case "lots": return item.lots.length;
+    case "place": return distinct(item.lots, "storage_location");
+    case "series": return distinct(item.lots, "series");
+    case "name": return distinct(item.lots, "name");
+    case "warehouse": return distinct(item.lots, "warehouse");
+    default: return item.article;
+  }
+}
+
+function compareArticles(left: WarehouseArticle, right: WarehouseArticle, sort: { key: SortKey; desc: boolean }) {
+  const a = sortValue(left, sort.key);
+  const b = sortValue(right, sort.key);
+  const order = typeof a === "number" && typeof b === "number" ? a - b : warehouseCollator.compare(String(a), String(b));
+  return (sort.desc ? -order : order) || warehouseCollator.compare(left.key, right.key);
+}
+
+function warehouseGroups(lots: WarehouseLot[], groupBy: "" | "type" | "place" | "name" | "series", sort: { key: SortKey; desc: boolean }): WarehouseGroup[] {
   const groupMap = new Map<string, WarehouseLot[]>();
   for (const lot of lots) {
     const value = groupBy === "type" ? lot.item_type
@@ -291,14 +331,20 @@ function warehouseGroups(lots: WarehouseLot[], groupBy: "" | "type" | "place" | 
         key: `${groupBy}:${groupKey}`,
         label: !groupBy ? "" : groupKey || ({ type: "Без типа", place: "Без места", name: "Без наименования", series: "Без серии" })[groupBy],
         articles: [...articleMap.entries()]
-          .sort(([left], [right]) => warehouseCollator.compare(left, right))
-          .map(([key, articleLots]) => ({ key: `${groupBy}:${groupKey}:${key}`, article: articleLots[0].article || articleLots[0].name, lots: articleLots })),
+          .map(([key, articleLots]) => ({ key: `${groupBy}:${groupKey}:${key}`, article: articleLots[0].article || articleLots[0].name, lots: articleLots }))
+          .sort((left, right) => compareArticles(left, right, sort)),
       };
     });
 }
 
 function distinct(lots: WarehouseLot[], field: keyof WarehouseLot) {
   return [...new Set(lots.map((lot) => String(lot[field] ?? "")).filter(Boolean))].join(" · ");
+}
+
+/** Places as in SUPPLYMAP: the first three, then «+N». */
+function places(lots: WarehouseLot[]) {
+  const all = [...new Set(lots.map((lot) => lot.storage_location).filter(Boolean))];
+  return all.slice(0, 3).join(" · ") + (all.length > 3 ? ` +${all.length - 3}` : "");
 }
 
 function quantity(lots: WarehouseLot[], field: "balance" | "available") {
@@ -317,25 +363,25 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
   readOnly: boolean;
 }) {
   return <>
-    {group.label && <tr className="stock-group-row"><td colSpan={12}>{group.label} · {group.articles.length}</td></tr>}
+    {group.label && <tr className="stock-group-row"><td colSpan={9}>{group.label} · {group.articles.length}</td></tr>}
     {group.articles.map((item) => {
       const open = expanded.has(item.key);
+      const unit = distinct(item.lots, "unit");
       return <Fragment key={item.key}>
-        <tr className="stock-article-row">
-          <td>{distinct(item.lots, "item_type") || "—"}</td>
-          <td><button className="link-button table-link" aria-expanded={open} onClick={() => toggle(item.key)}>{open ? "Скрыть" : "Показать"} партии ({item.lots.length})</button><small>{distinct(item.lots, "grn")}</small></td>
-          <td className="num"><strong>{quantity(item.lots, "balance")}</strong></td>
-          <td className="num"><strong>{quantity(item.lots, "available")}</strong></td>
-          <td>{distinct(item.lots, "unit")}</td>
-          <td>{distinct(item.lots, "storage_location") || "—"}</td>
-          <td>{distinct(item.lots, "series") || "—"}</td>
-          <td className="text"><strong>{item.article || "Без артикула"}</strong></td>
-          <td className="text">{distinct(item.lots, "name") || "—"}</td>
-          <td>{distinct(item.lots, "purpose") || "—"}</td>
+        <tr className={open ? "stock-article-row open" : "stock-article-row"}>
+          <td>{distinct(item.lots, "item_type")}</td>
+          <td className="stock-grn">{distinct(item.lots, "grn")}</td>
+          <td className="num"><strong>{quantity(item.lots, "balance")}{unit ? ` ${unit}` : ""}</strong></td>
+          <td className="num">{item.lots.length}</td>
+          <td>{places(item.lots)}</td>
+          <td>{distinct(item.lots, "series")}</td>
+          <td className="text">{item.article || "—"}</td>
+          <td className="text"><button className="link-button table-link" aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} title="Партии карточками" onClick={() => toggle(item.key)}>{distinct(item.lots, "name") || item.article || "Без наименования"}</button></td>
           <td>{distinct(item.lots, "warehouse")}</td>
-          <td />
         </tr>
-        {open && item.lots.map((lot) => <WarehouseRow key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} onHistory={onHistory} readOnly={readOnly} />)}
+        {open && <tr className="stock-cards-row"><td colSpan={9}><div className="lot-cards">
+          {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} onHistory={onHistory} readOnly={readOnly} />)}
+        </div></td></tr>}
       </Fragment>;
     })}
   </>;
@@ -641,7 +687,7 @@ function LotRowEditForm({ lot, disabled, mutate, onClose }: {
   </form>;
 }
 
-function WarehouseRow({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
+function LotCard({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
   lot: WarehouseLot;
   busy: boolean;
   disabled: boolean;
@@ -679,14 +725,22 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove, onHistory, readOnly
   }
 
   return (
-    <>
-      <tr>
-        <td>{lot.item_type || "—"}</td><td><strong>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</strong></td><td className="num">{lot.balance}</td><td className="num">{lot.available}</td><td>{lot.unit}</td><td>{lot.storage_location || "без места"}</td><td>{lot.series || "—"}</td><td className="text"><strong>{lot.article || "—"}</strong></td><td className="text">{lot.name || "—"}</td><td>{lot.purpose || "—"}</td><td>{lot.warehouse}</td>
-        <td>{(!readOnly || passport) && <button className="link-button table-link" onClick={() => setOpen((value) => !value)}>{readOnly ? "Паспорт" : "Операции"}</button>}</td>
-      </tr>
-      {open && <tr className="stock-actions-row"><td colSpan={12}>{passport && <p className="page-sub" aria-label="Паспорт партии">{passport}</p>}{!readOnly && <div className="stock-actions">
-        <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
+    <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
+      <div className="lot-card-main">
+        <div><span className="lot-card-big">{lot.balance} {lot.unit}</span><small>остаток{lot.available !== lot.balance ? ` · доступно ${lot.available}` : ""}</small></div>
+        <div><span className="lot-card-big">{lot.storage_location || "без места"}</span><small>{lot.warehouse}</small></div>
+      </div>
+      <p className="lot-card-meta">
+        <span>ГРН {lot.grn}{lot.package ? ` / ${lot.package}` : ""}</span>
+        {lot.purpose && <span>{lot.purpose}</span>}
+        {writtenOff && <span>списано {lot.written_off}</span>}
+      </p>
+      {(!readOnly || passport) && <div className="lot-card-actions">
+        {!readOnly && <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>}
         {onHistory && <button className="secondary small" onClick={() => onHistory(lot.grn)}>История</button>}
+        <button className="secondary small" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{readOnly ? "Паспорт" : "Операции"}</button>
+      </div>}
+      {open && <>{passport && <p className="page-sub" aria-label="Паспорт партии">{passport}</p>}{!readOnly && <div className="stock-actions">
         {!editingRow && <button className="secondary small" disabled={disabled} onClick={() => setEditingRow(true)}>Править строку</button>}
         {editingRow && <LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} />}
         <form className="inline-action" onSubmit={(event) => {
@@ -712,7 +766,7 @@ function WarehouseRow({ lot, busy, disabled, mutate, onMove, onHistory, readOnly
           <button className="primary small" disabled={disabled}>Вернуть</button>
           <button type="button" className="link-button" onClick={() => setReturning(false)}>Отмена</button>
         </form>}
-      </div>}</td></tr>}
-    </>
+      </div>}</>}
+    </article>
   );
 }

@@ -119,7 +119,7 @@ it("opens the native warehouse at the live ERP stock route", async () => {
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Склад", level: 1 })).toBeInTheDocument();
-  expect(screen.getByText("Остатки партиями: одна поставка — одна партия со своим номером.")).toBeInTheDocument();
+  expect(screen.getByText(/^Остатки склада\. Ищи по артикулу/)).toBeInTheDocument();
   expect(screen.getAllByText("Склад").length).toBeGreaterThan(1);
 });
 

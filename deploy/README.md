@@ -3,18 +3,26 @@
 Один VPS, всё в Docker: PostgreSQL 16, API (он же отдаёт сайт), фоновый воркер outbox, Caddy (HTTPS от
 Let's Encrypt), ночные копии базы. Файлы (УПД, счета) лежат в базе, поэтому копия базы — это вся ERP.
 
-## Сервер
-Timeweb Cloud (решено агентом 29.09.2026, в claude-brain о сервере владельца данных нет): российский хостинг,
-оплата картой РФ, данные сотрудников остаются в РФ, есть зеркало Docker Hub и ежедневные снимки диска.
-Ubuntu 24.04, Москва, 2 vCPU / 4 ГБ / 50 ГБ NVMe, опция «Автоматические бэкапы». SSH-ключ — `~\.ssh\erp_server.pub`
-с компьютера владельца. Без своего домена адрес будет `<ip-через-дефисы>.sslip.io` (HTTPS работает и так);
-свой домен — A-запись на IP и `ERP_DOMAIN` в `/opt/erp/config/.env`, затем `deploy/erp.sh up -d`.
+## Сервер — свой компьютер в цеху (владелец, 29.09.2026)
+- Железо: любой x86-64 ПК, от 4 ГБ RAM (лучше 8), SSD от 120 ГБ, проводной Ethernet; желательно второй диск
+  или USB-диск под копии базы и ИБП.
+- Ubuntu Server 24.04 LTS: пользователь `erp`, имя `erp-server`, галочка OpenSSH server, Import SSH identity →
+  GitHub → `artemiyfraxis-source` (на GitHub должен быть ключ `~\.ssh\erp_server.pub` с компьютера владельца).
+  В BIOS — Restore on AC Power Loss → Power On. На роутере — постоянный IP для сервера.
+- Один раз на консоли сервера (sudo без пароля для выкладки + Tailscale для доступа снаружи):
+  `echo "erp ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/erp && curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`
+  (ссылку входа открыть на телефоне тем же аккаунтом Tailscale, что на компьютере владельца).
+- В цеху сайт — `http://<IP сервера>` (cookie без Secure, `ERP_COOKIE_SECURE=0`); снаружи — `https://erp-server.<tailnet>.ts.net`
+  через `tailscale serve` (решено агентом: Tailscale вместо проброса портов — не нужен белый IP, трафик шифрован,
+  доступ только устройствам владельца). Для публичной машины с доменом: `bootstrap.sh <домен>` — Caddy с Let's Encrypt.
+- Копии: `pg_dump` в `/opt/erp/backups`. На том же диске они не спасут от его поломки — смонтировать второй
+  диск в `/opt/erp/backups` (сделает агент по ssh, если диск есть).
 
 ## Раскладка на сервере (`/opt/erp`)
 | Путь | Что |
 |---|---|
 | `app/` | код (снимок `origin/main`, коммит в `app/REVISION`); `app.prev/` — прошлый |
-| `config/.env` | `ERP_DOMAIN`, пароль базы, пути к ключам Google (создаёт `bootstrap.sh`) |
+| `config/.env` | `ERP_DOMAIN` (`:80` — сеть цеха), `ERP_COOKIE_SECURE`, пароль базы, пути к ключам Google (создаёт `bootstrap.sh`) |
 | `config/secrets/` | `google-service-account.json` (erp-reader), позже `kd-drive-oauth.json` |
 | `config/admin.txt`, `config/staff-pins.txt` | вход администратора и PIN сотрудников (после `load-real-data.sh base`) |
 | `supplymap/` | снимок SUPPLYMAP для импорта сотрудников и справочников |
@@ -24,10 +32,11 @@ Ubuntu 24.04, Москва, 2 vCPU / 4 ГБ / 50 ГБ NVMe, опция «Авт�
 ## Команды
 С компьютера владельца (PowerShell, из `Projects\ERP_NEXT`; рабочую копию не трогает, берёт `origin/main`):
 ```powershell
-.\deploy\push.ps1 -Server <IP>                 # первый раз — установка, дальше — обновление с копией базы перед ним
-.\deploy\push.ps1 -Server <IP> -Ref <коммит>   # откат кода
+.\deploy\push.ps1 -Server erp-server -GoogleKey <ключ erp-reader.json>   # первый раз — установка
+.\deploy\push.ps1 -Server erp-server                 # обновление (перед ним копия базы)
+.\deploy\push.ps1 -Server erp-server -Ref <коммит>   # откат кода
 ```
-На сервере (`ssh -i ~\.ssh\erp_server root@<IP>`, затем `cd /opt/erp/app/deploy`):
+На сервере (`ssh -i ~\.ssh\erp_server erp@erp-server`, `sudo -i`, `cd /opt/erp/app/deploy`):
 ```bash
 ./erp.sh ps                         # состояние контейнеров
 ./erp.sh logs -f --tail 100 api     # журнал API (worker, db, caddy, backup — так же)

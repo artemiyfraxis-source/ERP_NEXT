@@ -96,7 +96,8 @@ const DELETE_TEXT = "Проект уйдёт целиком: состав и с�
 export function ProjectsPage({ principal }: { principal: Principal }) {
   const canEdit = principal.permissions.projects === "edit";
   const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).get("project") || "");
-  if (open) return <KitsetCardView project={open} canEdit={canEdit} back={() => setOpen("")} />;
+  const canRequest = principal.permissions.newrequest === "edit";
+  if (open) return <KitsetCardView project={open} canEdit={canEdit} canRequest={canRequest} back={() => setOpen("")} />;
   return <KitsetHub canEdit={canEdit} openProject={setOpen} />;
 }
 
@@ -277,7 +278,7 @@ function CreateFromCalc({ close, done }: {
 
 type Tab = "sostav" | "supply" | "spec" | "gen" | `tc:${string}`;
 
-function KitsetCardView({ project, canEdit, back }: { project: string; canEdit: boolean; back: () => void }) {
+function KitsetCardView({ project, canEdit, canRequest, back }: { project: string; canEdit: boolean; canRequest: boolean; back: () => void }) {
   const [card, setCard] = useState<KitsetCard | null>(null);
   const [tab, setTab] = useState<Tab>("sostav");
   const [error, setError] = useState("");
@@ -339,6 +340,9 @@ function KitsetCardView({ project, canEdit, back }: { project: string; canEdit: 
     <div className="page-actions">
       {canEdit && <button className="secondary" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
       {canEdit && <button className="secondary" onClick={() => void remove()}>Удалить карточку</button>}
+      {/* Заявка — отдельный шаг, как в SUPPLYMAP: заведение проекта её не создаёт; кнопка открывает «Оформить заявку →
+          Из расчёта» с этой ссылкой и номером, оператор проверяет строки и отправляет. */}
+      {canRequest && card.calc_source && <button className="secondary" onClick={() => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project })}>Оформить заявку из расчёта</button>}
       <button className="secondary" onClick={() => openSection("shipping", { ship_project: card.project })}>Отгрузить</button>
       {note && <span className="muted">{note}</span>}
     </div>

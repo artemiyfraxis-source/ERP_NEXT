@@ -35,8 +35,9 @@ client = TestClient(app)
 
 def test_admin_has_every_section_on_edit_without_a_matrix():
     assert role_permissions("admin", {}) == {section: AccessMode.EDIT for section in SECTION_LABELS}
-    closed = role_permissions("admin", {"tcgen": AccessMode.NONE, "erpref": AccessMode.VIEW})
-    assert "tcgen" not in closed and closed["erpref"] is AccessMode.VIEW
+    # A full-access role ignores the matrix: a none/view cell cannot reduce it (owner 2026-09-29).
+    everything = {section: AccessMode.EDIT for section in SECTION_LABELS}
+    assert role_permissions("admin", {"tcgen": AccessMode.NONE, "erpref": AccessMode.VIEW}) == everything
 
 
 def test_new_keys_are_sections_of_their_own():
@@ -106,8 +107,13 @@ def test_staff_directory_takes_staffdir_and_access_takes_the_admin_role(as_princ
     as_principal({}, role="admin")
     assert client.get("/api/auth/staff").status_code == 403
     assert client.get("/api/auth/access").status_code != 403
-    as_principal({"staffdir": "edit"}, role="buyer")
+    # A non-full role with the staffdir cell is still refused (the route also asks the role).
+    as_principal({"staffdir": "edit"}, role="receiver")
     assert client.get("/api/auth/staff").status_code == 403
+    assert client.get("/api/auth/access").status_code == 403
+    # A full-access role (buyer) passes the role gate on «Сотрудники»; «Доступы» stays admin-only.
+    as_principal({"staffdir": "edit"}, role="buyer")
+    assert client.get("/api/auth/staff").status_code != 403
     assert client.get("/api/auth/access").status_code == 403
 
 

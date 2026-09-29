@@ -61,9 +61,10 @@ export function installerLoad(operatorId: string, tasks: ProductionTask[], absen
   return { operations, seconds, until, absent: absence ? `${absence.kind} до ${formatDay(absence.to_date)}` : "" };
 }
 
-export function MasterBoard({ tasks, operators, skills, absences, canEdit, busy, mutate, openTask }: {
+export function MasterBoard({ tasks, operators, site = "", skills, absences, canEdit, busy, mutate, openTask }: {
   tasks: ProductionTask[];
   operators: ProductionOperator[];
+  site?: string;
   skills: ProductionSkill[];
   absences: ProductionAbsence[];
   canEdit: boolean;
@@ -89,7 +90,8 @@ export function MasterBoard({ tasks, operators, skills, absences, canEdit, busy,
     ...waiting.filter((item) => item.project === project).map((item) => item.deadline)].filter(Boolean).sort()[0] ?? "";
   projects.sort((a, b) => (deadlineOf(a) || "9999").localeCompare(deadlineOf(b) || "9999") || a.localeCompare(b, "ru"));
 
-  const people = installers(operators);
+  // Мастер площадки (Степан в Жуковском) видит и ставит только своих монтажников; без площадки — всех.
+  const people = installers(operators).filter((person) => !site || person.site === site);
   const today = isoDay(new Date());
   const task = selected ? live.find((item) => item.id === selected.taskId) ?? null : null;
   const operation = task?.operations.find((item) => item.id === selected?.operationId) ?? null;
@@ -156,7 +158,7 @@ export function MasterBoard({ tasks, operators, skills, absences, canEdit, busy,
       })}
     </section>
     <aside className="panel mb-people" aria-label="Монтажники">
-      <div className="mb-head"><h2>Монтажники</h2><span className="mb-count">{people.length}</span></div>
+      <div className="mb-head"><h2>Монтажники</h2><span className="mb-count">{site ? `${site} · ` : ""}{people.length}</span></div>
       {task && operation
         ? <div className="mb-target"><b>{task.number} · этап {operation.position} · {operation.stage}</b><small>{itemId(task)} × {task.quantity} · норма {hours(operation.norm_seconds)}</small><button className="link-button" onClick={() => openTask(task.id, operation.id)}>Подробно с Гантом</button></div>
         : <div className="mb-target muted">{canEdit ? "Выбери операцию слева, затем монтажника." : "Загрузка монтажников по назначенным операциям."}</div>}
