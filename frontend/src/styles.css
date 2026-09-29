@@ -420,3 +420,17 @@ td small { margin-top: 4px; color: #7b857e; }
 .kit-supply-count { padding: 14px 16px; display: grid; gap: 4px; }
 .kit-supply-count strong { font-size: 24px; }
 .kit-autosave { font-size: 12px; }
+
+/* DataTable: общая таблица разделов (поиск, фильтры, сортировка, чипы, группы, массовые действия). */
+.data-table { display: grid; gap: 10px; }
+.data-table .filters { margin-bottom: 0; }
+.data-table .sort-head { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.data-table tr.clickable { cursor: pointer; }
+.data-table tr.clickable:hover td, .data-table tr.open td { background: var(--accent); }
+.data-table tr.detail > td { white-space: normal; background: var(--background); }
+.data-table tr.group-row td { background: var(--accent); font-size: 12px; }
+.data-table .calendar-chips { margin-bottom: 0; }
+.calendar-chip.active { color: var(--primary-foreground); background: var(--primary); }
+.column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
+.bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
+.table-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
