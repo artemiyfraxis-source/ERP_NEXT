@@ -23,7 +23,7 @@ Let's Encrypt), ночные копии базы. Файлы (УПД, счета
 |---|---|
 | `app/` | код (снимок `origin/main`, коммит в `app/REVISION`); `app.prev/` — прошлый |
 | `config/.env` | `ERP_DOMAIN` (`:80` — сеть цеха), `ERP_COOKIE_SECURE`, пароль базы, пути к ключам Google (создаёт `bootstrap.sh`) |
-| `config/secrets/` | `google-service-account.json` (erp-reader), позже `kd-drive-oauth.json` |
+| `config/secrets/` | `google-service-account.json` (erp-reader) — только чтение Google при импорте проектов и склада |
 | `config/admin.txt`, `config/staff-pins.txt` | вход администратора и PIN сотрудников (после `load-real-data.sh base`) |
 | `supplymap/` | снимок SUPPLYMAP для импорта сотрудников и справочников |
 | `import/` | снимки Google для импорта склада и проектов |
