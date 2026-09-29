@@ -1,14 +1,15 @@
 ﻿# Deploy from the owner's Windows PC: packs origin/main of ERP_NEXT (and SUPPLYMAP for the imports) with
 # `git archive` — the working tree, branches and stash are not touched — copies it to the server and runs
 # bootstrap.sh (first time) or update.sh (every next time, with a backup first).
-#   .\deploy\push.ps1 -Server 203.0.113.10               # ERP from origin/main
+#   .\deploy\push.ps1 -Server erp-server                 # ERP from origin/main (сервер в цеху, пользователь erp)
 #   .\deploy\push.ps1 -Server 203.0.113.10 -Ref <sha>    # a specific commit (rollback)
 #   .\deploy\push.ps1 -Server 203.0.113.10 -GoogleKey $HOME\Downloads\techmap-498119-….json   # first time
 param(
   [Parameter(Mandatory = $true)][string]$Server,
   [string]$Ref = 'origin/main',
   [string]$Key = "$HOME\.ssh\erp_server",
-  [string]$Domain = '',
+  [string]$Domain = 'lan',
+  [string]$User = 'erp',     # sudo без пароля (см. deploy/README.md)
   [string]$GoogleKey = '',   # JSON-ключ erp-reader: кладётся в /opt/erp/config/secrets до установки
 
   [string]$ErpRepo = (Split-Path $PSScriptRoot -Parent),
@@ -16,7 +17,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ssh = @('-i', $Key, '-o', 'StrictHostKeyChecking=accept-new')
-$target = "root@$Server"
+$target = "$User@$Server"
+$sudo = if ($User -eq 'root') { '' } else { 'sudo -n ' }
 $tmp = Join-Path $env:TEMP "erp-push-$(Get-Date -Format yyyyMMddHHmmss)"
 New-Item -ItemType Directory $tmp | Out-Null
 
@@ -31,10 +33,9 @@ if (Test-Path $SupplymapRepo) {
 & scp @ssh "$tmp\*.tar.gz" "${target}:/tmp/"
 if ($LASTEXITCODE) { throw 'scp failed' }
 if ($GoogleKey) {
-  & ssh @ssh $target 'mkdir -p /opt/erp/config/secrets && chmod 700 /opt/erp/config && chmod 755 /opt/erp/config/secrets'
-  & scp @ssh $GoogleKey "${target}:/opt/erp/config/secrets/google-service-account.json"
+  & scp @ssh $GoogleKey "${target}:/tmp/google-service-account.json"
   if ($LASTEXITCODE) { throw 'scp key failed' }
-  & ssh @ssh $target 'chown 10001 /opt/erp/config/secrets/*.json && chmod 600 /opt/erp/config/secrets/*.json'
+  & ssh @ssh $target "${sudo}sh -c 'mkdir -p /opt/erp/config/secrets && chmod 700 /opt/erp/config && chmod 755 /opt/erp/config/secrets && install -o 10001 -m 600 /tmp/google-service-account.json /opt/erp/config/secrets/ && rm -f /tmp/google-service-account.json'"
 }
 $remote = @"
 set -e
@@ -50,7 +51,7 @@ fi
 rm -f /tmp/app.tar.gz /tmp/supplymap.tar.gz
 "@
 $remote = $remote -replace "`r", ''
-$remote | & ssh @ssh $target 'bash -s'
+$remote | & ssh @ssh $target "${sudo}bash -s"
 if ($LASTEXITCODE) { throw "deploy failed on $Server" }
 Remove-Item -Recurse -Force $tmp
 Write-Host "Выложено: $rev"
