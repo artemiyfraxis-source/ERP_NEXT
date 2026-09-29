@@ -117,12 +117,10 @@ def command(*drafts: RequestDraft, key: str = "form:1") -> CreateRequestsCommand
     )
 
 
-def test_create_rejects_whole_batch_when_one_project_is_not_open():
+def test_create_accepts_project_missing_from_registry_manual_entry():
     uow = FakeUnitOfWork()
-    with pytest.raises(ValidationError, match="Позиция 2: проект «48К.13»"):
-        create_requests(command(draft("591К.3"), draft("48К.13")), uow, StaticRegistry(["591К.3"]))
-    assert uow.requests.items == {}
-    assert uow.commits == 0
+    created = create_requests(command(draft("591К.3"), draft("48К.13")), uow, StaticRegistry(["591К.3"]))
+    assert [item.project_reference for item in created] == ["591К.3", "48К.13"]
 
 
 def test_create_accepts_registered_project_and_stores_canonical_form():
