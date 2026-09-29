@@ -778,3 +778,11 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .data-table td button.small, .data-table td .secondary, .data-table td .primary { padding: 2px 10px; border-radius: 7px; font-size: 12px; line-height: 1.5; }
 @media (pointer: coarse) { .data-table td button { min-height: 32px; } }
 @media (pointer: coarse) { .table-wrap td .link-button { min-height: 28px; } }
+.tr-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 10px; }
+.tr-toolbar input { flex: 1 1 280px; max-width: 420px; }
+.tr-card-op { border-style: dashed; }
+.op-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 14px; margin: 0; }
+.op-fields > div { display: grid; gap: 1px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.op-fields dt { color: var(--muted-foreground); font-size: 11px; }
+.op-fields dd { margin: 0; font-size: 12.5px; }
+.tr-toolbar-end { margin-left: auto; }

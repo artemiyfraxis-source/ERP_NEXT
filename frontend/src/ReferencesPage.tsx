@@ -23,7 +23,7 @@ type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
 const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
-  { title: "Техкарты", tabs: [{ id: "templates", label: "Шаблоны техкарт", base: "tk_templates" }] },
+  { title: "Техкарты", tabs: [{ id: "templates", label: "Операции", base: "tk_templates" }] },
   // Owner 29.09.2026: «выгрузку хранить не нужно… оставляем коаксиальные провода по диаметрам, разъёмы коаксиальные и
   // терминалы». БД.ОП / БД.ОБ / БД.ПРОВ / БД.МАТ are not tabs any more; their rows stay in the database and the API,
   // the generator and the templates' norms still read them.
@@ -222,7 +222,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
 
   return <section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{current && count(current) !== null && <span className="page-count">{count(current)}</span>}</header>
-    <p className="page-sub">Шаблоны техкарт, терминалы, коаксиальные разъёмы и кабели, СПР.КАБ и карты соответствий — одна база, каждая вкладка как лист. Техкарты конкретных проектов открываются из «Проектов».</p>
+    <p className="page-sub">Операции и шаблоны техкарт, терминалы, коаксиальные разъёмы и кабели, СПР.КАБ и карты соответствий — одна база, каждая вкладка как лист. Техкарты конкретных проектов открываются из «Проектов».</p>
     <nav className="db-tabs" aria-label="Вкладки базы данных">
       {groups.map((group) => <div className="db-tab-group" key={group.title}>
         <span className="db-tab-group-title">{group.title}</span>
