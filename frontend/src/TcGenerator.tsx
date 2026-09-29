@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   referencesApi,
   techcardsApi,
@@ -87,7 +87,7 @@ async function loadRefs(): Promise<Refs> {
  * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
  * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more }: {
   card: ProjectTechcard;
   kit?: KitsetBom | null;
   kitError?: string;
@@ -95,6 +95,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   onBuild: (config: Record<string, unknown>) => Promise<void> | void;
   onDiscard: () => Promise<void> | void;
   onConfig?: (config: Record<string, unknown>) => void;
+  /** Служебное под «Ещё» рядом со сводом материалов и удалением черновика (JSON-конфигурация). */
+  more?: ReactNode;
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
   const [S, setS] = useState<GenState>(emptyState);
@@ -391,7 +393,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </div>;
   }
 
-  if (kitError) return <div className="tcgen"><div className="error-banner" role="alert">{kitError}</div></div>;
+  if (kitError) return <div className="tcgen"><div className="error-banner" role="alert">{kitError}</div>
+    {more && <details className="gen-more"><summary>Ещё</summary>{more}</details>}</div>;
   if (!refs || !kit) return <div className="tcgen"><div className="empty">Читаю состав {card.item_index}…</div></div>;
 
   const wrapOpts = gen.wrapCandidates().list;
@@ -619,10 +622,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       })}
     </div>
 
+    {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». Остальное — в «Ещё». */}
     <div className="gen-actions">
-      <label className="toggle-row"><input type="checkbox" checked={S.materialsSheet} onChange={(event) => update({ materialsSheet: event.target.checked })} /> Свод материалов (отдельный лист)</label>
-      <button className="secondary" disabled={busy || !card.document} onClick={() => void deleteGenerated()}>Удалить созданные</button>
-      <button className="primary" disabled={busy} onClick={() => void generate()}>Создать техкарты</button>
+      <details className="gen-more"><summary>Ещё</summary>
+        <label className="toggle-row"><input type="checkbox" checked={S.materialsSheet} onChange={(event) => update({ materialsSheet: event.target.checked })} /> Свод материалов (отдельный лист)</label>
+        {card.document && card.status !== "Выдана" && <button className="secondary small" disabled={busy} onClick={() => void deleteGenerated()}>Удалить собранный черновик</button>}
+        {more}
+      </details>
+      <button className="primary" disabled={busy} onClick={() => void generate()}>{busy ? "Собираю…" : card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>
     </div>
     {status.text && <div className={status.error ? "error-banner" : "muted"} role={status.error ? "alert" : undefined}>{status.text}</div>}
   </div>;
