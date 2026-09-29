@@ -25,6 +25,8 @@ export interface RequestRow {
   legacy_id: string;
   designation: string;
   status: string;
+  /** RQ-MINE: the pipeline stage — Procurement's own status once handed off, else Requests' status. */
+  stage: string;
   created_at: string;
   initiator: string;
   department: string;
@@ -38,6 +40,32 @@ export interface RequestRow {
   unit: string;
   priority: string;
   planned_date: string;
+}
+
+export interface MineRequestsResult {
+  requests: RequestRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** RQ-5 `/api/requests/import/parse`: one ЗКП row as read from a calculation grid. */
+export interface CalcImportItem {
+  item_type: string;
+  name: string;
+  quantity: string | null;
+  price: string | null;
+  price_with_vat: string | null;
+  link: string | null;
+  country: string | null;
+  unit: string | null;
+  quality_document: string;
+  planned_date: string | null;
+}
+
+export interface CalcImportPreview {
+  project: string;
+  items: CalcImportItem[];
 }
 
 export interface SupplierOrder {
@@ -1004,16 +1032,49 @@ export const legacyApi = {
 export const requestsApi = {
   schema: () => api<RequestSchema>("/api/requests/schema"),
   list: () => api<{ requests: RequestRow[] }>("/api/requests"),
+  /** RQ-MINE: server-side filter by the authenticated initiator, paginated (replaces the client-side
+   *  name match over the latest 200 rows). */
+  mine: (limit: number, offset: number) =>
+    api<MineRequestsResult>(`/api/requests/mine?limit=${limit}&offset=${offset}`),
   create: (request: Record<string, unknown>, idempotencyKey: string) =>
     api<{ requests: RequestRow[] }>("/api/requests", {
       method: "POST",
       headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({ requests: [request] }),
     }),
+  /** RQ-IMPORT-UI «Вставить из Excel»: one create call, every pasted position at once. */
+  createMany: (requests: Record<string, unknown>[], idempotencyKey: string) =>
+    api<{ requests: RequestRow[] }>("/api/requests", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ requests }),
+    }),
   handoff: (requestIds: string[], retransfer = false) =>
     api<{ accepted: unknown[] }>("/api/requests/handoff", {
       method: "POST",
       body: JSON.stringify({ request_ids: requestIds, retransfer }),
+    }),
+  /** RQ-IMPORT-UI «Из расчёта» (RQ-5): the ЗКП range pasted as a grid — no live Google Sheets access
+   *  here, so the operator pastes the range instead of a URL (решено агентом — проверить). */
+  importParse: (grid: Array<Array<string | null>>) =>
+    api<CalcImportPreview>("/api/requests/import/parse", {
+      method: "POST",
+      body: JSON.stringify({ grid }),
+    }),
+  importCreate: (
+    payload: {
+      project: string;
+      purpose: string;
+      delivery_point: string;
+      procurement_deadline: string;
+      items: Array<Record<string, unknown>>;
+    },
+    idempotencyKey: string,
+  ) =>
+    api<{ requests: RequestRow[]; warnings: string[] }>("/api/requests/import", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(payload),
     }),
 };
 
