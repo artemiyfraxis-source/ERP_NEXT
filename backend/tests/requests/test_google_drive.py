@@ -8,6 +8,7 @@ import pytest
 
 from app.modules.requests.google_drive import (
     FOLDER_ENV_VAR,
+    OAUTH_ENV_VAR,
     DriveError,
     GoogleDriveKd,
     folder_key,
@@ -92,3 +93,35 @@ def test_drive_from_env_needs_key_and_folder(monkeypatch):
         kd_drive_from_env()
     assert broken.value.kind == "config"
     assert ENV_VAR in str(broken.value)
+
+
+def test_drive_writes_as_folder_owner_through_oauth_refresh_token(monkeypatch):
+    """«!Проекты» SUPPLYMAP лежит в «Моём диске» — сервисный аккаунт туда не пишет, ERP пишет от владельца."""
+    monkeypatch.setenv(OAUTH_ENV_VAR, json.dumps({
+        "client_id": "cid", "client_secret": "sec", "refresh_token": "rt", "account": "owner@gmail.com",
+    }))
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    monkeypatch.setenv(FOLDER_ENV_VAR, "root-oauth")
+    drive = kd_drive_from_env()
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "oauth2.googleapis.com":
+            seen.append({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+            return httpx.Response(200, json={"access_token": "user-tok", "expires_in": 3600})
+        assert request.headers["Authorization"] == "Bearer user-tok"
+        return httpx.Response(200, json={"files": [{"id": "f533", "name": "533К."}]})
+
+    drive._client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert drive.root_folder_id == "root-oauth"
+    assert drive.folder("root-oauth", "533К", "533К.") == "f533"
+    assert seen == [{"grant_type": "refresh_token", "client_id": "cid", "client_secret": "sec", "refresh_token": "rt"}]
+
+
+def test_drive_oauth_json_must_carry_refresh_token(monkeypatch):
+    monkeypatch.setenv(OAUTH_ENV_VAR, json.dumps({"client_id": "cid", "client_secret": "sec"}))
+    monkeypatch.setenv(FOLDER_ENV_VAR, "root-bad")
+    with pytest.raises(DriveError) as broken:
+        kd_drive_from_env()
+    assert broken.value.kind == "config"
+    assert OAUTH_ENV_VAR in str(broken.value)

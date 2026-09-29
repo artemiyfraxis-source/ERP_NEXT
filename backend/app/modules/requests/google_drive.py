@@ -3,8 +3,10 @@
 GAS wrote as the web-app owner (`DriveApp`). Here the server writes through Drive API v3 as the same Google
 service account that reads calculations (``ERP_GOOGLE_SERVICE_ACCOUNT_JSON``, JWT on pure Python + ``httpx``,
 see `google_sheets`). The root — the «Проекты» folder of `tcProjectsFolder_` — comes from
-``ERP_KD_DRIVE_FOLDER_ID``. A service account has no storage quota of its own, so that folder must live on a
-shared drive where the account is a content manager (README).
+``ERP_KD_DRIVE_FOLDER_ID``. A service account has no storage quota of its own, so it can only write into a
+shared drive where it is a content manager. SUPPLYMAP's «!Проекты» lives in an ordinary «Мой диск»; for that case
+``ERP_KD_DRIVE_OAUTH_JSON`` (an ``authorized_user`` refresh token of the account that owns the folder) makes ERP
+write as that account, exactly as GAS did (README).
 
 Only four calls are needed: list sub-folders, create a folder, multipart upload, trash. Tests replace the whole
 adapter (`app.state.kitset_kd_drive`) with a fake; nothing here runs in tests against the network.
@@ -28,6 +30,8 @@ from .application import CalcSheetError
 from .google_sheets import ENV_VAR, ServiceAccount, load_service_account
 
 FOLDER_ENV_VAR = "ERP_KD_DRIVE_FOLDER_ID"
+OAUTH_ENV_VAR = "ERP_KD_DRIVE_OAUTH_JSON"
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 SCOPE = "https://www.googleapis.com/auth/drive"
 FILES_API = "https://www.googleapis.com/drive/v3/files"
 UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files"
@@ -66,12 +70,52 @@ def file_url(file_id: str) -> str:
     return f"https://drive.google.com/file/d/{file_id}/view?usp=drivesdk"
 
 
+@dataclass(frozen=True)
+class OAuthUser:
+    """``authorized_user`` credentials (client_id, client_secret, refresh_token) — Drive as that Google account."""
+
+    client_id: str
+    client_secret: str
+    refresh_token: str
+    token_uri: str = GOOGLE_TOKEN_URI
+    client_email: str = "аккаунт из ERP_KD_DRIVE_OAUTH_JSON"
+
+    def token_request(self, now: int) -> dict[str, str]:
+        return {
+            "grant_type": "refresh_token", "client_id": self.client_id,
+            "client_secret": self.client_secret, "refresh_token": self.refresh_token,
+        }
+
+
+def load_oauth_user(raw: str | None) -> OAuthUser:
+    """``ERP_KD_DRIVE_OAUTH_JSON``: the JSON itself or a path to it."""
+    text = str(raw or "").strip()
+    try:
+        if not text.startswith("{"):
+            with open(text, encoding="utf-8") as handle:
+                text = handle.read()
+        info = json.loads(text)
+        user = OAuthUser(
+            client_id=str(info.get("client_id") or "").strip(),
+            client_secret=str(info.get("client_secret") or "").strip(),
+            refresh_token=str(info.get("refresh_token") or "").strip(),
+            token_uri=str(info.get("token_uri") or GOOGLE_TOKEN_URI),
+            client_email=str(info.get("account") or info.get("email") or "").strip()
+            or "аккаунт из ERP_KD_DRIVE_OAUTH_JSON",
+        )
+    except (OSError, ValueError, AttributeError) as error:
+        raise DriveError(f"{OAUTH_ENV_VAR} не читается как JSON authorized_user — см. README.", "config") from error
+    if not (user.client_id and user.client_secret and user.refresh_token):
+        raise DriveError(f"В {OAUTH_ENV_VAR} нет client_id, client_secret или refresh_token — см. README.", "config")
+    return user
+
+
 class GoogleDriveKd:
     """КД storage over Drive API v3 (`KdDrive` port of the «Проекты» workflow)."""
 
     def __init__(
         self,
-        account: ServiceAccount,
+        account: ServiceAccount | OAuthUser,
         root_folder_id: str,
         client: httpx.Client | None = None,
         clock: Callable[[], float] = time.time,
@@ -92,23 +136,29 @@ class GoogleDriveKd:
             try:
                 response = self._client.post(
                     self.account.token_uri,
-                    data={
-                        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                        "assertion": self.account.assertion(int(now), SCOPE),
-                    },
+                    data=self._token_request(int(now)),
                 )
             except httpx.HTTPError as error:
                 raise DriveError("Google не ответил на вход сервисного аккаунта — повторите позже.") from error
             if response.status_code != 200:
+                where = OAUTH_ENV_VAR if isinstance(self.account, OAuthUser) else ENV_VAR
                 raise DriveError(
-                    f"Google отклонил ключ сервисного аккаунта {self.account.client_email} "
-                    f"(HTTP {response.status_code}) — проверьте ключ в {ENV_VAR}.",
+                    f"Google отклонил вход {self.account.client_email} "
+                    f"(HTTP {response.status_code}) — проверьте {where}.",
                     "config",
                 )
             body = response.json()
             self._token = str(body.get("access_token") or "")
             self._token_expires = now + float(body.get("expires_in") or 3600)
             return self._token
+
+    def _token_request(self, now: int) -> dict[str, str]:
+        if isinstance(self.account, OAuthUser):
+            return self.account.token_request(now)
+        return {
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": self.account.assertion(now, SCOPE),
+        }
 
     def _call(self, method: str, url: str, **kwargs) -> httpx.Response:
         headers = dict(kwargs.pop("headers", None) or {})
@@ -119,9 +169,9 @@ class GoogleDriveKd:
             raise DriveError("Google Диск не ответил — повторите позже.") from error
         if response.status_code in (401, 403, 404):
             raise DriveError(
-                "Нет доступа к папке КД на Google Диске (или её нет). Добавьте "
-                f"{self.account.client_email} в общий диск с папкой «Проекты» как «Менеджер контента» "
-                f"и проверьте {FOLDER_ENV_VAR}.",
+                "Нет доступа к папке КД на Google Диске (или её нет). Дайте "
+                f"{self.account.client_email} права редактора на папку «Проекты» (у сервисного аккаунта — "
+                f"«Менеджер контента» общего диска, либо задайте {OAUTH_ENV_VAR}) и проверьте {FOLDER_ENV_VAR}.",
                 "config" if response.status_code != 404 else "upstream",
             )
         if response.status_code >= 300:
@@ -189,17 +239,21 @@ _drives_lock = threading.Lock()
 
 def kd_drive_from_env() -> GoogleDriveKd:
     """One adapter per configured key and folder (its access token is cached for the hour Google grants)."""
-    raw = os.getenv(ENV_VAR, "")
+    oauth = os.getenv(OAUTH_ENV_VAR, "")
+    raw = oauth if oauth.strip() else os.getenv(ENV_VAR, "")
     folder = os.getenv(FOLDER_ENV_VAR, "").strip()
     if not raw.strip() or not folder:
         raise DriveError(NOT_CONFIGURED, "config")
     with _drives_lock:
         drive = _drives.get((raw, folder))
         if drive is None:
-            try:
-                account = load_service_account(raw)
-            except CalcSheetError as error:
-                raise DriveError(str(error), "config") from error
+            if oauth.strip():
+                account: ServiceAccount | OAuthUser = load_oauth_user(raw)
+            else:
+                try:
+                    account = load_service_account(raw)
+                except CalcSheetError as error:
+                    raise DriveError(str(error), "config") from error
             drive = GoogleDriveKd(account, folder)
             _drives.clear()
             _drives[(raw, folder)] = drive
