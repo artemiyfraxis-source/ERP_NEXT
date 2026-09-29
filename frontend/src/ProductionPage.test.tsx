@@ -403,7 +403,6 @@ it("lets the master hand out operations of issued projects to installers and lau
     if (path === "/api/production/operators") return json({ operators: [
       { id: "10000000-0000-0000-0000-000000000002", name: "Рыбкина Ольга", site: "ЦАР", department: "Монтаж" },
       { id: "10000000-0000-0000-0000-000000000003", name: "Попов Игнат", site: "ЦАР", department: "Монтаж" },
-      { id: "10000000-0000-0000-0000-000000000004", name: "Бухгалтер", site: "", department: "Бухгалтерия" },
     ] });
     if (path === "/api/techcards/kitsets?sort=upd") return json({ statuses: ["Новый", "ТК готова", "В работе", "Отгружено"], items: [{
       project: "591K.3", customer: "ООО «Тест»", calc_source: "", updated_at: "2026-09-28T15:19:00+03:00", updated_by: "",
@@ -424,7 +423,6 @@ it("lets the master hand out operations of issued projects to installers and lau
   render(<ProductionPage principal={principal} />);
   expect(await screen.findByRole("region", { name: "Проекты и операции" })).toBeInTheDocument();
   expect(await screen.findByText("Рыбкина Ольга", { selector: ".mb-person b" })).toBeInTheDocument();
-  expect(screen.queryByText("Бухгалтер")).not.toBeInTheDocument();
   expect(screen.getByText("1 опер. · 0,2 ч", { exact: false })).toBeInTheDocument();
   expect(screen.getByText("без исполнителя: 1")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();

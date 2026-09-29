@@ -842,7 +842,8 @@ def operators(
         rows = uow.operators.list()
         viewer = uow.operators.get(principal.actor.id)
     return {"viewer_site": viewer.site if viewer is not None else "", "operators": [
-        {"id": str(item.id), "name": item.name, "site": item.site, "department": item.department} for item in rows
+        {"id": str(item.id), "name": item.name, "site": item.site, "department": item.department}
+        for item in rows if item.installer
     ]}
 
 
