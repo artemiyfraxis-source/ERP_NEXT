@@ -220,7 +220,7 @@ class SqlAlchemyWarehouseRepository:
 
     @staticmethod
     def _matches(lot: StockLot, query: str) -> bool:
-        needle = str(query or "").strip().casefold()
+        words = str(query or "").casefold().split()
         haystack = " ".join((
             lot.grn,
             lot.package,
@@ -231,7 +231,7 @@ class SqlAlchemyWarehouseRepository:
             lot.purpose,
             lot.storage_location,
         )).casefold()
-        return needle in haystack
+        return all(word in haystack for word in words)
 
     def add(self, lot: StockLot) -> None:
         incoming = _row(lot)
