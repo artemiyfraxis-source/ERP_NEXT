@@ -59,10 +59,16 @@ class FinishedGood:
     ordered: Decimal
     unit: str
     accepted: Decimal = Decimal("0")
+    # Отобрано в отправки (ГП ОТГРУЖЕНО `shipPick_`): уменьшает остаток склада ГП уже при «Упаковать».
     shipped: Decimal = Decimal("0")
     received_at: date | None = None
     grn: str | None = None
     note: str = ""
+    # Уехало с завода: набранное в отправках «Отгружена»/«Закрыта». Этап КБ «Отгружено» считается по нему,
+    # а не по `shipped` — упакованное ещё стоит на складе (решено агентом 30.09, в SUPPLYMAP — по ОТГРУЖЕНО).
+    sent: Decimal = Decimal("0")
+    # Отгружено ещё в Google, до ERP (комментарий строки «ОТГРУЖЕН» листа цеха «ЗАГРУЗ»); входит в accepted/shipped/sent.
+    before_erp: Decimal = Decimal("0")
 
     @classmethod
     def create(
@@ -106,9 +112,27 @@ class FinishedGood:
         """Accepted or shipped goods outlive the project card (`shipGpDropProject_`)."""
         return self.accepted > 0 or self.shipped > 0
 
+    def dispatch(self, quantity: Decimal) -> FinishedGood:
+        """Отправка с этой КБ уехала: набранное в ней покинуло завод."""
+        amount = _positive(quantity, "Количество отгрузки")
+        if self.sent + amount > self.shipped:
+            raise ShippingValidationError("Уехало больше, чем отобрано в отправки")
+        return replace(self, sent=self.sent + amount, version=self.version + 1)
+
+    def ship_before_erp(self, total: Decimal) -> FinishedGood:
+        """Отгружено ещё в Google: приход на склад ГП и уход с завода разом, без ГРН. `total` — итог по листу цеха,
+        не приращение: повтор с тем же числом ничего не меняет, меньшее число уже записанное не откатывает."""
+        delta = _positive(total, "Отгружено до ERP") - self.before_erp
+        if delta <= 0:
+            return self
+        return replace(
+            self, accepted=self.accepted + delta, shipped=self.shipped + delta, sent=self.sent + delta,
+            before_erp=self.before_erp + delta, version=self.version + 1,
+        )
+
     def put_back(self, quantity: Decimal) -> FinishedGood:
         amount = _positive(quantity, "Количество возврата")
-        if amount > self.shipped:
+        if amount > self.shipped - self.sent:
             raise ShippingValidationError("Возврат не может превышать отобранное количество")
         return replace(self, shipped=self.shipped - amount, version=self.version + 1)
 

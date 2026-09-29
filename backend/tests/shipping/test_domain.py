@@ -145,6 +145,33 @@ def test_put_back_is_symmetric_to_take_and_never_exceeds_taken():
         taken.put_back(Decimal("0"))
 
 
+def test_dispatch_counts_what_left_the_plant_and_blocks_putting_it_back():
+    taken = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001").take(Decimal("6"))
+    gone = taken.dispatch(Decimal("4"))
+
+    assert (gone.shipped, gone.sent, gone.remaining) == (Decimal("6"), Decimal("4"), Decimal("4"))
+    assert gone.put_back(Decimal("2")).shipped == Decimal("4")
+    with pytest.raises(ShippingValidationError, match="не может превышать"):
+        gone.put_back(Decimal("3"))
+    with pytest.raises(ShippingValidationError, match="Уехало больше"):
+        gone.dispatch(Decimal("3"))
+
+
+def test_shipped_before_erp_is_a_total_not_an_increment():
+    item = good()
+    first = item.ship_before_erp(Decimal("154"))
+    again = first.ship_before_erp(Decimal("154"))
+    more = again.ship_before_erp(Decimal("200"))
+
+    assert (first.accepted, first.shipped, first.sent, first.before_erp) == (Decimal("154"),) * 4
+    assert first.remaining == Decimal("0") and first.grn is None and first.has_movement
+    assert again is first
+    assert more.ship_before_erp(Decimal("100")) is more
+    assert (more.accepted, more.sent, more.before_erp, more.version) == (Decimal("200"), Decimal("200"), Decimal("200"), item.version + 2)
+    with pytest.raises(ShippingValidationError):
+        item.ship_before_erp(Decimal("0"))
+
+
 def test_project_queue_adds_one_row_per_new_kb_and_is_idempotent():
     cards = [ProjectAssembly("КБ1", "Жгут", Decimal("40")), ProjectAssembly("КБ2", "Кабель", Decimal("5"), "A-2")]
     first = plan_project_queue(cards, [])

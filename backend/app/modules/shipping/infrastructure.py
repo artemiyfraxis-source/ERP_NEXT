@@ -37,6 +37,8 @@ class FinishedGoodRow(Base):
     received_at: Mapped[date | None] = mapped_column(Date(), nullable=True)
     grn: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
     note: Mapped[str] = mapped_column(Text(), nullable=False)
+    sent: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
+    before_erp: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -139,7 +141,7 @@ def _good(row: FinishedGoodRow) -> FinishedGood:
         id=row.id, version=row.version, project=row.project, item_index=row.item_index,
         customer=row.customer, article=row.article, name=row.name, ordered=row.ordered,
         unit=row.unit, accepted=row.accepted, shipped=row.shipped,
-        received_at=row.received_at, grn=row.grn, note=row.note,
+        received_at=row.received_at, grn=row.grn, note=row.note, sent=row.sent, before_erp=row.before_erp,
     )
 
 
@@ -174,7 +176,7 @@ class SqlAlchemyFinishedGoodsRepository:
         row = self.session.get(FinishedGoodRow, good.id)
         if row is None:
             row = FinishedGoodRow(id=good.id); self.session.add(row)
-        for key in ("version", "project", "item_index", "customer", "article", "name", "ordered", "unit", "accepted", "shipped", "received_at", "grn", "note"):
+        for key in ("version", "project", "item_index", "customer", "article", "name", "ordered", "unit", "accepted", "shipped", "received_at", "grn", "note", "sent", "before_erp"):
             setattr(row, key, getattr(good, key))
 
 

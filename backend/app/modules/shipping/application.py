@@ -122,6 +122,16 @@ class DropProjectResult:
 
 
 @dataclass(frozen=True)
+class ShipBeforeErpCommand:
+    """Перенос: столько КБ проекта уже отгружено в Google (итог по листу цеха, не приращение)."""
+    project: str
+    item_index: str
+    total: Decimal
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
 class AcceptGoodCommand:
     good_id: UUID
     expected_version: int
@@ -308,6 +318,22 @@ def drop_project(command: DropProjectCommand, uow: UnitOfWork) -> DropProjectRes
             deleted += 1
         uow.commit()
         return DropProjectResult(deleted=deleted, kept=kept)
+
+
+def ship_before_erp(command: ShipBeforeErpCommand, uow: UnitOfWork) -> FinishedGood:
+    """Отгруженное до ERP — в регистр ГП как пришедшее и уехавшее; повтор с тем же итогом ничего не меняет."""
+    with uow:
+        good = uow.goods.by_key(command.project.strip(), command.item_index.strip())
+        if good is None:
+            raise ShippingValidationError(f"В готовой продукции нет КБ {command.item_index} проекта {command.project}")
+        updated = good.ship_before_erp(command.total)
+        if updated is not good:
+            uow.goods.add(updated)
+            _audit(good.id, "shipping.shipped_before_erp", command.actor, command.now, {
+                "total": str(command.total), "added": str(updated.before_erp - good.before_erp),
+            }, uow)
+            uow.commit()
+        return updated
 
 
 def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:
@@ -566,6 +592,15 @@ def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> ShippedResult:
         shipment = _shipment(command.shipment_id, command.expected_version, uow)
         updated = shipment.mark_shipped(command.now.date())
         uow.shipments.add(updated)
+        sent: dict[UUID, Decimal] = {}
+        for line in updated.lines:
+            if line.picked > 0:
+                sent[line.finished_good_id] = sent.get(line.finished_good_id, Decimal("0")) + line.picked
+        for good_id, quantity in sent.items():
+            good = uow.goods.get(good_id)
+            if good is None:
+                raise ShippingValidationError("Позиция готовой продукции больше не существует")
+            uow.goods.add(good.dispatch(quantity))
         _audit(shipment.id, "shipping.shipped", command.actor, command.now, {}, uow)
         why = ""
         try:
