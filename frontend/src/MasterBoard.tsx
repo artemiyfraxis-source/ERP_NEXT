@@ -22,9 +22,9 @@ export function forgetOpenProject() { lastProject = ""; }
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
+// Список монтажников отбирает сервер (/operators: активный «Сотрудник» с площадкой или из отдела «Монтаж»).
 export function installers(operators: ProductionOperator[]) {
-  const picked = operators.filter((operator) => /монтаж/i.test(operator.department ?? ""));
-  return picked.length ? picked : operators;
+  return operators;
 }
 
 function itemId(task: { project: string; item: string }) {
