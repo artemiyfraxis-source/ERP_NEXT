@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.modules.identity.domain import (
     ROLE_DEFAULTS,
+    ROLE_SEED,
     SECTION_LABELS,
     AccessMode,
     IdentityUser,
@@ -30,6 +31,7 @@ from app.modules.identity.infrastructure import (
     IdentityUserAccessRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
+    seed_role_matrix,
 )
 from app.modules.requests.api import moscow_now
 from app.shared.persistence import AuditEventRow, create_schema
@@ -44,10 +46,11 @@ BUYER_ID = UUID("40000000-0000-0000-0000-000000000003")
 # ── Domain ─────────────────────────────────────────────────────────────────────────────────────────
 
 
-def test_matrix_sits_on_top_of_role_defaults():
-    assert role_permissions("buyer", {}) == ROLE_DEFAULTS["buyer"]
-    changed = role_permissions("buyer", {"warehouse": AccessMode.NONE, "shipping": AccessMode.VIEW,
-                                         "procurement": AccessMode.VIEW})
+def test_an_empty_cell_is_closed_and_only_explicit_cells_open():
+    """SUPPLYMAP portalApplyAccess_ (01.09.2026): a section is open only when explicitly granted."""
+    assert role_permissions("buyer", {}) == {}
+    changed = role_permissions("buyer", {**ROLE_SEED["buyer"], "warehouse": AccessMode.NONE,
+                                         "shipping": AccessMode.VIEW, "procurement": AccessMode.VIEW})
     assert changed == {
         "newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT,
         "requests": AccessMode.EDIT, "procurement": AccessMode.VIEW, "erpref": AccessMode.VIEW,
@@ -85,6 +88,7 @@ def access_api():
     with sessions() as session:
         provision_user(session, _user(ADMIN_ID, "admin", "admin"), hash_password("admin-password"))
         provision_user(session, _user(BUYER_ID, "buyer", "buyer"), hash_password("buyer-password"))
+        seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
         session.commit()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
     app.state.cookie_secure = False
@@ -124,11 +128,10 @@ def test_only_admin_opens_access(access_api):
     body = _client("admin", "admin-password").get("/api/auth/access").json()
     assert [section["key"] for section in body["sections"]] == list(SECTION_LABELS)
     assert {"key": "buyer", "label": "Специалист по снабжению"} in body["roles"]
-    assert body["defaults"]["buyer"] == {
-        "newrequest": "edit", "myrequests": "edit",
-        "requests": "edit", "procurement": "edit", "warehouse": "view", "erpref": "view",
-    }
-    assert body["matrix"] == {}  # nothing changed yet — every role follows ROLE_DEFAULTS
+    assert body["defaults"]["buyer"] == {}  # an empty cell is closed…
+    assert body["defaults"]["admin"] == {section: "edit" for section in SECTION_LABELS}  # …except for the admin
+    assert body["matrix"]["buyer"] == {section: mode.value for section, mode in ROLE_SEED["buyer"].items()}
+    assert "admin" not in body["matrix"]
     assert [(user["login"], user["access"]) for user in body["users"]] == [("admin", {}), ("buyer", {})]
 
 
@@ -143,27 +146,25 @@ def test_matrix_change_reaches_the_next_request_and_a_cleared_cell_falls_back(ac
     assert saved.status_code == 200, saved.text
     assert saved.json()["matrix"] == {"buyer": {"warehouse": "none", "shipping": "view"}}
     permissions = buyer.get("/api/auth/me").json()["permissions"]
-    assert "warehouse" not in permissions and permissions["shipping"] == "view"
-    assert permissions["procurement"] == "edit"  # "" = как задумано ролью
+    assert permissions == {"shipping": "view"}  # an empty cell is closed, the other roles' rows are gone too
 
-    [event] = _events(access_api, "identity.role_access_saved")
-    assert event.actor_id == ADMIN_ID and event.details["role"] == "buyer"
-    assert json.loads(event.details["changes"]) == {"shipping": ["", "view"], "warehouse": ["", "none"]}
+    [event] = [item for item in _events(access_api, "identity.role_access_saved") if item.details["role"] == "buyer"]
+    assert event.actor_id == ADMIN_ID
+    changes = json.loads(event.details["changes"])
+    assert changes["shipping"] == ["", "view"] and changes["warehouse"] == ["view", "none"]
+    assert changes["procurement"] == ["edit", ""]
 
-    # Clearing the whole row brings the role back to ROLE_DEFAULTS, not to «closed».
+    # Clearing the whole row closes everything for the role.
     assert admin.put("/api/auth/access/roles", json={"matrix": {}}).status_code == 200
-    assert buyer.get("/api/auth/me").json()["permissions"] == {
-        "newrequest": "edit", "myrequests": "edit",
-        "requests": "edit", "procurement": "edit", "warehouse": "view", "erpref": "view",
-    }
+    assert buyer.get("/api/auth/me").json()["permissions"] == {}
     with access_api() as session:
         assert session.scalars(select(IdentityRoleAccessRow)).first() is None
-    assert len(_events(access_api, "identity.role_access_saved")) == 2
 
 
 def test_unchanged_matrix_writes_no_audit(access_api):
     admin = _client("admin", "admin-password")
-    assert admin.put("/api/auth/access/roles", json={"matrix": {"pm": {}}}).status_code == 200
+    stored = admin.get("/api/auth/access").json()["matrix"]
+    assert admin.put("/api/auth/access/roles", json={"matrix": stored}).status_code == 200
     assert _events(access_api, "identity.role_access_saved") == []
 
 
@@ -295,7 +296,7 @@ def test_migration_folds_seeded_defaults_back_without_changing_anyones_access(tm
         ("buyer", "references"): "none",  # closed before, stays closed
         ("management", "warehouse"): "edit",  # the administrator's change stays
     }
-    staffed = role_permissions("buyer", {"erpref": AccessMode.NONE})
+    staffed = role_permissions("buyer", {**ROLE_SEED["buyer"], "erpref": AccessMode.NONE})  # as 0046 wrote it
     assert {section: mode.value for section, mode in staffed.items()} == {
         "newrequest": "edit", "myrequests": "edit",  # NAV-SECTIONS defaults, not stored
         "requests": "edit", "procurement": "edit", "warehouse": "view",

@@ -39,10 +39,11 @@ class AccessMode(str, Enum):
     EDIT = "edit"
 
 
-# Default section access per role — «как задумано ролью» (NAV-ACCESS). `identity_role_access` holds only what the
-# administrator changed on «Доступы» on top of it (`role_permissions`): a cleared cell falls back here, an explicit
-# `none` closes a section the role has by default. Changing a default therefore reaches every role that follows it,
-# without a migration. Before NAV-ACCESS the defaults were copied into the table (migration 0040 folds them back).
+# «Как задумано ролью»: the sections each role was meant to have. Since SUPPLYMAP 01.09.2026 (Portal.gs
+# portalApplyAccess_) a section is open only when EXPLICITLY granted — by the role's matrix row or a personal
+# exception; an empty cell = closed. ROLE_SEED is therefore not applied at run time: migration 0046 wrote it into
+# `identity_role_access` once, so nobody lost access on the switch, and `seed_role_matrix` does the same for a fresh
+# database. It stays here as the editor's reference of what a role was set up with.
 # View grants on procurement / receiving / warehouse (ID-6) follow SUPPLYMAP's role sets (Portal.gs portalButtons_):
 # buyer → склад, receiver → закупка, prodhead/management → закупка+приёмка+склад, master/staff → приёмка+склад.
 # NAV-SECTIONS: «Оформить заявку» (`newrequest`) and «Мои заявки» (`myrequests`) are open to every role, as in
@@ -51,11 +52,7 @@ class AccessMode(str, Enum):
 # the two can go to different people. handout: edit where SUPPLYMAP's role sets have it (receiver, admin), view where
 # the role reads fulfillment today (engineer, prodhead, master) so their «Выдача» card stays (решено агентом — проверить).
 _EVERYONE = {"newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT}
-# ID-5 (SUPPLYMAP portalAdminAccess_, 14.09.2026): the administrator has every section on edit unless the matrix or a
-# personal exception says otherwise, so a new section needs no entry here — the admin row is filled from
-# SECTION_LABELS below.
-ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
-    "admin": {},
+ROLE_SEED: dict[str, dict[str, AccessMode]] = {
     "buyer": {
         **_EVERYONE,
         "requests": AccessMode.EDIT,
@@ -164,7 +161,12 @@ SECTION_LABELS: dict[str, str] = {
     "staffdir": "Сотрудники",
     "operations": "Системный журнал",
 }
-ROLE_DEFAULTS["admin"] = {section: AccessMode.EDIT for section in SECTION_LABELS}
+# What an EMPTY cell means (`role_permissions`): closed for every role, except that the administrator has every
+# section on edit unless the matrix or a personal exception says otherwise (ID-5, SUPPLYMAP portalAdminAccess_,
+# 14.09.2026) — a new section needs no entry anywhere.
+ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
+    "admin": {section: AccessMode.EDIT for section in SECTION_LABELS},
+}
 
 
 @dataclass(frozen=True)
@@ -230,7 +232,8 @@ def _overlay(base: dict[str, AccessMode], overrides: dict[str, AccessMode]) -> d
 
 
 def role_permissions(role: str, overrides: dict[str, AccessMode]) -> dict[str, AccessMode]:
-    """The role's sections: ROLE_DEFAULTS with the «Доступы» matrix on top (`none` closes, view/edit set)."""
+    """The role's sections: the «Доступы» matrix row (view/edit open, `none` or empty closes); the administrator
+    starts from «edit everywhere» (ROLE_DEFAULTS)."""
     return _overlay(ROLE_DEFAULTS.get(role, {}), overrides)
 
 

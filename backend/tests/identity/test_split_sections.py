@@ -17,7 +17,7 @@ from app.modules.identity.application import (
     change_own_password,
     login,
 )
-from app.modules.identity.domain import ROLE_DEFAULTS, SECTION_LABELS, AccessMode, role_permissions
+from app.modules.identity.domain import ROLE_SEED, SECTION_LABELS, AccessMode, role_permissions
 from app.modules.identity.infrastructure import IdentityLoginThrottleRow
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, OutboxMessageRow
@@ -43,9 +43,8 @@ def test_new_keys_are_sections_of_their_own():
     assert {"erptctpl", "tcgen", "erpref", "staffdir"} <= set(SECTION_LABELS)
     assert not {"references", "identity"} & set(SECTION_LABELS)
     assert (SECTION_LABELS["erptctpl"], SECTION_LABELS["tcgen"]) == ("Шаблоны техкарт", "Генератор техкарт")
-    for role, defaults in ROLE_DEFAULTS.items():
-        if role != "admin":
-            assert "erpref" in defaults and "tcgen" not in defaults and "staffdir" not in defaults, role
+    for role, defaults in ROLE_SEED.items():
+        assert "erpref" in defaults and "tcgen" not in defaults and "staffdir" not in defaults, role
 
 
 # ── ID-3: each route asks its own key, without role lists ──────────────────────────────────────────

@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.identity_admin import ROLE_DEFAULTS, create_user
-from app.modules.identity.domain import AccessMode
+from app.modules.identity.domain import ROLE_SEED, AccessMode
 from app.modules.identity.infrastructure import (
     IdentityRoleAccessRow,
     IdentityUserAccessRow,
@@ -68,7 +68,7 @@ def test_cli_rejects_cross_field_identifier_collision(monkeypatch, admin_databas
 
 
 def test_operational_roles_include_receiving_and_warehouse_permissions():
-    assert ROLE_DEFAULTS["receiver"] == {
+    assert ROLE_SEED["receiver"] == {
         "newrequest": AccessMode.EDIT,
         "myrequests": AccessMode.EDIT,
         "handout": AccessMode.EDIT,
@@ -82,15 +82,15 @@ def test_operational_roles_include_receiving_and_warehouse_permissions():
     assert ROLE_DEFAULTS["admin"]["receiving"] is AccessMode.EDIT
     assert ROLE_DEFAULTS["admin"]["warehouse"] is AccessMode.EDIT
     assert ROLE_DEFAULTS["admin"]["fulfillment"] is AccessMode.EDIT
-    assert ROLE_DEFAULTS["engineer"]["fulfillment"] is AccessMode.EDIT
-    assert ROLE_DEFAULTS["prodhead"]["fulfillment"] is AccessMode.VIEW
+    assert ROLE_SEED["engineer"]["fulfillment"] is AccessMode.EDIT
+    assert ROLE_SEED["prodhead"]["fulfillment"] is AccessMode.VIEW
     assert ROLE_DEFAULTS["admin"]["production"] is AccessMode.EDIT
-    assert ROLE_DEFAULTS["master"]["production"] is AccessMode.EDIT
-    assert ROLE_DEFAULTS["prodhead"]["production"] is AccessMode.VIEW
-    assert ROLE_DEFAULTS["pm"]["shipping"] is AccessMode.EDIT
-    assert ROLE_DEFAULTS["master"]["shipping"] is AccessMode.VIEW
+    assert ROLE_SEED["master"]["production"] is AccessMode.EDIT
+    assert ROLE_SEED["prodhead"]["production"] is AccessMode.VIEW
+    assert ROLE_SEED["pm"]["shipping"] is AccessMode.EDIT
+    assert ROLE_SEED["master"]["shipping"] is AccessMode.VIEW
     assert ROLE_DEFAULTS["admin"]["erpref"] is AccessMode.EDIT
-    assert ROLE_DEFAULTS["staff"]["erpref"] is AccessMode.VIEW
+    assert ROLE_SEED["staff"]["erpref"] is AccessMode.VIEW
     assert ROLE_DEFAULTS["admin"]["operations"] is AccessMode.EDIT
-    assert ROLE_DEFAULTS["management"]["operations"] is AccessMode.VIEW
-    assert ROLE_DEFAULTS["qc"]["production"] is AccessMode.EDIT
+    assert ROLE_SEED["management"]["operations"] is AccessMode.VIEW
+    assert ROLE_SEED["qc"]["production"] is AccessMode.EDIT

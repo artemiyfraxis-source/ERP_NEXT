@@ -30,6 +30,7 @@ from app.modules.identity.infrastructure import (
     IdentityUserRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
+    seed_role_matrix,
 )
 from app.shared.clock import as_utc
 from app.shared.persistence import create_schema
@@ -69,6 +70,7 @@ def identity_database():
                 "procurement": AccessMode.EDIT,
             },
         )
+        seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
         session.commit()
     yield sessions
     engine.dispose()

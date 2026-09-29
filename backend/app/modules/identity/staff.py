@@ -114,7 +114,7 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
             id=uuid4(), login=login, email=email, name=name, department=department, role=role, site=site,
             active=True,
         )
-        # The role's sections come from ROLE_DEFAULTS + the «Доступы» matrix; nothing is seeded (NAV-ACCESS).
+        # The role's sections come from the «Доступы» matrix row of the role; nothing is seeded.
         uow.identity.add_user(user, password_hash, {})
         _audit(uow, user.id, "identity.user_created", actor, now, {
             "login": login, "email": email, "name": name, "department": department, "role": role,
