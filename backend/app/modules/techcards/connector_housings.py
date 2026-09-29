@@ -10,6 +10,9 @@ from typing import Any, Mapping
 IVORY = "#efe6cf"
 BLACK = "#2b2b2b"
 ALIASES = {"LP-12": "LP-12-C02PE"}
+# Analogue -> original the housing is drawn from (TcHousing.gs HOUSING_ALIAS_RULES_): BL2018P-nn is an analogue of
+# the JST SMP-nnV-BC plug. Applied after ALIASES and before family detection, on the normalised article.
+ALIAS_RULES: tuple[tuple[str, str], ...] = ((r"^BL2018P-0*(\d+)", r"SMP-0\1V-BC"),)
 
 
 def _jst(identifier: str, series: str, pattern: str, pitch: float, latch: str, **extra) -> dict[str, Any]:
@@ -45,7 +48,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "pattern": r"^22-?55-?2(\d{2})1$", "pitch": 2.54, "rows": 2, "order": "col", "start": "TR", "latch": "friction", "color": BLACK, "conf": "low"},
     {"id": "te-multilock-040", "title": "TE Multilock 040", "pattern": r"^1740(?:47|45|46|44)-\d$", "fixed": 20, "pitch": 2.5, "rows": 2, "order": "col", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
     {"id": "connfly-ds1071", "title": "Connfly DS1071 (Dupont 2,54)", "pattern": r"^I-DS1071-SC[BW]0?(\d)X0?(\d{1,2})", "grid": True, "pitch": 2.54, "order": "col", "start": "TR", "latch": "none", "color": BLACK, "conf": "low"},
-    {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST SM)", "pattern": r"^I-DS1069-SC[BW]0*(\d+)", "pitch": 2.5, "rows": 1, "order": "row", "start": "TR", "latch": "lever", "color": IVORY, "conf": "low"},
+    {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST XH)", "pattern": r"^I-DS1069-SC[BW]0*(\d+)", "pitch": 2.5, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "conf": "low"},
     {"id": "amass-xt", "title": "Amass XT", "pattern": r"^XT-?(30|60|90)", "fixed": 2, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": "#f2c200", "cavity": "round", "labels": ("", ""), "conf": "low"},
     {"id": "amass-qs8", "title": "Amass QS8", "pattern": r"^QS8", "fixed": 2, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": "#d7322d", "cavity": "round", "labels": ("", ""), "conf": "low"},
     {"id": "rj45", "title": "RJ45 8P8C", "pattern": r"^8P8C", "fixed": 8, "pitch": 1.02, "rows": 1, "order": "row", "start": "TR", "latch": "lever", "color": "#dfe8ea", "conf": "high"},
@@ -88,6 +91,9 @@ def housing_of(article: object) -> dict[str, Any] | None:
     alias = ALIASES.get(normalized)
     if alias:
         normalized = normalize_article(alias)
+    for pattern, replacement in ALIAS_RULES:
+        if re.search(pattern, normalized):
+            normalized = normalize_article(re.sub(pattern, replacement, normalized, count=1))
     for family in FAMILIES:
         match = re.search(family["pattern"], normalized, flags=re.I)
         if not match:

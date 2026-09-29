@@ -53,3 +53,25 @@ def test_grid_supports_column_order_and_attach_is_derived_without_mutating_snaps
 
     assert enriched["operations"][0]["housing"]["family"] == "jst-xh"
     assert "housing" not in document["operations"][0]
+
+
+def test_ds1069_is_jst_xh_analogue_not_sm():
+    for article in ("I-DS1069-SCW004", "i-ds1069-scb04", "Connfly I-DS1069-SCW004"):
+        layout = housing_of(article)
+        assert layout and layout["family"] == "connfly-ds1069" and layout["n"] == 4
+        assert "XH" in layout["title"] and "SM" not in layout["title"]
+        assert layout["latch"] == "ramp"
+        assert layout["grid"] == [[1, 2, 3, 4]]  # pin 1 on the left, as JST XH
+    xh = housing_of("XHP-4")
+    assert xh["latch"] == "ramp" and xh["grid"] == housing_of("I-DS1069-SCW004")["grid"]
+
+
+def test_alias_rule_bl2018p_resolves_to_jst_smp_plug():
+    for article, count in (("BL2018P-04", 4), ("bl2018p-4", 4), ("BL2018P-10", 10), ("BL2018P-04-X", 4)):
+        layout = housing_of(article)
+        assert layout and layout["family"] == "jst-sm-p" and layout["n"] == count
+        assert layout["conf"] == "high"
+    assert housing_of("BL2018P-04")["grid"] == housing_of("SMP-04V-BC")["grid"]
+    assert housing_of("BL2018P-14") is None  # SM is capped at 12 contacts
+    assert housing_of("SMR-04V-B")["family"] == "jst-sm-r" and housing_of("SMP-02V-BC")["family"] == "jst-sm-p"
+    assert housing_of("LP-12")["family"] == "cnlinko-lp12"
