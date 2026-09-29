@@ -90,7 +90,7 @@ def test_auto_plan_finds_first_common_free_window_and_manual_plan_warns():
 
     assert automatic.start == datetime(2026, 9, 22, 10, 0)
     assert automatic.finish == datetime(2026, 9, 22, 10, 7)
-    assert manual.warnings == ("Старт раньше окончания предыдущего этапа", "Оператор занят: ПЗ-0000 · этап 1")
+    assert manual.warnings == ("Старт раньше окончания предыдущего этапа", "Оператор занят(а): ПЗ-0000 · этап 1, 22.09.2026 09:00–22.09.2026 10:00")
 
 
 def test_cancel_preserves_operations_and_restore_only_changes_task_status():

@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
+from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, shipping_warehouse_principal
 
@@ -33,6 +35,8 @@ from .application import (
     set_production_cancelled,
 )
 from .domain import OperatorSkill, ProductionOperation, ProductionTask, ProductionValidationError, WorkShift
+from .launchable import item_id, launched_quantity, operation_codes, route_from_document
+from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
     BoxCommand,
@@ -71,29 +75,19 @@ router = APIRouter(prefix="/api/production", tags=["production"])
 NonnegativeDecimal = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=6)]
 
 
-class LaunchOperationPayload(BaseModel):
-    position: int = Field(gt=0)
-    code: str = Field(default="", max_length=255)
-    stage: str = Field(min_length=1, max_length=512)
-    description: str = Field(default="", max_length=5000)
-    seconds_per_unit: NonnegativeDecimal = Decimal("0")
-    setup_seconds: NonnegativeDecimal = Decimal("0")
-
-
 class LaunchPayload(BaseModel):
-    project: str = Field(min_length=1, max_length=255)
-    item: str = Field(min_length=1, max_length=255)
-    name: str = Field(default="", max_length=512)
+    # prodLaunch_: a task is launched only from an issued techcard — the route is its snapshot, never typed by hand.
+    techcard_id: UUID
     quantity: int = Field(gt=0, le=1_000_000)
     fulfillment_request_id: UUID | None = None
     deadline: date | None = None
-    operations: list[LaunchOperationPayload] = Field(min_length=1, max_length=500)
 
 
 class AssignPayload(BaseModel):
     version: int = Field(ge=1)
     operator_ids: list[UUID] = Field(max_length=100)
     requested_start: datetime | None = None
+    dry: bool = False
 
 
 class CancelPayload(BaseModel):
@@ -219,11 +213,53 @@ def production_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
     return factory
 
 
+def techcards_uow_factory(request: Request) -> Callable[[], TechcardsUnitOfWork] | None:
+    factory = getattr(request.app.state, "techcards_uow_factory", None)
+    return factory if callable(factory) else None
+
+
 def _number(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-def _result(task: ProductionTask) -> dict:
+def _op_state(processed: Decimal, quantity: int) -> str:
+    # prodOpState_: the operation status is not stored — it is computed from output against the task quantity.
+    if not processed:
+        return "не начата"
+    return "выполнена" if processed >= quantity else "в работе"
+
+
+def _facts(uow, tasks) -> dict:
+    """prodWorkFacts_ + prodWip_: per operation — good/scrap/processed and pieces in confirmed or waiting boxes."""
+    task_ids = {task.id for task in tasks}
+    facts: dict[UUID, dict] = {}
+    for output in uow.outputs.active_for_tasks(tuple(task_ids)):
+        fact = facts.setdefault(output.operation_id, {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)})
+        fact["good"] += output.good_quantity
+        fact["defect"] += output.defect_quantity
+    for box in uow.boxes.list(limit=100_000):
+        if box.task_id not in task_ids or box.available <= 0:
+            continue
+        fact = facts.setdefault(box.operation_id, {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)})
+        if box.status is BoxStatus.CONFIRMED:
+            fact["ok"] += box.available
+        elif box.status in {BoxStatus.OPEN, BoxStatus.OPERATOR_CLOSED, BoxStatus.RETURNED}:
+            # Решено агентом: у SUPPLYMAP нет «Открытой» коробки, её штуки тоже ждут подтверждения мастера.
+            fact["closed"] += box.available
+    return facts
+
+
+def _fact_result(fact: dict | None, quantity: int) -> dict:
+    fact = fact or {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)}
+    processed = fact["good"] + fact["defect"]
+    return {
+        "fact": {"good": _number(fact["good"]), "defect": _number(fact["defect"]), "processed": _number(processed)},
+        "state": _op_state(processed, quantity),
+        "wip": {"ok": _number(fact["ok"]), "closed": _number(fact["closed"])},
+    }
+
+
+def _result(task: ProductionTask, facts: dict | None = None) -> dict:
     starts = [operation.planned_start for operation in task.operations if operation.planned_start]
     finishes = [operation.planned_finish for operation in task.operations if operation.planned_finish]
     return {
@@ -247,6 +283,7 @@ def _result(task: ProductionTask) -> dict:
             "planned_start": operation.planned_start.isoformat() if operation.planned_start else None,
             "planned_finish": operation.planned_finish.isoformat() if operation.planned_finish else None,
             "assigned_by": operation.assigned_by,
+            **(_fact_result(facts.get(operation.id), task.quantity) if facts is not None else {}),
         } for operation in task.operations],
     }
 
@@ -364,8 +401,9 @@ def tasks(
         if after is not None and uow.production.get(after) is None:
             raise HTTPException(status_code=404, detail="Курсор задания не найден")
         rows = list(uow.production.list(limit + 1, after))
-    page = rows[:limit]
-    return {"tasks": [_result(task) for task in page], "next_cursor": str(page[-1].id) if len(rows) > limit else None}
+        page = rows[:limit]
+        facts = _facts(uow, page)
+    return {"tasks": [_result(task, facts) for task in page], "next_cursor": str(page[-1].id) if len(rows) > limit else None}
 
 
 @router.get("/traceability")
@@ -394,14 +432,22 @@ def my_operations(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
 ) -> dict:
     with uow_factory() as uow:
-        rows = uow.production.list(limit=10_000)
+        rows = [task for task in uow.production.list(limit=10_000) if task.status.value != "Отменено"]
+        mine = [task for task in rows if any(principal.actor.id in operation.operator_ids for operation in task.operations)]
+        facts = _facts(uow, mine)
+        names = {item.id: item.name for item in uow.operators.list()}
     operations = []
-    for task in rows:
-        if task.status.value == "Отменено":
-            continue
-        for operation in task.operations:
+    for task in mine:
+        result = _result(task, facts)
+        first = min(operation.position for operation in task.operations)
+        for index, operation in enumerate(task.operations):
             if principal.actor.id in operation.operator_ids:
-                operations.append({**_result(task), "operations": [_result(task)["operations"][task.operations.index(operation)]]})
+                # prodMyOps_: напарники по операции и первый ли это этап (вход без коробок).
+                operations.append({**result, "operations": [{
+                    **result["operations"][index],
+                    "first": operation.position == first,
+                    "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != principal.actor.id],
+                }]})
     operations.sort(key=lambda item: (item["operations"][0]["planned_start"] or "9999", item["number"], item["operations"][0]["position"]))
     return {"tasks": operations}
 
@@ -767,6 +813,37 @@ def task_serials(
     } for item in rows]}
 
 
+@router.get("/launchable")
+def launchable(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    """prodLaunchable_: kit positions with an issued techcard, with the run and what is already launched."""
+    if techcards_factory is None:
+        return {"items": []}
+    with techcards_factory() as techcards:
+        cards = [card for card in techcards.techcards.list() if card.status is TechcardStatus.ISSUED]
+    with uow_factory() as uow:
+        launched = launched_quantity(uow.production.list(limit=10_000))
+    items = []
+    for card in cards:
+        route = route_from_document(card.document)
+        if not route:
+            continue
+        item = item_id(card.project, card.item_index)
+        kit = (card.document or {}).get("kit") if isinstance(card.document, dict) else None
+        items.append({
+            "techcard_id": str(card.id), "project": card.project, "index": card.item_index,
+            "item": item, "name": card.product_name,
+            "run": str((kit or {}).get("part_quantity") or ""),
+            "deadline": card.deadline.isoformat() if card.deadline else None,
+            "launched": launched.get(kit_stage_key(card.project, card.item_index), 0), "operations": len(route),
+        })
+    items.sort(key=lambda value: (value["project"], value["index"]))
+    return {"items": items}
+
+
 @router.get("/operators")
 def operators(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
@@ -784,15 +861,30 @@ def launch(
     now: Annotated[datetime, Depends(moscow_now)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
 ) -> dict:
-    operations = tuple(ProductionOperation.create(
-        position=operation.position, code=operation.code, stage=operation.stage,
-        description=operation.description, seconds_per_unit=operation.seconds_per_unit,
-        setup_seconds=operation.setup_seconds, quantity=payload.quantity,
-    ) for operation in payload.operations)
+    if techcards_factory is None:
+        raise HTTPException(status_code=503, detail="База техкарт не настроена")
+    with techcards_factory() as techcards:
+        card = techcards.techcards.get(payload.techcard_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Техкарта не найдена")
+    item = item_id(card.project, card.item_index)
+    route = route_from_document(card.document) if card.status is TechcardStatus.ISSUED else ()
+    if not route:
+        raise HTTPException(status_code=422, detail=f"Техкарта «{item}» не выдана — запускать нечего")
+    try:
+        operations = tuple(ProductionOperation.create(
+            position=step.position, code=step.code, stage=step.stage,
+            description=step.description, seconds_per_unit=step.seconds_per_unit,
+            setup_seconds=step.setup_seconds, quantity=payload.quantity,
+        ) for step in route)
+    except ProductionValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    # Решено агентом: ERP хранит в задании изделие индексом КБ (как план и приёмка ГП), а не «проект+индекс».
     return _run(lambda: launch_production(LaunchProductionCommand(
-        idempotency_key=idempotency_key, project=payload.project, item=payload.item,
-        name=payload.name, quantity=payload.quantity,
+        idempotency_key=idempotency_key, project=card.project, item=card.item_index,
+        name=card.product_name, quantity=payload.quantity,
         fulfillment_request_id=payload.fulfillment_request_id, deadline=payload.deadline,
         operations=operations, actor=principal.actor, now=now,
     ), uow_factory()))
@@ -812,12 +904,19 @@ def assign(
         task, plan = assign_production(AssignProductionCommand(
             task_id=task_id, expected_version=payload.version, operation_id=operation_id,
             operator_ids=tuple(payload.operator_ids), requested_start=payload.requested_start,
-            actor=principal.actor, now=now,
+            actor=principal.actor, now=now, dry=payload.dry,
         ), uow_factory())
         result["warnings"] = list(plan.warnings)
+        result["plan"] = {
+            "start": plan.start.isoformat() if plan.start else None,
+            "finish": plan.finish.isoformat() if plan.finish else None,
+            "warnings": list(plan.warnings),
+        }
         return task
     response = _run(execute)
     response["warnings"] = result["warnings"]
+    response["plan"] = result["plan"]
+    response["dry"] = payload.dry
     return response
 
 
@@ -928,10 +1027,23 @@ def replace_calendar(
 def skills(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)] = None,
 ) -> dict:
     with uow_factory() as uow:
         rows = uow.skills.list()
-    return {"skills": [{
+    routes = []
+    if techcards_factory is not None:
+        with techcards_factory() as techcards:
+            routes = [
+                route_from_document(card.document) for card in techcards.techcards.list()
+                if card.status is TechcardStatus.ISSUED
+            ]
+        with uow_factory() as uow:
+            launched_codes = [(operation.code, operation.stage) for task in uow.production.list(limit=10_000) for operation in task.operations]
+    else:
+        launched_codes = []
+    codes = operation_codes(routes, [*((item.operation_code, "") for item in rows), *launched_codes])
+    return {"operation_codes": codes, "skills": [{
         "operator_id": str(item.operator_id), "operation_code": item.operation_code,
         "allowed": item.allowed, "stars": item.stars,
         "coefficient": str(item.coefficient),
