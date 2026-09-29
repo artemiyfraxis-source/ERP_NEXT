@@ -143,7 +143,7 @@ def test_migration_renames_keys_and_copies_techcards_to_templates_and_generator(
             (USER_A, "techcards", "view"), (USER_A, "references", "edit"), (USER_A, "identity", "none"),
         ])
 
-    command.upgrade(config, "0051_identity_split_sections")
+    command.upgrade(config, "0055_identity_split_sections")
     with sqlite3.connect(database_path) as connection:
         roles = {(r, s): m for r, s, m in connection.execute("SELECT role, section, mode FROM identity_role_access")}
         users = {(u, s): m for u, s, m in connection.execute("SELECT user_id, section, mode FROM identity_user_access")}

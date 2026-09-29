@@ -439,7 +439,7 @@ class SqlAlchemyIdentityUnitOfWork:
 
 
 def seed_role_matrix(session: Session) -> None:
-    """Every role's ROLE_SEED as explicit matrix cells, where nothing is stored yet — what migration 0046 did, for a
+    """Every role's ROLE_SEED as explicit matrix cells, where nothing is stored yet — what migration 0056 did, for a
     database built without migrations (tests, fixtures). Existing cells stay."""
     for role, row in ROLE_SEED.items():
         _seed_role_access(session, role, row)

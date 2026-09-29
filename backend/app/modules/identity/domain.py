@@ -41,7 +41,7 @@ class AccessMode(str, Enum):
 
 # «Как задумано ролью»: the sections each role was meant to have. Since SUPPLYMAP 01.09.2026 (Portal.gs
 # portalApplyAccess_) a section is open only when EXPLICITLY granted — by the role's matrix row or a personal
-# exception; an empty cell = closed. ROLE_SEED is therefore not applied at run time: migration 0046 wrote it into
+# exception; an empty cell = closed. ROLE_SEED is therefore not applied at run time: migration 0056 wrote it into
 # `identity_role_access` once, so nobody lost access on the switch, and `seed_role_matrix` does the same for a fresh
 # database. It stays here as the editor's reference of what a role was set up with.
 # View grants on procurement / receiving / warehouse (ID-6) follow SUPPLYMAP's role sets (Portal.gs portalButtons_):

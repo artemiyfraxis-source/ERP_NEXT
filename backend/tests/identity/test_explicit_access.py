@@ -46,7 +46,7 @@ def _access(database_path: Path) -> dict[tuple[str, str], str]:
 def test_migration_writes_former_defaults_and_keeps_the_administrators_cells(tmp_path):
     database_path = tmp_path / "identity.db"
     config = _config(database_path)
-    command.upgrade(config, "0051_identity_split_sections")
+    command.upgrade(config, "0055_identity_split_sections")
     with sqlite3.connect(database_path) as connection:
         connection.execute("DELETE FROM identity_role_access")
         connection.executemany("INSERT INTO identity_role_access VALUES (?, ?, ?)", [
@@ -55,7 +55,7 @@ def test_migration_writes_former_defaults_and_keeps_the_administrators_cells(tmp
             ("admin", "operations", "view"),
         ])
 
-    command.upgrade(config, "0052_identity_explicit_access")
+    command.upgrade(config, "0056_identity_explicit_access")
     access = _access(database_path)
     expected = {
         (role, section): mode.value for role, row in ROLE_SEED.items() for section, mode in row.items()
@@ -63,7 +63,7 @@ def test_migration_writes_former_defaults_and_keeps_the_administrators_cells(tmp
     expected.update({("buyer", "warehouse"): "none", ("staff", "shipping"): "view", ("admin", "operations"): "view"})
     assert access == expected
 
-    command.downgrade(config, "0051_identity_split_sections")
+    command.downgrade(config, "0055_identity_split_sections")
     assert _access(database_path) == {
         ("buyer", "warehouse"): "none", ("staff", "shipping"): "view", ("admin", "operations"): "view",
     }

@@ -14,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0052_identity_explicit_access"
-down_revision: str | None = "0051_identity_split_sections"
+revision: str = "0056_identity_explicit_access"
+down_revision: str | None = "0055_identity_split_sections"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
