@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -9,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.requests.api import Principal, authenticated_principal, moscow_now
+from app.modules.requests.application import ProcurementDetails
 from app.modules.requests.infrastructure import (
     OutboxMessageRow,
     RequestRow,
@@ -190,6 +192,9 @@ def test_mine_reports_procurement_stage_once_handed_off(write_api):
         def stages_for(self, request_ids):
             return {request_id: "Жду счет" for request_id in request_ids}
 
+        def details_for(self, request_ids):
+            return {request_id: ProcurementDetails(stage="Жду счет") for request_id in request_ids}
+
     app.state.procurement_stage_lookup = StubStageLookup()
     try:
         client.post(
@@ -267,3 +272,122 @@ def test_create_rejects_project_outside_open_registry_and_stores_canonical_numbe
     assert "№ ПРОЕКТА" in latin.json()["detail"]
     assert accepted.status_code == 201
     assert accepted.json()["requests"][0]["project_reference"] == "2000К.1"
+
+
+def test_mine_shows_purchase_columns_to_the_initiator(write_api):
+    """openMyRequests: закупщик, поставщик, № заказа, ожид. дата, сумма come through the port."""
+    client, _, _ = write_api
+
+    class StubStageLookup:
+        def details_for(self, request_ids):
+            return {
+                request_id: ProcurementDetails(
+                    stage="В пути",
+                    buyer="Петров",
+                    supplier="ООО Ромашка",
+                    order_number="З-17",
+                    expected_arrival=date(2026, 10, 3),
+                    sum=Decimal("1500.00"),
+                )
+                for request_id in request_ids
+            }
+
+    app.state.procurement_stage_lookup = StubStageLookup()
+    try:
+        client.post(
+            "/api/requests",
+            headers={"Idempotency-Key": "create:mine:purchase"},
+            json={"requests": [request_payload()]},
+        )
+        row = client.get("/api/requests/mine").json()["requests"][0]
+    finally:
+        del app.state.procurement_stage_lookup
+
+    assert row["stage"] == "В пути"
+    assert row["buyer"] == "Петров"
+    assert row["supplier"] == "ООО Ромашка"
+    assert row["order_number"] == "З-17"
+    assert row["expected_arrival"] == "2026-10-03"
+    assert row["procurement_sum"] == "1500.00"
+
+
+def test_mine_without_procurement_has_empty_purchase_columns(write_api):
+    client, _, _ = write_api
+    client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:mine:empty"},
+        json={"requests": [request_payload()]},
+    )
+
+    row = client.get("/api/requests/mine").json()["requests"][0]
+
+    assert row["stage"] == "Новый"
+    assert row["buyer"] is None and row["order_number"] is None and row["procurement_sum"] is None
+
+
+def test_mine_and_list_search_by_substring(write_api):
+    client, _, _ = write_api
+    client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:search"},
+        json={"requests": [request_payload("Разъём SMA"), request_payload("Кабель RG58")]},
+    )
+
+    mine = client.get("/api/requests/mine", params={"q": "rg58"}).json()
+    listed = client.get("/api/requests", params={"q": "SMA"}).json()
+    by_id = client.get("/api/requests", params={"q": "SM-20260915-02"}).json()
+
+    assert mine["total"] == 1
+    assert [item["name"] for item in mine["requests"]] == ["Кабель RG58"]
+    assert [item["name"] for item in listed["requests"]] == ["Разъём SMA"]
+    assert [item["name"] for item in by_id["requests"]] == ["Кабель RG58"]
+
+
+def test_batch_shares_one_designation_and_names_the_failing_position(write_api):
+    client, _, _ = write_api
+    ok = client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:batch:ok"},
+        json={"requests": [request_payload("A"), request_payload("B"), request_payload("C")]},
+    )
+    bad = client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:batch:bad"},
+        json={"requests": [request_payload("A"), {**request_payload(" "), "name": " "}]},
+    )
+
+    assert ok.status_code == 201, ok.text
+    assert {item["designation"] for item in ok.json()["requests"]} == {"RND.001"}
+    assert bad.status_code == 422
+    assert bad.json()["detail"].startswith("Позиция 2: ")
+    assert "НАИМЕНОВАНИЕ" in bad.json()["detail"]
+
+
+def test_general_category_defaults_quality_document_to_no_on_the_server(write_api):
+    client, _, _ = write_api
+
+    response = client.post(
+        "/api/requests",
+        headers={"Idempotency-Key": "create:quality:default"},
+        json={"requests": [{**request_payload(), "quality_document": "", "category": "Общепром"}]},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["requests"][0]["quality_document"] == "Нет"
+
+
+def test_schema_lists_open_registry_projects_for_the_goal_dropdown(write_api):
+    client, _, _ = write_api
+
+    class Registry:
+        def open_projects(self):
+            return ["591К.3", "2000К.1"]
+
+    assert client.get("/api/requests/schema").json()["projects"] == []
+    app.state.project_registry = Registry()
+    try:
+        response = client.get("/api/requests/schema")
+    finally:
+        del app.state.project_registry
+
+    assert response.json()["projects"] == ["591К.3", "2000К.1"]
