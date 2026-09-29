@@ -477,7 +477,8 @@ def bom(
     _principal: Annotated[Principal, Depends(projects_view_principal)],
 ) -> dict:
     """`tcLoadBomFromKit`: состав сборки для генератора — из сохранённой карточки, с правками оператора.
-    Аналог по КД → оригинал к применению (kitUseArt_): генератор ищет контакт по артикулу к применению."""
+    Аналог по КД → оригинал к применению (kitUseArt_): генератор ищет контакт по артикулу к применению.
+    `calc_ops` — строки листа КБn расчёта по ссылке карточки (`tcCalcOps_`): длины резки и лужение сметчика."""
     kitset = _kitset(request, project)
     assembly = kitset.assembly(index)
     if assembly is None:
@@ -495,6 +496,9 @@ def bom(
         "project": kitset.project, "index": assembly.index, "name": assembly.name,
         "run": _number(assembly.run), "part_qty": _number(assembly.run or Decimal("1")),
         "calc_source": kitset.calc_source, "components": components,
+        "calc_ops": flow.calc_ops_by_link(
+            kitset.calc_source, assembly.index, lambda: flow.calc_sheets_reader(request.app.state),
+        ),
     }
 
 

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
-import type { ProjectTechcard } from "./api";
+import type { KitsetBom, ProjectTechcard } from "./api";
 
 const card: ProjectTechcard = {
   id: "40000000-0000-0000-0000-000000000001", version: 1, project: "P-100", item_index: "КБ1", product_name: "Жгут XHP 150мм",
@@ -35,14 +35,23 @@ function mockApi(extra?: (path: string, init?: RequestInit) => Response | undefi
 
 afterEach(() => vi.restoreAllMocks());
 
+function kitOf(name: string, components: Array<{ type: string; name: string; art: string; qty: number }>, calc_ops: KitsetBom["calc_ops"] = []): KitsetBom {
+  return {
+    project: "P-100", index: "КБ1", name, run: "1", part_qty: "1", calc_source: "https://docs.google.com/spreadsheets/d/calc/edit",
+    components: components.map((item, i) => ({ id: `kit-${i}`, kd: "", ...item })), calc_ops,
+  };
+}
+
+const XH = [
+  { type: "Провод", name: "МГТФ 0,12", art: "МГТФ 0,12", qty: 0.3 },
+  { type: "Терминал", name: "Контакт XH", art: "SXH-001T-P0.6", qty: 4 },
+  { type: "Соед", name: "Колодка XH 2", art: "XHP-2", qty: 2 },
+];
+
 it("seeds the form from the kit and sends the SUPPLYMAP config to the build", async () => {
   mockApi();
   const onBuild = vi.fn();
-  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} bom={[
-    { type: "Провод", name: "МГТФ 0,12", art: "МГТФ 0,12", qty: 0.3 },
-    { type: "Терминал", name: "Контакт XH", art: "SXH-001T-P0.6", qty: 4 },
-    { type: "Соед", name: "Колодка XH 2", art: "XHP-2", qty: 2 },
-  ]} />);
+  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
 
   expect(await screen.findByRole("tab", { name: "Межплатная", selected: true })).toBeInTheDocument();
   expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
@@ -55,7 +64,8 @@ it("seeds the form from the kit and sends the SUPPLYMAP config to the build", as
   const config = onBuild.mock.calls[0][0];
   expect(config.wires).toEqual([{ name: "МГТФ 0,12", art: "МГТФ 0,12", qty: 2, length: 160 }]);
   expect(config.ops.map((op: { type: string }) => op.type)).toEqual(["cutWire", "prsTerm", "prsTerm"]);
-  expect(config.tcgen.state.tab).toBe("inter");
+  expect(config.partQty).toBe(1);
+  expect(config).not.toHaveProperty("tcgen");
 });
 
 it("adds a missing coax connector to БД.КОАКС through the references record", async () => {
@@ -67,10 +77,10 @@ it("adds a missing coax connector to БД.КОАКС through the references reco
     }
     return undefined;
   });
-  render(<TcGenerator card={{ ...card, product_name: "Сборка RG316 150mm" }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} bom={[
+  render(<TcGenerator card={{ ...card, product_name: "Сборка RG316 150mm" }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Сборка RG316 150mm", [
     { type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
     { type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
-  ]} />);
+  ])} />);
 
   expect(await screen.findByRole("tab", { name: "КОАКС", selected: true })).toBeInTheDocument();
   expect(screen.getByText("⚠ «SMA-J» нет в БД.КОАКС — добавьте ниже")).toBeInTheDocument();
@@ -80,4 +90,41 @@ it("adds a missing coax connector to БД.КОАКС through the references reco
   await waitFor(() => expect(created).toEqual({ tab: "coax", fields: {
     coaxArticle: "SMA-J", coaxWire: "RG316", d1: "0,51", pinType: "пайка", shieldType: "обжим", connArticle: "SMA-J",
   } }));
+});
+
+it("takes cut lengths and tinning from the КБn sheet of the calculation (tcCalcOps_)", async () => {
+  mockApi();
+  const onBuild = vi.fn();
+  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Жгут XHP", XH, [
+    { code: "CUT_WIRE", comp: "МГТФ 0,12", n: "2", l: "0,16", req: "L=150мм" },
+  ])} />);
+
+  await waitFor(() => expect(screen.getByLabelText("Длина по чертежу")).toHaveValue(150));
+  expect(screen.queryByLabelText("Строки расчёта КБn")).not.toBeInTheDocument();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Создать техкарты" }));
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  expect(onBuild.mock.calls[0][0].wires[0].length).toBe(160);
+});
+
+it("shows the kit error instead of a hand-made composition", async () => {
+  mockApi();
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kitError="Карточка набора «P-100» не найдена" />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Карточка набора «P-100» не найдена");
+  expect(screen.queryByRole("button", { name: "Создать техкарты" })).not.toBeInTheDocument();
+});
+
+it("resets hand-typed times to БД.ОП on the next form change, as renderOpsCard does", async () => {
+  mockApi((path) => (path.startsWith("/api/references/tech-operations?") && path.includes("tab=op")
+    ? json({ metadata: null, columns: [], records: [{ id: "o1", tab: "op", display_text: "", source_sheet: "", fields: { opNumber: "CUT_WIRE_auto", opName: "Резка", tPrep: "30", tOp: "5", tMachine: "" } }] })
+    : undefined));
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+
+  expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
+  const prep = () => screen.getAllByLabelText("Вр.подг, сек")[0];
+  await waitFor(() => expect(prep()).toHaveValue(30));
+  fireEvent.change(prep(), { target: { value: "45" } });
+  expect(prep()).toHaveValue(45);
+  fireEvent.change(screen.getByLabelText("Длина по чертежу"), { target: { value: "200" } });
+  expect(prep()).toHaveValue(30);
 });

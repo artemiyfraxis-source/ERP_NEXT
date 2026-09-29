@@ -3,6 +3,7 @@ import {
   referencesApi,
   techcardsApi,
   type GrapherImportResult,
+  type KitsetBom,
   type ProjectTechcard,
   type TerminalResolution,
 } from "./api";
@@ -11,7 +12,6 @@ import {
   JACKET_STRIP_MM_,
   WRAP_SLOTS_,
   addEndpoint,
-  applyCalcLengths,
   applyGrapherGroups,
   coaxDiaFromRecords,
   coaxFromFields,
@@ -21,7 +21,6 @@ import {
   makeGen,
   onCoaxConnChange,
   opFromFields,
-  parseCalcTsv,
   parseDecimal_,
   sideRu_,
   switchGenTab,
@@ -45,23 +44,13 @@ import {
   type WrapKind,
 } from "./tcGenLogic";
 
-/** Позиция состава, приходящая из набора проекта (BOM). */
-export type BomItem = { art: string; name: string; type: string; qty: number | string };
-
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia">;
-type Saved = { state: GenState; components: Comp[]; calcText: string; partQty: string };
 
 const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null };
 const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
   ["tape", "Лента — последней операцией"], ["braid", "Оплётка — до термоусадки"], ["under", "Лента под оплётку — перед ней"],
 ];
-
-function savedGenerator(card: ProjectTechcard): Saved | null {
-  const config = card.document?.build_config;
-  const value = config && typeof config === "object" ? (config as Record<string, unknown>).tcgen : null;
-  return value && typeof value === "object" && (value as Saved).state ? value as Saved : null;
-}
 
 function badgeCls(t: string) {
   const lc = (t || "").toLowerCase();
@@ -95,22 +84,21 @@ async function loadRefs(): Promise<Refs> {
 /**
  * Генератор техкарт — порт формы SUPPLYMAP TcGenInline.html. Собирает тот же config, что уходил в
  * portalTechmapGenerate, и отдаёт его в `onBuild` (→ POST /api/techcards/projects/{id}/build).
+ * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
+ * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig }: {
   card: ProjectTechcard;
-  bom?: BomItem[];
+  kit?: KitsetBom | null;
+  kitError?: string;
   busy: boolean;
   onBuild: (config: Record<string, unknown>) => Promise<void> | void;
   onDiscard: () => Promise<void> | void;
   onConfig?: (config: Record<string, unknown>) => void;
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
-  const [extra, setExtra] = useState<Comp[]>([]);
-  const [partQty, setPartQty] = useState("");
-  const [calcText, setCalcText] = useState("");
   const [S, setS] = useState<GenState>(emptyState);
   const [status, setStatus] = useState<{ text: string; error: boolean }>({ text: "", error: false });
-  const [newComp, setNewComp] = useState({ type: "", name: "", art: "", qty: "" });
   const [grapher, setGrapher] = useState<{ data: GrapherImportResult; pick: number } | null>(null);
   const [terEdits, setTerEdits] = useState<Record<string, Record<string, string>>>({});
   const [terNorms, setTerNorms] = useState<Record<string, TerminalResolution | null>>({});
@@ -118,37 +106,34 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
 
   useEffect(() => { void loadRefs().then(setRefs); }, []);
 
-  const bomComps = useMemo<Comp[]>(() => (bom || []).map((item, index) => ({
-    id: `bom-${index}`, type: item.type || "", name: item.name || item.art || "", art: item.art || item.name || "", qty: item.qty,
-  })), [bom]);
-  const components = useMemo(() => [...bomComps, ...extra], [bomComps, extra]);
-  const assemblyInfo = useMemo(() => ({
-    "Проект": card.project, "Индекс": card.item_index, "Наименование": card.product_name,
-    ...(partQty ? { "Кол-во": partQty } : {}),
-  }), [card.project, card.item_index, card.product_name, partQty]);
-  const calcOps = useMemo(() => parseCalcTsv(calcText), [calcText]);
-  const D: GenData = useMemo(() => ({ ...(refs || EMPTY_REFS), components, assemblyInfo, partQty: 1, calcOps }), [refs, components, assemblyInfo, calcOps]);
+  const components = useMemo<Comp[]>(() => (kit?.components || []).map((item) => ({
+    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", qty: item.qty,
+  })), [kit]);
+  // tcLoadBomFromKit: «Кол-во» — тираж сборки, партию генератор берёт отсюда.
+  const assemblyInfo = useMemo<Record<string, string>>(() => ({
+    "Индекс": kit?.index || "", "Наименование": kit?.name || "", "Кол-во": kit?.run || "",
+  }), [kit]);
+  const D: GenData = useMemo(() => ({
+    ...(refs || EMPTY_REFS), components, assemblyInfo, partQty: Number(kit?.part_qty) || 1, calcOps: kit?.calc_ops || [],
+  }), [refs, components, assemblyInfo, kit]);
   const gen = useMemo(() => makeGen(D, S), [D, S]);
 
-  // init(): при открытии карточки — восстановить форму из собранной ЭТК, иначе засеять из состава.
-  const bomKey = JSON.stringify(bom || []);
+  // init(): каждый монтаж засевает форму из состава набора и строк расчёта (autoFillAllWires, applyCalcTin_).
   useEffect(() => {
-    if (!refs) return;
-    const saved = savedGenerator(card);
-    if (saved) {
-      setExtra(saved.components.filter((item) => !item.id.startsWith("bom-")));
-      setCalcText(saved.calcText || "");
-      setPartQty(saved.partQty || "");
-      setS({ ...emptyState(), ...saved.state });
-      return;
-    }
-    setExtra([]); setCalcText(""); setPartQty("");
-    setS(initState({ ...refs, components: bomComps, assemblyInfo: { "Проект": card.project, "Индекс": card.item_index, "Наименование": card.product_name }, calcOps: [] }));
+    if (!refs || !kit) return;
+    setS(initState(D));
+    setStatus({ text: "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refs, card.id, bomKey]);
+  }, [refs, card.id, kit]);
+
+  // renderOpsCard: шаблон, показанный первым, запоминается (selectedTemplates) и дальше не пересчитывается.
+  useEffect(() => {
+    const next = gen.stickTemplates();
+    if (next) setS((current) => ({ ...current, selectedTemplates: next }));
+  }, [gen]);
 
   const ops = useMemo(() => gen.getActiveOps(), [gen]);
-  const config = useMemo(() => ({ ...gen.buildConfig(), tcgen: { state: S, components, calcText, partQty } }), [gen, S, components, calcText, partQty]);
+  const config = useMemo(() => gen.buildConfig(), [gen]);
   useEffect(() => { onConfig?.(config); }, [config]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Нормы терминала по сечению проводов разъёма (TcGenerator.gs:762-788) — через справочник ERP.
@@ -171,8 +156,10 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
     return () => { alive = false; };
   }, [normKey, gostAwg]);
 
+  // Любая правка формы перерисовывает карточку операций (refresh → renderOpsCard): ручные времена сбрасываются
+  // к БД.ОП. Правка самих времён — setTime, она карточку не перерисовывает.
   const update = (patch: Partial<GenState> | ((current: GenState) => GenState)) =>
-    setS((current) => (typeof patch === "function" ? patch(current) : { ...current, ...patch }));
+    setS((current) => ({ ...(typeof patch === "function" ? patch(current) : { ...current, ...patch }), times: {} }));
   const complex = S.tab === "complex";
   const { terms: bomTerms, conns: bomConns } = gen.bomLists();
   const wireOptions = gen.wireComps_();
@@ -188,32 +175,6 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
       <option value="">{empty}</option>
       {list.map((c) => <option key={c.id} value={c.id}>{c.art || c.name}</option>)}
     </select>;
-  }
-
-  function addComponent() {
-    if (!newComp.art.trim() && !newComp.name.trim()) return;
-    const id = `add-${Date.now()}-${extra.length}`;
-    setExtra((current) => [...current, { id, type: newComp.type.trim(), name: newComp.name.trim() || newComp.art.trim(), art: newComp.art.trim() || newComp.name.trim(), qty: newComp.qty.trim() || "1" }]);
-    setNewComp({ type: "", name: "", art: "", qty: "" });
-  }
-
-  function reseed() {
-    setS(initState(D));
-    setStatus({ text: "Форма заполнена из состава", error: false });
-  }
-
-  async function applyCalc() {
-    if (!calcOps.length) { setStatus({ text: "Вставьте строки операций листа КБn (TSV: код, комплектующее, n, L, требования).", error: true }); return; }
-    if (gen.asmLenFromName_() > 0) { setStatus({ text: "Длина есть в наименовании сборки — расчёт её не заменяет (как в SUPPLYMAP).", error: true }); return; }
-    const wires = active.map((w) => gen.getCompById(w.compId)).filter((c): c is Comp => !!c).map((c) => ({ id: c.id, art: c.art, name: c.name }));
-    try {
-      const result = await techcardsApi.cutLengths(wires, calcOps);
-      const count = Object.keys(result.lengths).length;
-      update((current) => applyCalcLengths(D, current, result.lengths));
-      setStatus({ text: count ? `Длины из расчёта подставлены: ${count} каб. — сверьте с КД` : "В строках расчёта нет однозначной длины резки для этих кабелей", error: !count });
-    } catch (reason) {
-      setStatus({ text: reason instanceof Error ? reason.message : "Длины из расчёта не получены", error: true });
-    }
   }
 
   async function grapherFile(file: File) {
@@ -239,21 +200,12 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
   function grapherApply() {
     if (!grapher) return;
     const harness = grapher.data.harnesses[grapher.pick];
-    const created: Comp[] = [];
-    const groups = harness.groups.map((group, index) => {
-      let compId = group.component_id && components.some((c) => c.id === group.component_id) ? group.component_id : "";
-      if (!compId && group.material) {
-        const known = components.find((c) => (c.art || c.name) === group.material) || created.find((c) => c.art === group.material);
-        if (known) compId = known.id;
-        else {
-          compId = `grapher-${Date.now()}-${index}`;
-          created.push({ id: compId, type: "Провод", name: group.material, art: group.material, qty: 0 });
-        }
-      }
-      return { compId, qty: group.quantity, length: Number(group.length_mm) || 0, cores: group.cores, jacket: group.jacket_mm == null ? "" : String(group.jacket_mm) };
-    });
-    if (created.length) setExtra((current) => [...current, ...created]);
-    if (harness.quantity && !partQty) setPartQty(String(harness.quantity));
+    // Не найденный в составе материал остаётся пустым кабелем — «не найдено — выбери».
+    const groups = harness.groups.map((group) => ({
+      compId: group.component_id && components.some((c) => c.id === group.component_id) ? group.component_id : "",
+      qty: group.quantity, length: Number(group.length_mm) || 0, cores: group.cores,
+      jacket: group.jacket_mm == null ? "" : String(group.jacket_mm),
+    }));
     update((current) => applyGrapherGroups(current, groups));
     setStatus({ text: `Кабели из ${harness.designation || "чертежа"} подставлены в «Кабели»`, error: false });
   }
@@ -315,7 +267,7 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
       return;
     }
     setStatus({ text: card.status === "Выдана" ? "Пересобираю техкарты…" : "Создаю техкарты…", error: false });
-    await onBuild({ ...cfg, tcgen: { state: S, components, calcText, partQty } });
+    await onBuild(cfg);
     setStatus({ text: "", error: false });
   }
 
@@ -439,7 +391,8 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
     </div>;
   }
 
-  if (!refs) return <div className="tcgen"><div className="empty">Загружаю справочники генератора…</div></div>;
+  if (kitError) return <div className="tcgen"><div className="error-banner" role="alert">{kitError}</div></div>;
+  if (!refs || !kit) return <div className="tcgen"><div className="empty">Читаю состав {card.item_index}…</div></div>;
 
   const wrapOpts = gen.wrapCandidates().list;
   const capTubes = gen.capTubes();
@@ -451,23 +404,13 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
       <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "gen-tab-btn gactive" : "gen-tab-btn"}
         onClick={() => update((current) => switchGenTab(current, tab))}>{label}</button>)}</div>
 
-    <h3>Данные изделия</h3>
+    <h3>Данные из листа</h3>
     <div className="gcard">
-      <div className="info-kv">{Object.entries(assemblyInfo).map(([key, value]) => <span className="info-pair" key={key}><span>{key}: </span><strong>{value}</strong></span>)}</div>
-      <label className="field-label inline">Кол-во изделий в партии<input aria-label="Кол-во изделий" value={partQty} placeholder="1" onChange={(event) => setPartQty(event.target.value)} /></label>
-      <table className="spy"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th>Кол-во</th><th /></tr></thead><tbody>
-        {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}</td><td className="muted">{c.art}</td><td>{String(c.qty)}</td>
-          <td>{!c.id.startsWith("bom-") && <button className="btn-remove" title="Убрать позицию" onClick={() => setExtra((current) => current.filter((item) => item.id !== c.id))}>×</button>}</td></tr>)}
-        {!components.length && <tr><td colSpan={5} className="empty">СПЯ не найдена — добавьте позиции состава ниже</td></tr>}
-        <tr className="spy-add">
-          <td><input aria-label="Тип позиции" placeholder="Провод / Терминал / Соед…" value={newComp.type} onChange={(event) => setNewComp({ ...newComp, type: event.target.value })} /></td>
-          <td><input aria-label="Название позиции" value={newComp.name} onChange={(event) => setNewComp({ ...newComp, name: event.target.value })} /></td>
-          <td><input aria-label="Артикул позиции" value={newComp.art} onChange={(event) => setNewComp({ ...newComp, art: event.target.value })} /></td>
-          <td><input aria-label="Кол-во позиции" value={newComp.qty} placeholder="норма" onChange={(event) => setNewComp({ ...newComp, qty: event.target.value })} /></td>
-          <td><button className="secondary small" onClick={addComponent}>+</button></td>
-        </tr>
+      <div className="info-kv">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="info-pair" key={key}><span>{key}: </span><strong>{value}</strong></span>)}</div>
+      <table className="spy"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th>Кол-во</th></tr></thead><tbody>
+        {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}</td><td className="muted">{c.art}</td><td>{String(c.qty)}</td></tr>)}
+        {!components.length && <tr><td colSpan={4} className="empty">СПЯ не найдена</td></tr>}
       </tbody></table>
-      <div className="form-actions"><button className="secondary small" onClick={reseed}>Заполнить из состава</button></div>
     </div>
 
     {S.tab !== "coax" && <div className={complex ? "tab-inter" : "tab-inter gen-basic"}>
@@ -489,7 +432,7 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
             <button className="btn-link" onClick={() => setGrapher(null)}>скрыть</button></div>
           <table><thead><tr><th>Материал в чертеже</th><th>Позиция набора</th><th>Шт</th><th>По чертежу, мм</th><th>Поправки</th><th>Рез в чертеже</th><th>Концы</th></tr></thead><tbody>
             {h.groups.map((g, i) => <tr key={i}><td>{g.material || "—"}{g.cores > 1 ? ` · ${g.cores} жил${g.jacket_mm != null ? ", разделка " + g.jacket_mm : ""}` : ""}</td>
-              <td>{g.component_id && gen.getCompById(g.component_id) ? compLabel(g.component_id) : <span className="danger-text">не найдено — добавится позицией</span>}</td>
+              <td>{g.component_id && gen.getCompById(g.component_id) ? compLabel(g.component_id) : <span className="danger-text">не найдено — выбери</span>}</td>
               <td>{g.quantity}</td><td>{g.length_mm == null ? <span className="danger-text">нет</span> : g.length_mm}</td>
               <td>{Number(g.correction_from_mm) || Number(g.correction_to_mm) ? `${sg(g.correction_from_mm)} / ${sg(g.correction_to_mm)}` : "—"}{g.mixed_corrections ? " (разные)" : ""}</td>
               <td>{g.cut_mm == null ? "—" : g.cut_mm}</td><td className="muted">{g.ends.join("; ")}{g.quantity > g.ends.length ? " …" : ""}</td></tr>)}
@@ -521,12 +464,6 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
           </div>;
         })}
         <button className="btn-add" onClick={() => update((current) => ({ ...current, wires: [...current.wires, { idx: current.nextWireIdx, compId: "", length: 0, qty: 1 }], nextWireIdx: current.nextWireIdx + 1 }))}>+ Добавить кабель</button>
-        <details className="calc-rows"><summary>Длины из расчёта (строки листа КБn)</summary>
-          <label className="field-label">Строки операций КБn — TSV: код, комплектующее, n, L, требования
-            <textarea aria-label="Строки расчёта КБn" rows={4} value={calcText} placeholder={"CUT_WIRE\tМГТФ 0,12\t4\t0,16\tL=160мм"} onChange={(event) => setCalcText(event.target.value)} /></label>
-          <button className="secondary small" disabled={busy} onClick={() => void applyCalc()}>Подставить длины из расчёта</button>
-          {S.lenFromCalc && <small className="danger-text"> Длины взяты из расчёта — сверьте с КД.</small>}
-        </details>
       </div>
 
       {(["A", "B"] as Side[]).map((side) => <div key={side}>
@@ -662,7 +599,7 @@ export function TcGenerator({ card, bom, busy, onBuild, onDiscard, onConfig }: {
       {!ops.length && <div className="op-empty">{S.tab === "coax" ? "Выберите разъём — появятся операции" : "Добавьте кабель — появятся операции"}</div>}
       {ops.map((spec, i) => {
         const row = gen.opRow(spec);
-        const setTime = (key: "tPrep" | "tOp" | "tMachine", value: string) => update((current) => ({ ...current, times: { ...current.times, [spec.opKey]: { ...row.times, [key]: value } } }));
+        const setTime = (key: "tPrep" | "tOp" | "tMachine", value: string) => setS((current) => ({ ...current, times: { ...current.times, [spec.opKey]: { ...row.times, [key]: value } } }));
         return <div className="op-item" key={spec.opKey}>
           <div className="op-badge">{i + 1}</div>
           <div>
