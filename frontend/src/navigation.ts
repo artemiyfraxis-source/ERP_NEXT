@@ -32,7 +32,6 @@ export const BLOCKS: Array<{ id: BlockId; icon: string; title: string; sub: stri
   { id: "mgmt", icon: "📊", title: "Менеджмент", sub: "производственный план · сотрудники · доступы · журнал" },
 ];
 
-const TECHCARD_ROLES = ["engineer", "master", "prodhead", "management", "admin"];
 // ID-6: view grants open these sections read-only; the role sets mirror backend *_view_principal.
 const FULFILLMENT_ROLES = ["engineer", "receiver", "prodhead", "master", "admin"];
 
@@ -44,9 +43,10 @@ export const NAV: NavItem[] = [
   { id: "projects", label: "Проекты", sub: "проекты · состав · спецификация · генератор", permission: "projects", block: "prod" },
   // Product cards with ETKs: in SUPPLYMAP they live inside «Проекты» (kit · generator · ready TCs). Here they are a
   // native screen of their own, so they sit next to «Проекты» instead of merging.
-  { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", roles: TECHCARD_ROLES, block: "prod" },
-  { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "techcards", roles: TECHCARD_ROLES, block: "prod" },
-  { id: "references", label: "Справочник", sub: "операции · оборудование · терминалы · провода · материалы", permission: "references", block: "prod" },
+  // ID-3 (SUPPLYMAP PORTAL_SECTIONS_): each card has its own key and no role list — the matrix alone decides.
+  { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", block: "prod" },
+  { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "prod" },
+  { id: "references", label: "Справочник", sub: "операции · оборудование · терминалы · провода · материалы", permission: "erpref", block: "prod" },
   { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", roles: ["master", "prodhead", "management", "qc", "admin"], block: "prod" },
   { id: "myops", label: "Задания", sub: "мои операции", permission: "production", roles: ["staff", "master", "admin"], block: "prod" },
   // Снабжение. «Оформить заявку» and «Мои заявки» are sections of their own, not actions inside «Заявки»
@@ -66,9 +66,9 @@ export const NAV: NavItem[] = [
   { id: "shipping", label: "Отгрузка", sub: "готовая продукция · отправки", permission: "shipping", roles: ["pm", "receiver", "master", "prodhead", "management", "admin"], block: "stock" },
   // Менеджмент
   { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", roles: ["master", "prodhead", "management", "admin"], block: "mgmt" },
-  { id: "staff", label: "Сотрудники", sub: "справочник, роли, отделы", permission: "identity", minimum: "edit", roles: ["admin"], block: "mgmt" },
-  // NAV-ACCESS: same gate as «Сотрудники» — the backend `identity_edit_principal` (identity edit + admin role).
-  { id: "access", label: "Доступы", sub: "роли × разделы · исключения по сотрудникам", permission: "identity", minimum: "edit", roles: ["admin"], block: "mgmt" },
+  { id: "staff", label: "Сотрудники", sub: "справочник, роли, отделы", permission: "staffdir", minimum: "edit", roles: ["admin"], block: "mgmt" },
+  // NAV-ACCESS: always the administrator's, outside the matrix (SUPPLYMAP portalButtons_ pushes it for role admin).
+  { id: "access", label: "Доступы", sub: "роли × разделы · исключения по сотрудникам", roles: ["admin"], block: "mgmt" },
   { id: "notifications", label: "Уведомления", sub: "мои события", block: "mgmt" },
   { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", roles: ["management", "admin"], block: "mgmt" },
 ];

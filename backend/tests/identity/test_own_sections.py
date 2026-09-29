@@ -10,7 +10,7 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.modules.identity.domain import ROLE_DEFAULTS, ROLES, SECTION_LABELS, AccessMode, role_permissions
+from app.modules.identity.domain import ROLE_DEFAULTS, ROLE_SEED, ROLES, SECTION_LABELS, AccessMode, role_permissions
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
 
@@ -24,12 +24,12 @@ client = TestClient(app)
 
 def test_every_role_files_requests_and_sees_its_own_by_default():
     for role in ROLES:
-        assert ROLE_DEFAULTS[role]["newrequest"] is AccessMode.EDIT, role
-        assert ROLE_DEFAULTS[role]["myrequests"] is AccessMode.EDIT, role
+        assert (ROLE_SEED.get(role) or ROLE_DEFAULTS[role])["newrequest"] is AccessMode.EDIT, role
+        assert (ROLE_SEED.get(role) or ROLE_DEFAULTS[role])["myrequests"] is AccessMode.EDIT, role
 
 
 def test_handout_defaults_follow_who_hands_out_and_who_reads_fulfillment():
-    handout = {role: ROLE_DEFAULTS[role].get("handout") for role in ROLES}
+    handout = {role: (ROLE_SEED.get(role) or ROLE_DEFAULTS[role]).get("handout") for role in ROLES}
     assert handout == {
         "admin": AccessMode.EDIT, "receiver": AccessMode.EDIT,
         "engineer": AccessMode.VIEW, "prodhead": AccessMode.VIEW, "master": AccessMode.VIEW,
@@ -47,7 +47,7 @@ def test_access_screen_lists_the_three_keys_next_to_their_neighbours():
 
 
 def test_closing_requests_keeps_filing_and_own_rows():
-    staff = role_permissions("staff", {"requests": AccessMode.NONE})
+    staff = role_permissions("staff", {**ROLE_SEED["staff"], "requests": AccessMode.NONE})
     assert "requests" not in staff
     assert staff["newrequest"] is AccessMode.EDIT and staff["myrequests"] is AccessMode.EDIT
 

@@ -24,7 +24,7 @@ from .modules.operations import api as operations_api
 from .modules.requests import api as requests_api
 from .modules.techcards import api as techcards_api
 from .modules.techcards import kitset_api as kitsets_api
-from .shared.http_auth import techcards_view_principal
+from .shared.http_auth import techcards_router_principal
 
 app = FastAPI(
     title="Fraxis ERP Next",
@@ -40,14 +40,14 @@ configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, 
 app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=1_048_576,
-    path_limits={"/api/techcards/kitsets": 30 * 1_048_576},
+    path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576},
 )
 app.add_middleware(IdentitySessionMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(
     techcards_api.router,
-    dependencies=[Depends(techcards_view_principal)],
+    dependencies=[Depends(techcards_router_principal)],
 )
 app.include_router(identity_api.router)
 app.include_router(requests_api.router)

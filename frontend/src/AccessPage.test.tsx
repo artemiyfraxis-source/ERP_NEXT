@@ -4,16 +4,16 @@ import { AccessPage, roleModes } from "./AccessPage";
 import type { AccessOverview } from "./api";
 
 const OVERVIEW: AccessOverview = {
-  sections: [{ key: "requests", label: "Заявки" }, { key: "warehouse", label: "Склад" }, { key: "identity", label: "Сотрудники и доступы" }],
+  sections: [{ key: "requests", label: "Заявки" }, { key: "warehouse", label: "Склад" }, { key: "staffdir", label: "Сотрудники" }],
   roles: [{ key: "admin", label: "Технолог" }, { key: "buyer", label: "Специалист по снабжению" }],
   defaults: {
-    admin: { requests: "edit", warehouse: "edit", identity: "edit" },
+    admin: { requests: "edit", warehouse: "edit", staffdir: "edit" },
     buyer: { requests: "edit", warehouse: "view" },
   },
   matrix: { buyer: { warehouse: "none" } },
   users: [
     { id: "u1", login: "admin", name: "Админов", role: "admin", active: true, access: {} },
-    { id: "u2", login: "buyer", name: "Закупкин", role: "buyer", active: true, access: { identity: "view" } },
+    { id: "u2", login: "buyer", name: "Закупкин", role: "buyer", active: true, access: { staffdir: "view" } },
   ],
 };
 
@@ -25,8 +25,8 @@ afterEach(() => vi.restoreAllMocks());
 
 it("computes a role's sections as defaults with the matrix on top", () => {
   expect(roleModes(OVERVIEW, "buyer")).toEqual({ requests: "edit" });
-  expect(roleModes({ ...OVERVIEW, matrix: { buyer: { identity: "view", requests: "view" } } }, "buyer"))
-    .toEqual({ requests: "view", warehouse: "view", identity: "view" });
+  expect(roleModes({ ...OVERVIEW, matrix: { buyer: { staffdir: "view", requests: "view" } } }, "buyer"))
+    .toEqual({ requests: "view", warehouse: "view", staffdir: "view" });
   expect(roleModes(OVERVIEW, "admin")).toEqual(OVERVIEW.defaults.admin);
 });
 
@@ -47,7 +47,7 @@ it("shows the role default in an empty cell and saves the whole matrix", async (
   expect(warehouse.value).toBe("none");
   const requests = screen.getByLabelText("Заявки · Специалист по снабжению") as HTMLSelectElement;
   expect(requests.value).toBe("");
-  expect(within(requests).getByRole("option", { name: "как задумано: полный" })).toBeInTheDocument();
+  expect(within(requests).getByRole("option", { name: "пусто: полный" })).toBeInTheDocument();
 
   const save = screen.getByRole("button", { name: "Сохранить доступы ролей" });
   expect(save).toBeDisabled();
@@ -70,7 +70,7 @@ it("shows the server's refusal to lock every administrator out", async () => {
   });
 
   render(<AccessPage />);
-  fireEvent.change(await screen.findByLabelText("Сотрудники и доступы · Технолог"), { target: { value: "none" } });
+  fireEvent.change(await screen.findByLabelText("Сотрудники · Технолог"), { target: { value: "none" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить доступы ролей" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("хотя бы один администратор");
 });
@@ -96,10 +96,10 @@ it("edits one person's exceptions against what the role gives", async () => {
   const table = screen.getByRole("table", { name: "Исключения: Закупкин" });
   const warehouseRow = within(table).getByText("Склад").closest("tr")!;
   expect(within(warehouseRow).getByText("закрыт")).toBeInTheDocument(); // the matrix closed it for the role
-  expect((screen.getByLabelText("Исключение: Сотрудники и доступы") as HTMLSelectElement).value).toBe("view");
+  expect((screen.getByLabelText("Исключение: Сотрудники") as HTMLSelectElement).value).toBe("view");
 
   fireEvent.change(screen.getByLabelText("Исключение: Склад"), { target: { value: "view" } });
-  fireEvent.change(screen.getByLabelText("Исключение: Сотрудники и доступы"), { target: { value: "" } });
+  fireEvent.change(screen.getByLabelText("Исключение: Сотрудники"), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить исключения" }));
 
   await waitFor(() => expect(saved).toEqual([{ access: { warehouse: "view" } }]));
@@ -127,9 +127,9 @@ it("NAV-SECTIONS: shows «Оформить заявку», «Мои заявки
 
   render(<AccessPage />);
   const filing = await screen.findByLabelText("Оформить заявку · Специалист по снабжению") as HTMLSelectElement;
-  expect(within(filing).getByRole("option", { name: "как задумано: полный" })).toBeInTheDocument();
+  expect(within(filing).getByRole("option", { name: "пусто: полный" })).toBeInTheDocument();
   expect(screen.getByLabelText("Мои заявки · Специалист по снабжению")).toBeInTheDocument();
   const handout = screen.getByLabelText("Выдача со списанием · Специалист по снабжению") as HTMLSelectElement;
-  expect(within(handout).getByRole("option", { name: "как задумано: закрыт" })).toBeInTheDocument();
+  expect(within(handout).getByRole("option", { name: "пусто: закрыт" })).toBeInTheDocument();
   expect(screen.getByLabelText("Выдача со списанием · Технолог")).toBeInTheDocument();
 });

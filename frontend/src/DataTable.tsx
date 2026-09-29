@@ -44,6 +44,9 @@ export interface DataTableProps<T> {
   storageKey?: string;
   label?: string;
   presets?: DataPreset<T>[];
+  /** Счётчики чипов — по строкам, прошедшим поиск и фильтры колонок (без самого чипа), как issFilterRender_ в
+      SUPPLYMAP. По умолчанию — по всем строкам. */
+  presetCountsFollowSearch?: boolean;
   groupBy?: (row: T) => string;
   bulkActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
@@ -134,6 +137,7 @@ export function DataTable<T>({
   storageKey,
   label = "Таблица",
   presets = [],
+  presetCountsFollowSearch = false,
   groupBy,
   bulkActions = [],
   renderDetail,
@@ -162,16 +166,18 @@ export function DataTable<T>({
   const visible = columns.filter((column) => !hidden.includes(column.key));
   const activePreset = presets.find((item) => item.label === preset);
 
+  const searched = useMemo(() => rows.filter((row) => {
+    for (const [key, wanted] of Object.entries(filters)) {
+      if (!wanted) continue;
+      const column = columns.find((item) => item.key === key);
+      if (column && String(column.value(row) ?? "") !== wanted) return false;
+    }
+    return matchesWords(columns.map((column) => column.value(row)), query);
+  }), [rows, columns, filters, query]);
+  const counted = presetCountsFollowSearch ? searched : rows;
+
   const filtered = useMemo(() => {
-    const result = rows.filter((row) => {
-      if (activePreset && !activePreset.test(row)) return false;
-      for (const [key, wanted] of Object.entries(filters)) {
-        if (!wanted) continue;
-        const column = columns.find((item) => item.key === key);
-        if (column && String(column.value(row) ?? "") !== wanted) return false;
-      }
-      return matchesWords(columns.map((column) => column.value(row)), query);
-    });
+    const result = searched.filter((row) => !activePreset || activePreset.test(row));
     if (sort) {
       const column = columns.find((item) => item.key === sort.key);
       if (column) {
@@ -179,7 +185,7 @@ export function DataTable<T>({
       }
     }
     return result;
-  }, [rows, columns, filters, query, sort, activePreset]);
+  }, [searched, columns, sort, activePreset]);
 
   const shown = filtered.slice(0, limit);
   const keys = new Set(rows.map(rowKey));
@@ -308,10 +314,10 @@ export function DataTable<T>({
       )}
       {presets.length > 0 && (
         <div className="calendar-chips" role="group" aria-label="Быстрый отбор">
-          <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {rows.length}</button>
+          <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>
           {presets.map((item) => (
             <button type="button" key={item.label} className={`calendar-chip${preset === item.label ? " active" : ""}`} aria-pressed={preset === item.label} onClick={() => setPreset(preset === item.label ? "" : item.label)}>
-              {item.label} · {rows.filter(item.test).length}
+              {item.label} · {counted.filter(item.test).length}
             </button>
           ))}
         </div>

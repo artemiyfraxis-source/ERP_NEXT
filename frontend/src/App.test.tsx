@@ -209,7 +209,7 @@ it("opens native references at the references route", async () => {
     const path = String(input);
     if (path === "/api/auth/me") return json({
       ...principal,
-      permissions: { references: "view" },
+      permissions: { erpref: "view" },
     });
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     throw new Error(`Unexpected request: ${path}`);
@@ -278,7 +278,7 @@ it("NAV-1: home shows the blocks as tiles and a block shows its section cards in
     ...principal,
     permissions: {
       newrequest: "edit", myrequests: "edit", requests: "edit", receiving: "view", warehouse: "view", production: "view",
-      references: "view",
+      erpref: "view",
     },
   }));
 

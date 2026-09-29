@@ -21,7 +21,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, techcards_admin_principal, techcards_edit_principal
+from app.shared.http_auth import (
+    Principal, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
+    tctemplates_edit_principal, tctemplates_view_principal,
+)
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab, gost_awg_map
 from app.modules.references.technology import TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord
@@ -255,7 +258,7 @@ def _operation_card_result(
 @router.post("/techcards/grapher/import")
 def import_grapher_export(
     payload: GrapherImportPayload,
-    _principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    _principal: Annotated[Principal, Depends(tcgen_principal)],
 ) -> dict:
     try:
         content = base64.b64decode(payload.content_base64, validate=True)
@@ -266,7 +269,7 @@ def import_grapher_export(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
-@router.get("/techcards/templates")
+@router.get("/techcards/templates", dependencies=[Depends(tctemplates_view_principal)])
 def operation_card_templates(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
     references_factory: Annotated[
@@ -287,7 +290,7 @@ def operation_card_templates(
     }
 
 
-@router.get("/techcards/templates/{source_id}")
+@router.get("/techcards/templates/{source_id}", dependencies=[Depends(tctemplates_view_principal)])
 def operation_card_template(
     source_id: str,
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
@@ -306,7 +309,7 @@ def operation_card_template(
 @router.put("/techcards/templates/supplymap-library")
 def import_operation_card_templates(
     payload: OperationLibraryPayload,
-    principal: Annotated[Principal, Depends(techcards_admin_principal)],
+    principal: Annotated[Principal, Depends(tctemplates_admin_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
 ) -> dict:
@@ -327,7 +330,7 @@ def import_operation_card_templates(
 def edit_operation_card_template(
     source_id: str,
     payload: OperationRecordPayload,
-    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    principal: Annotated[Principal, Depends(tctemplates_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
     references_factory: Annotated[
@@ -349,7 +352,7 @@ def edit_operation_card_template(
     return _operation_card_result(card, detail=True, norms=_operation_norms(references_factory))
 
 
-@router.get("/techcards/projects")
+@router.get("/techcards/projects", dependencies=[Depends(techcards_view_principal)])
 def project_techcards(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
 ) -> dict:
@@ -377,7 +380,7 @@ def add_project_techcard(
     return _card_result(card)
 
 
-@router.get("/techcards/projects/{card_id}")
+@router.get("/techcards/projects/{card_id}", dependencies=[Depends(techcards_view_principal)])
 def project_techcard(
     card_id: UUID,
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
@@ -411,7 +414,7 @@ def rebuild_project_etk(
 def auto_build_project_etk(
     card_id: UUID,
     payload: AutoBuildTechcardPayload,
-    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    principal: Annotated[Principal, Depends(tcgen_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
     references_factory: Annotated[
@@ -521,7 +524,7 @@ def edit_project_etk_operation(
     return _card_result(card)
 
 
-@router.get("/techcards/projects/{card_id}/revisions")
+@router.get("/techcards/projects/{card_id}/revisions", dependencies=[Depends(techcards_view_principal)])
 def project_etk_revisions(
     card_id: UUID,
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
@@ -621,7 +624,7 @@ def _выдать(шаги, предупреждения: list[str]) -> dict:
     }
 
 
-@router.post("/route/harness")
+@router.post("/route/harness", dependencies=[Depends(tcgen_principal)])
 def route_harness(body: ЖгутIn) -> dict:
     """Маршрут обычной кабельной сборки."""
     сборка = Сборка(
@@ -636,7 +639,7 @@ def route_harness(body: ЖгутIn) -> dict:
     return _выдать(*построить(сборка))
 
 
-@router.post("/route/coax")
+@router.post("/route/coax", dependencies=[Depends(tcgen_principal)])
 def route_coax(body: КоаксIn) -> dict:
     """Маршрут коаксиальной сборки."""
     сборка = КоаксСборка(

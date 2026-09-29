@@ -98,3 +98,66 @@ def test_api_lists_acts_and_prints_one(api):
     assert client.get(f"/api/receiving/{line.id}/acts/complaint").status_code == 422
     assert client.get(f"/api/receiving/{line.id}/acts/unknown").status_code == 404
 
+
+
+def test_incoming_act_carries_manufacturer_country_and_quality_document(erp):
+    receiving, _, _ = erp
+    message = expected_message()
+    message = replace(
+        message,
+        payload={
+            **message.payload,
+            "manufacturer": "АО Разъём",
+            "country": "Россия",
+            "quality_document_type": "Паспорт",
+            "quality_document_number": "П-17",
+            "quality_document_date": "2026-09-01",
+            "standard": "ГОСТ 23784-98",
+        },
+    )
+    line = consume_receiving_expected(message, receiving())
+    assert (line.manufacturer, line.country, line.quality_document_date) == ("АО Разъём", "Россия", date(2026, 9, 1))
+
+    # Приёмщик уточняет № документа качества; незаполненное в форме остаётся из заказа.
+    line = run(receiving, line, replace(inspection(), quality_document_number="П-18"))
+
+    rows = {row[1]: row[2] for row in build_act_print_sheet(line, "incoming").rows}
+    assert rows["Производитель"] == "АО Разъём"
+    assert rows["Страна"] == "Россия"
+    assert rows["Тип документа по качеству"] == "Паспорт"
+    assert rows["№ документа по качеству"] == "П-18"
+    assert rows["Дата документа по качеству"] == "01.09.2026"
+    assert rows["Стандарт"] == "ГОСТ 23784-98"
+
+
+def test_api_takes_quality_details_from_the_inspection_form(api):
+    client, receiving, _ = api
+    line = consume_receiving_expected(expected_message(), receiving())
+
+    response = client.post(
+        f"/api/receiving/{line.id}/inspect",
+        json={
+            "version": line.version,
+            "fact_quantity": "10",
+            "document_quantity": "10",
+            "shipping_document_url": "https://files.test/upd.pdf",
+            "expiry_date": "2027-01-01",
+            "manufacturer": "АО Разъём",
+            "country": "Китай",
+            "quality_document_number": "С-5",
+            "quality_document_date": "2026-08-30",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()["line"]
+    assert (body["manufacturer"], body["country"], body["quality_document_number"]) == ("АО Разъём", "Китай", "С-5")
+    assert body["quality_document_date"] == "2026-08-30"
+
+
+def test_stock_name_comes_from_the_upd_name(erp):
+    from app.modules.receiving.application import _warehouse_payload
+
+    receiving, _, _ = erp
+    line = consume_receiving_expected(expected_message(), receiving())
+    assert _warehouse_payload(line)["name"] == "Разъём 1"
+    assert _warehouse_payload(replace(line, document_name="Вилка 2РМ14"))["name"] == "Вилка 2РМ14"

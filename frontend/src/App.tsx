@@ -31,6 +31,7 @@ import { TechcardsPage } from "./TechcardsPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { StaffPage } from "./StaffPage";
 import { AccessPage } from "./AccessPage";
+import { ProfilePanel } from "./ProfilePanel";
 
 // «Режим просмотра» (ID-6): edit controls only when the backend *_edit_principal would pass too.
 function canEdit(principal: Principal, permission: string, roles: string[]) {
@@ -150,6 +151,7 @@ export function App() {
         <div className="profile side-foot">
           <strong>{principal.user.name}</strong>
           <span>{principal.user.department}</span>
+          <ProfilePanel />
           <button
             className="link-button"
             onClick={() => void signOut()}

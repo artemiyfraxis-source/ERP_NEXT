@@ -69,7 +69,7 @@ def create_user(args: argparse.Namespace, sessions: sessionmaker[Session]) -> No
             session,
             user,
             hash_password(password),
-            # The role's sections = ROLE_DEFAULTS + the «Доступы» matrix; nothing is seeded (NAV-ACCESS).
+            # The role's sections = its «Доступы» matrix row (empty = closed, admin = edit everywhere).
             user_access=user_access,
         )
         session.commit()

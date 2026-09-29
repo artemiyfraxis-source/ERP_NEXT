@@ -13,8 +13,8 @@ function layout(principal: Principal) {
 }
 
 const ALL_EDIT = Object.fromEntries(
-  ["identity", "projects", "techcards", "newrequest", "myrequests", "requests", "procurement",
-    "receiving", "warehouse", "fulfillment", "handout", "production", "shipping", "references", "operations"].map((key) => [key, "edit" as AccessMode]),
+  ["staffdir", "projects", "techcards", "erptctpl", "tcgen", "newrequest", "myrequests", "requests", "procurement",
+    "receiving", "warehouse", "fulfillment", "handout", "production", "shipping", "erpref", "operations"].map((key) => [key, "edit" as AccessMode]),
 );
 
 it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order", () => {
@@ -30,11 +30,11 @@ it("shows the administrator every block with SUPPLYMAP's cards in order, ERP-onl
   });
 });
 
-// Permissions below mirror backend identity ROLE_DEFAULTS for each role.
+// Permissions below mirror backend identity ROLE_SEED (written as matrix cells by migration 0046) for each role.
 const OWN = { newrequest: "edit", myrequests: "edit" } as const;
 it("gives a rank-and-file employee the request form, own rows and read-only stock", () => {
   expect(layout(as("staff", {
-    ...OWN, requests: "edit", receiving: "view", warehouse: "view", production: "view", references: "view",
+    ...OWN, requests: "edit", receiving: "view", warehouse: "view", production: "view", erpref: "view",
   }))).toEqual({
     "Производство": ["Справочник", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки"],
@@ -45,7 +45,7 @@ it("gives a rank-and-file employee the request form, own rows and read-only stoc
 
 it("gives the buyer the whole supply block and the stock view", () => {
   expect(layout(as("buyer", {
-    ...OWN, requests: "edit", procurement: "edit", warehouse: "view", references: "view",
+    ...OWN, requests: "edit", procurement: "edit", warehouse: "view", erpref: "view",
   }))).toEqual({
     "Производство": ["Справочник"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
@@ -57,7 +57,7 @@ it("gives the buyer the whole supply block and the stock view", () => {
 it("gives the storekeeper picking and handout as two sections", () => {
   expect(layout(as("receiver", {
     ...OWN, receiving: "edit", warehouse: "edit", fulfillment: "edit", handout: "edit", shipping: "edit",
-    procurement: "view", references: "view",
+    procurement: "view", erpref: "view",
   }))).toEqual({
     "Производство": ["Справочник"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Лист закупки"],
@@ -68,7 +68,7 @@ it("gives the storekeeper picking and handout as two sections", () => {
 
 it("gives the shop master planning, tasks and the production plan", () => {
   expect(layout(as("master", {
-    ...OWN, receiving: "view", warehouse: "view", fulfillment: "view", handout: "view", production: "edit", shipping: "view", references: "view",
+    ...OWN, receiving: "view", warehouse: "view", fulfillment: "view", handout: "view", production: "edit", shipping: "view", erpref: "view",
   }))).toEqual({
     "Производство": ["Справочник", "Ресурсное планирование", "Задания"],
     "Снабжение": ["Оформить заявку", "Мои заявки"],
@@ -98,15 +98,23 @@ it("hides a block with no section the principal may open", () => {
   expect(blocks.map((block) => block.title)).toEqual(["Менеджмент"]);
 });
 
-it("does not open a section on a grant alone when the role is outside its set", () => {
-  // Procurement edit for a non-buyer role and techcards for a role outside the ETK set stay hidden (ID-6).
-  const blocks = layout(as("staff", { procurement: "edit", techcards: "edit" }));
+it("does not open procurement on a grant alone when the role is outside its set", () => {
+  // Procurement edit for a non-buyer role stays hidden (ID-6).
+  const blocks = layout(as("staff", { procurement: "edit" }));
   expect(blocks["Снабжение"]).toBeUndefined();
-  expect(blocks["Производство"]).toBeUndefined();
 });
 
-it("opens «Доступы» only to an administrator who can edit identity", () => {
-  expect(layout(as("admin", { ...ALL_EDIT, identity: "view" }))["Менеджмент"]).not.toContain("Доступы");
-  expect(layout(as("buyer", { identity: "edit" }))["Менеджмент"]).toEqual(["Уведомления"]);
-  expect(layout(as("admin", { identity: "edit" }))["Менеджмент"]).toEqual(["Сотрудники", "Доступы", "Уведомления"]);
+it("opens techcards, templates and the reference book by their own keys to any role (ID-3)", () => {
+  expect(layout(as("staff", { techcards: "view" }))["Производство"]).toEqual(["Техкарты проектов"]);
+  expect(layout(as("master", { erptctpl: "view" }))["Производство"]).toEqual(["Шаблоны техкарт"]);
+  expect(layout(as("pm", { erpref: "view" }))["Производство"]).toEqual(["Справочник"]);
+  // The generator has no card of its own (SUPPLYMAP: a right, not a screen).
+  expect(layout(as("staff", { tcgen: "view" }))["Производство"]).toBeUndefined();
+});
+
+it("opens «Доступы» to every administrator and «Сотрудники» by staffdir", () => {
+  expect(layout(as("admin", { ...ALL_EDIT, staffdir: "view" }))["Менеджмент"]).toContain("Доступы");
+  expect(layout(as("admin", { ...ALL_EDIT, staffdir: "view" }))["Менеджмент"]).not.toContain("Сотрудники");
+  expect(layout(as("buyer", { staffdir: "edit" }))["Менеджмент"]).toEqual(["Уведомления"]);
+  expect(layout(as("admin", { staffdir: "edit" }))["Менеджмент"]).toEqual(["Сотрудники", "Доступы", "Уведомления"]);
 });

@@ -88,6 +88,12 @@ class ReceivingLineRow(Base):
     document_name: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
     inspection_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     manufacture_date: Mapped[Any | None] = mapped_column(Date)
+    manufacturer: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    country: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    quality_document_type: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    quality_document_number: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    standard: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    quality_document_date: Mapped[Any | None] = mapped_column(Date)
     split_of_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("receiving_lines.id", ondelete="RESTRICT"), index=True
     )
@@ -155,6 +161,12 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         document_name=line.document_name,
         inspection_note=line.inspection_note,
         manufacture_date=line.manufacture_date,
+        manufacturer=line.manufacturer,
+        country=line.country,
+        quality_document_type=line.quality_document_type,
+        quality_document_number=line.quality_document_number,
+        standard=line.standard,
+        quality_document_date=line.quality_document_date,
         split_of_id=line.split_of_id,
         vk_act_number=line.vk_act_number,
         vk_act_date=line.vk_act_date,
@@ -224,6 +236,12 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         document_name=row.document_name or "",
         inspection_note=row.inspection_note or "",
         manufacture_date=row.manufacture_date,
+        manufacturer=row.manufacturer or "",
+        country=row.country or "",
+        quality_document_type=row.quality_document_type or "",
+        quality_document_number=row.quality_document_number or "",
+        standard=row.standard or "",
+        quality_document_date=row.quality_document_date,
         split_of_id=row.split_of_id,
         vk_act_number=row.vk_act_number or "",
         vk_act_date=row.vk_act_date,

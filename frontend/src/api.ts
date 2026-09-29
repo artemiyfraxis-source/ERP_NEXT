@@ -235,6 +235,12 @@ export interface ReceivingLine {
   document_name?: string;
   inspection_note?: string;
   manufacture_date?: string | null;
+  manufacturer?: string;
+  country?: string;
+  quality_document_type?: string;
+  quality_document_number?: string;
+  quality_document_date?: string | null;
+  standard?: string;
   split_of_id?: string | null;
   /** RC-9: выпущенные акты строки — печатаются бланком. */
   acts?: { kind: string; title: string; number: string; date: string | null }[];
@@ -443,6 +449,8 @@ export interface FulfillmentRequest {
   handout_location: string | null;
   return_location: string | null;
   fully_reserved: boolean;
+  /** НЕДОБОР (issueShortText_): what a lot does not close yet. */
+  shortfall?: string;
   /** issueProjectOf_: the part of НАЗНАЧЕНИЕ before « · »; "" for a manual request. */
   project?: string;
   /** FF-4 stage dates by the first hit: В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА. */
@@ -474,6 +482,8 @@ export interface FulfillmentDraftLine {
   name: string;
   unit: string;
   requirement: string;
+  /** The picked warehouse lot (IssueForm FIFO pick); reserved when the request is created. */
+  lot_id?: string;
 }
 
 export interface ProductionOperator {
@@ -816,10 +826,10 @@ export interface Shipment {
   shipping_point: string;
   contact: string;
   phone: string;
-  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК";
+  terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
   carrier: string;
   deadline: string | null;
-  upd_type: "ЭДО" | "БУМАГА";
+  upd_type: "ЭДО" | "БУМАГА" | null;
   upd_number: string;
   upd_date: string | null;
   upd_url: string;
@@ -878,6 +888,18 @@ export interface ReferenceMaps {
   suppliers: ReferencePair[];
   countries: ReferencePair[];
   gost_awg: ReferencePair[];
+  /** Which maps this user may change: supplier/country — «Лист закупки» on edit, ГОСТ→AWG — «Справочник» on edit. */
+  can_edit?: { suppliers: boolean; gost_awg: boolean };
+}
+
+/** A tile of «Справочник» (SUPPLYMAP portalRefList): a base with its record count. */
+export interface ReferenceBase {
+  id: string;
+  label: string;
+  editable: boolean;
+  icon: string;
+  sub: string;
+  count: number | null;
 }
 
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
@@ -1100,7 +1122,22 @@ export const identityApi = {
       body: JSON.stringify({ login, password }),
     }),
   logout: () => api<void>("/api/auth/logout", { method: "POST" }),
+  profile: () => api<OwnProfile>("/api/auth/profile"),
+  changePassword: (current: string, next: string) =>
+    api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
 };
+
+/** The signed-in employee as the header shows them (SUPPLYMAP portalState_: role, department, site). */
+export interface OwnProfile {
+  name: string;
+  login: string;
+  email: string;
+  department: string;
+  role: string;
+  role_label: string;
+  site: string;
+  site_label: string;
+}
 
 /** ID-8 «Сотрудники»: the directory as the administrator sees it. No password ever comes back. */
 export interface Employee {
@@ -1784,6 +1821,10 @@ export const shippingApi = {
   }),
   print: (shipmentId: string, document: "pl" | "dn") => api<{ sheets: PrintSheet[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
   addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
+  /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
+  uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
+    method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
+  }),
   saveAddressee: (payload: Record<string, unknown>) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-addressee", {
     method: "PUT", body: JSON.stringify(payload),
   }),
@@ -1794,6 +1835,7 @@ export const shippingApi = {
 };
 
 export const referencesApi = {
+  bases: () => api<{ bases: ReferenceBase[] }>("/api/references/bases"),
   maps: () => api<ReferenceMaps>("/api/references/maps"),
   saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
     method: "PUT",

@@ -102,6 +102,7 @@ class FulfillmentLine:
         self,
         lot: LotSnapshot,
         quantity: Decimal,
+        unit: str | None = None,
     ) -> tuple[FulfillmentLine, FulfillmentLine | None]:
         if self.issued > 0:
             raise FulfillmentValidationError("Выданную позицию нельзя перепривязать")
@@ -110,7 +111,9 @@ class FulfillmentLine:
         amount = _positive(quantity, "Резерв")
         if amount > self.requirement:
             raise FulfillmentValidationError("Резерв не может превышать потребность")
-        bound = replace(self, requirement=amount, reserved=amount, lot=lot)
+        # issueAttachLot_: the bound row takes the lot's ЕД.ИЗМ; the remainder row keeps the position's own unit.
+        lot_unit = str(unit or "").strip()
+        bound = replace(self, requirement=amount, reserved=amount, lot=lot, unit=lot_unit or self.unit)
         remainder = None
         if amount < self.requirement:
             remainder = replace(
@@ -247,7 +250,11 @@ class FulfillmentRequest:
         line_id: UUID,
         lot: LotSnapshot,
         quantity: Decimal,
+        unit: str | None = None,
+        *,
+        touch: bool = True,
     ) -> FulfillmentRequest:
+        """touch=False — the reserve made while the request is created (issueCreateTasks_): it stays «Новая»."""
         self._require_editable()
         updated: list[FulfillmentLine] = []
         found = False
@@ -256,7 +263,7 @@ class FulfillmentRequest:
                 updated.append(line)
                 continue
             found = True
-            bound, remainder = line.bind(lot, quantity)
+            bound, remainder = line.bind(lot, quantity, unit)
             updated.append(bound)
             if remainder is not None:
                 updated.append(remainder)
@@ -264,8 +271,23 @@ class FulfillmentRequest:
             raise FulfillmentValidationError("Позиция заявки не найдена")
         # FF-3 (Issue.gs issueHeadSync_): the first bound lot moves «Новая» → «Недоукомплектован» and nothing else;
         # «Укомплектован» is a separate manual step (`mark_complete`) with the whole-kit gate.
-        status = FulfillmentStatus.UNDERFILLED if self.status is FulfillmentStatus.NEW else self.status
+        status = FulfillmentStatus.UNDERFILLED if touch and self.status is FulfillmentStatus.NEW else self.status
         return replace(self, lines=tuple(updated), status=status, version=self.version + 1)
+
+    @property
+    def shortfall(self) -> str:
+        """НЕДОБОР of the header (Issue.gs issueShortText_): what a lot does not close yet is what we wait for."""
+        def number(value: Decimal) -> str:
+            return format(value.quantize(Decimal("0.01")).normalize(), "f")
+
+        parts = []
+        for line in self.lines:
+            picked = line.issued if line.issued > 0 else line.reserved
+            if picked >= line.requirement:
+                continue
+            where = f" ({line.lot.grn})" if line.lot else " (ГРН не выбран)"
+            parts.append(f"{line.name}{where}: −{number(line.requirement - picked)}")
+        return "; ".join(parts)
 
     def open_lines(self) -> tuple[FulfillmentLine, ...]:
         """Lines a lot does not close yet (issueStatusSweep_: КОЛ-ВО < ПОТРЕБНОСТЬ)."""
@@ -322,6 +344,12 @@ class FulfillmentRequest:
                 updated.append(line)
         if not released:
             raise FulfillmentValidationError("Позиция заявки не найдена")
+        # FF-6, Issue.gs issueMergeFreePlan_: after a lot is removed, every FREE row (no lot, no reserve, no issue) of
+        # one article + name + unit folds into the first such row — also rows that came from different positions of
+        # the composition; the need is summed. A row with a lot, reserve or issue keeps its own quantity.
+        def free_key(line: FulfillmentLine) -> tuple[str, str, str]:
+            return tuple(str(value or "").strip().casefold() for value in (line.article, line.name, line.unit))
+
         merged: list[FulfillmentLine] = []
         for line in updated:
             if line.lot is not None or line.reserved > 0 or line.issued > 0:
@@ -331,9 +359,10 @@ class FulfillmentRequest:
                 (
                     index
                     for index, candidate in enumerate(merged)
-                    if candidate.requirement_id == line.requirement_id
-                    and candidate.lot is None
+                    if candidate.lot is None
+                    and candidate.reserved == 0
                     and candidate.issued == 0
+                    and free_key(candidate) == free_key(line)
                 ),
                 None,
             )
