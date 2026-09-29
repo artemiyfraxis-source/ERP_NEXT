@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
+import logging
 from typing import Any, Iterable, Protocol
 from uuid import UUID, uuid4
 
@@ -178,6 +179,7 @@ def load_kitset(
     techcards_uow: Callable[[], TechcardsUnitOfWork],
     production_uow: Callable[[], PlanUnitOfWork] | None,
     shipping_uow: Callable[[], ShippingUnitOfWork] | None,
+    enqueue_names: Callable[[str], None] | None = None,
 ) -> LoadKitsetResult:
     """`tcKitsetLoadFromCalc`: create or refresh the card. `number` overrides the calculation's number: typed
     at creation, and passed by «Обновить из расчёта» so the refresh does not open a second card under the
@@ -244,6 +246,12 @@ def load_kitset(
             ), production_uow())
         except Exception as error:  # noqa: BLE001
             result.deadline_error = str(error)
+    # tcKitNamesEnqueue_: пустые наименования добирает фон (kitset_names_tick) по ссылкам из расчёта.
+    if enqueue_names is not None:
+        try:
+            enqueue_names(kitset.project)
+        except Exception:  # noqa: BLE001 — очередь имён не роняет заведение
+            logging.exception("tcKitNamesEnqueue_:%s", kitset.project)
     return result
 
 
