@@ -1,0 +1,110 @@
+"""STAFF-IMPORT: the SUPPLYMAP staff snapshot → ERP employees, each with a fresh PIN printed for the owner
+(owner ask 2026-09-29 «перенести сотрудников из гугла … все пины мне»)."""
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.modules.identity.application import login_with_pin
+from app.modules.identity.import_staff import (
+    ROLE_MAP,
+    SourceEmployee,
+    import_staff,
+    read_source,
+    staff_id,
+)
+from app.modules.identity.infrastructure import SqlAlchemyIdentityUnitOfWork
+from app.shared.persistence import create_schema
+
+
+NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+
+CONFIG_GS = """
+// preamble
+var STAFF_BY_EMAIL = {
+  'ivan@example.test':   { name: 'Иван Иванов',   dept: 'Цех',  role: 'admin' },
+  'petr@example.test':   { name: 'Пётр Петров',   dept: 'Склад' }, // no role → staff fallback
+  'sveta@example.test':  { name: 'Света Светова', dept: 'Офис', role: 'master' },
+};
+
+var SOMETHING_ELSE = 1;
+"""
+
+ACCESS_BACKUP = '{"staff": [' \
+    '{"email": "ivan@example.test", "name": "Иван Иванов", "role": "admin"},' \
+    '{"email": "petr@example.test", "name": "Пётр Петров", "role": "receiver"}' \
+    ']}'
+
+
+@pytest.fixture
+def source(tmp_path: Path) -> Path:
+    (tmp_path / "Config.gs").write_text(CONFIG_GS, encoding="utf-8")
+    (tmp_path / "_local").mkdir()
+    (tmp_path / "_local" / "access-backup-2026-09-01.json").write_text(ACCESS_BACKUP, encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture
+def sessions():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    create_schema(engine)
+    return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def _uow(sessions):
+    return lambda: SqlAlchemyIdentityUnitOfWork(sessions)
+
+
+def test_read_source_merges_config_names_with_backup_roles(source):
+    people = read_source(source)
+    by_email = {person.email: person for person in people}
+    # Config carries name + department; the access backup's role wins over the seed's (petr: staff seed → receiver).
+    assert by_email["petr@example.test"] == SourceEmployee(
+        email="petr@example.test", name="Пётр Петров", department="Склад", role="receiver",
+    )
+    assert by_email["ivan@example.test"].role == "admin"
+    assert by_email["sveta@example.test"].role == "master"  # not in the backup → the seed's role
+
+
+def test_dry_run_writes_nothing_and_issues_a_pin_each(source, sessions):
+    rows = import_staff(read_source(source), _uow(sessions)(), NOW, apply=False, reset_pins=False)
+    assert len(rows) == 3
+    assert all(row.action == "создан" and row.pin and len(row.pin) == 6 for row in rows)
+    with _uow(sessions)() as uow:  # nothing was committed
+        assert uow.identity.all_users() == []
+
+
+def test_apply_creates_everyone_and_login_works_then_is_idempotent(source, sessions):
+    people = read_source(source)
+    rows = import_staff(people, _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    ivan = next(row for row in rows if row.name == "Иван Иванов")
+
+    # Sign in by name (the opaque staff id from /login-staff) + the issued PIN.
+    who = str(staff_id("ivan@example.test"))
+    result = login_with_pin(who, ivan.pin, NOW, _uow(sessions)(), client_key="k")
+    assert result.principal.email == "ivan@example.test"
+
+    # Re-running touches the same rows: nobody is duplicated and PINs are kept.
+    again = import_staff(read_source(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    assert all(row.action == "пропущен (уже есть)" and row.pin is None for row in again)
+    with _uow(sessions)() as uow:
+        assert len(uow.identity.all_users()) == 3
+
+
+def test_reset_pins_reissues_for_existing(source, sessions):
+    import_staff(read_source(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
+    rows = import_staff(read_source(source), _uow(sessions)(), NOW, apply=True, reset_pins=True)
+    assert all(row.action == "PIN перевыдан" and row.pin for row in rows)
+    ivan = next(row for row in rows if row.name == "Иван Иванов")
+    who = str(staff_id("ivan@example.test"))
+    assert login_with_pin(who, ivan.pin, NOW, _uow(sessions)(), client_key="k2").principal.email == "ivan@example.test"
+
+
+def test_role_map_covers_current_supplymap_roles():
+    assert set(ROLE_MAP) >= {"admin", "buyer", "receiver", "prodhead", "master", "management", "staff"}

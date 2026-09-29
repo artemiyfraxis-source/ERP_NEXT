@@ -158,9 +158,34 @@ def test_admin_creates_an_employee_who_can_log_in(staff_api):
         assert session.get(IdentityRoleAccessRow, ("master", "production")).mode == "edit"
 
 
+def test_create_issues_and_returns_a_pin_when_the_field_is_blank(staff_api):
+    # Owner 2026-09-29 «все пины мне … чтобы я мог заводить новых сам»: a blank PIN is generated and shown once.
+    admin = _client("admin", "admin-password")
+    body = {"email": "novichok@example.test", "name": "Новичок", "department": "Цех", "role": "staff"}
+    response = admin.post("/api/auth/staff", json=body)
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    pin = payload["pin"]
+    assert len(pin) == 6 and pin.isdigit() and pin[0] != "0"
+    assert payload["user"]["pin_set"] is True
+    # The employee can sign in by name (their id) + the shown PIN right away — no first-login reveal step.
+    who = payload["user"]["id"]
+    assert TestClient(app).post("/api/auth/pin-login", json={"who": who, "pin": pin}).status_code == 200
+
+
+def test_create_returns_the_pin_the_admin_typed(staff_api):
+    admin = _client("admin", "admin-password")
+    body = {"email": "svoi@example.test", "name": "Свой", "department": "Цех", "role": "staff", "pin": "246802"}
+    payload = admin.post("/api/auth/staff", json=body).json()
+    assert payload["pin"] == "246802"
+
+
 @pytest.mark.parametrize(
     ("change", "status"),
     [
+        ({"pin": "12a456"}, 422),
+        ({"pin": "12345"}, 422),
         ({"email": "buyer@example.test"}, 409),
         ({"login": "buyer"}, 409),
         ({"login": "admin@example.test"}, 409),  # login and e-mail share one namespace
