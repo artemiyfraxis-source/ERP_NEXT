@@ -185,7 +185,7 @@ export function App() {
               disabled={switching}
               onClick={() => void toggleAdmin()}
             >
-              {switching ? "…" : principal.admin_mode ? "🛡 Выйти из админа" : "🛡 Режим админа"}
+              {switching ? "…" : principal.admin_mode ? "Выйти из админа" : "Режим админа"}
             </button>
           )}
           <ProfilePanel />

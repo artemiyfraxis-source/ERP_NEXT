@@ -568,7 +568,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
       presets={templatePresets}
       groupBy={(item) => recordCategory(item.code)}
       exportName="Шаблоны техкарт"
-      toolbar={<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>📄 Шаблоны-листы</button>}
+      toolbar={<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>}
     />
     </>}
     </>}

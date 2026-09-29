@@ -85,7 +85,7 @@ it("adds a missing coax connector to БД.КОАКС through the references reco
   expect(await screen.findByRole("tab", { name: "КОАКС", selected: true })).toBeInTheDocument();
   expect(screen.getByText("⚠ «SMA-J» нет в БД.КОАКС — добавьте ниже")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("d1 A"), { target: { value: "0,51" } });
-  fireEvent.click(screen.getByRole("button", { name: "➕ Добавить в БД.КОАКС" }));
+  fireEvent.click(screen.getByRole("button", { name: "Добавить в БД.КОАКС" }));
 
   await waitFor(() => expect(created).toEqual({ tab: "coax", fields: {
     coaxArticle: "SMA-J", coaxWire: "RG316", d1: "0,51", pinType: "пайка", shieldType: "обжим", connArticle: "SMA-J",

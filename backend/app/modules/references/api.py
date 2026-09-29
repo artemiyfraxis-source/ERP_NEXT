@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Sequence
 
 from uuid import UUID
 
@@ -21,7 +21,7 @@ from .application import (
     StaleRecordError, UnitOfWork, create_record, edit_record, replace_maps, replace_snapshot,
 )
 from .domain import (
-    BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError,
+    BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
     TechOperationTab,
 )
 from .technology import (
@@ -30,6 +30,7 @@ from .technology import (
     fold_wire_section,
     import_supplymap_snapshot,
     resolve_terminal,
+    schema_keys,
     wire_section,
 )
 
@@ -152,6 +153,19 @@ def save_maps(payload: MapsPayload, principal: Annotated[Principal, Depends(refe
     return {**_maps(entries), "can_edit": rights}
 
 
+def _columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord]) -> list[str]:
+    """Known sheet schema first (so an empty tab still has a create form). ОБ/ОП/ТЕР/КОАКС: the sheet's own columns
+    kept by the import, without the schema values derived from them; a snapshot without them shows the schema keys."""
+    if tab in BASE_COLUMNS:
+        return list(BASE_COLUMNS[tab])
+    if not tab or not records:
+        return []
+    keys = schema_keys(tab.value)
+    richest = max(records, key=lambda item: sum(1 for key in item.fields if key not in keys))
+    sheet = [key for key in richest.fields if key not in keys]
+    return sheet or list(richest.fields)
+
+
 @router.get("/tech-operations")
 def tech_operations(
     _principal: Annotated[Principal, Depends(references_view_principal)],
@@ -170,7 +184,7 @@ def tech_operations(
             "imported_at": metadata["imported_at"].isoformat(),
         },
         # Known sheet schema first (so an empty tab still has a create form), else the first row's keys.
-        "columns": list(BASE_COLUMNS[tab]) if tab in BASE_COLUMNS else (list(records[0].fields) if tab and records else []),
+        "columns": _columns(tab, records),
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet, "fields": item.fields,

@@ -252,7 +252,7 @@ describe("RequestsPage", () => {
 
     render(<RequestsPage principal={principal} view="create" />);
     await screen.findByRole("button", { name: "Создать заявку" });
-    fireEvent.click(screen.getByRole("button", { name: "📥 Вставить из Excel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
 
     fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон из Excel/), {
       target: { value: "Наименование\tКоличество\tЕдиница\nРазъём SMA\t3\tшт\nКабель РК\t10\tм" },
@@ -287,7 +287,7 @@ describe("RequestsPage", () => {
 
     render(<RequestsPage principal={principal} view="create" />);
     await screen.findByRole("button", { name: "Создать заявку" });
-    fireEvent.click(screen.getByRole("button", { name: "📥 Вставить из Excel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
     fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон из Excel/), {
       target: { value: "Наименование\tЦвет\nРазъём\tкрасный" },
     });
@@ -329,7 +329,7 @@ describe("RequestsPage", () => {
 
     render(<RequestsPage principal={principal} view="create" />);
     await screen.findByRole("button", { name: "Создать заявку" });
-    fireEvent.click(screen.getByRole("button", { name: "🧮 Из расчёта" }));
+    fireEvent.click(screen.getByRole("button", { name: "Из расчёта" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Загрузить" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Вставь ссылку");
@@ -376,7 +376,7 @@ describe("RequestsPage", () => {
 
     render(<RequestsPage principal={principal} view="create" />);
     await screen.findByRole("button", { name: "Создать заявку" });
-    fireEvent.click(screen.getByRole("button", { name: "🧮 Из расчёта" }));
+    fireEvent.click(screen.getByRole("button", { name: "Из расчёта" }));
     fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон листа ЗКП/), {
       target: { value: "Тип\tОбозначение\tНа проект\tБез НДС\nКабель\tМГТФ\t2\t10" },
     });
@@ -436,12 +436,12 @@ describe("RequestsPage", () => {
 
     render(<RequestsPage principal={principal} view="create" />);
     await screen.findByRole("button", { name: "Создать заявку" });
-    fireEvent.click(screen.getByRole("button", { name: "📥 Вставить из Excel" }));
-    fireEvent.click(screen.getByRole("button", { name: "⧉ Скопировать заголовки" }));
+    fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Скопировать заголовки" }));
     await waitFor(() => expect(writeText).toHaveBeenCalled());
     expect(writeText.mock.calls[0][0]).toContain("Наименование *\tТип *\tКатегория\tАртикул КД");
     expect(await screen.findByText(/Заголовки скопированы/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "⬇ Скачать шаблон (.csv)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Скачать шаблон (.csv)" }));
     expect(click).toHaveBeenCalled();
 
     fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон из Excel/), {

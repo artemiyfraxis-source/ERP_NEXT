@@ -16,7 +16,7 @@ from app.modules.references.application import ReplaceSnapshotCommand, TechRecor
 from app.modules.references.domain import TechOperationTab
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_mirror import ACTOR, MirrorLoadError, default_source, format_report, load_mirror, main, read_mirror
-from app.modules.references.technology import import_supplymap_snapshot
+from app.modules.references.technology import import_supplymap_snapshot, schema_keys
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
 
@@ -131,24 +131,33 @@ def only(records, tab):
     return record
 
 
+def schema(record):
+    """The schema values of a record; its sheet columns are checked separately."""
+    keys = schema_keys(record.tab.value)
+    return {key: value for key, value in record.fields.items() if key in keys}
+
+
 def test_tech_bases_are_built_like_the_gas_exporter(tmp_path):
     tables = read_mirror(mirror(tmp_path)).tables
 
     op, = tables["op"]
     assert (op.display_text, op.search_text, op.sort_key, op.source_sheet) == (
         "Резка | CUT_WIRE_auto", "cut_wire_autoрезка", "Резка", "БД.ОП")
-    assert op.fields == {"opNumber": "CUT_WIRE_auto", "opName": "Резка", "tOp": "3,50", "tPrep": "180", "tMachine": "3,50"}
+    assert schema(op) == {"opNumber": "CUT_WIRE_auto", "opName": "Резка", "tOp": "3,50", "tPrep": "180", "tMachine": "3,50"}
     ob, = tables["ob"]
-    assert (ob.display_text, ob.search_text, ob.sort_key, ob.fields) == (
+    assert (ob.display_text, ob.search_text, ob.sort_key, schema(ob)) == (
         "DT-8920/Дифманометр", "dt-8920/дифманометр", "Инструмент DT-8920/Дифманометр", {"obType": "Инструмент"})
     coax, = tables["coax"]
     assert (coax.display_text, coax.search_text, coax.sort_key) == (
         "BNC-male | RG58", "bnc-c58pbnc-maleruichirg58", "RG58 BNC-male RUICHI BNC-C58P")
-    assert coax.fields == {"coaxArticle": "BNC-C58P", "coaxType": "BNC-male", "coaxMfr": "RUICHI", "coaxWire": "RG58"}
+    assert schema(coax) == {"coaxArticle": "BNC-C58P", "coaxType": "BNC-male", "coaxMfr": "RUICHI", "coaxWire": "RG58"}
     micro_fit, kvt = tables["ter"]  # the registry row and the blank row are not records
     assert (micro_fit.display_text, micro_fit.sort_key) == ("Molex | 43020, 43640 | Micro-Fit 3.0", "")
     assert micro_fit.search_text == "molex43020,43640micro-fit3.0обжимнойконтактmale"
-    assert micro_fit.fields == {
+    # Every named sheet column is kept too, as the portal shows the base (owner 29.09.2026).
+    assert (op.fields["Машина"], ob.fields["Инв. номер"], coax.fields["Тип пина"]) == ("EW-05F+M/Автомат", "ОБ.048", "пайка")
+    assert micro_fit.fields["Высота обжима изоляции, мм"] == "24 AWG: 1,58\n22 AWG: 1,58\n20 AWG: 1,7"
+    assert schema(micro_fit) == {
         "terManufacturer": "Molex", "terSeries": "43020, 43640", "terComponent": "Micro-Fit 3.0", "terType": "Male",
         "terArticle": "430310001", "terLPlus": "6", "terLMinus": "", "terStep": "3", "terApplicator": "S8/M8",
         "terStrip": "2,54 - 2,92", "terCrimpHeight": "24 AWG: 0,83 - 0,93\n22 AWG: 0,83 - 0,93\n20 AWG: 0,89 - 0,99",

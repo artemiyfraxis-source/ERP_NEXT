@@ -389,10 +389,10 @@ it("switches «Режим админа» for the allowed account and shows it in
 
   render(<App />);
   expect(await screen.findByText("Менеджер по проектам")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "🛡 Режим админа" }));
+  fireEvent.click(screen.getByRole("button", { name: "Режим админа" }));
 
   expect(await screen.findByText("Технолог · режим")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "🛡 Выйти из админа" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Выйти из админа" })).toBeInTheDocument();
   expect(bodies).toEqual([{ on: true }]);
 });
 
@@ -400,5 +400,5 @@ it("offers no admin mode to other accounts", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ ...principal, can_admin_mode: false }));
   render(<App />);
   expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "🛡 Режим админа" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Режим админа" })).not.toBeInTheDocument();
 });
