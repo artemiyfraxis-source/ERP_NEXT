@@ -226,6 +226,22 @@ td small { margin-top: 4px; color: #7b857e; }
 .reference-fields span { display: grid; gap: 2px; }
 .reference-fields small { color: var(--muted-foreground); font-size: 9px; text-transform: uppercase; }
 .reference-tiles { margin-bottom: 14px; }
+/* «База данных»: tab groups read as one sheet bar; every tab below is a DataTable. */
+.db-tabs { display: flex; flex-wrap: wrap; gap: 14px 22px; margin: 16px 0 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.db-tab-group { display: grid; gap: 6px; }
+.db-tab-group-title { color: var(--muted-foreground); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.db-tab-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.db-tab { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 11px; color: var(--foreground); background: var(--card); font-size: 13px; font-weight: 500; }
+.db-tab:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.db-tab.active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
+.db-tab-count { border-radius: 999px; padding: 0 7px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; font-weight: 400; }
+.db-tab.active .db-tab-count { color: var(--primary); }
+.db-cell-input { width: 100%; min-width: 160px; }
+.db-dirty { color: var(--muted-foreground); font-size: 12px; }
+.db-edit { margin-bottom: 14px; padding: 16px 18px; }
+.db-form label { display: grid; gap: 3px; min-width: 180px; }
+.techcards-page.embedded > .page-sub:first-child { margin-top: 0; }
+
 .reference-tiles .tile { min-height: 0; }
 .notification-list { display: grid; gap: 12px; margin-top: 16px; }
 .notification-card { padding: 17px 19px; }

@@ -21,7 +21,7 @@ function json(body: unknown) {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
 
 it("edits and atomically saves all reference maps", async () => {
   let payload: unknown;
@@ -37,11 +37,13 @@ it("edits and atomically saves all reference maps", async () => {
       gost_awg: [{ key: "0,35", value: "22" }],
       can_edit: { suppliers: true, gost_awg: true },
     });
+    if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<ReferencesPage principal={admin} />);
+  render(<ReferencesPage principal={admin} initialTab="suppliers" />);
   fireEvent.change(await screen.findByLabelText("Поставщик 1"), { target: { value: "Новый поставщик" } });
+  fireEvent.click(screen.getByRole("button", { name: "ГОСТ → AWG" }));
   fireEvent.change(screen.getByLabelText("AWG 1"), { target: { value: "23" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить справочники" }));
 
@@ -53,7 +55,7 @@ it("edits and atomically saves all reference maps", async () => {
   expect(await screen.findByText("Справочники сохранены целиком")).toBeInTheDocument();
 });
 
-it("searches the versioned technology snapshot", async () => {
+it("shows the versioned technology snapshot as a table of its own columns", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
@@ -69,18 +71,18 @@ it("searches the versioned technology snapshot", async () => {
         tab: "op",
         display_text: "Обжим контакта",
         source_sheet: "БД.ОП",
-        fields: { code: "ОП-01" },
+        fields: { opNumber: "ОП-01" },
       }],
     });
+    if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
 
-  expect(await screen.findByText("Обжим контакта")).toBeInTheDocument();
+  expect(await screen.findByText("ОП-01")).toBeInTheDocument();
   expect(screen.getByText(/Схема v14/)).toBeInTheDocument();
-  expect(screen.getByText("ОП-01")).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Номер" })).toBeInTheDocument();
 });
 
 
@@ -95,11 +97,11 @@ it("edits a technology row with the old value and hides editing for non-admins",
       return json(record);
     }
     if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [record] });
+    if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   const { unmount } = render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
   fireEvent.click(await screen.findByRole("button", { name: "Провода" }));
   fireEvent.click(await screen.findByRole("button", { name: "Править" }));
   fireEvent.change(screen.getByLabelText("Поле Сечение"), { target: { value: "0,5" } });
@@ -110,7 +112,6 @@ it("edits a technology row with the old value and hides editing for non-admins",
   unmount();
 
   render(<ReferencesPage principal={{ ...admin, roles: ["receiver"], permissions: { erpref: "view" } }} />);
-  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
   expect((await screen.findAllByText("МГТФ")).length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
 });
@@ -127,11 +128,11 @@ it("offers the create form on an empty tab from the known column schema", async 
     if (path.startsWith("/api/references/tech-operations?")) return json({
       metadata: null, columns: ["Наименование", "Группа"], records: [],
     });
+    if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
   fireEvent.click(await screen.findByRole("button", { name: "Материалы" }));
   const add = await screen.findByRole("button", { name: "+ Запись" });
   await waitFor(() => expect(add).toBeEnabled());
@@ -155,11 +156,11 @@ it("shows the СПР.КАБ tables as read-only grids", async () => {
       metadata: null, columns: ["AWG", "ГОСТ"],
       records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "СПР.КАБ · AWG", fields: { AWG: "22", ГОСТ: "0,35" } }],
     });
+    if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
   fireEvent.click(await screen.findByRole("button", { name: "СПР.КАБ · коаксиал" }));
   expect(await screen.findByText("1,95")).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "D3" })).toBeInTheDocument();
@@ -171,14 +172,13 @@ it("shows the СПР.КАБ tables as read-only grids", async () => {
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
 });
 
-it("shows base tiles with record counts and opens a base from its tile", async () => {
+it("shows record counts on the tabs and opens a base from its tab", async () => {
   const opened: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path === "/api/references/bases") return json({ bases: [
       { id: "prov", label: "БД.ПРОВ — провода", editable: true, icon: "🧵", sub: "марки · сечения", count: 42 },
-      { id: "tk_templates", label: "БД.ТК — шаблоны ТК", editable: false, icon: "🧩", sub: "шаблоны", count: null },
     ] });
     if (path.startsWith("/api/references/tech-operations?")) {
       opened.push(path);
@@ -188,11 +188,29 @@ it("shows base tiles with record counts and opens a base from its tile", async (
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "База техопераций" }));
-  expect(await screen.findByLabelText("Записей: 42")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /БД\.ТК — шаблоны ТК/ })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: /БД\.ПРОВ — провода/ }));
+  const prov = await screen.findByRole("button", { name: "Провода" });
+  await waitFor(() => expect(prov).toHaveTextContent("42"));
+  expect(screen.queryByRole("button", { name: "Шаблоны техкарт" })).toBeNull(); // no erptctpl grant
+  fireEvent.click(prov);
   await waitFor(() => expect(opened.some((path) => path.includes("tab=prov"))).toBe(true));
+});
+
+it("opens the templates tab by its own key without the reference book (ID-3)", async () => {
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [
+      { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
+    ] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={{ ...admin, roles: ["master"], permissions: { erptctpl: "view" } }} />);
+  expect(await screen.findByText("CUT_WIRE_auto")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "База данных", level: 1 })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Операции" })).toBeNull();
+  expect(paths).toEqual(["/api/techcards/templates"]);
 });
 
 it("lets the buyer edit supplier maps but not the ГОСТ→AWG map", async () => {
@@ -202,11 +220,14 @@ it("lets the buyer edit supplier maps but not the ГОСТ→AWG map", async () 
       suppliers: [{ key: "склад", value: "Склад" }], countries: [], gost_awg: [{ key: "0,35", value: "22" }],
       can_edit: { suppliers: true, gost_awg: false },
     });
+    if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<ReferencesPage principal={{ ...admin, roles: ["buyer"], permissions: { erpref: "view", procurement: "edit" } }} />);
+  render(<ReferencesPage principal={{ ...admin, roles: ["buyer"], permissions: { erpref: "view", procurement: "edit" } }} initialTab="suppliers" />);
   expect(await screen.findByLabelText("Поставщик 1")).toBeEnabled();
-  expect(screen.getByLabelText("AWG 1")).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "ГОСТ → AWG" }));
+  expect(await screen.findByText("22")).toBeInTheDocument();
+  expect(screen.queryByLabelText("AWG 1")).toBeNull();
   expect(screen.getByRole("button", { name: "Сохранить справочники" })).toBeInTheDocument();
 });
