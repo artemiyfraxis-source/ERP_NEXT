@@ -696,7 +696,9 @@ function LotCard({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
   onHistory?: (grn: string) => void;
   readOnly: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  // One form at a time, as the buttons on a SUPPLYMAP partition card (− / + / ✎).
+  const [mode, setMode] = useState<"" | "writeoff" | "return" | "edit">("");
+  const toggle = (next: "writeoff" | "return" | "edit") => setMode((current) => current === next ? "" : next);
   const [writeoffDate, setWriteoffDate] = useState(() => new Date().toLocaleDateString("sv-SE"));
   const [quantity, setQuantity] = useState("");
   const [purpose, setPurpose] = useState("");
@@ -705,7 +707,6 @@ function LotCard({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
   const [name, setName] = useState(lot.name);
   const [series, setSeries] = useState(lot.series);
   const [place, setPlace] = useState(lot.storage_location);
-  const [returning, setReturning] = useState(false);
   const [editingRow, setEditingRow] = useState(false);
   const [returnQuantity, setReturnQuantity] = useState("");
   const [returnSource, setReturnSource] = useState("");
@@ -721,7 +722,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
   function returnToStock(event: FormEvent) {
     event.preventDefault();
     void mutate(lot.id, () => warehouseApi.returnWriteOff(lot.id, lot.version, returnQuantity, returnSource.trim(), returnReason.trim()))
-      .then(() => setReturning(false), () => undefined);
+      .then(() => setMode(""), () => undefined);
   }
 
   return (
@@ -735,12 +736,30 @@ function LotCard({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
         {lot.purpose && <span>{lot.purpose}</span>}
         {writtenOff && <span>списано {lot.written_off}</span>}
       </p>
-      {(!readOnly || passport) && <div className="lot-card-actions">
-        {!readOnly && <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>}
+      {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
+      {!readOnly && <div className="lot-card-actions">
+        <button className={mode === "writeoff" ? "secondary small active" : "secondary small"} aria-expanded={mode === "writeoff"} disabled={disabled} title="Снять количество с партии" onClick={() => toggle("writeoff")}>− Списать</button>
+        {writtenOff && <button className={mode === "return" ? "secondary small active" : "secondary small"} aria-expanded={mode === "return"} disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => toggle("return")}>Вернуть на склад</button>}
+        <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
+        <button className={mode === "edit" ? "secondary small active" : "secondary small"} aria-expanded={mode === "edit"} disabled={disabled} onClick={() => toggle("edit")}>✎ Правка</button>
         {onHistory && <button className="secondary small" onClick={() => onHistory(lot.grn)}>История</button>}
-        <button className="secondary small" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{readOnly ? "Паспорт" : "Операции"}</button>
       </div>}
-      {open && <>{passport && <p className="page-sub" aria-label="Паспорт партии">{passport}</p>}{!readOnly && <div className="stock-actions">
+      {readOnly && onHistory && <div className="lot-card-actions"><button className="secondary small" onClick={() => onHistory(lot.grn)}>История</button></div>}
+      {!readOnly && mode === "writeoff" && <div className="stock-actions">
+        <form className="inline-action" onSubmit={writeoff}>
+          <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Назначение<input aria-label="Назначение списания" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label><label>Основание<input placeholder="Выдача" value={reason} onChange={(event) => setReason(event.target.value)} /></label><label>Дата<input aria-label="Дата списания" type="date" value={writeoffDate} onChange={(event) => setWriteoffDate(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>
+        </form>
+      </div>}
+      {!readOnly && mode === "return" && writtenOff && <div className="stock-actions">
+        <form className="inline-action" aria-label="Возврат на склад" onSubmit={returnToStock}>
+          <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={lot.written_off} step="any" required title={`Списано ${lot.written_off} ${lot.unit}`} value={returnQuantity} onChange={(event) => setReturnQuantity(event.target.value)} /></label>
+          <label>Откуда<input aria-label="Откуда возврат" placeholder="проект или фамилия" required pattern=".*\S.*" value={returnSource} onChange={(event) => setReturnSource(event.target.value)} /></label>
+          <label>Основание возврата<input aria-label="Основание возврата" placeholder="Возврат" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label>
+          <button className="primary small" disabled={disabled}>Вернуть</button>
+          <button type="button" className="link-button" onClick={() => setMode("")}>Отмена</button>
+        </form>
+      </div>}
+      {!readOnly && mode === "edit" && <div className="stock-actions">
         {!editingRow && <button className="secondary small" disabled={disabled} onClick={() => setEditingRow(true)}>Править строку</button>}
         {editingRow && <LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} />}
         <form className="inline-action" onSubmit={(event) => {
@@ -755,18 +774,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
         }}>
           <label>Место как есть<input aria-label="Место как есть" title="Ручная правка: любой текст (12C7, 12C7B, A-01…), пусто — без места" placeholder="без места" value={place} onChange={(event) => setPlace(event.target.value)} /></label><button className="secondary small" disabled={disabled}>Записать место</button>
         </form>
-        <form className="inline-action" onSubmit={writeoff}>
-          <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Назначение<input aria-label="Назначение списания" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label><label>Основание<input placeholder="Выдача" value={reason} onChange={(event) => setReason(event.target.value)} /></label><label>Дата<input aria-label="Дата списания" type="date" value={writeoffDate} onChange={(event) => setWriteoffDate(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>
-        </form>
-        {writtenOff && !returning && <button className="secondary small" disabled={disabled} onClick={() => setReturning(true)}>Вернуть на склад</button>}
-        {writtenOff && returning && <form className="inline-action" aria-label="Возврат на склад" onSubmit={returnToStock}>
-          <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={lot.written_off} step="any" required title={`Списано ${lot.written_off} ${lot.unit}`} value={returnQuantity} onChange={(event) => setReturnQuantity(event.target.value)} /></label>
-          <label>Откуда<input aria-label="Откуда возврат" placeholder="проект или фамилия" required pattern=".*\S.*" value={returnSource} onChange={(event) => setReturnSource(event.target.value)} /></label>
-          <label>Основание возврата<input aria-label="Основание возврата" placeholder="Возврат" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label>
-          <button className="primary small" disabled={disabled}>Вернуть</button>
-          <button type="button" className="link-button" onClick={() => setReturning(false)}>Отмена</button>
-        </form>}
-      </div>}</>}
+      </div>}
     </article>
   );
 }
