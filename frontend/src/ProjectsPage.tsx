@@ -137,7 +137,7 @@ function KitsetHub({ canEdit, openProject }: { canEdit: boolean; openProject: (p
   return <section className="page projects-page">
     <header className="page-head"><h1>Проекты</h1>{all && <span className="page-count">{all.length}</span>}</header>
     <p className="page-sub">Проект заводится из расчёта: номер, заказчик, сборки с тиражом и состав каждой. Он же попадает в реестр ERP вместе с позициями, поэтому техкарты, задания и план видят те же КБ. Внутри проекта — состав, спецификация и техкарты по каждой сборке.</p>
-    {canEdit && <div className="page-actions"><button className="primary" onClick={() => setCreating(true)}>➕ Создать проект из расчёта</button></div>}
+    {canEdit && <div className="page-actions"><button className="primary" onClick={() => setCreating(true)}>Создать проект из расчёта</button></div>}
     {creating && <CreateFromCalc close={() => setCreating(false)} done={(project, note, bad) => {
       setCreating(false);
       if (bad) setError(note); else setNotice(note);
@@ -255,7 +255,7 @@ function CreateFromCalc({ close, done }: {
     } finally { setBusy(false); }
   }
 
-  const title = "➕ Создать проект из расчёта";
+  const title = "Создать проект из расчёта";
   return <div className="panel kit-modal" role="dialog" aria-label={title}>
     <h3>{title}</h3>
     <p className="page-sub">Нужна только ссылка: номер проекта, заказчик, сборки и состав читаются из листов ЗКЗ и СПЯ. Проект заведётся в реестре ERP вместе с позициями. Если он уже есть — обновится состав, правки количеств сохранятся, статус и дедлайн не тронутся.</p>
@@ -337,9 +337,9 @@ function KitsetCardView({ project, canEdit, back }: { project: string; canEdit: 
     <header className="page-head"><button className="secondary small" onClick={back}>← Назад</button><h1>📋 {card.project}</h1><span className="kit-status">{card.status}</span></header>
     <p className="page-sub">{card.customer || "—"} · <a href={card.calc_source} target="_blank" rel="noopener">расчёт</a> · обновлено {new Date(card.updated_at).toLocaleString("ru-RU")} {card.updated_by}</p>
     <div className="page-actions">
-      {canEdit && <button className="secondary" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "🔄 Обновить из расчёта"}</button>}
-      {canEdit && <button className="secondary" onClick={() => void remove()}>🗑 Удалить карточку</button>}
-      <button className="secondary" onClick={() => openSection("shipping", { ship_project: card.project })}>🚚 Отгрузить</button>
+      {canEdit && <button className="secondary" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
+      {canEdit && <button className="secondary" onClick={() => void remove()}>Удалить карточку</button>}
+      <button className="secondary" onClick={() => openSection("shipping", { ship_project: card.project })}>Отгрузить</button>
       {note && <span className="muted">{note}</span>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -360,8 +360,8 @@ function KitsetCardView({ project, canEdit, back }: { project: string; canEdit: 
         <p><strong>{assembly.index}</strong> {assembly.name} <span className="muted">кол-во {assembly.run} · операций {assembly.techcard.stages} · ревизия {assembly.techcard.revision} · {assembly.techcard.status}</span></p>
         <p className="page-sub">Электронную ТК правят в её карточке («Править» на операции), каждая правка поднимает ревизию; пересборка сохраняет ручные правки.</p>
         <div className="page-actions">
-          <button className="primary" onClick={() => openTechcardScreen(assembly.techcard!.card_id)}>📄 Открыть ЭТК</button>
-          <button className="secondary" onClick={() => void openTechcard(assembly.index)}>⚙️ Пересобрать</button>
+          <button className="primary" onClick={() => openTechcardScreen(assembly.techcard!.card_id)}>Открыть ЭТК</button>
+          <button className="secondary" onClick={() => void openTechcard(assembly.index)}>Пересобрать</button>
         </div>
       </div>;
     })()}
@@ -557,7 +557,7 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
     }, render: ({ assembly, component }) => {
       const lot = draftOf(assembly, component).lot;
       return <button className="secondary small" disabled={!canEdit} onClick={() => setPicking({ assembly, component })}>
-        {lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "📦 выбрать со склада"}
+        {lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "выбрать со склада"}
       </button>;
     } },
   ];
@@ -565,7 +565,7 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
   return <div className="kit-pane">
     <p className="page-sub">Артикул КД, тип и ссылка — из расчёта. Наименование — то, что закуплено под этот артикул КД, пустое — впиши сам. По типу генератор раскладывает состав по операциям. «На партию» = расход на штуку × кол-во с учётом брака. «ГРН склада» — с какой складской строки брать: выбери, и при отправке на комплектацию количество зарезервируется. Не выбрал — позиция всё равно уедет заявкой и будет ждать поставки, ГРН к ней подцепит кладовщик после приёмки. Правки сохраняются сами и переживают обновление из расчёта.</p>
     {canEdit
-      ? <div className="page-actions"><button className="primary" onClick={() => setIssuing(true)}>🧺 Отправить на комплектацию</button><span className="muted kit-autosave">{autosave}</span></div>
+      ? <div className="page-actions"><button className="primary" onClick={() => setIssuing(true)}>Отправить на комплектацию</button><span className="muted kit-autosave">{autosave}</span></div>
       : <p className="page-sub">Раздел открыт на просмотр — править и отправлять нельзя.</p>}
     {issuing && <IssueDialog project={card.project} close={() => setIssuing(false)} done={(text) => { setIssuing(false); setNote(text); }} />}
     {picking && <LotPicker component={picking.component} batch={kitBatch(draftOf(picking.assembly, picking.component).per, picking.assembly.run, draftOf(picking.assembly, picking.component).scrap)}
@@ -600,7 +600,7 @@ function LotPicker({ component, batch, current, close, pick }: {
     return () => window.clearTimeout(timer);
   }, [query]);
   return <div className="panel kit-modal" role="dialog" aria-label="Выбор ГРН">
-    <h3>📦 ГРН для «{component.name || component.art}»</h3>
+    <h3>ГРН для «{component.name || component.art}»</h3>
     <p className="page-sub">Нужно на партию: {batch}. Выбранный ГРН зарезервируется при отправке на комплектацию.</p>
     <input aria-label="Поиск по складу" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="наименование, артикул, ГРН" />
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -636,7 +636,7 @@ function IssueDialog({ project, close, done }: { project: string; close: () => v
     finally { setBusy(false); }
   }
   return <div className="panel kit-modal" role="dialog" aria-label="Отправить на комплектацию">
-    <h3>🧺 Отправить на комплектацию</h3>
+    <h3>Отправить на комплектацию</h3>
     <p className="page-sub">На каждую сборку набора уйдёт отдельная заявка: назначение — {project} и индекс КБ. Позиции с выбранным ГРН сразу встают в резерв, остальные уедут в заявку ждать поставки — кладовщик подцепит к ним ГРН после приёмки.</p>
     <label>Дедлайн<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
     {error && <div className="error-banner" role="alert">{error}</div>}

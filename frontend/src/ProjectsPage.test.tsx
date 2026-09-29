@@ -79,7 +79,7 @@ describe("ProjectsPage", () => {
       ? json({ res: { project: "708К.4.1", assemblies: 1, lines: 1, erp: "", erp_error: "", ship: "", ship_error: "", ship_to_error: "", deadline_error: "" } })
       : base(input, init));
     render(<ProjectsPage principal={editor} />);
-    fireEvent.click(await screen.findByRole("button", { name: "➕ Создать проект из расчёта" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Создать проект из расчёта" }));
     fireEvent.change(screen.getByLabelText("Ссылка на расчёт"), { target: { value: " https://docs.google.com/spreadsheets/d/1AbC/edit " } });
     fireEvent.click(screen.getByRole("button", { name: "Создать" }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/techcards/kitsets/load")).toBe(true));
@@ -102,7 +102,7 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
     expect((await screen.findByRole("link", { name: "расчёт" })).getAttribute("href")).toBe(linked.calc_source);
-    fireEvent.click(screen.getByRole("button", { name: "🔄 Обновить из расчёта" }));
+    fireEvent.click(screen.getByRole("button", { name: "Обновить из расчёта" }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/techcards/kitsets/load")).toBe(true));
     const [, init] = fetchMock.mock.calls.find(([url]) => String(url) === "/api/techcards/kitsets/load")!;
     expect(JSON.parse(String(init?.body))).toEqual({ url: linked.calc_source, number: "708К.4" });
@@ -111,7 +111,7 @@ describe("ProjectsPage", () => {
   it("hides writing controls for view-only access", async () => {
     render(<ProjectsPage principal={viewer} />);
     await screen.findByText("708К.4");
-    expect(screen.queryByRole("button", { name: "➕ Создать проект из расчёта" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Создать проект из расчёта" })).toBeNull();
     expect(screen.queryByLabelText("Удалить 708К.4")).toBeNull();
   });
 
@@ -127,7 +127,7 @@ describe("ProjectsPage", () => {
     const saved = vi.mocked(fetch).mock.calls.find(([url]) => decodeURIComponent(String(url)).endsWith("/lines"));
     expect(JSON.parse(String(saved?.[1]?.body)).edits).toEqual([{ index: "КБ1", art: "UL1007 22AWG", per: "2", scrap: "5", name: "", link: "", lot: null }]);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "📦 выбрать со склада" })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "выбрать со склада" })[1]);
     fireEvent.click(await screen.findByRole("button", { name: "Выбрать" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "FRX.26.0000001" })).toBeTruthy());
     const lotCall = vi.mocked(fetch).mock.calls.filter(([url]) => decodeURIComponent(String(url)).endsWith("/lines")).at(-1);
@@ -138,7 +138,7 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
     fireEvent.click(await screen.findByRole("tab", { name: "Спецификация" }));
-    fireEvent.click(screen.getByRole("button", { name: "🧺 Отправить на комплектацию" }));
+    fireEvent.click(screen.getByRole("button", { name: "Отправить на комплектацию" }));
     fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
     expect(screen.getByText("Укажи дедлайн.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Дедлайн"), { target: { value: "2026-10-10" } });

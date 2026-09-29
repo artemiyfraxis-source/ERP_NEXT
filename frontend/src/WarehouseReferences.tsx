@@ -129,7 +129,7 @@ export function StockJournalPanel({ onClose, initialQuery = "" }: { onClose: () 
   </section>;
 }
 
-/** «⬇ Выгрузить»: the whole stock as a table for Excel (SUPPLYMAP wh05Export). */
+/** «Выгрузить»: the whole stock as a table for Excel (SUPPLYMAP wh05Export). */
 export async function downloadStockTable() {
   const { rows } = await warehouseApi.exportRows();
   const blob = new Blob([stockTableBytes(stockTableText(rows))], { type: "text/csv;charset=utf-16le" });
@@ -145,7 +145,7 @@ export async function downloadStockTable() {
   URL.revokeObjectURL(url);
 }
 
-/** «⬆ Загрузить правки склада» (SUPPLYMAP openStock05Import): check first — the preview shows what changes,
+/** «Загрузить правки склада» (SUPPLYMAP openStock05Import): check first — the preview shows what changes,
  *  only the second button writes. The administrator only; the server refuses anyone else. */
 export function StockImportPanel({ onClose, onApplied }: { onClose: () => void; onApplied: () => Promise<void> | void }) {
   const [text, setText] = useState("");
@@ -206,7 +206,7 @@ export function StockImportPanel({ onClose, onApplied }: { onClose: () => void; 
 
   return <section className="panel stock-import-panel" aria-label="Загрузить правки склада">
     <div className="manual-stock-head"><h2>Загрузить правки склада</h2><button type="button" className="link-button" onClick={onClose}>Закрыть</button></div>
-    <p className="page-sub">Порядок: «⬇ Выгрузить» → правишь файл в Excel → выбираешь его здесь (или вставляешь диапазон вместе со строкой заголовков) → «Проверить». Сначала покажем, что изменится, и только по второй кнопке запишем. Строки находятся по Склад + ГРН + Пакет — эти три колонки не меняй. Загружаются справочные поля; количество из файла не загружается — его меняют списание, возврат и приход. Колонку можно удалить из файла — тогда она не трогается; пустая ячейка в оставленной колонке стирает значение (кроме наименования).</p>
+    <p className="page-sub">Порядок: «Выгрузить» → правишь файл в Excel → выбираешь его здесь (или вставляешь диапазон вместе со строкой заголовков) → «Проверить». Сначала покажем, что изменится, и только по второй кнопке запишем. Строки находятся по Склад + ГРН + Пакет — эти три колонки не меняй. Загружаются справочные поля; количество из файла не загружается — его меняют списание, возврат и приход. Колонку можно удалить из файла — тогда она не трогается; пустая ячейка в оставленной колонке стирает значение (кроме наименования).</p>
     <input type="file" aria-label="Файл таблицы" accept=".csv,.txt,.tsv" onChange={readFile} />
     <textarea aria-label="Таблица склада" rows={6} placeholder="…или вставь сюда диапазон из Excel со строкой заголовков" value={text} onChange={(event) => { setPreview(null); setText(event.target.value); }} />
     <div className="manual-stock-actions"><button className="primary" type="button" disabled={busy} onClick={() => void check()}>Проверить</button></div>

@@ -179,7 +179,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{shown.length}</span>
         {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => setArchive((value) => !value)}>{archive ? "Активные" : "Архив"}</button>}
         {canEdit && mode !== "give" && !archive && <button className="primary small" onClick={() => { setCreating((value) => !value); setFromCalc(false); }}>+ Заявка</button>}
-        {canEdit && mode !== "give" && !archive && <button className="secondary small" onClick={() => { setFromCalc((value) => !value); setCreating(false); }}>📐 Заявка по расчёту</button>}
+        {canEdit && mode !== "give" && !archive && <button className="secondary small" onClick={() => { setFromCalc((value) => !value); setCreating(false); }}>Заявка по расчёту</button>}
       </header>
       <p className="page-sub">{screen?.sub ?? "Партии выбирает человек. Заявка ждёт поставки, а в цех уходит только полностью собранный комплект."}</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
@@ -323,14 +323,14 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
         {request.lines.map((line) => <FulfillmentLineRow key={line.id} request={request} line={line} lots={lots} canEdit={canPick} busy={busy} mutate={mutate} />)}
       </tbody></table></div>
       <div className="fulfillment-actions">
-        {canPick && ["Новая", "Недоукомплектован"].includes(request.status) && !waiting.length && <button className="secondary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.complete(request.id, request.version))}>✅ Укомплектован</button>}
-        {canPick && request.status === "Укомплектован" && !sending && <button className="secondary" disabled={busy} onClick={() => setSending(true)}>📤 Отправить на выдачу</button>}
+        {canPick && ["Новая", "Недоукомплектован"].includes(request.status) && !waiting.length && <button className="secondary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.complete(request.id, request.version))}>Укомплектован</button>}
+        {canPick && request.status === "Укомплектован" && !sending && <button className="secondary" disabled={busy} onClick={() => setSending(true)}>Отправить на выдачу</button>}
         {canHandout && showGive && request.status === "Готов к выдаче" && <button className="primary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.issue(request.id, request.version))}>Выдать комплект</button>}
         {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
         {canEdit && !closed && <button className="link-button danger-link" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
         <button className="secondary small" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>
         {hasIssuedLines && <button className="secondary small" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
-        {isAdmin && <button className="link-button danger-link" disabled={busy} onClick={remove}>🗑 Удалить заявку</button>}
+        {isAdmin && <button className="link-button danger-link" disabled={busy} onClick={remove}>Удалить заявку</button>}
       </div>
       {sending && <HandoutPlaceForm request={request} places={places} busy={busy} mutate={mutate} onCancel={() => setSending(false)} />}
       {printError && <div className="error-banner" role="alert">{printError}</div>}

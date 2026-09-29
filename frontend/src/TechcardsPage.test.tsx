@@ -389,12 +389,12 @@ it("edits a template sheet through a draft and saves it (portalTcTplDraft → po
   });
 
   render(<TechcardsPage principal={engineer} view="templates" />);
-  fireEvent.click(await screen.findByRole("button", { name: "📄 Шаблоны-листы" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Шаблоны-листы" }));
   expect(await screen.findByText("Автомат")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Редактировать CUT_WIRE | Резка" }));
 
   fireEvent.change(await screen.findByLabelText("Ячейка 2:3"), { target: { value: "Отрезать провод в размер" } });
-  fireEvent.click(screen.getByRole("button", { name: "💾 Сохранить шаблон" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить шаблон" }));
   expect(screen.getByText("Пересохранение существующего шаблона «CUT_WIRE | Резка» (контент заменится).")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 
@@ -428,14 +428,14 @@ it("creates a new template draft, drops a draft and deletes a template sheet", a
   });
 
   render(<TechcardsPage principal={engineer} view="templates" />);
-  fireEvent.click(await screen.findByRole("button", { name: "📄 Шаблоны-листы" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Шаблоны-листы" }));
   fireEvent.click(await screen.findByRole("button", { name: "Удалить черновик OLD | Черновик" }));
   await waitFor(() => expect(screen.queryByText("Открытые черновики:")).not.toBeInTheDocument());
 
   fireEvent.click(screen.getByRole("button", { name: "Удалить STRIP | Разделка" }));
   expect(await screen.findByText("Шаблон удалён: STRIP | Разделка")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "➕ Новый шаблон" }));
+  fireEvent.click(screen.getByRole("button", { name: "Новый шаблон" }));
   fireEvent.change(screen.getByLabelText("Название нового шаблона"), { target: { value: "NEW | Новый" } });
   fireEvent.click(screen.getByRole("button", { name: "Создать черновик" }));
   expect(await screen.findByText("Черновик — NEW | Новый")).toBeInTheDocument();

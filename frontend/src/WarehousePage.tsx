@@ -149,12 +149,12 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         <button className="secondary compact" disabled={Boolean(busy)} onClick={() => {
           setError("");
           downloadStockTable().catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось выгрузить."));
-        }}>⬇ Выгрузить</button>
-        <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>⬆ Загрузить правки</button>
+        }}>Выгрузить</button>
+        <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>Загрузить правки</button>
         <button className="secondary compact" onClick={() => setPanel((value) => value === "racks" ? "" : "racks")}>Раскладка</button>
         </>}
         {admin && <button className="secondary compact" onClick={() => { setJournalQuery(""); setPanel((value) => value === "journal" ? "" : "journal"); }}>Журнал склада</button>}
-        {!readOnly && <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>🖨 Лист перемещения</button>}
+        {!readOnly && <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>Лист перемещения</button>}
         <input className="search" aria-label="Поиск по складу" placeholder="Поиск: артикул, серия, место, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>

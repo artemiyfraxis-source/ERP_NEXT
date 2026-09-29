@@ -453,7 +453,7 @@ function TaskDetail({ task, tasks, operators, skills, holidays, week, setWeek, c
     </div>
     {canEdit && <div className="page-actions">
       {edit && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-      <button className="secondary small" disabled={Boolean(busy)} onClick={toggleCancel}>{cancelled ? "↩ Вернуть в работу" : "⛔ Отменить задание"}</button>
+      <button className="secondary small" disabled={Boolean(busy)} onClick={toggleCancel}>{cancelled ? "Вернуть в работу" : "Отменить задание"}</button>
     </div>}
     <Gantt rows={rows} labelHead="Операция" week={week} onWeekChange={setWeek} holidays={holidays} />
     {operation && edit && <AssignCard
@@ -590,7 +590,7 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
 
   const variant = variants[pick];
   return <div className="schedule-planner">
-    <button className="secondary small" onClick={() => setShow((value) => !value)}>⚙ Авторасчёт плана</button>
+    <button className="secondary small" onClick={() => setShow((value) => !value)}>Авторасчёт плана</button>
     {show && <div className="schedule-panel">
       <small>{itemId(task)} × {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · этапы идут цепочкой: следующий начинает, как только предыдущий отдал передаточную партию. Операторы — из «Компетенции», по допуску и коэффициенту.</small>
       <div className="schedule-controls">
@@ -699,8 +699,8 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
           setShown({ number: result.box.number ?? "", fixed: false });
           setGood(""); setDefect("0"); setDefectCharacter(""); setDefectDescription("");
           return result;
-        })}>✅ Сдать</button>
-        <button className="link-button danger-link" disabled={busy} onClick={() => { if (window.confirm("Отменить начало? Время не запишется.")) void mutate(session.id, () => productionApi.workAction(session.id, "cancel")); }}>✖ Отменить начало</button>
+        })}>Сдать</button>
+        <button className="link-button danger-link" disabled={busy} onClick={() => { if (window.confirm("Отменить начало? Время не запишется.")) void mutate(session.id, () => productionApi.workAction(session.id, "cancel")); }}>Отменить начало</button>
       </div>
     </div>}
     {execution.boxes.length > 0 && <div className="panel execution-boxes">
@@ -721,7 +721,7 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
 
 // prodBoxShow_: номер новой коробки крупно — его переписывают на коробку от руки.
 function BoxNumberDialog({ number, fixed, close }: { number: string; fixed: boolean; close: () => void }) {
-  const title = fixed ? "✅ Коробка исправлена" : "📦 Напиши на коробке";
+  const title = fixed ? "Коробка исправлена" : "Напиши на коробке";
   return <div className="panel kit-modal box-dialog" role="dialog" aria-label={title}>
     <h3>{title}</h3>
     <p>{fixed ? "Коробка снова ждёт подтверждения мастера." : "Коробка закрыта и ждёт подтверждения мастера. Без номера её не возьмут дальше."}</p>
