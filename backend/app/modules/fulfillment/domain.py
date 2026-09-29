@@ -177,6 +177,10 @@ class FulfillmentRequest:
     lines: tuple[FulfillmentLine, ...]
     handout_location: str | None = None
     return_location: str | None = None
+    # НЕДОБОР written when the request is created (issueCreateTasks_ `shortfall`: shortNote of the form plus what the
+    # picked lots did not give). None — nothing was written: the header shows issueShortText_ of the lines. The first
+    # lot bound or removed rewrites it from the lines (issueHeadSync_), so both operations reset it to None.
+    shortfall_note: str | None = None
     # ЗАЯВИТЕЛЬ as a user: «готова к получению» goes to this id; None = the name matched nobody.
     requester_id: UUID | None = None
     # FF-4 (SUPPLYMAP ISSUE_SHEET В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА): the first time the request
@@ -272,11 +276,18 @@ class FulfillmentRequest:
         # FF-3 (Issue.gs issueHeadSync_): the first bound lot moves «Новая» → «Недоукомплектован» and nothing else;
         # «Укомплектован» is a separate manual step (`mark_complete`) with the whole-kit gate.
         status = FulfillmentStatus.UNDERFILLED if touch and self.status is FulfillmentStatus.NEW else self.status
-        return replace(self, lines=tuple(updated), status=status, version=self.version + 1)
+        return replace(
+            self, lines=tuple(updated), status=status, version=self.version + 1,
+            shortfall_note=None if touch else self.shortfall_note,
+        )
 
     @property
     def shortfall(self) -> str:
-        """НЕДОБОР of the header (Issue.gs issueShortText_): what a lot does not close yet is what we wait for."""
+        """НЕДОБОР of the header: the text written at creation, or issueShortText_ of the lines — what a lot does not
+        close yet is what we wait for."""
+        if self.shortfall_note is not None:
+            return self.shortfall_note
+
         def number(value: Decimal) -> str:
             return format(value.quantize(Decimal("0.01")).normalize(), "f")
 
@@ -380,6 +391,7 @@ class FulfillmentRequest:
             status=FulfillmentStatus.UNDERFILLED,
             handout_location=None,
             version=self.version + 1,
+            shortfall_note=None,
         )
 
     def mark_ready(self, handout_location: str) -> FulfillmentRequest:

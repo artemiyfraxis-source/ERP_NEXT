@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   fulfillmentApi,
+  type FulfillmentCalcLine,
   type FulfillmentLine,
   type FulfillmentLot,
   type FulfillmentPlaces,
@@ -79,6 +80,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   const [byProject, setByProject] = useState(false);
   const [project, setProject] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [fromCalc, setFromCalc] = useState(false);
   const [requests, setRequests] = useState<FulfillmentRequest[]>([]);
   const [lots, setLots] = useState<FulfillmentLot[]>([]);
   const [places, setPlaces] = useState<FulfillmentPlaces | undefined>(undefined);
@@ -176,11 +178,13 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
       <header className="page-head">
         <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{shown.length}</span>
         {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => setArchive((value) => !value)}>{archive ? "Активные" : "Архив"}</button>}
-        {canEdit && mode !== "give" && !archive && <button className="primary small" onClick={() => setCreating((value) => !value)}>+ Заявка</button>}
+        {canEdit && mode !== "give" && !archive && <button className="primary small" onClick={() => { setCreating((value) => !value); setFromCalc(false); }}>+ Заявка</button>}
+        {canEdit && mode !== "give" && !archive && <button className="secondary small" onClick={() => { setFromCalc((value) => !value); setCreating(false); }}>📐 Заявка по расчёту</button>}
       </header>
       <p className="page-sub">{screen?.sub ?? "Партии выбирает человек. Заявка ждёт поставки, а в цех уходит только полностью собранный комплект."}</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
+      {fromCalc && <CalcRequestForm onClose={() => setFromCalc(false)} onCreated={async () => { setFromCalc(false); await reload(); }} />}
       {creating && <CreateRequestForm lots={lots} onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await reload(); }} />}
       {project && <ProjectPanel project={project} requests={projectRequests} onClose={() => setProject(null)} busyId={busy} {...cardProps} />}
       {!project && <DataTable
@@ -559,6 +563,98 @@ function CreateRequestForm({ lots, onClose, onCreated }: { lots: FulfillmentLot[
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="fulfillment-actions">
       <button type="button" className="primary" disabled={saving || !added.length} onClick={() => void submit()}>Оформить заявку</button>
+      <button type="button" className="secondary" onClick={onClose}>Отмена</button>
+    </div>
+  </div>;
+}
+
+/* «Заявка по расчёту» (SUPPLYMAP IssueCalc.html → issueCalcPreview → queueIssueRequest): ссылка на расчёт (Google
+   Таблица с листом ЗКП) и склад → позиции расчёта, подобранные по складу FIFO: подобрано / недобор / нет на складе.
+   «Оформить» шлёт подобранные партии, а позиции, которых нет на складе, — пометкой в НЕДОБОР заявки. */
+function CalcRequestForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
+  const key = useRef(crypto.randomUUID());
+  const [url, setUrl] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [warehouse, setWarehouse] = useState("ЦАР");
+  const [lines, setLines] = useState<FulfillmentCalcLine[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function pick() {
+    setError("");
+    setMessage("");
+    if (!url.trim()) { setError("Вставь ссылку на расчёт."); return; }
+    setBusy(true);
+    setMessage("Читаю расчёт и подбираю по складу…");
+    try {
+      const result = await fulfillmentApi.calcPreview(url.trim(), warehouse);
+      setLines(result.lines);
+      if (result.project && !purpose) setPurpose(result.project);
+      setMessage("");
+    } catch (reason) {
+      setMessage("");
+      setError(reason instanceof Error ? reason.message : "Расчёт не прочитан");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function send() {
+    setError("");
+    if (!lines) return;
+    if (!purpose.trim()) { setError("Укажи назначение."); return; }
+    if (!deadline) { setError("Укажи дедлайн."); return; }
+    const picked = lines.flatMap((line) => line.picks.map((item) => ({
+      article: item.article, name: item.name || item.article || line.name, unit: item.unit || line.unit || "шт",
+      requirement: item.qty, lot_id: item.lot_id,
+    })));
+    const shortNote = lines.filter((line) => !line.found).map((line) => `${line.name}: нет на складе (−${line.qty})`);
+    setBusy(true);
+    try {
+      await fulfillmentApi.create({ purpose: purpose.trim(), deadline, lines: picked, short_note: shortNote }, key.current);
+      key.current = crypto.randomUUID();
+      await onCreated();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Заявка не создана");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const full = lines?.filter((line) => line.found && !(Number(line.short) > 0)).length ?? 0;
+  const part = lines?.filter((line) => line.found && Number(line.short) > 0).length ?? 0;
+  const missing = lines?.filter((line) => !line.found).length ?? 0;
+
+  return <div className="panel fulfillment-create" role="form" aria-label="Заявка по расчёту">
+    <h3>Заявка на выдачу по расчёту</h3>
+    <div className="return-line">
+      <label>Ссылка на расчёт<input aria-label="Ссылка на расчёт" placeholder="Ссылка на расчёт (Google Таблица с листом ЗКП)" value={url} onChange={(event) => setUrl(event.target.value)} /></label>
+      <label>Склад<select aria-label="Склад расчёта" value={warehouse} onChange={(event) => {
+        setWarehouse(event.target.value);
+        if (lines) { setLines(null); setMessage("Склад сменился — нажми «Подобрать» заново."); }
+      }}><option>ЦАР</option><option>ЖУК</option></select></label>
+      <button type="button" className="secondary small" disabled={busy} onClick={() => void pick()}>Подобрать</button>
+    </div>
+    <div className="return-line">
+      <label>Назначение *<input aria-label="Назначение по расчёту" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
+      <label>Дедлайн *<input aria-label="Дедлайн по расчёту" type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
+    </div>
+    {message && <p className="fulfillment-progress" role="status">{message}</p>}
+    {lines && <>
+      <p className="fulfillment-progress">Позиций: {lines.length} · полностью: {full} · с недобором: {part} · нет на складе: {missing}</p>
+      <div className="table-wrap"><table className="grid wide"><thead><tr><th>Позиция расчёта</th><th className="num">Нужно</th><th>Подобрано (FIFO)</th><th>Статус</th></tr></thead><tbody>
+        {lines.map((line, index) => <tr key={`${line.name}:${index}`}>
+          <td>{line.name}</td><td className="num">{line.qty} {line.unit}</td>
+          <td>{line.picks.map((item) => `${item.grn}${item.package ? `·п${item.package}` : ""}: ${item.qty}`).join(", ") || "—"}</td>
+          <td>{!line.found ? "нет на складе" : Number(line.short) > 0 ? `недобор ${line.short}` : "✓"}</td>
+        </tr>)}
+      </tbody></table></div>
+    </>}
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    <div className="fulfillment-actions">
+      <button type="button" className="primary" disabled={busy || !lines?.some((line) => line.picks.length)} onClick={() => void send()}>Оформить заявку</button>
       <button type="button" className="secondary" onClick={onClose}>Отмена</button>
     </div>
   </div>;
