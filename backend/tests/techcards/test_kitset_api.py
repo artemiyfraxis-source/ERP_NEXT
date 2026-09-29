@@ -244,15 +244,12 @@ def test_generator_bom_reads_kb_sheet_of_the_linked_calculation(kitset_api):
         ["2", "", "итого", "", "", "", "", ""],
         ["3", "SDR_tin"],
     ]
-    reader = _Sheets({**SHEETS, "КБ1": kb})
+    reader = FakeSheets({**SHEETS, "КБ1": kb}, title="708К.4.1 Расчет")
     app.state.kitset_sheets_reader = reader
-    try:
-        assert client.post("/api/techcards/kitsets/load", json={"url": LINK}).status_code == 200
-        bom = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
-        app.state.kitset_sheets_reader = _Sheets({}, CalcSheetError("Нет доступа к таблице расчёта", "access"))
-        failed = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
-    finally:
-        del app.state.kitset_sheets_reader
+    assert client.post("/api/techcards/kitsets/load", json={"url": LINK}).status_code == 200
+    bom = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
+    app.state.kitset_sheets_reader = FakeSheets({}, error=CalcSheetError("Нет доступа к таблице расчёта", "access"))
+    failed = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
     assert reader.calls[-1] == ("1AbC-calc_id", ("КБ1",))
     assert bom["calc_ops"] == [
         {"code": "CUT_WIRE", "comp": "UL1007 22AWG", "n": "4", "l": "0,16", "req": "L=150мм + SHF-001T"},
