@@ -94,6 +94,17 @@ class ProjectTechcard:
             version=self.version + 1, updated_at=now,
         )
 
+    def discard_draft(self, now: datetime) -> ProjectTechcard:
+        """«Удалить созданные» (SUPPLYMAP deleteGenerated): собранный черновик убирается, выданная ЭТК — нет."""
+        if self.status is TechcardStatus.ISSUED:
+            raise TechcardValidationError("Выданную ЭТК удалить нельзя — пересоберите её новой ревизией")
+        if self.document is None:
+            raise TechcardValidationError("Черновик ЭТК ещё не собран")
+        return replace(
+            self, document=None, manual_operation_keys=(),
+            version=self.version + 1, updated_at=now,
+        )
+
     def issue(self, now: datetime) -> ProjectTechcard:
         if self.document is None:
             raise TechcardValidationError("Сначала соберите электронную техкарту")
