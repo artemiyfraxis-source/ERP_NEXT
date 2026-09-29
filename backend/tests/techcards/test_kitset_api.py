@@ -258,6 +258,10 @@ def test_view_only_reads_but_cannot_write(kitset_api):
     assert client.delete("/api/techcards/kitsets/708К.4").status_code == 403
     app.dependency_overrides[authenticated_principal] = _principal({"techcards": "edit"})
     assert client.get("/api/techcards/kitsets").status_code == 403
+    # Экран мастера показывает плитки проектов: «Ресурсное планирование» читает список, но не карточку.
+    app.dependency_overrides[authenticated_principal] = _principal({"production": "edit"})
+    assert client.get("/api/techcards/kitsets").status_code == 200
+    assert client.get("/api/techcards/kitsets/708К.4").status_code == 403
 
 
 LINK = "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit#gid=0"

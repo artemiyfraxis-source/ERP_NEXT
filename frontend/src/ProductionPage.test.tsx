@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPage } from "./ProductionPage";
+import { forgetOpenProject } from "./MasterBoard";
 import type { Principal, ProductionTask } from "./api";
 
 const principal: Principal = {
@@ -50,7 +51,11 @@ function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); forgetOpenProject(); });
+
+async function openBoardProject(project: string) {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${project.replace(/\./g, "\\.")}`) }));
+}
 
 function masterFetch(extra: (path: string, init?: RequestInit) => Response | null, tasks: ProductionTask[] = []) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -133,6 +138,7 @@ it("shows tasks on a Gantt, operation fact, and assigns with a server preview an
   }, [withFact]);
 
   render(<ProductionPage principal={principal} />);
+  await openBoardProject("591K.3");
   fireEvent.click(await screen.findByRole("button", { name: /ПЗ-0001/ }));
   expect(await screen.findByText(/сдано 6 из 10, брак 1 · в коробках 4 \+ 2 ждут подтверждения/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
@@ -399,6 +405,11 @@ it("lets the master hand out operations of issued projects to installers and lau
       { id: "10000000-0000-0000-0000-000000000003", name: "Попов Игнат", site: "ЦАР", department: "Монтаж" },
       { id: "10000000-0000-0000-0000-000000000004", name: "Бухгалтер", site: "", department: "Бухгалтерия" },
     ] });
+    if (path === "/api/techcards/kitsets?sort=upd") return json({ statuses: ["Новый", "ТК готова", "В работе", "Отгружено"], items: [{
+      project: "591K.3", customer: "ООО «Тест»", calc_source: "", updated_at: "2026-09-28T15:19:00+03:00", updated_by: "",
+      assemblies: 1, lines: 7, kbs: ["КБ1"], status: "В работе", blocker: "",
+      kb_stages: [{ index: "КБ1", status: "В работе", tc: true, kit: false, review: null }],
+    }] });
     if (path === "/api/production/launchable") return json({ items: [{
       techcard_id: "80000000-0000-0000-0000-000000000009", project: "708К.4", index: "КБ2", item: "708К.4КБ2",
       name: "Кабель", customer: "", run: "5", deadline: "2026-10-10", launched: 0, operations: 4,
@@ -416,7 +427,12 @@ it("lets the master hand out operations of issued projects to installers and lau
   expect(screen.queryByText("Бухгалтер")).not.toBeInTheDocument();
   expect(screen.getByText("1 опер. · 0,2 ч", { exact: false })).toBeInTheDocument();
   expect(screen.getByText("без исполнителя: 1")).toBeInTheDocument();
+  expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
+  expect(screen.getByText("к запуску 1")).toBeInTheDocument();
+  expect(screen.getByText("ООО «Тест»")).toBeInTheDocument();
+  expect(screen.getByText("ТК ✓")).toBeInTheDocument();
 
+  await openBoardProject("591K.3");
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
   fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
@@ -424,6 +440,8 @@ it("lets the master hand out operations of issued projects to installers and lau
     body: { version: 2, operator_ids: ["10000000-0000-0000-0000-000000000003"], requested_start: null, dry: false },
   }));
 
+  fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
+  await openBoardProject("708К.4");
   fireEvent.click(await screen.findByRole("button", { name: "В работу" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: "/api/production/tasks",

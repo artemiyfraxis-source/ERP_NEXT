@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { KitsetTile } from "./api";
 
 /** Карточка проекта как в SUPPLYMAP «Проекты» (статус, блокер, ТК, проверка, набор, заказчик, сборки · позиции).
@@ -13,8 +14,9 @@ export function toneOf(status: string, statuses: string[]) {
   return "prep";
 }
 
-export function KitTile({ item, statuses, canEdit, open, remove }: {
-  item: KitsetTile; statuses: string[]; canEdit: boolean; open: () => void; remove: () => void;
+// `extra` — строка экрана мастера (ДЛ, операции без исполнителя, к запуску); без `remove` корзины нет.
+export function KitTile({ item, statuses, canEdit, open, remove, extra }: {
+  item: KitsetTile; statuses: string[]; canEdit: boolean; open: () => void; remove?: () => void; extra?: ReactNode;
 }) {
   const kbs = item.kb_stages;
   const mixed = kbs.some((kb) => kb.status !== kbs[0].status);
@@ -41,7 +43,7 @@ export function KitTile({ item, statuses, canEdit, open, remove }: {
     <div className="tile-body">
       <div className="kit-tile-head">
         <strong className="t-h">{item.project}</strong>
-        {canEdit && <button className="link-button danger-link" title="Удалить карточку проекта" aria-label={`Удалить ${item.project}`} onClick={(event) => { event.stopPropagation(); remove(); }}>🗑</button>}
+        {canEdit && remove && <button className="link-button danger-link" title="Удалить карточку проекта" aria-label={`Удалить ${item.project}`} onClick={(event) => { event.stopPropagation(); remove(); }}>🗑</button>}
       </div>
       <div className="kit-chips">
         <span className={`kit-status tone-${toneOf(item.status, statuses)}`}>{item.status || "—"}</span>
@@ -55,6 +57,7 @@ export function KitTile({ item, statuses, canEdit, open, remove }: {
       <div className="t-sub">{item.customer || "—"}</div>
       <div className="t-in">сборок {item.assemblies} · позиций {item.lines}</div>
       <div className="t-sub">обновлено {new Date(item.updated_at).toLocaleString("ru-RU")}</div>
+      {extra}
     </div>
   </div>;
 }
