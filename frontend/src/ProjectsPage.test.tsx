@@ -138,7 +138,7 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
     expect((await screen.findByRole("link", { name: "расчёт" })).getAttribute("href")).toBe(linked.calc_source);
-    fireEvent.click(screen.getByRole("button", { name: "Обновить из расчёта" }));
+    fireEvent.click(screen.getByRole("button", { name: /Обновить из расчёта/ }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/techcards/kitsets/load")).toBe(true));
     const [, init] = fetchMock.mock.calls.find(([url]) => String(url) === "/api/techcards/kitsets/load")!;
     expect(JSON.parse(String(init?.body))).toEqual({ url: linked.calc_source, number: "708К.4" });
@@ -159,13 +159,46 @@ describe("ProjectsPage", () => {
       if (url.endsWith("/revisions")) return json({ items: [] });
       return base(input, init);
     });
-    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", techcards: "edit" } }} />);
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", techcards: "edit", tcgen: "edit" } }} />);
     fireEvent.click(await screen.findByText("708К.4"));
-    fireEvent.click(await screen.findByRole("tab", { name: "Генератор" }));
-    fireEvent.click(screen.getByRole("button", { name: "КБ1" }));
-    expect(await screen.findByText(/ЭТК ещё не собрана/)).toBeTruthy();
-    expect(screen.getByText("708К.4 · КБ1")).toBeTruthy();
+    // SUPPLYMAP renderSostav_: клик по строке сборки открывает её генератор.
+    fireEvent.click(await screen.findByText("Жгут питания"));
+    expect(await screen.findByRole("tab", { name: "Генератор", selected: true })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "КБ1", selected: true })).toBeTruthy();
+    // Одна кнопка: ТК ещё нет — «Создать»; служебное свёрнуто в «Ещё».
+    expect(await screen.findByRole("button", { name: "Создать" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Создать техкарты" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).toBeNull();
+    expect(screen.getByText("Ещё")).toBeTruthy();
     expect(window.location.search).toBe("?section=projects");
+  });
+
+  it("shows an issued techcard on its own tab and sends «Пересобрать» to the generator", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    const etk = {
+      id: "tc-1", version: 3, project: "708К.4", item_index: "КБ1", product_name: "Жгут питания", source_calculation: "",
+      deadline: null, status: "Выдана", revision: 1, manual_operation_keys: [],
+      document: { operations: [{ position: 1, code: "CUT_WIRE_auto", card: { name: "Резка", steps: [{ number: "1", kind: "Операция", text: "Отрезать" }] }, result: [], time: [] }], warnings: [] },
+      created_at: "2026-09-29T10:00:00", updated_at: "2026-09-29T10:00:00", issued_at: "2026-09-29T10:00:00",
+    };
+    const issuedCard = { ...card, assemblies: [{ ...card.assemblies[0], techcard: { card_id: "tc-1", status: "Выдана", issued: true, stages: 1, revision: 1 } }] };
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(issuedCard);
+      if (url === "/api/techcards/kitsets/708К.4/techcards/КБ1") return json({ card_id: "tc-1" });
+      if (url === "/api/techcards/projects") return json({ items: [etk] });
+      if (url.endsWith("/revisions")) return json({ items: [] });
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", techcards: "edit", tcgen: "edit" } }} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("button", { name: "готова · 1 эт." }));
+    expect(await screen.findByRole("tab", { name: "ТК КБ1", selected: true })).toBeTruthy();
+    expect(await screen.findByText("Отрезать")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Пересобрать/ }));
+    expect(await screen.findByRole("tab", { name: "Генератор", selected: true })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Пересобрать" })).toBeTruthy();
   });
 
   it("hides writing controls for view-only access", async () => {

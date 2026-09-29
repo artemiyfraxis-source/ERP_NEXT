@@ -80,11 +80,12 @@ it("automatically builds and issues an electronic techcard", async () => {
   render(<TechcardsPage principal={engineer} />);
   const editor = await screen.findByLabelText("Конфигурация автоматической сборки");
   fireEvent.change(editor, { target: { value: JSON.stringify({ ops: [{ templateId: "one" }] }) } });
-  fireEvent.click(screen.getByRole("button", { name: "Собрать ЭТК по JSON" }));
-  // Как SUPPLYMAP «Создать техкарты»: собранная ЭТК сразу выдана, отдельной кнопки «Выдать ЭТК» нет.
-  expect(await screen.findByText("ЭТК создана и выдана, ревизия 1")).toBeInTheDocument();
+  // Одна кнопка: сборка ЭТК и выдача сразу, отдельного шага «Выдать» нет (как файл техкарты в SUPPLYMAP).
+  fireEvent.click(screen.getByRole("button", { name: "Собрать по JSON" }));
+  expect(await screen.findByText("Техкарта создана")).toBeInTheDocument();
   expect(screen.getByText("Собрать")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).toBeNull();
+  expect(screen.getByText(/ревизия 1/)).toBeInTheDocument();
 });
 
 it("shows the imported operation library and opens a structured template", async () => {
@@ -178,7 +179,7 @@ it("walks the ETK route with ← → like SUPPLYMAP renderEtk_", async () => {
 
   render(<TechcardsPage principal={engineer} view="projects" />);
   expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
-  expect(screen.getByText(/Операция 1 из 2/)).toBeInTheDocument();
+  expect(screen.getByText(/операция 1 из 2/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "← Назад" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Далее: Опрессовка →" }));
   expect(await screen.findByText("Проверить высоту обжима")).toBeInTheDocument();
@@ -205,7 +206,7 @@ it("edits an issued ETK operation from the UI and shows the new revision (portal
   });
 
   render(<TechcardsPage principal={engineer} view="projects" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Править/ }));
   expect(screen.getByText(/поднимет ревизию до 2/)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод по КД" } });
   fireEvent.click(screen.getByRole("button", { name: "＋ Контроль" }));
@@ -263,7 +264,7 @@ it("prints the ETK through the shared print contract (etkPrint_)", async () => {
   render(<TechcardsPage principal={engineer} view="projects" />);
   await screen.findByText("Отрезать провод");
   await waitFor(() => expect(screen.getByText(/Первая выдача/)).toBeInTheDocument());
-  fireEvent.click(screen.getByRole("button", { name: "Печать / PDF" }));
+  fireEvent.click(screen.getByRole("button", { name: /Печать \/ PDF/ }));
 
   expect(win.print).toHaveBeenCalled();
   const html = written.join("");
@@ -340,7 +341,7 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   expect(screen.getByText("180 с")).toBeInTheDocument();
   expect(screen.getByText("Перенесено из шаблона БД.ТК, в ERP не правилась")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Править" }));
+  fireEvent.click(screen.getByRole("button", { name: /Править/ }));
   expect(screen.getByLabelText("Требование безопасности")).toHaveValue("Работать в очках");
   fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод в размер" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
