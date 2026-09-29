@@ -97,6 +97,12 @@ class InspectionPayload(BaseModel):
     note: str = Field(default="", max_length=2000)
     manufacture_date: date | None = None
     nonconformity_description: str = Field(default="", max_length=2000)
+    manufacturer: str = Field(default="", max_length=255)
+    country: str = Field(default="", max_length=128)
+    quality_document_type: str = Field(default="", max_length=128)
+    quality_document_number: str = Field(default="", max_length=128)
+    standard: str = Field(default="", max_length=255)
+    quality_document_date: date | None = None
     # RC-13: ≥ 2 партии — строка делится, каждая партия проходит ВК со своим ГРН.
     batches: list[BatchPayload] = Field(default_factory=list, max_length=20)
 
@@ -197,6 +203,12 @@ def _result(line: ReceivingLine) -> dict:
         "document_name": line.document_name,
         "inspection_note": line.inspection_note,
         "manufacture_date": line.manufacture_date.isoformat() if line.manufacture_date else None,
+        "manufacturer": line.manufacturer,
+        "country": line.country,
+        "quality_document_type": line.quality_document_type,
+        "quality_document_number": line.quality_document_number,
+        "standard": line.standard,
+        "quality_document_date": line.quality_document_date.isoformat() if line.quality_document_date else None,
         "split_of_id": str(line.split_of_id) if line.split_of_id else None,
         "acts": [
             {"kind": kind, "title": ACT_KINDS[kind][1], "number": number, "date": day.isoformat() if day else None}
@@ -359,6 +371,12 @@ def inspect(
             note=payload.note.strip(),
             manufacture_date=data.manufacture_date,
             nonconformity_description=payload.nonconformity_description.strip(),
+            manufacturer=payload.manufacturer.strip(),
+            country=payload.country.strip(),
+            quality_document_type=payload.quality_document_type.strip(),
+            quality_document_number=payload.quality_document_number.strip(),
+            standard=payload.standard.strip(),
+            quality_document_date=payload.quality_document_date,
         )
 
     if len(payload.batches) == 1:

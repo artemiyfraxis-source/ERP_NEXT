@@ -9,14 +9,13 @@ from decimal import Decimal
 from hashlib import sha256
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, and_, select
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
-
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, ProjectAddressee, Shipment, ShipmentBox,
-    ShipmentLine, ShipmentStatus, UpdType,
+    ShipmentLine, ShipmentStatus, StoredFile, UpdType,
 )
 
 
@@ -55,10 +54,10 @@ class ShipmentRow(Base):
     shipping_point: Mapped[str] = mapped_column(Text(), nullable=False)
     contact: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str] = mapped_column(String(128), nullable=False)
-    terms: Mapped[str] = mapped_column(String(32), nullable=False)
+    terms: Mapped[str | None] = mapped_column(String(32), nullable=True)
     carrier: Mapped[str] = mapped_column(String(255), nullable=False)
     deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
-    upd_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    upd_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     upd_number: Mapped[str] = mapped_column(String(255), nullable=False)
     upd_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     upd_url: Mapped[str] = mapped_column(Text(), nullable=False)
@@ -187,8 +186,8 @@ class SqlAlchemyShipmentRepository:
             id=row.id, number=row.number, version=row.version, created_at=row.created_at,
             status=ShipmentStatus(row.status), customer=row.customer, receiver=row.receiver,
             shipping_point=row.shipping_point, contact=row.contact, phone=row.phone,
-            terms=DeliveryTerms(row.terms), carrier=row.carrier, deadline=row.deadline,
-            upd_type=UpdType(row.upd_type), upd_number=row.upd_number, upd_date=row.upd_date,
+            terms=DeliveryTerms(row.terms) if row.terms else None, carrier=row.carrier, deadline=row.deadline,
+            upd_type=UpdType(row.upd_type) if row.upd_type else None, upd_number=row.upd_number, upd_date=row.upd_date,
             upd_url=row.upd_url, pl_number=row.pl_number, dn_number=row.dn_number,
             track_number=row.track_number, packed_at=row.packed_at, shipped_at=row.shipped_at,
             manager=row.manager, note=row.note, manager_id=row.manager_id, tk_note=row.tk_note or "",
@@ -233,7 +232,8 @@ class SqlAlchemyShipmentRepository:
             "manager_id", "tk_note",
         ):
             setattr(row, key, getattr(shipment, key))
-        row.status = shipment.status.value; row.terms = shipment.terms.value; row.upd_type = shipment.upd_type.value
+        row.status = shipment.status.value; row.terms = shipment.terms.value if shipment.terms else None
+        row.upd_type = shipment.upd_type.value if shipment.upd_type else None
         existing = {line.id: line for line in self.session.scalars(select(ShipmentLineRow).where(ShipmentLineRow.shipment_id == shipment.id))}
         for position, line in enumerate(shipment.lines):
             stored = existing.pop(line.id, None)
@@ -282,6 +282,37 @@ class SqlAlchemyProjectAddresseeRepository:
         row.upd_type = addressee.upd_type.value if addressee.upd_type else None
 
 
+class ShippingFileRow(Base):
+    """Файл УПД отправки (`shipUpdAttach_` клал его в папку Drive «Отгрузочные документы/УПД»)."""
+
+    __tablename__ = "shipping_files"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    shipment_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SqlAlchemyUpdFileRepository:
+    def __init__(self, session: Session): self.session = session
+    def add(self, stored: StoredFile, content: bytes) -> None:
+        self.session.add(ShippingFileRow(
+            id=stored.id, shipment_id=stored.shipment_id, file_name=stored.file_name, content_type=stored.content_type,
+            size=stored.size, content=content, uploaded_by=stored.uploaded_by, uploaded_at=stored.uploaded_at,
+        ))
+    def get(self, file_id: UUID) -> tuple[StoredFile, bytes] | None:
+        row = self.session.get(ShippingFileRow, file_id)
+        if row is None:
+            return None
+        return StoredFile(
+            id=row.id, shipment_id=row.shipment_id, file_name=row.file_name, content_type=row.content_type,
+            size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at,
+        ), row.content
+
+
 class SqlAlchemyShippingUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory; self.session: Session | None = None; self.committed = False
@@ -290,6 +321,7 @@ class SqlAlchemyShippingUnitOfWork:
         self.goods = SqlAlchemyFinishedGoodsRepository(self.session)
         self.shipments = SqlAlchemyShipmentRepository(self.session)
         self.addressees = SqlAlchemyProjectAddresseeRepository(self.session)
+        self.files = SqlAlchemyUpdFileRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

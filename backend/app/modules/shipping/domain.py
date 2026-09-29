@@ -308,10 +308,12 @@ class Shipment:
     shipping_point: str
     contact: str
     phone: str
-    terms: DeliveryTerms
+    # Условия доставки и тип УПД могут быть пустыми, как в SUPPLYMAP (shipRequestCreate_ требует только
+    # получателя и точку). Пустой тип УПД — не ЭДО: без файла УПД груз не уедет (shipGateMiss_).
+    terms: DeliveryTerms | None
     carrier: str
     deadline: date | None
-    upd_type: UpdType
+    upd_type: UpdType | None
     upd_number: str
     upd_date: date | None
     upd_url: str
@@ -332,8 +334,8 @@ class Shipment:
     @classmethod
     def create(
         cls, *, number: str, created_at: datetime, customer: str, receiver: str,
-        shipping_point: str, contact: str, phone: str, terms: DeliveryTerms,
-        carrier: str, deadline: date | None, upd_type: UpdType, upd_number: str,
+        shipping_point: str, contact: str, phone: str, terms: DeliveryTerms | None,
+        carrier: str, deadline: date | None, upd_type: UpdType | None, upd_number: str,
         upd_date: date | None, upd_url: str, manager: str, note: str,
         lines: tuple[ShipmentLine, ...], manager_id: UUID | None = None,
     ) -> Shipment:
@@ -399,7 +401,7 @@ class Shipment:
         )
 
     def update_documents(
-        self, *, upd_type: UpdType, upd_number: str, upd_date: date | None,
+        self, *, upd_type: UpdType | None, upd_number: str, upd_date: date | None,
         upd_url: str, track_number: str,
     ) -> Shipment:
         if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
@@ -411,19 +413,22 @@ class Shipment:
         )
 
     def mark_shipped(self, day: date) -> Shipment:
-        """`shipShipped_`: груз уехал из «Собрана» или «Упакована» (`shipGateMiss_('Отгружена')`)."""
-        if self.status not in {ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
-            raise ShippingValidationError("Сначала наберите и упакуйте отгрузку")
+        """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:
+        набрана хоть одна позиция и, кроме ЭДО, приложен файл УПД."""
+        if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
+            raise ShippingValidationError("Отгрузить можно только активную заявку")
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
         if self.upd_type != UpdType.EDO and not self.upd_url:
-            raise ShippingValidationError("Для бумажной отгрузки приложите файл УПД")
+            raise ShippingValidationError("Нельзя отгрузить: не хватает — файл УПД (без файла — только по ЭДО)")
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
 
     def set_requested(self, line_id: UUID, quantity: Decimal) -> Shipment:
-        """`shipItemSetQty_`: менеджер передумал — «Заказано» не ниже уже набранного."""
-        if self.status in {ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
-            raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
+        """`shipItemSetQty_`: менеджер передумал — «Заказано» не ниже уже набранного, в любом статусе.
+
+        Как в SUPPLYMAP, статус не проверяется: «Заказано» не двигает склад ГП (его двигает только набор),
+        поэтому правка закрытой или отменённой отправки регистр остатка не ломает.
+        """
         amount = _round2(Decimal(quantity))
         if not amount.is_finite() or amount <= 0:
             raise ShippingValidationError("Количество должно быть больше нуля")
@@ -440,6 +445,12 @@ class Shipment:
         if not found:
             raise ShippingValidationError("Позиция отгрузки не найдена")
         return replace(self, lines=tuple(updated), version=self.version + 1)
+
+    def attach_upd(self, url: str) -> Shipment:
+        """`shipUpdAttach_`: файл УПД к отправке — в любом статусе, кроме отменённой."""
+        if self.status == ShipmentStatus.CANCELLED:
+            raise ShippingValidationError("Отправка отменена.")
+        return replace(self, upd_url=_text(url, "Ссылка на файл УПД"), version=self.version + 1)
 
     def lay_out(self, boxes: tuple[ShipmentBox, ...], tk_note: str) -> Shipment:
         """`portalShipDocs`: раскладка по коробам и примечания для ТК перед сборкой PL/DN."""
@@ -482,6 +493,19 @@ def _round2(value: Decimal) -> Decimal:
 def _plain(value: Decimal) -> str:
     text = format(Decimal(value).normalize(), "f")
     return text
+
+
+@dataclass(frozen=True)
+class StoredFile:
+    """Метаданные файла УПД в хранилище отгрузки."""
+
+    id: UUID
+    shipment_id: UUID
+    file_name: str
+    content_type: str
+    size: int
+    uploaded_by: str
+    uploaded_at: datetime
 
 
 @dataclass(frozen=True)
