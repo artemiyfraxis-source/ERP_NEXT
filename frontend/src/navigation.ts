@@ -40,7 +40,8 @@ const FULFILLMENT_ROLES = ["engineer", "receiver", "prodhead", "master", "admin"
 export const NAV: NavItem[] = [
   { id: "cabinet", label: "Личный кабинет" },
   // Производство
-  { id: "projects", label: "Проекты", sub: "реестр проектов", permission: "projects", block: "prod" },
+  // «Проекты» (SUPPLYMAP erptechmap): карточки наборов — состав, спецификация, снабжение, генератор, готовые ТК.
+  { id: "projects", label: "Проекты", sub: "проекты · состав · спецификация · генератор", permission: "projects", block: "prod" },
   { id: "calculation", label: "Расчёт и КП", sub: "расчёт стоимости · коммерческое предложение", permission: "calculation", block: "prod" },
   // Product cards with ETKs: in SUPPLYMAP they live inside «Проекты» (kit · generator · ready TCs). Here they are a
   // native screen apart from the legacy registry iframe, so they sit next to «Проекты» instead of merging.
