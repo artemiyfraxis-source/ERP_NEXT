@@ -757,8 +757,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                 </p>
                 <fieldset className="form-grid">
                   <legend>Общее для всех позиций</legend>
-                  <label>Назначение *<select value={common.purpose} onChange={(e) => setCommonField("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
-                  <label>Цель (проект)
+                  <label className="half">Назначение *<select value={common.purpose} onChange={(e) => setCommonField("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
+                  <label className="half">Цель (проект)
                     {projects.length ? (
                       <select value={common.project_reference} onChange={(e) => setCommonField("project_reference", e.target.value)}>
                         <option value="">— без проекта —</option>
@@ -792,7 +792,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                       <label>Артикул КД<input value={position.design_article} onChange={(e) => setPositionField(index, "design_article", e.target.value)} /></label>
                       <label>Количество *<input type="number" min="0.000001" step="any" value={position.quantity} onChange={(e) => setPositionField(index, "quantity", e.target.value)} /></label>
                       <label>Единица *<select value={position.unit} onChange={(e) => setPositionField(index, "unit", e.target.value)}><option value="">—</option>{schema?.units.map((item) => <option key={item}>{item}</option>)}</select></label>
-                      <label className="wide">Ссылка<input value={position.link} onChange={(e) => setPositionField(index, "link", e.target.value)} placeholder="https://…" /></label>
+                      <label className="wide half">Ссылка<input value={position.link} onChange={(e) => setPositionField(index, "link", e.target.value)} placeholder="https://…" /></label>
                       <label>Цена<input type="number" min="0" step="0.01" value={position.price} onChange={(e) => setPositionField(index, "price", e.target.value)} /></label>
                       <label>Цена с НДС<input type="number" min="0" step="0.01" value={position.price_with_vat} onChange={(e) => setPositionField(index, "price_with_vat", e.target.value)} /></label>
                       <label className="wide">Комментарий<textarea value={position.comment} onChange={(e) => setPositionField(index, "comment", e.target.value)} rows={2} /></label>

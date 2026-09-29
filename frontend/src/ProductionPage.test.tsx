@@ -386,3 +386,47 @@ it("groups the operator queue by plan day and hides start for a completed operat
   expect(screen.getByText(/вместе с: Мастер/)).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "▶ Начать" })).toHaveLength(1);
 });
+
+it("lets the master hand out operations of issued projects to installers and launch a ready card", async () => {
+  const bodies: Array<{ path: string; body: unknown }> = [];
+  const open: ProductionTask = { ...task, assigned: 0, operations: [
+    { ...task.operations[0], operator_ids: [] },
+    { ...task.operations[0], id: "71000000-0000-0000-0000-000000000002", position: 2, stage: "Обжим", code: "OP-02", operator_ids: ["10000000-0000-0000-0000-000000000002"] },
+  ] };
+  masterFetch((path, init) => {
+    if (path === "/api/production/operators") return json({ operators: [
+      { id: "10000000-0000-0000-0000-000000000002", name: "Рыбкина Ольга", site: "ЦАР", department: "Монтаж" },
+      { id: "10000000-0000-0000-0000-000000000003", name: "Попов Игнат", site: "ЦАР", department: "Монтаж" },
+      { id: "10000000-0000-0000-0000-000000000004", name: "Бухгалтер", site: "", department: "Бухгалтерия" },
+    ] });
+    if (path === "/api/production/launchable") return json({ items: [{
+      techcard_id: "80000000-0000-0000-0000-000000000009", project: "708К.4", index: "КБ2", item: "708К.4КБ2",
+      name: "Кабель", customer: "", run: "5", deadline: "2026-10-10", launched: 0, operations: 4,
+    }] });
+    if (init?.method === "POST") {
+      bodies.push({ path, body: JSON.parse(String(init.body)) });
+      return json({ task: open, warnings: [], plan: { start: null, finish: null, warnings: [] }, dry: false });
+    }
+    return null;
+  }, [open]);
+
+  render(<ProductionPage principal={principal} />);
+  expect(await screen.findByRole("region", { name: "Проекты и операции" })).toBeInTheDocument();
+  expect(await screen.findByText("Рыбкина Ольга", { selector: ".mb-person b" })).toBeInTheDocument();
+  expect(screen.queryByText("Бухгалтер")).not.toBeInTheDocument();
+  expect(screen.getByText("1 опер. · 0,2 ч", { exact: false })).toBeInTheDocument();
+  expect(screen.getByText("без исполнителя: 1")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат" }));
+  await waitFor(() => expect(bodies.at(-1)).toEqual({
+    path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/assign`,
+    body: { version: 2, operator_ids: ["10000000-0000-0000-0000-000000000003"], requested_start: null, dry: false },
+  }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "В работу" }));
+  await waitFor(() => expect(bodies.at(-1)).toEqual({
+    path: "/api/production/tasks",
+    body: { techcard_id: "80000000-0000-0000-0000-000000000009", quantity: 5, deadline: "2026-10-10", fulfillment_request_id: null },
+  }));
+});

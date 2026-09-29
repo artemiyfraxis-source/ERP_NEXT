@@ -37,6 +37,8 @@ class Operator:
     name: str
     site: str
     active: bool
+    # Отдел из справочника сотрудников: «Монтаж» отбирает монтажников на экране мастера.
+    department: str = ""
 
 
 @dataclass(frozen=True)

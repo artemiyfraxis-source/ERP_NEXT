@@ -90,6 +90,15 @@ def launch_from_card(client, key, project, index, quantity, ops, **extra):
     )
 
 
+def test_operators_carry_department_for_the_master_board(production_api):
+    client, operator_id = production_api
+
+    listed = client.get("/api/production/operators")
+
+    assert listed.status_code == 200, listed.text
+    assert {"id": str(operator_id), "name": "Оператор", "site": "ЦАР", "department": "Производство"} in listed.json()["operators"]
+
+
 def test_master_launches_route_snapshot_assigns_multiple_people_and_preserves_cancelled_task(production_api):
     client, operator_id = production_api
     launched = launch_from_card(
