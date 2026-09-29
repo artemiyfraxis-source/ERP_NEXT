@@ -28,7 +28,7 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "op", label: "Операции", base: "op" },
     { id: "ob", label: "Оборудование", base: "ob" },
     { id: "ter", label: "Терминалы", base: "ter" },
-    { id: "coax", label: "Коаксиал", base: "coax" },
+    { id: "coax", label: "Коаксиал: разъёмы", base: "coax" },
     { id: "prov", label: "Провода", base: "prov" },
     { id: "mat", label: "Материалы", base: "mat" },
   ] },
@@ -36,7 +36,7 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
   // (TcGenData.gs gostAwgMap_), so there is no separate map tab (owner 29.09.2026: «нет диаметров по сечению»).
   { title: "СПР.КАБ", tabs: [
     { id: "kab_awg", label: "Провода: AWG · ГОСТ · Ø по маркам" },
-    { id: "kab_coax", label: "Коаксиал: D1 · D2 · D3" },
+    { id: "kab_coax", label: "Коаксиальные кабели: D1 · D2 · D3" },
   ] },
   { title: "Соответствия", tabs: [
     { id: "suppliers", label: "Домен → поставщик" },
@@ -62,6 +62,11 @@ const FIELD_TITLES: Record<string, string> = {
   coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
 };
 const fieldTitle = (field: string) => FIELD_TITLES[field] ?? field;
+// БД.КОАКС (owner 29.09.2026): Ø belong to the cable (СПР.КАБ · коаксиал), the connector row keeps only lengths;
+// D1–D3 come from СПР.КАБ by «Провод», as the sheet's D1 formula does. Same key as the generator's coaxCableDiaLookup_.
+const CABLE_DIAMETERS = ["D1", "D2", "D3"];
+const cableKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
+type CableDia = Record<string, Record<string, string>>;
 
 function isMapTab(tab: DbTab): tab is MapTab {
   return tab in MAP_TABS;
@@ -86,6 +91,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [maps, setMaps] = useState<ReferenceMaps>(EMPTY_MAPS);
   const [savedMaps, setSavedMaps] = useState("");
   const [tech, setTech] = useState<TechOperationResult>({ metadata: null, records: [] });
+  const [cableDia, setCableDia] = useState<CableDia>({});
   const [bases, setBases] = useState<ReferenceBase[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -110,6 +116,10 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     setError("");
     try {
       setTech(await referencesApi.techOperations(next, "", 5000));
+      if (next === "coax") {
+        const cables = await referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] }));
+        setCableDia(Object.fromEntries(cables.records.map((record) => [cableKey(Object.values(record.fields)[0] ?? ""), record.fields])));
+      }
     } catch (reason) {
       setTech({ metadata: null, records: [] });
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить базу техопераций");
@@ -173,11 +183,25 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   }
 
   const fieldColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
-  // Edit form: the sheet's columns only; the server moves the schema values derived from them.
-  const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns.filter((key) => key in record.fields).map((key) => [key, record.fields[key]]));
+  const coaxTab = techTab === "coax";
+  const cableOf = (record: TechOperationRecord) => cableDia[cableKey(record.fields["Провод"] ?? record.fields.coaxWire ?? "")];
+  // Edit form: the sheet's columns only (the server moves the schema values derived from them); on БД.КОАКС without
+  // the cable's Ø — they are edited in СПР.КАБ.
+  const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns
+    .filter((key) => key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
+    .map((key) => [key, record.fields[key]]));
   const techColumns: DataColumn<TechOperationRecord>[] = [
     // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
     ...fieldColumns.map((field): DataColumn<TechOperationRecord> => {
+      if (coaxTab && CABLE_DIAMETERS.includes(field)) return {
+        key: field, title: `${field} кабеля`, numeric: true,
+        value: (record) => cableOf(record)?.[field] ?? "",
+        render: (record) => cableOf(record)
+          ? <span title={`Из СПР.КАБ · коаксиал по кабелю «${record.fields["Провод"] ?? ""}»`}>{cableOf(record)?.[field] || "—"}</span>
+          : (record.fields["Провод"] ?? record.fields.coaxWire ?? "").trim()
+            ? <span className="muted" title="Кабеля нет в СПР.КАБ · коаксиал — добавьте его туда">нет в СПР.КАБ</span>
+            : <span className="muted" title="У разъёма не указан кабель («Провод»)">—</span>,
+      };
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
       const long = values.some((value) => value.length > 40);
       return {
@@ -250,7 +274,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         emptyText={viewOnly ? "Таблица СПР.КАБ не загружена из зеркала." : "Записей нет."}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
       />
-      <p className="page-sub">{viewOnly ? "СПР.КАБ — только просмотр, как в портале SUPPLYMAP; генератор берёт из этой таблицы и «ГОСТ → AWG»." : "Правки строк живут до следующего импорта снимка."}</p>
+      <p className="page-sub">{coaxTab ? "D1–D3 — диаметры кабеля из СПР.КАБ · коаксиал по колонке «Провод»; у разъёма хранятся только длины разделки (L1–L3, L+, L−). Правятся диаметры в СПР.КАБ." : viewOnly ? "СПР.КАБ — только просмотр, как в портале SUPPLYMAP; генератор берёт из этой таблицы и «ГОСТ → AWG»." : "Правки строк живут до следующего импорта снимка."}</p>
     </>}
   </section>;
 }

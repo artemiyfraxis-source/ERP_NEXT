@@ -161,7 +161,7 @@ it("shows the СПР.КАБ tables as read-only grids", async () => {
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Коаксиал: D1 · D2 · D3" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Коаксиальные кабели: D1 · D2 · D3" }));
   expect(await screen.findByText("1,95")).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "D3" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
@@ -228,4 +228,33 @@ it("lets the buyer edit supplier maps and shows no separate ГОСТ→AWG map (
   expect(await screen.findByLabelText("Поставщик 1")).toBeEnabled();
   expect(screen.queryByRole("button", { name: "ГОСТ → AWG" })).toBeNull();
   expect(screen.getByRole("button", { name: "Сохранить справочники" })).toBeInTheDocument();
+});
+
+it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them out of the edit form", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.startsWith("/api/references/tech-operations?tab=kab_coax")) return json({
+      metadata: null, columns: ["Кабель", "D1", "D2", "D3"],
+      records: [{ id: "k", tab: "kab_coax", display_text: "RG58", source_sheet: "", fields: { Кабель: "RG58", D1: "1", D2: "2,95", D3: "3,5" } }],
+    });
+    if (path.startsWith("/api/references/tech-operations?tab=coax")) return json({
+      metadata: null, columns: ["Артикул", "Провод", "D1", "D2", "D3", "L1"],
+      records: [
+        { id: "c1", tab: "coax", display_text: "BNC", source_sheet: "БД.КОАКС", fields: { Артикул: "BNC-C58P", Провод: "RG-58", D1: "9", D2: "9", D3: "9", L1: "5" } },
+        { id: "c2", tab: "coax", display_text: "N", source_sheet: "БД.КОАКС", fields: { Артикул: "N-111/10D", Провод: "10D-FB", D1: "", D2: "", D3: "", L1: "7" } },
+      ],
+    });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={admin} initialTab="coax" />);
+  expect(await screen.findByText("3,5")).toBeInTheDocument(); // D3 of RG58, not the connector's own «9»
+  expect(screen.queryByText("9")).toBeNull();
+  expect(screen.getAllByText("нет в СПР.КАБ")).toHaveLength(3);
+  expect(screen.getByRole("columnheader", { name: "D1 кабеля" })).toBeInTheDocument();
+  fireEvent.click(screen.getAllByRole("button", { name: "Править" })[0]);
+  expect(screen.getByLabelText("Поле L1")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Поле D1")).toBeNull();
 });
