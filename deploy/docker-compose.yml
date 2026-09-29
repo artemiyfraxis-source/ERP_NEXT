@@ -80,6 +80,7 @@ services:
       BACKUP_HOUR: ${BACKUP_HOUR:-3}
       KEEP_DAILY: ${KEEP_DAILY:-14}
       KEEP_WEEKLY: ${KEEP_WEEKLY:-8}
+      KEEP_MONTHLY: ${KEEP_MONTHLY:-36}
     volumes:
       - ./backup-loop.sh:/backup-loop.sh:ro
       - ${ERP_HOME:-/opt/erp}/backups:/backups

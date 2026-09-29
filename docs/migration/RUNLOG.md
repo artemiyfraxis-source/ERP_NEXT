@@ -615,3 +615,12 @@
 - Платформа клонирует SUPPLYMAP мелко (shallow, одна ветка) — пины SOURCE.json не находятся, drift-отчёт был пустым. `cloud-siblings.mjs` теперь делает `--unshallow`; порядок запуска вручную записан в CLAUDE.md.
 - Решено агентом — проверить: копировать скиллы плагинов claude-code-skills в `.claude/skills` не стали (автопроверка запретила вносить сторонний код). Плагины для тредов включает владелец в настройках проекта → Plugins.
 - В список владельцу при настройке сервера: включить в настройках проекта (Plugins) karpathy-coder, write-a-skill, caveman, grill-me, handoff-engineering, reflect-skill, self-improving-agent из маркетплейса alirezarezvani/claude-skills — по желанию, работе не мешает.
+
+## 2026-09-29 · тред «Догнать свежий SUPPLYMAP» · пины модулей → SUPPLYMAP d0a030b
+- Разобраны коммиты SUPPLYMAP после пинов по файлам каждого модуля (`git log <пин>..main -- <sourceFiles>`). Кода .gs после a9ce52c нет; всё до него уже разобрано конвейером (BACKLOG DRIFT-*) и аудитом (колонка «дрейф»), не двигались только пины.
+- warehouse (fb6c798 список серий БД.ТЕР) — перенесено (DRIFT-fb6c798). operations (30d7fe5 кодировка страницы) — `techcards/kitset_names.page_charset`; ae64579 коаксиал склада — SK-11. requests/procurement (2340178, 57bb346 номер проекта; 989190d этапы проекта по фактам) — RQ-4, `production/plan.py` KIT_STAGES. identity (5e7b27a, 4d2188f доступы; новые разделы) — ID-3/ID-5. procurement 15e0030 «По поставщикам» — PR-11. shipping — коммитов в Shipment.gs нет. receiving — только 30d7fe5.
+- Не было в ERP: 44ad0ca месячные копии за 36 мес. (прослеживаемость ГОСТ РВ хранится 3 года). Добавлено в `deploy/backup-loop.sh`: копия за 1-е число → `backups/monthly`, `KEEP_MONTHLY=36`.
+- Неприменимо (механика Google): `backupWarehouseNow`/`diagBackupStatus` (снимок файла Склад), `dbMirrorDeleteRows`, `diagPortalAccess*`.
+- Пины identity/requests/procurement/operations/shipping/receiving/warehouse/fulfillment → `sourceRef: main`, `sourceCommit: d0a030b` (аудит X1, X3: теперь drift-тест краснеет, когда SUPPLYMAP main уходит вперёд, как у production).
+- Решено агентом — проверить: ядро techcards (`sourceCommit` 83b223a, `feat/techmap-web-generator`) оставлено — каталога `techmap/` в SUPPLYMAP main нет, синхронизировать нечего. Открытым из дрейфа остаётся TC-1 (артикул к применению в ЭТК, d88150d).
+
