@@ -194,8 +194,28 @@ $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = 'C:\secrets\erp-calc-reader.json'
 ключа или папки вложение и отвязка отвечают `503` с подсказкой.
 
 ```powershell
-$env:ERP_KD_DRIVE_FOLDER_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz'
+$env:ERP_KD_DRIVE_FOLDER_ID = '1cPlM5X6ZSdiPpSajOw1YvBYfOdqGdzfA'   # «!Проекты» SUPPLYMAP
 ```
+
+#### Google: где лежат ключи и как проверить
+
+- Ключи — только в секретах GitHub репозитория (Settings → Secrets and variables → Actions), не в git:
+  `ERP_GOOGLE_SERVICE_ACCOUNT_JSON` (JSON-ключ `erp-reader@techmap-498119.iam.gserviceaccount.com`) и
+  `ERP_KD_DRIVE_OAUTH_JSON`. Деплой на сервер передаёт их backend как переменные окружения — так, как это делает
+  `.github/workflows/google-access.yml`. `ERP_KD_DRIVE_FOLDER_ID` не секрет: по умолчанию «!Проекты», переменная
+  репозитория с тем же именем его переопределяет.
+- Проверка без записи в Google: `python -m app.modules.requests.google_check` (из `backend`) — вход сервисного
+  аккаунта, чтение таблиц SUPPLYMAP (`--sheet <ID>` — ещё любая, например расчёт), список папок в «!Проекты».
+  В GitHub она же — Actions → google-access → Run workflow.
+- `ERP_KD_DRIVE_OAUTH_JSON` получает владелец папки один раз на своём компьютере: в Google Cloud (проект
+  techmap-498119) «APIs & Services → OAuth consent screen» — тип External, статус **In production** (в статусе
+  Testing Google отзывает ключ через 7 дней); «Credentials → Create credentials → OAuth client ID → Desktop app»,
+  скачать JSON. Затем из `backend`:
+  `.\.venv\Scripts\python.exe -m app.modules.requests.google_oauth_login --client <client_secret….json>` — браузер,
+  вход `artemiyfraxis@gmail.com`, «Разрешить» (предупреждение «приложение не проверено» → «Дополнительно» →
+  «Перейти»). Появится `erp-kd-oauth.json`: его содержимое — в секрет `ERP_KD_DRIVE_OAUTH_JSON`, файл удалить.
+- Локальный preview (`.claude/launch.json`) берёт папку из конфигурации, а оба ключа — из переменных окружения
+  Windows пользователя (путь к файлу ключа), как `$env:` выше.
 
 ### Импорт живых остатков из SUPPLYMAP (WH-IMPORT)
 

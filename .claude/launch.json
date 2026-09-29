@@ -8,7 +8,8 @@
       "cwd": "backend",
       "env": {
         "ERP_DATABASE_URL": "sqlite+pysqlite:///preview.db",
-        "ERP_COOKIE_SECURE": "0"
+        "ERP_COOKIE_SECURE": "0",
+        "ERP_KD_DRIVE_FOLDER_ID": "1cPlM5X6ZSdiPpSajOw1YvBYfOdqGdzfA"
       },
       "port": 8021
     },
