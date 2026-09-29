@@ -79,3 +79,79 @@ def test_manager_cannot_execute_warehouse_step(shipping_api):
     )
     response = client.post("/api/shipping/shipments/10000000-0000-0000-0000-000000000099/pick", json={"version": 1})
     assert response.status_code == 403
+
+
+def _stocked_good(client, item_index: str, quantity: str) -> dict:
+    good = client.post("/api/shipping/goods", json={
+        "project": "591К.3", "item_index": item_index, "customer": "Заказчик",
+        "name": "Жгут " + item_index, "ordered": "40", "unit": "шт",
+    }).json()["good"]
+    return client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": quantity}).json()["good"]
+
+
+def _picked_shipment(client, lines: list[tuple[dict, str]]) -> dict:
+    shipment = client.post("/api/shipping/shipments", json={
+        "receiver": "Получатель", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО",
+        "lines": [{"good_id": good["id"], "quantity": quantity} for good, quantity in lines],
+    }).json()["shipment"]
+    return client.post(f"/api/shipping/shipments/{shipment['id']}/pick", json={"version": shipment["version"]}).json()["shipment"]
+
+
+def _goods(client) -> dict[str, dict]:
+    return {good["id"]: good for good in client.get("/api/shipping/goods").json()["goods"]}
+
+
+def test_unpick_returns_picked_quantity_to_finished_goods_register(shipping_api):
+    client = shipping_api
+    first, second = _stocked_good(client, "КБ1", "6"), _stocked_good(client, "КБ2", "3")
+    shipment = _picked_shipment(client, [(first, "10"), (second, "3")])
+    assert _goods(client)[first["id"]]["shipped"] == "6"
+
+    line = next(line for line in shipment["lines"] if line["good_id"] == first["id"])
+    unpicked = client.post(f"/api/shipping/shipments/{shipment['id']}/unpick", json={"version": shipment["version"], "line_id": line["id"]})
+    goods = _goods(client)
+
+    assert unpicked.status_code == 200
+    assert unpicked.json()["shipment"]["status"] == "Собрана"
+    assert goods[first["id"]]["shipped"] == "0"
+    assert goods[first["id"]]["remaining"] == "6"
+    assert goods[second["id"]]["shipped"] == "3"
+
+    stale = client.post(f"/api/shipping/shipments/{shipment['id']}/unpick", json={"version": shipment["version"], "line_id": line["id"]})
+    assert stale.status_code == 409
+    assert _goods(client)[first["id"]]["shipped"] == "0"
+
+
+def test_cancel_returns_every_picked_line_and_repeated_cancel_changes_nothing(shipping_api):
+    client = shipping_api
+    first, second = _stocked_good(client, "КБ1", "6"), _stocked_good(client, "КБ2", "3")
+    shipment = _picked_shipment(client, [(first, "4"), (second, "3")])
+    packed = client.post(f"/api/shipping/shipments/{shipment['id']}/pack", json={"version": shipment["version"]}).json()["shipment"]
+
+    cancelled = client.post(f"/api/shipping/shipments/{shipment['id']}/cancel", json={"version": packed["version"]})
+    goods = _goods(client)
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["shipment"]["status"] == "Отменена"
+    assert all(line["picked"] == "0" for line in cancelled.json()["shipment"]["lines"])
+    assert (goods[first["id"]]["shipped"], goods[first["id"]]["remaining"]) == ("0", "6")
+    assert (goods[second["id"]]["shipped"], goods[second["id"]]["remaining"]) == ("0", "3")
+
+    again = client.post(f"/api/shipping/shipments/{shipment['id']}/cancel", json={"version": cancelled.json()["shipment"]["version"]})
+    assert again.status_code == 422
+    assert _goods(client)[first["id"]]["shipped"] == "0"
+
+
+def test_shipped_goods_stay_shipped_when_cancel_is_refused(shipping_api):
+    client = shipping_api
+    good = _stocked_good(client, "КБ1", "5")
+    shipment = _picked_shipment(client, [(good, "5")])
+    packed = client.post(f"/api/shipping/shipments/{shipment['id']}/pack", json={"version": shipment["version"]}).json()["shipment"]
+    shipped = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": packed["version"]}).json()["shipment"]
+
+    refused = client.post(f"/api/shipping/shipments/{shipment['id']}/cancel", json={"version": shipped["version"]})
+    unpick = client.post(f"/api/shipping/shipments/{shipment['id']}/unpick", json={"version": shipped["version"], "line_id": shipped["lines"][0]["id"]})
+
+    assert refused.status_code == 422
+    assert unpick.status_code == 422
+    assert _goods(client)[good["id"]]["shipped"] == "5"
