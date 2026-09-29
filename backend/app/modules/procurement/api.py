@@ -15,8 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.document_url import normalize_document_url
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
+from app.shared.stored_files import decode_upload, file_response
 
 from .application import (
     CancelBackorderCommand,
@@ -35,6 +35,9 @@ from .application import (
     SetReplacementCommand,
     SetTraceabilityCommand,
     RecordInvoiceCommand,
+    UploadInvoiceFileCommand,
+    invoice_file,
+    upload_invoice_file,
     ReplaceInvoiceCommand,
     MarkProcurementPaidCommand,
     OfflineAction,
@@ -89,8 +92,10 @@ from .domain import (
     ProcurementLine,
     ProcurementValidationError,
     ReplacementDecision,
+    normalize_invoice_url,
 )
 from .exchange_rates import CbrExchangeRates
+from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
 
@@ -210,14 +215,23 @@ class InvoiceInput(BaseModel):
     version: int = Field(ge=1)
     invoice_url: str = Field(min_length=1, max_length=4096)
     expected_arrival: date
+    invoice_number: str | None = Field(default=None, max_length=128)
+    invoice_date: date | None = None
 
     @field_validator("invoice_url")
     @classmethod
     def validate_invoice_url(cls, value: str) -> str:
-        normalized = normalize_document_url(value)
+        normalized = normalize_invoice_url(value)
         if normalized is None:
             raise ValueError("Счёт обязателен")
         return normalized
+
+
+class InvoiceFileInput(BaseModel):
+    line_id: UUID
+    file_name: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(default="", max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
 
 
 class InvoiceReplaceInput(BaseModel):
@@ -229,7 +243,7 @@ class InvoiceReplaceInput(BaseModel):
     @field_validator("invoice_url")
     @classmethod
     def validate_invoice_url(cls, value: str) -> str:
-        normalized = normalize_document_url(value)
+        normalized = normalize_invoice_url(value)
         if normalized is None:
             raise ValueError("Счёт обязателен")
         return normalized
@@ -335,7 +349,7 @@ class KpInput(BaseModel):
     def validate_invoice_url(cls, value: str | None) -> str | None:
         if value is None or not value.strip():
             return None
-        normalized = normalize_document_url(value)
+        normalized = normalize_invoice_url(value)
         if normalized is None:
             raise ValueError("Счёт обязателен")
         return normalized
@@ -1000,10 +1014,56 @@ def invoice(
                 expected_arrival=payload.expected_arrival,
                 actor=principal.actor,
                 now=now,
+                invoice_number=payload.invoice_number,
+                invoice_date=payload.invoice_date,
             ),
             uow_factory(),
         )
     )
+
+
+@router.post("/invoice-files")
+def upload_invoice(
+    payload: InvoiceFileInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """`uploadInvoice`: the file goes to storage, the form gets its link and the recognised № and date."""
+    content = decode_upload(payload.content_base64, "Файл счёта повреждён")
+    try:
+        uploaded = upload_invoice_file(
+            UploadInvoiceFileCommand(
+                line_id=payload.line_id, file_name=payload.file_name, content_type=payload.content_type,
+                content=content, actor=principal.actor, now=now,
+            ),
+            uow_factory(),
+        )
+    except ProcurementValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Строка закупки не найдена") from error
+    parsed = invoice_day(uploaded.info.date)
+    return {
+        "url": uploaded.url,
+        "file_name": uploaded.file.file_name,
+        "invoice_number": uploaded.info.number,
+        "invoice_date": parsed.isoformat() if parsed else "",
+        "hint": uploaded.hint,
+    }
+
+
+@router.get("/files/{file_id}")
+def download_invoice(
+    file_id: UUID,
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> Response:
+    found = invoice_file(file_id, uow_factory())
+    if found is None:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    meta, content = found
+    return file_response(content, meta.content_type, meta.file_name)
 
 
 @router.post("/{line_id}/invoice/replace")

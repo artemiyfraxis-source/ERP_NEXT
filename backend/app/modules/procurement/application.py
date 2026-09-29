@@ -16,6 +16,9 @@ from app.shared.identity import Actor
 from app.shared.notifications import NotificationOutbox, notification_requested, publish_notification
 from app.shared.print_sheet import PrintSheet
 
+from .invoice_file import (
+    INVOICE_FILE_LIMIT, INVOICE_FILE_PATH, InvoiceInfo, invoice_file_name, recognise_invoice,
+)
 from .domain import (
     UNSET as UNSET_FACT,
     _PAID_STATUSES,
@@ -118,10 +121,29 @@ class DispatchOutboxRepository(Protocol):
     def mark_failed(self, message_id: UUID, failed_at: datetime, error: str) -> None: ...
 
 
+@dataclass(frozen=True)
+class StoredInvoiceFile:
+    """An invoice file in ERP storage (`uploadInvoice` put it in the Drive folder «Счета»)."""
+
+    id: UUID
+    line_id: UUID
+    file_name: str
+    content_type: str
+    size: int
+    uploaded_by: str
+    uploaded_at: datetime
+
+
+class InvoiceFileRepository(Protocol):
+    def add(self, stored: StoredInvoiceFile, content: bytes) -> None: ...
+    def get(self, file_id: UUID) -> tuple[StoredInvoiceFile, bytes] | None: ...
+
+
 class UnitOfWork(Protocol):
     procurement: ProcurementRepository
     audit: AppendOnlyRepository
     outbox: AppendOnlyRepository
+    files: InvoiceFileRepository
 
     def __enter__(self) -> UnitOfWork: ...
     def __exit__(self, exc_type, exc, traceback) -> bool | None: ...
@@ -324,6 +346,8 @@ class RecordInvoiceCommand:
     expected_arrival: date
     actor: Actor
     now: datetime
+    invoice_number: str | None = None
+    invoice_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -991,6 +1015,8 @@ def record_invoice(command: RecordInvoiceCommand, uow: UnitOfWork) -> Procuremen
             command.invoice_url,
             command.expected_arrival,
             command.actor,
+            invoice_number=command.invoice_number,
+            invoice_date=command.invoice_date,
         )
         result = _save_transition(
             current,
@@ -1002,6 +1028,80 @@ def record_invoice(command: RecordInvoiceCommand, uow: UnitOfWork) -> Procuremen
         )
         uow.commit()
         return result
+
+
+@dataclass(frozen=True)
+class UploadInvoiceFileCommand:
+    """The file chosen in the invoice form; `line_id` is the line (or the first line of the order)."""
+
+    line_id: UUID
+    file_name: str
+    content_type: str
+    content: bytes
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class UploadedInvoice:
+    file: StoredInvoiceFile
+    url: str
+    info: InvoiceInfo
+    hint: str
+
+
+def invoice_file_url(file_id: UUID) -> str:
+    return f"{INVOICE_FILE_PATH}{file_id}"
+
+
+def upload_invoice_file(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> UploadedInvoice:
+    """`uploadInvoice`, first half: recognise № and date, store the file named after them.
+
+    SUPPLYMAP writes the link, № and date into the rows in the same call; ERP hands them to the invoice
+    form, which the buyer sends through the usual invoice / replacement / «Внести КП» command, so the pay
+    gate and the status move stay in one place.
+    """
+    if not command.content:
+        raise ProcurementValidationError("Файл не передан")
+    if len(command.content) > INVOICE_FILE_LIMIT:
+        raise ProcurementValidationError("Файл счёта больше 20 МБ")
+    info, hint = recognise_invoice(command.content)
+    with uow:
+        line = uow.procurement.get(command.line_id)
+        if line is None:
+            raise KeyError("Строка закупки не найдена")
+        line._require_owner(command.actor)
+        if line.status is ProcurementStatus.CANCELLED:
+            raise ProcurementValidationError("Счёт отменённой строки не загружается")
+        stored = StoredInvoiceFile(
+            id=uuid4(),
+            line_id=line.id,
+            file_name=invoice_file_name(
+                info, line.supplier or "", line.designation, line.order_number or "", command.file_name,
+            ),
+            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            size=len(command.content),
+            uploaded_by=command.actor.name,
+            uploaded_at=command.now,
+        )
+        uow.files.add(stored, command.content)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=line.id,
+                event_type="procurement.invoice_file_uploaded",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={"file_id": str(stored.id), "name": stored.file_name},
+            )
+        )
+        uow.commit()
+    return UploadedInvoice(file=stored, url=invoice_file_url(stored.id), info=info, hint=hint)
+
+
+def invoice_file(file_id: UUID, uow: UnitOfWork) -> tuple[StoredInvoiceFile, bytes] | None:
+    with uow:
+        return uow.files.get(file_id)
 
 
 def replace_invoice(command: ReplaceInvoiceCommand, uow: UnitOfWork) -> ProcurementLine:

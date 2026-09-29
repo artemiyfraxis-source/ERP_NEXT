@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   manualRatePrompt,
   procurementApi,
+  type InvoiceUpload,
   type KpRowInput,
   type ManualRatePrompt,
   type MoneyDriver,
@@ -439,6 +440,10 @@ function ProcurementCard({
 }) {
   const [draft, setDraft] = useState(() => draftFrom(line));
   const [invoiceUrl, setInvoiceUrl] = useState(line.invoice_url ?? "");
+  // № and date of an uploaded file; empty keeps what the money form saved (uploadInvoice setIf).
+  const [invoiceFile, setInvoiceFile] = useState(false);
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState("");
   const [expectedArrival, setExpectedArrival] = useState(line.expected_arrival ?? "");
   const moneyMissing = line.pay_missing.filter((name) => name !== "ОЖИД. ДАТА");
 
@@ -502,8 +507,18 @@ function ProcurementCard({
           )}
           <MoneyForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
           <MoneySummary line={line} />
-          <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.recordInvoice(line.id, line.version, invoiceUrl, expectedArrival), `${line.legacy_id}: счёт передан в оплату`).catch(() => undefined); }}>
-            <label>Ссылка на счёт<input type="url" required value={invoiceUrl} onChange={(event) => setInvoiceUrl(event.target.value)} /></label>
+          <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.recordInvoice(line.id, line.version, invoiceUrl, expectedArrival, invoiceNumber, invoiceDate), `${line.legacy_id}: счёт передан в оплату`).catch(() => undefined); }}>
+            <InvoiceFileUpload lineId={line.id} disabled={disabled} onUploaded={(upload) => {
+              setInvoiceUrl(upload.url);
+              setInvoiceFile(true);
+              setInvoiceNumber(upload.invoice_number);
+              setInvoiceDate(upload.invoice_date);
+            }} />
+            <label>Ссылка на счёт<input required value={invoiceUrl} onChange={(event) => setInvoiceUrl(event.target.value)} /></label>
+            {invoiceFile && <>
+              <label>№ счёта по файлу<input value={invoiceNumber} onChange={(event) => setInvoiceNumber(event.target.value)} placeholder={line.invoice_number ?? ""} /></label>
+              <label>Дата счёта по файлу<input type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} /></label>
+            </>}
             <label>Ожидаемая дата<input type="date" required value={expectedArrival} onChange={(event) => setExpectedArrival(event.target.value)} /></label>
             <button className="primary small" disabled={disabled || moneyMissing.length > 0}>{busy ? "Сохраняем…" : "В оплату"}</button>
           </form>
@@ -579,12 +594,59 @@ function InvoiceReplaceForm({ line, busy, disabled, onAdvance }: {
     <details>
       <summary>Заменить счёт</summary>
       <form className="inline-action" onSubmit={submit}>
-        <label>Ссылка на новый счёт<input type="url" required value={url} onChange={(event) => setUrl(event.target.value)} /></label>
+        <InvoiceFileUpload lineId={line.id} disabled={disabled} onUploaded={(upload) => {
+          setUrl(upload.url);
+          if (upload.invoice_number) setNumber(upload.invoice_number);
+          if (upload.invoice_date) setDate(upload.invoice_date);
+        }} />
+        <label>Ссылка на новый счёт<input required value={url} onChange={(event) => setUrl(event.target.value)} /></label>
         <label>№ счёта<input value={number} onChange={(event) => setNumber(event.target.value)} placeholder={line.invoice_number ?? ""} /></label>
         <label>Дата счёта<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
         <button className="secondary small" disabled={disabled}>{busy ? "Сохраняем…" : "Заменить"}</button>
       </form>
     </details>
+  );
+}
+
+// Invoices.gs uploadInvoice: the file goes to ERP storage and its link, № and date fill the form —
+// the buyer checks them and sends the form (SUPPLYMAP wrote them into the rows at once).
+function InvoiceFileUpload({ lineId, disabled, onUploaded }: {
+  lineId: string;
+  disabled: boolean;
+  onUploaded: (upload: InvoiceUpload) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+
+  async function upload(file: File) {
+    setBusy(true);
+    setNote("");
+    setError("");
+    try {
+      const result = await procurementApi.uploadInvoiceFile(lineId, {
+        name: file.name, type: file.type || "application/octet-stream", base64: await readBase64(file),
+      });
+      onUploaded(result);
+      setNote(result.hint
+        ? `${result.file_name} · ${result.hint}`
+        : `${result.file_name} · распознано: № ${result.invoice_number || "—"}, дата ${result.invoice_date || "—"} — проверьте`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Счёт не загружен");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <label>Файл счёта
+        <input type="file" accept=".pdf,image/*" disabled={disabled || busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(file); }} />
+      </label>
+      {busy && <small className="hint">Загружаем счёт…</small>}
+      {note && <small className="hint">{note}</small>}
+      {error && <small className="danger-text" role="alert">{error}</small>}
+    </>
   );
 }
 
@@ -1082,7 +1144,12 @@ function KpForm({ reference, onClose, onSaved }: {
         <label>Файл КП (.xlsx, .csv)
           <input type="file" accept=".xlsx,.csv" disabled={busy || !lines.length} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void importFile(file); }} />
         </label>
-        <label>Ссылка на счёт (один на заказ, необязательно)<input type="url" value={invoiceUrl} onChange={(e) => setInvoiceUrl(e.target.value)} /></label>
+        {lines.length > 0 && <InvoiceFileUpload lineId={lines[0].id} disabled={busy} onUploaded={(upload) => {
+          setInvoiceUrl(upload.url);
+          if (upload.invoice_number) fillAll("invoice_number", upload.invoice_number);
+          if (upload.invoice_date) fillAll("invoice_date", upload.invoice_date);
+        }} />}
+        <label>Ссылка на счёт (один на заказ, необязательно)<input value={invoiceUrl} onChange={(e) => setInvoiceUrl(e.target.value)} /></label>
         {prompt && (
           <label>{prompt.message}. Курс, ₽ за 1 {prompt.currency} *
             <input inputMode="decimal" required value={manualRate} onChange={(e) => setManualRate(e.target.value)} />
