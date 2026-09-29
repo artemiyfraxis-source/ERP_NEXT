@@ -13,7 +13,7 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from .domain import EDITABLE_TABS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
-from .technology import TECH_SNAPSHOT_SCHEMA_VERSION
+from .technology import TECH_SNAPSHOT_SCHEMA_VERSION, schema_display_text, schema_keys, sync_schema_fields
 
 
 class ReferenceRepository(Protocol):
@@ -221,6 +221,12 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
             fields[edit.field] = value
         if refused:
             raise StaleRecordError("Не записано ничего — отклонено полей: " + str(len(refused)) + "; " + "; ".join(refused))
+        # A sheet column edit also moves the schema value the generator reads (Название → opName).
+        edited = {edit.field for edit in command.edits}
+        synced = sync_schema_fields(record.tab.value, fields)
+        keys = schema_keys(record.tab.value)
+        fields = {key: (synced[key] if key in keys and key not in edited else value) for key, value in synced.items()}
+        display = schema_display_text(record.tab.value, fields) or display
         updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
         updated = replace(updated, normalized_search=_search_text(updated))
         uow.tech_operations.save(updated)
@@ -239,9 +245,11 @@ def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperatio
     filled = [value for value in fields.values() if value]
     if not filled:
         raise ReferenceValidationError("Заполни хотя бы одно поле")
+    fields = sync_schema_fields(command.tab.value, fields)
+    display = schema_display_text(command.tab.value, fields) or filled[0]
     record = TechOperationRecord.create(
-        tab=command.tab, display_text=filled[0], search_text="", source_sheet="",
-        sort_key=filled[0], fields=fields, edited_in_erp=True,
+        tab=command.tab, display_text=display, search_text="", source_sheet="",
+        sort_key=display, fields=fields, edited_in_erp=True,
     )
     with uow:
         uow.tech_operations.save(record)

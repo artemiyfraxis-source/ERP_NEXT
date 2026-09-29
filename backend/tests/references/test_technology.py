@@ -141,3 +141,10 @@ def test_splice_and_coax_time_multiply_operation_units():
     ))
     assert splice[0].minutes == Decimal("3.00")
     assert coax[0].minutes == Decimal("2.00")
+
+
+def test_gost_awg_comes_from_the_spr_kab_awg_table_like_supplymap():
+    from app.modules.references.technology import gost_awg_from_wire_table
+
+    rows = [{"AWG": "22", "ГОСТ": "0,35"}, {"AWG": "17", "ГОСТ": "1"}, {"AWG": "1/0", "ГОСТ": "50"}, {"AWG": "20", "ГОСТ": "—"}]
+    assert gost_awg_from_wire_table(rows) == {"0.35": 22, "1": 17}

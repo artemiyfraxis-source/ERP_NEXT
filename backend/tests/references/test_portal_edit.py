@@ -112,3 +112,30 @@ def test_editing_needs_erpref_edit(references_api):
 
     assert patch.status_code == 403 and post.status_code == 403
     assert read.status_code == 200
+
+
+def test_sheet_columns_edit_moves_the_schema_value_and_columns_hide_schema_keys(references_api):
+    # БД.ОП keeps every sheet column (owner 29.09.2026); editing «Название» also moves opName the generator reads.
+    record = _seed_record(references_api, tab="op", fields={
+        "opNumber": "CUT", "opName": "Резка", "Номер": "CUT", "Название": "Резка", "Машина": "EW-05F",
+    })
+    columns = references_api.get("/api/references/tech-operations", params={"tab": "op"}).json()["columns"]
+    response = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={
+        "edits": [{"field": "Название", "old": "Резка", "value": "Резка провода"}],
+    })
+
+    assert columns == ["Номер", "Название", "Машина"]
+    assert response.status_code == 200
+    assert response.json()["fields"]["opName"] == "Резка провода"
+    assert response.json()["display_text"] == "Резка провода | CUT"
+
+
+def test_created_row_gets_schema_values_from_sheet_columns(references_api):
+    _seed_record(references_api, tab="ob", fields={"obType": "Инструмент", "Тип": "Инструмент", "Для базы": "A/Б"})
+    response = references_api.post("/api/references/tech-operations", json={
+        "tab": "ob", "fields": {"Тип": "Станок", "Для базы": "EW-05F/Автомат"},
+    })
+
+    assert response.status_code in (200, 201)
+    assert response.json()["fields"]["obType"] == "Станок"
+    assert response.json()["display_text"] == "EW-05F/Автомат"
