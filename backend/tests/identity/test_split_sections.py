@@ -1,4 +1,5 @@
-"""ID-3 / ID-5: SUPPLYMAP PORTAL_SECTIONS_ keys (erptctpl, tcgen, erpref, staffdir) and portalAdminAccess_."""
+"""ID-3 / ID-5 / ID-4 and the own profile: SUPPLYMAP PORTAL_SECTIONS_ keys (erptctpl, tcgen, erpref, staffdir),
+portalAdminAccess_, the global login throttle (Portal.gs:252-306) and the employee's own password."""
 
 import sqlite3
 from pathlib import Path
@@ -7,11 +8,22 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.main import app
+from app.modules.identity.application import (
+    AuthenticationError,
+    AuthenticationRateLimited,
+    change_own_password,
+    login,
+)
 from app.modules.identity.domain import ROLE_DEFAULTS, SECTION_LABELS, AccessMode, role_permissions
+from app.modules.identity.infrastructure import IdentityLoginThrottleRow
 from app.shared.http_auth import Principal, authenticated_principal
+from app.shared.persistence import AuditEventRow, OutboxMessageRow
 from tests.factories import Actor
+from tests.identity.test_access import _client, access_api  # noqa: F401  (fixture)
+from tests.identity.test_application import NOW, USER_ID, factory, identity_database  # noqa: F401  (fixture)
 
 
 ANY_ID = "99999999-9999-9999-9999-999999999999"
@@ -151,3 +163,71 @@ def test_migration_renames_keys_and_copies_techcards_to_templates_and_generator(
     with sqlite3.connect(database_path) as connection:
         sections = {s for (s,) in connection.execute("SELECT section FROM identity_role_access")}
     assert sections == {"techcards", "references", "identity"}
+
+
+# ── ID-4: global throttle, failure journal, alert to the administrators ─────────────────────────────
+
+
+def _fail(uow_factory, who: str, client_key: str = "client:test") -> None:
+    with pytest.raises(AuthenticationError):
+        login(who, "wrong-password", NOW, uow_factory(), client_key=client_key)
+
+
+def test_thirty_failures_over_all_accounts_close_the_login_and_alert_admins(identity_database):
+    uow_factory = factory(identity_database)
+    for index in range(29):
+        _fail(uow_factory, f"nobody{index}", client_key=f"client:{index}")
+    with identity_database() as session:
+        assert session.scalars(select(OutboxMessageRow)).first() is None
+    _fail(uow_factory, "nobody-last", client_key="client:last")
+
+    with pytest.raises(AuthenticationRateLimited, match="Вход временно закрыт"):
+        login("petrov", "correct-password", NOW, uow_factory(), client_key="client:fresh")
+    with identity_database() as session:
+        assert session.get(IdentityLoginThrottleRow, "global:login").failures == 30
+        alerts = list(session.scalars(select(OutboxMessageRow)))
+        failed = list(session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "identity.login_failed")))
+    assert len(alerts) == 1
+    assert alerts[0].payload["recipient_roles"] == "admin" and alerts[0].payload["type"] == "security"
+    assert "всего — 30" in alerts[0].payload["body"]
+    assert len(failed) == 30 and failed[-1].details["total"] == "30"
+
+
+def test_ten_failures_on_one_account_alert_once(identity_database):
+    uow_factory = factory(identity_database)
+    for _ in range(10):
+        _fail(uow_factory, "petrov")
+    with pytest.raises(AuthenticationRateLimited, match="Слишком много попыток"):
+        login("petrov", "correct-password", NOW, uow_factory(), client_key="client:test")
+    with identity_database() as session:
+        alerts = list(session.scalars(select(OutboxMessageRow)))
+    assert len(alerts) == 1 and "«petrov» — 10" in alerts[0].payload["body"]
+
+
+# ── Own password and profile ───────────────────────────────────────────────────────────────────────
+
+
+def test_own_password_change_needs_the_current_one(identity_database):
+    uow_factory = factory(identity_database)
+    actor = Actor(id=USER_ID, name="Петров", department="Закупки")
+    with pytest.raises(AuthenticationError):
+        change_own_password(USER_ID, "wrong-password", "brand-new-password", actor, NOW, uow_factory())
+    change_own_password(USER_ID, "correct-password", "brand-new-password", actor, NOW, uow_factory())
+
+    assert login("petrov", "brand-new-password", NOW, uow_factory(), client_key="client:test").principal
+    _fail(uow_factory, "petrov")  # the old one is gone
+
+
+def test_profile_and_password_over_http(access_api):  # noqa: F811
+    buyer = _client("buyer", "buyer-password")
+    profile = buyer.get("/api/auth/profile").json()
+    assert profile["role_label"] == "Специалист по снабжению" and "department" in profile and "site_label" in profile
+
+    wrong = buyer.post("/api/auth/password", json={"current": "nope-nope", "new": "another-password"})
+    short = buyer.post("/api/auth/password", json={"current": "buyer-password", "new": "short"})
+    done = buyer.post("/api/auth/password", json={"current": "buyer-password", "new": "another-password"})
+
+    assert wrong.status_code == 422 and "Текущий пароль" in wrong.json()["detail"]
+    assert short.status_code == 422
+    assert done.status_code == 204
+    assert _client("buyer", "another-password").get("/api/auth/me").status_code == 200

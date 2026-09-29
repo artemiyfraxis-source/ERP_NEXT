@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base
-from app.shared.persistence import SqlAlchemyAuditRepository
+from app.shared.persistence import SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.clock import as_utc
 
 from .application import IdentitySession
@@ -350,6 +350,10 @@ class SqlAlchemyIdentityRepository:
         row.site = user.site
         row.active = user.active
 
+    def password_hash(self, user_id: UUID) -> str | None:
+        row = self.session.get(IdentityCredentialRow, user_id, with_for_update=True)
+        return None if row is None else row.password_hash
+
     def set_password(self, user_id: UUID, password_hash: str) -> None:
         row = self.session.get(IdentityCredentialRow, user_id)
         if row is None:
@@ -417,6 +421,7 @@ class SqlAlchemyIdentityUnitOfWork:
         self.session = self.session_factory()
         self.identity = SqlAlchemyIdentityRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
