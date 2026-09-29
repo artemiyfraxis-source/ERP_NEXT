@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   kitsetsApi,
@@ -13,6 +13,7 @@ import {
   type Principal,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
+import { KitTile } from "./ProjectCard";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
    номер, заказчик, сборки с тиражом и состав каждой. Внутри — состав, снабжение, спецификация, генератор и
@@ -149,7 +150,7 @@ function KitsetHub({ canEdit, openProject }: { canEdit: boolean; openProject: (p
     {all === null && !error && <div className="empty">Загрузка…</div>}
     {all && !all.length && <div className="empty">Наборов пока нет — загрузи первый из расчёта.</div>}
     {all && all.length > 0 && <>
-      <div className="plan-filters kit-filters">
+      <div className="kit-filters">
         <label>Сортировка <select aria-label="Сортировка" value={sort} onChange={(event) => { setSort(event.target.value as SortKey); remember("kitSort", event.target.value); }}>
           {SORTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
@@ -167,65 +168,6 @@ function KitsetHub({ canEdit, openProject }: { canEdit: boolean; openProject: (p
       </div> : <div className="empty">Нет проектов с таким статусом.</div>}
     </>}
   </section>;
-}
-
-function toneOf(status: string, statuses: string[]) {
-  const index = statuses.indexOf(status);
-  const done = statuses.indexOf("Отгружено");
-  if (!status || index <= 0) return "neutral";
-  if (index > done) return "danger";
-  if (index === done) return "done";
-  if (status === "КБ на складе") return "stock";
-  if (status === "В работе") return "work";
-  return "prep";
-}
-
-// Плитка проекта; её же показывает экран мастера (`extra` — строка про операции и дедлайн).
-export function KitTile({ item, statuses, canEdit, open, remove, extra, active }: {
-  item: KitsetTile; statuses: string[]; canEdit: boolean; open: () => void; remove?: () => void; extra?: ReactNode; active?: boolean;
-}) {
-  const kbs = item.kb_stages;
-  const mixed = kbs.some((kb) => kb.status !== kbs[0].status);
-  const reviews = kbs.map((kb) => kb.review?.value);
-  const ok = reviews.filter((value) => value === "проверена").length;
-  const bad = reviews.filter((value) => value === "с погрешностями").length;
-  const total = kbs.length;
-  const tc = kbs.filter((kb) => kb.tc).length;
-  const kit = kbs.filter((kb) => kb.kit).length;
-  const unreviewed = kbs.filter((kb) => kb.tc && !(kb.review?.value && kb.review.value !== "не проверена")).length;
-  const index = statuses.indexOf(item.status);
-  const late = index >= statuses.indexOf("В работе") && index < statuses.indexOf("Отгружено");
-  const facts: Array<[string, string, string]> = [];
-  if (item.blocker) facts.push([`⛔ ${item.blocker}`, "danger", "Активный блокер из журнала проекта"]);
-  // Отказ/Слился/Отменён стоят после «Отгружено»: у закрытого проекта факты не нужны.
-  if (total && index <= statuses.indexOf("Отгружено")) {
-    facts.push(tc === total ? ["ТК ✓", "ok", "Техкарты выданы на все КБ"] : tc ? [`ТК ${tc}/${total}`, "warn", "Техкарты выданы не на все КБ"] : ["ТК нет", "neutral", "Техкарт ещё нет"]);
-    if (tc && unreviewed) facts.push([`не проверено ${unreviewed}`, "warn", "Выданные ТК без отметки проверки"]);
-    if (kit === total) facts.push(["набрано ✓", "ok", "Комплектация набрана на все КБ"]);
-    else if (kit) facts.push([`набрано ${kit}/${total}`, "warn", "Комплектация набрана не на все КБ"]);
-    else if (late) facts.push(["не набрано", "neutral", "Заявки на комплектацию не набраны"]);
-  }
-  return <div className={`tile kit-tile${active ? " active" : ""}`} role="button" tabIndex={0} onClick={open} onKeyDown={(event) => { if (event.key === "Enter") open(); }}>
-    <div className="tile-body">
-      <div className="kit-tile-head">
-        <strong className="t-h">{item.project}</strong>
-        {canEdit && remove && <button className="link-button danger-link" title="Удалить карточку проекта" aria-label={`Удалить ${item.project}`} onClick={(event) => { event.stopPropagation(); remove(); }}>🗑</button>}
-      </div>
-      <div className="kit-chips">
-        <span className={`kit-status tone-${toneOf(item.status, statuses)}`}>{item.status || "—"}</span>
-        {facts.map(([text, tone, title]) => <span key={text} className={`kit-fact tone-${tone}`} title={title}>{text}</span>)}
-      </div>
-      {mixed && <div className="t-sub">{kbs.map((kb) => `${kb.index} — ${kb.status}`).join(" · ")}</div>}
-      {(ok > 0 || bad > 0) && <div className="t-in">
-        {ok > 0 && <span className="kit-ok">✓ ТК проверено {ok} </span>}
-        {bad > 0 && <span className="kit-bad">⚠ с погрешностями {bad}</span>}
-      </div>}
-      <div className="t-sub">{item.customer || "—"}</div>
-      <div className="t-in">сборок {item.assemblies} · позиций {item.lines}</div>
-      <div className="t-sub">обновлено {new Date(item.updated_at).toLocaleString("ru-RU")}</div>
-      {extra}
-    </div>
-  </div>;
 }
 
 function CreateFromCalc({ close, done }: {

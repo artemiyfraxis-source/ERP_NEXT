@@ -890,3 +890,12 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .mb-tile-extra .mb-done { background: #e6f7f5; }
 .mb-launch { color: #175cd3; background: #eff8ff; }
 .mb-project-head .secondary { margin-right: 4px; }
+
+/* Проекты как в SUPPLYMAP: плотная сетка карточек, фильтры в одну строку. */
+.kit-filters label { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+.kit-filters select { width: auto; }
+.kit-tiles { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.kit-tiles .kit-tile { min-height: 0; padding: 12px 14px; }
+.kit-tiles .tile-body { gap: 4px; }
+.kit-tiles .t-h { font-size: 15px; }
+.kit-tiles .t-sub { font-size: 12px; }

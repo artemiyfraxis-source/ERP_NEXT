@@ -10,7 +10,7 @@ import {
   type ProductionSkill,
   type ProductionTask,
 } from "./api";
-import { KitTile } from "./ProjectsPage";
+import { KitTile } from "./ProjectCard";
 
 // Экран мастера (владелец, 29.09): после выдачи техкарты проект приходит мастеру, разбитый на операции маршрута,
 // и мастер раздаёт их монтажникам. Слева проекты → задания → операции, справа монтажники с загрузкой.
