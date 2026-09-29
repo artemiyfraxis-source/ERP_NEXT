@@ -232,9 +232,9 @@ it("renders the target stock table and sends its filters to the native API", asy
   });
 
   render(<WarehousePage />);
-  expect(await screen.findByRole("columnheader", { name: "Партия" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Артикул" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Место" })).toBeInTheDocument();
+  expect(await screen.findByRole("columnheader", { name: "ГРН" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: /^Артикул/ })).toHaveAttribute("aria-sort", "ascending");
+  expect(screen.getByRole("columnheader", { name: "Места" })).toBeInTheDocument();
   expect(await screen.findByText("FRX.26.0000001")).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Поиск по складу"), {
@@ -243,7 +243,7 @@ it("renders the target stock table and sends its filters to the native API", asy
   fireEvent.change(screen.getByLabelText("Склад"), {
     target: { value: "ЦАР" },
   });
-  fireEvent.click(screen.getByLabelText("С нулевым остатком"));
+  fireEvent.click(screen.getByLabelText("показывать нулевые"));
 
   await waitFor(() => expect(paths).toContain(
     "/api/stock?q=%D1%80%D0%B0%D0%B7%D1%8A%D1%91%D0%BC&zero=true&warehouse=%D0%A6%D0%90%D0%A0",
@@ -266,7 +266,7 @@ it("keeps an unnamed legacy lot expandable so its article can be entered", async
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [unnamed], total: 1, truncated: 0, next_cursor: null }));
 
   render(<WarehousePage />);
-  expect(await screen.findByText("Без артикула")).toBeInTheDocument();
+  expect(await screen.findByText("Без наименования")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Показать партии (1)" }));
   fireEvent.click(await screen.findByRole("button", { name: "Операции" }));
 
@@ -429,7 +429,7 @@ it("loads every cursor page before calculating article totals", async () => {
   render(<WarehousePage />);
 
   expect(await screen.findByRole("button", { name: "Показать партии (2)" })).toBeInTheDocument();
-  expect(screen.getByText("15")).toBeInTheDocument();
+  expect(screen.getByText(/^15\b/)).toBeInTheDocument();
 });
 
 it("moves a whole storage location from the unified movement form", async () => {
@@ -659,9 +659,9 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   render(<WarehousePage readOnly />);
 
   fireEvent.click(await screen.findByRole("button", { name: /Показать партии/ }));
-  expect(await screen.findAllByText("FRX.26.0000001")).toHaveLength(2);
+  expect(await screen.findByText("ГРН FRX.26.0000001")).toBeInTheDocument();
   expect(screen.getByText("Склад открыт вам только на просмотр.")).toBeInTheDocument();
-  for (const name of ["+ Внести позиции", "↔ Переместить", "Справочник типов", "Выгрузить", "Загрузить правки", "Лист перемещения", "Операции"]) {
+  for (const name of ["+ Внести позиции", "↔ Переместить", "Стеллажи", "Типы", "Выгрузить", "Загрузить правки", "Лист перемещения", "Операции"]) {
     expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   }
   expect(requested.every((call) => call === "GET /api/stock")).toBe(true);
