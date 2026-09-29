@@ -32,6 +32,7 @@ from .application import (
     SupplierOrder,
     SplitProcurementLineCommand,
     SetReplacementCommand,
+    SetTraceabilityCommand,
     RecordInvoiceCommand,
     ReplaceInvoiceCommand,
     MarkProcurementPaidCommand,
@@ -57,6 +58,7 @@ from .application import (
     procurement_line,
     split_procurement_line,
     set_procurement_replacement,
+    set_procurement_traceability,
     record_invoice,
     replace_invoice,
     mark_procurement_paid,
@@ -81,6 +83,7 @@ from .domain import (
     KpEntry,
     MoneyEntry,
     ProcurementFacts,
+    ProcurementTraceability,
     ProcurementLine,
     ProcurementValidationError,
     ReplacementDecision,
@@ -173,6 +176,26 @@ class FactsBatchRowInput(ProcurementFactsInput):
 
 class FactsBatchInput(BaseModel):
     rows: list[FactsBatchRowInput] = Field(min_length=1, max_length=200)
+
+
+class TraceabilityInput(BaseModel):
+    version: int = Field(ge=1)
+    manufacturer: str = Field(default="", max_length=255)
+    country: str = Field(default="", max_length=128)
+    quality_document_type: str = Field(default="", max_length=128)
+    quality_document_number: str = Field(default="", max_length=128)
+    quality_document_date: date | None = None
+    standard: str = Field(default="", max_length=255)
+
+    def to_domain(self) -> ProcurementTraceability:
+        return ProcurementTraceability(
+            manufacturer=self.manufacturer,
+            country=self.country,
+            quality_document_type=self.quality_document_type,
+            quality_document_number=self.quality_document_number,
+            quality_document_date=self.quality_document_date,
+            standard=self.standard,
+        )
 
 
 class ReplacementInput(BaseModel):
@@ -404,6 +427,14 @@ def _line_result(line: ProcurementLine) -> dict:
         "replacement_open": line.replacement_open,
         "permission_number": line.permission_number,
         "permission_date": line.permission_date.isoformat() if line.permission_date else None,
+        "manufacturer": line.trace.manufacturer,
+        "country": line.trace.country,
+        "quality_document_type": line.trace.quality_document_type,
+        "quality_document_number": line.trace.quality_document_number,
+        "quality_document_date": (
+            line.trace.quality_document_date.isoformat() if line.trace.quality_document_date else None
+        ),
+        "standard": line.trace.standard,
     }
 
 
@@ -875,6 +906,30 @@ def replacement(
                 now=now,
             ),
             uow_factory(),
+        )
+    )
+
+
+@router.patch("/{line_id}/traceability")
+def traceability(
+    line_id: UUID,
+    payload: TraceabilityInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    suppliers: Annotated[SupplierDirectory | None, Depends(procurement_supplier_directory)],
+) -> dict:
+    return _transition(
+        lambda: set_procurement_traceability(
+            SetTraceabilityCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                trace=payload.to_domain(),
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+            suppliers,
         )
     )
 

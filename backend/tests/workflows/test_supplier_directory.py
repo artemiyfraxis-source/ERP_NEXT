@@ -59,3 +59,11 @@ def test_learn_adds_a_new_domain_once_and_keeps_other_maps():
             select(AuditEventRow).where(AuditEventRow.event_type == "references.supplier_learned")
         ).all()
     assert len(learned) == 2
+
+
+def test_country_for_manufacturer_ignores_case_and_spaces():
+    """`countryForManufacturer_`: СТРАНА by ИЗГОТОВИТЕЛЬ, key normalised like the map's."""
+    directory, _, _ = _directory()
+    assert directory.country_for_manufacturer("  amphenol ") == "США"
+    assert directory.country_for_manufacturer("Molex") == ""
+    assert directory.country_for_manufacturer("") == ""
