@@ -1215,7 +1215,7 @@ export const procurementApi = {
       failed: { legacy_id: string; error: string }[];
     }>("/api/procurement/paid", { method: "POST", body: JSON.stringify({ items }) }),
   take: (lineIds: string[]) =>
-    api<{ lines: ProcurementLine[] }>("/api/procurement/take", {
+    api<{ lines: ProcurementLine[]; skipped?: string[] }>("/api/procurement/take", {
       method: "POST",
       body: JSON.stringify({ line_ids: lineIds }),
     }),

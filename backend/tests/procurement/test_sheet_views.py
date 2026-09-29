@@ -198,3 +198,28 @@ def test_batch_paid_needs_edit_access(procurement_api):
     response = client.post("/api/procurement/paid", json={"items": [{"line_id": str(line.id), "version": 1}]})
     assert response.status_code == 403
 
+
+def as_buyer(name: str):
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name=name, department="Закупки"),
+        email=f"{name}@example.test",
+        roles=frozenset({"buyer"}),
+        permissions={"procurement": "edit"},
+    )
+
+
+def test_take_batch_skips_lines_other_buyers_took_and_takes_the_rest(procurement_api):
+    client, line, sessions = procurement_api
+    factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    free = consume_procurement_requested(message(2), factory())
+    as_buyer("Сидоров")
+    client.post("/api/procurement/take", json={"line_ids": [str(line.id)]})
+    as_buyer("Петров")
+
+    response = client.post("/api/procurement/take", json={"line_ids": [str(line.id), str(free.id)]})
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["lines"]] == [str(free.id)]
+    assert response.json()["lines"][0]["buyer"] == "Петров"
+    assert response.json()["skipped"] == [line.legacy_id]
+

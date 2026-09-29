@@ -164,7 +164,8 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     setError("");
     try {
       const result = await procurementApi.take(lines.map((line) => line.id));
-      setNotice(`Взято в работу: ${result.lines.length}`);
+      const skipped = result.skipped ?? [];
+      setNotice(`Взято в работу: ${result.lines.length}` + (skipped.length ? `; пропущено (уже в работе или дальше): ${skipped.join(", ")}` : ""));
       await reload(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось взять строки");
@@ -200,8 +201,8 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     setBusyId(line.id);
     setError("");
     try {
-      await procurementApi.take([line.id]);
-      setNotice(`${line.legacy_id} взята в работу`);
+      const result = await procurementApi.take([line.id]);
+      setNotice(result.skipped?.length ? `${line.legacy_id} пропущена: уже в работе или дальше` : `${line.legacy_id} взята в работу`);
       await reload(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось взять строку");

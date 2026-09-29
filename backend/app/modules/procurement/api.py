@@ -67,6 +67,7 @@ from .application import (
     set_procurement_offline_status,
     save_procurement_money,
     take_procurement_in_work,
+    take_procurement_in_work_batch,
 )
 from .domain import (
     ACTUAL_UNITS,
@@ -547,8 +548,8 @@ def take_lines(
     ],
 ) -> dict:
     try:
-        lines = _retry_transaction(
-            lambda: take_procurement_in_work(
+        lines, skipped = _retry_transaction(
+            lambda: take_procurement_in_work_batch(
                 TakeProcurementInWorkCommand(
                     line_ids=tuple(payload.line_ids),
                     actor=principal.actor,
@@ -561,7 +562,10 @@ def take_lines(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return {"lines": [_line_result(line) for line in lines]}
+    return {
+        "lines": [_line_result(line) for line in lines],
+        "skipped": [line.legacy_id for line in skipped],
+    }
 
 
 @router.patch("/{line_id}/facts")

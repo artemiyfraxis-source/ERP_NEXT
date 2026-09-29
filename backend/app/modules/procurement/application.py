@@ -573,6 +573,16 @@ def take_procurement_in_work(
     command: TakeProcurementInWorkCommand,
     uow: UnitOfWork,
 ) -> list[ProcurementLine]:
+    return take_procurement_in_work_batch(command, uow)[0]
+
+
+def take_procurement_in_work_batch(
+    command: TakeProcurementInWorkCommand,
+    uow: UnitOfWork,
+) -> tuple[list[ProcurementLine], list[ProcurementLine]]:
+    """`portalTakeInWork` → `takeRowsInWork_`: every selected «Новый» line becomes the buyer's; a line that
+    is already further along (taken by another buyer, or past «В работе») is skipped, not an error.
+    Returns (lines now the buyer's, skipped lines). The buyer's own «В работе» line is a read-only retry."""
     line_ids = list(dict.fromkeys(command.line_ids))
     if not line_ids:
         raise ProcurementValidationError("Не выбрано ни одной строки закупки")
@@ -585,14 +595,20 @@ def take_procurement_in_work(
                 raise KeyError(f"Procurement line not found: {line_id}")
             current.append(line)
 
-        updated = [line.take_in_work(command.actor) for line in current]
-        changed = [
-            (before, after)
-            for before, after in zip(current, updated, strict=True)
-            if before != after
-        ]
+        taken: list[ProcurementLine] = []
+        skipped: list[ProcurementLine] = []
+        changed: list[tuple[ProcurementLine, ProcurementLine]] = []
+        for before in current:
+            try:
+                after = before.take_in_work(command.actor)
+            except ProcurementValidationError:
+                skipped.append(before)
+                continue
+            taken.append(after)
+            if after != before:
+                changed.append((before, after))
         if not changed:
-            return updated
+            return taken, skipped
 
         for before, after in changed:
             uow.procurement.add(after)
@@ -611,7 +627,7 @@ def take_procurement_in_work(
                 )
             )
         uow.commit()
-        return updated
+        return taken, skipped
 
 
 def save_procurement_facts(
