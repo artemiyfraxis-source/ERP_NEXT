@@ -759,14 +759,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                   <legend>Общее для всех позиций</legend>
                   <label className="half">Назначение *<select value={common.purpose} onChange={(e) => setCommonField("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
                   <label className="half">Цель (проект)
-                    {projects.length ? (
-                      <select value={common.project_reference} onChange={(e) => setCommonField("project_reference", e.target.value)}>
-                        <option value="">— без проекта —</option>
-                        {projects.map((item) => <option key={item}>{item}</option>)}
-                      </select>
-                    ) : (
-                      <input value={common.project_reference} onChange={(e) => setCommonField("project_reference", e.target.value)} placeholder="Например, 591К.3" />
-                    )}
+                    {/* Ручная заявка: номер проекта вписывают руками, пусто — без проекта; реестр только подсказывает. */}
+                    <input list="request-projects" value={common.project_reference} onChange={(e) => setCommonField("project_reference", e.target.value)} placeholder="пусто — без проекта, например 591К.3" />
+                    <datalist id="request-projects">{projects.map((item) => <option key={item} value={item} />)}</datalist>
                   </label>
                   <label className="wide">Точка отгрузки *<select value={common.delivery_point} onChange={(e) => setCommonField("delivery_point", e.target.value)}><option value="">Выберите точку</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
                   <label>Категория<select value={common.category} onChange={(e) => setCommonField("category", e.target.value)}>{schema?.categories.map((item) => <option key={item}>{item}</option>)}</select></label>
