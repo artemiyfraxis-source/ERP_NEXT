@@ -292,17 +292,38 @@ function opColumns(fields: Record<string, string>): Array<[string, string]> {
   return Object.entries(fields).filter(([key, value]) => !OP_SCHEMA_KEYS.has(key) && String(value ?? "").trim() && String(value).trim().toUpperCase() !== "FALSE");
 }
 
-/** Every filled БД.ОП column of the operation: machine, program, semi-product, wire, connector, tool, times, prices, type. */
-function OpFields({ fields }: { fields: Record<string, string> }) {
-  const rows = opColumns(fields);
-  return <div className="tr-block"><h4>Строка БД.ОП <span>{rows.length} полей</span></h4>
-    {rows.length ? <dl className="op-fields">{rows.map(([key, value]) => <div key={key}><dt>{key}</dt><dd className="pre-line">{value}</dd></div>)}</dl>
+/** Every filled БД.ОП column of the operation: machine, program, semi-product, wire, connector, tool, times, prices, type.
+    With «Справочник» edit the row is corrected here, as on the old БД.ОП tab (PortalRef.gs whitelist edit). */
+function OpFields({ record, canEdit, onSaved }: { record: TechOperationRecord; canEdit?: boolean; onSaved?: (record: TechOperationRecord) => void }) {
+  const [draft, setDraft] = useState<Record<string, string> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const rows = opColumns(record.fields);
+  async function save() {
+    if (!draft) return;
+    const edits = Object.entries(draft).filter(([key, value]) => (record.fields[key] ?? "") !== value)
+      .map(([field, value]) => ({ field, old: record.fields[field] ?? "", value }));
+    if (!edits.length) { setDraft(null); return; }
+    setBusy(true); setError("");
+    try { onSaved?.(await referencesApi.editRecord(record.id, edits)); setDraft(null); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Строка БД.ОП не сохранена"); }
+    finally { setBusy(false); }
+  }
+  return <div className="tr-block"><h4>Строка БД.ОП <span>{rows.length} полей</span>
+    {canEdit && !draft && <> <button type="button" className="secondary small" onClick={() => setDraft(Object.fromEntries(Object.entries(record.fields).filter(([key]) => !OP_SCHEMA_KEYS.has(key))))}>Править строку</button></>}</h4>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {draft ? <>
+      <div className="reference-fields db-form">{Object.entries(draft).map(([key, value]) => <label key={key}><small>{key}</small>
+        <input aria-label={`БД.ОП: ${key}`} value={value} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>)}</div>
+      <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void save()}>Сохранить строку</button> <button className="secondary" onClick={() => setDraft(null)}>Отмена</button></div>
+    </> : rows.length ? <dl className="op-fields">{rows.map(([key, value]) => <div key={key}><dt>{key}</dt><dd className="pre-line">{value}</dd></div>)}</dl>
       : <div className="empty">В БД.ОП строка пустая.</div>}
   </div>;
 }
 
 /** An operation that exists only in БД.ОП: no БД.ТК sheet, so the generator has nothing to put on a techcard page. */
-function OpOnlyDetail({ fields, onBack }: { fields: Record<string, string>; onBack: () => void }) {
+function OpOnlyDetail({ record, canEdit, onSaved, onBack }: { record: TechOperationRecord; canEdit: boolean; onSaved: (record: TechOperationRecord) => void; onBack: () => void }) {
+  const fields = record.fields;
   return <article className="panel template-detail tr-paper">
     <div className="form-actions"><button className="secondary" onClick={onBack}>← Все операции</button></div>
     <div className="tr-head">
@@ -312,7 +333,7 @@ function OpOnlyDetail({ fields, onBack }: { fields: Record<string, string>; onBa
       <div><small>Подготовка</small><b>{fields.tPrep ? `${fields.tPrep} с` : "—"}</b></div>
     </div>
     <div className="warning-inline">Шаблона листа (БД.ТК) у этой операции нет: шагов, оснастки и контроля нет, генератор не выводит её отдельным листом техкарты. Нормы времени из БД.ОП в расчёт идут.</div>
-    <OpFields fields={fields} />
+    <OpFields record={record} canEdit={canEdit} onSaved={onSaved} />
   </article>;
 }
 
@@ -366,8 +387,9 @@ function OperationCards({ entries, onOpen, toolbar }: { entries: OperationEntry[
 }
 
 /** Просмотр: карточка в форме листа техкарты (SUPPLYMAP openTcRecords → renderCard). */
-function TemplateDetail({ template, op, canEdit, onBack, onEdit }: {
-  template: OperationCardDetail; op?: Record<string, string>; canEdit: boolean; onBack: () => void; onEdit: () => void;
+function TemplateDetail({ template, op, canEdit, canEditOp, onOpSaved, onBack, onEdit }: {
+  template: OperationCardDetail; op?: TechOperationRecord; canEdit: boolean; canEditOp: boolean; onOpSaved: (record: TechOperationRecord) => void;
+  onBack: () => void; onEdit: () => void;
 }) {
   const norms = template.norms;
   const known = template.norms_known;
@@ -391,7 +413,7 @@ function TemplateDetail({ template, op, canEdit, onBack, onEdit }: {
       </tbody></table>
     </div>
     {template.document.defects && <div className="tr-block"><h4>Типовые дефекты</h4><p>{template.document.defects}</p></div>}
-    {op && <OpFields fields={op} />}
+    {op && <OpFields record={op} canEdit={canEditOp} onSaved={onOpSaved} />}
     <div className="tr-foot">{template.changed_at ? `Изменено ${new Date(template.changed_at).toLocaleString("ru-RU")}${template.changed_by ? ` · ${template.changed_by}` : ""}` : "Перенесено из шаблона БД.ТК, в ERP не правилась"}</div>
   </article>;
 }
@@ -449,20 +471,22 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     return [...byCode.values()];
   }, [templates]);
   const opByCode = useMemo(() => {
-    const byCode = new Map<string, Record<string, string>>();
-    opRows.forEach((row) => { const code = opCode(row.fields); if (code && !byCode.has(code)) byCode.set(code, row.fields); });
+    const byCode = new Map<string, TechOperationRecord>();
+    opRows.forEach((row) => { const code = opCode(row.fields); if (code && !byCode.has(code)) byCode.set(code, row); });
     return byCode;
   }, [opRows]);
   // Operations and templates are one entity keyed by code: 107 templates ⊂ 139 БД.ОП rows (owner 29.09.2026 «лучше на карточки»).
   const operationEntries = useMemo<OperationEntry[]>(() => {
-    const entries: OperationEntry[] = records.map((item) => ({ key: item.id, code: item.code, name: item.name, template: item, op: opByCode.get(item.code) }));
+    const entries: OperationEntry[] = records.map((item) => ({ key: item.id, code: item.code, name: item.name, template: item, op: opByCode.get(item.code)?.fields }));
     const known = new Set(records.map((item) => item.code));
-    opByCode.forEach((fields, code) => {
+    opByCode.forEach(({ fields }, code) => {
       if (!known.has(code)) entries.push({ key: `op:${code}`, code, name: fields.opName || fields["Название"] || "", op: fields });
     });
     return entries;
   }, [records, opByCode]);
   const selectedOp = selectedOpCode ? opByCode.get(selectedOpCode) : undefined;
+  const canEditOps = principal.permissions.erpref === "edit";
+  const replaceOp = (record: TechOperationRecord) => setOpRows((rows) => rows.map((row) => (row.id === record.id ? record : row)));
 
   async function load() {
     try {
@@ -645,13 +669,13 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     <p className="page-sub">Снимок SUPPLYMAP {libraryCommit ? libraryCommit.slice(0, 8) : "не загружен"}; карточка сохраняется внутри каждой собранной ЭТК. Карточка операции — то, из чего собирается лист техкарты: шаги, контроль с допусками, оснастка, безопасность, дефекты и строка БД.ОП (машина, программа, провод, разъём, время). Пунктиром — операции БД.ОП без шаблона листа. Открой карточку, чтобы посмотреть{canEdit ? " или поправить" : ""}.</p>
     {sheetsOpen ? <TcTemplateSheets canEdit={canEditTemplates} onBack={() => setSheetsOpen(false)} onChanged={() => {
       void techcardsApi.templates().then((library) => setTemplates(library.items)).catch(() => undefined);
-    }} /> : selectedOp ? <OpOnlyDetail fields={selectedOp} onBack={() => setSelectedOpCode("")} /> : templateDetail && selectedTemplateId ? (editingTemplate ? <TcCardEditForm
+    }} /> : selectedOp ? <OpOnlyDetail record={selectedOp} canEdit={canEditOps} onSaved={replaceOp} onBack={() => setSelectedOpCode("")} /> : templateDetail && selectedTemplateId ? (editingTemplate ? <TcCardEditForm
       code={templateDetail.code}
       initial={editDraft(templateDetail.name, templateDetail.document)}
       hint="Правки пишутся в библиотеку ERP и попадают в ТК проектов при следующей сборке; при обновлении снимка SUPPLYMAP правленая карточка сохраняется. Пустые шаги и строки оснастки при сохранении отбрасываются, номера проставятся сами."
       onCancel={() => setEditingTemplate(false)}
       onSave={saveTemplate}
-    /> : <TemplateDetail template={templateDetail} op={opByCode.get(templateDetail.code)} canEdit={canEditTemplates} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
+    /> : <TemplateDetail template={templateDetail} op={opByCode.get(templateDetail.code)} canEditOp={canEditOps} onOpSaved={replaceOp} canEdit={canEditTemplates} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
     <OperationCards entries={operationEntries} toolbar={<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>} onOpen={(entry) => {
       if (entry.template) { setSelectedOpCode(""); setSelectedTemplateId(entry.template.id); } else setSelectedOpCode(entry.code);
     }} />
