@@ -163,7 +163,7 @@ describe("ProjectsPage", () => {
     fireEvent.click(await screen.findByText("708К.4"));
     fireEvent.click(await screen.findByRole("tab", { name: "Генератор" }));
     fireEvent.click(screen.getByRole("button", { name: "КБ1" }));
-    expect(await screen.findByText("ЭТК ещё не собрана.")).toBeTruthy();
+    expect(await screen.findByText(/ЭТК ещё не собрана/)).toBeTruthy();
     expect(screen.getByText("708К.4 · КБ1")).toBeTruthy();
     expect(window.location.search).toBe("?section=projects");
   });

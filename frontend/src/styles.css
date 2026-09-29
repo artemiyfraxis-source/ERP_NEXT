@@ -750,6 +750,34 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tcgen .op-match.found, .tcgen .ok-text { color: #065f46; } .tcgen .op-match.not-found { color: #b45309; }
 .tcgen .f-ok { border-color: #34d399; } .tcgen .f-warn { border-color: #f59e0b; background: #fffbeb; } .tcgen .f-empty { border-color: #f87171; }
 .tcgen .muted { color: var(--muted-foreground); }
+/* Генератор компактный, как #tcgen SUPPLYMAP (TcGenInline.html): узкая колонка, поля по размеру значения, флажки и
+   радиокнопки в строку с подписью. Глобальные label{grid}/input{width:100%} здесь перекрыты. */
+.tcgen { max-width: 920px; }
+.tcgen label { font-weight: 600; font-size: 12px; }
+.tcgen input, .tcgen select { padding: 5px 8px; font-size: 13px; border-radius: 6px; }
+.tcgen input[type="checkbox"], .tcgen input[type="radio"] { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--primary); }
+.tcgen .radio-row label, .tcgen .ep-method label, .tcgen .chip-row label, .tcgen .ep-route label, .tcgen .toggle-row, .tcgen .ep-otp { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.tcgen .toggle-row, .tcgen .ep-otp { display: flex; }
+.tcgen .toggle-row { font-size: 13px; padding: 2px 0; }
+.tcgen .ep-otp { font-weight: 500; }
+.project-etk .etk-empty { color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
+.tcgen .ep-otp input[type="number"] { width: 52px; }
+.tcgen .gen-tabs { gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 4px; }
+.tcgen .gen-tab-btn { border: 0; border-bottom: 2px solid transparent; margin-bottom: -2px; border-radius: 0; background: none; padding: 6px 14px; color: var(--muted-foreground); cursor: pointer; }
+.tcgen .gen-tab-btn.gactive { border-bottom-color: var(--primary); color: var(--primary); }
+.tcgen .spy th, .tcgen .spy td { padding: 3px 6px; }
+.tcgen .field-label.len { max-width: 200px; }
+.tcgen .wire-entry { grid-template-columns: minmax(0, 1fr) 90px auto; }
+.tcgen .wire-entry.cores { grid-template-columns: minmax(0, 1fr) 90px 70px 100px auto; }
+.tcgen .wire-entry.adv { grid-template-columns: minmax(0, 1fr) 130px 90px auto; }
+.tcgen .wire-entry.adv.cores { grid-template-columns: minmax(0, 1fr) 130px 90px 70px 100px auto; }
+.tcgen .ter-row { grid-template-columns: repeat(auto-fill, minmax(110px, 150px)); }
+.tcgen .op-times { grid-template-columns: repeat(3, 110px); }
+.tcgen .ep-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 10px; align-items: start; }
+.tcgen .ep-sides > div { display: grid; gap: 6px; }
+.tcgen .ep-sides h3 { margin-top: 4px; }
+.tcgen .gen-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.tcgen .gen-actions .toggle-row { margin-right: auto; }
 
 /* Шаблоны-листы БД.ТК: каталог и сетка черновика */
 .nowrap { white-space: nowrap; }

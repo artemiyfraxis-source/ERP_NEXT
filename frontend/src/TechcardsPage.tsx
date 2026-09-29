@@ -513,16 +513,17 @@ export function ProjectEtk({ card, principal, onChange }: { card: ProjectTechcar
         onChange(updated);
         setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
       }} />
-      {!operations(card.document).length && <div className="empty">ЭТК ещё не собрана.</div>}
+      {!operations(card.document).length && <div className="etk-empty">ЭТК ещё не собрана — заполни генератор ниже и нажми «Создать техкарты».</div>}
       {canGenerate && <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} onConfig={(config) => { generatedConfig.current = config; }} />}
       {canGenerate && <details className="build-config"><summary>JSON-конфигурация (для эксперта)</summary>
         <div className="form-actions"><button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button></div>
         <label>Config генератора SUPPLYMAP<textarea aria-label="Конфигурация автоматической сборки" rows={14} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
+        <div className="form-actions"><button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК автоматически</button></div>
       </details>}
-      {(canEdit || canGenerate) && <div className="form-actions">{canGenerate && <button className="secondary" disabled={busy} onClick={() => void autoBuild()}>Собрать ЭТК автоматически</button>}{canEdit && card.status === "Черновик" && card.document && <button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}</div>}
+      {canEdit && card.status === "Черновик" && card.document && <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button></div>}
       <div className="panel-heading"><strong>Журнал ревизий</strong><span>{revisions.length}</span></div>
       {revisions.map((revision) => <div className="panel-heading" key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span>{revision.actor_name} · {new Date(revision.occurred_at).toLocaleString("ru-RU")}</span></div>)}
-      {!revisions.length && <div className="empty">Выданных ревизий пока нет.</div>}
+      {!revisions.length && <div className="etk-empty">Выданных ревизий пока нет.</div>}
     </article>
   </>;
 }
