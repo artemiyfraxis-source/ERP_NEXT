@@ -129,6 +129,13 @@ td small { margin-top: 4px; color: #7b857e; }
 .fulfillment-lines select { min-width: 260px; }
 .fulfillment-actions { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .fulfillment-actions label { min-width: min(300px, 100%); margin-right: auto; }
+.fulfillment-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; font-size: 12px; }
+.fulfillment-meta dt { color: var(--muted-foreground); }
+.fulfillment-meta dd { margin: 0; font-weight: 500; }
+.fulfillment-progress { margin: 8px 0 0; font-size: 13px; color: var(--muted-foreground); }
+.fulfillment-create, .fulfillment-project { padding: 18px 20px; margin-bottom: 16px; }
+.lot-picker { display: grid; gap: 8px; }
+.lot-picker .status { margin-left: 6px; }
 .danger-link { color: #a33830; }
 .return-form { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
 .return-form h3 { margin: 0 0 5px; font-size: 15px; font-weight: 600; }
