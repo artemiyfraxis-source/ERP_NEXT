@@ -530,6 +530,15 @@ td small { margin-top: 4px; color: #7b857e; }
 .column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
 .table-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.supplier-return { margin-bottom: 18px; }
+
+.inline-select { display:flex; gap:6px; align-items:center; font-size:13px; }
+.receiving-card .batches { width:100%; margin:10px 0; border-collapse:collapse; }
+.receiving-card .batches th, .receiving-card .batches td { padding:4px 6px; text-align:left; font-size:13px; }
+.receiving-card .batches input { width:100%; min-width:80px; }
+
+
 
 /* Ресурсное планирование: Гант (перенос prodGantt_ SUPPLYMAP), запуск из техкарты, карточка назначения, очередь оператора. */
 .pg-s { color: var(--muted-foreground); font-size: 11px; margin-top: 2px; }

@@ -23,8 +23,14 @@ JOURNAL_LIMIT = 400  # STOCK05_LOG_LIMIT_: the rest is reached by narrowing the 
 # The same movement already sits in warehouse_writeoffs: listing the audit event too would double it.
 MIRRORED_BY_WRITEOFFS = frozenset({
     "warehouse.written_off", "warehouse.writeoff_returned", "warehouse.legacy_writeoff_history",
+    "warehouse.returned_to_supplier",
 })
-WRITEOFF_KIND_LABELS = {"writeoff": "Списание", "return": "Возврат", "issue": "Выдача"}
+WRITEOFF_KIND_LABELS = {
+    "writeoff": "Списание",
+    "return": "Возврат",
+    "issue": "Выдача",
+    "supplier_return": "Возврат поставщику",
+}
 
 
 @dataclass(frozen=True)
@@ -118,6 +124,8 @@ def event_text(event_type: str, details: Mapping[str, object]) -> str:
         return f"Правка строки: {_text(details, 'changes') or '—'}" + (f" ({reason})" if reason else "")
     if event_type == "warehouse.item_types_saved":
         return f"Справочник типов сохранён: {_text(details, 'count')}"
+    if event_type == "warehouse.rack_layout_saved":
+        return f"Склад 0.5: {_text(details, 'message')}"
     return event_type
 
 

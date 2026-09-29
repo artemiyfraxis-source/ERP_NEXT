@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -653,3 +653,20 @@ def test_a_refused_writeoff_or_return_leaves_no_journal_row():
         _write_off(uow, uow.warehouse.get(written.id), "", "Выдача")
 
     assert [row.kind for row in uow.writeoffs.items] == ["writeoff"]
+
+
+def test_writeoff_can_be_dated_back_like_the_writeoff_form():
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    write_off(
+        WriteOffCommand(
+            lot_id=lot.id, expected_version=lot.version, quantity=Decimal("1"),
+            purpose="FRX.001", reason="", actor=Actor(name="Кладовщик", department="Склад"),
+            now=datetime(2026, 9, 21, 12, 3), entry_date=date(2026, 9, 1),
+        ),
+        uow,
+    )
+
+    entry = uow.writeoffs.items[-1]
+    assert entry.occurred_at == datetime(2026, 9, 1, 12, 3)
+    assert uow.audit.items[-1].occurred_at == datetime(2026, 9, 21, 12, 3)

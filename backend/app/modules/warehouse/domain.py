@@ -430,6 +430,10 @@ WRITEOFF_KINDS = (
     "return",  # manual return of a write-off to its lot (Stock05.gs stock05Return_)
     "issue",  # kitting request handed out, «КБ Выдана» (Issue.gs:475-502)
     "legacy",  # a SUPPLYMAP СПИСАНИЕ row brought in by the stock import (WH-IMPORT)
+    # an accepted lot goes back to its supplier (SupplierReturn.gs, RC-6). SUPPLYMAP journals it with
+    # ОСНОВАНИЕ «Возврат поставщику: …», which its tick then takes for a return TO stock
+    # (writeoffIsReturn_) — ERP keeps its own kind, so the basis text never flips the sign.
+    "supplier_return",
 )
 ISSUE_WRITEOFF_AUTHOR = "выдача по заявке"  # КТО СПИСАЛ of an issue row (Issue.gs:500)
 

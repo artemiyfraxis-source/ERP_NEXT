@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ItemTypesPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
+import { ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 
 function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -99,4 +99,26 @@ it("shows the warehouse journal newest first and searches it on the server", asy
   fireEvent.change(screen.getByLabelText("Поиск по журналу склада"), { target: { value: " возврат " } });
   expect(await screen.findByText("+1 шт · Излишек · проведено", {}, { timeout: 2000 })).toBeInTheDocument();
   expect(paths.at(-1)).toBe("/api/stock/journal?q=%D0%B2%D0%BE%D0%B7%D0%B2%D1%80%D0%B0%D1%82");
+});
+
+it("«Раскладка»: edits racks, default shelves and a special rack and shows the saved summary", async () => {
+  let saved: unknown;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) === "/api/stock/rack-layout" && init?.method === "PUT") {
+      saved = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ layout: { racks: 5, shelves: 7, perRack: { "2": 3 } }, message: "Стеллажей: 5, полок по умолчанию: 7, особых стеллажей: 1." }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ layout: { racks: 32, shelves: 26, perRack: {} } }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+
+  render(<RackLayoutPanel onClose={() => undefined} />);
+  fireEvent.change(await screen.findByLabelText("Стеллажей"), { target: { value: "5" } });
+  fireEvent.change(screen.getByLabelText("Полок по умолчанию"), { target: { value: "7" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ особый стеллаж" }));
+  fireEvent.change(screen.getByLabelText("Особый стеллаж 1"), { target: { value: "2" } });
+  fireEvent.change(screen.getByLabelText("Полок на особом стеллаже 1"), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить раскладку" }));
+
+  expect(await screen.findByText("Стеллажей: 5, полок по умолчанию: 7, особых стеллажей: 1.")).toBeInTheDocument();
+  expect(saved).toEqual({ racks: 5, shelves: 7, perRack: { "2": 3 } });
 });

@@ -53,6 +53,36 @@ TECHNOLOGIST_NONCONFORMITIES = {MECHANICAL_DAMAGE}
 NOTIFY_TECHNOLOGIST = "Технолог"
 NOTIFY_SUPPLY = "Снабжение"
 
+# SupplierReturn.gs:15-22 — причины возврата поставщику. Первые три — литералы характера несоответствия
+# входного контроля: возврат по браку продолжает ВК, и формулировки должны совпадать с актами.
+SUPPLIER_RETURN_REASONS = (
+    MECHANICAL_DAMAGE,
+    WRONG_ITEM,
+    EXPIRED,
+    "Пересорт / несоответствие спецификации",
+    "Не нужна — возврат из-за брака основной позиции",
+    "Отказ от поставки (иное)",
+)
+SUPPLIER_RETURN_DISPOSITION = "Возврат поставщику"
+
+
+class SupplierReturnMode(str, Enum):
+    """SupplierReturn.gs:24-26: ждём замену → строка снова «В пути»; заказ закрыт → «Возврат»."""
+
+    WAIT = "wait"
+    CLOSE = "close"
+
+
+def supplier_return_basis(reason: str, claim: str = "", comment: str = "") -> str:
+    """SupplierReturn.gs supplierReturnBasis_: одна строка для журнала склада и ОПИСАНИЯ НЕСООТВ."""
+    claim_text = str(claim or "").strip()
+    comment_text = str(comment or "").strip()
+    return (
+        f"Возврат поставщику: {str(reason or '').strip()}"
+        + (f" · претензия {claim_text}" if claim_text else "")
+        + (f" · {comment_text}" if comment_text else "")
+    )
+
 
 def workdays_between(start: date, end: date) -> int:
     """Full Mon–Fri days after ``start`` up to and including ``end``; holidays ignored (Schema.gs:564)."""
@@ -106,6 +136,39 @@ class InspectionInput:
     mass_100: object = None
     # Receiving.gs:685-693 — historical receipt judges expiry on the УПД date, not on today.
     verdict_date: date | None = None
+    # receiveFields_/batchFields_ (Receiving.gs:252-324): реквизиты накладной и партии изготовителя.
+    document_number: str = ""
+    document_date: date | None = None
+    document_name: str = ""
+    note: str = ""
+    manufacture_date: date | None = None
+    nonconformity_description: str = ""
+
+
+# RC-9: акты приёмки (Config.gs DOC_TYPES): вид → (префикс номера, заголовок).
+ACT_KINDS: dict[str, tuple[str, str]] = {
+    "incoming": ("ВК", "Акт входного контроля"),
+    "nonconformity": ("АН", "Акт о несоответствии"),
+    "complaint": ("РК", "Акт рекламации"),
+    "usepermit": ("РИ", "Разрешение на использование"),
+}
+
+
+def act_number_prefix(kind: str, day: date) -> str:
+    return f"{ACT_KINDS[kind][0]}-{day.strftime('%Y%m%d')}-"
+
+
+def next_act_number(kind: str, day: date, existing: Iterable[str]) -> str:
+    """SystemId.gs nextSystemId_: ПРЕФИКС-ГГГГММДД-NN, NN — следующий за наибольшим за этот день."""
+    prefix = act_number_prefix(kind, day)
+    top = 0
+    for value in existing:
+        text = str(value or "")
+        if text.startswith(prefix):
+            tail = text[len(prefix):]
+            if tail.isdigit():
+                top = max(top, int(tail))
+    return f"{prefix}{top + 1:02d}"
 
 
 def verdict_reference_date(
@@ -275,6 +338,39 @@ class ReceivingLine:
     inspected_on: date | None = None
     revision_of_id: UUID | None = None
     revision_root_id: UUID | None = None
+    # ОПИСАНИЕ НЕСООТВ.: free text of the nonconformity; a supplier return appends its basis here.
+    nonconformity_description: str = ""
+    # How many supplier returns the line went through; a «wait» return re-opens the line for the
+    # replacement, whose own hand-over to the warehouse needs a fresh outbox key.
+    supplier_returns: int = 0
+    # Context of the order (Лист закупки → Лист ожидания): № ЗАКАЗА and ОЖИД. ДАТА for the queue.
+    order_number: str = ""
+    expected_arrival: date | None = None
+    # № УПД/М-15, ДАТА УПД/М-15, НАИМЕНОВАНИЕ (УПД/М-15), ПРИМЕЧАНИЕ ВК, ДАТА ИЗГОТОВЛЕНИЯ.
+    document_number: str = ""
+    document_date: date | None = None
+    document_name: str = ""
+    inspection_note: str = ""
+    manufacture_date: date | None = None
+    # A batch (RC-13) or package (RC-8) line `-ПN` split off this line; the order stays one procurement line.
+    split_of_id: UUID | None = None
+    # RC-9: № и дата актов строки (№ АКТ ВК/АКТ ВК ДАТА, № АКТ НС, № АКТ РЕКЛ., № РАЗРЕШ. ИСПОЛЬЗ.).
+    vk_act_number: str = ""
+    vk_act_date: date | None = None
+    nc_act_number: str = ""
+    nc_act_date: date | None = None
+    complaint_act_number: str = ""
+    complaint_act_date: date | None = None
+    use_permit_number: str = ""
+    use_permit_date: date | None = None
+
+    def act(self, kind: str) -> tuple[str, date | None]:
+        return {
+            "incoming": (self.vk_act_number, self.vk_act_date),
+            "nonconformity": (self.nc_act_number, self.nc_act_date),
+            "complaint": (self.complaint_act_number, self.complaint_act_date),
+            "usepermit": (self.use_permit_number, self.use_permit_date),
+        }[kind]
 
     @property
     def lineage_root_id(self) -> UUID:
@@ -291,6 +387,7 @@ class ReceivingLine:
         *,
         existing_grns: Iterable[str],
         manual_grn_prefix: str | None = None,
+        existing_act_numbers: Iterable[str] = (),
     ) -> ReceivingLine:
         if not str(actor.name or "").strip():
             raise ReceivingValidationError("Не определён приёмщик")
@@ -327,6 +424,40 @@ class ReceivingLine:
                     )
                 prefix = candidate
             grn = next_grn(prefix, data.inspection_date.year, existing_grns)
+        # RC-9 (Receiving.gs:704-761): акт ВК — при первом контроле; АН и РК — когда вердикт их требует и
+        # их ещё нет (догенерация); РИ — вывод из «Ожидания»/«Карантина» в «Принято» после акта ВК.
+        # Дата актов ВК/АН/РК — дата УПД у исторической приёмки (dateFromCol + useDocDate), иначе сегодня.
+        taken = [str(value) for value in existing_act_numbers]
+        act_day = data.verdict_date or data.inspection_date
+
+        def issue(kind: str, current: str, current_day: date | None, day: date) -> tuple[str, date | None]:
+            if current:
+                return current, current_day
+            number = next_act_number(kind, day, taken)
+            taken.append(number)
+            return number, day
+
+        vk = issue("incoming", self.vk_act_number, self.vk_act_date, act_day)
+        nc = (
+            issue("nonconformity", self.nc_act_number, self.nc_act_date, act_day)
+            if result.nonconformity_act_required
+            else (self.nc_act_number, self.nc_act_date)
+        )
+        complaint = (
+            issue("complaint", self.complaint_act_number, self.complaint_act_date, act_day)
+            if result.complaint_required
+            else (self.complaint_act_number, self.complaint_act_date)
+        )
+        released = (
+            bool(self.vk_act_number)
+            and self.status in {ReceivingStatus.WAITING, ReceivingStatus.QUARANTINE}
+            and result.status is ReceivingStatus.ACCEPTED
+        )
+        permit = (
+            issue("usepermit", self.use_permit_number, self.use_permit_date, data.inspection_date)
+            if released
+            else (self.use_permit_number, self.use_permit_date)
+        )
         return replace(
             self,
             status=result.status,
@@ -347,6 +478,22 @@ class ReceivingLine:
             grn=grn,
             inspector=actor,
             inspected_on=data.inspection_date,
+            document_number=str(data.document_number or "").strip() or self.document_number,
+            document_date=data.document_date or self.document_date,
+            document_name=str(data.document_name or "").strip() or self.document_name,
+            inspection_note=str(data.note or "").strip(),
+            manufacture_date=data.manufacture_date,
+            nonconformity_description=(
+                str(data.nonconformity_description or "").strip() or self.nonconformity_description
+            ),
+            vk_act_number=vk[0],
+            vk_act_date=vk[1],
+            nc_act_number=nc[0],
+            nc_act_date=nc[1],
+            complaint_act_number=complaint[0],
+            complaint_act_date=complaint[1],
+            use_permit_number=permit[0],
+            use_permit_date=permit[1],
         )
 
     def waiting_overdue(self, today: date) -> bool:
@@ -433,6 +580,142 @@ class ReceivingLine:
         )
         return archived, revision
 
+    def return_to_supplier(
+        self,
+        *,
+        reason: str,
+        mode: SupplierReturnMode,
+        claim: str = "",
+        comment: str = "",
+    ) -> ReceivingLine:
+        """SupplierReturn.gs supplierReturnApply_: an accepted line goes back to the supplier.
+
+        РЕШЕНИЕ becomes «Возврат поставщику», the basis is appended to ОПИСАНИЕ НЕСООТВ.; «close» ends the
+        order («Возврат»), «wait» puts the line back «В пути» for the replacement and lets its next
+        acceptance reach the warehouse again (supplierReturnFreePushed_)."""
+        if self.status is not ReceivingStatus.ACCEPTED:
+            raise ReceivingValidationError(
+                f"Вернуть поставщику можно только принятую позицию (статус «{self.status.value}»)"
+            )
+        reason_text = str(reason or "").strip()
+        if not reason_text:
+            raise ReceivingValidationError("Укажи причину возврата.")
+        if reason_text not in SUPPLIER_RETURN_REASONS:
+            raise ReceivingValidationError("Неизвестная причина возврата")
+        basis = supplier_return_basis(reason_text, claim, comment)
+        previous = self.nonconformity_description.strip()
+        wait = mode is SupplierReturnMode.WAIT
+        return replace(
+            self,
+            status=ReceivingStatus.IN_TRANSIT if wait else ReceivingStatus.RETURN,
+            version=self.version + 1,
+            disposition=SUPPLIER_RETURN_DISPOSITION,
+            nonconformity_description=f"{previous}; {basis}" if previous else basis,
+            supplier_returns=self.supplier_returns + 1,
+            warehouse_event_emitted=False if wait else self.warehouse_event_emitted,
+        )
+
+    def _split_copy(self, *, legacy_id: str, now: datetime, key: str) -> ReceivingLine:
+        if len(legacy_id) > 32:
+            raise ReceivingValidationError("System ID части длиннее 32 символов")
+        return replace(
+            self,
+            id=uuid4(),
+            source_event_id=uuid4(),
+            source_idempotency_key=key,
+            legacy_id=legacy_id,
+            version=1,
+            created_at=now,
+            split_of_id=self.id,
+            revision_of_id=None,
+            revision_root_id=None,
+            supplier_returns=0,
+        )
+
+    def split_into_batches(
+        self, quantities: list[Decimal], *, existing_legacy_ids: Iterable[str], now: datetime
+    ) -> list[ReceivingLine]:
+        """Receiving.gs applyWaitlistBatchSplits_: поставка пришла несколькими партиями изготовителя.
+
+        This line becomes batch 1 (КОЛ-ВО ЗКП = its quantity); every other batch is a new line `<ID>-ПN`
+        with the order context and ЗКП = its quantity, still «В пути» — each then gets its own ВК, ГРН and
+        acts. Quantities are those of the batches (УПД, else fact)."""
+        if self.status not in {ReceivingStatus.IN_TRANSIT, ReceivingStatus.WAITING, ReceivingStatus.QUARANTINE}:
+            raise ReceivingValidationError("Разбить на партии можно только поставку до приёмки")
+        if self.warehouse_event_emitted or self.grn:
+            raise ReceivingValidationError("У строки уже есть ГРН — разбивка на партии только до первого ВК")
+        if len(quantities) < 2:
+            raise ReceivingValidationError("Для разбивки нужно минимум 2 партии")
+        amounts = [_positive(Decimal(value), f"Партия {index}: кол-во") for index, value in enumerate(quantities, 1)]
+        taken = {str(value or "").strip() for value in existing_legacy_ids}
+        first = replace(self, ordered_quantity=amounts[0], version=self.version + 1)
+        lines = [first]
+        number = 2
+        for index, amount in enumerate(amounts[1:], start=2):
+            while f"{self.legacy_id}-П{number}" in taken:
+                number += 1
+            legacy_id = f"{self.legacy_id}-П{number}"
+            taken.add(legacy_id)
+            copy = self._split_copy(legacy_id=legacy_id, now=now, key=f"receiving:{self.id}:batch:{legacy_id}")
+            lines.append(replace(copy, ordered_quantity=amount, status=ReceivingStatus.IN_TRANSIT))
+        return lines
+
+    def unpack(
+        self, quantities: list[Decimal], *, existing_legacy_ids: Iterable[str], now: datetime
+    ) -> list[ReceivingLine]:
+        """Receiving.gs applyUnpackSplits_ «Разукомплектовка (пакеты)»: a received position is split into
+        packages sharing its ГРН before it is placed. This line becomes package 1; packages 2..N are full
+        copies `<ID>-ПN` (acts, ГРН, status kept) with their own КОЛ-ВО ФАКТ and ПАКЕТ = N; ЗКП and УПД stay on
+        package 1 only. Each package is placed and goes to stock on its own."""
+        if self.status is not ReceivingStatus.ACCEPTED:
+            raise ReceivingValidationError("Разукомплектовка — только для строк «Принято» (после ВК)")
+        if not self.grn:
+            raise ReceivingValidationError("У строки нет ГРН — сначала проведи входной контроль")
+        if self.package:
+            raise ReceivingValidationError("Строка уже является пакетом разукомплектовки")
+        if self.storage_location or self.warehouse_event_emitted:
+            raise ReceivingValidationError(
+                "Строка уже разложена на склад — разукомплектовка возможна только до раскладки"
+            )
+        total = self.fact_quantity
+        if total is None or total <= 0:
+            raise ReceivingValidationError("У строки нет корректного КОЛ-ВО ФАКТ")
+        if len(quantities) < 2:
+            raise ReceivingValidationError("Нужно минимум 2 части")
+        amounts = [_positive(Decimal(value), f"Часть {index}: кол-во") for index, value in enumerate(quantities, 1)]
+        if abs(sum(amounts) - total) > Decimal("0.001"):
+            raise ReceivingValidationError(
+                f"Сумма частей {format(sum(amounts).normalize(), 'f')} ≠ исходному {format(total.normalize(), 'f')}"
+            )
+        taken = {str(value or "").strip() for value in existing_legacy_ids}
+        first = replace(
+            self, fact_quantity=amounts[0], accepted_quantity=amounts[0], package="1", version=self.version + 1
+        )
+        lines = [first]
+        number = 2
+        for index, amount in enumerate(amounts[1:], start=2):
+            while f"{self.legacy_id}-П{number}" in taken:
+                number += 1
+            legacy_id = f"{self.legacy_id}-П{number}"
+            taken.add(legacy_id)
+            copy = self._split_copy(legacy_id=legacy_id, now=now, key=f"receiving:{self.id}:package:{index}")
+            lines.append(replace(
+                copy,
+                fact_quantity=amount,
+                accepted_quantity=amount,
+                document_quantity=None,
+                ordered_quantity=amount,
+                backorder_quantity=Decimal("0"),
+                package=str(index),
+            ))
+        return lines
+
+    @property
+    def warehouse_event_key(self) -> str:
+        """Outbox key of the hand-over to the warehouse; each replacement after a «wait» return has its own."""
+        base = f"receiving:{self.id}:warehouse"
+        return f"{base}:r{self.supplier_returns}" if self.supplier_returns else base
+
     @property
     def ready_for_warehouse(self) -> bool:
         return bool(
@@ -479,6 +762,10 @@ def create_line_from_expected(message: OutboxMessage) -> ReceivingLine:
             ordered_quantity=quantity,
             unit=str(payload["unit"]).strip(),
             quality_document_required=bool(payload.get("quality_document_required", False)),
+            order_number=str(payload.get("order_number") or "").strip(),
+            expected_arrival=(
+                date.fromisoformat(str(payload["expected_arrival"])) if payload.get("expected_arrival") else None
+            ),
         )
     except (KeyError, ValueError, TypeError, DecimalException) as error:
         if isinstance(error, ReceivingValidationError):

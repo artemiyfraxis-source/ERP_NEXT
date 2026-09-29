@@ -116,3 +116,73 @@ def test_vk_revision_migration_keeps_one_live_line_per_procurement_line(tmp_path
         assert "revision_of_id" not in _columns(connection)
 
     command.upgrade(config, AFTER)
+
+
+def test_supplier_return_migration_adds_description_and_counter_with_defaults(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "receiving.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+
+    command.upgrade(config, "0050_shipping_boxes_requisites")
+    with sqlite3.connect(database_path) as connection:
+        assert "supplier_returns" not in _columns(connection)
+        _insert(connection, "1", "Принято")
+
+    command.upgrade(config, "0051_receiving_supplier_returns")
+    with sqlite3.connect(database_path) as connection:
+        assert {"nonconformity_description", "supplier_returns"} <= _columns(connection)
+        assert connection.execute(
+            "SELECT nonconformity_description, supplier_returns FROM receiving_lines"
+        ).fetchall() == [("", 0)]
+
+    command.downgrade(config, "0050_shipping_boxes_requisites")
+    with sqlite3.connect(database_path) as connection:
+        assert "supplier_returns" not in _columns(connection)
+
+
+def test_document_details_migration_adds_columns_and_lets_batches_share_the_procurement_line(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "receiving.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+
+    command.upgrade(config, "0051_receiving_supplier_returns")
+    with sqlite3.connect(database_path) as connection:
+        _insert(connection, "1", "Принято")
+
+    command.upgrade(config, "0052_receiving_document_details")
+    with sqlite3.connect(database_path) as connection:
+        assert {
+            "order_number", "expected_arrival", "document_number", "document_date", "document_name",
+            "inspection_note", "manufacture_date", "split_of_id",
+        } <= _columns(connection)
+        index = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'ux_receiving_live_procurement_line'"
+        ).fetchone()[0]
+        assert "split_of_id IS NULL" in index
+
+    command.downgrade(config, "0051_receiving_supplier_returns")
+    with sqlite3.connect(database_path) as connection:
+        assert "split_of_id" not in _columns(connection)
+
+
+def test_acts_migration_adds_numbers_and_dates(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "receiving.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+
+    command.upgrade(config, "0052_receiving_document_details")
+    with sqlite3.connect(database_path) as connection:
+        _insert(connection, "1", "Принято")
+
+    command.upgrade(config, "0053_receiving_acts")
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT vk_act_number, vk_act_date, use_permit_number FROM receiving_lines"
+        ).fetchall() == [("", None, "")]
+
+    command.downgrade(config, "0052_receiving_document_details")
+    with sqlite3.connect(database_path) as connection:
+        assert "vk_act_number" not in _columns(connection)

@@ -27,14 +27,18 @@ from app.modules.receiving.application import (
     quarantine_overdue_waiting,
 )
 from app.modules.receiving.infrastructure import SqlAlchemyReceivingUnitOfWork
-from app.modules.warehouse.application import PoisonWarehouseMessage, dispatch_next_warehouse_received
-from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
+from app.modules.warehouse.application import (
+    PoisonWarehouseMessage,
+    dispatch_next_supplier_return,
+    dispatch_next_warehouse_received,
+)
+from app.modules.warehouse.infrastructure import SqlAlchemyRackLayoutStore, SqlAlchemyWarehouseUnitOfWork
 from app.modules.operations.application import PoisonNotificationMessage, dispatch_next_notification
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.shared.clock import moscow_now
 from app.workflows.supplier_directory import ReferencesSupplierDirectory
-from app.shared.warehouse_location import configured_rack_layout
+from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
 from app.workflows.owner_alerts import alert_on_dead_letters, daily_overdue_digest, quarantine_escalations
 
 # alertOnErrors_ ran once per owner tick (a minute); the worker loop turns every couple of seconds.
@@ -94,6 +98,20 @@ def dispatch_available(
             dispatched += 1
             continue
         if warehouse is not None:
+            dispatched += 1
+            progressed = True
+        if dispatched >= limit:
+            break
+        try:
+            supplier_return = dispatch_next_supplier_return(
+                moscow_now(),
+                SqlAlchemyWarehouseUnitOfWork(sessions),
+            )
+        except PoisonWarehouseMessage as error:
+            logging.warning("Quarantined invalid supplier return message %s", error.message_id)
+            dispatched += 1
+            continue
+        if supplier_return is not None:
             dispatched += 1
             progressed = True
         if dispatched >= limit:
@@ -200,6 +218,7 @@ def main() -> None:
 
     engine = build_engine(database_url)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    set_rack_layout_loader(SqlAlchemyRackLayoutStore(sessions).load)
     try:
         if args.once:
             run_timers(sessions)
