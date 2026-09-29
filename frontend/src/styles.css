@@ -497,6 +497,9 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .side-foot .role-label { color: var(--muted-foreground); font-size: 12px; }
 .side-foot .admin-mode.on { border-color: var(--primary, #00b09b); }
 .login-card label input { margin-top: 2px; text-transform: none; letter-spacing: normal; font-size: 14px; }
+/* Вход по логину и паролю нужен для preview/админа, но остаётся незаметным (owner 2026-09-29). */
+.login-alt { margin-top: 4px; color: var(--muted-foreground); font-size: 12px; text-align: center; justify-self: center; }
+.login-alt:hover { color: var(--primary); text-decoration: underline; }
 .screen-center { min-height: 100vh; display: grid; place-items: center; }
 .muted { color: #637069; }
 

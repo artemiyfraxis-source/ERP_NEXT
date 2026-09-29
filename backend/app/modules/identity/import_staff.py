@@ -53,6 +53,12 @@ DEFAULT_SOURCE = Path(__file__).resolve().parents[5] / "SUPPLYMAP"
 CONFIG_RELATIVE = Path("Config.gs")
 ACCESS_BACKUP_RELATIVE = Path("_local") / "access-backup-2026-09-01.json"
 
+# Test entries in the Google directory, not employees (mirror scripts/demo/drop_test_staff.py). «Вася Пупкин»
+# (artemiyfraxis@gmail.com) is the owner's test account; the owner renamed it «Артемий» in the demo, so the login list
+# showed two «Артемий» (owner 2026-09-29 «и без отдела … оставь одну запись»). The import never creates them, and
+# deactivates such a row if it is still active, so only the real «Артемий Васильев» (tit1963yt) remains.
+TEST_EMAILS = frozenset({"artemiyfraxis@gmail.com"})
+
 # SUPPLYMAP role keys → ERP role keys. Every current portal role already exists in ROLE_LABELS; the map is here so
 # a renamed or retired SUPPLYMAP role lands on a real ERP role instead of a silent «staff».
 ROLE_MAP = {
@@ -138,6 +144,13 @@ def _load_access_roles(path: Path) -> dict[str, str]:
     }
 
 
+def _surname_first(name: str) -> str:
+    """SUPPLYMAP stores «Имя Фамилия»; the login list wants «Фамилия Имя» so it sorts by surname (owner 2026-09-29).
+    A two-word name is swapped; anything else (one word like «Артемий», or three words) is left alone."""
+    parts = name.split()
+    return f"{parts[1]} {parts[0]}" if len(parts) == 2 else name
+
+
 def _infer_site(role: str, department: str) -> str | None:
     """Site for a SUPPLYMAP row: full-access roles (directors, технолог, снабжение) span sites (None); otherwise read
     the participok from the department text — «Жуковский»/ЖУК → ЖУК, «Царицыно»/ЦАР → ЦАР, else None."""
@@ -164,7 +177,7 @@ def read_source(source: Path) -> list[SourceEmployee]:
         department = info.get("dept", "")
         people.append(SourceEmployee(
             email=email,
-            name=info.get("name", "") or email,
+            name=_surname_first(info.get("name", "") or email),
             department=department,
             role=role,
             site=_infer_site(role, department),
@@ -206,7 +219,16 @@ def import_staff(
             role = normalize_role(person.role)
             site = normalize_site(person.site)
             current = existing.get(email)
-            if current is None:
+            if email in TEST_EMAILS:
+                # Not an employee — never create; deactivate the row if a run already made it (so it leaves the list).
+                if current is not None and current.active:
+                    if apply:
+                        uow.identity.update_user(replace(current, active=False))
+                    rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=None,
+                                            action="тестовый — отключён"))
+                else:
+                    rows.append(ImportedRow(name=name, login=login, role=role, pin=None, action="тестовый — пропущен"))
+            elif current is None:
                 pin = new_pin()
                 if apply:
                     user = IdentityUser(
@@ -222,13 +244,13 @@ def import_staff(
                     uow.identity.set_pin(current.id, hash_pin(pin))
                 rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=pin,
                                         action="PIN перевыдан"))
-            elif current.department != department or current.site != site:
-                # Already imported, but the participok/department moved (ЖУК added, installers → «Монтаж»): update the
-                # department and site, keep the PIN, role and name (the administrator may have edited them by hand).
+            elif current.name != name or current.department != department or current.site != site:
+                # Already imported, but the source shape moved: name to «Фамилия Имя», the participok/department (ЖУК
+                # added, installers → «Монтаж»). Bring name, department and site to the source; keep the PIN and role.
                 if apply:
-                    uow.identity.update_user(replace(current, department=department, site=site))
-                rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=None,
-                                        action="обновлён (отдел/площадка)"))
+                    uow.identity.update_user(replace(current, name=name, department=department, site=site))
+                rows.append(ImportedRow(name=name, login=current.login, role=current.role, pin=None,
+                                        action="обновлён (имя/отдел/площадка)"))
             else:
                 rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=None,
                                         action="пропущен (уже есть)"))
@@ -248,9 +270,11 @@ def _print_report(rows: list[ImportedRow], *, apply: bool) -> None:
     created = sum(1 for row in rows if row.action == "создан")
     reissued = sum(1 for row in rows if row.action == "PIN перевыдан")
     updated = sum(1 for row in rows if row.action.startswith("обновлён"))
-    skipped = sum(1 for row in rows if row.action.startswith("пропущен"))
+    deactivated = sum(1 for row in rows if row.action == "тестовый — отключён")
+    skipped = sum(1 for row in rows if row.action.startswith("пропущен") or row.action == "тестовый — пропущен")
     print("-" * 84)
-    print(f"создано: {created}, PIN перевыдано: {reissued}, обновлено: {updated}, пропущено: {skipped}")
+    print(f"создано: {created}, PIN перевыдано: {reissued}, обновлено: {updated}, "
+          f"тестовых отключено: {deactivated}, пропущено: {skipped}")
     if any(row.pin for row in rows):
         print("Раздайте PIN сотрудникам — вход по имени и PIN. Пароль не нужен.")
 

@@ -54,7 +54,7 @@ export function LoginPage({ onLogin }: { onLogin: (principal: Principal) => void
         {pinAvailable && (
           <button
             type="button"
-            className="link-button"
+            className="link-button login-alt"
             onClick={() => { setError(""); setMode(shown === "pin" ? "password" : "pin"); }}
           >
             {shown === "pin" ? "Войти по логину и паролю" : "Войти по PIN"}
@@ -75,20 +75,16 @@ type FormProps = {
 
 function PinForm({ staff, busy, setBusy, error, setError, onLogin }: FormProps & { staff: LoginStaff[] }) {
   const [who, setWho] = useState(() => rememberedWho());
-  const [search, setSearch] = useState("");
   const [pin, setPin] = useState("");
   const [revealed, setRevealed] = useState<PinReveal | null>(null);
   const pinRef = useRef<HTMLInputElement>(null);
 
-  // Find yourself by name: the list is filtered in the browser (portalStaffLite_ came with the page).
-  const options = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase("ru").replace(/ё/g, "е");
-    const matches = needle
-      ? staff.filter((person) => person.name.toLocaleLowerCase("ru").replace(/ё/g, "е").includes(needle))
-      : staff;
-    const picked = staff.find((person) => person.id === who);
-    return picked && !matches.includes(picked) ? [picked, ...matches] : matches;
-  }, [staff, search, who]);
+  // «Просто выбор себя и PIN» (owner 2026-09-29): the list alone, sorted by surname; a <select> searches by typing on
+  // its own, so no separate search box. Names are «Фамилия Имя», so a plain ru sort is already by surname.
+  const options = useMemo(
+    () => [...staff].sort((a, b) => a.name.localeCompare(b.name, "ru")),
+    [staff],
+  );
   const known = staff.some((person) => person.id === who);
 
   async function submit(event: FormEvent) {
@@ -125,14 +121,13 @@ function PinForm({ staff, busy, setBusy, error, setError, onLogin }: FormProps &
   return (
     <form onSubmit={submit}>
       <label>Кто ты
-        <input aria-label="Поиск сотрудника" placeholder="фамилия или имя" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <select aria-label="Сотрудник" value={known ? who : ""} onChange={(event) => { setWho(event.target.value); pinRef.current?.focus(); }}>
+          <option value="">— выбери себя —</option>
+          {options.map((person) => (
+            <option key={person.id} value={person.id}>{person.name}</option>
+          ))}
+        </select>
       </label>
-      <select aria-label="Сотрудник" value={known ? who : ""} onChange={(event) => { setWho(event.target.value); pinRef.current?.focus(); }}>
-        <option value="">— выбери себя —</option>
-        {options.map((person) => (
-          <option key={person.id} value={person.id}>{person.department ? `${person.name} · ${person.department}` : person.name}</option>
-        ))}
-      </select>
       <label>PIN-код
         <input
           ref={pinRef}
@@ -148,7 +143,6 @@ function PinForm({ staff, busy, setBusy, error, setError, onLogin }: FormProps &
       </label>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <button className="primary" disabled={busy}>{busy ? "Проверяю…" : "Войти"}</button>
-      <p className="sub">Первый вход? Выбери себя и нажми «Войти» с пустым PIN.</p>
       {revealed && (
         <div className="pin-overlay" role="dialog" aria-label="Ваш PIN">
           <div className="pin-card">
