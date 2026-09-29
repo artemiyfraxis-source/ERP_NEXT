@@ -2,11 +2,13 @@
 # Запуск из корня копии: powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1
 # Порядок безопасный: сначала новый код, зависимости и сборка сайта в frontend\dist-next — старая ERP в это
 # время работает. Ошибка на этом шаге → код возвращается на прежнюю версию, ERP не останавливалась.
-# Потом остановка API, копия базы в backend\<база>.bak, миграции, сотрудники (без --reset-pins), отгруженные
-# проекты по снимку data\import\projects.json, подмена сайта, запуск API и фонового outbox_worker. Ошибка миграций → база из копии,
+# Потом остановка API, копия базы в backend\<база>.bak, миграции, сотрудники (без --reset-pins), отгруженное по
+# листу цеха «ЗАГРУЗ» (полностью отгруженные проекты прочь, частичные отгрузки — в готовую продукцию; лист
+# перечитывается из Google ключом, путь к которому запомнил load-real-data.ps1 или -Key, иначе — снимок
+# data\import\projects.json), подмена сайта, запуск API и фонового outbox_worker. Ошибка миграций → база из копии,
 # прежний код, прежний сайт, API снова запущен. В конце — версия и «Что нового» (влитые PR с прошлого
 # обновления; коммит прошлого обновления в backend\<база>.version), то же уходит в version.json для плашки в ERP.
-param([string]$DbFile = 'real.db', [int]$Port = 8022)
+param([string]$DbFile = 'real.db', [int]$Port = 8022, [string]$Key = '')
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $root = (Resolve-Path "$PSScriptRoot\..").Path
@@ -105,9 +107,27 @@ else {
   else { Write-Host 'Новых сотрудников нет.' }
 }
 
-Write-Host '== Отгруженные по листу цеха — из базы (владелец 29.09: отгруженное не нужно)'
-& $py -X utf8 ..\scripts\projects_import.py drop-shipped (Join-Path $root 'data\import\projects.json')
-if ($LASTEXITCODE -ne 0) { Write-Warning "Отгруженные не убраны (ошибка выше)" }
+Write-Host '== Отгруженное по листу цеха «ЗАГРУЗ» (владелец 29.09: отгруженное не нужно, отгруженное из Google — «отгружено»)'
+# Ключ Google (только чтение): -Key или путь, запомненный load-real-data.ps1 / прошлым -Key. Сам ключ не копируется.
+$keyPath = Join-Path $root 'data\import\google-key.path'
+if ($Key) { $Key = (Resolve-Path $Key).Path; New-Item -ItemType Directory -Force (Split-Path $keyPath) | Out-Null; Set-Content $keyPath $Key -Encoding UTF8 }
+elseif (Test-Path $keyPath) { $Key = (Get-Content $keyPath -Raw).Trim() }
+else {
+  # Путь ещё не запомнен: JSON ключа erp-reader в Загрузках, на Рабочем столе, в Документах или рядом с копией ERP.
+  $Key = Get-ChildItem -Path "$HOME\Downloads", "$HOME\Desktop", "$HOME\Documents", (Split-Path $root) -Filter *.json -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Length -lt 10KB -and (Select-String -Path $_.FullName -Pattern 'erp-reader@techmap-498119' -SimpleMatch -Quiet -ErrorAction SilentlyContinue) } |
+    Select-Object -First 1 -ExpandProperty FullName
+  if ($Key) {
+    New-Item -ItemType Directory -Force (Split-Path $keyPath) | Out-Null
+    Set-Content $keyPath $Key -Encoding UTF8
+    Write-Host "Ключ Google найден и запомнен: $Key"
+  }
+}
+$shipped = @('-X', 'utf8', '..\scripts\projects_import.py', 'drop-shipped', (Join-Path $root 'data\import\projects.json'))
+if ($Key -and (Test-Path $Key)) { $shipped += @('--key', $Key) }
+else { Write-Host 'Ключа Google нет — лист цеха берётся из последнего снимка.' }
+& $py @shipped
+if ($LASTEXITCODE -ne 0) { Write-Warning "Отгруженное не перенесено (причина выше)" }
 
 $head = (git -C $root rev-parse HEAD).Trim()
 $stamp = "$db.version"

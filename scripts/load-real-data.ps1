@@ -15,6 +15,8 @@ $py = Join-Path $backend '.venv\Scripts\python.exe'
 $Key = (Resolve-Path $Key).Path
 $data = Join-Path $root 'data\import'
 New-Item -ItemType Directory -Force $data | Out-Null
+# Путь к ключу (не сам ключ) — для update-local.ps1: он перечитывает лист цеха «ЗАГРУЗ» при каждом обновлении.
+Set-Content (Join-Path $data 'google-key.path') $Key -Encoding UTF8
 Set-Location $backend
 $env:ERP_DATABASE_URL = if ($DatabaseUrl) { $DatabaseUrl } else { "sqlite+pysqlite:///$DbFile" }
 $env:ERP_COOKIE_SECURE = '0'

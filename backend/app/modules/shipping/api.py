@@ -188,7 +188,7 @@ def _good_result(good: FinishedGood) -> dict:
         "item_index": good.item_index, "customer": good.customer, "article": good.article,
         "name": good.name, "ordered": _number(good.ordered), "unit": good.unit,
         "accepted": _number(good.accepted), "shipped": _number(good.shipped),
-        "remaining": _number(good.remaining),
+        "remaining": _number(good.remaining), "sent": _number(good.sent), "before_erp": _number(good.before_erp),
         "received_at": good.received_at.isoformat() if good.received_at else None,
         "grn": good.grn, "note": good.note,
     }

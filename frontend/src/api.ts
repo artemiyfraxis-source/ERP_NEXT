@@ -861,6 +861,10 @@ export interface FinishedGood {
   accepted: string;
   shipped: string;
   remaining: string;
+  /** Уехало с завода: отправки «Отгружена»/«Закрыта» плюс отгруженное до ERP. */
+  sent: string;
+  /** Отгружено ещё в Google (лист цеха «ЗАГРУЗ»), входит в принятое, отобранное и уехавшее. */
+  before_erp: string;
   received_at: string | null;
   grn: string | null;
   note: string;

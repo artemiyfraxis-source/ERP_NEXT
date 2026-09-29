@@ -180,6 +180,41 @@ def shipped_projects(sheet: list[dict]) -> set[str]:
     return {k for k, values in statuses.items() if all("ОТГРУЖЕН" in value for value in values)}
 
 
+# Сколько уже уехало, из комментария строки: «Отгрузили 154 шт», «ОТГРУЗКА  60000». На строке «ОТГРУЖЕН» годится любое
+# «отгруз…», на живой — только прошедшее «отгрузил…» («Отгрузили 50 шт. Придут разъемы…»): «ОТГРУЗКА 600» там — план.
+_QTY = r"\s+(\d{1,3}(?:[ \u00a0]\d{3})+|\d+)"
+SHIPPED_DONE = re.compile(r"отгруз\w*" + _QTY, re.I)
+SHIPPED_LIVE = re.compile(r"отгрузил\w*" + _QTY, re.I)
+
+
+def partial_shipments(sheet: list[dict]) -> dict[str, dict]:
+    """Частичные отгрузки листа цеха (у проекта есть и живые строки): проект → {"no", "total", "texts"}.
+    total — сумма чисел из комментариев; None — строка «ОТГРУЖЕН» есть, а сколько уехало, не написано. Чистая."""
+    from decimal import Decimal
+
+    from app.modules.production.plan import normalize_project_number as key
+
+    found: dict[str, dict] = {}
+    shipped = shipped_projects(sheet)
+    for row in sheet:
+        k = key(row["no"])
+        if not k or k in shipped:
+            continue
+        done = "ОТГРУЖЕН" in [shop_status(part) for part in str(row["status"] or "").split(",")]
+        comment = _flat(row["comment"])
+        match = (SHIPPED_DONE if done else SHIPPED_LIVE).search(comment)
+        if not done and not match:
+            continue
+        o = found.setdefault(k, {"no": _flat(row["no"]), "total": Decimal("0"), "texts": [], "unknown": False})
+        o["texts"].append(comment or ", ".join(shop_status(p) for p in str(row["status"]).split(",")))
+        if match:
+            o["total"] += Decimal(re.sub(r"\s", "", match[1]))
+        else:
+            o["unknown"] = True
+    return {k: {"no": o["no"], "texts": o["texts"], "total": None if o["unknown"] and not o["total"] else o["total"]}
+            for k, o in found.items()}
+
+
 def shop_sync(sheet: list[dict], portal: list[dict]) -> dict:
     """Порт planShopSync_: записи журнала, которые приведут план к листу цеха. Чистая.
     portal — строки плана: {no, terminal, stage, kbs: [{index, status}], blocker: {type, text}|None,
@@ -412,6 +447,9 @@ def apply(args: argparse.Namespace) -> None:
         except Exception as error:  # noqa: BLE001 — одна запись не роняет сверку
             report["failed"].append(f"{entry['project']} {entry['kind']}: {error}")
 
+    # 5. Отгруженное по листу цеха: полностью отгруженные, заведённые прошлым прогоном, — прочь; частичные — в ГП.
+    shipped_done, shipped_skipped = sync_shipped(data["shop"], app.state, shop, moscow_now())
+
     rows = call("GET", "/api/production/plan")["rows"]
     print(f"Наборы из расчёта: заведено {len(report['loaded'])} (всего в SUPPLYMAP {len(kitsets)})")
     for line in report["loaded"]:
@@ -422,6 +460,10 @@ def apply(args: argparse.Namespace) -> None:
     if result["not_in_sheet"]:
         print("В плане, но нет в листе цеха: " + ", ".join(result["not_in_sheet"]))
     print(f"Отгружено по листу цеха, не переносится: {len(shipped)}" + (f" ({', '.join(sorted(shipped))})" if shipped else ""))
+    for line in shipped_done:
+        print("  " + line)
+    for line in shipped_skipped:
+        print("  НЕ ПЕРЕНЕСЕНО: " + line)
     print(f"В плане цеха ERP: {len(rows)} проектов")
     for line in report["failed"]:
         print("ОШИБКА: " + line)
@@ -429,41 +471,112 @@ def apply(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def sync_shipped(shop_grid: list[list[str]], state, actor, now) -> tuple[list[str], list[str]]:
+    """Отгруженное по листу цеха — в базу. Полностью отгруженные проекты уходят (владелец 29.09: отгруженное не
+    нужно): набор каскадом, как «Удалить проект» в карточке, без набора — строка реестра. Частичные отгрузки —
+    в готовую продукцию «отгружено до ERP», если КБ у проекта одна (у нескольких не угадать, какая уехала).
+    Проект, у которого в ERP уже есть своё движение готовой продукции или отправка, не трогается. Повтор ничего
+    не меняет. → (что сделано, что не перенесено)."""
+    from app.modules.production.plan import normalize_project_number as key
+    from app.modules.production.plan_application import ReplacePlanProjectsCommand, replace_plan_projects
+    from app.modules.shipping.application import DropProjectCommand, ShipBeforeErpCommand, drop_project, ship_before_erp
+    from app.workflows.project_kitset import delete_kitset
+
+    sheet = shop_rows(shop_grid)
+    shipped = shipped_projects(sheet)
+    partial = partial_shipments(sheet)
+    done: list[str] = []
+    skipped: list[str] = []
+    with state.shipping_uow_factory() as uow:
+        goods: dict[str, list] = {}
+        for good in uow.goods.list(limit=1_000_000):
+            goods.setdefault(key(good.project), []).append(good)
+        in_erp = {k for k, rows in goods.items()
+                  if uow.goods.in_shipments([g.id for g in rows]) or any(g.accepted > g.before_erp for g in rows)}
+
+    with state.techcards_uow_factory() as uow:
+        kitsets = [item.project for item in uow.kitsets.list() if key(item.project) in shipped]
+    for project in kitsets:
+        if key(project) in in_erp:
+            skipped.append(f"{project}: отгружен по листу цеха, но в ERP уже есть приёмка или отправка — не удаляю")
+            continue
+        delete_kitset(project, actor, now, state.techcards_uow_factory, state.production_uow_factory,
+                      state.shipping_uow_factory)
+        done.append(f"{project}: отгружен по листу цеха — убран из ERP")
+    # Готовая продукция без движения, оставшаяся без карточки, — тоже прочь (`shipGpDropProject_`).
+    for k in sorted(shipped - in_erp - {key(p) for p in kitsets}):
+        for name in sorted({good.project for good in goods.get(k, [])}):
+            result = drop_project(DropProjectCommand(name, actor, now), state.shipping_uow_factory())
+            if result.deleted:
+                done.append(f"{name}: отгружен по листу цеха — готовая продукция без карточки убрана ({result.deleted})")
+    with state.production_uow_factory() as uow:
+        projects = list(uow.plan_projects.list())
+    kept = [item for item in projects if key(item.project) not in shipped or key(item.project) in in_erp]
+    if len(kept) != len(projects):
+        replace_plan_projects(ReplacePlanProjectsCommand(tuple(kept), actor, now), state.production_uow_factory())
+        gone = {key(p) for p in kitsets}
+        done.extend(f"{item.project}: отгружен по листу цеха — строка реестра убрана"
+                    for item in projects if item not in kept and key(item.project) not in gone)
+
+    for k, item in sorted(partial.items()):
+        rows = goods.get(k, [])
+        why = " · ".join(item["texts"])
+        if item["total"] is None:
+            skipped.append(f"{item['no']}: частично отгружен, количество в листе цеха не написано ({why})")
+        elif not rows:
+            skipped.append(f"{item['no']}: частично отгружен ({item['total']} шт), в ERP нет готовой продукции проекта")
+        elif len(rows) > 1:
+            skipped.append(f"{item['no']}: частично отгружен ({item['total']} шт), КБ {len(rows)} — "
+                           "какая уехала, не ясно, отметить вручную")
+        elif item["total"] > rows[0].before_erp:
+            good = ship_before_erp(ShipBeforeErpCommand(rows[0].project, rows[0].item_index, item["total"], actor, now),
+                                   state.shipping_uow_factory())
+            done.append(f"{good.project} {good.item_index}: отгружено до ERP {item['total']} из {good.ordered} ({why})")
+    return done, skipped
+
+
+def _read_shop(key_path: str | None) -> list[list[str]]:
+    from app.modules.requests.google_sheets import GoogleSheetsCalcReader, load_service_account
+
+    raw = Path(key_path).read_text(encoding="utf-8") if key_path else os.getenv("ERP_GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    _title, shop = GoogleSheetsCalcReader(load_service_account(raw)).read_sheets(SHOP_SPREADSHEET, (SHOP_SHEET,))
+    return shop.get(SHOP_SHEET) or []
+
+
 def drop_shipped(args: argparse.Namespace) -> None:
-    """Убрать из уже загруженной базы проекты, отгруженные по листу цеха снимка (владелец 29.09: отгруженное не
-    нужно). Набор уходит каскадом, как «Удалить проект» в карточке; без набора — строка реестра. Повторный запуск
-    ничего не меняет; сотрудники, склад и остальное не трогаются."""
+    """Отгруженное по листу цеха — в уже загруженную базу (`sync_shipped`). С --key лист «ЗАГРУЗ» сначала
+    перечитывается из Google (только чтение) и сохраняется в снимок; без ключа — берётся из снимка.
+    Сотрудники, склад и остальное не трогаются."""
     if not os.getenv("ERP_DATABASE_URL"):
         raise SystemExit("Задайте ERP_DATABASE_URL")
     from app.main import app
-    from app.modules.production.plan import normalize_project_number
-    from app.modules.production.plan_application import ReplacePlanProjectsCommand, replace_plan_projects
     from app.shared.clock import moscow_now
     from app.shared.identity import Actor
-    from app.workflows.project_kitset import delete_kitset
 
     snapshot = Path(args.snapshot)
-    if not snapshot.exists():
-        print(f"Снимка {snapshot} нет — отгруженные не проверялись")
-        return
-    shipped = shipped_projects(shop_rows(json.loads(snapshot.read_text(encoding="utf-8"))["shop"]))
-    actor = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP: отгруженное не переносится", department="")
-    now = moscow_now()
-    state = app.state
-    with state.techcards_uow_factory() as uow:
-        kitsets = [item.project for item in uow.kitsets.list() if normalize_project_number(item.project) in shipped]
-    for project in kitsets:
-        delete_kitset(project, actor, now, state.techcards_uow_factory, state.production_uow_factory,
-                      getattr(state, "shipping_uow_factory", None))
-    with state.production_uow_factory() as uow:
-        projects = list(uow.plan_projects.list())
-    kept = [item for item in projects if normalize_project_number(item.project) not in shipped]
-    if len(kept) != len(projects):
-        replace_plan_projects(ReplacePlanProjectsCommand(tuple(kept), actor, now), state.production_uow_factory())
-    removed = sorted({normalize_project_number(p) for p in kitsets}
-                     | {item.project for item in projects if item not in kept})
-    print(f"Отгружено по листу цеха: {len(shipped)}; убрано из базы: {len(removed)}"
-          + (f" ({', '.join(removed)}, наборов {len(kitsets)})" if removed else ""))
+    data = json.loads(snapshot.read_text(encoding="utf-8")) if snapshot.exists() else None
+    if args.key:
+        try:
+            shop = _read_shop(args.key)
+        except Exception as error:  # noqa: BLE001 — нет сети или ключа: работаем по снимку, если он есть
+            print(f"ВНИМАНИЕ: лист цеха из Google не прочитан ({error}) — беру снимок")
+        else:
+            data = {**(data or {}), "shop": shop, "shop_read_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            print(f"Лист цеха «{SHOP_SHEET}» перечитан из Google: {len(shop)} строк")
+    if not data or not data.get("shop"):
+        print(f"ВНИМАНИЕ: снимка листа цеха {snapshot} нет — отгруженные проекты не убраны. "
+              "Нужен ключ Google: scripts\\update-local.ps1 -Key <ключ.json> (запомнится) или load-real-data.ps1.")
+        sys.exit(1)
+    actor = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP: отгружено по листу цеха", department="")
+    done, skipped = sync_shipped(data["shop"], app.state, actor, moscow_now())
+    read_at = data.get("shop_read_at") or data.get("read_at") or "?"
+    print(f"Отгруженное по листу цеха (снимок {read_at}): изменений {len(done)}, не перенесено {len(skipped)}")
+    for line in done:
+        print("  " + line)
+    for line in skipped:
+        print("  НЕ ПЕРЕНЕСЕНО: " + line)
 
 
 def main() -> None:
@@ -479,8 +592,9 @@ def main() -> None:
     run.add_argument("--login", default="preview")
     run.add_argument("--password", default="Preview-2026!")
     run.add_argument("--refresh", action="store_true", help="перечитать расчёт и у уже заведённых карточек")
-    drop = sub.add_parser("drop-shipped", help="убрать из базы проекты, отгруженные по листу цеха снимка")
+    drop = sub.add_parser("drop-shipped", help="отгруженное по листу цеха: отгруженные проекты прочь, частичные — в ГП")
     drop.add_argument("snapshot")
+    drop.add_argument("--key", help="перечитать «ЗАГРУЗ» из Google этим ключом и сохранить в снимок")
     args = parser.parse_args()
     {"snapshot": snapshot, "apply": apply, "drop-shipped": drop_shipped}[args.command](args)
 
