@@ -14,6 +14,14 @@ from app.modules.references.domain import (
 
 def test_supplier_key_is_reduced_to_canonical_domain():
     assert normalized_supplier_key(" HTTPS://www.Example.RU/catalog?id=1 ") == "example.ru"
+    assert normalized_supplier_key("www.chipdip.ru/product/1") == "chipdip.ru"
+
+
+def test_supplier_key_without_a_domain_is_a_literal():
+    """Schema.gs supplierKey_ (RF-1): «Склад», «Фраксис», «Вода», «КабельРФ» are keys as typed, lower case."""
+    assert normalized_supplier_key(" Склад ") == "склад"
+    assert normalized_supplier_key("КабельРФ") == "кабельрф"
+    assert normalized_supplier_key("Кабель РФ.ру") == "кабель рф.ру"
 
 
 def test_supplier_key_without_domain_is_the_literal_text_as_supplymap():

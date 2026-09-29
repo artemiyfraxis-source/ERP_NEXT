@@ -2,8 +2,9 @@
 
 SUPPLYMAP Portal.gs portalAccessGet / portalAccessSave / portalAccessClean_ (ScriptProperties `portal_access`) and the
 per-person «Доступ» column of Staff.gs (staffAccessClean_, edited in sdAccessModal_). Differences, «решено агентом —
-проверить»: an empty cell means «как задумано ролью» (ROLE_DEFAULTS), not «закрыто» as SUPPLYMAP has since 01.09.2026,
-so the matrix offers an explicit `none`; unknown roles/sections are refused (422), not silently dropped; the
+проверить»: an empty cell = closed, as SUPPLYMAP has since 01.09.2026 (the administrator: edit everywhere, ID-5), and
+the matrix still offers an explicit `none` for a personal exception; unknown roles/sections are refused (422), not
+silently dropped; the
 «nobody can return rights» guard covers the whole admin set (matrix row + exceptions), not only `admin.staffdir`."""
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ ACCESS_AGGREGATE = uuid5(NAMESPACE_URL, "fraxis-erp:identity:access-matrix")
 
 @dataclass(frozen=True)
 class AccessOverview:
-    matrix: dict[str, dict[str, AccessMode]]  # only what the administrator changed on top of ROLE_DEFAULTS
+    matrix: dict[str, dict[str, AccessMode]]  # the explicit cells; an empty one is closed (admin: edit)
     exceptions: dict[UUID, dict[str, AccessMode]]
     users: list[IdentityUser]
 
@@ -43,7 +44,7 @@ def _clean(row: dict[str, str], where: str) -> dict[str, AccessMode]:
         if section not in SECTION_LABELS:
             raise IdentityValidationError(f"{where}: неизвестный раздел «{section}».")
         if mode in ("", None):
-            continue  # an empty cell = «как задумано ролью» / «как у роли»
+            continue  # an empty cell = closed for a role, «как у роли» for a person
         try:
             result[section] = AccessMode(mode)
         except ValueError as error:
@@ -52,8 +53,7 @@ def _clean(row: dict[str, str], where: str) -> dict[str, AccessMode]:
 
 
 def clean_matrix(matrix: dict[str, dict[str, str]]) -> dict[str, dict[str, AccessMode]]:
-    """portalAccessClean_: known roles, sections and modes only. A cell equal to the role default is kept — it pins the
-    value if ROLE_DEFAULTS later change (the screen shows it as set)."""
+    """portalAccessClean_: known roles, sections and modes only."""
     result: dict[str, dict[str, AccessMode]] = {}
     for role, row in matrix.items():
         if role not in ROLE_LABELS:
@@ -77,7 +77,7 @@ def _changes(before: dict[str, AccessMode], after: dict[str, AccessMode]) -> dic
 
 
 def access_overview(uow: UnitOfWork) -> AccessOverview:
-    """portalAccessGet: the stored matrix (the defaults travel as ROLE_DEFAULTS) + every person's exceptions."""
+    """portalAccessGet: the stored matrix + every person's exceptions."""
     with uow:
         users = sorted(uow.identity.all_users(), key=lambda user: (not user.active, user.name.casefold(), user.login))
         return AccessOverview(
@@ -90,8 +90,8 @@ def access_overview(uow: UnitOfWork) -> AccessOverview:
 def save_role_matrix(
     matrix: dict[str, dict[str, str]], actor: Actor, now: datetime, uow: UnitOfWork,
 ) -> dict[str, dict[str, AccessMode]]:
-    """portalAccessSave: the whole matrix at once; a role missing from it follows ROLE_DEFAULTS again. One audit event
-    per role whose row changed, with «было → стало» per section ("" = как задумано ролью)."""
+    """portalAccessSave: the whole matrix at once; a role missing from it has nothing open (the administrator: edit
+    everywhere). One audit event per role whose row changed, with «было → стало» per section ("" = пусто)."""
     cleaned = clean_matrix(matrix)
     now = as_utc(now)
     with uow:

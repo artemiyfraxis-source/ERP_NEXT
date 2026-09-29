@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-from .domain import EDITABLE_TABS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
+from .domain import EDITABLE_TABS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
 from .technology import TECH_SNAPSHOT_SCHEMA_VERSION
 
 
@@ -23,6 +23,7 @@ class ReferenceRepository(Protocol):
 
 class TechOperationRepository(Protocol):
     def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> Sequence[TechOperationRecord]: ...
+    def counts(self) -> dict[TechOperationTab, int]: ...
     def get(self, record_id: UUID) -> TechOperationRecord | None: ...
     def save(self, record: TechOperationRecord) -> None: ...
     def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]: ...
@@ -55,6 +56,9 @@ class ReplaceMapsCommand:
     gost_awg: tuple[ReferencePair, ...]
     actor: Actor
     now: datetime
+    # The maps this actor may change (None = all). The others keep what is stored: supplier and country maps are the
+    # buyer's (portalCanWork_), ГОСТ→AWG belongs to «Справочник» (erpref).
+    kinds: frozenset[ReferenceKind] | None = None
 
 
 @dataclass(frozen=True)
@@ -99,21 +103,28 @@ def _audit(event_type: str, actor: Actor, now: datetime, details: dict, uow: Uni
 
 
 def replace_maps(command: ReplaceMapsCommand, uow: UnitOfWork) -> tuple[ReferenceEntry, ...]:
-    entries = tuple(
+    kinds = frozenset(ReferenceKind) if command.kinds is None else command.kinds
+    given = {
+        ReferenceKind.SUPPLIER: command.suppliers,
+        ReferenceKind.COUNTRY: command.countries,
+        ReferenceKind.GOST_AWG: command.gost_awg,
+    }
+    fresh = tuple(
         ReferenceEntry.create(kind, pair.key, pair.value, position)
-        for kind, pairs in (
-            (ReferenceKind.SUPPLIER, command.suppliers),
-            (ReferenceKind.COUNTRY, command.countries),
-            (ReferenceKind.GOST_AWG, command.gost_awg),
-        )
-        for position, pair in enumerate(pairs)
+        for kind in (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY, ReferenceKind.GOST_AWG) if kind in kinds
+        for position, pair in enumerate(pair for pair in given[kind] if not pair_is_blank(pair.key, pair.value))
     )
-    validate_entries(entries)
     with uow:
+        kept = tuple(entry for entry in uow.references.list() if entry.kind not in kinds)
+        entries = kept + fresh
+        validate_entries(entries)
         uow.references.replace(entries)
         _audit("references.maps_replaced", command.actor, command.now, {
-            "suppliers": len(command.suppliers), "countries": len(command.countries),
-            "gost_awg": len(command.gost_awg),
+            name: sum(1 for entry in entries if entry.kind is kind)
+            for name, kind in (
+                ("suppliers", ReferenceKind.SUPPLIER), ("countries", ReferenceKind.COUNTRY),
+                ("gost_awg", ReferenceKind.GOST_AWG),
+            )
         }, uow)
         uow.commit()
     return entries

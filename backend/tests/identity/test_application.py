@@ -30,6 +30,7 @@ from app.modules.identity.infrastructure import (
     IdentityUserRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
+    seed_role_matrix,
 )
 from app.shared.clock import as_utc
 from app.shared.persistence import create_schema
@@ -69,6 +70,7 @@ def identity_database():
                 "procurement": AccessMode.EDIT,
             },
         )
+        seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
         session.commit()
     yield sessions
     engine.dispose()
@@ -98,7 +100,7 @@ def test_login_resolve_logout_and_server_owned_principal(identity_database):
         "requests": "edit",
         "procurement": "edit",
         "warehouse": "view",
-        "references": "view",
+        "erpref": "view",
     }
     assert result.session_token not in resolved.session.token_hash
 
@@ -196,7 +198,7 @@ def test_user_override_removes_permission_and_deactivation_revokes_session(ident
         client_key="client:test",
     )
     assert result.principal.permissions == {
-        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "warehouse": "view", "references": "view",
+        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "warehouse": "view", "erpref": "view",
     }
 
     with identity_database() as session:

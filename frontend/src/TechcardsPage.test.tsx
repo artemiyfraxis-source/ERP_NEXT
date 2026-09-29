@@ -11,7 +11,7 @@ const engineer: Principal = {
     department: "Производство",
   },
   roles: ["engineer"],
-  permissions: { techcards: "edit" },
+  permissions: { techcards: "edit", erptctpl: "edit", tcgen: "edit" },
 };
 
 const card: ProjectTechcard = {

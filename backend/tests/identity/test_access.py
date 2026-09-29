@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.modules.identity.domain import (
     ROLE_DEFAULTS,
+    ROLE_SEED,
     SECTION_LABELS,
     AccessMode,
     IdentityUser,
@@ -30,6 +31,7 @@ from app.modules.identity.infrastructure import (
     IdentityUserAccessRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
+    seed_role_matrix,
 )
 from app.modules.requests.api import moscow_now
 from app.shared.persistence import AuditEventRow, create_schema
@@ -44,13 +46,14 @@ BUYER_ID = UUID("40000000-0000-0000-0000-000000000003")
 # ── Domain ─────────────────────────────────────────────────────────────────────────────────────────
 
 
-def test_matrix_sits_on_top_of_role_defaults():
-    assert role_permissions("buyer", {}) == ROLE_DEFAULTS["buyer"]
-    changed = role_permissions("buyer", {"warehouse": AccessMode.NONE, "shipping": AccessMode.VIEW,
-                                         "procurement": AccessMode.VIEW})
+def test_an_empty_cell_is_closed_and_only_explicit_cells_open():
+    """SUPPLYMAP portalApplyAccess_ (01.09.2026): a section is open only when explicitly granted."""
+    assert role_permissions("buyer", {}) == {}
+    changed = role_permissions("buyer", {**ROLE_SEED["buyer"], "warehouse": AccessMode.NONE,
+                                         "shipping": AccessMode.VIEW, "procurement": AccessMode.VIEW})
     assert changed == {
         "newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT,
-        "requests": AccessMode.EDIT, "procurement": AccessMode.VIEW, "references": AccessMode.VIEW,
+        "requests": AccessMode.EDIT, "procurement": AccessMode.VIEW, "erpref": AccessMode.VIEW,
         "shipping": AccessMode.VIEW,
     }
     assert role_permissions("unknown", {"requests": AccessMode.EDIT}) == {"requests": AccessMode.EDIT}
@@ -85,6 +88,7 @@ def access_api():
     with sessions() as session:
         provision_user(session, _user(ADMIN_ID, "admin", "admin"), hash_password("admin-password"))
         provision_user(session, _user(BUYER_ID, "buyer", "buyer"), hash_password("buyer-password"))
+        seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
         session.commit()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
     app.state.cookie_secure = False
@@ -124,11 +128,10 @@ def test_only_admin_opens_access(access_api):
     body = _client("admin", "admin-password").get("/api/auth/access").json()
     assert [section["key"] for section in body["sections"]] == list(SECTION_LABELS)
     assert {"key": "buyer", "label": "Специалист по снабжению"} in body["roles"]
-    assert body["defaults"]["buyer"] == {
-        "newrequest": "edit", "myrequests": "edit",
-        "requests": "edit", "procurement": "edit", "warehouse": "view", "references": "view",
-    }
-    assert body["matrix"] == {}  # nothing changed yet — every role follows ROLE_DEFAULTS
+    assert body["defaults"]["buyer"] == {}  # an empty cell is closed…
+    assert body["defaults"]["admin"] == {section: "edit" for section in SECTION_LABELS}  # …except for the admin
+    assert body["matrix"]["buyer"] == {section: mode.value for section, mode in ROLE_SEED["buyer"].items()}
+    assert "admin" not in body["matrix"]
     assert [(user["login"], user["access"]) for user in body["users"]] == [("admin", {}), ("buyer", {})]
 
 
@@ -143,27 +146,25 @@ def test_matrix_change_reaches_the_next_request_and_a_cleared_cell_falls_back(ac
     assert saved.status_code == 200, saved.text
     assert saved.json()["matrix"] == {"buyer": {"warehouse": "none", "shipping": "view"}}
     permissions = buyer.get("/api/auth/me").json()["permissions"]
-    assert "warehouse" not in permissions and permissions["shipping"] == "view"
-    assert permissions["procurement"] == "edit"  # "" = как задумано ролью
+    assert permissions == {"shipping": "view"}  # an empty cell is closed, the other roles' rows are gone too
 
-    [event] = _events(access_api, "identity.role_access_saved")
-    assert event.actor_id == ADMIN_ID and event.details["role"] == "buyer"
-    assert json.loads(event.details["changes"]) == {"shipping": ["", "view"], "warehouse": ["", "none"]}
+    [event] = [item for item in _events(access_api, "identity.role_access_saved") if item.details["role"] == "buyer"]
+    assert event.actor_id == ADMIN_ID
+    changes = json.loads(event.details["changes"])
+    assert changes["shipping"] == ["", "view"] and changes["warehouse"] == ["view", "none"]
+    assert changes["procurement"] == ["edit", ""]
 
-    # Clearing the whole row brings the role back to ROLE_DEFAULTS, not to «closed».
+    # Clearing the whole row closes everything for the role.
     assert admin.put("/api/auth/access/roles", json={"matrix": {}}).status_code == 200
-    assert buyer.get("/api/auth/me").json()["permissions"] == {
-        "newrequest": "edit", "myrequests": "edit",
-        "requests": "edit", "procurement": "edit", "warehouse": "view", "references": "view",
-    }
+    assert buyer.get("/api/auth/me").json()["permissions"] == {}
     with access_api() as session:
         assert session.scalars(select(IdentityRoleAccessRow)).first() is None
-    assert len(_events(access_api, "identity.role_access_saved")) == 2
 
 
 def test_unchanged_matrix_writes_no_audit(access_api):
     admin = _client("admin", "admin-password")
-    assert admin.put("/api/auth/access/roles", json={"matrix": {"pm": {}}}).status_code == 200
+    stored = admin.get("/api/auth/access").json()["matrix"]
+    assert admin.put("/api/auth/access/roles", json={"matrix": stored}).status_code == 200
     assert _events(access_api, "identity.role_access_saved") == []
 
 
@@ -181,20 +182,21 @@ def test_unknown_role_section_or_mode_is_refused(access_api, matrix):
 @pytest.mark.parametrize("mode", ["none", "view"])
 def test_admin_role_cannot_close_access_to_itself(access_api, mode):
     admin = _client("admin", "admin-password")
-    response = admin.put("/api/auth/access/roles", json={"matrix": {"admin": {"identity": mode}}})
+    response = admin.put("/api/auth/access/roles", json={"matrix": {"admin": {"staffdir": mode}}})
     assert response.status_code == 409
     assert "хотя бы один администратор" in response.json()["detail"]
     assert admin.get("/api/auth/access").status_code == 200
 
 
-def test_admin_matrix_may_close_identity_while_one_admin_keeps_it_personally(access_api):
+def test_admin_matrix_may_close_staffdir_while_one_admin_keeps_it_personally(access_api):
     _add_second_admin(access_api)
     admin = _client("admin", "admin-password")
-    assert admin.put(f"/api/auth/access/users/{SECOND_ADMIN_ID}", json={"access": {"identity": "edit"}}).status_code == 200
-    assert admin.put("/api/auth/access/roles", json={"matrix": {"admin": {"identity": "none"}}}).status_code == 200
-    assert admin.get("/api/auth/access").status_code == 403
+    assert admin.put(f"/api/auth/access/users/{SECOND_ADMIN_ID}", json={"access": {"staffdir": "edit"}}).status_code == 200
+    assert admin.put("/api/auth/access/roles", json={"matrix": {"admin": {"staffdir": "none"}}}).status_code == 200
+    assert admin.get("/api/auth/staff").status_code == 403
+    assert admin.get("/api/auth/access").status_code == 200  # «Доступы» is always the administrator's
     second = _client("admin2", "admin2-password")
-    assert second.get("/api/auth/access").status_code == 200
+    assert second.get("/api/auth/staff").status_code == 200
     # …and that last keeper cannot drop the exception or step down.
     assert second.put(f"/api/auth/access/users/{SECOND_ADMIN_ID}", json={"access": {}}).status_code == 409
     body = {"name": "Admin2", "department": "ИТ", "role": "buyer", "site": "", "active": True}
@@ -212,7 +214,7 @@ def test_personal_exception_is_stronger_than_the_role(access_api):
     assert response.json()["access"] == {"procurement": "view", "requests": "none", "shipping": "edit"}
     assert buyer.get("/api/auth/me").json()["permissions"] == {
         "newrequest": "edit", "myrequests": "edit",  # «Заявки» closed, filing and own rows stay (NAV-SECTIONS)
-        "procurement": "view", "shipping": "edit", "warehouse": "view", "references": "view",
+        "procurement": "view", "shipping": "edit", "warehouse": "view", "erpref": "view",
     }
     [event] = _events(access_api, "identity.user_access_saved")
     assert event.aggregate_id == BUYER_ID and event.details["login"] == "buyer"
@@ -234,9 +236,9 @@ def test_personal_exception_is_stronger_than_the_role(access_api):
 
 def test_admin_cannot_close_identity_to_the_only_admin_personally(access_api):
     admin = _client("admin", "admin-password")
-    response = admin.put(f"/api/auth/access/users/{ADMIN_ID}", json={"access": {"identity": "view"}})
+    response = admin.put(f"/api/auth/access/users/{ADMIN_ID}", json={"access": {"staffdir": "view"}})
     assert response.status_code == 409
-    assert admin.put(f"/api/auth/access/users/{BUYER_ID}", json={"access": {"identity": "edit"}}).status_code == 200
+    assert admin.put(f"/api/auth/access/users/{BUYER_ID}", json={"access": {"staffdir": "edit"}}).status_code == 200
 
 
 def test_exceptions_refuse_unknown_user_section_and_mode(access_api):
@@ -250,7 +252,7 @@ def test_demoting_an_admin_counts_personal_exceptions(access_api):
     # admin2 has «Доступы» closed personally, so admin is the only keeper and may not step down.
     _add_second_admin(access_api)
     admin = _client("admin", "admin-password")
-    assert admin.put(f"/api/auth/access/users/{SECOND_ADMIN_ID}", json={"access": {"identity": "none"}}).status_code == 200
+    assert admin.put(f"/api/auth/access/users/{SECOND_ADMIN_ID}", json={"access": {"staffdir": "none"}}).status_code == 200
     body = {"name": "Admin", "department": "ИТ", "role": "buyer", "site": "", "active": True}
     response = admin.put(f"/api/auth/staff/{ADMIN_ID}", json=body)
     assert response.status_code == 409
@@ -294,7 +296,7 @@ def test_migration_folds_seeded_defaults_back_without_changing_anyones_access(tm
         ("buyer", "references"): "none",  # closed before, stays closed
         ("management", "warehouse"): "edit",  # the administrator's change stays
     }
-    staffed = role_permissions("buyer", {"references": AccessMode.NONE})
+    staffed = role_permissions("buyer", {**ROLE_SEED["buyer"], "erpref": AccessMode.NONE})  # as 0046 wrote it
     assert {section: mode.value for section, mode in staffed.items()} == {
         "newrequest": "edit", "myrequests": "edit",  # NAV-SECTIONS defaults, not stored
         "requests": "edit", "procurement": "edit", "warehouse": "view",
