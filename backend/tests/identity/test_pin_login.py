@@ -336,7 +336,7 @@ def test_migration_marks_everyone_who_already_signed_in_as_seen(tmp_path):
     database = tmp_path / "identity.db"
     config = Config(Path(__file__).parents[2] / "alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database.as_posix()}")
-    command.upgrade(config, "0061_procurement_traceability")
+    command.upgrade(config, "0065_procurement_supplier_order_documents")
     with sqlite3.connect(database) as connection:
         for user_id, login in ((BUYER_ID, "buyer"), (NEWBIE_ID, "newbie")):
             connection.execute(
@@ -351,8 +351,8 @@ def test_migration_marks_everyone_who_already_signed_in_as_seen(tmp_path):
             " '2026-09-20 08:00:00', '{}')",
             ("50000000000000000000000000000001", BUYER_ID.hex, BUYER_ID.hex),
         )
-    command.upgrade(config, "0062_identity_pin_admin_mode")
+    command.upgrade(config, "0066_identity_pin_admin_mode")
     with sqlite3.connect(database) as connection:
         seen = dict(connection.execute("SELECT login, seen_at FROM identity_users").fetchall())
     assert seen["buyer"] is not None and seen["newbie"] is None
-    command.downgrade(config, "0061_procurement_traceability")
+    command.downgrade(config, "0065_procurement_supplier_order_documents")

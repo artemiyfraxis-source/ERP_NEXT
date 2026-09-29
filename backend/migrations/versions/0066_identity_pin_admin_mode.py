@@ -16,8 +16,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0062_identity_pin_admin_mode"
-down_revision: str | None = "0061_procurement_traceability"
+revision: str = "0066_identity_pin_admin_mode"
+down_revision: str | None = "0065_procurement_supplier_order_documents"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
