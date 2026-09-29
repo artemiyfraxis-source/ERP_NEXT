@@ -170,7 +170,9 @@ export function TechcardsPage({ principal, view }: { principal: Principal; view?
         showLibrary ? techcardsApi.templates() : Promise.resolve({ items: [] as OperationCardSummary[], metadata: null }),
       ]);
       setCards((current) => current.length ? current : projectResult.items);
-      setSelectedId((current) => current || projectResult.items[0]?.id || "");
+      // «Проекты» → «Генератор»/«ТК КБn» открывают здесь карточку изделия: ?card=<id>.
+      const linked = new URLSearchParams(window.location.search).get("card") || "";
+      setSelectedId((current) => current || (projectResult.items.some((card) => card.id === linked) ? linked : "") || projectResult.items[0]?.id || "");
       setTemplates(libraryResult.items);
       setLibraryCommit(libraryResult.metadata?.source_commit || "");
     } catch (reason) {
