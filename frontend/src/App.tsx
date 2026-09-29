@@ -82,12 +82,21 @@ export function App() {
     const url = new URL(window.location.href);
     url.searchParams.delete("section");
     url.searchParams.delete("block");
+    url.searchParams.delete("project");
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
     window.history.pushState({}, "", url);
     setPlace(next);
   }
   const navigate = (section: Section) => go({ section, block: null });
+  // «Карточка проекта» from the production plan (SUPPLYMAP planAct_ 'card' → openKitsetCard): the
+  // native project card is the techcards section narrowed to that project.
+  function openProjectCard(project: string) {
+    go({ section: "techcards", block: null });
+    const url = new URL(window.location.href);
+    url.searchParams.set("project", project);
+    window.history.replaceState({}, "", url);
+  }
   // A block with a single visible section opens that section directly: a screen with one card is a
   // wasted click (SUPPLYMAP openHomeBlock).
   function openBlock(id: BlockId) {
@@ -164,7 +173,7 @@ export function App() {
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
-        {activeSection === "prodplan" && <ProductionPlanPage principal={principal} />}
+        {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "techcards") ? openProjectCard : undefined} />}
         {activeSection === "production" && <ProductionPage principal={principal} />}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "references" && <ReferencesPage principal={principal} />}

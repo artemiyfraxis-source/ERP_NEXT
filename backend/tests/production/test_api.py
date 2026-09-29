@@ -278,6 +278,7 @@ def test_manual_techcard_project_appears_from_snapshot_without_fake_card(product
         "deadline": None,
         "days_left": None,
         "stage": "ТК готова",
+        "terminal": False,
         "stage_manual": False,
         "kits": [],
         "supply": None,
@@ -431,3 +432,25 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
     assert again.status_code == 422
     assert "не возвращена мастером" in again.json()["detail"]
     assert [item["id"] for item in after.json()["outputs"]] == [corrected.json()["output"]["id"]]
+
+
+def test_production_plan_survives_a_failing_source(production_api):
+    # ProdPlan.gs prodPlanData_: «Недоступный источник не валит план — его колонка будет пустой» (PP-5).
+    client, _operator_id = production_api
+    client.put("/api/production/plan/projects-snapshot", json={"projects": [{
+        "project": "714К.", "customer": "Заказчик", "status": "Новый", "terminal": False,
+    }]})
+
+    def broken():
+        raise RuntimeError("источник недоступен")
+
+    saved = app.state.shipping_uow_factory, app.state.procurement_uow_factory
+    app.state.shipping_uow_factory = broken
+    app.state.procurement_uow_factory = broken
+    try:
+        loaded = client.get("/api/production/plan")
+    finally:
+        app.state.shipping_uow_factory, app.state.procurement_uow_factory = saved
+
+    assert loaded.status_code == 200, loaded.text
+    assert [row["project"] for row in loaded.json()["rows"]] == ["714К.1"]

@@ -453,6 +453,8 @@ export interface ProductionPlanRow {
   deadline: string | null;
   days_left: number | null;
   stage: string;
+  /** Registry status is terminal (closed/cancelled): the row is dimmed and out of «В работе». */
+  terminal: boolean;
   stage_manual: boolean;
   kits: Array<{
     item_index: string;

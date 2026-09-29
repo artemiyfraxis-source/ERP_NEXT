@@ -1,4 +1,6 @@
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -202,3 +204,46 @@ def test_deadline_and_note_validation_match_current_supplymap():
     for payload, message in cases:
         with pytest.raises(ProductionValidationError, match=message):
             validate_plan_note(payload, ["708К.4"])
+
+
+def _status(value):
+    return SimpleNamespace(value=value)
+
+
+def test_supply_eta_takes_procurement_plan_date_before_request_date():
+    # ProdPlan.gs planSupplyPositions_: Закупки ОЖИД. || Закупки ПЛАН. || заявка (PP-3).
+    planned, expected, bare = uuid4(), uuid4(), uuid4()
+    requests = [
+        SimpleNamespace(id=request_id, project_reference="708К.4", purpose="", link=None,
+                        status=_status("Новый"), planned_date=date(2026, 10, 1))
+        for request_id in (planned, expected, bare)
+    ]
+    procurement = [
+        SimpleNamespace(source_request_id=planned, status=_status("Жду счет"),
+                        expected_arrival=None, planned_date=date(2026, 10, 9)),
+        SimpleNamespace(source_request_id=expected, status=_status("Жду счет"),
+                        expected_arrival=date(2026, 10, 5), planned_date=date(2026, 10, 20)),
+    ]
+
+    rows = build_production_plan(
+        cards=(), tasks=(), fulfillment=(), goods=(), requests=requests, procurement=procurement,
+        projects=(PlanProjectSnapshot("708К.4"),),
+        events=(PlanEvent("708К.4", datetime(2026, 9, 28), "", PLAN_KINDS["note"], text="есть"),),
+        today=date(2026, 9, 28),
+    )
+
+    assert rows[0].supply.eta == "09.10.2026"
+    assert (rows[0].supply.buying, rows[0].supply.request) == (2, 1)
+
+
+def test_a_broken_supply_column_leaves_the_plan_standing():
+    # ProdPlan.gs prodPlanData_ `safe` (PP-5): the column is empty, the project row stays.
+    broken = [SimpleNamespace(id=uuid4())]  # no status/purpose: summarising supply raises
+
+    rows = build_production_plan(
+        cards=(), tasks=(), fulfillment=(), goods=(), requests=broken, procurement=(),
+        projects=(PlanProjectSnapshot("708К.4", terminal=True, status="Закрыт"),), events=(),
+        today=date(2026, 9, 28),
+    )
+
+    assert [(row.project, row.supply, row.terminal) for row in rows] == [("708К.4", None, True)]
