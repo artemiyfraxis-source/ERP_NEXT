@@ -1,10 +1,10 @@
 """Warehouse HTTP contract for stock, movement, writeoff and its return."""
 
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, date as date_type, datetime
 from decimal import Decimal
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
@@ -19,7 +19,8 @@ from app.shared.http_auth import (
     warehouse_journal_principal,
     warehouse_view_principal,
 )
-from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH
+from app.shared.events import AuditEvent
+from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH, RackLayout, current_rack_layout, rack_layout_from_config
 from app.modules.references.domain import TechOperationTab
 from app.workflows.warehouse_article import infer_article_identity
 
@@ -74,6 +75,8 @@ class WriteOffPayload(BaseModel):
     quantity: Quantity
     purpose: str = Field(default="", max_length=255)  # НАЗНАЧЕНИЕ; emptiness is refused with the SUPPLYMAP text
     reason: str = Field(default="", max_length=1024)  # ОСНОВАНИЕ; empty means «Выдача»
+    # ДАТА списания (Writeoff.html: по умолчанию сегодня, можно задним числом); пусто — сейчас.
+    date: date_type | None = None
 
 
 class ReturnWriteOffPayload(BaseModel):
@@ -308,6 +311,58 @@ def journal(
     }
 
 
+class RackLayoutPayload(BaseModel):
+    racks: int
+    shelves: int
+    perRack: dict[str, int] = Field(default_factory=dict, max_length=99)
+
+
+def _layout_dict(layout: RackLayout) -> dict:
+    return {
+        "racks": layout.racks,
+        "shelves": layout.shelves,
+        "perRack": {str(rack): count for rack, count in sorted(layout.per_rack.items())},
+    }
+
+
+def rack_layout_store(request: Request):
+    store = getattr(request.app.state, "rack_layout_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    return store
+
+
+@router.get("/rack-layout")
+def rack_layout(_principal: Annotated[Principal, Depends(warehouse_view_principal)]) -> dict:
+    """«Раскладка»: сколько стеллажей, полок по умолчанию и стеллажи со своим числом полок."""
+    return {"layout": _layout_dict(current_rack_layout())}
+
+
+@router.put("/rack-layout")
+def save_rack_layout(
+    payload: RackLayoutPayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    store=Depends(rack_layout_store),
+) -> dict:
+    """portalStock05PlacesSave / stock05PlacesSave_: те же проверки и то же сообщение; правка — в журнал."""
+    try:
+        layout = rack_layout_from_config(payload.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    message = (
+        f"Стеллажей: {layout.racks}, полок по умолчанию: {layout.shelves}"
+        + (f", особых стеллажей: {len(layout.per_rack)}" if layout.per_rack else "")
+        + "."
+    )
+    store.save(layout, AuditEvent(
+        id=uuid4(), aggregate_id=UUID(int=0), event_type="warehouse.rack_layout_saved",
+        actor=principal.actor, occurred_at=now,
+        details={**_layout_dict(layout), "message": f"раскладка стеллажей — {message}"},
+    ))
+    return {"layout": _layout_dict(layout), "message": message}
+
+
 @router.get("/places")
 def shelf_places(
     _principal: Annotated[Principal, Depends(warehouse_view_principal)],
@@ -427,6 +482,7 @@ def writeoff(
                 reason=payload.reason,
                 actor=principal.actor,
                 now=now,
+                entry_date=payload.date,
             ),
             uow_factory(),
         )

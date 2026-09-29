@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
@@ -21,13 +22,14 @@ class ReceivingLineRow(Base):
     __table_args__ = (
         UniqueConstraint("grn", "package", name="uq_receiving_grn_package"),
         UniqueConstraint("revision_of_id", name="uq_receiving_lines_revision_of_id"),
-        # One live line per procurement line; archived «Архив ВК» rows keep the link as history.
+        # One live line per procurement line; archived «Архив ВК» rows keep the link as history, and
+        # batch/package lines `-ПN` (split_of_id) share the order of the line they came from.
         Index(
             "ux_receiving_live_procurement_line",
             "procurement_line_id",
             unique=True,
-            sqlite_where=text("status <> 'Архив ВК'"),
-            postgresql_where=text("status <> 'Архив ВК'"),
+            sqlite_where=text("status <> 'Архив ВК' AND split_of_id IS NULL"),
+            postgresql_where=text("status <> 'Архив ВК' AND split_of_id IS NULL"),
         ),
         Index("ix_receiving_created_id", "created_at", "id"),
         Index("ix_receiving_status_created_id", "status", "created_at", "id"),
@@ -77,6 +79,26 @@ class ReceivingLineRow(Base):
         Uuid(as_uuid=True), ForeignKey("receiving_lines.id", ondelete="RESTRICT")
     )
     revision_root_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    nonconformity_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    supplier_returns: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    order_number: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    expected_arrival: Mapped[Any | None] = mapped_column(Date)
+    document_number: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    document_date: Mapped[Any | None] = mapped_column(Date)
+    document_name: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    inspection_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    manufacture_date: Mapped[Any | None] = mapped_column(Date)
+    split_of_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("receiving_lines.id", ondelete="RESTRICT"), index=True
+    )
+    vk_act_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    vk_act_date: Mapped[date | None] = mapped_column(Date)
+    nc_act_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    nc_act_date: Mapped[date | None] = mapped_column(Date)
+    complaint_act_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    complaint_act_date: Mapped[date | None] = mapped_column(Date)
+    use_permit_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    use_permit_date: Mapped[date | None] = mapped_column(Date)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -124,6 +146,24 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         inspected_on=line.inspected_on,
         revision_of_id=line.revision_of_id,
         revision_root_id=line.revision_root_id,
+        nonconformity_description=line.nonconformity_description,
+        supplier_returns=line.supplier_returns,
+        order_number=line.order_number,
+        expected_arrival=line.expected_arrival,
+        document_number=line.document_number,
+        document_date=line.document_date,
+        document_name=line.document_name,
+        inspection_note=line.inspection_note,
+        manufacture_date=line.manufacture_date,
+        split_of_id=line.split_of_id,
+        vk_act_number=line.vk_act_number,
+        vk_act_date=line.vk_act_date,
+        nc_act_number=line.nc_act_number,
+        nc_act_date=line.nc_act_date,
+        complaint_act_number=line.complaint_act_number,
+        complaint_act_date=line.complaint_act_date,
+        use_permit_number=line.use_permit_number,
+        use_permit_date=line.use_permit_date,
     )
 
 
@@ -175,6 +215,24 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         inspected_on=row.inspected_on,
         revision_of_id=row.revision_of_id,
         revision_root_id=row.revision_root_id,
+        nonconformity_description=row.nonconformity_description or "",
+        supplier_returns=row.supplier_returns or 0,
+        order_number=row.order_number or "",
+        expected_arrival=row.expected_arrival,
+        document_number=row.document_number or "",
+        document_date=row.document_date,
+        document_name=row.document_name or "",
+        inspection_note=row.inspection_note or "",
+        manufacture_date=row.manufacture_date,
+        split_of_id=row.split_of_id,
+        vk_act_number=row.vk_act_number or "",
+        vk_act_date=row.vk_act_date,
+        nc_act_number=row.nc_act_number or "",
+        nc_act_date=row.nc_act_date,
+        complaint_act_number=row.complaint_act_number or "",
+        complaint_act_date=row.complaint_act_date,
+        use_permit_number=row.use_permit_number or "",
+        use_permit_date=row.use_permit_date,
     )
 
 
@@ -243,6 +301,15 @@ class SqlAlchemyReceivingRepository:
         )
         return [_domain(row) for row in rows]
 
+    def by_status(self, status: ReceivingStatus, limit: int = 500) -> list[ReceivingLine]:
+        rows = self.session.scalars(
+            select(ReceivingLineRow)
+            .where(ReceivingLineRow.status == status.value)
+            .order_by(ReceivingLineRow.created_at, ReceivingLineRow.id)
+            .limit(limit)
+        )
+        return [_domain(row) for row in rows]
+
     def all_grns(self) -> list[str]:
         return list(
             self.session.scalars(
@@ -258,6 +325,19 @@ class SqlAlchemyReceivingRepository:
                 )
             )
         )
+
+    def act_numbers_with_prefixes(self, prefixes: Iterable[str]) -> list[str]:
+        columns = (
+            ReceivingLineRow.vk_act_number,
+            ReceivingLineRow.nc_act_number,
+            ReceivingLineRow.complaint_act_number,
+            ReceivingLineRow.use_permit_number,
+        )
+        found: list[str] = []
+        for prefix in set(prefixes):
+            for column in columns:
+                found.extend(self.session.scalars(select(column).where(column.startswith(prefix, autoescape=True))))
+        return found
 
     def add(self, line: ReceivingLine) -> None:
         incoming = _row(line)

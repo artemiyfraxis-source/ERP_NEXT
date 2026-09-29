@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { warehouseApi, type WarehouseBulkResult, type WarehouseItemTypes, type WarehouseJournal, type WarehouseReferenceEdit } from "./api";
+import { warehouseApi, type WarehouseBulkResult, type WarehouseItemTypes, type WarehouseJournal, type WarehouseRackLayout, type WarehouseReferenceEdit } from "./api";
 import { decodeStockTable, stockTableBytes, stockTableEdits, stockTableText } from "./warehouseTable";
 
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
@@ -89,8 +89,9 @@ export function ItemTypesPanel({ onClose, onChanged }: {
 
 /** SK-16 «Журнал склада» (SUPPLYMAP openStock05Log): who did what to the stock and when — receipts, moves, row edits,
  *  write-offs, returns and issues, newest first. The search runs on the server; the last 400 matches come back. */
-export function StockJournalPanel({ onClose }: { onClose: () => void }) {
-  const [query, setQuery] = useState("");
+/** `initialQuery` — «История» партии (openStock05Log(grn)): журнал сразу отобран по её ГРН. */
+export function StockJournalPanel({ onClose, initialQuery = "" }: { onClose: () => void; initialQuery?: string }) {
+  const [query, setQuery] = useState(initialQuery);
   const [journal, setJournal] = useState<WarehouseJournal | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -223,5 +224,60 @@ export function StockImportPanel({ onClose, onApplied }: { onClose: () => void; 
       {preview.count > preview.changes.length && <p className="page-sub">Показаны первые {preview.changes.length} из {preview.count}.</p>}
       <div className="manual-stock-actions"><button className="primary" type="button" disabled={busy} onClick={() => void apply()}>Записать {preview.count} изменений</button></div>
     </>}
+  </section>;
+}
+
+/** «Раскладка» склада (PortalApp.html, portalStock05PlacesSave): сколько стеллажей, полок по умолчанию и
+ *  стеллажи со своим числом полок. По ней проверяется каждое место при приходе, вводе и перемещении. */
+export function RackLayoutPanel({ onClose }: { onClose: () => void }) {
+  const [layout, setLayout] = useState<WarehouseRackLayout | null>(null);
+  const [special, setSpecial] = useState<Array<{ rack: string; shelves: string }>>([]);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    warehouseApi.rackLayout()
+      .then(({ layout: loaded }) => {
+        setLayout(loaded);
+        setSpecial(Object.entries(loaded.perRack).map(([rack, shelves]) => ({ rack, shelves: String(shelves) })));
+      })
+      .catch((reason) => setError(errorText(reason, "Не удалось загрузить раскладку")));
+  }, []);
+
+  async function save() {
+    if (!layout) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const perRack = Object.fromEntries(special.filter((row) => row.rack.trim()).map((row) => [row.rack.trim(), Number(row.shelves)]));
+      const result = await warehouseApi.saveRackLayout({ ...layout, perRack });
+      setLayout(result.layout);
+      setSpecial(Object.entries(result.layout.perRack).map(([rack, shelves]) => ({ rack, shelves: String(shelves) })));
+      setMessage(result.message);
+    } catch (reason) {
+      setError(errorText(reason, "Раскладка не сохранена"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <section className="panel" aria-label="Раскладка стеллажей">
+    <div className="manual-stock-head"><h2>Раскладка стеллажей</h2><button type="button" className="link-button" onClick={onClose}>Закрыть</button></div>
+    <p className="page-sub">Сколько стеллажей и полок (буквы A…Z). Место вида 1F4 принимается, только если такой стеллаж и полка есть.</p>
+    {error && <p className="danger-text" role="alert">{error}</p>}
+    {layout && <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <label>Стеллажей<input aria-label="Стеллажей" type="number" min="1" max="99" required value={layout.racks} onChange={(event) => setLayout({ ...layout, racks: Number(event.target.value) })} /></label>
+      <label>Полок по умолчанию<input aria-label="Полок по умолчанию" type="number" min="1" max="26" required value={layout.shelves} onChange={(event) => setLayout({ ...layout, shelves: Number(event.target.value) })} /></label>
+      {special.map((row, index) => <span key={index} className="inline-action">
+        <label>Стеллаж №<input aria-label={`Особый стеллаж ${index + 1}`} type="number" min="1" max="99" value={row.rack} onChange={(event) => setSpecial((current) => current.map((item, position) => position === index ? { ...item, rack: event.target.value } : item))} /></label>
+        <label>полок<input aria-label={`Полок на особом стеллаже ${index + 1}`} type="number" min="1" max="26" value={row.shelves} onChange={(event) => setSpecial((current) => current.map((item, position) => position === index ? { ...item, shelves: event.target.value } : item))} /></label>
+        <button type="button" className="link-button" onClick={() => setSpecial((current) => current.filter((_, position) => position !== index))}>✕</button>
+      </span>)}
+      <button type="button" className="secondary small" onClick={() => setSpecial((current) => [...current, { rack: "", shelves: String(layout.shelves) }])}>+ особый стеллаж</button>
+      <button className="primary small" disabled={saving}>{saving ? "Сохраняем…" : "Сохранить раскладку"}</button>
+    </form>}
+    {message && <p className="page-sub" role="status">{message}</p>}
   </section>;
 }

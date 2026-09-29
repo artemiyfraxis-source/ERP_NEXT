@@ -108,6 +108,7 @@ class WriteOffCommand:
     reason: str  # ОСНОВАНИЕ: the class of the expense; empty means «Выдача»
     actor: Actor
     now: datetime
+    entry_date: date | None = None  # ДАТА строки СПИСАНИЯ (Writeoff.html), None — сегодня
 
 
 @dataclass(frozen=True)
@@ -249,7 +250,7 @@ def _lot_from_payload(payload: dict) -> StockLot:
             unit=str(payload["unit"]),
             quantity=Decimal(str(payload["quantity"])),
             storage_location=str(payload["storage_location"]),
-            source_receiving_ids=(str(payload["receiving_line_id"]),),
+            source_receiving_ids=(str(payload.get("receipt_id") or payload["receiving_line_id"]),),
             article=str(payload.get("article") or ""),
             series=str(payload.get("series") or ""),
             expiry_date=date.fromisoformat(payload["expiry_date"]) if payload.get("expiry_date") else None,
@@ -314,6 +315,65 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
         uow.outbox.mark_published(message.id, now)
         uow.commit()
         return lot
+
+
+def dispatch_next_supplier_return(now: datetime, uow: UnitOfWork) -> StockLot | None:
+    """RC-6: Receiving asks to write off the returned quantity of an accepted lot (SupplierReturn.gs
+    supplierReturnJournalAppend_ → processWriteoffs_). The row goes to the СПИСАНИЕ journal as
+    «Возврат поставщику», НАЗНАЧЕНИЕ is the supplier. A lot gone or short since the request is a
+    poison message: the receiving side already changed status, the operator sees the refusal."""
+    with uow:
+        message = uow.outbox.next_unpublished("warehouse.supplier_return_requested", now)
+        if message is None:
+            return None
+        payload = message.payload
+        try:
+            try:
+                quantity = Decimal(str(payload["quantity"]))
+                warehouse = str(payload["warehouse"]).strip()
+                grn = str(payload["grn"]).strip()
+                package = str(payload.get("package") or "").strip()
+                reason = str(payload["reason"]).strip()
+                actor = Actor(
+                    id=UUID(str(payload["actor_id"])),
+                    name=str(payload.get("actor_name") or "").strip(),
+                    department="",
+                )
+            except (KeyError, ValueError, TypeError, DecimalException) as error:
+                raise WarehouseValidationError(
+                    f"Invalid warehouse.supplier_return_requested payload: {error}"
+                ) from error
+            current = uow.warehouse.by_key(warehouse, grn, package)
+            if current is None:
+                label = grn + (f" (пакет {package})" if package else "")
+                raise WarehouseValidationError(f"Партии {label} нет на складе {warehouse}")
+            updated = current.write_off(quantity)
+        except WarehouseValidationError as error:
+            uow.outbox.mark_failed(message.id, now, str(error))
+            uow.commit()
+            raise PoisonWarehouseMessage(message.id, str(error)) from error
+        supplier = str(payload.get("supplier") or "").strip()
+        uow.warehouse.add(updated)
+        uow.writeoffs.add(WriteOffEntry.for_lot(
+            updated, kind="supplier_return", quantity=quantity, reason=reason,
+            purpose=supplier or "Поставщик", author=actor.name, actor_id=actor.id,
+            actor_name=actor.name, occurred_at=now, remaining_after=updated.balance,
+            source_key=message.idempotency_key,
+        ))
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(), aggregate_id=updated.id, event_type="warehouse.returned_to_supplier",
+                actor=actor, occurred_at=now,
+                details={
+                    "quantity": str(quantity),
+                    "reason": reason,
+                    "receiving_line_id": str(payload.get("receiving_line_id") or ""),
+                },
+            )
+        )
+        uow.outbox.mark_published(message.id, now)
+        uow.commit()
+        return updated
 
 
 def _manual_unit_mass(item: ManualStockItem) -> Decimal | None:
@@ -648,7 +708,12 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
         uow.writeoffs.add(WriteOffEntry.for_lot(
             updated, kind="writeoff", quantity=command.quantity, reason=reason, purpose=purpose,
             author=command.actor.name, actor_id=command.actor.id, actor_name=command.actor.name,
-            occurred_at=command.now, remaining_after=updated.balance,
+            occurred_at=(
+                datetime.combine(command.entry_date, command.now.time())
+                if command.entry_date and command.entry_date != command.now.date()
+                else command.now
+            ),
+            remaining_after=updated.balance,
         ))
         uow.audit.add(
             AuditEvent(
