@@ -7,8 +7,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0062_techcard_template_sheets"
-down_revision: str | None = "0061_procurement_traceability"
+revision: str = "0063_techcard_template_sheets"
+down_revision: str | None = "0062_fulfillment_shortfall_note"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
