@@ -73,6 +73,7 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
         <button type="button" role="menuitem" className="psm-item" disabled={busy} title="Снять ручные этапы: статус по фактам (ТК, набор, задания, склад, отгрузка)"
           onClick={() => void run({ action: "status", value: "авто" })}>{closed ? "Вернуть в работу" : "Авто"}</button>
       </div>
+      {status === "Отгружено" && <div className="psm-note">Отгрузка по факту ставит «Отгружено» и сильнее ручного этапа.</div>}
       <div className="psm-head">Блокер</div>
       <div className="psm-row">
         {blocker

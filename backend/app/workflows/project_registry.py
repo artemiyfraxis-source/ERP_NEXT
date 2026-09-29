@@ -11,6 +11,12 @@ from app.modules.production.plan_application import PlanUnitOfWork
 CLOSED_PROJECT_STATUS = "Закрыт"
 
 
+def _closed(item, journal) -> bool:
+    if journal is not None and journal.status is not None:
+        return bool(journal.status)
+    return item.terminal or bool(project_terminal(item, None))
+
+
 class PlanSnapshotProjectRegistry:
     """Open projects = not terminal and not «Закрыт» (SUPPLYMAP Forms.gs purposeProjects_).
 
@@ -31,6 +37,6 @@ class PlanSnapshotProjectRegistry:
         return [
             item.project
             for item in projects
-            if not project_terminal(item, journal.get(normalize_project_number(item.project)))
+            if not _closed(item, journal.get(normalize_project_number(item.project)))
             and item.status.strip() != CLOSED_PROJECT_STATUS
         ]

@@ -1046,3 +1046,4 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .plan-drawer-scrim { position: absolute; inset: 0; background: rgba(0, 26, 24, .25); }
 .plan-drawer-body { position: absolute; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; background: var(--background, #f6f8f8); box-shadow: -8px 0 30px rgba(0,0,0,.15); padding: 12px; }
 .plan-details-close { position: absolute; right: 18px; top: 18px; z-index: 1; }
+.psm-note { font-size: 12px; color: var(--muted-foreground); }

@@ -262,7 +262,8 @@ def build_production_plan(
             project=project, customer=customer, opened_on=opened_on,
             deadline=deadline, days_left=days_left(deadline, today),
             stage=stage, supply=supply.get(project), plan=task_plan.get(project),
-            journal=project_journal, terminal=bool(terminal),
+            journal=project_journal,
+            terminal=bool(terminal) or (project_journal.status is None and bool(snapshot and snapshot.terminal)),
         ))
     return tuple(sorted(rows, key=lambda row: (
         row.journal.blocker is None,
