@@ -179,9 +179,12 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
     ...fieldColumns.map((field): DataColumn<TechOperationRecord> => {
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
+      const long = values.some((value) => value.length > 40);
       return {
         key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "",
-        wrap: values.some((value) => value.length > 40),
+        // Long text (datasheet links, sources) is cut to three lines so one cell does not stretch the row; full text on hover.
+        render: long ? (record) => <span className="db-clamp" title={record.fields[field] ?? ""}>{record.fields[field] ?? ""}</span> : undefined,
+        wrap: long,
         numeric: values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
       };
     }),
