@@ -22,7 +22,7 @@ from app.workflows.production_plan import build_production_plan
 
 from .application import UnitOfWork
 from .domain import ProductionValidationError
-from .plan import KIT_STAGES, PLAN_BLOCKERS, TC_REVIEW_VALUES, PlanEvent, PlanProjectSnapshot
+from .plan import KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, PlanEvent, PlanProjectSnapshot
 from .plan_application import (
     AddPlanEventCommand,
     ReplacePlanProjectsCommand,
@@ -150,7 +150,7 @@ def production_plan(
         events=events, today=today, kitsets=kitsets,
     )
     return {
-        "blockers": list(PLAN_BLOCKERS), "stages": list(KIT_STAGES),
+        "blockers": list(PLAN_BLOCKERS), "stages": list(KIT_STAGES), "terminals": list(PROJECT_TERMINALS),
         "review_values": list(TC_REVIEW_VALUES),
         "rows": [{
             "project": row.project, "customer": row.customer,

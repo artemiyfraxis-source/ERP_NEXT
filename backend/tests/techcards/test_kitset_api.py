@@ -344,3 +344,43 @@ def test_generator_bom_reads_kb_sheet_of_the_linked_calculation(kitset_api):
     ]
     assert failed["calc_ops"] == []
     assert bom["run"] == "10"
+
+
+def test_project_status_in_one_click(kitset_api):
+    client, _lot = kitset_api
+    _load(client)
+    kbs = [item["index"] for item in client.get("/api/techcards/kitsets/708К.4").json()["assemblies"]]
+    assert len(kbs) >= 2
+
+    staged = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "В работе"})
+    assert staged.status_code == 200, staged.text
+    card = staged.json()["card"]
+    assert card["status"] == "В работе"
+    assert {item["stage"]["status"] for item in card["assemblies"]} == {"В работе"}
+    assert card["terminals"] == ["Отказ", "Слился", "Отменён"] and "ХОЛД" in card["blockers"]
+
+    no_reason = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "ХОЛД"})
+    assert no_reason.status_code == 422
+    held = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "ХОЛД", "text": "ждём оплату"})
+    card = held.json()["card"]
+    assert card["blocker"] == "ХОЛД" and card["blocker_info"]["text"] == "ждём оплату"
+    tile = next(item for item in client.get("/api/techcards/kitsets").json()["items"] if item["project"] == "708К.4")
+    assert (tile["status"], tile["blocker"]) == ("В работе", "ХОЛД")
+    card = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "unblock"}).json()["card"]
+    assert card["blocker"] == "" and card["blocker_info"] is None
+
+    closed = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "Отказ"}).json()["card"]
+    assert closed["status"] == "Отказ"
+    # Этап у закрытого проекта сначала возвращает его в работу.
+    reopened = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "авто"}).json()["card"]
+    assert reopened["status"] == "Новый"
+    assert all(item["stage"]["manual"] is False for item in reopened["assemblies"])
+
+    bad = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "Готово"})
+    assert bad.status_code == 422
+
+    noted = client.post("/api/techcards/kitsets/708К.4/journal", json={"kind": "deadline", "deadline": "2026-10-20"})
+    assert noted.status_code == 200, noted.text
+    card = noted.json()["card"]
+    assert card["deadline"] == "2026-10-20"
+    assert [event["kind"] for event in card["journal"][:2]] == ["Дедлайн", "Этап КБ"]
