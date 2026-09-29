@@ -404,3 +404,59 @@ td small { margin-top: 4px; color: #7b857e; }
 .column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
 .table-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
+
+/* Ресурсное планирование: Гант (перенос prodGantt_ SUPPLYMAP), запуск из техкарты, карточка назначения, очередь оператора. */
+.pg-nav { display: flex; gap: 8px; margin: 12px 0 8px; }
+.pg-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+.pg { min-width: max-content; font-size: 12px; }
+.pg-row { display: flex; border-top: 1px solid var(--border); min-height: 38px; }
+.pg-row:first-child { border-top: 0; }
+.pg-head { position: sticky; top: 0; background: var(--card, #fff); z-index: 2; font-size: 11px; color: var(--muted-foreground); }
+.pg-lab { position: sticky; left: 0; z-index: 1; width: 260px; flex: 0 0 260px; padding: 6px 10px; background: var(--card, #fff); border-right: 1px solid var(--border); }
+.pg-s { color: var(--muted-foreground); font-size: 11px; margin-top: 2px; }
+.pg-q { color: var(--muted-foreground); }
+.pg-track { position: relative; flex: 0 0 auto; }
+.pg-day { position: absolute; top: 4px; text-align: center; line-height: 1.2; }
+.pg-bg { position: absolute; top: 0; bottom: 0; background: rgba(0, 0, 0, .04); }
+.pg-bg.today { background: rgba(0, 120, 212, .10); }
+.pg-bar { position: absolute; top: 9px; height: 20px; border-radius: 5px; background: #2e7d32; color: #fff; font-size: 11px; line-height: 20px; padding: 0 5px; overflow: hidden; white-space: nowrap; }
+.pg-bar.part { background: repeating-linear-gradient(45deg, #2e7d32, #2e7d32 6px, #43a047 6px, #43a047 12px); }
+.pg-bar.late { background: #c62828; }
+.pg-bar.op { background: #1565c0; }
+.pg-bar.busy { background: #9e9e9e; }
+.pg-bar.new { background: #ef6c00; }
+.pg-mark { position: absolute; top: 0; bottom: 0; width: 3px; background: #c62828; }
+.pg-click { cursor: pointer; }
+.pg-click:hover .pg-lab { background: color-mix(in srgb, var(--primary) 8%, var(--card, #fff)); }
+.pg-dim { opacity: .55; }
+.pg-site { min-height: 24px; font-weight: 600; background: rgba(0, 0, 0, .03); }
+.pa-who { display: flex; gap: 6px; align-items: center; }
+.pa-ctl { display: flex; gap: 12px; align-items: end; margin: 10px 0; flex-wrap: wrap; }
+.pa-plan { margin-top: 10px; font-size: 13px; }
+.pa-plan.err { color: #c62828; }
+.assign-card { margin-top: 16px; padding: 16px; }
+.ap-t { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+.ap-t th, .ap-t td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+.ap-t tr.on { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.ap-t tbody tr { cursor: pointer; }
+.ap-man { color: var(--muted-foreground); font-size: 11px; }
+.pl-search { width: 100%; margin: 10px 0; }
+.pl-proj { margin: 12px 0; }
+.pl-ph { margin-bottom: 6px; }
+.pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.pl-card { display: grid; gap: 4px; text-align: left; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card, #fff); cursor: pointer; }
+.pl-kb { font-weight: 700; font-size: 15px; }
+.pl-name { font-size: 12px; }
+.pl-meta { font-size: 11px; color: var(--muted-foreground); }
+.pl-sel { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+.pl-warn { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: #fff3e0; font-size: 12px; }
+.my-queue { display: grid; gap: 8px; margin-top: 14px; }
+.mo-day { margin: 10px 0 2px; font-weight: 700; }
+.mo-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: grid; gap: 4px; font-size: 12px; }
+.mo-card.late { border-left: 4px solid #c62828; }
+.mo-card.done { opacity: .6; }
+.mo-card.run { border-left: 4px solid #2e7d32; }
+.mo-h { display: flex; gap: 8px; align-items: baseline; }
+.mo-time { margin-left: auto; color: var(--muted-foreground); }
+.mo-s, .mo-d { color: var(--muted-foreground); }
+.mo-fact { font-size: 13px; }

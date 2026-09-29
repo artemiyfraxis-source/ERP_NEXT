@@ -52,80 +52,122 @@ function json(body: unknown) {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("launches a task with an explicit immutable route snapshot", async () => {
+function masterFetch(extra: (path: string, init?: RequestInit) => Response | null, tasks: ProductionTask[] = []) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    const handled = extra(path, init);
+    if (handled) return handled;
+    if (path === "/api/production/tasks") return json({ tasks, next_cursor: null });
+    if (path === "/api/production/operators") return json({ operators: [
+      { id: "10000000-0000-0000-0000-000000000002", name: "Оператор", site: "ЦАР" },
+      { id: "10000000-0000-0000-0000-000000000003", name: "Новичок", site: "ЦАР" },
+    ] });
+    if (path === "/api/production/boxes") return json({ boxes: [] });
+    if (path === "/api/production/defects") return json({ defects: [] });
+    if (path === "/api/production/instruments") return json({ instruments: [] });
+    if (path === "/api/production/qc/rejections") return json({ rejections: [] });
+    if (path === "/api/production/calendar") return json({ holidays: [], absences: [] });
+    if (path === "/api/production/skills") return json({
+      skills: [{ operator_id: "10000000-0000-0000-0000-000000000002", operation_code: "OP-01", allowed: true, stars: 3, coefficient: "1.2" }],
+      operation_codes: [{ code: "OP-01", name: "Разделка" }, { code: "OP-02", name: "Сборка" }],
+    });
+    if (path === "/api/issues") return json({ requests: [], next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("launches a task only from an issued techcard picked in the launchable list", async () => {
   let payload: unknown;
   let key = "";
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
+  masterFetch((path, init) => {
+    if (path === "/api/production/launchable") return json({ items: [{
+      techcard_id: "80000000-0000-0000-0000-000000000001", project: "591K.3", index: "КБ1", item: "591K.3КБ1",
+      name: "Жгут", run: "25", deadline: null, launched: 10, operations: 3,
+    }, {
+      techcard_id: "80000000-0000-0000-0000-000000000002", project: "708К.4", index: "КБ2", item: "708К.4КБ2",
+      name: "Кабель", run: "5", deadline: null, launched: 0, operations: 1,
+    }] });
     if (path === "/api/production/tasks" && init?.method === "POST") {
       payload = JSON.parse(String(init.body));
       key = new Headers(init.headers).get("Idempotency-Key") ?? "";
       return json({ task });
     }
-    if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
-    if (path === "/api/production/operators") return json({ operators: [] });
-    if (path === "/api/production/boxes") return json({ boxes: [] });
-    if (path === "/api/production/defects") return json({ defects: [] });
-    if (path === "/api/production/instruments") return json({ instruments: [] });
-    if (path === "/api/production/qc/rejections") return json({ rejections: [] });
-    if (path === "/api/issues") return json({ requests: [], next_cursor: null });
-    throw new Error(`Unexpected request: ${path}`);
+    return null;
   });
 
   render(<ProductionPage principal={principal} />);
   fireEvent.click(await screen.findByRole("button", { name: "+ Запустить задание" }));
-  fireEvent.change(screen.getByLabelText("Проект"), { target: { value: "591K.3" } });
-  fireEvent.change(screen.getByLabelText("Изделие"), { target: { value: "591K.3.КБ1" } });
-  fireEvent.change(screen.getByLabelText("Название этапа 1"), { target: { value: "Разделка" } });
-  fireEvent.change(screen.getByLabelText("Секунд на штуку 1"), { target: { value: "60" } });
+  expect(await screen.findByText("запущено 10")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Поиск сборки"), { target: { value: "кабель" } });
+  expect(screen.queryByText("Жгут")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Поиск сборки"), { target: { value: "591" } });
+  fireEvent.click(screen.getByRole("button", { name: /КБ1/ }));
+  expect(screen.getByLabelText("Кол-во")).toHaveValue("25");
+  fireEvent.change(screen.getByLabelText("Кол-во"), { target: { value: "12" } });
   fireEvent.click(screen.getByRole("button", { name: "Запустить" }));
 
   await waitFor(() => expect(payload).toEqual({
-    project: "591K.3",
-    item: "591K.3.КБ1",
-    name: "",
-    quantity: 1,
+    techcard_id: "80000000-0000-0000-0000-000000000001",
+    quantity: 12,
     deadline: null,
     fulfillment_request_id: null,
-    operations: [{
-      position: 1,
-      code: "",
-      stage: "Разделка",
-      description: "",
-      seconds_per_unit: "60",
-      setup_seconds: "0",
-    }],
   }));
   expect(key).not.toBe("");
 });
 
-it("assigns all selected operators with optimistic task version", async () => {
-  let payload: unknown;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path === "/api/production/tasks") return json({ tasks: [task], next_cursor: null });
-    if (path === "/api/production/operators") return json({ operators: [{
-      id: "10000000-0000-0000-0000-000000000002", name: "Оператор", site: "ЦАР",
-    }] });
-    if (path === "/api/production/boxes") return json({ boxes: [] });
-    if (path === "/api/production/defects") return json({ defects: [] });
-    if (path === "/api/production/instruments") return json({ instruments: [] });
-    if (path === "/api/production/qc/rejections") return json({ rejections: [] });
+it("shows tasks on a Gantt, operation fact, and assigns with a server preview and admission tags", async () => {
+  const bodies: unknown[] = [];
+  const withFact: ProductionTask = { ...task, operations: [{
+    ...task.operations[0], fact: { good: "6", defect: "1", processed: "7" }, state: "в работе", wip: { ok: "4", closed: "2" },
+  }] };
+  masterFetch((path, init) => {
     if (path.endsWith("/assign") && init?.method === "POST") {
-      payload = JSON.parse(String(init.body));
-      return json({ task, warnings: [] });
+      const body = JSON.parse(String(init.body));
+      bodies.push(body);
+      return json({ task: withFact, warnings: [], dry: body.dry, plan: {
+        start: "2026-09-22T09:00:00+03:00", finish: "2026-09-22T10:00:00+03:00",
+        warnings: body.operator_ids.length > 1 ? ["Новичок: нет допуска к операции OP-01"] : [],
+      } });
     }
-    throw new Error(`Unexpected request: ${path}`);
+    return null;
+  }, [withFact]);
+
+  render(<ProductionPage principal={principal} />);
+  fireEvent.click(await screen.findByRole("button", { name: /ПЗ-0001/ }));
+  expect(await screen.findByText(/сдано 6 из 10, брак 1 · в коробках 4 \+ 2 ждут подтверждения/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
+  expect(await screen.findByText("нет допуска", { exact: false })).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Назначить Новичок"));
+  expect(await screen.findByText("Новичок: нет допуска к операции OP-01", {}, { timeout: 2000 })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Назначить" }));
+
+  await waitFor(() => expect(bodies.at(-1)).toEqual({
+    version: 2,
+    operator_ids: ["10000000-0000-0000-0000-000000000002", "10000000-0000-0000-0000-000000000003"],
+    requested_start: expect.stringMatching(/^2026-09-22T/),
+    dry: false,
+  }));
+  expect(bodies.some((body) => (body as { dry: boolean }).dry)).toBe(true);
+});
+
+it("keeps «—» in the competency matrix: only set codes are saved", async () => {
+  let payload: unknown;
+  masterFetch((path, init) => {
+    if (path.startsWith("/api/production/skills/") && init?.method === "PUT") {
+      payload = JSON.parse(String(init.body));
+      return new Response(null, { status: 204 });
+    }
+    return null;
   });
 
   render(<ProductionPage principal={principal} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Запланировать" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Компетенции" }));
+  expect(await screen.findByLabelText("Допуск OP-02")).toHaveValue("");
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 
-  await waitFor(() => expect(payload).toEqual({
-    version: 2,
-    operator_ids: ["10000000-0000-0000-0000-000000000002"],
-    requested_start: "2026-09-22T09:00",
-  }));
+  await waitFor(() => expect(payload).toEqual({ skills: [
+    { operation_code: "OP-01", allowed: true, stars: 3, coefficient: "1.2" },
+  ] }));
 });
 
 it("saves shop holidays through the production calendar", async () => {
@@ -184,6 +226,8 @@ it("starts the first operation from an issued GRN and package", async () => {
   });
 
   render(<ProductionPage principal={operatorPrincipal} mine />);
+  expect(await screen.findByText("Ещё не сдавали")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "▶ Начать" }));
   fireEvent.change(await screen.findByLabelText("Количество из партии PPM.26.0000001 П1"), { target: { value: "3" } });
   fireEvent.click(screen.getByRole("button", { name: "Начать операцию" }));
 
@@ -272,4 +316,33 @@ it("corrects one output of a returned box and keeps reopening as a separate acti
     },
     { path: `/api/production/boxes/${returned.id}/reopen`, body: { version: 4 } },
   ]));
+});
+
+it("groups the operator queue by plan day and hides start for a completed operation", async () => {
+  const operatorPrincipal: Principal = {
+    user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+    roles: ["staff"], permissions: { production: "view" },
+  };
+  const now = new Date();
+  const at = (days: number, hour: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, hour).toISOString();
+  const done: ProductionTask = { ...task, id: "70000000-0000-0000-0000-000000000009", number: "ПЗ-0009", operations: [{
+    ...task.operations[0], planned_start: at(0, 9), planned_finish: at(0, 23),
+    fact: { good: "10", defect: "0", processed: "10" }, state: "выполнена", mates: ["Мастер"],
+  }] };
+  const next: ProductionTask = { ...task, operations: [{
+    ...task.operations[0], planned_start: at(1, 9), planned_finish: at(1, 10), state: "не начата", mates: [],
+  }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [done, next] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProductionPage principal={operatorPrincipal} mine />);
+
+  expect(await screen.findByText(/^Сегодня · /)).toBeInTheDocument();
+  expect(screen.getByText(/^Завтра · /)).toBeInTheDocument();
+  expect(screen.getByText(/вместе с: Мастер/)).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "▶ Начать" })).toHaveLength(1);
 });

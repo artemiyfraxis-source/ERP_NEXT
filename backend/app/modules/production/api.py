@@ -130,7 +130,7 @@ class ReplaceSkillsPayload(BaseModel):
 class AutoSchedulePayload(BaseModel):
     version: int = Field(ge=1)
     replan: bool = False
-    max_crew: int = Field(default=1, ge=1, le=5)
+    max_crew: int = Field(default=1, ge=1, le=3)  # prodAutoPlanModal_: бригада до 3
 
 
 class ApplySchedulePayload(AutoSchedulePayload):
