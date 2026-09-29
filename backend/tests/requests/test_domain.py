@@ -101,7 +101,7 @@ def test_category_rules_are_applied_server_side():
         {"item_type": ""},
         {"quantity": Decimal("0")},
         {"unit": ""},
-        {"quality_document": ""},
+        {"quality_document": "Может быть"},  # empty is «Нет» for Общепром (RQ-1)
     ],
 )
 def test_invalid_request_is_rejected(changes):
@@ -171,3 +171,30 @@ def test_handoff_requires_explicit_in_work_transition():
 def test_legacy_sequence_and_designation_helpers():
     assert next_legacy_id(["noise", "SM-20260915-09"], date(2026, 9, 15)) == "SM-20260915-10"
     assert next_designation("48К.13", ["48К.13.009"]) == "48К.13.010"
+
+
+@pytest.mark.parametrize(
+    ("category", "given", "expected"),
+    [("Общепром", "", "Нет"), ("Общепром", "Да", "Да"), ("ИП", "", "Да"), ("ОП", "Нет", "Да")],
+)
+def test_quality_document_rule_matches_schema_passport_rule(category, given, expected):
+    (request,) = create_request_batch(
+        [draft(category=category, quality_document=given)],
+        actor=Actor(name="Иванов", department="РНД"),
+        now=datetime(2026, 9, 15, 10, 30),
+        existing_legacy_ids=[],
+        existing_designations=[],
+    )
+
+    assert request.quality_document == expected
+
+
+def test_batch_error_names_the_position():
+    with pytest.raises(ValidationError, match="^Позиция 2: Не заполнены обязательные поля: ТИП$"):
+        create_request_batch(
+            [draft(), draft(item_type=" ")],
+            actor=Actor(name="Иванов", department="РНД"),
+            now=datetime(2026, 9, 15, 10, 30),
+            existing_legacy_ids=[],
+            existing_designations=[],
+        )

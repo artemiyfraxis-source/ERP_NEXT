@@ -11,7 +11,7 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from .project_cards import ProjectTechcard, TechcardRevision, TechcardValidationError
-from .operation_cards import OperationCardTemplate, parse_operation_library
+from .operation_cards import OperationCardTemplate, OperationRecordEdit, normalize_record_edit, parse_operation_library
 from .etk_builder import build_etk
 
 
@@ -29,7 +29,8 @@ class OperationCardRepository(Protocol):
     def get(self, source_id: str) -> OperationCardTemplate | None: ...
     def replace(
         self, cards: tuple[OperationCardTemplate, ...], *, source_commit: str, imported_at: datetime,
-    ) -> None: ...
+    ) -> tuple[str, ...]: ...
+    def edit(self, code: str, edit: OperationRecordEdit, *, changed_at: datetime, changed_by: str) -> int: ...
     def metadata(self) -> dict | None: ...
 
 
@@ -80,6 +81,20 @@ class AutoBuildProjectTechcardCommand(ChangeProjectTechcardCommand):
 class EditTechcardOperationCommand(ChangeProjectTechcardCommand):
     operation_key: str
     operation: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class EditOperationRecordCommand:
+    source_id: str
+    record: dict[str, Any]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class ReplacedOperationLibrary:
+    templates: int
+    kept_edited: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -191,13 +206,56 @@ def issue_project_techcard(command: ChangeProjectTechcardCommand, uow: UnitOfWor
         return updated
 
 
+def _edited_operation(operation: dict[str, Any], actor: Actor, now: datetime) -> dict[str, Any]:
+    """SUPPLYMAP TcBuild.gs etkApplyOpEdit_: the operation's card (steps, tooling, safety, defects) goes through the
+    same normalization as a library record; the operation is stamped as edited (at, by). The card name stays."""
+    card = operation.get("card")
+    if not isinstance(card, dict):
+        return operation
+    try:
+        record = normalize_record_edit({**card, "name": str(card.get("name") or operation.get("code") or "")})
+    except ValueError as error:
+        raise TechcardValidationError(str(error)) from error
+    return {
+        **operation,
+        "card": {
+            **card,
+            "safety": record.safety, "defects": record.defects,
+            "steps": [{**step.__dict__, "tolerance": "" if step.tolerance == "-" else step.tolerance} for step in record.steps],
+            "tooling": [tool.__dict__ for tool in record.tooling],
+        },
+        "edited": {"at": now.strftime("%d.%m.%Y %H:%M"), "by": actor.name},
+    }
+
+
+def _edit_reason(operation: dict[str, Any]) -> str:
+    """SUPPLYMAP etkApplyOpEdit_ log line: «Правка операции N (CODE — suffix)»."""
+    suffix = str(operation.get("connector") or "").strip()
+    position = str(operation.get("position") or "").strip()
+    code = str(operation.get("code") or "").strip()
+    return f"Правка операции {position + ' ' if position else ''}({code}{f' — {suffix}' if suffix else ''})"
+
+
+def discard_project_techcard_draft(command: ChangeProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
+    with uow:
+        updated = _current(command, uow).discard_draft(command.now)
+        uow.techcards.save(updated)
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=updated.id, event_type="techcards.project_draft_discarded",
+            actor=command.actor, occurred_at=command.now, details={},
+        ))
+        uow.commit()
+        return updated
+
+
 def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWork) -> ProjectTechcard:
     with uow:
         current = _current(command, uow)
-        updated = current.edit_operation(command.operation_key, command.operation, command.now)
+        operation = _edited_operation(command.operation, command.actor, command.now)
+        updated = current.edit_operation(command.operation_key, operation, command.now)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
-            uow.techcards.add_revision(_revision(updated, f"Правка {command.operation_key}", command.actor, command.now))
+            uow.techcards.add_revision(_revision(updated, _edit_reason(operation), command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.operation_edited",
             actor=command.actor, occurred_at=command.now,
@@ -207,7 +265,31 @@ def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWor
         return updated
 
 
-def replace_operation_library(command: ReplaceOperationLibraryCommand, uow: UnitOfWork) -> int:
+def edit_operation_record(command: EditOperationRecordCommand, uow: UnitOfWork) -> OperationCardTemplate:
+    """SUPPLYMAP TcRecordDb.gs tcRecordSave_: the record of one operation code is written whole; a new operation
+    cannot be started this way — only an existing record is edited. Stamps who/when edited."""
+    try:
+        edit = normalize_record_edit(command.record)
+    except ValueError as error:
+        raise TechcardValidationError(str(error)) from error
+    with uow:
+        current = uow.operation_cards.get(command.source_id)
+        if current is None:
+            raise KeyError(f"Operation card not found: {command.source_id}")
+        uow.operation_cards.edit(current.code, edit, changed_at=command.now, changed_by=command.actor.name)
+        uow.audit.add(AuditEvent(
+            id=uuid4(),
+            aggregate_id=UUID("00000000-0000-0000-0000-000000000018"),
+            event_type="techcards.operation_record_edited",
+            actor=command.actor,
+            occurred_at=command.now,
+            details={"code": current.code, "steps": str(len(edit.steps)), "tooling": str(len(edit.tooling))},
+        ))
+        uow.commit()
+        return current.with_edit(edit, changed_at=command.now, changed_by=command.actor.name)
+
+
+def replace_operation_library(command: ReplaceOperationLibraryCommand, uow: UnitOfWork) -> ReplacedOperationLibrary:
     source_commit = str(command.source_commit or "").strip().lower()
     if len(source_commit) != 40 or any(character not in "0123456789abcdef" for character in source_commit):
         raise TechcardValidationError("Нужен полный commit SUPPLYMAP из 40 hex-символов")
@@ -216,14 +298,17 @@ def replace_operation_library(command: ReplaceOperationLibraryCommand, uow: Unit
     except ValueError as error:
         raise TechcardValidationError(str(error)) from error
     with uow:
-        uow.operation_cards.replace(cards, source_commit=source_commit, imported_at=command.now)
+        kept = uow.operation_cards.replace(cards, source_commit=source_commit, imported_at=command.now)
         uow.audit.add(AuditEvent(
             id=uuid4(),
             aggregate_id=UUID("00000000-0000-0000-0000-000000000018"),
             event_type="techcards.operation_library_replaced",
             actor=command.actor,
             occurred_at=command.now,
-            details={"source_commit": source_commit, "templates": str(len(cards))},
+            details={
+                "source_commit": source_commit, "templates": str(len(cards)),
+                "kept_edited": ", ".join(kept),
+            },
         ))
         uow.commit()
-    return len(cards)
+    return ReplacedOperationLibrary(templates=len(cards), kept_edited=tuple(kept))

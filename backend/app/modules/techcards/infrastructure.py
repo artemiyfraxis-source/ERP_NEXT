@@ -10,8 +10,9 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
+from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .project_cards import ProjectTechcard, TechcardRevision, TechcardStatus
-from .operation_cards import OperationCardTemplate, parse_operation_template
+from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
 
 
 class ProjectTechcardRow(Base):
@@ -74,6 +75,10 @@ class OperationCardTemplateRow(Base):
     images: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_commit: Mapped[str] = mapped_column(String(40), nullable=False)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Правка записи в ERP поверх снимка (SUPPLYMAP БД.ОП-ТК: ИЗМЕНЕНО / КЕМ); переживает замену библиотеки.
+    edited: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    edited_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class OperationCardSnapshotRow(Base):
@@ -167,6 +172,17 @@ class SqlAlchemyTechcardRepository:
             )
         )
 
+    def delete_project(self, project: str) -> tuple[int, int]:
+        """`erpProdDropCards_`: the project's cards go together with their revisions. → (cards, revisions)."""
+        ids = list(self.session.scalars(select(ProjectTechcardRow.id).where(ProjectTechcardRow.project == project)))
+        if not ids:
+            return 0, 0
+        revisions = self.session.execute(
+            delete(TechcardRevisionRow).where(TechcardRevisionRow.project_card_id.in_(ids))
+        ).rowcount or 0
+        cards = self.session.execute(delete(ProjectTechcardRow).where(ProjectTechcardRow.id.in_(ids))).rowcount or 0
+        return cards, revisions
+
     def revisions(self, card_id: UUID) -> list[TechcardRevision]:
         rows = self.session.scalars(
             select(TechcardRevisionRow)
@@ -193,13 +209,19 @@ class SqlAlchemyOperationCardRepository:
 
     @staticmethod
     def _domain(row: OperationCardTemplateRow) -> OperationCardTemplate:
-        return parse_operation_template(
+        card = parse_operation_template(
             source_id=row.id,
             title=row.title,
             category=row.category,
             rows=row.raw_rows,
             images=row.images,
         )
+        if row.edited and row.edited_at is not None:
+            card = card.with_edit(
+                OperationRecordEdit.from_json(row.edited),
+                changed_at=row.edited_at, changed_by=row.edited_by or "",
+            )
+        return card
 
     def list(self) -> list[OperationCardTemplate]:
         rows = self.session.scalars(
@@ -216,9 +238,32 @@ class SqlAlchemyOperationCardRepository:
         row = self.session.get(OperationCardTemplateRow, source_id)
         return self._domain(row) if row is not None else None
 
+    def edit(self, code: str, edit: OperationRecordEdit, *, changed_at: datetime, changed_by: str) -> int:
+        """One record = one operation code (SUPPLYMAP tcRecordsByCode_): the edit lands on every (A)/(B) block of the
+        code. Returns how many templates were changed (0 — no such code)."""
+        rows = list(self.session.scalars(
+            select(OperationCardTemplateRow).where(OperationCardTemplateRow.code == code)
+        ))
+        for row in rows:
+            row.edited = edit.as_json()
+            row.edited_at = changed_at
+            row.edited_by = changed_by
+            row.name = edit.name
+            row.document = self._domain(row).document()
+        return len(rows)
+
     def replace(
         self, cards: tuple[OperationCardTemplate, ...], *, source_commit: str, imported_at: datetime,
-    ) -> None:
+    ) -> tuple[str, ...]:
+        """Replace the snapshot whole, but keep ERP edits: a code edited here keeps its edit over the fresh snapshot
+        (SUPPLYMAP tcRecordsSync / tcRecordResyncFromTemplate refuse to overwrite a record with ИЗМЕНЕНО).
+        Returns the codes whose edits were kept."""
+        kept = {
+            row.code: (row.edited, row.edited_at, row.edited_by)
+            for row in self.session.scalars(
+                select(OperationCardTemplateRow).where(OperationCardTemplateRow.edited_at.is_not(None))
+            )
+        }
         self.session.execute(delete(OperationCardTemplateRow))
         self.session.add_all(OperationCardTemplateRow(
             id=card.source_id,
@@ -238,6 +283,9 @@ class SqlAlchemyOperationCardRepository:
             ],
             source_commit=source_commit,
             imported_at=imported_at,
+            edited=kept[card.code][0] if card.code in kept else None,
+            edited_at=kept[card.code][1] if card.code in kept else None,
+            edited_by=kept[card.code][2] if card.code in kept else None,
         ) for card in cards)
         snapshot = self.session.get(OperationCardSnapshotRow, "current")
         if snapshot is None:
@@ -246,6 +294,7 @@ class SqlAlchemyOperationCardRepository:
         snapshot.source_commit = source_commit
         snapshot.imported_at = imported_at
         snapshot.template_count = len(cards)
+        return tuple(sorted(code for code in kept if any(card.code == code for card in cards)))
 
     def metadata(self) -> dict | None:
         row = self.session.get(OperationCardSnapshotRow, "current")
@@ -269,6 +318,7 @@ class SqlAlchemyTechcardsUnitOfWork:
         self.session = self.session_factory()
         self.techcards = SqlAlchemyTechcardRepository(self.session)
         self.operation_cards = SqlAlchemyOperationCardRepository(self.session)
+        self.kitsets = SqlAlchemyKitsetRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 

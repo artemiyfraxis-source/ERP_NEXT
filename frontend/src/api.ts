@@ -18,6 +18,10 @@ export interface RequestSchema {
   delivery_points: string[];
   units: string[];
   categories: string[];
+  /** `purposeProjects_`: open registry projects for the ЦЕЛЬ dropdown (empty = registry unavailable). */
+  projects?: string[];
+  /** ТИП combobox options (REQUEST_FORM_FIELDS «ТИП»). */
+  item_types?: string[];
 }
 
 export interface RequestRow {
@@ -40,6 +44,20 @@ export interface RequestRow {
   unit: string;
   priority: string;
   planned_date: string;
+  procurement_deadline?: string;
+  quality_document?: string;
+  design_article?: string | null;
+  link?: string | null;
+  price?: string | null;
+  price_with_vat?: string | null;
+  line_sum?: string | null;
+  comment?: string | null;
+  /** «Мои заявки» only: the purchase-sheet columns the initiator sees (via Procurement's read port). */
+  buyer?: string | null;
+  supplier?: string | null;
+  order_number?: string | null;
+  expected_arrival?: string | null;
+  procurement_sum?: string | null;
 }
 
 export interface MineRequestsResult {
@@ -95,6 +113,7 @@ export interface ProcurementLine {
   request_date: string;
   initiator: string;
   department: string;
+  task_type?: string;
   designation: string;
   project_reference: string | null;
   priority: string;
@@ -422,7 +441,37 @@ export interface FulfillmentRequest {
   handout_location: string | null;
   return_location: string | null;
   fully_reserved: boolean;
+  /** issueProjectOf_: the part of НАЗНАЧЕНИЕ before « · »; "" for a manual request. */
+  project?: string;
+  /** FF-4 stage dates by the first hit: В РАБОТУ / НАБРАНА / ВЫДАНА / ВОЗВРАЩЕНА / ЗАКРЫТА. */
+  at_work?: string | null;
+  at_picked?: string | null;
+  at_issued?: string | null;
+  at_returned?: string | null;
+  at_closed?: string | null;
   lines: FulfillmentLine[];
+}
+
+/** Rack layout for the handout address (SUPPLYMAP issueCardResp_ `places.config`). */
+export interface FulfillmentPlaces {
+  racks: number;
+  shelves: number;
+  per_rack: Record<string, number>;
+  slots: string;
+}
+
+export interface FulfillmentPlace {
+  rack: string;
+  shelf: string;
+  num: string;
+  slot: string;
+}
+
+export interface FulfillmentDraftLine {
+  article: string;
+  name: string;
+  unit: string;
+  requirement: string;
 }
 
 export interface ProductionOperator {
@@ -823,16 +872,51 @@ export interface OperationCardSummary {
   category: string;
   steps: number;
   tooling: number;
+  /** Catalog meta as SUPPLYMAP openTcRecords shows it; optional for older API answers. */
+  controls?: number;
+  first_step?: string;
+  step_text?: string;
+  /** БД.ОП time norms by code; null — no row in БД.ОП («нет норм»), norms_known=false — references not loaded. */
+  norms?: { operation_seconds: string; setup_seconds: string } | null;
+  norms_known?: boolean;
+  changed_at?: string | null;
+  changed_by?: string;
+}
+
+export interface OperationCardStepValue { number?: string; kind: string; text: string; tolerance: string }
+export interface OperationCardToolValue {
+  section: string;
+  number?: string;
+  name: string;
+  inventory_number: string;
+  program: string;
+  parameters: string;
+  norm: string;
+  unit: string;
 }
 
 export interface OperationCardDetail extends OperationCardSummary {
   document: {
     safety: string;
     defects: string;
+    revision?: string;
     steps: Array<{ number: string; kind: string; text: string; tolerance: string }>;
-    tooling: Array<{ section: string; number: string; name: string; inventory_number: string; program: string }>;
+    tooling: Array<{
+      section: string; number: string; name: string; inventory_number: string; program: string;
+      parameters?: string; norm?: string; unit?: string;
+    }>;
   };
   raw_rows: string[][];
+}
+
+/** SUPPLYMAP tcCardEditForm_ → portalTcRecordSave payload. */
+export interface OperationRecordEdit {
+  name: string;
+  safety: string;
+  defects: string;
+  revision?: string;
+  steps: OperationCardStepValue[];
+  tooling: OperationCardToolValue[];
 }
 
 export interface GrapherImportResult {
@@ -1063,11 +1147,14 @@ export const legacyApi = {
 
 export const requestsApi = {
   schema: () => api<RequestSchema>("/api/requests/schema"),
-  list: () => api<{ requests: RequestRow[] }>("/api/requests"),
+  list: (q = "") =>
+    api<{ requests: RequestRow[] }>(q ? `/api/requests?q=${encodeURIComponent(q)}` : "/api/requests"),
   /** RQ-MINE: server-side filter by the authenticated initiator, paginated (replaces the client-side
    *  name match over the latest 200 rows). */
-  mine: (limit: number, offset: number) =>
-    api<MineRequestsResult>(`/api/requests/mine?limit=${limit}&offset=${offset}`),
+  mine: (limit: number, offset: number, q = "") =>
+    api<MineRequestsResult>(
+      `/api/requests/mine?limit=${limit}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
   create: (request: Record<string, unknown>, idempotencyKey: string) =>
     api<{ requests: RequestRow[] }>("/api/requests", {
       method: "POST",
@@ -1165,6 +1252,30 @@ export const procurementApi = {
     api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
       `/api/procurement/in-work${after ? `?after=${encodeURIComponent(after)}` : ""}`,
     ),
+  // Весь лист закупки: все статусы и закупщики, поиск и отбор на сервере, страницы по курсору.
+  sheet: (filters: { q?: string; status?: string; buyer?: string }, after?: string) => {
+    const params = new URLSearchParams();
+    if (filters.q) params.set("q", filters.q);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.buyer) params.set("buyer", filters.buyer);
+    if (after) params.set("after", after);
+    const query = params.toString();
+    return api<{ lines: ProcurementLine[]; next_cursor: string | null; buyers: string[] }>(
+      `/api/procurement/lines${query ? `?${query}` : ""}`,
+    );
+  },
+  // PR-11 portalPurchaseBySupplier: открытые строки всех закупщиков и порядок этапов.
+  bySupplier: () => api<{ lines: ProcurementLine[]; stages: string[] }>("/api/procurement/by-supplier"),
+  meta: () => api<{ units: string[]; statuses: string[] }>("/api/procurement/meta"),
+  // portalMarkPaid: «Оплачено → В пути» пачкой, только строки со счётом.
+  markPaidBatch: (items: { line_id: string; version: number }[]) =>
+    api<{
+      lines: ProcurementLine[];
+      done: number;
+      already: number;
+      no_invoice: string[];
+      failed: { legacy_id: string; error: string }[];
+    }>("/api/procurement/paid", { method: "POST", body: JSON.stringify({ items }) }),
   take: (lineIds: string[]) =>
     api<{ lines: ProcurementLine[] }>("/api/procurement/take", {
       method: "POST",
@@ -1395,9 +1506,29 @@ export const warehouseApi = {
 };
 
 export const fulfillmentApi = {
-  list: (after?: string) => api<{ requests: FulfillmentRequest[]; next_cursor: string | null }>(
+  list: (after?: string) => api<{ requests: FulfillmentRequest[]; next_cursor: string | null; places?: FulfillmentPlaces }>(
     `/api/issues${after ? `?after=${encodeURIComponent(after)}` : ""}`,
   ),
+  create: (
+    payload: { purpose: string; deadline: string; lines: FulfillmentDraftLine[] },
+    idempotencyKey: string,
+  ) => api<{ request: FulfillmentRequest }>("/api/issues", {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  complete: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  close: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/close`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  remove: (requestId: string) =>
+    api<{ message: string }>(`/api/issues/${requestId}`, { method: "DELETE" }),
   lots: () => api<{ lots: FulfillmentLot[] }>("/api/issues/lots"),
   printSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/print`),
   returnSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/return-sheet`),
@@ -1411,10 +1542,11 @@ export const fulfillmentApi = {
       method: "DELETE",
       body: JSON.stringify({ version }),
     }),
-  ready: (requestId: string, version: number, handoutLocation: string) =>
+  /** Either a rack address (the server glues the code, placeCode_) or a free-text place. */
+  ready: (requestId: string, version: number, place: FulfillmentPlace | string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/ready`, {
       method: "POST",
-      body: JSON.stringify({ version, handout_location: handoutLocation }),
+      body: JSON.stringify(typeof place === "string" ? { version, handout_location: place } : { version, place }),
     }),
   issue: (requestId: string, version: number) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/issue`, {
@@ -1599,16 +1731,26 @@ export const referencesApi = {
     method: "PUT",
     body: JSON.stringify(maps),
   }),
-  techOperations: (tab: TechOperationTab, query = "") => {
+  techOperations: (tab: TechOperationTab, query = "", limit?: number) => {
     const params = new URLSearchParams({ tab });
     if (query.trim()) params.set("q", query.trim());
+    if (limit) params.set("limit", String(limit));
     return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
+  resolveTerminal: (payload: { article: string; wires: string[]; folded?: boolean; gost_awg?: Record<string, number> }) =>
+    api<TerminalResolution>("/api/references/technology/resolve-terminal", { method: "POST", body: JSON.stringify(payload) }),
 };
+
+export interface TerminalResolution {
+  applicator: string;
+  crimp_height: string;
+  pull_force: string;
+  by_section: Array<{ section: string; crimp_height: string; pull_force: string; applicator: string; range_only: boolean; found: boolean }>;
+}
 
 export const techcardsApi = {
   list: () => api<{ items: ProjectTechcard[] }>("/api/techcards/projects"),
@@ -1618,9 +1760,19 @@ export const techcardsApi = {
   }>("/api/techcards/templates"),
   template: (templateId: string) =>
     api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`),
-  importGrapher: (filename: string, contentBase64: string) =>
+  saveTemplate: (templateId: string, record: OperationRecordEdit) =>
+    api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`, {
+      method: "PUT",
+      body: JSON.stringify(record),
+    }),
+  editOperation: (cardId: string, version: number, operationKey: string, operation: Record<string, unknown>) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/operations/${encodeURIComponent(operationKey)}`, {
+      method: "PUT",
+      body: JSON.stringify({ version, operation }),
+    }),
+  importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = []) =>
     api<GrapherImportResult>("/api/techcards/grapher/import", {
-      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components: [] }),
+      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components }),
     }),
   create: (payload: {
     project: string;
@@ -1649,10 +1801,21 @@ export const techcardsApi = {
     }),
   revisions: (cardId: string) =>
     api<{ items: TechcardRevision[] }>(`/api/techcards/projects/${cardId}/revisions`),
+  discardDraft: (cardId: string, version: number) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/etk`, {
+      method: "DELETE",
+      body: JSON.stringify({ version }),
+    }),
+  cutLengths: (wires: Array<{ id: string; art: string; name: string }>, calcOps: Array<{ code: string; comp: string; req?: string; l?: string }>) =>
+    api<{ lengths: Record<string, number> }>("/api/techcards/cut-lengths", {
+      method: "POST",
+      body: JSON.stringify({ wires, calc_ops: calcOps.map((op) => ({ code: op.code, comp: op.comp, req: op.req || "", l: op.l || "" })) }),
+    }),
 };
 
 export const operationsApi = {
   notifications: () => api<{ notifications: NotificationItem[]; unread: number }>("/api/notifications"),
+  unread: () => api<{ unread: number }>("/api/notifications/unread"),
   markRead: (ids: string[] = []) => api<{ unread: number }>("/api/notifications/read", {
     method: "POST",
     body: JSON.stringify({ ids }),
@@ -1663,4 +1826,167 @@ export const operationsApi = {
     return api<{ events: AuditItem[] }>(`/api/operations/audit${params.size ? `?${params}` : ""}`);
   },
   outbox: () => api<OutboxHealth>("/api/operations/outbox"),
+};
+
+/** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */
+export interface KitsetKbStage {
+  index: string;
+  status: string;
+  manual: boolean;
+  tc: boolean;
+  kit: boolean;
+  review: { value: string; text: string; who: string } | null;
+}
+
+export interface KitsetTile {
+  project: string;
+  customer: string;
+  calc_source: string;
+  updated_at: string;
+  updated_by: string;
+  assemblies: number;
+  lines: number;
+  kbs: string[];
+  status: string;
+  kb_stages: KitsetKbStage[];
+  blocker: string;
+}
+
+export interface KitsetLot {
+  lot_id: string | null;
+  warehouse: string;
+  grn: string;
+  package: string;
+}
+
+export interface KitsetComponent {
+  art: string;
+  type: string;
+  name: string;
+  link: string;
+  per: string;
+  scrap: string;
+  batch: string;
+  lot: KitsetLot | null;
+}
+
+export interface KitsetDocument {
+  id: string;
+  name: string;
+  size: number;
+  uploaded_at: string;
+  who: string;
+}
+
+export interface KitsetAssembly {
+  index: string;
+  name: string;
+  run: string;
+  item: string;
+  stage: KitsetKbStage | null;
+  techcard: { card_id: string; status: string; issued: boolean; stages: number; revision: number } | null;
+  kd: KitsetDocument[];
+  components: KitsetComponent[];
+}
+
+export interface KitsetCard {
+  project: string;
+  customer: string;
+  calc_source: string;
+  updated_at: string;
+  updated_by: string;
+  version: number;
+  status: string;
+  blocker: string;
+  stages: string[];
+  review_values: string[];
+  assemblies: KitsetAssembly[];
+}
+
+export interface KitsetLoadResult {
+  project: string;
+  assemblies: number;
+  lines: number;
+  erp_error: string;
+  ship_error: string;
+  ship_to_error: string;
+  deadline_error: string;
+}
+
+export interface KitsetSupplyLine {
+  art: string;
+  name: string;
+  kbs: string[];
+  need: string;
+  grn: string;
+  stage: string;
+  received: boolean;
+  rows: Array<{ where: string; status: string; source_id: string }>;
+}
+
+export interface KitsetStockLot {
+  lot_id: string;
+  warehouse: string;
+  grn: string;
+  package: string;
+  article: string;
+  name: string;
+  unit: string;
+  storage_location: string;
+  available: string;
+}
+
+export interface KitsetLineEdit {
+  index: string;
+  art: string;
+  per: string;
+  scrap: string;
+  name?: string;
+  link?: string;
+  lot?: KitsetLot | null;
+}
+
+export interface KitsetDeleteResult {
+  project: string;
+  deleted: number;
+  erp: Record<string, number>;
+  cards: { cards: number; revisions: number };
+  kd: number;
+  gp: { deleted: number; kept: number };
+}
+
+const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
+
+export const kitsetsApi = {
+  list: (sort = "upd") => api<{ items: KitsetTile[]; statuses: string[] }>(`/api/techcards/kitsets?sort=${encodeURIComponent(sort)}`),
+  get: (project: string) => api<KitsetCard>(kitsetPath(project)),
+  load: (payload: {
+    file_name: string;
+    content_b64: string;
+    number?: string;
+    deadline?: string | null;
+    ship?: { shipping_point: string; contact: string; phone: string } | null;
+  }) => api<{ res: KitsetLoadResult }>("/api/techcards/kitsets/load", { method: "POST", body: JSON.stringify(payload) }),
+  saveLines: (project: string, edits: KitsetLineEdit[]) =>
+    api<{ res: { updated: number } }>(`${kitsetPath(project)}/lines`, { method: "PUT", body: JSON.stringify({ edits }) }),
+  supply: (project: string) => api<{ lines: KitsetSupplyLine[] }>(`${kitsetPath(project)}/supply`),
+  bom: (project: string, index: string) =>
+    api<{ components: Array<{ id: string; type: string; name: string; art: string; kd: string; qty: number }> }>(
+      `${kitsetPath(project)}/bom/${encodeURIComponent(index)}`,
+    ),
+  lots: (query: string) => api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}`),
+  issue: (project: string, deadline: string) =>
+    api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; message: string }>(
+      `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
+    ),
+  remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
+  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string }) =>
+    api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
+  addDocument: (project: string, payload: { index: string; file_name: string; content_type: string; content_b64: string }) =>
+    api<{ res: KitsetDocument & { index: string } }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
+  documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
+  removeDocument: (project: string, id: string) =>
+    api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  openTechcard: (project: string, index: string) =>
+    api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
 };

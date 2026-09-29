@@ -9,6 +9,45 @@ import {
   type SupplierOrder,
 } from "./api";
 import { openPrintSheet } from "./print";
+import { DataTable, type DataColumn } from "./DataTable";
+import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
+
+// ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
+const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
+
+type ProcurementTab = "queues" | "sheet" | "suppliers";
+
+const availableColumns: DataColumn<ProcurementLine>[] = [
+  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>рев. {line.revision}</small></> },
+  { key: "name", title: "Позиция", value: (line) => line.calculated_name, render: (line) => <>{line.calculated_name}<small>{line.designation}</small></> },
+  { key: "project", title: "Проект", value: (line) => line.project_reference, render: (line) => <>{line.project_reference || "—"}<small>{line.delivery_point}</small></> },
+  { key: "planned", title: "Срок", value: (line) => line.planned_date, render: (line) => <>{line.planned_date}<small>{line.priority}</small></> },
+  { key: "priority", title: "Приоритет", value: (line) => line.priority, filter: true, hidden: true },
+  { key: "qty", title: "Кол-во", value: (line) => `${line.calculated_quantity} ${line.calculated_unit}` },
+];
+
+const inWorkColumns: DataColumn<ProcurementLine>[] = [
+  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>{line.project_reference || line.designation}</small></> },
+  { key: "name", title: "Позиция", value: (line) => line.calculated_name, render: (line) => <>{line.calculated_name}<small>{line.actual_quantity ?? line.calculated_quantity} {line.actual_unit ?? line.calculated_unit}</small></> },
+  { key: "buyer", title: "Закупщик", value: (line) => line.buyer },
+  { key: "status", title: "Статус", value: (line) => line.status, filter: true },
+  { key: "supplier", title: "Поставщик · заказ", value: (line) => line.supplier, render: (line) => <>{line.supplier || "—"}<small>{line.order_number || ""}</small></> },
+  { key: "eta", title: "Ожидается", value: (line) => line.expected_arrival },
+];
+
+const toPayColumns: DataColumn<ProcurementLine>[] = [
+  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id },
+  { key: "order", title: "№ заказа", value: (line) => line.order_number },
+  { key: "supplier", title: "Поставщик", value: (line) => line.supplier },
+  { key: "name", title: "Наименование", value: (line) => line.calculated_name },
+  { key: "sum", title: "Сумма", value: (line) => line.actual_sum, numeric: true },
+  { key: "invoice", title: "Счёт", value: (line) => line.invoice_url, render: (line) => line.invoice_url ? <a href={line.invoice_url} target="_blank" rel="noreferrer">счёт</a> : "—" },
+];
+
+/** `portalPurchaseToPay`: свои строки «В оплату» со счётом — кандидаты на «Оплачено → В пути». */
+function payable(line: ProcurementLine) {
+  return line.status === "В оплату" && Boolean(line.invoice_url) && !line.paid_at;
+}
 
 type FactsDraft = {
   supplier: string;
@@ -35,6 +74,23 @@ function draftFrom(line: ProcurementLine): FactsDraft {
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
 export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {}) {
+  const [tab, setTab] = useState<ProcurementTab>("queues");
+  return (
+    <>
+      <nav className="shipping-tabs" aria-label="Разделы закупки">
+        <button type="button" className={`secondary small${tab === "queues" ? " active" : ""}`} aria-pressed={tab === "queues"} onClick={() => setTab("queues")}>Очереди</button>
+        <button type="button" className={`secondary small${tab === "sheet" ? " active" : ""}`} aria-pressed={tab === "sheet"} onClick={() => setTab("sheet")}>Весь лист</button>
+        <button type="button" className={`secondary small${tab === "suppliers" ? " active" : ""}`} aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>По поставщикам</button>
+      </nav>
+      {tab === "queues" && <ProcurementQueues readOnly={readOnly} />}
+      {tab === "sheet" && <section className="page"><ProcurementSheetView /></section>}
+      {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}
+    </>
+  );
+}
+
+function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
+  const [units, setUnits] = useState<string[]>(DEFAULT_UNITS);
   const [available, setAvailable] = useState<ProcurementLine[]>([]);
   const [mine, setMine] = useState<ProcurementLine[]>([]);
   const [availableCursor, setAvailableCursor] = useState<string | null>(null);
@@ -98,7 +154,46 @@ export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {
 
   useEffect(() => {
     void reload();
+    if (!readOnly) procurementApi.meta().then((meta) => setUnits(meta.units)).catch(() => undefined);
   }, []);
+
+  /** `portalTakeInWork`: выбранные «Новый» строки — одним запросом. */
+  async function takeMany(lines: ProcurementLine[]) {
+    if (interactionLocked || !lines.length) return;
+    setBusyId("take-many");
+    setError("");
+    try {
+      const result = await procurementApi.take(lines.map((line) => line.id));
+      setNotice(`Взято в работу: ${result.lines.length}`);
+      await reload(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не удалось взять строки");
+      throw reason;
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  /** `portalMarkPaid`: выбранные строки со счётом → «В пути»; уже оплаченные и без счёта пропускаются. */
+  async function markPaidMany(lines: ProcurementLine[]) {
+    if (interactionLocked || !lines.length) return;
+    setBusyId("paid-many");
+    setError("");
+    try {
+      const result = await procurementApi.markPaidBatch(lines.map((line) => ({ line_id: line.id, version: line.version })));
+      const parts = [`Оплачено → В пути: ${result.done}`];
+      if (result.already) parts.push(`уже оплачено: ${result.already}`);
+      if (result.no_invoice.length) parts.push(`без счёта: ${result.no_invoice.join(", ")}`);
+      setNotice(parts.join("; "));
+      if (result.failed.length) setError(result.failed.map((item) => `${item.legacy_id}: ${item.error}`).join("; "));
+      await reload(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Оплата не проведена");
+      throw reason;
+    } finally {
+      setBusyId("");
+    }
+  }
 
   async function take(line: ProcurementLine) {
     if (interactionLocked) return;
@@ -197,24 +292,18 @@ export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {
 
       <section className="panel table-panel">
         <div className="panel-heading"><h2>Неразобранные</h2>{!readOnly && <span>Берите только то, что будете вести</span>}</div>
-        <div className="table-scroll">
-          <table>
-            <thead><tr><th>ID</th><th>Позиция</th><th>Проект</th><th>Срок</th><th>Кол-во</th>{!readOnly && <th />}</tr></thead>
-            <tbody>
-              {available.map((line) => (
-                <tr key={line.id}>
-                  <td><strong>{line.legacy_id}</strong><small>рев. {line.revision}</small></td>
-                  <td>{line.calculated_name}<small>{line.designation}</small></td>
-                  <td>{line.project_reference || "—"}<small>{line.delivery_point}</small></td>
-                  <td>{line.planned_date}<small>{line.priority}</small></td>
-                  <td>{line.calculated_quantity} {line.calculated_unit}</td>
-                  {!readOnly && <td><button className="secondary small" disabled={interactionLocked} onClick={() => take(line)}>{busyId === line.id ? "Берём…" : "Взять"}</button></td>}
-                </tr>
-              ))}
-              {!available.length && <tr><td className="empty" colSpan={readOnly ? 5 : 6}>Свободных позиций нет</td></tr>}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          label="Неразобранные"
+          rows={available}
+          columns={readOnly ? availableColumns : [...availableColumns, {
+            key: "take", title: "", value: () => "",
+            render: (line) => <button className="secondary small" disabled={interactionLocked} onClick={() => void take(line)}>{busyId === line.id ? "Берём…" : "Взять"}</button>,
+          }]}
+          rowKey={(line) => line.id}
+          storageKey="procurement-available"
+          emptyText="Свободных позиций нет"
+          bulkActions={readOnly ? [] : [{ label: "Взять в работу", run: takeMany, disabled: () => interactionLocked }]}
+        />
         {availableCursor && (
           <button className="secondary" disabled={interactionLocked} onClick={() => void loadMore("available", availableCursor)}>
             {loadingMore === "available" ? "Загружаем…" : "Ещё неразобранные"}
@@ -225,24 +314,14 @@ export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {
       {readOnly && (
         <section className="panel table-panel">
           <div className="panel-heading"><h2>В работе у закупщиков</h2><span>Только просмотр</span></div>
-          <div className="table-scroll">
-            <table>
-              <thead><tr><th>ID</th><th>Позиция</th><th>Закупщик</th><th>Статус</th><th>Поставщик · заказ</th><th>Ожидается</th></tr></thead>
-              <tbody>
-                {mine.map((line) => (
-                  <tr key={line.id}>
-                    <td><strong>{line.legacy_id}</strong><small>{line.project_reference || line.designation}</small></td>
-                    <td>{line.calculated_name}<small>{line.actual_quantity ?? line.calculated_quantity} {line.actual_unit ?? line.calculated_unit}</small></td>
-                    <td>{line.buyer || "—"}</td>
-                    <td>{line.status}</td>
-                    <td>{line.supplier || "—"}<small>{line.order_number || ""}</small></td>
-                    <td>{line.expected_arrival || "—"}</td>
-                  </tr>
-                ))}
-                {!mine.length && <tr><td className="empty" colSpan={6}>В работе ничего нет</td></tr>}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            label="В работе у закупщиков"
+            rows={mine}
+            columns={inWorkColumns}
+            rowKey={(line) => line.id}
+            storageKey="procurement-in-work"
+            emptyText="В работе ничего нет"
+          />
           {mineCursor && (
             <button className="secondary" disabled={interactionLocked} onClick={() => void loadMore("mine", mineCursor)}>
               {loadingMore === "mine" ? "Загружаем…" : "Ещё в работе"}
@@ -259,6 +338,18 @@ export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {
             {busyId === "supplier-requests" ? "Формируем…" : "Сформировать запросы поставщикам"}
           </button>
         </div>
+        {mine.some(payable) && (
+          <section className="panel table-panel">
+            <div className="panel-heading"><h2>К оплате</h2><span>Отметьте оплаченные счета — строки уйдут «В пути» в приёмку</span></div>
+            <DataTable
+              label="К оплате"
+              rows={mine.filter(payable)}
+              columns={toPayColumns}
+              rowKey={(line) => line.id}
+              bulkActions={[{ label: "Оплачено → В пути", run: markPaidMany, disabled: () => interactionLocked }]}
+            />
+          </section>
+        )}
         {orders.map((order) => (
           <article className="panel procurement-card" key={order.order_number}>
             <div className="procurement-title">
@@ -289,6 +380,7 @@ export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {
             onSave={save}
             onAdvance={advance}
             onOpenKp={setKpReference}
+            units={units}
           />
         ))}
         {!mine.length && <div className="panel empty">Пока ничего не взято в работу.</div>}
@@ -309,10 +401,12 @@ function ProcurementCard({
   onSave,
   onAdvance,
   onOpenKp,
+  units = DEFAULT_UNITS,
 }: {
   line: ProcurementLine;
   busy: boolean;
   disabled: boolean;
+  units?: string[];
   onOpenKp: (reference: string) => void;
   onSave: (line: ProcurementLine, draft: FactsDraft) => Promise<void>;
   onAdvance: (
@@ -345,7 +439,10 @@ function ProcurementCard({
         <label>Поставщик *<input value={draft.supplier} onChange={(e) => field("supplier", e.target.value)} required /></label>
         <label>Площадка<input value={draft.site_name} onChange={(e) => field("site_name", e.target.value)} /></label>
         <label>Фактическое количество *<input type="number" min="0.000001" step="any" value={draft.actual_quantity} onChange={(e) => field("actual_quantity", e.target.value)} required /></label>
-        <label>Единица *<input value={draft.actual_unit} onChange={(e) => field("actual_unit", e.target.value)} required /></label>
+        <label>Единица *<select value={draft.actual_unit} onChange={(e) => field("actual_unit", e.target.value)} required>
+          <option value="">—</option>
+          {(units.includes(draft.actual_unit) || !draft.actual_unit ? units : [draft.actual_unit, ...units]).map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+        </select></label>
         <label>Артикул<input value={draft.design_article} onChange={(e) => field("design_article", e.target.value)} /></label>
         <label>Уточнённое наименование<input value={draft.calculated_name} onChange={(e) => field("calculated_name", e.target.value)} /></label>
         <label className="wide">Ссылка<input type="url" value={draft.link} onChange={(e) => field("link", e.target.value)} placeholder="https://…" /></label>

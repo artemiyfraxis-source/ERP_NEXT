@@ -24,7 +24,6 @@ from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork as SqlAlche
 from app.modules.receiving.application import (
     PoisonReceivingMessage,
     dispatch_next_receiving_expected,
-    quarantine_disposal_escalations,
     quarantine_overdue_waiting,
 )
 from app.modules.receiving.infrastructure import SqlAlchemyReceivingUnitOfWork
@@ -36,8 +35,15 @@ from app.modules.warehouse.application import (
 from app.modules.warehouse.infrastructure import SqlAlchemyRackLayoutStore, SqlAlchemyWarehouseUnitOfWork
 from app.modules.operations.application import PoisonNotificationMessage, dispatch_next_notification
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
+from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.shared.clock import moscow_now
+from app.workflows.supplier_directory import ReferencesSupplierDirectory
 from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
+from app.workflows.owner_alerts import alert_on_dead_letters, daily_overdue_digest, quarantine_escalations
+
+# alertOnErrors_ ran once per owner tick (a minute); the worker loop turns every couple of seconds.
+ERROR_ALERT_INTERVAL_SECONDS = 60.0
+_last_error_alert = 0.0
 
 
 def dispatch_available(
@@ -48,12 +54,14 @@ def dispatch_available(
     if limit < 1:
         raise ValueError("limit must be positive")
     dispatched = 0
+    suppliers = ReferencesSupplierDirectory(lambda: SqlAlchemyReferencesUnitOfWork(sessions))
     while dispatched < limit:
         progressed = False
         try:
             line = dispatch_next_procurement_requested(
                 moscow_now(),
                 SqlAlchemyProcurementUnitOfWork(sessions),
+                suppliers,
             )
         except PoisonOutboxMessage as error:
             logging.warning("Quarantined invalid outbox message %s", error.message_id)
@@ -160,16 +168,31 @@ def run_timers(sessions: sessionmaker[Session]) -> int:
         done += len(quarantine_overdue_waiting(moscow_now(), SqlAlchemyReceivingUnitOfWork(sessions)))
     except (IntegrityError, StaleDataError):
         logging.warning("Receiving line changed during the quarantine timer; retrying next tick")
-    # OwnerTick.gs quarantineEscalations_: «Карантин» 90+ дней → решение об утилизации.
-    try:
-        done += quarantine_disposal_escalations(moscow_now(), SqlAlchemyReceivingUnitOfWork(sessions))
-    except IntegrityError:
-        logging.warning("Quarantine disposal notice raced; retrying next tick")
     # OwnerTick.gs notifyInitiators_: status changes of procurement lines → their initiators.
     try:
         done += notify_initiators(moscow_now(), SqlAlchemyProcurementUnitOfWork(sessions))
     except (IntegrityError, StaleDataError):
         logging.warning("Procurement line changed during the initiator notifications; retrying next tick")
+    done += run_owner_jobs(sessions)
+    return done
+
+
+def run_owner_jobs(sessions: sessionmaker[Session]) -> int:
+    """OP-4 daily digest, disposal escalation (day-gated) and OP-5 failure alert (once a minute).
+
+    A failing job is logged and never stops the others (runTickStepsLocked_ swallowed step errors).
+    """
+    global _last_error_alert
+    done = 0
+    jobs = [("daily digest", daily_overdue_digest), ("quarantine escalation", quarantine_escalations)]
+    if time.monotonic() - _last_error_alert >= ERROR_ALERT_INTERVAL_SECONDS:
+        _last_error_alert = time.monotonic()
+        jobs.append(("failure alert", alert_on_dead_letters))
+    for name, job in jobs:
+        try:
+            done += int(job(moscow_now(), sessions))
+        except Exception:  # noqa: BLE001 — one broken job must not stop the worker
+            logging.exception("Owner job %s failed; retrying next tick", name)
     return done
 
 

@@ -69,7 +69,7 @@ def test_imports_lists_and_reads_lossless_operation_cards(operation_library_api)
     detail = operation_library_api.get("/api/techcards/templates/cut-wire")
 
     assert imported.status_code == 200
-    assert imported.json() == {"templates": 1, "source_commit": SOURCE_COMMIT}
+    assert imported.json() == {"templates": 1, "source_commit": SOURCE_COMMIT, "kept_edited": []}
     assert listed.json()["metadata"]["template_count"] == 1
     assert listed.json()["items"][0]["code"] == "CUT_WIRE"
     assert detail.json()["document"]["steps"][0]["text"] == "Выполнить операцию"
@@ -259,3 +259,143 @@ def test_auto_build_uses_workshop_gost_awg_map_from_references(operation_library
     assert maps.status_code == 200
     assert built.status_code == 200
     assert built.json()["document"]["operations"][0]["fields"]["crimpHeight"] == "0,84 - 0,89"
+
+
+def _sided(source_id: str, code: str, side: str) -> dict:
+    template = _template(source_id, code)
+    template["title"] = f"{code} | Операция ({side})"
+    template["rows"][0] = [template["title"]]
+    return template
+
+
+EDIT = {
+    "name": "Операция поправленная",
+    "safety": "Работать в очках",
+    "defects": "ТИПОВЫЕ ДЕФЕКТЫ: заусенец",
+    "revision": "‹рев.›",
+    "steps": [
+        {"kind": "Операция", "text": "Новый шаг", "tolerance": ""},
+        {"kind": "Контроль", "text": "  ", "tolerance": "±1"},
+        {"kind": "Контроль", "text": "Проверить", "tolerance": "±1 мм"},
+    ],
+    "tooling": [
+        {"section": "Инструмент", "name": "Клещи", "inventory_number": "ОБ.010"},
+        {"section": "Оборудование", "name": "Автомат", "program": "5"},
+        {"section": "Инструмент", "name": "Нож"},
+        {"section": "Расходники", "name": ""},
+    ],
+}
+
+
+def test_engineer_edits_operation_record_as_supplymap_normalizes_it(operation_library_api):
+    """SUPPLYMAP tcRecordNormalize_ + tcRecordSave_: empty rows dropped, steps numbered through, tooling inside its
+    section, empty tolerance «-», safety with the form heading, revision placeholder dropped, who/when stamped;
+    one record per code — both (A)/(B) blocks carry the edit."""
+    operation_library_api.put("/api/techcards/templates/supplymap-library", json={
+        "sourceCommit": SOURCE_COMMIT,
+        "templates": [_sided("sdr-a", "SDR_X", "A"), _sided("sdr-b", "SDR_X", "B"), _template("other", "OP_OTHER")],
+    })
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=UUID("30000000-0000-0000-0000-000000000010"), name="Инженер", department="Производство"),
+        email="engineer@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "edit"},
+    )
+
+    saved = operation_library_api.put("/api/techcards/templates/sdr-a", json=EDIT)
+    other_side = operation_library_api.get("/api/techcards/templates/sdr-b").json()
+    untouched = operation_library_api.get("/api/techcards/templates/other").json()
+
+    assert saved.status_code == 200, saved.text
+    document = saved.json()["document"]
+    assert saved.json()["name"] == "Операция поправленная"
+    assert saved.json()["changed_by"] == "Инженер"
+    assert saved.json()["changed_at"].startswith("2026-09-23T12:00")
+    assert document["safety"] == "ВАЖНО! ТРЕБОВАНИЕ БЕЗОПАСНОСТИ:\nРаботать в очках"
+    assert document["revision"] == ""
+    assert [(s["number"], s["kind"], s["text"], s["tolerance"]) for s in document["steps"]] == [
+        ("1", "Операция", "Новый шаг", "-"), ("2", "Контроль", "Проверить", "±1 мм"),
+    ]
+    assert [(t["section"], t["number"], t["name"]) for t in document["tooling"]] == [
+        ("Инструмент", "1", "Клещи"), ("Оборудование", "1", "Автомат"), ("Инструмент", "2", "Нож"),
+    ]
+    assert other_side["document"]["steps"] == document["steps"]
+    assert other_side["changed_by"] == "Инженер"
+    assert untouched["changed_at"] is None
+    assert untouched["document"]["steps"][0]["text"] == "Выполнить операцию"
+
+
+def test_operation_record_edit_rejects_empty_record_and_unknown_card(operation_library_api):
+    operation_library_api.put("/api/techcards/templates/supplymap-library", json={
+        "sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")],
+    })
+
+    no_steps = operation_library_api.put("/api/techcards/templates/one", json={**EDIT, "steps": []})
+    bad_kind = operation_library_api.put("/api/techcards/templates/one", json={
+        **EDIT, "steps": [{"kind": "Проверка", "text": "x"}],
+    })
+    missing = operation_library_api.put("/api/techcards/templates/nope", json=EDIT)
+
+    assert no_steps.status_code == 422
+    assert no_steps.json()["detail"] == "В операции должен остаться хотя бы один шаг"
+    assert bad_kind.status_code == 422
+    assert missing.status_code == 404
+
+
+def test_operation_record_edit_needs_techcards_edit(operation_library_api):
+    operation_library_api.put("/api/techcards/templates/supplymap-library", json={
+        "sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")],
+    })
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=UUID("30000000-0000-0000-0000-000000000011"), name="Мастер", department="Производство"),
+        email="master@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "view"},
+    )
+
+    assert operation_library_api.put("/api/techcards/templates/one", json=EDIT).status_code == 403
+
+
+def test_library_replace_keeps_edited_records_and_builds_with_them(operation_library_api):
+    """SUPPLYMAP tcRecordsSync / tcRecordResyncFromTemplate never overwrite a record edited in the portal: the next
+    snapshot load keeps the edit over the fresh template and reports the code; the ETK is built from the edit."""
+    library = {"sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE"), _template("two", "OP_TWO")]}
+    operation_library_api.put("/api/techcards/templates/supplymap-library", json=library)
+    operation_library_api.put("/api/techcards/templates/one", json=EDIT)
+
+    reloaded = operation_library_api.put("/api/techcards/templates/supplymap-library", json=library)
+    detail = operation_library_api.get("/api/techcards/templates/one").json()
+    created = operation_library_api.post(
+        "/api/techcards/projects", json={"project": "P-300", "item_index": "КБ1", "product_name": "Жгут"},
+    ).json()
+    built = operation_library_api.post(f"/api/techcards/projects/{created['id']}/build", json={
+        "version": created["version"],
+        "config": {"assemblyName": "Жгут", "partQty": 1, "ops": [{"type": "heatTut", "templateId": "one"}]},
+    })
+
+    assert reloaded.json()["kept_edited"] == ["OP_ONE"]
+    assert detail["document"]["steps"][0]["text"] == "Новый шаг"
+    assert detail["changed_by"] == "Администратор"
+    assert built.json()["document"]["operations"][0]["card"]["steps"][0]["text"] == "Новый шаг"
+
+
+def test_template_list_carries_supplymap_catalog_meta_and_norms(operation_library_api):
+    """SUPPLYMAP openTcRecords/renderCard: first step, control count, step text for search, БД.ОП time norms
+    (or «нет норм»), and the edit stamp."""
+    operation_library_api.put("/api/techcards/templates/supplymap-library", json={
+        "sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE"), _template("two", "OP_TWO")],
+    })
+    before = operation_library_api.get("/api/techcards/templates").json()["items"]
+    operation_library_api.put("/api/references/tech-operations/snapshot", json={
+        "schema_version": 14,
+        "records": [{
+            "tab": "op", "display_text": "Операция | OP_ONE", "source_sheet": "БД.ОП",
+            "fields": {"opNumber": "OP_ONE", "tOp": "3,50", "tPrep": "180"},
+        }],
+    })
+    listed = {item["code"]: item for item in operation_library_api.get("/api/techcards/templates").json()["items"]}
+    detail = operation_library_api.get("/api/techcards/templates/one").json()
+
+    assert before[0]["norms_known"] is False
+    assert listed["OP_ONE"]["first_step"] == "Выполнить операцию"
+    assert listed["OP_ONE"]["step_text"] == "Выполнить операцию"
+    assert listed["OP_ONE"]["controls"] == 0
+    assert listed["OP_ONE"]["norms"] == {"operation_seconds": "3,50", "setup_seconds": "180"}
+    assert listed["OP_TWO"]["norms"] is None and listed["OP_TWO"]["norms_known"] is True
+    assert detail["norms"] == {"operation_seconds": "3,50", "setup_seconds": "180"}

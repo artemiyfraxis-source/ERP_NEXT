@@ -88,6 +88,8 @@ ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
     },
     "engineer": {
         **_EVERYONE,
+        # «Проекты» (erptechmap): технолог заводит набор из расчёта и собирает из него техкарты (решено агентом — проверить).
+        "projects": AccessMode.EDIT,
         "fulfillment": AccessMode.EDIT,
         "handout": AccessMode.VIEW,
         "references": AccessMode.VIEW,

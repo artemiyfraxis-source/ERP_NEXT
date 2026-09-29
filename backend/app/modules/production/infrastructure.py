@@ -50,8 +50,8 @@ from .traceability import (
     WorkInput,
     WorkSession,
     WorkStatus,
-    format_box_number,
     issue_box_number,
+    issue_defect_number,
 )
 
 
@@ -945,7 +945,7 @@ class SqlAlchemyDefectRepository:
             self.session.add(row)
             self.session.flush()
         row.value += 1
-        return format_box_number(row.value)
+        return issue_defect_number(row.value)
 
     def save(self, defect: DefectRecord) -> None:
         row = self.session.get(ProductionDefectRow, defect.id)

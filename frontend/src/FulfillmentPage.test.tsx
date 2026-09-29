@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { FulfillmentPage } from "./FulfillmentPage";
+import { FulfillmentPage, lotSimilarity } from "./FulfillmentPage";
 import type { FulfillmentRequest, Principal } from "./api";
 
 const principal: Principal = {
@@ -21,7 +21,7 @@ const request: FulfillmentRequest = {
   created_at: "2026-09-22T10:00:00+03:00",
   requester: "Инженер",
   purpose: "FRX.001",
-  deadline: null,
+  deadline: "2026-10-01",
   status: "Новая",
   handout_location: null,
   return_location: null,
@@ -43,6 +43,14 @@ const request: FulfillmentRequest = {
   }],
 };
 
+const boundLine = {
+  ...request.lines[0],
+  reserved: "4",
+  lot: { id: "40000000-0000-0000-0000-000000000001", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", storage_location: "1F4" },
+};
+
+const places = { racks: 3, shelves: 2, per_rack: { "2": 4 }, slots: "ABCDEFGHIJKLMNOPQRSTUVWXYZ" };
+
 function json(body: unknown) {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -50,34 +58,22 @@ function json(body: unknown) {
   });
 }
 
+async function expand(number: string) {
+  fireEvent.click((await screen.findAllByText(number))[0]);
+}
+
 afterEach(() => vi.restoreAllMocks());
 
-it("binds the lot selected by the warehouse worker with the current request version", async () => {
+it("binds a lot picked from the searchable list, the similar lot on top", async () => {
   let bindPayload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/issues") return json({ requests: [request], next_cursor: null });
     if (path === "/api/issues/lots") return json({ lots: [
-      {
-        id: "40000000-0000-0000-0000-000000000001",
-        warehouse: "ЦАР",
-        grn: "FRX.26.0000001",
-        package: "",
-        name: "Разъём",
-        unit: "шт",
-        storage_location: "1F4",
-        available: "10",
-      },
-      {
-        id: "40000000-0000-0000-0000-000000000002",
-        warehouse: "ЦАР",
-        grn: "FRX.26.0000002",
-        package: "",
-        name: "Разъём",
-        unit: "шт",
-        storage_location: "",
-        available: "7",
-      },
+      { id: "40000000-0000-0000-0000-000000000003", warehouse: "ЖУК", grn: "FRX.26.0000003", package: "", article: "", name: "Болт", unit: "шт", storage_location: "2A1", available: "9" },
+      { id: "40000000-0000-0000-0000-000000000001", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", article: "CON-001", name: "Разъём", unit: "шт", storage_location: "1F4", available: "10" },
+      { id: "40000000-0000-0000-0000-000000000002", warehouse: "ЦАР", grn: "FRX.26.0000002", package: "", article: "", name: "Разъём угловой", unit: "шт", storage_location: "", available: "3" },
+      { id: "40000000-0000-0000-0000-000000000004", warehouse: "ЦАР", grn: "FRX.26.0000004", package: "", article: "", name: "Разъём", unit: "м", storage_location: "", available: "3" },
     ] });
     if (path.endsWith("/bind") && init?.method === "POST") {
       bindPayload = JSON.parse(String(init.body));
@@ -87,16 +83,26 @@ it("binds the lot selected by the warehouse worker with the current request vers
   });
 
   render(<FulfillmentPage principal={principal} />);
+  await expand("FRX-ISS-26-0001");
+  fireEvent.click(await screen.findByRole("button", { name: "Выбрать ГРН" }));
 
-  const select = await screen.findByLabelText("Партия для Разъём");
-  expect(screen.getByRole("option", { name: /FRX\.26\.0000002 .* ЦАР \/ без места/ })).toBeInTheDocument();
-  fireEvent.change(select, { target: { value: "40000000-0000-0000-0000-000000000002" } });
-  fireEvent.click(screen.getByRole("button", { name: "Привязать" }));
+  const picks = screen.getAllByRole("button", { name: /^Выбрать FRX/ }).map((button) => button.getAttribute("aria-label"));
+  expect(picks).toEqual(["Выбрать FRX.26.0000001", "Выбрать FRX.26.0000002", "Выбрать FRX.26.0000003"]);
+  expect(screen.getByText("меньше нужного")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Поиск партии для Разъём"), { target: { value: "угловой" } });
+  expect(screen.getAllByRole("button", { name: /^Выбрать FRX/ })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Выбрать FRX.26.0000002" }));
 
   await waitFor(() => expect(bindPayload).toEqual({
     version: 3,
     lot_id: "40000000-0000-0000-0000-000000000002",
   }));
+});
+
+it("ranks the same article above a name match", () => {
+  const line = { article: "CON-001", name: "Разъём" };
+  expect(lotSimilarity(line, { article: "CON-001", name: "Вилка" })).toBeGreaterThan(lotSimilarity(line, { article: "", name: "Разъём" }));
+  expect(lotSimilarity(line, { article: "", name: "Болт" })).toBe(0);
 });
 
 it("does not load lots or show editing actions to a view-only production role", async () => {
@@ -112,10 +118,13 @@ it("does not load lots or show editing actions to a view-only production role", 
     permissions: { fulfillment: "view" },
   }} />);
 
+  await expand("FRX-ISS-26-0001");
   expect(await screen.findByText("Ждём поставки")).toBeInTheDocument();
   expect(paths).toEqual(["/api/issues"]);
-  expect(screen.queryByRole("button", { name: "Привязать" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Выбрать ГРН" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Отменить заявку" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ Заявка" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "🗑 Удалить заявку" })).not.toBeInTheDocument();
 });
 
 it("prints the issue sheet and, once something is issued, offers the return sheet too", async () => {
@@ -134,6 +143,7 @@ it("prints the issue sheet and, once something is issued, offers the return shee
   });
 
   render(<FulfillmentPage principal={principal} />);
+  await expand("FRX-ISS-26-0001");
   expect(await screen.findByRole("button", { name: "Печать заявки" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Печать листа возврата" })).not.toBeInTheDocument();
 
@@ -155,13 +165,7 @@ it("records good return and both defect quantities for every issued line", async
       ...request.lines[0],
       issued: "4",
       consumed: "4",
-      lot: {
-        id: "40000000-0000-0000-0000-000000000001",
-        warehouse: "ЦАР",
-        grn: "FRX.26.0000001",
-        package: "",
-        storage_location: "1F4",
-      },
+      lot: boundLine.lot,
     }],
   };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -176,6 +180,7 @@ it("records good return and both defect quantities for every issued line", async
   });
 
   render(<FulfillmentPage principal={principal} />);
+  await expand("FRX-ISS-26-0001");
   expect(await screen.findByRole("button", { name: "Печать листа возврата" })).toBeInTheDocument();
   fireEvent.change(await screen.findByLabelText("Годное Разъём"), { target: { value: "2" } });
   fireEvent.change(screen.getByLabelText("Брак возвращён Разъём"), { target: { value: "1" } });
@@ -193,4 +198,161 @@ it("records good return and both defect quantities for every issued line", async
       storage_location: "2A1",
     }],
   }));
+});
+
+it("creates a manual request with a deadline and one idempotency key per form", async () => {
+  const posts: Array<{ body: unknown; key: string | null }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/issues" && init?.method === "POST") {
+      posts.push({ body: JSON.parse(String(init.body)), key: new Headers(init.headers).get("Idempotency-Key") });
+      return json({ request });
+    }
+    if (path === "/api/issues") return json({ requests: [], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Заявка" }));
+  fireEvent.change(screen.getByLabelText("Назначение"), { target: { value: "48К.13" } });
+  fireEvent.change(screen.getByLabelText("Наименование 1"), { target: { value: "Разъём" } });
+  fireEvent.change(screen.getByLabelText("Потребность 1"), { target: { value: "4" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ строка" }));
+  fireEvent.change(screen.getByLabelText("Наименование 2"), { target: { value: "Лишнее" } });
+  fireEvent.click(screen.getByRole("button", { name: "Удалить строку 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
+  expect(await screen.findByText("Укажи дедлайн.")).toBeInTheDocument();
+  expect(posts).toHaveLength(0);
+
+  fireEvent.change(screen.getByLabelText("Дедлайн"), { target: { value: "2026-10-05" } });
+  fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
+
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toEqual({
+    purpose: "48К.13",
+    deadline: "2026-10-05",
+    lines: [{ article: "", name: "Разъём", unit: "шт", requirement: "4" }],
+  });
+  expect(posts[0].key).toMatch(/[0-9a-f-]{36}/);
+});
+
+it("searches by number, purpose, requester and status and counts every stage in its chip", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [
+      request,
+      { ...request, id: "r2", number: "FRX-ISS-26-0002", purpose: "708К.4 · КБ1 · Жгут", requester: "Петров", status: "Недоукомплектован" },
+      { ...request, id: "r3", number: "FRX-ISS-26-0003", status: "Готов к выдаче" },
+    ], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  expect(await screen.findByRole("button", { name: "Новая · 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Недоукомплектован · 1" })).toBeInTheDocument();
+  // «Готов к выдаче» is done for the picker: hidden until ticked (ISS_MODES_.pick.hidden).
+  expect(screen.queryByText("FRX-ISS-26-0003")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("показать «Готов к выдаче»"));
+  expect(await screen.findByText("FRX-ISS-26-0003")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Поиск: Запросы на комплектацию"), { target: { value: "петров КБ1" } });
+  expect(screen.getByText("FRX-ISS-26-0002")).toBeInTheDocument();
+  expect(screen.queryByText("FRX-ISS-26-0001")).not.toBeInTheDocument();
+});
+
+it("opens a project with every request of it and a whole-order view", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [
+      { ...request, id: "k1", number: "REQ.26.0000001", purpose: "728К.2 · КБ1 · Жгут", project: "728К.2", status: "Недоукомплектован", lines: [boundLine] },
+      { ...request, id: "k2", number: "REQ.26.0000002", purpose: "728К.2 · КБ2 · Жгут", project: "728К.2" },
+      { ...request, id: "k3", number: "REQ.26.0000003", purpose: "Ручная", project: "" },
+    ], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click((await screen.findAllByRole("button", { name: "728К.2" }))[0]);
+
+  const tabs = screen.getByRole("tablist", { name: "Заявки проекта" });
+  expect(within(tabs).getByRole("tab", { name: "КБ1 ✓" })).toBeInTheDocument();
+  expect(within(tabs).getByRole("tab", { name: "КБ2 · ждут 1" })).toBeInTheDocument();
+  expect(screen.getByText(/набрано 0 из 1 поз\. по заказу/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "КБ2 0 / 4" }));
+  expect(await screen.findByText("REQ.26.0000002")).toBeInTheDocument();
+  expect(screen.queryByText("REQ.26.0000003")).not.toBeInTheDocument();
+});
+
+it("marks the kit complete once every line is closed and sends it to handout with a rack address", async () => {
+  const calls: Array<{ path: string; body: unknown }> = [];
+  let status = "Недоукомплектован";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") {
+      calls.push({ path, body: JSON.parse(String(init.body)) });
+      status = path.endsWith("/complete") ? "Укомплектован" : "Готов к выдаче";
+      return json({ request });
+    }
+    if (path === "/api/issues") return json({ requests: [{ ...request, status, lines: [boundLine], at_work: "2026-09-22T11:00:00" }], next_cursor: null, places });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={{ ...principal, roles: ["engineer"], permissions: { fulfillment: "edit" } }} />);
+  await expand("FRX-ISS-26-0001");
+  expect(await screen.findByText("Взята в работу")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "✅ Укомплектован" }));
+  await waitFor(() => expect(calls[0]).toEqual({ path: `/api/issues/${request.id}/complete`, body: { version: 3 } }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "📤 Отправить на выдачу" }));
+  fireEvent.change(screen.getByLabelText("Стеллаж"), { target: { value: "2" } });
+  expect(within(screen.getByLabelText("Полка")).getAllByRole("option")).toHaveLength(5);
+  fireEvent.change(screen.getByLabelText("Полка"), { target: { value: "C" } });
+  fireEvent.change(screen.getByLabelText("№ на полке"), { target: { value: "7" } });
+  expect(screen.getByText("2C7")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+
+  await waitFor(() => expect(calls[1]).toEqual({
+    path: `/api/issues/${request.id}/ready`,
+    body: { version: 3, place: { rack: "2", shelf: "C", num: "7", slot: "" } },
+  }));
+});
+
+it("closes an issued request without return on the handout screen", async () => {
+  let closed = "";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") { closed = path; return json({ request }); }
+    if (path === "/api/issues") return json({ requests: [{ ...request, status: "КБ Выдана", lines: [{ ...boundLine, reserved: "0", issued: "4" }] }], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  await expand("FRX-ISS-26-0001");
+  fireEvent.click(await screen.findByRole("button", { name: "Готово" }));
+
+  await waitFor(() => expect(closed).toBe(`/api/issues/${request.id}/close`));
+});
+
+it("lets only the administrator delete a request", async () => {
+  let deleted = "";
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "DELETE") { deleted = path; return json({ message: "Заявка удалена: позиций 1." }); }
+    if (path === "/api/issues") return json({ requests: [request], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={{ ...principal, roles: ["admin"] }} mode="pick" />);
+  await expand("FRX-ISS-26-0001");
+  fireEvent.click(await screen.findByRole("button", { name: "🗑 Удалить заявку" }));
+
+  await waitFor(() => expect(deleted).toBe(`/api/issues/${request.id}`));
+  expect(await screen.findByText("Заявка удалена: позиций 1.")).toBeInTheDocument();
 });

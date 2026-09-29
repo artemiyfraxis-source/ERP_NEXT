@@ -64,6 +64,10 @@ myrequests_principal = require_section(
     detail="Раздел «Мои заявки» вам не открыт.",
 )
 techcards_view_principal = require_section("techcards", "view")
+# «Проекты» — карточки наборов (SUPPLYMAP erptechmap): просмотр читает, запись (загрузка, правка, удаление,
+# отправка на комплектацию, КД) — только с правом правки раздела (portalSectionEditGuard_).
+projects_view_principal = require_section("projects", "view", detail="Раздел «Проекты» вам не открыт.")
+projects_edit_principal = require_section("projects", "edit", detail="Раздел «Проекты» открыт только на просмотр.")
 techcards_edit_principal = require_section(
     "techcards",
     "edit",
@@ -132,6 +136,13 @@ fulfillment_edit_principal = require_section(
     "fulfillment",
     "edit",
     roles=frozenset({"engineer", "receiver", "admin"}),
+)
+# FF-5: SUPPLYMAP portalIssueDelete — section `issues` on edit + portalRealAdmin_; ERP has no admin mode, so the role.
+fulfillment_admin_principal = require_section(
+    "fulfillment",
+    "edit",
+    roles=frozenset({"admin"}),
+    detail="Удалять заявки может только администратор.",
 )
 fulfillment_handout_principal = require_section(
     "handout",

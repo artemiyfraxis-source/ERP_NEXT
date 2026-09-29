@@ -1,0 +1,528 @@
+"""«Проекты» — карточки наборов по проектам (SUPPLYMAP erptechmap: portalKitset*, portalKd*, portalKitMark,
+portalIssueFromKitset). Composed like the production plan API: this router reads other modules' units of work
+through app.state and hands cross-module steps to `app.workflows.project_kitset`."""
+
+from __future__ import annotations
+
+import base64
+import binascii
+from collections.abc import Callable
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Annotated, Any
+from urllib.parse import quote
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
+
+from app.modules.fulfillment.domain import FulfillmentValidationError
+from app.modules.production.domain import ProductionValidationError
+from app.modules.production.plan import KIT_STAGES, TC_REVIEW_VALUES
+from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
+from app.shared.clock import moscow_now
+from app.shared.http_auth import Principal, projects_edit_principal, projects_view_principal
+from app.workflows import project_kitset as flow
+
+from .application import CreateProjectTechcardCommand, create_project_techcard
+from .kitset_calc import parse_calc
+from .kitsets import (
+    Kitset,
+    KitsetNotFound,
+    KitsetValidationError,
+    item_id,
+    sort_kitsets,
+    supply_lines,
+)
+from .project_cards import TechcardValidationError
+
+
+router = APIRouter(prefix="/api/techcards/kitsets", tags=["Проекты"])
+
+
+def _factory(request: Request, name: str, *, required: bool = False):
+    factory = getattr(request.app.state, name, None)
+    if callable(factory):
+        return factory
+    if required:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    return None
+
+
+def techcards_factory(request: Request):
+    return _factory(request, "techcards_uow_factory", required=True)
+
+
+def production_factory(request: Request):
+    return _factory(request, "production_uow_factory")
+
+
+def shipping_factory(request: Request):
+    return _factory(request, "shipping_uow_factory")
+
+
+def fulfillment_factory(request: Request):
+    return _factory(request, "fulfillment_uow_factory")
+
+
+def requests_factory(request: Request):
+    return _factory(request, "uow_factory")
+
+
+def procurement_factory(request: Request):
+    return _factory(request, "procurement_uow_factory")
+
+
+def _read(factory, reader, default=()):
+    if factory is None:
+        return default
+    with factory() as uow:
+        return reader(uow)
+
+
+def _run(operation):
+    try:
+        return operation()
+    except KitsetNotFound as error:
+        # «Не найдена» — не сбой: плитка висела на открытом экране после сноса. gone → клиент вернётся к списку.
+        raise HTTPException(status_code=404, detail={"message": str(error), "gone": True}) from error
+    except (KitsetValidationError, TechcardValidationError, ProductionValidationError, FulfillmentValidationError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (IntegrityError, StaleDataError) as error:
+        raise HTTPException(status_code=409, detail="Карточка проекта изменена конкурентно — обновите") from error
+
+
+def _number(value: Decimal) -> str:
+    return flow.kit_number_payload(value)
+
+
+def _facts(request: Request) -> flow.KitsetFacts:
+    techcards = techcards_factory(request)
+    production = production_factory(request)
+
+    def production_read(uow):
+        return (
+            tuple(uow.production.list(limit=10_000)),
+            tuple(uow.plan_events.list()),
+            tuple(uow.plan_projects.list()),
+        )
+
+    tasks, events, projects = _read(production, production_read, ((), (), ()))
+    return flow.KitsetFacts(
+        cards=_read(techcards, lambda uow: tuple(uow.techcards.list())),
+        tasks=tasks,
+        fulfillment=_read(fulfillment_factory(request), lambda uow: tuple(uow.fulfillment.list(limit=10_000))),
+        goods=_read(shipping_factory(request), lambda uow: tuple(uow.goods.list(limit=10_000))),
+        events=events,
+        projects=projects,
+    )
+
+
+def _kb_stage(stage) -> dict[str, Any]:
+    return {
+        "index": stage.item_index, "status": stage.status, "manual": stage.manual,
+        "tc": stage.tc, "kit": stage.kit,
+        "review": None if stage.review is None else {
+            "value": stage.review.value, "text": stage.review.text, "who": stage.review.who,
+        },
+    }
+
+
+@router.get("")
+def kitsets(
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+    sort: Annotated[str, Query(max_length=16)] = "upd",
+) -> dict:
+    """`portalKitsetList`: one tile per project with the computed status, КБ stages and the active blocker."""
+    with techcards_factory(request)() as uow:
+        items = list(uow.kitsets.list())
+    stages = flow.kitset_stages(items, _facts(request))
+    statuses = flow.kitset_statuses()
+    rows = []
+    for kitset in items:
+        stage, blocker = stages[kitset.project]
+        rows.append({
+            "project": kitset.project, "customer": kitset.customer, "calc_source": kitset.calc_source,
+            "updated_at": kitset.updated_at, "updated_by": kitset.updated_by,
+            "assemblies": len(kitset.assemblies), "lines": kitset.lines,
+            "kbs": [assembly.index for assembly in kitset.assemblies],
+            "status": stage.status, "kb_stages": [_kb_stage(item) for item in stage.kits], "blocker": blocker,
+        })
+    rows = sort_kitsets(rows, sort, statuses)
+    for row in rows:
+        row["updated_at"] = row["updated_at"].isoformat()
+    return {"items": rows, "statuses": statuses}
+
+
+class ShipPayload(BaseModel):
+    shipping_point: str = Field(default="", max_length=2000)
+    contact: str = Field(default="", max_length=255)
+    phone: str = Field(default="", max_length=128)
+
+
+class LoadPayload(BaseModel):
+    file_name: str = Field(min_length=1, max_length=512)
+    content_b64: str = Field(min_length=1)
+    number: str = Field(default="", max_length=255)
+    deadline: date | None = None
+    ship: ShipPayload | None = None
+
+
+def _decode(value: str) -> bytes:
+    try:
+        return base64.b64decode(value.split(",", 1)[-1], validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(status_code=422, detail="Файл передан не в base64") from error
+
+
+@router.post("/load")
+def load(
+    payload: LoadPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """`portalKitsetLoad`: create a project from the calculation, or refresh it («Обновить из расчёта»)."""
+    content = _decode(payload.content_b64)
+    result = _run(lambda: flow.load_kitset(flow.LoadKitsetCommand(
+        data=parse_calc(content, payload.file_name),
+        number=payload.number, deadline=payload.deadline,
+        ship=payload.ship.model_dump() if payload.ship else {},
+        actor=principal.actor, now=now,
+    ), techcards_factory(request), production_factory(request), shipping_factory(request)))
+    return {"res": {
+        "project": result.project, "assemblies": result.assemblies, "lines": result.lines,
+        "erp": result.erp, "erp_error": result.erp_error, "ship": result.ship, "ship_error": result.ship_error,
+        "ship_to_error": result.ship_to_error, "deadline_error": result.deadline_error,
+    }}
+
+
+@router.get("/lots")
+def lots(
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_edit_principal)],
+    q: Annotated[str, Query(max_length=255)] = "",
+) -> dict:
+    """The warehouse picker of the spec (stockPick_): the whole stock with a search, not only «matching names» —
+    a matched list misses when acceptance named the goods differently from the КД."""
+    factory = fulfillment_factory(request)
+    if factory is None:
+        return {"lots": []}
+    with factory() as uow:
+        found = uow.warehouse.list(limit=300, query=q, include_zero=False)
+    return {"lots": [{
+        "lot_id": str(lot.id), "warehouse": lot.warehouse, "grn": lot.grn, "package": lot.package,
+        "article": lot.article, "name": lot.name, "unit": lot.unit,
+        "storage_location": lot.storage_location, "available": _number(lot.available),
+    } for lot in found if lot.available > 0]}
+
+
+def _kitset(request: Request, project: str) -> Kitset:
+    with techcards_factory(request)() as uow:
+        kitset = uow.kitsets.get(project)
+    if kitset is None:
+        raise HTTPException(status_code=404, detail={"message": f"Карточка набора «{project}» не найдена", "gone": True})
+    return kitset
+
+
+def _card(request: Request, kitset: Kitset) -> dict:
+    facts = _facts(request)
+    stage, blocker = flow.kitset_stages([kitset], facts)[kitset.project]
+    stage_of = {item.item_index: item for item in stage.kits}
+    cards = flow.cards_state(kitset.project, facts.cards)
+    with techcards_factory(request)() as uow:
+        documents = uow.kitsets.documents(kitset.project)
+    return {
+        "project": kitset.project, "customer": kitset.customer, "calc_source": kitset.calc_source,
+        "updated_at": kitset.updated_at.isoformat(), "updated_by": kitset.updated_by, "version": kitset.version,
+        "status": stage.status, "blocker": blocker,
+        "stages": list(KIT_STAGES), "review_values": list(TC_REVIEW_VALUES),
+        "assemblies": [{
+            "index": assembly.index, "name": assembly.name, "run": _number(assembly.run),
+            "item": item_id(kitset.project, assembly.index),
+            "stage": _kb_stage(stage_of[assembly.index]) if assembly.index in stage_of else None,
+            "techcard": cards.get(assembly.index),
+            "kd": [{
+                "id": str(document.id), "name": document.file_name, "size": document.size,
+                "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
+            } for document in documents if document.item_index == assembly.index],
+            "components": [{
+                "art": component.article, "type": component.type, "name": component.name, "link": component.link,
+                "per": _number(component.per_unit), "scrap": _number(component.scrap_pct),
+                "batch": _number(component.batch(assembly.run)),
+                "lot": None if component.lot is None else {
+                    "lot_id": str(component.lot.lot_id) if component.lot.lot_id else None,
+                    "warehouse": component.lot.warehouse, "grn": component.lot.grn,
+                    "package": component.lot.package,
+                },
+            } for component in assembly.components],
+        } for assembly in kitset.assemblies],
+    }
+
+
+@router.get("/{project}")
+def kitset(
+    project: str,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    """`portalKitsetGet`: шапка + сборки со своим составом, этап КБ, техкарта, КД."""
+    return _card(request, _kitset(request, project))
+
+
+class LinePayload(BaseModel):
+    index: str = Field(min_length=1, max_length=64)
+    art: str = Field(min_length=1, max_length=255)
+    per: str = Field(default="0", max_length=32)
+    scrap: str = Field(default="0", max_length=32)
+    name: str | None = Field(default=None, max_length=1024)
+    link: str | None = Field(default=None, max_length=2000)
+    lot: dict[str, Any] | None = None
+
+
+class LinesPayload(BaseModel):
+    edits: list[LinePayload] = Field(min_length=1, max_length=500)
+
+
+@router.put("/{project}/lines")
+def save_lines(
+    project: str,
+    payload: LinesPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """`portalKitsetSave`: autosave of ONE spec row — an edit of one cell must not overwrite twenty others."""
+
+    def save():
+        with techcards_factory(request)() as uow:
+            current = uow.kitsets.get(project)
+            if current is None:
+                raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
+            edits = []
+            for item in payload.edits:
+                edit = item.model_dump(exclude_unset=True)
+                if "lot" in edit and edit["lot"] is None:
+                    edit["lot"] = {}
+                edits.append(edit)
+            updated, count = current.with_edits(edits, who=principal.actor.name, now=now)
+            uow.kitsets.save(updated)
+            uow.commit()
+            return {"project": updated.project, "updated": count}
+
+    return {"res": _run(save)}
+
+
+@router.get("/{project}/supply")
+def supply(
+    project: str,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    """`portalKitsetSupply`: что по позициям закуплено, что едет, а что вообще не заведено."""
+    kitset = _kitset(request, project)
+    requests = _read(requests_factory(request), lambda uow: tuple(uow.requests.recent(10_000)))
+    procurement = _read(procurement_factory(request), lambda uow: tuple(uow.procurement.list(limit=10_000)))
+    lines = supply_lines(kitset, flow.supply_rows(kitset.project, requests, procurement))
+    return {"project": kitset.project, "lines": [{
+        "art": line.article, "name": line.name, "kbs": list(line.kbs), "need": _number(line.need),
+        "grn": line.grn, "stage": line.stage, "received": line.received,
+        "rows": [{"where": row.where, "status": row.status, "source_id": row.source_id} for row in line.rows],
+    } for line in lines]}
+
+
+class IssuePayload(BaseModel):
+    deadline: date | None = None
+
+
+@router.post("/{project}/issue")
+def issue(
+    project: str,
+    payload: IssuePayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """`portalIssueFromKitset`: по заявке на комплектацию на каждую сборку с составом."""
+    factory = fulfillment_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    kitset = _kitset(request, project)
+    result = _run(lambda: flow.issue_from_kitset(kitset, payload.deadline, principal.actor, now, factory))
+    return {"created": result.created, "skipped": result.skipped, "message": result.message}
+
+
+@router.delete("/{project}")
+def delete(
+    project: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """`portalKitsetDelete`: проект уходит целиком во всех разделах сразу."""
+    return {"res": _run(lambda: flow.delete_kitset(
+        project, principal.actor, now,
+        techcards_factory(request), production_factory(request), shipping_factory(request),
+    ))}
+
+
+class MarkPayload(BaseModel):
+    kb: str = Field(default="", max_length=64)
+    kind: str = Field(min_length=1, max_length=16)
+    value: str = Field(default="", max_length=64)
+    text: str = Field(default="", max_length=5000)
+
+
+@router.post("/{project}/marks")
+def mark(
+    project: str,
+    payload: MarkPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """`portalKitMark`: ручной этап КБ и проверка ТК — в журнал проекта, как в «Производственном плане»."""
+    if payload.kind not in {"stage", "tcReview"}:
+        raise HTTPException(status_code=422, detail="Неизвестный вид отметки.")
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    kitset = _kitset(request, project)
+    event = _run(lambda: add_plan_event(AddPlanEventCommand(
+        project=kitset.project, kind=payload.kind, blocker="", text=payload.text, deadline=None,
+        known_projects=(kitset.project,), actor=principal.actor, now=now,
+        item_index=payload.kb, value=payload.value,
+    ), factory()))
+    return {"msg": event.text or event.value, "event": {"kind": event.kind, "value": event.value, "item_index": event.item_index}}
+
+
+class DocumentPayload(BaseModel):
+    index: str = Field(min_length=1, max_length=64)
+    file_name: str = Field(min_length=1, max_length=400)
+    content_type: str = Field(default="", max_length=255)
+    content_b64: str = Field(min_length=1)
+
+
+@router.post("/{project}/documents", status_code=201)
+def add_document(
+    project: str,
+    payload: DocumentPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """`portalKdAdd`: вложить файл к сборке."""
+    content = _decode(payload.content_b64)
+    document = _run(lambda: flow.attach_document(
+        project, payload.index, payload.file_name, payload.content_type, content,
+        principal.actor, now, techcards_factory(request),
+    ))
+    return {"res": {
+        "id": str(document.id), "index": document.item_index, "name": document.file_name,
+        "size": document.size, "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
+    }}
+
+
+@router.get("/{project}/documents/{document_id}")
+def document(
+    project: str,
+    document_id: UUID,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> Response:
+    with techcards_factory(request)() as uow:
+        found = uow.kitsets.document_content(document_id)
+    if found is None or found[0].project != _kitset(request, project).project:
+        raise HTTPException(status_code=404, detail="Файл КД не найден")
+    meta, content = found
+    return Response(content=content, media_type=meta.content_type, headers={
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(meta.file_name)}",
+    })
+
+
+@router.delete("/{project}/documents/{document_id}")
+def delete_document(
+    project: str,
+    document_id: UUID,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+) -> dict:
+    """`portalKdDelete`: отвязать вложение."""
+    kitset = _kitset(request, project)
+    with techcards_factory(request)() as uow:
+        deleted = uow.kitsets.delete_document(kitset.project, document_id)
+        uow.commit()
+    return {"res": {"deleted": deleted}}
+
+
+@router.get("/{project}/bom/{index}")
+def bom(
+    project: str,
+    index: str,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    """`tcLoadBomFromKit`: состав сборки для генератора — из сохранённой карточки, с правками оператора.
+    Аналог по КД → оригинал к применению (kitUseArt_): генератор ищет контакт по артикулу к применению."""
+    kitset = _kitset(request, project)
+    assembly = kitset.assembly(index)
+    if assembly is None:
+        raise HTTPException(status_code=404, detail=f"В наборе «{kitset.project}» нет сборки {index}")
+    components = []
+    for position, component in enumerate(assembly.components):
+        use = use_article(component.article, component.name)
+        components.append({
+            "id": f"kit-{position}", "type": component.type,
+            "name": use["art"] if use["kd"] else (component.name or component.article),
+            "art": use["art"], "kd": use["kd"], "qty": _number(component.per_unit or Decimal("1")),
+            "scrap": _number(component.scrap_pct / 100),
+        })
+    return {
+        "project": kitset.project, "index": assembly.index, "name": assembly.name,
+        "run": _number(assembly.run), "part_qty": _number(assembly.run or Decimal("1")),
+        "calc_source": kitset.calc_source, "components": components,
+    }
+
+
+def use_article(art: object, title: object) -> dict[str, str]:
+    """`kitUseArt_`: a code in the name that differs from the article is the article to apply (the estimator writes
+    the original over an analog there); Russian text with spaces is a name, not a code."""
+    import re
+
+    a, t = str(art or "").strip(), str(title or "").strip()
+    is_code = bool(t) and t != a and not (re.search(r"[а-яё]", t, re.I) and re.search(r"\s", t)) and not re.search(r"\s{2,}", t)
+    return {"art": t, "kd": a} if is_code and a else {"art": a or t, "kd": ""}
+
+
+class TechcardPayload(BaseModel):
+    deadline: date | None = None
+
+
+@router.post("/{project}/techcards/{index}")
+def open_techcard(
+    project: str,
+    index: str,
+    payload: TechcardPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """«Генератор» сборки: карточка техкарты изделия проекта+КБ, заводится при первом открытии."""
+    kitset = _kitset(request, project)
+    assembly = kitset.assembly(index)
+    if assembly is None:
+        raise HTTPException(status_code=404, detail=f"В наборе «{kitset.project}» нет сборки {index}")
+    factory = techcards_factory(request)
+    with factory() as uow:
+        card = uow.techcards.by_key(kitset.project, assembly.index)
+    if card is None:
+        card = _run(lambda: create_project_techcard(CreateProjectTechcardCommand(
+            project=kitset.project, item_index=assembly.index,
+            product_name=assembly.name or item_id(kitset.project, assembly.index),
+            source_calculation=kitset.calc_source, deadline=payload.deadline,
+            actor=principal.actor, now=now,
+        ), factory()))
+    return {"card_id": str(card.id)}

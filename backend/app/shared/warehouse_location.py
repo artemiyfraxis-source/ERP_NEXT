@@ -233,3 +233,27 @@ def remap_storage_location(value: str, source: str, target: str) -> str | None:
         return None
     slot = (target_parts[3] or current_slot) if source_slot else current_slot
     return "".join((*target_parts[:3], slot))
+
+
+def _shelf_letter(value: object) -> str:
+    """SUPPLYMAP placeShelfNorm_: first character, upper case, Cyrillic homoglyph → Latin, only A..Z."""
+    text = str(value if value is not None else "").strip().upper()
+    if not text:
+        return ""
+    letter = text[0].translate(_HOMOGLYPHS)
+    return letter if letter in SHELF_LETTERS else ""
+
+
+def place_code(rack: object, shelf: object, number: object, slot: object = "") -> str:
+    """SUPPLYMAP Stock05.gs placeCode_: rack 1..99 + shelf letter + № 1..999 (+ optional slot letter) → «12C7B».
+    Any of the three required parts empty or broken → '' (no place)."""
+    def whole(value: object) -> int:
+        try:
+            return int(float(str(value).strip()))  # Math.floor(Number(v)) for the positive values that pass
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    rack_number, shelf_letter, place_number = whole(rack), _shelf_letter(shelf), whole(number)
+    if not 1 <= rack_number <= 99 or not shelf_letter or not 1 <= place_number <= PLACE_MAX_NUMBER:
+        return ""
+    return f"{rack_number}{shelf_letter}{place_number}{_shelf_letter(slot)}"

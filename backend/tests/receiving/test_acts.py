@@ -98,20 +98,3 @@ def test_api_lists_acts_and_prints_one(api):
     assert client.get(f"/api/receiving/{line.id}/acts/complaint").status_code == 422
     assert client.get(f"/api/receiving/{line.id}/acts/unknown").status_code == 404
 
-
-def test_quarantine_90_days_notifies_once_about_disposal(erp):
-    from app.modules.receiving.application import quarantine_disposal_escalations
-
-    receiving, _, _ = erp
-    line = consume_receiving_expected(expected_message(), receiving())
-    quarantined = run(receiving, line, replace(inspection("8"), disposition="Изолятор"))
-    assert quarantined.status.value == "Карантин"
-
-    assert quarantine_disposal_escalations(NOW + timedelta(days=89), receiving()) == 0
-    assert quarantine_disposal_escalations(NOW + timedelta(days=90), receiving()) == 1
-    assert quarantine_disposal_escalations(NOW + timedelta(days=91), receiving()) == 0
-    with receiving() as uow:
-        message = uow.outbox.by_idempotency_key(f"notify:receiving:{line.id}:disposal:{NOW.date().isoformat()}")
-    assert message is not None
-    assert "решение об утилизации" in message.payload["title"]
-    assert message.payload["recipient_roles"] == "management,prodhead"

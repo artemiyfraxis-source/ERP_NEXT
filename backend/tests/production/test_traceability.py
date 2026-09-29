@@ -17,6 +17,7 @@ from app.modules.production.traceability import (
     format_box_number,
     give_back_inputs,
     issue_box_number,
+    issue_defect_number,
     pick_inputs,
     validate_box_number,
 )
@@ -44,6 +45,13 @@ def test_erp_issues_box_numbers_below_supplymap_series():
     assert issue_box_number(99_999) == format_box_number(99_999)
     with pytest.raises(ProductionValidationError, match="исчерпана"):
         issue_box_number(100_000)
+
+
+def test_erp_issues_defect_numbers_below_supplymap_series():
+    assert issue_defect_number(1) == "000001-8"
+    assert issue_defect_number(99_999) == format_box_number(99_999)
+    with pytest.raises(ProductionValidationError, match="Б-000001–099999 исчерпана"):
+        issue_defect_number(100_000)
 
 
 def test_confirmed_box_is_reserved_then_consumed_without_changing_number():

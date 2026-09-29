@@ -23,6 +23,8 @@ button:disabled { cursor: wait; opacity: .55; }
 .sidebar { width: 240px; flex: none; height: 100%; padding: 18px 12px; color: var(--foreground); background: var(--card); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; letter-spacing: .04em; }
 .wordmark { font-size: 19px; letter-spacing: .08em; }
+.notif-bell { margin-left: auto; position: relative; background: none; border: 0; padding: 4px 6px; font-size: 18px; line-height: 1; cursor: pointer; }
+.notif-badge { position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #d93025; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; letter-spacing: 0; }
 .brand .mod, .logo-row .mod { color: var(--muted-foreground); font-size: 11px; letter-spacing: .09em; text-transform: uppercase; }
 .brand-mark { width: 38px; height: 38px; border-radius: 12px; display: inline-grid; place-items: center; background: #dbff57; color: #10281d; font-weight: 900; }
 .brand-mark.large { width: 56px; height: 56px; font-size: 24px; }
@@ -129,6 +131,13 @@ td small { margin-top: 4px; color: #7b857e; }
 .fulfillment-lines select { min-width: 260px; }
 .fulfillment-actions { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .fulfillment-actions label { min-width: min(300px, 100%); margin-right: auto; }
+.fulfillment-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; font-size: 12px; }
+.fulfillment-meta dt { color: var(--muted-foreground); }
+.fulfillment-meta dd { margin: 0; font-weight: 500; }
+.fulfillment-progress { margin: 8px 0 0; font-size: 13px; color: var(--muted-foreground); }
+.fulfillment-create, .fulfillment-project { padding: 18px 20px; margin-bottom: 16px; }
+.lot-picker { display: grid; gap: 8px; }
+.lot-picker .status { margin-left: 6px; }
 .danger-link { color: #a33830; }
 .return-form { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
 .return-form h3 { margin: 0 0 5px; font-size: 15px; font-weight: 600; }
@@ -287,6 +296,53 @@ td small { margin-top: 4px; color: #7b857e; }
 .template-table td small { display: block; margin-top: 3px; color: var(--muted-foreground); }
 .template-detail { margin-top: 14px; }
 .template-detail p { margin: 12px 0 0; white-space: pre-line; font-size: 12px; }
+/* ЭТК: навигатор по операциям (SUPPLYMAP renderEtk_) и «Шаблоны техкарт» как лист ТК (openTcRecords/renderCard). */
+.etk-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0; }
+.etk-head span { color: var(--muted-foreground); font-size: 12px; }
+.etk-wrap { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.etk-nav-route { display: grid; gap: 4px; }
+.etk-nav-route button { display: flex; gap: 8px; align-items: flex-start; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 12px; }
+.etk-nav-route button.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.etk-nav-route small { display: block; color: var(--muted-foreground); }
+.etk-no { font-weight: 800; color: var(--primary); }
+.etk-main { display: grid; gap: 12px; min-width: 0; }
+.etk-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
+.etk-kicker button { margin-left: auto; }
+.etk-nav { display: flex; justify-content: space-between; gap: 10px; }
+.tr-edited { color: #8a5a00; }
+.tr-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+.tr-chips button { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font-size: 12.5px; }
+.tr-chips button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+.tr-group h3 { margin: 16px 0 8px; font-size: 15px; }
+.tr-group h3 span, .tr-block h4 span { color: var(--muted-foreground); font-weight: 400; }
+.tr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.tr-card { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; }
+.tr-card:hover { border-color: var(--primary); }
+.tr-name { font-weight: 600; font-size: 13px; }
+.tr-first { color: var(--muted-foreground); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tr-meta { color: var(--muted-foreground); font-size: 11.5px; }
+.tr-paper { display: grid; gap: 12px; }
+.tr-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.tr-head > div { display: grid; gap: 2px; }
+.tr-head small, .tr-sec-h { color: var(--muted-foreground); font-size: 11px; text-transform: uppercase; }
+.tr-block { display: grid; gap: 6px; font-size: 12px; }
+.tr-block h4 { margin: 0; font-size: 13px; }
+.tr-block textarea { width: 100%; }
+.tr-sec { display: grid; gap: 4px; margin-bottom: 6px; }
+.tr-tool { display: flex; gap: 8px; font-size: 12px; }
+.tr-tool small { display: block; color: var(--muted-foreground); }
+.tr-n { min-width: 18px; color: var(--primary); font-weight: 700; }
+.tr-inv { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: #e0efed; color: #00554f; font-size: 11px; }
+.tr-steps td small { display: block; color: var(--muted-foreground); }
+.tr-steps tr.ctl td { background: #f6f9ee; }
+.pre-line { white-space: pre-line; }
+.tr-foot { color: var(--muted-foreground); font-size: 12px; }
+.tr-erow { display: grid; gap: 6px; align-items: start; margin-bottom: 6px; }
+.tr-tool-e { grid-template-columns: 130px minmax(0, 2fr) 90px minmax(0, 1fr) 70px 60px auto; }
+.tr-step-e { grid-template-columns: 24px 110px minmax(0, 3fr) minmax(0, 1fr) auto; }
+.tr-step-e.ctl { background: #f6f9ee; }
+.tr-rowbtn { display: flex; gap: 2px; }
+.tr-rowbtn button { padding: 2px 6px; }
 
 /* NAV-1: home = block tiles, block page = section tiles (SUPPLYMAP .tiles/.tile). */
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
@@ -381,6 +437,7 @@ td small { margin-top: 4px; color: #7b857e; }
   .operation-assign { grid-column: auto; }
   .operations-metrics, .operations-failures > div { grid-template-columns: 1fr; }
   .etk-flow { grid-template-columns: 1fr; }
+  .etk-wrap, .tr-head, .tr-tool-e, .tr-step-e { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
   .plan-note-text { grid-column: auto; }
 }
@@ -390,6 +447,36 @@ td small { margin-top: 4px; color: #7b857e; }
 .access-matrix select, .access-people select { width: auto; min-width: 128px; font-size: 12.5px; }
 .access-page select.access-set { border-color: var(--primary); font-weight: 600; }
 .access-page select.access-default { color: var(--muted-foreground); }
+
+/* «Проекты» — карточки наборов (SUPPLYMAP openKitsetHub / openKitsetCard). */
+.kit-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; font-size: 13px; }
+.kit-tiles .kit-tile { cursor: pointer; }
+.kit-tile-head { display: flex; align-items: baseline; gap: 8px; }
+.kit-tile-head .t-h { flex: 1; }
+.kit-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.kit-status, .kit-fact { border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; background: var(--accent); color: var(--muted-foreground); }
+.tone-ok, .kit-ok { color: #15803d; }
+.tone-warn { color: #a16207; }
+.tone-danger, .kit-bad { color: #b91c1c; }
+.tone-info { color: #1d4ed8; }
+.tone-neutral { color: #6b7280; }
+.kit-status.tone-prep, .kit-fact.tone-warn { background: #fdf3d8; color: #8a5a00; }
+.kit-status.tone-work { background: color-mix(in srgb, var(--primary) 12%, white); color: var(--primary); }
+.kit-status.tone-stock, .kit-fact.tone-ok { background: #e3f5e8; color: #15803d; }
+.kit-status.tone-done { background: #eceff0; color: #5f6b6d; }
+.kit-status.tone-danger, .kit-fact.tone-danger { background: #fde8e8; color: #b91c1c; }
+.kit-pane { margin: 8px 0 16px; }
+.panel.kit-pane, .panel.kit-modal { padding: 16px 18px; }
+.kit-modal { margin: 0 0 16px; display: grid; gap: 10px; }
+.kit-modal h3 { margin: 0; }
+.kit-spec { margin: 0 0 18px; }
+.kit-spec-table input { width: 100%; min-width: 60px; }
+.kit-link { display: flex; gap: 4px; align-items: center; }
+.kit-kd { display: flex; gap: 6px; align-items: center; }
+.kit-supply-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.kit-supply-count { padding: 14px 16px; display: grid; gap: 4px; }
+.kit-supply-count strong { font-size: 24px; }
+.kit-autosave { font-size: 12px; }
 
 /* DataTable: общая таблица разделов (поиск, фильтры, сортировка, чипы, группы, массовые действия). */
 .data-table { display: grid; gap: 10px; }
@@ -411,3 +498,42 @@ td small { margin-top: 4px; color: #7b857e; }
 .receiving-card .batches { width:100%; margin:10px 0; border-collapse:collapse; }
 .receiving-card .batches th, .receiving-card .batches td { padding:4px 6px; text-align:left; font-size:13px; }
 .receiving-card .batches input { width:100%; min-width:80px; }
+
+/* Генератор техкарт (порт SUPPLYMAP TcGenInline.html) */
+.tcgen { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; }
+.tcgen h3 { margin: 12px 0 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
+.tcgen .gcard, .tcgen .ep-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card); display: grid; gap: 8px; }
+.tcgen .gen-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tcgen .gen-tab-btn { border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 6px 12px; font-weight: 600; }
+.tcgen .gen-tab-btn.gactive { border-color: var(--primary); color: var(--primary); }
+.tcgen .field-label { display: grid; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.tcgen .field-label.inline { max-width: 220px; }
+.tcgen .info-kv { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 12px; }
+.tcgen .spy { width: 100%; font-size: 12px; }
+.tcgen .spy input { width: 100%; }
+.tcgen .gbadge { border-radius: 6px; padding: 1px 6px; font-size: 11px; background: #eef2f7; }
+.tcgen .badge-wire { background: #e0f2fe; } .tcgen .badge-term { background: #fef3c7; } .tcgen .badge-conn { background: #dcfce7; }
+.tcgen .section-hdr { display: flex; align-items: center; gap: 12px; }
+.tcgen .btn-link { border: 0; background: none; color: var(--primary); cursor: pointer; font-size: 12px; padding: 0; }
+.tcgen .btn-add { border: 1px dashed var(--border); background: var(--card); border-radius: 8px; padding: 5px 10px; font-size: 12px; font-weight: 600; justify-self: start; }
+.tcgen .btn-remove { border: 0; background: none; color: var(--muted-foreground); font-size: 16px; padding: 0 4px; cursor: pointer; }
+.tcgen .wire-entry { display: grid; grid-template-columns: minmax(0, 2fr) repeat(auto-fit, minmax(90px, 1fr)) auto; gap: 8px; align-items: end; }
+.tcgen .ter-row, .tcgen .op-times { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; align-items: end; }
+.tcgen .radio-row, .tcgen .chip-row, .tcgen .ep-route, .tcgen .ep-method { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; }
+.tcgen .toggle-row, .tcgen .ep-otp { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
+.tcgen .ep-head { display: flex; justify-content: space-between; align-items: center; }
+.tcgen .ep-badge { font-weight: 700; color: var(--primary); }
+.tcgen .ep-auto { font-size: 11px; color: var(--muted-foreground); }
+.tcgen .ep-sdr { font-size: 12px; } .tcgen .ep-sdr-warn { color: #b45309; }
+.tcgen .ep-pin, .tcgen .twist-pair-row { display: flex; gap: 6px; align-items: center; }
+.tcgen .cut-info { padding: 6px 8px; border: 1px solid #bcd8d5; background: #f0f7f6; border-radius: 6px; font-size: 12px; }
+.tcgen .cut-info.warn { border-color: #fde68a; background: #fffbeb; }
+.tcgen .coax-add { border: 1px dashed #e0a800; background: #fff8e1; border-radius: 6px; padding: 8px; display: grid; gap: 6px; }
+.tcgen .coax-dims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.tcgen .grapher-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tcgen .op-item { display: grid; grid-template-columns: 28px 1fr; gap: 8px; border-bottom: 1px solid var(--border); padding: 8px 0; }
+.tcgen .op-badge { width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.tcgen .op-title { font-weight: 600; }
+.tcgen .op-match.found, .tcgen .ok-text { color: #065f46; } .tcgen .op-match.not-found { color: #b45309; }
+.tcgen .f-ok { border-color: #34d399; } .tcgen .f-warn { border-color: #f59e0b; background: #fffbeb; } .tcgen .f-empty { border-color: #f87171; }
+.tcgen .muted { color: var(--muted-foreground); }

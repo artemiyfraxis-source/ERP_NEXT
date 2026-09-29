@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
+import logging
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
@@ -16,6 +17,7 @@ from app.shared.notifications import NotificationOutbox, notification_requested,
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
+    _PAID_STATUSES,
     KpEntry,
     MoneyEntry,
     PERMISSION_NUMBER_PREFIX,
@@ -28,7 +30,9 @@ from .domain import (
     create_backorder_line,
     create_line_from_requested,
     group_supplier_requests,
+    BY_SUPPLIER_CLOSED,
     next_backorder_id,
+    supplier_from_link,
     next_order_number,
     next_retransfer_revision,
     next_system_id,
@@ -39,6 +43,8 @@ from .domain import (
 )
 from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
 
+
+_log = logging.getLogger(__name__)
 
 SYSTEM_ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
 
@@ -67,9 +73,27 @@ class ProcurementRepository(Protocol):
     def revisions_for_designation(self, designation: str) -> Sequence[str]:
         """Revisions of every line whose НАЗНАЧЕНИЕ has the same `designation_key`."""
         ...
+    def search(
+        self,
+        *,
+        query: str,
+        status: str | None,
+        buyer: str | None,
+        limit: int,
+        after_id: UUID | None = None,
+    ) -> Sequence[ProcurementLine]: ...
+    def buyer_names(self) -> Sequence[str]: ...
+    def excluding_statuses(self, statuses: Sequence[str]) -> Sequence[ProcurementLine]: ...
     def add(self, line: ProcurementLine) -> None: ...
     def add_order(self, order: SupplierOrder) -> None: ...
     def get_order(self, order_number: str) -> SupplierOrder | None: ...
+
+
+class SupplierDirectory(Protocol):
+    """Port to References: the «ссылка → поставщик» map (`supplierMap_`) and its learning (`learnSupplier_`)."""
+
+    def supplier_map(self) -> dict[str, str]: ...
+    def learn(self, link: str | None, supplier: str | None, actor: Actor, now: datetime) -> bool: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -373,7 +397,28 @@ class ReconcileProcurementRateCommand:
     now: datetime
 
 
-def _line_from_requested(message: OutboxMessage, lines: ProcurementRepository) -> ProcurementLine:
+def _transfer_rules(
+    line: ProcurementLine, message: OutboxMessage, suppliers: SupplierDirectory | None
+) -> ProcurementLine:
+    """`requestRowsToPurchaseLocked_` (Pipeline.gs:82-86): ПОСТАВЩИК from the ССЫЛКА's domain via the
+    «ссылка → поставщик» map at the moment of transfer; no match leaves it untouched. ПРИОРИТЕТ is already
+    recomputed for the transfer day by Requests (`build_procurement_requested_snapshot`, Pipeline.gs:87-92)."""
+    if suppliers is not None and line.link:
+        supplier = supplier_from_link(line.link, suppliers.supplier_map())
+        if supplier:
+            line = replace(line, supplier=supplier)
+    return line
+
+
+def _line_from_requested(
+    message: OutboxMessage,
+    lines: ProcurementRepository,
+    suppliers: SupplierDirectory | None = None,
+) -> ProcurementLine:
+    return _transfer_rules(_new_line_from_requested(message, lines), message, suppliers)
+
+
+def _new_line_from_requested(message: OutboxMessage, lines: ProcurementRepository) -> ProcurementLine:
     """`requestRowsToPurchaseLocked_` (Pipeline.gs:98-112): the first transfer of a request is Рев.A under
     the request's System ID; a repeated transfer appends a NEW line — fresh System ID, revision = max letter
     among lines of the same НАЗНАЧЕНИЕ + 1, «Новый» — and leaves the earlier line and its buyer data intact.
@@ -395,6 +440,7 @@ def _line_from_requested(message: OutboxMessage, lines: ProcurementRepository) -
 def consume_procurement_requested(
     message: OutboxMessage,
     uow: UnitOfWork,
+    suppliers: SupplierDirectory | None = None,
 ) -> ProcurementLine:
     with uow:
         existing = uow.procurement.by_source_idempotency_key(message.idempotency_key)
@@ -405,7 +451,7 @@ def consume_procurement_requested(
                 )
             return existing
 
-        line = _line_from_requested(message, uow.procurement)
+        line = _line_from_requested(message, uow.procurement, suppliers)
         uow.procurement.add(line)
         uow.audit.add(
             AuditEvent(
@@ -427,6 +473,7 @@ def consume_procurement_requested(
 def dispatch_next_procurement_requested(
     now: datetime,
     uow: DispatchUnitOfWork,
+    suppliers: SupplierDirectory | None = None,
 ) -> ProcurementLine | None:
     with uow:
         message = uow.outbox.next_unpublished("procurement.requested", now)
@@ -442,7 +489,7 @@ def dispatch_next_procurement_requested(
             line = existing
         else:
             try:
-                line = _line_from_requested(message, uow.procurement)
+                line = _line_from_requested(message, uow.procurement, suppliers)
             except ProcurementValidationError as error:
                 uow.outbox.mark_failed(message.id, now, str(error))
                 uow.commit()
@@ -570,7 +617,23 @@ def take_procurement_in_work(
 def save_procurement_facts(
     command: SaveProcurementFactsCommand,
     uow: UnitOfWork,
+    suppliers: SupplierDirectory | None = None,
 ) -> ProcurementLine:
+    line, before = _save_procurement_facts(command, uow)
+    # `portalSavePurchaseFacts` → `learnSupplier_`: the map learns «домен ссылки → поставщик» only when the
+    # buyer fills an EMPTY supplier (a changed supplier is a one-off purchase and must not retrain the map).
+    if suppliers is not None and before is not None and not (before.supplier or "").strip() and (line.supplier or "").strip():
+        try:
+            suppliers.learn(line.link, line.supplier, command.actor, command.now)
+        except Exception:  # the facts are already saved; a failed map write must not turn them into an error
+            _log.warning("learnSupplier failed for %s", line.legacy_id, exc_info=True)
+    return line
+
+
+def _save_procurement_facts(
+    command: SaveProcurementFactsCommand,
+    uow: UnitOfWork,
+) -> tuple[ProcurementLine, ProcurementLine | None]:
     with uow:
         current = uow.procurement.get(command.line_id)
         if current is None:
@@ -583,11 +646,11 @@ def save_procurement_facts(
                     "Строка изменилась после загрузки формы"
                 ) from error
             if retry_result == current:
-                return current
+                return current, None
             raise ConcurrentProcurementUpdate("Строка изменилась после загрузки формы")
         updated = current.update_facts(command.facts, command.actor)
         if updated == current:
-            return current
+            return current, None
 
         uow.procurement.add(updated)
         uow.audit.add(
@@ -605,7 +668,7 @@ def save_procurement_facts(
             )
         )
         uow.commit()
-        return updated
+        return updated, current
 
 
 def _load_versioned(line_id: UUID, expected_version: int, uow: UnitOfWork) -> ProcurementLine:
@@ -1340,3 +1403,103 @@ def buyer_procurement(
         if after_id is not None and uow.procurement.get(after_id) is None:
             raise KeyError(f"Procurement cursor not found: {after_id}")
         return list(uow.procurement.by_buyer(actor, limit, after_id))
+
+
+def procurement_lines(
+    uow: UnitOfWork,
+    *,
+    query: str = "",
+    status: str | None = None,
+    buyer: str | None = None,
+    limit: int = 100,
+    after_id: UUID | None = None,
+) -> tuple[list[ProcurementLine], list[str]]:
+    """The whole procurement sheet (`portalViewDefs_` purchase): every status and buyer, a search over the
+    line's text and filters by status and buyer; also the buyer names for the filter."""
+    with uow:
+        if after_id is not None and uow.procurement.get(after_id) is None:
+            raise KeyError(f"Procurement cursor not found: {after_id}")
+        lines = list(
+            uow.procurement.search(
+                query=" ".join(str(query or "").split()),
+                status=status or None,
+                buyer=buyer or None,
+                limit=limit,
+                after_id=after_id,
+            )
+        )
+        return lines, sorted(set(uow.procurement.buyer_names()), key=str.casefold)
+
+
+def procurement_by_supplier(uow: UnitOfWork) -> list[ProcurementLine]:
+    """`portalPurchaseBySupplier`: every buyer's open lines (not «В пути»/«Готово»/«Отменено») for the
+    per-supplier overview; grouping happens in the client, as in SUPPLYMAP."""
+    with uow:
+        return list(uow.procurement.excluding_statuses([status.value for status in BY_SUPPLIER_CLOSED]))
+
+
+@dataclass(frozen=True)
+class MarkPaidBatchItem:
+    line_id: UUID
+    expected_version: int
+
+
+@dataclass(frozen=True)
+class MarkPaidBatchCommand:
+    items: tuple[MarkPaidBatchItem, ...]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class MarkPaidBatchResult:
+    lines: list[ProcurementLine]
+    already: int
+    no_invoice: list[str]
+    failed: list[tuple[str, str]]
+
+
+def mark_procurement_paid_batch(
+    command: MarkPaidBatchCommand,
+    uow_factory,
+    rates: ExchangeRates | None = None,
+) -> MarkPaidBatchResult:
+    """`portalMarkPaid` → `markRowsPaid_`: each selected line independently — already paid is counted and
+    skipped, a line without an invoice (not «В оплату») is listed and skipped, the rest go «В пути»."""
+    items = list({item.line_id: item for item in command.items}.values())
+    if not items:
+        raise ProcurementValidationError("Не выбрано ни одной строки")
+    done: list[ProcurementLine] = []
+    already = 0
+    no_invoice: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for item in items:
+        try:
+            line = _peek(item.line_id, uow_factory())
+        except KeyError:
+            failed.append((str(item.line_id), "Строка не найдена"))
+            continue
+        if line.paid_at is not None or line.status in _PAID_STATUSES:
+            already += 1
+            continue
+        if line.status is not ProcurementStatus.TO_PAY or not line.invoice_url:
+            no_invoice.append(line.legacy_id)
+            continue
+        try:
+            done.append(
+                mark_procurement_paid(
+                    MarkProcurementPaidCommand(
+                        line_id=item.line_id,
+                        expected_version=item.expected_version,
+                        actor=command.actor,
+                        now=command.now,
+                    ),
+                    uow_factory(),
+                    rates,
+                )
+            )
+        except ManualRateRequired as error:
+            failed.append((line.legacy_id, f"{error} — проведите оплату строки отдельно с ручным курсом"))
+        except (ProcurementValidationError, ConcurrentProcurementUpdate, RateUnavailable) as error:
+            failed.append((line.legacy_id, str(error)))
+    return MarkPaidBatchResult(lines=done, already=already, no_invoice=no_invoice, failed=failed)
