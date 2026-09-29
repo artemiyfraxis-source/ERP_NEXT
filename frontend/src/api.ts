@@ -165,6 +165,7 @@ export interface ReceivingLine {
   inspector: string | null;
   warehouse_event_emitted: boolean;
   inspected_on: string | null;
+  revision_of_id?: string | null;
 }
 
 export interface WarehouseLot {
@@ -976,6 +977,11 @@ export const receivingApi = {
     api<{ line: ReceivingLine }>(`/api/receiving/${lineId}/place`, {
       method: "POST",
       body: JSON.stringify({ version, storage_location: storageLocation }),
+    }),
+  openVkRevision: (lineId: string, version: number) =>
+    api<{ archived: ReceivingLine; line: ReceivingLine }>(`/api/receiving/${lineId}/vk-revision`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
     }),
 };
 

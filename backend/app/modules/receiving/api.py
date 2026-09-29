@@ -19,9 +19,11 @@ from app.shared.unit_mass import mass_fields_from
 from .application import (
     ConcurrentReceivingUpdate,
     InspectReceivingCommand,
+    OpenVkRevisionCommand,
     PlaceReceivingCommand,
     UnitOfWork,
     inspect_receiving,
+    open_vk_revision,
     place_receiving,
     receiving_queue,
 )
@@ -53,6 +55,10 @@ class InspectionPayload(BaseModel):
     @classmethod
     def validate_document_url(cls, value: str | None) -> str | None:
         return normalize_document_url(value)
+
+
+class VersionPayload(BaseModel):
+    version: int = Field(ge=1)
 
 
 class PlacementPayload(BaseModel):
@@ -105,6 +111,7 @@ def _result(line: ReceivingLine) -> dict:
         "inspector": line.inspector.name if line.inspector else None,
         "warehouse_event_emitted": line.warehouse_event_emitted,
         "inspected_on": line.inspected_on.isoformat() if line.inspected_on else None,
+        "revision_of_id": str(line.revision_of_id) if line.revision_of_id else None,
     }
 
 
@@ -201,3 +208,25 @@ def place(
         )
     )
     return {"line": _result(line)}
+
+
+@router.post("/{line_id}/vk-revision")
+def vk_revision(
+    line_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> dict:
+    archived, revision = _run(
+        lambda: open_vk_revision(
+            OpenVkRevisionCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
+    return {"archived": _result(archived), "line": _result(revision)}

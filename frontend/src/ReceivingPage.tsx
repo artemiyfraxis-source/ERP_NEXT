@@ -66,6 +66,23 @@ export function ReceivingPage() {
     }
   }
 
+  async function openVkRevision(line: ReceivingLine) {
+    if (busy || loading) return;
+    if (!window.confirm(`Строка ${line.legacy_id} уйдёт в «Архив ВК» (акты сохранятся как история). Появится ревизия с контекстом заказа и УПД — по ней проведёте приёмку заново. Продолжить?`)) return;
+    setBusy(line.id);
+    setError("");
+    try {
+      await receivingApi.openVkRevision(line.id, line.version);
+      const result = await receivingApi.list();
+      setLines(result.lines);
+      setNextCursor(result.next_cursor);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Новый ВК не открыт");
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <section className="page">
       <header className="page-header">
@@ -83,6 +100,7 @@ export function ReceivingPage() {
             disabled={Boolean(busy) || loading}
             onInspect={inspect}
             onPlace={place}
+            onOpenVkRevision={openVkRevision}
           />
         ))}
         {!lines.length && !loading && <div className="panel empty">Поставок для приёмки пока нет.</div>}
@@ -98,12 +116,14 @@ function ReceivingCard({
   disabled,
   onInspect,
   onPlace,
+  onOpenVkRevision,
 }: {
   line: ReceivingLine;
   busy: boolean;
   disabled: boolean;
   onInspect: (line: ReceivingLine, payload: Record<string, unknown>) => Promise<void>;
   onPlace: (line: ReceivingLine, location: string) => Promise<void>;
+  onOpenVkRevision: (line: ReceivingLine) => Promise<void>;
 }) {
   const [fact, setFact] = useState(line.fact_quantity ?? line.ordered_quantity);
   const [documentQty, setDocumentQty] = useState(line.document_quantity ?? line.ordered_quantity);
@@ -137,6 +157,7 @@ function ReceivingCard({
   }
 
   const inspectable = ["В пути", "Ожидание", "Карантин"].includes(line.status);
+  const revisable = Boolean(line.verdict) && line.status !== "Архив ВК" && !line.warehouse_event_emitted;
   return (
     <article className="panel receiving-card">
       <div className="procurement-title">
@@ -170,6 +191,10 @@ function ReceivingCard({
           <button className="primary small" disabled={disabled}>{busy ? "Передаём…" : "Передать на склад"}</button>
         </form>
       )}
+      {revisable && (
+        <button className="secondary small" disabled={disabled} onClick={() => void onOpenVkRevision(line)}>Провести новый ВК</button>
+      )}
+      {line.status === "Архив ВК" && <p className="hint">Архив ВК: акты этой строки — история, приёмка идёт по ревизии.</p>}
       {line.warehouse_event_emitted && <div className="success-banner">Передано на склад: {line.grn} · {line.storage_location}</div>}
     </article>
   );

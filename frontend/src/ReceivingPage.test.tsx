@@ -149,3 +149,28 @@ it("shows that a paid shortfall went back to procurement as a backorder", async 
 
   expect(await screen.findByText("Недовоз 2.5 шт — оплаченный остаток ушёл в закупку дозавозом")).toBeInTheDocument();
 });
+
+it("opens a new incoming-control revision only for a line with a held act", async () => {
+  const inspected: ReceivingLine = { ...line, status: "Ожидание", verdict: "Условно годен", version: 3 };
+  let revision: Record<string, unknown> | undefined;
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: revision ? [{ ...inspected, status: "Архив ВК", version: 4 }] : [inspected, { ...line, id: "other" }] });
+    if (path.endsWith("/vk-revision") && init?.method === "POST") {
+      revision = JSON.parse(String(init.body));
+      return json({ archived: { ...inspected, status: "Архив ВК" }, line });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  const buttons = await screen.findAllByRole("button", { name: "Провести новый ВК" });
+  expect(buttons).toHaveLength(1);
+  fireEvent.click(buttons[0]);
+
+  await waitFor(() => expect(revision).toEqual({ version: 3 }));
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(await screen.findByText(/Архив ВК: акты этой строки/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Провести новый ВК" })).toBeNull();
+});

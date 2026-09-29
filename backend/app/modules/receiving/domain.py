@@ -28,6 +28,7 @@ class ReceivingStatus(str, Enum):
     ACCEPTED = "Принято"
     QUARANTINE = "Карантин"
     RETURN = "Возврат"
+    VK_ARCHIVE = "Архив ВК"
 
 
 MISSING_SHIPPING_DOCUMENT = "Отсутствие / несоответствие УПД/М-15"
@@ -256,6 +257,16 @@ class ReceivingLine:
     inspector: Actor | None = None
     warehouse_event_emitted: bool = False
     inspected_on: date | None = None
+    revision_of_id: UUID | None = None
+    revision_root_id: UUID | None = None
+
+    @property
+    def lineage_root_id(self) -> UUID:
+        return self.revision_root_id or self.id
+
+    @property
+    def base_legacy_id(self) -> str:
+        return re.sub(r"(?:-В\d+)+$", "", self.legacy_id)
 
     def inspect(
         self,
@@ -274,6 +285,10 @@ class ReceivingLine:
         if self.status is ReceivingStatus.RETURN:
             raise ReceivingValidationError(
                 "Возвращённая поставка закрыта для повторного контроля"
+            )
+        if self.status is ReceivingStatus.VK_ARCHIVE:
+            raise ReceivingValidationError(
+                "Строка в «Архив ВК» — контроль проводится по её ревизии"
             )
         try:
             shipping_document_url = normalize_document_url(data.shipping_document_url)
@@ -349,6 +364,58 @@ class ReceivingLine:
         if normalized == self.storage_location:
             return self
         return replace(self, storage_location=normalized, version=self.version + 1)
+
+    def open_vk_revision(
+        self, *, existing_legacy_ids: Iterable[str], now: datetime
+    ) -> tuple[ReceivingLine, ReceivingLine]:
+        """Receiving.gs:474-551 «Провести новый ВК»: the inspected line goes to «Архив ВК» as history
+        of its acts; a copy `-ВN` keeps the order context and the delivery's УПД and starts over
+        «В пути» with empty acceptance fields."""
+        if self.status is ReceivingStatus.VK_ARCHIVE:
+            raise ReceivingValidationError("Строка уже в архиве ВК")
+        if self.verdict is None:
+            raise ReceivingValidationError(
+                "По строке ещё не проведён ВК — новый ВК не нужен, проводите обычную приёмку"
+            )
+        if self.warehouse_event_emitted:
+            raise ReceivingValidationError(
+                "Позиция уже передана на склад — новый ВК по ней не проводится"
+            )
+        base = self.base_legacy_id
+        taken = {str(value or "").strip() for value in existing_legacy_ids}
+        number = 2
+        while f"{base}-В{number}" in taken:
+            number += 1
+        legacy_id = f"{base}-В{number}"
+        if len(legacy_id) > 32:
+            raise ReceivingValidationError("System ID ревизии ВК длиннее 32 символов")
+        archived = replace(self, status=ReceivingStatus.VK_ARCHIVE, version=self.version + 1)
+        revision = ReceivingLine(
+            id=uuid4(),
+            source_event_id=uuid4(),
+            source_idempotency_key=f"receiving:{self.id}:vk-revision",
+            procurement_line_id=self.procurement_line_id,
+            legacy_id=legacy_id,
+            status=ReceivingStatus.IN_TRANSIT,
+            version=1,
+            created_at=now,
+            warehouse=self.warehouse,
+            article=self.article,
+            series=self.series,
+            name=self.name,
+            item_type=self.item_type,
+            purpose=self.purpose,
+            goal=self.goal,
+            source_link=self.source_link,
+            supplier=self.supplier,
+            ordered_quantity=self.ordered_quantity,
+            unit=self.unit,
+            quality_document_required=self.quality_document_required,
+            shipping_document_url=self.shipping_document_url,
+            revision_of_id=self.id,
+            revision_root_id=self.lineage_root_id,
+        )
+        return archived, revision
 
     @property
     def ready_for_warehouse(self) -> bool:

@@ -318,3 +318,101 @@ def test_waiting_line_without_act_date_never_times_out():
     line = replace(waiting_line(), inspected_on=None)
 
     assert line.waiting_overdue(date(2027, 1, 1)) is False
+
+
+def _inspected(**overrides):
+    return create_line_from_expected(expected_message()).inspect(
+        inspection(**overrides), Actor(name="Приёмщик", department="ОТК"), existing_grns=(),
+    )
+
+
+def test_new_vk_archives_inspected_line_and_opens_revision_in_transit():
+    source = _inspected(
+        document_quantity=Decimal("8"),
+        fact_quantity=Decimal("8"),
+        shipping_document_url="https://files.test/upd.pdf",
+        series="LOT-1",
+    )
+    now = datetime(2026, 9, 22, 9, 0)
+
+    archived, revision = source.open_vk_revision(existing_legacy_ids=(source.legacy_id,), now=now)
+
+    assert archived.status is ReceivingStatus.VK_ARCHIVE
+    assert archived.version == source.version + 1
+    assert (archived.verdict, archived.grn, archived.nonconformities) == (
+        source.verdict, source.grn, source.nonconformities,
+    )
+    assert revision.legacy_id == f"{source.legacy_id}-В2"
+    assert revision.status is ReceivingStatus.IN_TRANSIT
+    assert revision.version == 1
+    assert revision.created_at == now
+    assert revision.id != source.id
+    assert revision.revision_of_id == source.id
+    assert revision.revision_root_id == source.id
+    assert revision.lineage_root_id == source.id
+    # Order context and the delivery's УПД travel; acceptance fields start empty.
+    assert (revision.procurement_line_id, revision.article, revision.ordered_quantity, revision.supplier) == (
+        source.procurement_line_id, source.article, source.ordered_quantity, source.supplier,
+    )
+    assert revision.shipping_document_url == "https://files.test/upd.pdf"
+    assert revision.series == "LOT-1"
+    assert revision.verdict is None
+    assert revision.grn is None
+    assert revision.document_quantity is None
+    assert revision.fact_quantity is None
+    assert revision.accepted_quantity is None
+    assert revision.backorder_quantity == Decimal("0")
+    assert revision.nonconformities == ()
+    assert revision.inspector is None
+    assert revision.storage_location is None
+
+
+def test_new_vk_revision_number_is_next_free_on_the_base_id():
+    source = _inspected()
+    _, second = source.open_vk_revision(
+        existing_legacy_ids=(source.legacy_id, f"{source.legacy_id}-В2"), now=datetime(2026, 9, 22)
+    )
+    assert second.legacy_id == f"{source.legacy_id}-В3"
+
+    reinspected = second.inspect(inspection(), Actor(name="Приёмщик", department="ОТК"), existing_grns=())
+    _, third = reinspected.open_vk_revision(
+        existing_legacy_ids=(source.legacy_id, f"{source.legacy_id}-В2", second.legacy_id),
+        now=datetime(2026, 9, 23),
+    )
+    assert third.legacy_id == f"{source.legacy_id}-В4"
+    assert third.revision_of_id == second.id
+    assert third.revision_root_id == source.id
+
+
+def test_new_vk_needs_a_held_act_and_a_line_not_yet_in_stock():
+    line = create_line_from_expected(expected_message())
+    with pytest.raises(ReceivingValidationError, match="ещё не проведён ВК"):
+        line.open_vk_revision(existing_legacy_ids=(), now=datetime(2026, 9, 22))
+
+    archived, _ = _inspected().open_vk_revision(existing_legacy_ids=(), now=datetime(2026, 9, 22))
+    with pytest.raises(ReceivingValidationError, match="уже в архиве ВК"):
+        archived.open_vk_revision(existing_legacy_ids=(), now=datetime(2026, 9, 22))
+
+    in_stock = _inspected().place("1F4").mark_warehouse_event_emitted()
+    with pytest.raises(ReceivingValidationError, match="передана на склад"):
+        in_stock.open_vk_revision(existing_legacy_ids=(), now=datetime(2026, 9, 22))
+
+
+def test_returned_line_can_get_a_new_vk_revision():
+    returned = _inspected(expiry_date=date(2026, 1, 1))
+    assert returned.status is ReceivingStatus.RETURN
+
+    archived, revision = returned.open_vk_revision(existing_legacy_ids=(), now=datetime(2026, 9, 22))
+
+    assert archived.status is ReceivingStatus.VK_ARCHIVE
+    assert revision.status is ReceivingStatus.IN_TRANSIT
+
+
+def test_archived_vk_line_is_closed_for_inspection_and_placement():
+    archived, _ = _inspected().open_vk_revision(existing_legacy_ids=(), now=datetime(2026, 9, 22))
+
+    with pytest.raises(ReceivingValidationError, match="Архив ВК"):
+        archived.inspect(inspection(), Actor(name="Приёмщик", department="ОТК"), existing_grns=())
+    with pytest.raises(ReceivingValidationError, match="только принятую"):
+        archived.place("1F4")
+    assert archived.ready_for_warehouse is False

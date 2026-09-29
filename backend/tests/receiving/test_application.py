@@ -5,12 +5,15 @@ from decimal import Decimal
 import pytest
 
 from app.modules.receiving.application import (
+    ConcurrentReceivingUpdate,
     InspectReceivingCommand,
+    OpenVkRevisionCommand,
     PlaceReceivingCommand,
     PoisonReceivingMessage,
     consume_receiving_expected,
     dispatch_next_receiving_expected,
     inspect_receiving,
+    open_vk_revision,
     place_receiving,
     quarantine_overdue_waiting,
 )
@@ -46,6 +49,9 @@ class Repository:
 
     def all_grns(self):
         return [item.grn for item in self.items.values() if item.grn]
+
+    def legacy_ids_starting_with(self, prefix):
+        return [item.legacy_id for item in self.items.values() if item.legacy_id.startswith(prefix)]
 
     def add(self, line):
         self.items[line.id] = line
@@ -242,3 +248,94 @@ def test_overdue_waiting_is_quarantined_by_the_system_with_notify_targets():
     assert uow.outbox.items == []
     assert uow.commits == commits + 1
     assert quarantine_overdue_waiting(datetime(2026, 9, 29, 8, 0), uow) == []
+
+
+def _inspect(uow, line, now, **overrides):
+    return inspect_receiving(
+        InspectReceivingCommand(
+            line_id=line.id,
+            expected_version=line.version,
+            inspection=replace(inspection(), **overrides),
+            actor=Actor(name="Приёмщик", department="ОТК"),
+            now=now,
+        ),
+        uow,
+    )
+
+
+def _revise(uow, line, now):
+    return open_vk_revision(
+        OpenVkRevisionCommand(
+            line_id=line.id,
+            expected_version=line.version,
+            actor=Actor(name="Приёмщик", department="ОТК"),
+            now=now,
+        ),
+        uow,
+    )
+
+
+def test_new_vk_archives_line_opens_revision_and_audits_both_atomically():
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+    waiting = _inspect(uow, line, datetime(2026, 9, 21, 11, 0), shipping_document_url=None)
+    assert waiting.status is ReceivingStatus.WAITING
+
+    archived, revision = _revise(uow, waiting, datetime(2026, 9, 22, 9, 0))
+
+    assert uow.receiving.get(line.id).status is ReceivingStatus.VK_ARCHIVE
+    assert uow.receiving.get(revision.id) == revision
+    assert revision.legacy_id == "SM-20260921-01-В2"
+    assert [event.event_type for event in uow.audit.items][-2:] == [
+        "receiving.vk_archived",
+        "receiving.vk_revision_opened",
+    ]
+    assert uow.audit.items[-2].details["revision_legacy_id"] == "SM-20260921-01-В2"
+    assert uow.commits == 3
+
+    accepted = _inspect(uow, revision, datetime(2026, 9, 22, 10, 0))
+    assert accepted.status is ReceivingStatus.ACCEPTED
+    assert accepted.grn != archived.grn
+
+
+def test_new_vk_rejects_a_stale_form():
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+    inspected = _inspect(uow, line, datetime(2026, 9, 21, 11, 0))
+
+    with pytest.raises(ConcurrentReceivingUpdate):
+        _revise(uow, line, datetime(2026, 9, 22, 9, 0))
+    assert uow.receiving.get(line.id) == inspected
+
+
+def test_backorder_is_requested_once_per_delivery_across_vk_revisions():
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+    short = _inspect(
+        uow, line, datetime(2026, 9, 21, 11, 0),
+        document_quantity=Decimal("6"), fact_quantity=Decimal("6"),
+    )
+    _, revision = _revise(uow, short, datetime(2026, 9, 22, 9, 0))
+    _inspect(
+        uow, revision, datetime(2026, 9, 22, 10, 0),
+        document_quantity=Decimal("6"), fact_quantity=Decimal("6"),
+    )
+
+    backorders = [item for item in uow.outbox.items if item.topic == "procurement.backorder_requested"]
+    assert len(backorders) == 1
+    assert backorders[0].payload["receiving_line_id"] == str(line.id)
+
+
+def test_revision_requests_the_backorder_its_source_never_did():
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+    clean = _inspect(uow, line, datetime(2026, 9, 21, 11, 0), shipping_document_url=None)
+    _, revision = _revise(uow, clean, datetime(2026, 9, 22, 9, 0))
+    _inspect(
+        uow, revision, datetime(2026, 9, 22, 10, 0),
+        document_quantity=Decimal("7"), fact_quantity=Decimal("7"),
+    )
+
+    backorders = [item for item in uow.outbox.items if item.topic == "procurement.backorder_requested"]
+    assert [item.payload["legacy_id"] for item in backorders] == ["SM-20260921-01-В2"]
+    assert backorders[0].idempotency_key == f"receiving:{line.id}:backorder"

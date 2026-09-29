@@ -175,3 +175,37 @@ def test_receiving_rejects_non_http_document_urls(receiving_api, document_url):
     )
 
     assert response.status_code == 422
+
+
+def test_new_vk_archives_line_and_queue_shows_both_rows(receiving_api):
+    client, line = receiving_api
+    base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    early = client.post(f"/api/receiving/{line.id}/vk-revision", json={"version": line.version})
+    assert early.status_code == 422
+    assert "ещё не проведён ВК" in early.json()["detail"]
+
+    waiting = client.post(f"/api/receiving/{line.id}/inspect", json={**base, "version": line.version})
+    revised = client.post(
+        f"/api/receiving/{line.id}/vk-revision", json={"version": waiting.json()["line"]["version"]}
+    )
+
+    assert revised.status_code == 200, revised.text
+    body = revised.json()
+    assert body["archived"]["status"] == "Архив ВК"
+    assert body["line"]["status"] == "В пути"
+    assert body["line"]["legacy_id"] == "SM-20260921-01-В2"
+    assert body["line"]["revision_of_id"] == str(line.id)
+    assert body["line"]["grn"] is None
+
+    again = client.post(
+        f"/api/receiving/{line.id}/vk-revision", json={"version": body["archived"]["version"]}
+    )
+    stale = client.post(f"/api/receiving/{line.id}/vk-revision", json={"version": line.version})
+    assert again.status_code == 422
+    assert stale.status_code == 409
+
+    queue = client.get("/api/receiving").json()["lines"]
+    assert [(row["legacy_id"], row["status"]) for row in queue] == [
+        ("SM-20260921-01", "Архив ВК"),
+        ("SM-20260921-01-В2", "В пути"),
+    ]

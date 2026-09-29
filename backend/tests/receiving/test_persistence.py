@@ -181,3 +181,85 @@ def test_quarantine_timer_reads_the_stored_act_date_and_persists_the_move():
             )
         ) == 1
     engine.dispose()
+
+
+def test_vk_revision_persists_and_one_procurement_line_has_one_live_receiving_line():
+    import pytest
+    from dataclasses import replace
+    from sqlalchemy.exc import IntegrityError
+
+    from app.modules.receiving.application import OpenVkRevisionCommand, open_vk_revision
+    from app.modules.receiving.domain import ReceivingStatus
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_schema(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    with sessions() as session:
+        session.add(
+            OutboxMessageRow(
+                id=UUID("10000000-0000-0000-0000-000000000001"),
+                topic="receiving.expected",
+                idempotency_key="procurement:one:receiving",
+                created_at=datetime(2026, 9, 21, 10, 0),
+                payload={
+                    "procurement_line_id": "20000000-0000-0000-0000-000000000001",
+                    "legacy_id": "SM-1",
+                    "warehouse": "ЦАР",
+                    "name": "Разъём",
+                    "item_type": "Комплектующие",
+                    "purpose": "FRX.001",
+                    "supplier": "ООО Поставка",
+                    "ordered_quantity": "10",
+                    "unit": "шт",
+                },
+            )
+        )
+        session.commit()
+    factory = lambda: SqlAlchemyReceivingUnitOfWork(sessions)
+    line = dispatch_next_receiving_expected(datetime(2026, 9, 21, 10, 1), factory())
+    actor = Actor(name="Приёмщик", department="ОТК")
+    inspected = inspect_receiving(
+        InspectReceivingCommand(
+            line_id=line.id,
+            expected_version=line.version,
+            inspection=InspectionInput(
+                fact_quantity=Decimal("10"),
+                document_quantity=Decimal("10"),
+                ordered_quantity=Decimal("10"),
+                has_shipping_document=False,
+                quality_document_required=False,
+                quality_document_present=False,
+                expiry_date=None,
+                inspection_date=date(2026, 9, 21),
+            ),
+            actor=actor,
+            now=datetime(2026, 9, 21, 11, 0),
+        ),
+        factory(),
+    )
+    archived, revision = open_vk_revision(
+        OpenVkRevisionCommand(
+            line_id=line.id, expected_version=inspected.version, actor=actor, now=datetime(2026, 9, 22, 9, 0)
+        ),
+        factory(),
+    )
+
+    with factory() as uow:
+        assert uow.receiving.get(line.id).status is ReceivingStatus.VK_ARCHIVE
+        stored = uow.receiving.get(revision.id)
+        assert stored.legacy_id == "SM-1-В2"
+        assert stored.revision_of_id == line.id
+        assert stored.revision_root_id == line.id
+        assert sorted(uow.receiving.legacy_ids_starting_with("SM-1")) == ["SM-1", "SM-1-В2"]
+        assert uow.receiving.legacy_ids_starting_with("SM-1%") == []
+
+    # A second live line for the same procurement line is refused by the database itself.
+    with factory() as uow:
+        uow.receiving.add(replace(revision, id=UUID(int=7), source_event_id=UUID(int=8),
+                                  source_idempotency_key="duplicate", legacy_id="SM-1-В9", revision_of_id=None))
+        with pytest.raises(IntegrityError):
+            uow.commit()

@@ -35,6 +35,7 @@ class ReceivingRepository(Protocol):
     ) -> Sequence[ReceivingLine]: ...
     def waiting_inspected_by(self, day: date, limit: int = 200) -> Sequence[ReceivingLine]: ...
     def all_grns(self) -> Sequence[str]: ...
+    def legacy_ids_starting_with(self, prefix: str) -> Sequence[str]: ...
     def add(self, line: ReceivingLine) -> None: ...
 
 
@@ -84,6 +85,14 @@ class PlaceReceivingCommand:
     line_id: UUID
     expected_version: int
     storage_location: str
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class OpenVkRevisionCommand:
+    line_id: UUID
+    expected_version: int
     actor: Actor
     now: datetime
 
@@ -252,7 +261,8 @@ def _request_backorder(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> N
     # re-inspections of «Ожидание»/«Карантин» never do. Procurement turns it into the paid `-Д` line.
     if line.backorder_quantity <= 0:
         return
-    key = f"receiving:{line.id}:backorder"
+    # A `-ВN` revision re-inspects the same physical delivery: one backorder per lineage, never twice.
+    key = f"receiving:{line.lineage_root_id}:backorder"
     if uow.outbox.by_idempotency_key(key) is not None:
         return
     uow.outbox.add(
@@ -269,6 +279,48 @@ def _request_backorder(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> N
             },
         )
     )
+
+
+def open_vk_revision(command: OpenVkRevisionCommand, uow: UnitOfWork) -> tuple[ReceivingLine, ReceivingLine]:
+    with uow:
+        current = uow.receiving.get(command.line_id)
+        if current is None:
+            raise KeyError(f"Receiving line not found: {command.line_id}")
+        if current.version != command.expected_version:
+            raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
+        archived, revision = current.open_vk_revision(
+            existing_legacy_ids=uow.receiving.legacy_ids_starting_with(current.base_legacy_id),
+            now=command.now,
+        )
+        uow.receiving.add(archived)
+        uow.receiving.add(revision)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=archived.id,
+                event_type="receiving.vk_archived",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={
+                    "legacy_id": archived.legacy_id,
+                    "from_status": current.status.value,
+                    "revision_id": str(revision.id),
+                    "revision_legacy_id": revision.legacy_id,
+                },
+            )
+        )
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=revision.id,
+                event_type="receiving.vk_revision_opened",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={"legacy_id": revision.legacy_id, "revision_of_id": str(archived.id)},
+            )
+        )
+        uow.commit()
+        return archived, revision
 
 
 def place_receiving(command: PlaceReceivingCommand, uow: UnitOfWork) -> ReceivingLine:

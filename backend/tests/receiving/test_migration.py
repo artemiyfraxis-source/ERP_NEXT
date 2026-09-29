@@ -50,3 +50,69 @@ def test_act_date_migration_backfills_the_last_inspection_from_the_audit(tmp_pat
     with sqlite3.connect(database_path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(receiving_lines)")}
     assert "inspected_on" not in columns
+
+
+BEFORE = "0031_receiving_inspected_on"
+AFTER = "0032_receiving_vk_revisions"
+
+
+def _columns(connection: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in connection.execute("PRAGMA table_info(receiving_lines)")}
+
+
+def _unique_columns(connection: sqlite3.Connection) -> dict[str, list[str]]:
+    result = {}
+    for row in connection.execute("PRAGMA index_list(receiving_lines)"):
+        if row[2] == 1:
+            result[row[1]] = [info[2] for info in connection.execute(f"PRAGMA index_info('{row[1]}')")]
+    return result
+
+
+def _insert(connection: sqlite3.Connection, suffix: str, status: str) -> None:
+    connection.execute(
+        "INSERT INTO receiving_lines (id, source_event_id, source_idempotency_key, procurement_line_id, legacy_id,"
+        " status, version, created_at, warehouse, article, series, name, item_type, purpose, goal, source_link,"
+        " supplier, ordered_quantity, unit, quality_document_required, nonconformities, backorder_quantity,"
+        " package, warehouse_event_emitted) VALUES (?, ?, ?, 'p1', ?, ?, 1, '2026-09-21', 'ЦАР', 'A', '', 'N',"
+        " 'T', 'FRX', '', '', 'S', 10, 'шт', 0, '[]', 0, '', 0)",
+        (f"id{suffix}", f"ev{suffix}", f"key{suffix}", f"SM-{suffix}", status),
+    )
+
+
+def test_vk_revision_migration_keeps_one_live_line_per_procurement_line(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "receiving.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+
+    command.upgrade(config, BEFORE)
+    with sqlite3.connect(database_path) as connection:
+        assert ["procurement_line_id"] in _unique_columns(connection).values()
+        assert "revision_of_id" not in _columns(connection)
+
+    command.upgrade(config, AFTER)
+    with sqlite3.connect(database_path) as connection:
+        assert {"revision_of_id", "revision_root_id"} <= _columns(connection)
+        uniques = _unique_columns(connection)
+        assert uniques["ux_receiving_live_procurement_line"] == ["procurement_line_id"]
+        assert ["procurement_line_id"] not in [
+            columns for name, columns in uniques.items() if name != "ux_receiving_live_procurement_line"
+        ]
+        assert ["revision_of_id"] in uniques.values()
+        _insert(connection, "1", "Архив ВК")
+        _insert(connection, "2", "В пути")
+        try:
+            _insert(connection, "3", "Ожидание")
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise AssertionError("a second live line for one procurement line was accepted")
+        connection.execute("DELETE FROM receiving_lines")
+        connection.commit()
+
+    command.downgrade(config, BEFORE)
+    with sqlite3.connect(database_path) as connection:
+        assert ["procurement_line_id"] in _unique_columns(connection).values()
+        assert "revision_of_id" not in _columns(connection)
+
+    command.upgrade(config, AFTER)

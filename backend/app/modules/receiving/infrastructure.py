@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, or_, select
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, or_, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.identity import Actor
@@ -20,6 +20,15 @@ class ReceivingLineRow(Base):
     __tablename__ = "receiving_lines"
     __table_args__ = (
         UniqueConstraint("grn", "package", name="uq_receiving_grn_package"),
+        UniqueConstraint("revision_of_id", name="uq_receiving_lines_revision_of_id"),
+        # One live line per procurement line; archived «Архив ВК» rows keep the link as history.
+        Index(
+            "ux_receiving_live_procurement_line",
+            "procurement_line_id",
+            unique=True,
+            sqlite_where=text("status <> 'Архив ВК'"),
+            postgresql_where=text("status <> 'Архив ВК'"),
+        ),
         Index("ix_receiving_created_id", "created_at", "id"),
         Index("ix_receiving_status_created_id", "status", "created_at", "id"),
         Index("ix_receiving_warehouse_status_created_id", "warehouse", "status", "created_at", "id"),
@@ -28,7 +37,7 @@ class ReceivingLineRow(Base):
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     source_event_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), unique=True, nullable=False)
     source_idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    procurement_line_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), unique=True, nullable=False)
+    procurement_line_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     legacy_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -64,6 +73,10 @@ class ReceivingLineRow(Base):
     inspector_department: Mapped[str | None] = mapped_column(String(255))
     warehouse_event_emitted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     inspected_on: Mapped[Any | None] = mapped_column(Date)
+    revision_of_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("receiving_lines.id", ondelete="RESTRICT")
+    )
+    revision_root_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -109,6 +122,8 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         inspector_department=line.inspector.department if line.inspector else None,
         warehouse_event_emitted=line.warehouse_event_emitted,
         inspected_on=line.inspected_on,
+        revision_of_id=line.revision_of_id,
+        revision_root_id=line.revision_root_id,
     )
 
 
@@ -158,6 +173,8 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         inspector=inspector,
         warehouse_event_emitted=row.warehouse_event_emitted,
         inspected_on=row.inspected_on,
+        revision_of_id=row.revision_of_id,
+        revision_root_id=row.revision_root_id,
     )
 
 
@@ -216,6 +233,15 @@ class SqlAlchemyReceivingRepository:
         return list(
             self.session.scalars(
                 select(ReceivingLineRow.grn).where(ReceivingLineRow.grn.is_not(None))
+            )
+        )
+
+    def legacy_ids_starting_with(self, prefix: str) -> list[str]:
+        return list(
+            self.session.scalars(
+                select(ReceivingLineRow.legacy_id).where(
+                    ReceivingLineRow.legacy_id.startswith(prefix, autoescape=True)
+                )
             )
         )
 
