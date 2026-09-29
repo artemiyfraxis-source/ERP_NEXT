@@ -6,9 +6,10 @@ from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
+from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -55,6 +56,7 @@ from .application import (
     build_supplier_requests,
     build_replacement_permission_sheet,
     supplier_order,
+    supplier_order_document,
     procurement_line,
     split_procurement_line,
     set_procurement_replacement,
@@ -400,6 +402,8 @@ def _line_result(line: ProcurementLine) -> dict:
         "supplier_request_reference": line.supplier_request_reference,
         "order_number": line.order_number,
         "order_date": line.order_date.isoformat() if line.order_date else None,
+        # «ЗАКАЗ» (SupplierRequest.gs): ссылка на документ запроса в строке.
+        "order_url": order_document_url(line.order_number) if line.order_number else None,
         "expected_arrival": line.expected_arrival.isoformat() if line.expected_arrival else None,
         "invoice_url": line.invoice_url,
         "paid_at": line.paid_at.isoformat() if line.paid_at else None,
@@ -839,7 +843,12 @@ def reconcile_rate(
     )
 
 
+def order_document_url(order_number: str) -> str:
+    return f"/api/procurement/supplier-requests/{quote(order_number, safe='')}/document"
+
+
 def _order_result(order: SupplierOrder) -> dict:
+    document = order.document
     return {
         "order_number": order.order_number,
         "order_date": order.order_date.isoformat(),
@@ -849,6 +858,11 @@ def _order_result(order: SupplierOrder) -> dict:
         "buyer": order.buyer.name,
         "letter": order.letter,
         "line_ids": [str(line_id) for line_id in order.line_ids],
+        "document": {
+            "url": order_document_url(order.order_number),
+            "file_name": document.file_name,
+            "folder": document.folder,
+        } if document else None,
     }
 
 
@@ -885,6 +899,24 @@ def supplier_request_order(
         return {"order": _order_result(supplier_order(order_number, uow_factory()))}
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/supplier-requests/{order_number}/document")
+def supplier_request_document(
+    order_number: str,
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> Response:
+    """Документ запроса поставщику: открыть / распечатать (в SUPPLYMAP — ссылка на Google Doc)."""
+    try:
+        meta, content = supplier_order_document(order_number, uow_factory())
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Документ запроса не найден") from error
+    return Response(content=content, media_type=meta.content_type, headers={
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(meta.file_name)}",
+        # Файл собран сервером из данных заказа; скрипты в нём не нужны.
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    })
 
 
 @router.patch("/{line_id}/replacement")

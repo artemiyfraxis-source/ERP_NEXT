@@ -106,6 +106,26 @@ export function openPrintDocument(title: string, pages: PrintPage[]): void {
   openPrintHtml(buildPrintDocumentHtml(title, pages));
 }
 
+/** Печать готового файла ERP (документ запроса поставщику): грузится в скрытый iframe того же origin и
+ * отправляется в диалог печати браузера; iframe убирается после печати. */
+export function printStoredDocument(url: string): void {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.onload = () => {
+    const win = frame.contentWindow;
+    if (!win) return;
+    win.addEventListener("afterprint", () => frame.remove());
+    win.focus();
+    win.print();
+  };
+  frame.src = url;
+  document.body.appendChild(frame);
+}
+
 /** Several sheets in one print job, each on its own page (packing list per box — `shipBuildDocs_`). */
 export function buildPrintSheetsHtml(sheets: PrintSheet[]): string {
   const bodies = sheets.map((sheet) => {

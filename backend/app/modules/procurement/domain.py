@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
@@ -828,6 +829,32 @@ ORDER_PREFIX = {"закупка": "PO"}
 DEFAULT_ORDER_PREFIX = "PO"
 SUPPLIER_REQUEST_VAT = "22%"
 NO_SUPPLIER = "(без поставщика)"
+# SUPPLIER_REQUEST.folder (Config.gs): корневая папка документов запросов.
+SUPPLIER_REQUEST_FOLDER = "Запросы поставщикам"
+
+
+@dataclass(frozen=True)
+class DeliveryReceiver:
+    """Получатель на точке отгрузки (`SUPPLIER_REQUEST.receivers`, Config.gs): контакт для доставки."""
+
+    name: str
+    phone: str
+    address: str = ""
+
+
+# SUPPLIER_REQUEST.receivers (Config.gs): ключ — ТОЧКА ОТГРУЗКИ как есть; 'default' — для прочих точек.
+SUPPLIER_REQUEST_RECEIVERS: dict[str, DeliveryReceiver] = {
+    "default": DeliveryReceiver(name="Гусев Алексей", phone="+79259647705"),
+    "г. Москва, ул. 6-я Радиальная, д. 17": DeliveryReceiver(name="Гусев Алексей", phone="+79259647705"),
+    "г. Раменское, ул. 100-й Свирской Дивизии, д. 52": DeliveryReceiver(
+        name="Малышев Степан", phone="+7 977 846 3541"
+    ),
+}
+
+
+def delivery_receiver(point: str) -> DeliveryReceiver:
+    """`SUPPLIER_REQUEST.receivers[g.ship] || receivers['default']` — точное совпадение ключа, как в JS."""
+    return SUPPLIER_REQUEST_RECEIVERS.get(point) or SUPPLIER_REQUEST_RECEIVERS["default"]
 
 
 def _norm(value: str | None) -> str:
@@ -948,12 +975,14 @@ def position_paragraphs(lines: Iterable[ProcurementLine]) -> list[str]:
         if _text(line.link):
             out.append(f"\tСсылка: {_text(line.link)}")
         if _norm(line.quality_document) == "да":
-            out.append("\tДокумент по качеству: требуется.")
+            document_type = _text(line.trace.quality_document_type)
+            out.append(f"\tДокумент по качеству: требуется{f' ({document_type})' if document_type else ''}.")
     return out
 
 
 def supplier_request_letter(group: SupplierRequestGroup, order_no: str) -> str:
     """`supplierTemplateBody_` filled for one group (the Google Doc of SUPPLYMAP, as plain text)."""
+    receiver = delivery_receiver(group.delivery_point)
     return "\n".join(
         [
             f"{group.supplier} · {supplier_reference(group.request_date, group.designation, order_no)}",
@@ -966,8 +995,57 @@ def supplier_request_letter(group: SupplierRequestGroup, order_no: str) -> str:
             "",
             "По каждой позиции по возможности, прошу указать изготовителя (бренд) и страну происхождения.",
             f"Работаем с НДС {SUPPLIER_REQUEST_VAT}. Карточка организации — во вложении.",
-            f"Адрес доставки: {group.delivery_point}.",
+            f"Адрес доставки: {receiver.address or group.delivery_point}.",
+            f"Контактное лицо для доставки: {receiver.name}, тел. {receiver.phone}.",
         ]
+    )
+
+
+_MONTHS_RU = (
+    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+)
+_FOLDER_FORBIDDEN = re.compile(r'[\\/:*?"<>|]+')
+
+
+def sanitize_folder_name(value: str | None) -> str:
+    """`sanitizeFolderName_` (DocGen.gs): недопустимые для папки символы → пробел, пробелы схлопнуты."""
+    return " ".join(_FOLDER_FORBIDDEN.sub(" ", str(value or "")).split())
+
+
+def date_supplier_segments(day: date, supplier: str) -> list[str]:
+    """`dateSupplierSegments_` (DocGen.gs): год / «NN Месяц» / поставщик («Без поставщика»)."""
+    month = f"{day.month:02d} {_MONTHS_RU[day.month - 1]}"
+    return [str(day.year), month, sanitize_folder_name(supplier) or "Без поставщика"]
+
+
+def supplier_request_folder(day: date, supplier: str) -> str:
+    """Папка документа: «Запросы поставщикам/год/месяц/поставщик» (`ensureFolderPath_(reqRoot, …)`)."""
+    return "/".join([SUPPLIER_REQUEST_FOLDER, *date_supplier_segments(day, supplier)])
+
+
+def supplier_request_document_title(order_no: str, day: date) -> str:
+    """Имя копии шаблона: `orderNo + ' от ' + dd.MM.yyyy`."""
+    return f"{order_no} от {day:%d.%m.%Y}"
+
+
+# Шаблон SUPPLYMAP — обычный Google Doc: абзацы Arial 11, межстрочный 1,15, поля 2,54 см; подпозиции — с табом.
+_DOCUMENT_CSS = (
+    "@page{size:A4;margin:2.54cm}"
+    "body{font-family:Arial,Helvetica,sans-serif;font-size:11pt;line-height:1.15;color:#000;"
+    "max-width:16cm;margin:2.54cm auto;background:#fff}"
+    "p{margin:0;white-space:pre-wrap;tab-size:4}"
+    "@media print{body{margin:0;max-width:none}}"
+)
+
+
+def supplier_request_document_html(title: str, letter: str) -> str:
+    """Документ запроса: шаблон `supplierTemplateBody_` с подставленными полями, по абзацу на строку."""
+    paragraphs = "".join(f"<p>{html.escape(line) if line else '&nbsp;'}</p>" for line in letter.split("\n"))
+    return (
+        '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+        f"<title>{html.escape(title)}</title><style>{_DOCUMENT_CSS}</style></head>"
+        f"<body>{paragraphs}</body></html>"
     )
 
 
