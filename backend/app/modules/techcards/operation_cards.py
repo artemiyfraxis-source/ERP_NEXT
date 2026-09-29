@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime
 import json
 import re
 from typing import Mapping, Sequence
@@ -89,6 +90,17 @@ class OperationCardTemplate:
     tooling: tuple[OperationCardTool, ...]
     raw_rows: tuple[tuple[str, ...], ...]
     images: tuple[OperationCardImage, ...] = ()
+    # След правки в ERP (SUPPLYMAP БД.ОП-ТК «ИЗМЕНЕНО» / «КЕМ»): пусто — запись как в снимке библиотеки.
+    changed_at: datetime | None = None
+    changed_by: str = ""
+
+    def with_edit(self, edit: OperationRecordEdit, *, changed_at: datetime, changed_by: str) -> OperationCardTemplate:
+        """The template with a portal edit laid over its snapshot content (SUPPLYMAP tcRecordSave_ writes the
+        record's name, safety, defects, revision, steps and tooling as a whole)."""
+        return replace(
+            self, name=edit.name, safety=edit.safety, defects=edit.defects, revision=edit.revision,
+            steps=edit.steps, tooling=edit.tooling, changed_at=changed_at, changed_by=changed_by,
+        )
 
     def document(self) -> dict:
         return {
@@ -275,3 +287,86 @@ def build_operation_records(cards: Sequence[OperationCardTemplate]) -> tuple[Ope
         winner = record if pick == card.side else previous
         by_code[card.code] = replace(winner, sides=combined_sides, images=previous.images + record.images)
     return tuple(by_code[code] for code in sorted(by_code))
+
+
+# ── Правка записи в ERP (SUPPLYMAP TcRecord.gs «Правка записи в портале», этап 3) ──
+RECORD_STEP_KINDS = ("Операция", "Контроль")
+RECORD_TOOL_SECTIONS = ("Инструмент", "Матрицы", "Оснастка", "Оборудование", "Расходники")
+RECORD_SAFETY_HEAD = "ВАЖНО! ТРЕБОВАНИЕ БЕЗОПАСНОСТИ:"
+
+
+@dataclass(frozen=True)
+class OperationRecordEdit:
+    name: str
+    safety: str
+    defects: str
+    revision: str
+    steps: tuple[OperationCardStep, ...]
+    tooling: tuple[OperationCardTool, ...]
+
+    def as_json(self) -> dict:
+        return {
+            "name": self.name, "safety": self.safety, "defects": self.defects, "revision": self.revision,
+            "steps": [step.__dict__ for step in self.steps],
+            "tooling": [tool.__dict__ for tool in self.tooling],
+        }
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, object]) -> OperationRecordEdit:
+        steps = value.get("steps") or []
+        tooling = value.get("tooling") or []
+        return cls(
+            name=str(value.get("name") or ""), safety=str(value.get("safety") or ""),
+            defects=str(value.get("defects") or ""), revision=str(value.get("revision") or ""),
+            steps=tuple(OperationCardStep(**item) for item in steps if isinstance(item, Mapping)),
+            tooling=tuple(OperationCardTool(**item) for item in tooling if isinstance(item, Mapping)),
+        )
+
+
+def _text(value: object) -> str:
+    return re.sub(r"\r\n?", "\n", "" if value is None else str(value)).strip()
+
+
+def normalize_record_edit(value: Mapping[str, object]) -> OperationRecordEdit:
+    """SUPPLYMAP TcRecord.gs tcRecordNormalize_: empty steps and tooling rows are dropped; steps are numbered
+    through, tooling inside its own section; an empty tolerance is «-»; safety is stored with the form's heading;
+    the revision placeholder «‹рев.›» is not a revision. Raises ValueError with the GAS message."""
+    name = _text(value.get("name"))
+    if not name:
+        raise ValueError("Название операции не может быть пустым")
+    steps = []
+    for item in value.get("steps") or []:
+        if not isinstance(item, Mapping) or not _text(item.get("text")):
+            continue
+        kind = _text(item.get("kind"))
+        if kind not in RECORD_STEP_KINDS:
+            raise ValueError(f"Шаг {len(steps) + 1}: тип «{kind}» — нужен «Операция» или «Контроль»")
+        steps.append(OperationCardStep(
+            number=str(len(steps) + 1), kind=kind, text=_text(item.get("text")),
+            tolerance=_text(item.get("tolerance")) or "-",
+        ))
+    if not steps:
+        raise ValueError("В операции должен остаться хотя бы один шаг")
+    per_section: dict[str, int] = {}
+    tooling = []
+    for item in value.get("tooling") or []:
+        if not isinstance(item, Mapping) or not _text(item.get("name")):
+            continue
+        section = _text(item.get("section"))
+        if section not in RECORD_TOOL_SECTIONS:
+            raise ValueError(f"Оснастка «{_text(item.get('name'))}»: раздел «{section}» неизвестен")
+        per_section[section] = per_section.get(section, 0) + 1
+        tooling.append(OperationCardTool(
+            section=section, number=str(per_section[section]), name=_text(item.get("name")),
+            inventory_number=_text(item.get("inventory_number")), program=_text(item.get("program")),
+            parameters=_text(item.get("parameters")), norm=_text(item.get("norm")), unit=_text(item.get("unit")),
+        ))
+    safety = _text(value.get("safety"))
+    if safety and not safety.startswith(RECORD_SAFETY_HEAD):
+        safety = f"{RECORD_SAFETY_HEAD}\n{safety}"
+    revision = _text(value.get("revision"))
+    return OperationRecordEdit(
+        name=name, safety=safety, defects=_text(value.get("defects")),
+        revision="" if REVISION_PLACEHOLDER_PATTERN.match(revision) else revision,
+        steps=tuple(steps), tooling=tuple(tooling),
+    )

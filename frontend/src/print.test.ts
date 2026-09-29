@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { PrintSheet } from "./api";
-import { buildPrintSheetHtml } from "./print";
+import { buildPrintDocumentHtml, buildPrintSheetHtml } from "./print";
 
 const sheet: PrintSheet = {
   title: "ЗАЯВКА НА ВЫДАЧУ REQ.26.001",
@@ -30,4 +30,16 @@ it("escapes cell content so an article or name cannot inject markup", () => {
 it("omits the note block entirely when there is no shortage", () => {
   const html = buildPrintSheetHtml({ ...sheet, note: "" });
   expect(html).not.toContain('class="note"');
+});
+
+it("renders a multi-page document: one section per page, empty tables left out, content escaped", () => {
+  const html = buildPrintDocumentHtml("ТК P-1", [
+    { title: "Титул", subtitle: "ревизия 1", blocks: [{ heading: "Маршрут" }, { table: { columns: ["№"], rows: [["1 <b>"]] } }], sign: "Подпись" },
+    { title: "Операция 1", subtitle: "", blocks: [{ text: "ВАЖНО!" }, { table: { columns: ["Пусто"], rows: [] } }], sign: "Подпись" },
+  ]);
+  expect(html.match(/<section class="page">/g)).toHaveLength(2);
+  expect(html).toContain("<h2>Маршрут</h2>");
+  expect(html).toContain("1 &lt;b&gt;");
+  expect(html).not.toContain("<th>Пусто</th>");
+  expect(html).toContain("page-break-after: always");
 });

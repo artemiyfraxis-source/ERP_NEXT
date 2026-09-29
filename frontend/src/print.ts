@@ -2,7 +2,8 @@
 // cheap, temporary mechanisms only). A module's backend builds a `PrintSheet` (title/columns/rows/
 // sign), and this file turns it into a plain HTML document opened in a new window and sent straight
 // to the browser's print dialog (Ctrl+P / "Save as PDF" is the browser's own job). Several modules
-// print through this same tiny contract (fulfillment, warehouse) — keep it minimal and stable.
+// print through this same tiny contract (fulfillment, warehouse, procurement; techcards — multi-page ЭТК) — keep it
+// minimal and stable.
 import type { PrintSheet } from "./api";
 
 function escapeHtml(value: string): string {
@@ -25,6 +26,14 @@ const PRINT_CSS = `
   .sign { margin-top: 32px; font-size: 13px; white-space: pre-wrap; }
 `;
 
+const PAGE_CSS = `
+  .page { page-break-after: always; }
+  .page:last-child { page-break-after: auto; }
+  .page h2 { font-size: 14px; margin: 14px 0 6px; }
+  .page table { margin-bottom: 10px; }
+  .text { font-size: 12px; white-space: pre-wrap; margin: 8px 0; }
+`;
+
 export function buildPrintSheetHtml(sheet: PrintSheet): string {
   const head = sheet.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
   const body = sheet.rows
@@ -41,13 +50,54 @@ export function buildPrintSheetHtml(sheet: PrintSheet): string {
     `</body></html>`;
 }
 
-/** Opens the sheet in a new window and triggers the browser print dialog. No-op if popups are blocked. */
-export function openPrintSheet(sheet: PrintSheet): void {
+function openPrintHtml(html: string): void {
   const win = window.open("", "_blank", "noopener,noreferrer,width=900,height=1150");
   if (!win) return;
   win.document.open();
-  win.document.write(buildPrintSheetHtml(sheet));
+  win.document.write(html);
   win.document.close();
   win.focus();
   win.print();
+}
+
+/** Opens the sheet in a new window and triggers the browser print dialog. No-op if popups are blocked. */
+export function openPrintSheet(sheet: PrintSheet): void {
+  openPrintHtml(buildPrintSheetHtml(sheet));
+}
+
+/** A multi-page form (ЭТК: cover + one page per operation, SUPPLYMAP etkPrint_) on the same minimal contract:
+ * each page is a title/subtitle, a run of text paragraphs and plain tables, and a sign line. A table with no
+ * rows is left out, as SUPPLYMAP does. */
+export interface PrintTable { columns: string[]; rows: string[][] }
+export type PrintBlock = { heading: string } | { text: string } | { table: PrintTable };
+export interface PrintPage { title: string; subtitle: string; blocks: PrintBlock[]; sign: string }
+
+function tableHtml(table: PrintTable): string {
+  if (!table.rows.length) return "";
+  const head = table.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
+  const body = table.rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .join("");
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function blockHtml(block: PrintBlock): string {
+  if ("heading" in block) return `<h2>${escapeHtml(block.heading)}</h2>`;
+  if ("text" in block) return block.text ? `<p class="text">${escapeHtml(block.text)}</p>` : "";
+  return tableHtml(block.table);
+}
+
+export function buildPrintDocumentHtml(title: string, pages: PrintPage[]): string {
+  const body = pages.map((page) =>
+    `<section class="page"><h1>${escapeHtml(page.title)}</h1>` +
+    (page.subtitle ? `<p class="subtitle">${escapeHtml(page.subtitle)}</p>` : "") +
+    page.blocks.map(blockHtml).join("") +
+    `<p class="sign">${escapeHtml(page.sign)}</p></section>`,
+  ).join("");
+  return `<!doctype html><html><head><meta charset="utf-8">` +
+    `<title>${escapeHtml(title)}</title><style>${PRINT_CSS}${PAGE_CSS}</style></head><body>${body}</body></html>`;
+}
+
+export function openPrintDocument(title: string, pages: PrintPage[]): void {
+  openPrintHtml(buildPrintDocumentHtml(title, pages));
 }

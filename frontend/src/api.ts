@@ -835,16 +835,51 @@ export interface OperationCardSummary {
   category: string;
   steps: number;
   tooling: number;
+  /** Catalog meta as SUPPLYMAP openTcRecords shows it; optional for older API answers. */
+  controls?: number;
+  first_step?: string;
+  step_text?: string;
+  /** БД.ОП time norms by code; null — no row in БД.ОП («нет норм»), norms_known=false — references not loaded. */
+  norms?: { operation_seconds: string; setup_seconds: string } | null;
+  norms_known?: boolean;
+  changed_at?: string | null;
+  changed_by?: string;
+}
+
+export interface OperationCardStepValue { number?: string; kind: string; text: string; tolerance: string }
+export interface OperationCardToolValue {
+  section: string;
+  number?: string;
+  name: string;
+  inventory_number: string;
+  program: string;
+  parameters: string;
+  norm: string;
+  unit: string;
 }
 
 export interface OperationCardDetail extends OperationCardSummary {
   document: {
     safety: string;
     defects: string;
+    revision?: string;
     steps: Array<{ number: string; kind: string; text: string; tolerance: string }>;
-    tooling: Array<{ section: string; number: string; name: string; inventory_number: string; program: string }>;
+    tooling: Array<{
+      section: string; number: string; name: string; inventory_number: string; program: string;
+      parameters?: string; norm?: string; unit?: string;
+    }>;
   };
   raw_rows: string[][];
+}
+
+/** SUPPLYMAP tcCardEditForm_ → portalTcRecordSave payload. */
+export interface OperationRecordEdit {
+  name: string;
+  safety: string;
+  defects: string;
+  revision?: string;
+  steps: OperationCardStepValue[];
+  tooling: OperationCardToolValue[];
 }
 
 export interface GrapherImportResult {
@@ -1603,6 +1638,16 @@ export const techcardsApi = {
   }>("/api/techcards/templates"),
   template: (templateId: string) =>
     api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`),
+  saveTemplate: (templateId: string, record: OperationRecordEdit) =>
+    api<OperationCardDetail>(`/api/techcards/templates/${encodeURIComponent(templateId)}`, {
+      method: "PUT",
+      body: JSON.stringify(record),
+    }),
+  editOperation: (cardId: string, version: number, operationKey: string, operation: Record<string, unknown>) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/operations/${encodeURIComponent(operationKey)}`, {
+      method: "PUT",
+      body: JSON.stringify({ version, operation }),
+    }),
   importGrapher: (filename: string, contentBase64: string) =>
     api<GrapherImportResult>("/api/techcards/grapher/import", {
       method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components: [] }),
