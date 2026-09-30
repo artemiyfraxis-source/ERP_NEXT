@@ -145,7 +145,7 @@ Write-Host '== Проекты по одному: новые номера из da
 $report = Join-Path $backend 'projects-load.txt'
 $load = @('-X', 'utf8', '..\scripts\projects_import.py', 'load')
 if ($Key -and (Test-Path $Key)) { $load += @('--key', $Key) }
-& $py @load | Tee-Object -FilePath $report
+& $py @load | Tee-Object -FilePath $report -Append
 if ($LASTEXITCODE -gt 1) { Write-Warning "Проекты из списка не загружены (причина выше, итог: $report)" }
 elseif ($LASTEXITCODE -eq 1) { Write-Warning "Часть проектов из списка не загружена — повтор при следующем обновлении (итог: $report)" }
 
