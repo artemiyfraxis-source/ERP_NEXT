@@ -3,6 +3,12 @@ import pytest
 from app import outbox_worker
 
 
+@pytest.fixture(autouse=True)
+def no_receipt_sync(monkeypatch):
+    """The timer tests below pass a bare object as sessions; the receipt sync gets its own test."""
+    monkeypatch.setattr(outbox_worker, "sync_receipt_stages", lambda now, uow, receipts: 0)
+
+
 def test_drain_available_reads_every_batch(monkeypatch):
     batches = iter((2, 2, 1))
     calls = []
@@ -71,3 +77,20 @@ def test_owner_jobs_run_after_the_timers_and_one_failure_does_not_stop_the_rest(
     # The failure alert is throttled to once a minute; the day-gated jobs run every loop.
     assert outbox_worker.run_owner_jobs(object()) == 1
     assert calls == ["digest", "disposal", "alert", "digest", "disposal"]
+
+
+def test_run_timers_syncs_receipt_stages_before_notifying_and_survives_a_concurrent_edit(monkeypatch):
+    from sqlalchemy.orm.exc import StaleDataError
+
+    order = []
+    monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", lambda now, uow: [])
+    monkeypatch.setattr(outbox_worker, "sync_receipt_stages", lambda now, uow, receipts: order.append("sync") or 3)
+    monkeypatch.setattr(outbox_worker, "notify_initiators", lambda now, uow: order.append("notify") or 1)
+    assert outbox_worker.run_timers(object()) == 4
+    assert order == ["sync", "notify"]
+
+    def stale(now, uow, receipts):
+        raise StaleDataError("changed")
+
+    monkeypatch.setattr(outbox_worker, "sync_receipt_stages", stale)
+    assert outbox_worker.run_timers(object()) == 1

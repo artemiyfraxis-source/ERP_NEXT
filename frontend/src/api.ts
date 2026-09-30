@@ -239,6 +239,8 @@ export interface WarehouseRackLayout {
 export interface ReceivingLine {
   id: string;
   legacy_id: string;
+  /** ГРН prefix derived from НАЗНАЧЕНИЕ / ЦЕЛЬ / ССЫЛКА; null — the storekeeper picks CSM or PPM. */
+  grn_prefix?: string | null;
   status: string;
   version: number;
   warehouse: string;
@@ -1635,6 +1637,12 @@ export const receivingApi = {
     api<{ lines: ReceivingLine[] }>(`/api/receiving/${lineId}/unpack`, {
       method: "POST",
       body: JSON.stringify({ version, quantities }),
+    }),
+  /** УПД/М-15 or the quality document into the ERP storage; the returned link goes into the ВК form. */
+  uploadFile: (lineId: string, kind: "upd" | "quality", file: { name: string; type: string; base64: string }) =>
+    api<{ url: string; file_name: string; size: number }>("/api/receiving/files", {
+      method: "POST",
+      body: JSON.stringify({ line_id: lineId, kind, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
     }),
   actSheet: (lineId: string, kind: string) =>
     api<{ sheet: PrintSheet }>(`/api/receiving/${lineId}/acts/${kind}`),

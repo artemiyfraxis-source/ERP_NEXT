@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 /* Общая таблица разделов — то, что в SUPPLYMAP давал лист Google и портальные таблицы (portalGetView,
    portalSaveUserCols): поиск по всем словам, фильтр по значениям колонки, сортировка по заголовку,
@@ -168,6 +168,18 @@ export function DataTable<T>({
   const [choosingColumns, setChoosingColumns] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [running, setRunning] = useState("");
+  // An opened row's card stays inside the visible part of a table wider than the screen (its cell spans
+  // every column): the card is pinned to the left edge and as wide as the scroll box, not the table.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    const sync = () => wrap.style.setProperty("--detail-width", `${wrap.clientWidth}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(wrap);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => writeSaved(storageKey, { hidden, sort, preset }), [storageKey, hidden, sort, preset]);
 
@@ -291,7 +303,7 @@ export function DataTable<T>({
           ))}
         </tr>
         {open && renderDetail && (
-          <tr className="detail"><td colSpan={span}>{renderDetail(row)}</td></tr>
+          <tr className="detail"><td colSpan={span}><div className="detail-body">{renderDetail(row)}</div></td></tr>
         )}
       </Fragment>
     );
@@ -369,7 +381,7 @@ export function DataTable<T>({
           <button type="button" className="secondary small" onClick={() => setSelected(new Set())}>Снять выбор</button>
         </div>
       )}
-      <div className="table-wrap">
+      <div className="table-wrap" ref={wrapRef}>
         <table className={selectable ? "grid wide selectable" : "grid wide"}>
           <thead>
             <tr>

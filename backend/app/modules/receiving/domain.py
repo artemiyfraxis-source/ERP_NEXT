@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Iterable
 from uuid import UUID, uuid4
 
-from app.shared.document_url import normalize_document_url
+from app.shared.document_url import normalize_document_url as _normalize_external_url
 from app.shared.events import OutboxMessage
 from app.shared.identity import Actor
 from app.shared.unit_mass import mass_per_unit
@@ -20,6 +20,21 @@ from app.shared.warehouse_location import existing_storage_location
 
 class ReceivingValidationError(ValueError):
     """A delivery cannot be inspected without trustworthy source facts."""
+
+
+# A file uploaded to ERP (УПД/М-15, документ качества) is linked by its own download path — SUPPLYMAP
+# linked the Drive file. Anything else must be an absolute http(s) link.
+RECEIVING_FILE_PATH = "/api/receiving/files/"
+_STORED_FILE = re.compile(
+    re.escape(RECEIVING_FILE_PATH) + r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+
+
+def normalize_document_url(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if _STORED_FILE.fullmatch(text):
+        return text
+    return _normalize_external_url(value)
 
 
 class ReceivingStatus(str, Enum):

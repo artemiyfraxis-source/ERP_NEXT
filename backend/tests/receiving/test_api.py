@@ -293,3 +293,79 @@ def test_putaway_sheet_requires_receiver_role(receiving_api):
     )
 
     assert client.get("/api/receiving/putaway-sheet").status_code == 403
+
+
+def test_upd_file_is_stored_in_erp_and_its_link_passes_the_inspection(receiving_api):
+    import base64
+
+    client, line = receiving_api
+    pdf = b"%PDF-1.4 scan of the UPD"
+    uploaded = client.post(
+        "/api/receiving/files",
+        json={
+            "line_id": str(line.id),
+            "kind": "upd",
+            "file_name": "скан.PDF",
+            "content_type": "application/pdf",
+            "content_base64": base64.b64encode(pdf).decode(),
+        },
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    url = uploaded.json()["url"]
+    assert url.startswith("/api/receiving/files/")
+    assert uploaded.json()["file_name"] == "УПД SM-20260921-01.pdf"
+
+    opened = client.get(url)
+    assert opened.status_code == 200
+    assert opened.content == pdf
+    assert opened.headers["content-type"] == "application/pdf"
+    assert "inline" in opened.headers["content-disposition"]
+
+    accepted = client.post(
+        f"/api/receiving/{line.id}/inspect",
+        json={"version": line.version, "fact_quantity": "10", "document_quantity": "10", "shipping_document_url": url},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["line"]["status"] == "Принято"
+    assert accepted.json()["line"]["shipping_document_url"] == url
+    assert accepted.json()["line"]["grn_prefix"] == "FRX"
+
+
+@pytest.mark.parametrize(
+    ("file_name", "size", "detail"),
+    [("upd.docx", 3, "нужен PDF или фото JPG/PNG"), ("upd.pdf", 20 * 1024 * 1024 + 1, "больше 20 МБ")],
+    ids=["word", "over-20-mb"],
+)
+def test_receiving_file_refuses_other_types_and_large_files(receiving_api, file_name, size, detail):
+    import base64
+
+    client, line = receiving_api
+    response = client.post(
+        "/api/receiving/files",
+        json={
+            "line_id": str(line.id),
+            "kind": "upd",
+            "file_name": file_name,
+            "content_base64": base64.b64encode(b"x" * size).decode(),
+        },
+    )
+    assert response.status_code == 422
+    assert detail in response.json()["detail"]
+
+
+def test_receiving_file_needs_a_known_line_and_an_editor(receiving_api):
+    import base64
+
+    client, line = receiving_api
+    body = {"kind": "quality", "file_name": "cert.png", "content_base64": base64.b64encode(b"png").decode()}
+    missing = {**body, "line_id": "00000000-0000-0000-0000-000000000009"}
+    assert client.post("/api/receiving/files", json=missing).status_code == 404
+    assert client.get("/api/receiving/files/00000000-0000-0000-0000-000000000009").status_code == 404
+
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Мастер", department="Цех"),
+        email="master@example.test",
+        roles=frozenset({"receiver"}),
+        permissions={"receiving": "view"},
+    )
+    assert client.post("/api/receiving/files", json={**body, "line_id": str(line.id)}).status_code == 403

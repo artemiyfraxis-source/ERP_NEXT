@@ -482,6 +482,14 @@ class SqlAlchemyProcurementRepository:
         )
         return [_line_domain(row) for row in self.session.scalars(statement)]
 
+    def with_statuses(self, statuses) -> list[ProcurementLine]:
+        statement = (
+            select(ProcurementLineRow)
+            .where(ProcurementLineRow.status.in_(list(statuses)))
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+        )
+        return [_line_domain(row) for row in self.session.scalars(statement)]
+
     def list(self, limit: int = 10_000) -> list[ProcurementLine]:
         rows = self.session.scalars(
             select(ProcurementLineRow)
