@@ -53,6 +53,7 @@ from app.modules.techcards.application import (
     import_issued_techcard,
     issue_project_techcard,
 )
+from app.modules.techcards.etk_builder import ETK_VERSION
 from app.modules.techcards.kitsets import KitAssembly, Kitset, item_id, project_key
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus, TechcardValidationError
 from app.shared.clock import moscow_now
@@ -412,6 +413,38 @@ def generate(
     return report
 
 
+def refresh(state: Any, *, actor: Actor, now: datetime, apply: bool) -> Report:
+    """Issued generator ETKs built by an older builder (document schema_version < ETK_VERSION) are rebuilt from
+    their own saved build_config: a new revision «Автопересборка», hand-edited operations kept (manual keys).
+    ETKs moved from SUPPLYMAP (build_config.source) stay as they are. A rerun finds nothing to do."""
+    report = Report()
+    techcards = state.techcards_uow_factory
+    with techcards() as uow:
+        cards = list(uow.techcards.list())
+    for card in cards:
+        label = _label(card.project, card.item_index)
+        document = card.document if isinstance(card.document, dict) else {}
+        config = document.get("build_config")
+        if card.status is not TechcardStatus.ISSUED or not isinstance(config, dict) or config.get("source") == "SUPPLYMAP":
+            continue
+        if int(document.get("schema_version") or 0) >= ETK_VERSION:
+            continue
+        if not apply:
+            report.done.append(label)
+            continue
+        try:
+            built_config, technology_source = with_technology(config, getattr(state, "references_uow_factory", None))
+            built = auto_build_project_techcard(AutoBuildProjectTechcardCommand(
+                card_id=card.id, expected_version=card.version, config=built_config, actor=actor, now=now,
+                technology_source=technology_source,
+            ), techcards())
+        except TechcardValidationError as error:
+            report.failed.append(f"{label}: {error}")
+            continue
+        report.done.append(f"{label} — ревизия {built.revision}")
+    return report
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -439,7 +472,7 @@ def _google_reader() -> SheetsReader | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Техкарты по всем проектам ERP: перенос выданных из SUPPLYMAP и генерация остальных.")
-    parser.add_argument("step", choices=("supplymap", "generate"))
+    parser.add_argument("step", choices=("supplymap", "generate", "refresh"))
     parser.add_argument("--dry-run", action="store_true", help="только показать, что будет сделано")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -454,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
 
     holder = SimpleNamespace(state=SimpleNamespace())
     engine = configure_database(holder, url)
-    actor = Actor(id=uuid.uuid4(), name="пакетная генерация ТК" if args.step == "generate" else "перенос из SUPPLYMAP", department="")
+    actor = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP" if args.step == "supplymap" else "пакетная генерация ТК", department="")
     try:
         if args.step == "supplymap":
             reader = _google_reader()
@@ -468,6 +501,10 @@ def main(argv: list[str] | None = None) -> int:
             report = import_supplymap(sheets[TECHCARDS_SHEET], holder.state.techcards_uow_factory,
                                       actor=actor, now=moscow_now(), apply=not args.dry_run)
             print(format_report("Выданные ТК из SUPPLYMAP", report, apply=not args.dry_run, done_title="Перенесено"))
+        elif args.step == "refresh":
+            report = refresh(holder.state, actor=actor, now=moscow_now(), apply=not args.dry_run)
+            print(format_report("Пересборка выданных ЭТК новым генератором", report, apply=not args.dry_run,
+                                done_title="Пересобрано"))
         else:
             report = generate(holder.state, node_generator(), _google_reader(),
                               actor=actor, now=moscow_now(), apply=not args.dry_run)

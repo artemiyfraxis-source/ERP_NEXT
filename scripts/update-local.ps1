@@ -153,6 +153,9 @@ if ($Key) {
 }
 & $py -X utf8 -m app.workflows.techcards_all generate | Tee-Object -FilePath $report -Append
 if ($LASTEXITCODE -gt 1) { Write-Warning 'Техкарты не сгенерированы (ошибка выше)' }
+# Выданные ЭТК старой сборки — новой ревизией из их же конфигурации (правки операций сохраняются); повтор ничего не делает.
+& $py -X utf8 -m app.workflows.techcards_all refresh | Tee-Object -FilePath $report -Append
+if ($LASTEXITCODE -gt 1) { Write-Warning 'Выданные ЭТК не пересобраны (ошибка выше)' }
 Write-Host "Итог по техкартам: $report"
 
 $head = (git -C $root rev-parse HEAD).Trim()

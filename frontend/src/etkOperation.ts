@@ -151,3 +151,14 @@ export function parseDefects(raw: unknown): Defects {
   }
   return { intro, groups: groups.filter((item) => item.items.length) };
 }
+
+/** Категория карточки по префиксу кода (SUPPLYMAP PortalApp.html TC_REC_CATS_ / tcRecCat_). */
+export const RECORD_CATEGORIES: Array<[string, string]> = [
+  ["CUT", "Резка"], ["STRIP", "Разделка"], ["TWIST", "Свивка"], ["PRS", "Опрессовка"], ["SDR", "Пайка и лужение"],
+  ["INS", "Монтаж"], ["HEAT", "Усадка"], ["US", "УЗ-сварка"], ["MOLD", "Литьё"], ["PLASM", "Литьё"],
+];
+
+export function recordCategory(code: string): string {
+  const prefix = String(code).split("_")[0];
+  return RECORD_CATEGORIES.find(([key]) => key === prefix)?.[1] ?? "Прочее";
+}

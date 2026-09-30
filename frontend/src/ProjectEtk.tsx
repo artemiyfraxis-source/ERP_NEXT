@@ -13,7 +13,7 @@ import {
 import { etkChips, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
 import { defectArt } from "./etkDefectArt";
-import { parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
 
@@ -120,11 +120,60 @@ function defaultConfig(card: ProjectTechcard): Record<string, unknown> {
   };
 }
 
+/** «2000 Шт.»; без нормы — пусто, а не «— Шт.». */
+function quantity(row: EtkRow): string {
+  return row.norm ? `${row.norm} ${row.unit || ""}`.trim() : "";
+}
+
 function Rows({ title, rows }: { title: string; rows?: EtkRow[] }) {
   if (!rows?.length) return null;
   return <div className="etk-block"><strong>{title}</strong>{rows.map((row, index) =>
-    <span key={`${row.name || row.art}:${index}`}>{row.name || row.art || "—"}<small>{row.norm || "—"} {row.unit || ""}</small></span>
+    <span key={`${row.name || row.art}:${index}`}>{row.name || row.art || "—"}{quantity(row) && <small>{quantity(row)}</small>}</span>
   )}</div>;
+}
+
+function minutes(value: string | undefined): number {
+  const number = Number(String(value ?? "").replace(",", "."));
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatMinutes(value: number): string {
+  return String(Math.round(value * 100) / 100).replace(".", ",");
+}
+
+/** «2 ч 50 мин» для времени от часа. */
+function hoursText(value: number): string {
+  const total = Math.round(value);
+  if (total < 60) return "";
+  const rest = total % 60;
+  return `${Math.floor(total / 60)} ч${rest ? ` ${rest} мин` : ""}`;
+}
+
+/** 6 Результат: что операция отдаёт дальше (наименование, количество на партию) и расчётное время отдельной цифрой.
+ *  Время по строкам (резка, опрессовка стороны А — на каждый провод) встаёт колонкой к своей строке, итог — в плитке;
+ *  одно время на операцию — только в плитке, без повтора наименования (в Google оно дублировалось). */
+function ResultView({ label, result = [], time = [], batch }: { label: string; result?: EtkRow[]; time?: EtkRow[]; batch: string }) {
+  const byName = new Map(time.map((row) => [row.name || "", row.norm || ""]));
+  const perRow = time.length > 1 && result.length === time.length && result.every((row) => byName.has(row.name || ""));
+  const total = time.reduce((sum, row) => sum + minutes(row.norm), 0);
+  const hours = hoursText(total);
+  return <div className="etk-result">
+    {result.length > 0 && <table className="etk-result-table">
+      <thead><tr><th>{label}</th><th>Кол-во</th>{perRow && <th>Время, мин</th>}</tr></thead>
+      <tbody>{result.map((row, index) => <tr key={`${row.name}:${index}`}>
+        <td>{row.name || "—"}</td>
+        <td className="num">{quantity(row)}</td>
+        {perRow && <td className="num">{byName.get(row.name || "")}</td>}
+      </tr>)}</tbody>
+    </table>}
+    {time.length > 0 && <div className="etk-time" aria-label="Расчётное время">
+      <small>{perRow || time.length > 1 ? "Расчётное время, итого" : "Расчётное время"}</small>
+      <b>{formatMinutes(total)} <span>мин</span></b>
+      <small>{[hours, batch ? `на партию ${batch} шт.` : ""].filter(Boolean).join(" · ")}</small>
+      {!perRow && time.length > 1 && <ul>{time.map((row, index) =>
+        <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm}</span></li>)}</ul>}
+    </div>}
+  </div>;
 }
 
 /** Комплектующие (SUPPLYMAP etkPartRow_): артикул к применению, под ним «по КД», наименование по артикулу, ГРН партии. */
@@ -142,7 +191,9 @@ function PartRows({ rows }: { rows?: EtkRow[] }) {
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
  *  1 вход: комплектующие и полуфабрикаты → 2 инструмент, оборудование, расходники + режим пайки (жало, температура) →
  *  3 ход операции → 4 типовые дефекты с пиктограммами → 5 эскиз → 6 результат и расчётное время. */
-function EtkOperationCard({ operation, number, total, actions }: { operation: EtkOperation; number: number; total: number; actions?: ReactNode }) {
+function EtkOperationCard({ operation, number, total, batch = "", actions }: {
+  operation: EtkOperation; number: number; total: number; batch?: string; actions?: ReactNode;
+}) {
   const raw = operation as Record<string, unknown>;
   // Раскладка корпуса при монтаже — только если известно, какой провод в какой контакт: пустая сетка повторяла бы
   // схему жгута. Остальные эскизы — SVG-строки etkDraw (как в печати).
@@ -197,10 +248,7 @@ function EtkOperationCard({ operation, number, total, actions }: { operation: Et
     </section>}
     {hasResult && <section className="etk-sec" aria-label="Результат">
       <h4><span className="etk-sec-n">{next()}</span>Результат</h4>
-      <div className="etk-flow">
-        <Rows title={resultLabel} rows={operation.result} />
-        <Rows title="Расчётное время, мин" rows={operation.time} />
-      </div>
+      <ResultView label={resultLabel} result={operation.result} time={operation.time} batch={batch} />
     </section>}
   </article>;
 }
@@ -252,8 +300,12 @@ function opCode(operation: EtkOperation): string {
   return /^без кода$/i.test(code) ? "" : code;
 }
 
+/** Русское название операции: имя карты → название шаблона без кода («CUT_WIRE+1crimp | Автомат резка…») →
+ *  категория по коду карты. Код и тип операции (cutWireCrimp) названием не бывают. */
 function etkTitle(operation: EtkOperation): string {
-  return operation.card?.name || operation.title || operation.type || operation.code || "Операция";
+  const title = String(operation.title || "").split("|").map((part) => part.trim()).filter(Boolean).at(-1) || "";
+  const category = opCode(operation) ? recordCategory(opCode(operation)) : "";
+  return operation.card?.name || title || (category && category !== "Прочее" ? category : "") || "Операция";
 }
 
 function toolSub(tool: EtkTool): string {
@@ -330,6 +382,7 @@ function EtkView({ card, canEdit, onSaved }: { card: ProjectTechcard; canEdit: b
         onSave={save}
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
+          batch={String(record(card.document?.kit).part_quantity ?? "")}
           actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>✏️ Править</button> : null} />
         <div className="etk-nav">
           <button className="secondary small" disabled={!index} onClick={() => setSelected(index - 1)}>← Назад</button>

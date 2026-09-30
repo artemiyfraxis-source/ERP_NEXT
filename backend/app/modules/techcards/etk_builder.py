@@ -10,7 +10,9 @@ from typing import Any, Iterable, Mapping, Sequence
 from .operation_cards import OperationCardTemplate
 
 
-ETK_VERSION = 1
+# 2: result/semi-finished rows with quantities (SUPPLYMAP etkResult_/etkSemis_), combined cards carry the defects of
+#    every transition they perform.
+ETK_VERSION = 2
 NO_COMPONENTS = {
     "SDR_tin", "INS_TUT", "PRS_SLEEVE_coax", "TWIST", "HEAT_TYT_short",
     "HEAT_TYT_long", "HEAT_TTK_short", "HEAT_TTK_long", "PRS_MHF",
@@ -221,6 +223,115 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
     return []
 
 
+CUT_TYPES = {"cutWire", "cutWireStrip", "cutWireCrimp"}
+PIECE_TYPES = {"twist", "tin", "heatTut", "insWrap", "insMark", "seal"}
+TUT_TYPES = {"cutTut", "insTut", "endCap", "foldCore", "stripCable"}
+
+
+def _row(name: str, norm: object) -> dict[str, str]:
+    return {"name": name, "norm": str(norm or ""), "unit": "Шт."}
+
+
+def _terminal(op: Mapping[str, Any]) -> str:
+    endpoint = _endpoint(op)
+    return str(endpoint.get("termArt") or endpoint.get("termName") or "")
+
+
+def _wire_result_name(wire: Mapping[str, Any], terminal: str) -> str:
+    """SUPPLYMAP buildWireResultName_ (without the connector tail, which ETK never passes)."""
+    return f"{_wire_name(wire)}, обжатый терминал {terminal}" if terminal else _wire_name(wire)
+
+
+def _double_crimp_rows(op: Mapping[str, Any], config: Mapping[str, Any], wires: Sequence[Mapping[str, Any]]) -> list[str]:
+    """SUPPLYMAP doubleCrimpRows_: one row per terminal, 2 (or perTerm) routed wires in it."""
+    per = max(2, int(_number(_endpoint(op).get("perTerm"), Decimal(2))))
+    label = f"обжим {per} проводов" if per > 2 else "двойной обжим"
+    return [
+        f"{' + '.join(_wire_name(wire) for wire in wires[start:start + per])}, обж. терм. {_terminal(op)} "
+        f"({label}, {_location(op, config)})"
+        for start in range(0, len(wires), per)
+    ]
+
+
+def _per_wire(wire: Mapping[str, Any], quantity: Decimal) -> str:
+    return _format(_number(wire.get("qty"), Decimal(1)) * quantity)
+
+
+def _result_rows(op: Mapping[str, Any], config: Mapping[str, Any], result: str, is_last: bool) -> list[dict[str, str]]:
+    """SUPPLYMAP etkResult_: what the operation hands on and how many pieces per batch."""
+    if not result:
+        return []
+    operation_type = str(op.get("type") or "")
+    kind = _kind(op)
+    wires = _wires(op, config)
+    quantity = _part_quantity(config)
+    single = str(config.get("assemblyName") or result) if is_last else result
+    build_side = op.get("side") != "B"
+    if kind == "prs" and _endpoint(op).get("double") and len(wires) >= 2:
+        return [_row(name, _format(quantity)) for name in _double_crimp_rows(op, config, wires)]
+    if (kind in {"ins", "sdr"} or (kind == "prs" and not build_side)) and wires:
+        return [_row(single, _format(quantity))]
+    if (operation_type in CUT_TYPES or (kind == "prs" and build_side)) and wires:
+        terminal = _terminal(op) if kind or operation_type == "cutWireCrimp" else ""
+        return [_row(_wire_result_name(wire, terminal), _per_wire(wire, quantity)) for wire in wires]
+    norm = ""
+    if operation_type == "coaxCutTut":
+        norm = _format(max(Decimal(1), _decimal(op.get("units"))) * quantity)
+    elif operation_type in PIECE_TYPES or operation_type.startswith("coax"):
+        norm = _format(quantity)
+    if operation_type in TUT_TYPES:
+        norm = _format(quantity if operation_type == "insTut" and op.get("harness") else _decimal(op.get("tutCount")) * quantity)
+    # The last operation hands over the product itself: never leave its quantity blank.
+    return [_row(single, norm or (_format(quantity) if is_last else ""))]
+
+
+def _semis_rows(
+    op: Mapping[str, Any], config: Mapping[str, Any], previous: str, previous_norm: str,
+    auxiliary: Mapping[str, Any] | None, tut_on: bool,
+) -> list[dict[str, str]]:
+    """SUPPLYMAP etkSemis_: the incoming semi-finished product with its quantity per batch."""
+    operation_type = str(op.get("type") or "")
+    kind = _kind(op)
+    if (not previous and not kind) or operation_type in {"coaxCut", "coaxCutTut"}:
+        return []
+    wires = _wires(op, config)
+    quantity = _part_quantity(config)
+    build_side = op.get("side") != "B"
+    branches = list(dict.fromkeys(str(item) for item in op.get("wireSources") or [] if item))
+    if kind == "prs" and (len(branches) > 1 or (len(branches) == 1 and not previous)):
+        return [_row(f"Заготовка ветви {branch}", _format(quantity)) for branch in branches]
+    if kind == "ins" and _endpoint(op).get("double") and len(wires) >= 2:
+        return [_row(name, _format(quantity)) for name in _double_crimp_rows(op, config, wires)]
+    if build_side and kind == "prs" and wires:
+        return [_row(_wire_name(wire), _per_wire(wire, quantity)) for wire in wires]
+    if build_side and kind in {"ins", "sdr"} and wires:
+        tail = " (ТУТ надет)" if tut_on else ""
+        return [_row(_wire_result_name(wire, _terminal(op)) + tail, _per_wire(wire, quantity)) for wire in wires]
+    norm = previous_norm
+    if not norm and operation_type in {"insTut", "endCap", "foldCore", "stripCable"}:
+        norm = _format(sum((_number(wire.get("qty"), Decimal(1)) for wire in wires), Decimal(0)) * quantity)
+    rows = [_row(previous, norm)]
+    if auxiliary and auxiliary.get("name"):
+        rows.append(_row(str(auxiliary["name"]), auxiliary.get("norm")))
+    return rows
+
+
+def _output_norm(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
+    """SUPPLYMAP computeOutputNorm_: pieces of the semi-finished product the next operation receives."""
+    operation_type = str(op.get("type") or "")
+    quantity = _format(_part_quantity(config))
+    if operation_type.startswith("coax"):
+        return quantity
+    kind = _kind(op)
+    if kind in {"ins", "sdr"}:
+        return quantity if _wires(op, config) else ""
+    if kind == "prs":
+        return "" if op.get("side") != "B" else quantity
+    if operation_type in PIECE_TYPES or (operation_type == "insTut" and op.get("harness")):
+        return quantity
+    return ""
+
+
 def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) -> list[dict[str, str]]:
     operation_type = str(op.get("type") or "")
     kind = _kind(op)
@@ -357,7 +468,60 @@ def _placeholder_map(
     return {PLACEHOLDERS[key]: str(value) for key, value in values.items()}
 
 
-def _resolve_card(card: OperationCardTemplate, replacements: Mapping[str, str], fields: Mapping[str, Any]) -> dict[str, Any]:
+# Combined operation cards («резка + опрессовка», «резка с разделкой + маркировка», «резка коаксиала + разделка») list
+# only the cutting defects, while the operation also crimps / marks / strips. Their ETK adds the defects of the card
+# that performs that transition on its own, as labelled groups.
+COMBINED_DEFECTS = (
+    (re.compile(r"\+\d*crimp", re.IGNORECASE), "PRS_TERMINAL_auto", "Опрессовка"),
+    (re.compile(r"\+\d*mark", re.IGNORECASE), "INS_MARK", "Маркировка"),
+    (re.compile(r"^CUT_COAX\+\d*strip", re.IGNORECASE), "STRIP_COAX_auto", "Разделка коаксиала"),
+)
+_DEFECT_INTRO = re.compile(r"^(типовые дефекты|в соответствии|согласно)", re.IGNORECASE)
+_DEFECT_GROUP = re.compile(r"^\d+[.)]\s*([^:;]{2,120}?)\s*:\s*$")
+
+
+def _labelled_defects(text: str, label: str) -> str:
+    """The component card's defects without its intro, every group titled «<label> — …»."""
+    lines: list[str] = []
+    for source in text.replace("\r", "").split("\n"):
+        line = source.strip()
+        if not line:
+            continue
+        if _DEFECT_INTRO.match(line):
+            head, colon, rest = line.partition(":")
+            # «ТИПОВЫЕ ДЕФЕКТЫ (NG): a; b» carries the list after the colon; «… считаются:» is only a lead-in.
+            if colon and rest.strip() and "(" in head:
+                lines.append(rest.strip())
+            continue
+        group = _DEFECT_GROUP.match(line)
+        if group:
+            title = group.group(1)
+            lines.append(f"{label} — {title[:1].lower()}{title[1:]}:")
+            continue
+        lines.append(line)
+    if not lines:
+        return ""
+    if not (lines[0].startswith(f"{label} — ") and lines[0].endswith(":")):
+        lines.insert(0, f"{label}:")
+    return "\n".join(lines)
+
+
+def _combined_defects(code: str, defects: str, cards_by_code: Mapping[str, OperationCardTemplate]) -> str:
+    parts = [defects.rstrip()] if defects.strip() else []
+    for pattern, component, label in COMBINED_DEFECTS:
+        card = cards_by_code.get(component)
+        if not pattern.search(code) or card is None or not card.defects.strip():
+            continue
+        extra = _labelled_defects(card.defects, label)
+        if extra:
+            parts.append(extra)
+    return "\n".join(parts)
+
+
+def _resolve_card(
+    card: OperationCardTemplate, replacements: Mapping[str, str], fields: Mapping[str, Any],
+    cards_by_code: Mapping[str, OperationCardTemplate] | None = None,
+) -> dict[str, Any]:
     def substitute(value: object) -> str:
         text = str(value or "")
         for token, replacement in replacements.items():
@@ -394,7 +558,8 @@ def _resolve_card(card: OperationCardTemplate, replacements: Mapping[str, str], 
             "inventory_number": tool.inventory_number, "program": program,
             "parameters": substitute(tool.parameters), "norm": tool.norm, "unit": tool.unit,
         })
-    return {"name": card.name, "safety": card.safety, "defects": card.defects, "steps": steps, "tooling": tooling}
+    defects = _combined_defects(card.code, card.defects, cards_by_code or {})
+    return {"name": card.name, "safety": card.safety, "defects": defects, "steps": steps, "tooling": tooling}
 
 
 def _topology(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -469,12 +634,16 @@ def build_etk(
     if not isinstance(raw_operations, list):
         raise ValueError("Нет операций для сборки")
     cards_by_id = {card.source_id: card for card in cards}
+    cards_by_code: dict[str, OperationCardTemplate] = {}
+    for item in cards:
+        cards_by_code.setdefault(item.code, item)
     operations = [deepcopy(item) for item in raw_operations if isinstance(item, Mapping)]
     warnings: list[str] = []
     built: list[dict[str, Any]] = []
     previous_result = ""
     previous_norm = ""
     tut_cuts: list[dict[str, Any]] = []
+    tut_on_wires = False
 
     for index, op in enumerate(operations, start=1):
         card = cards_by_id.get(str(op.get("templateId") or ""))
@@ -511,29 +680,31 @@ def build_etk(
                 )
         replacements = _placeholder_map(op, config, previous_result, result, wire_data, fields)
         components = _components(op, config, code)
-        semis = [] if code.startswith("CUT_") or not previous_result else [{"name": previous_result, "norm": previous_norm, "unit": "Шт."}]
-        if auxiliary and auxiliary["name"]:
-            semis.append({**auxiliary, "unit": "Шт."})
-        quantity = _part_quantity(config)
+        tut_on = False
+        if op.get("type") == "insTut" and not op.get("harness"):
+            tut_on_wires = True
+        elif tut_on_wires and _kind(op):
+            tut_on, tut_on_wires = True, False
+        semis = [] if code.startswith("CUT_") else _semis_rows(op, config, previous_result, previous_norm, auxiliary, tut_on)
         is_last = index == len(operations)
-        result_norm = _format(quantity) if is_last or _kind(op) in {"ins", "sdr"} or op.get("type") in {"twist", "heatTut", "insWrap", "insMark", "seal"} else ""
-        result_rows = [{"name": str(config.get("assemblyName") or result) if is_last else result, "norm": result_norm, "unit": "Шт."}]
+        result_rows = _result_rows(op, config, result, is_last)
+        single_name = str(config.get("assemblyName") or result) if is_last else result
         suffix = _suffix(op)
         built.append({
             "position": index, "code": code, "type": str(op.get("type") or ""),
             "side": str(op.get("side") or ""), "connector": suffix or str(op.get("side") or index),
             "connector_article": str(_endpoint(op).get("connArt") or _endpoint(op).get("connName") or ""),
             "template_id": str(op.get("templateId") or ""), "title": card.title if card else "",
-            "card": _resolve_card(card, replacements, fields) if card else None,
+            "card": _resolve_card(card, replacements, fields, cards_by_code) if card else None,
             "components": components, "semis": semis, "result": result_rows,
             "result_label": "Изделие" if is_last else "Полуфабрикат",
-            "time": _time(op, config, result_rows[0]["name"]),
+            "time": _time(op, config, single_name),
             "times": {"operation_seconds": str(op.get("tOp") or ""), "setup_seconds": str(op.get("tPrep") or ""), "machine_seconds": str(op.get("tMachine") or "")},
             "fields": fields,
         })
         if op.get("type") not in {"cutTut", "endCap", "foldCore", "stripCable"} and not (op.get("type") == "insTut" and not op.get("harness")):
             previous_result = result
-            previous_norm = _format(quantity) if _kind(op) in {"ins", "sdr"} or op.get("side") == "B" or op.get("type") in {"twist", "heatTut", "insWrap", "insMark", "seal"} else ""
+            previous_norm = _output_norm(op, config)
 
     return {
         "schema_version": ETK_VERSION,
