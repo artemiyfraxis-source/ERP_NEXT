@@ -443,6 +443,9 @@ it("lets the master hand out operations of issued projects to installers and lau
   // Клик по дню — раскладка по часам: у Рыбкиной 10:00–14:00 занято, выбор часа ставит операцию ровно с него.
   fireEvent.click(screen.getByRole("button", { name: "День Рыбкина Ольга 22.09" }));
   expect(screen.getByTitle("11:00–12:00: Обжим · 591K.3.КБ1")).toBeInTheDocument();
+  // Занятый час не принимает вторую операцию: на нём нет кнопки, свободные — есть, первый свободный — отдельной кнопкой.
+  expect(screen.queryByRole("button", { name: "Назначить Рыбкина Ольга на 22.09 с 11:00" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Назначить на 22.09 с 09:00" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "День Попов Игнат 23.09" }));
   fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 23.09 с 13:00" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({

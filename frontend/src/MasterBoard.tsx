@@ -118,7 +118,7 @@ function clock(value: number) {
 export interface DaySlot { start: string; finish: string; rest: boolean; busy: string[] }
 
 // Раскладка дня монтажника по часам смены: что занято (операция · сборка) и где перерыв.
-export function daySlots(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift): DaySlot[] {
+export function daySlots(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, skip = ""): DaySlot[] {
   const slots: DaySlot[] = [];
   const end = minutes(shift.finish);
   for (let from = minutes(shift.start); from < end; from += 60) {
@@ -129,7 +129,7 @@ export function daySlots(operatorId: string, day: string, tasks: ProductionTask[
     for (const task of tasks) {
       if (task.status === "Отменено") continue;
       for (const operation of task.operations) {
-        if (done(operation) || !operation.operator_ids.includes(operatorId) || !operation.planned_start || !operation.planned_finish) continue;
+        if (operation.id === skip || done(operation) || !operation.operator_ids.includes(operatorId) || !operation.planned_start || !operation.planned_finish) continue;
         if (new Date(operation.planned_start).getTime() < b && a < new Date(operation.planned_finish).getTime()) busy.push(`${operation.stage} · ${itemId(task)}`);
       }
     }
@@ -346,20 +346,33 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               <div className="mb-day-head"><b>{person.name} · {new Date(`${expanded}T00:00:00`).toLocaleDateString("ru-RU", { weekday: "short" })} {formatDay(expanded)}</b>
                 <span>занято {oneDecimal(dayHours(person.id, expanded, tasks, workShift))} из {oneDecimal(capacity)} ч</span>
                 <button className="mb-day-close" aria-label="Закрыть день" onClick={() => setOpenDay(null)}>×</button></div>
-              <div className="mb-hours">{daySlots(person.id, expanded, tasks, workShift).map((slot) => {
-                const past = expanded < today || (expanded === today && slot.finish <= nowTime);
-                const can = Boolean(operation && canEdit && !past && !slot.rest);
-                const state = slot.rest ? "rest" : slot.busy.length ? "busy" : "free";
-                const hint = slot.rest ? "перерыв" : slot.busy.length ? slot.busy.join("; ") : "свободно";
-                return <div key={slot.start} className={`mb-hour ${state}${past ? " past" : ""}`} title={`${slot.start}–${slot.finish}: ${hint}`}>
-                  {can
-                    ? <button disabled={Boolean(busy)} aria-label={`Назначить ${person.name} на ${formatDay(expanded)} с ${slot.start}`}
-                      onClick={() => { assign(on ? operation!.operator_ids : [...operation!.operator_ids, person.id], expanded, expanded === today && slot.start < nowTime ? nowTime : slot.start); setOpenDay(null); }}>{slot.start}</button>
-                    : <span>{slot.start}</span>}
-                  <small>{slot.rest ? "обед" : slot.busy.length ? slot.busy[0] : ""}</small>
-                </div>;
-              })}</div>
-              {operation && canEdit && <div className="mb-day-hint">Нажми на час — «{operation.stage}» начнётся с него.</div>}
+              {(() => {
+                // Своя операция не считается занятостью: её можно передвинуть на другой час.
+                const slots = daySlots(person.id, expanded, tasks, workShift, operation?.id ?? "");
+                const past = (slot: DaySlot) => expanded < today || (expanded === today && slot.finish <= nowTime);
+                const startOf = (slot: DaySlot) => expanded === today && slot.start < nowTime ? nowTime : slot.start;
+                const pick = (slot: DaySlot) => { assign(on ? operation!.operator_ids : [...operation!.operator_ids, person.id], expanded, startOf(slot)); setOpenDay(null); };
+                const first = operation && canEdit ? slots.find((slot) => !past(slot) && !slot.rest && !slot.busy.length) : undefined;
+                return <>
+                  <div className="mb-hours">{slots.map((slot) => {
+                    const can = Boolean(operation && canEdit && !past(slot) && !slot.rest && !slot.busy.length);
+                    const state = slot.rest ? "rest" : slot.busy.length ? "busy" : "free";
+                    const hint = slot.rest ? "перерыв" : slot.busy.length ? slot.busy.join("; ") : "свободно";
+                    return <div key={slot.start} className={`mb-hour ${state}${past(slot) ? " past" : ""}`} title={`${slot.start}–${slot.finish}: ${hint}`}>
+                      {can
+                        ? <button disabled={Boolean(busy)} aria-label={`Назначить ${person.name} на ${formatDay(expanded)} с ${slot.start}`} onClick={() => pick(slot)}>{slot.start}</button>
+                        : <span>{slot.start}</span>}
+                      <small>{slot.rest ? "обед" : slot.busy.length ? slot.busy[0] : ""}</small>
+                    </div>;
+                  })}</div>
+                  {operation && canEdit && <div className="mb-day-hint">
+                    {first
+                      ? <button className="primary small" disabled={Boolean(busy)} onClick={() => pick(first)}>Назначить на {formatDay(expanded)} с {startOf(first)}</button>
+                      : <span className="danger-text">Свободных часов в этот день нет — выбери другой день.</span>}
+                    <span>или нажми на свободный час. Если операция длиннее остатка смены, хвост переходит на следующий рабочий день.</span>
+                  </div>}
+                </>;
+              })()}
             </div>
           </td></tr>}
           </Fragment>;
