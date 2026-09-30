@@ -452,36 +452,46 @@ it("loads every cursor page before calculating article totals", async () => {
   expect(screen.getByText(/^15\b/)).toBeInTheDocument();
 });
 
-it("moves a whole storage location from the unified movement form", async () => {
+const layout = { layout: { racks: 20, shelves: 6, perRack: {} } };
+
+it("moves a whole storage location, the target picked from the rack layout with the first free №", async () => {
   let payload: unknown;
+  const onShelf = { ...lot, id: "40000000-0000-0000-0000-000000000009", grn: "FRX.26.0000009", storage_location: "18C3B" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/stock" && !init?.method) {
-      return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
-    }
+    if (path === "/api/stock" && !init?.method) return json({ lots: [lot, onShelf], total: 2, truncated: 0, next_cursor: null });
+    if (path === "/api/stock/rack-layout") return json(layout);
+    if (path === "/api/stock/places?warehouse=%D0%A6%D0%90%D0%A0&shelf=20B") return json({ warehouse: "ЦАР", shelf: "20B", occupied: ["20B1", "20B2", "20B3", "20B4"], next_number: 5 });
     if (path === "/api/stock/locations/move" && init?.method === "POST") {
       payload = JSON.parse(String(init.body));
-      return json({ lots: [{ ...lot, storage_location: "20B5" }] });
+      return json({ lots: [{ ...onShelf, storage_location: "20B5B" }] });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "↔ Переместить" }));
-  fireEvent.change(screen.getByLabelText("Исходное место"), { target: { value: "18C3" } });
-  fireEvent.change(screen.getByLabelText("Новое место"), { target: { value: "20B5" } });
-  fireEvent.click(screen.getByRole("button", { name: "Переместить" }));
+  await screen.findByRole("button", { name: "Показать партии (2)" });
+  fireEvent.click(screen.getByRole("button", { name: "↔ Переместить" }));
+  const dialog = screen.getByRole("dialog", { name: "Переместить" });
+  fireEvent.change(within(dialog).getByLabelText("Исходное место"), { target: { value: "18С3" } });
+  expect(within(dialog).getByText(/Уедет партий: 1 — 18C3B/)).toBeInTheDocument();
+  fireEvent.change(await within(dialog).findByLabelText("Стеллаж"), { target: { value: "20" } });
+  fireEvent.change(within(dialog).getByLabelText("Полка"), { target: { value: "B" } });
+  await waitFor(() => expect(within(dialog).getByLabelText("№ на полке")).toHaveValue(5));
+  expect(within(dialog).getByText(/первый свободный № на полке 20B/)).toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Другой склад")).toBeNull();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Переместить" }));
 
-  await waitFor(() => expect(payload).toEqual({
-    warehouse: "ЦАР", source_location: "18C3", target_location: "20B5",
-  }));
+  await waitFor(() => expect(payload).toEqual({ warehouse: "ЦАР", source_location: "18C3", target_location: "20B5" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
-it("moves a whole lot to the other warehouse without asking for a new place", async () => {
+it("moves the lot opened from its card: ГРН preset, no package field, other warehouse keeps the place", async () => {
   let payload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path === "/api/stock/rack-layout") return json(layout);
     if (path === `/api/stock/batches/${lot.id}/move` && init?.method === "POST") {
       payload = JSON.parse(String(init.body));
       return json({ lot: { ...lot, version: 5, warehouse: "ЖУК" } });
@@ -492,12 +502,47 @@ it("moves a whole lot to the other warehouse without asking for a new place", as
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
   fireEvent.click(screen.getAllByRole("button", { name: "Переместить" })[0]);
-  fireEvent.change(screen.getByLabelText("Склад назначения"), { target: { value: "ЖУК" } });
-  expect(screen.getByLabelText("Новое место")).not.toBeRequired();
-  expect(screen.getByText(/уедет на ЖУК целиком/)).toBeInTheDocument();
-  fireEvent.submit(screen.getByLabelText("Склад назначения").closest("form")!);
+  const dialog = screen.getByRole("dialog", { name: "Переместить" });
+  expect(within(dialog).getByLabelText("Партия")).toHaveTextContent("ГРН FRX.26.0000001");
+  expect(within(dialog).getByLabelText("Партия")).toHaveTextContent("Разъём · 10 шт · ЦАР, место 1F4");
+  expect(within(dialog).queryByLabelText("ГРН партии")).toBeNull();
+  expect(within(dialog).queryByLabelText("Пакет")).toBeNull();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Переместить" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Укажи новое место или склад.");
+  fireEvent.change(within(dialog).getByLabelText("Другой склад"), { target: { value: "ЖУК" } });
+  expect(within(dialog).getByText(/уедет на ЖУК целиком.*место останется прежним/)).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Переместить" }));
 
   await waitFor(() => expect(payload).toEqual({ version: 4, storage_location: "", warehouse: "ЖУК" }));
+});
+
+it("asks for the package only when one typed ГРН has several", async () => {
+  let path_: string | undefined;
+  const second = { ...lot, id: "40000000-0000-0000-0000-000000000002", package: "2", storage_location: "1F5" };
+  const first = { ...lot, package: "1" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) return json({ lots: [first, second], total: 2, truncated: 0, next_cursor: null });
+    if (path === "/api/stock/rack-layout") return json(layout);
+    if (path.endsWith("/move") && init?.method === "POST") {
+      path_ = path;
+      return json({ lot: second });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  await screen.findByRole("button", { name: "Показать партии (2)" });
+  fireEvent.click(screen.getByRole("button", { name: "↔ Переместить" }));
+  const dialog = screen.getByRole("dialog", { name: "Переместить" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Одну партию (ГРН)" }));
+  fireEvent.change(within(dialog).getByLabelText("ГРН партии"), { target: { value: "frx.26.0000001" } });
+  fireEvent.change(within(dialog).getByLabelText("Пакет"), { target: { value: second.id } });
+  expect(within(dialog).getByRole("status")).toHaveTextContent("Разъём · 10 шт · ЦАР, место 1F5");
+  fireEvent.change(within(dialog).getByLabelText("Другой склад"), { target: { value: "ЖУК" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Переместить" }));
+
+  await waitFor(() => expect(path_).toBe(`/api/stock/batches/${second.id}/move`));
 });
 
 it("writes an old address as is from the lot operations and shows a lot without a place", async () => {
@@ -643,8 +688,8 @@ it("shows no hint for an unknown shelf (SK-15)", async () => {
   });
 
   render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "↔ Переместить" }));
-  fireEvent.change(screen.getByLabelText("Новое место"), { target: { value: "18A1" } });
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Место хранения для внесения"), { target: { value: "18A1" } });
 
   await new Promise((resolve) => setTimeout(resolve, 400));
   expect(screen.queryByRole("status")).toBeNull();

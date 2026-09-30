@@ -6,6 +6,7 @@ import {
   type WarehouseLot,
   type WarehouseLotPassport,
   type WarehouseManualItem,
+  type WarehouseRackLayout,
   type WarehouseRowEdit,
 } from "./api";
 import { openPrintSheet } from "./print";
@@ -216,8 +217,9 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           }
         }}
       />}
-      {moveOpen && <MoveStockForm
+      {moveOpen && <MoveStockDialog
         preset={moveLot}
+        lots={lots}
         busy={Boolean(busy) || loading}
         mutate={mutate}
         onClose={() => setMoveOpen(false)}
@@ -559,36 +561,125 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
   );
 }
 
-function MoveStockForm({ preset, busy, mutate, onClose }: {
+const WAREHOUSES = ["ЦАР", "ЖУК"];
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const RACK_CODE = /^(\d{1,2})([A-Z])(\d{1,4})([A-Z])?$/;
+const LATIN_TWINS: Record<string, string> = { А: "A", В: "B", С: "C", Е: "E", Н: "H", К: "K", М: "M", О: "O", Р: "P", Т: "T", Х: "X" };
+
+/** «18С3» is typed with a Russian С: the same twins as placeShelfNorm_ / wh05Move norm in SUPPLYMAP. */
+function rackCode(value: string) {
+  const code = value.replace(/\s+/g, "").toUpperCase().replace(/[АВСЕНКМОРТХ]/g, (letter) => LATIN_TWINS[letter]);
+  const match = RACK_CODE.exec(code);
+  return match ? { rack: Number(match[1]), shelf: match[2], num: Number(match[3]), slot: match[4] ?? "", code } : null;
+}
+
+function lotLine(lot: WarehouseLot) {
+  return `${lot.name || lot.article || "—"} · ${lot.balance} ${lot.unit} · ${lot.warehouse}${lot.storage_location ? `, место ${lot.storage_location}` : ", без места"}`;
+}
+
+/** SUPPLYMAP wh05Move (PortalApp.html): one window, two modes. «Одну партию» — the whole lot to a new place and/or
+    the other warehouse; «Всё место целиком» — everything on a place, within the warehouse (18C3 takes its cells along,
+    18C3B only that cell). The target is picked from the rack layout; № defaults to the first free one on the shelf. */
+function MoveStockDialog({ preset, lots, busy, mutate, onClose }: {
   preset: WarehouseLot | null;
+  lots: WarehouseLot[];
   busy: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   onClose: () => void;
 }) {
+  const presetPlace = preset ? rackCode(preset.storage_location) : null;
   const [mode, setMode] = useState<"lot" | "location">(preset ? "lot" : "location");
   const [warehouse, setWarehouse] = useState(preset?.warehouse ?? "ЦАР");
-  const [source, setSource] = useState(preset?.grn ?? "");
-  const [packageNumber, setPackageNumber] = useState(preset?.package ?? "");
-  const [target, setTarget] = useState("");
+  const [grn, setGrn] = useState(preset?.grn ?? "");
+  const [lotId, setLotId] = useState(preset?.id ?? "");
+  const [source, setSource] = useState(presetPlace ? `${presetPlace.rack}${presetPlace.shelf}${presetPlace.num}` : "");
+  const [layout, setLayout] = useState<WarehouseRackLayout | null>(null);
+  const [rack, setRack] = useState("");
+  const [shelf, setShelf] = useState("");
+  const [num, setNum] = useState("");
+  const [slot, setSlot] = useState("");
   const [targetWarehouse, setTargetWarehouse] = useState("");
+  const [occupied, setOccupied] = useState<string[]>([]);
+  const [nextNumber, setNextNumber] = useState<number | null>(null);
   const [error, setError] = useState("");
-  const placeHint = usePlaceHint(mode === "lot" && targetWarehouse ? targetWarehouse : warehouse, target);
-  const transfer = mode === "lot" && Boolean(targetWarehouse) && targetWarehouse !== warehouse;
+
+  useEffect(() => {
+    warehouseApi.rackLayout().then((result) => setLayout(result.layout), () => setError("Не удалось загрузить раскладку стеллажей"));
+  }, []);
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
+
+  // «Одну партию»: the lot opened from its card, or the one the typed ГРН finds in the loaded list. Several packages
+  // under one ГРН — the storekeeper picks the package; otherwise the package never shows.
+  const matches = mode === "lot" && !(preset && lotId === preset.id && grn === preset.grn)
+    ? lots.filter((item) => item.warehouse === warehouse && item.grn.toUpperCase() === grn.replace(/\s+/g, "").toUpperCase())
+    : [];
+  const selected = mode !== "lot" ? null
+    : preset && lotId === preset.id && grn === preset.grn ? preset
+    : matches.find((item) => item.id === lotId) ?? (matches.length === 1 ? matches[0] : null);
+  const destination = mode === "lot" ? targetWarehouse || selected?.warehouse || warehouse : warehouse;
+  const transfer = mode === "lot" && Boolean(targetWarehouse) && targetWarehouse !== (selected?.warehouse ?? warehouse);
+
+  const from = mode === "location" ? rackCode(source) : null;
+  const onPlace = from ? lots.filter((item) => {
+    const place = rackCode(item.storage_location);
+    return item.warehouse === warehouse && Number(item.balance) > 0 && place !== null && place.rack === from.rack
+      && place.shelf === from.shelf && place.num === from.num && (!from.slot || place.slot === from.slot);
+  }) : [];
+
+  const shelvesIn = rack && layout ? layout.perRack[rack] ?? layout.shelves : 0;
+  const target = rack && shelf && Number(num) >= 1 ? `${rack}${shelf}${Number(num)}${slot}` : "";
+  const targetBusy = Boolean(target) && occupied.includes(target);
+
+  // SK-15 placeNextNum_: the first № where nothing lies, on the shelf of the warehouse the lot ends up in.
+  useEffect(() => {
+    setOccupied([]);
+    setNextNumber(null);
+    if (!rack || !shelf) { setNum(""); return; }
+    let cancelled = false;
+    warehouseApi.shelfPlaces(destination, `${rack}${shelf}`).then((result) => {
+      if (cancelled) return;
+      setOccupied(result.occupied);
+      setNextNumber(result.next_number);
+      setNum(result.next_number === null ? "" : String(result.next_number));
+    }, () => undefined);
+    return () => { cancelled = true; };
+  }, [destination, rack, shelf]);
+
+  function switchMode(next: "lot" | "location") {
+    setMode(next);
+    setError("");
+    if (next === "location") setTargetWarehouse("");
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
+    if (rack && !target) return setError("Выбери полку и № на полке.");
     try {
-      if (mode === "location") {
-        await mutate("move-location", () => warehouseApi.moveLocation(warehouse, source, target));
-      } else {
-        let selected = preset?.grn === source.trim() && preset.package === packageNumber.trim() && preset.warehouse === warehouse ? preset : null;
-        if (!selected) {
-          const result = await warehouseApi.list({ query: source.trim(), includeZero: false, warehouse });
-          selected = result.lots.find((item) => item.grn === source.trim() && item.package === packageNumber.trim()) ?? null;
+      if (mode === "lot") {
+        let lot = selected;
+        const typed = grn.replace(/\s+/g, "");
+        if (!typed) return setError("Укажи ГРН партии.");
+        if (!target && !transfer) return setError("Укажи новое место или склад.");
+        if (!lot && matches.length > 1) return setError("Под этим ГРН несколько пакетов — выбери пакет.");
+        if (!lot) {
+          const found = (await warehouseApi.list({ query: typed, includeZero: false, warehouse })).lots
+            .filter((item) => item.grn.toUpperCase() === typed.toUpperCase());
+          if (found.length > 1) return setError("Под этим ГРН несколько пакетов — найди партию в списке и нажми «Переместить» на её карточке.");
+          lot = found[0] ?? null;
         }
-        if (!selected) throw new Error("Партия с таким ГРН и пакетом не найдена");
-        await mutate(selected.id, () => warehouseApi.move(selected.id, selected.version, target.trim(), transfer ? targetWarehouse : ""));
+        if (!lot) return setError(`Партии ${typed} на складе ${warehouse} нет.`);
+        const chosen = lot;
+        await mutate(chosen.id, () => warehouseApi.move(chosen.id, chosen.version, target, transfer ? targetWarehouse : ""));
+      } else {
+        if (!from) return setError("Укажи, откуда: например 18C3.");
+        if (!target) return setError("Укажи, куда: стеллаж, полку и № на полке.");
+        if (slot && !from.slot) return setError("Место целиком переносится без ячейки — ячейки едут со своими буквами.");
+        await mutate("move-location", () => warehouseApi.moveLocation(warehouse, from.code, target));
       }
       onClose();
     } catch (reason) {
@@ -596,25 +687,66 @@ function MoveStockForm({ preset, busy, mutate, onClose }: {
     }
   }
 
-  return <form className="panel manual-stock-form" onSubmit={(event) => void submit(event)}>
-    <div className="manual-stock-head"><h2>Перемещение</h2><button type="button" className="link-button" onClick={onClose}>Отмена</button></div>
-    {error && <div className="error-banner" role="alert">{error}</div>}
-    <div className="manual-stock-grid">
-      <label>Что переносим<select aria-label="Что переносим" value={mode} onChange={(event) => {
-        const next = event.target.value as "lot" | "location";
-        setMode(next);
-        setSource(next === "lot" ? preset?.grn ?? "" : preset?.storage_location ?? "");
-      }}><option value="lot">Одну партию по ГРН</option><option value="location">Всё место целиком</option></select></label>
-      <label>Склад<select aria-label="Склад перемещения" value={warehouse} onChange={(event) => { setWarehouse(event.target.value); setTargetWarehouse(""); }}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
-      <label>{mode === "lot" ? "ГРН" : "Откуда"}<input aria-label={mode === "lot" ? "ГРН для перемещения" : "Исходное место"} required value={source} onChange={(event) => setSource(event.target.value)} /></label>
-      {mode === "lot" && <label>Пакет<input aria-label="Пакет для перемещения" value={packageNumber} onChange={(event) => setPackageNumber(event.target.value)} /></label>}
-      {mode === "lot" && <label>На склад<select aria-label="Склад назначения" value={targetWarehouse} onChange={(event) => setTargetWarehouse(event.target.value)}><option value="">Тот же склад</option>{["ЦАР", "ЖУК"].filter((item) => item !== warehouse).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
-      <label>Куда<input aria-label="Новое место" placeholder={transfer ? "прежнее место" : "20B5"} required={!transfer} className={placeHint.busy ? "place-busy" : undefined} title={placeHint.busy ? BUSY_TITLE : undefined} value={target} onChange={(event) => setTarget(event.target.value)} /></label>
-    </div>
-    <PlaceHint {...placeHint} place={target} onPick={setTarget} />
-    {transfer && <p className="page-sub">Партия уедет на {targetWarehouse} целиком: с остатком и историей списаний. Пустое место — останется прежнее.</p>}
-    <button className="primary" disabled={busy}>{busy ? "Перемещаем…" : "Переместить"}</button>
-  </form>;
+  const fromPreset = mode === "lot" && preset !== null && selected === preset;
+  return <div className="dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <form className="panel move-dialog" role="dialog" aria-label="Переместить" onSubmit={(event) => void submit(event)}>
+      <h2>Переместить</h2>
+      <p className="page-sub">{mode === "lot"
+        ? "Переезжает партия целиком: новое место и/или другой склад. Пустой стеллаж — место не меняем."
+        : "Всё, что лежит на месте, уезжает на новое в пределах склада. 18C3 — вместе с ячейками (18C3B → 20B5B), 18C3B — только ячейка."}</p>
+      <div className="seg-tabs move-modes">
+        <button type="button" className={mode === "lot" ? "on" : ""} aria-pressed={mode === "lot"} onClick={() => switchMode("lot")}>Одну партию (ГРН)</button>
+        <button type="button" className={mode === "location" ? "on" : ""} aria-pressed={mode === "location"} onClick={() => switchMode("location")}>Всё место целиком</button>
+      </div>
+      {fromPreset && preset ? <div className="move-lot" aria-label="Партия">
+        <strong>ГРН {preset.grn}{preset.package ? ` / пакет ${preset.package}` : ""}</strong>
+        <span>{lotLine(preset)}</span>
+      </div> : <>
+        <div className="move-grid two">
+          <label>Склад<select aria-label="Склад перемещения" value={warehouse} onChange={(event) => { setWarehouse(event.target.value); setTargetWarehouse(""); setLotId(""); }}>{WAREHOUSES.map((item) => <option key={item}>{item}</option>)}</select></label>
+          {mode === "lot"
+            ? <label>ГРН партии<input aria-label="ГРН партии" placeholder="OLD.26.0000001" value={grn} onChange={(event) => { setGrn(event.target.value); setLotId(""); }} /></label>
+            : <label>Откуда (место)<input aria-label="Исходное место" placeholder="18C3" value={source} onChange={(event) => setSource(event.target.value)} /></label>}
+        </div>
+        {mode === "lot" && matches.length > 1 && <label>Пакет<select aria-label="Пакет" value={selected?.id ?? ""} onChange={(event) => setLotId(event.target.value)}>
+          <option value="">—</option>
+          {matches.map((item) => <option key={item.id} value={item.id}>{item.package || "без пакета"} · {item.balance} {item.unit}{item.storage_location ? ` · ${item.storage_location}` : ""}</option>)}
+        </select></label>}
+        <p className="page-sub move-preview" role="status">{mode === "lot"
+          ? selected ? lotLine(selected) : grn.trim() && !matches.length ? "В загруженном списке такой партии нет — проверим на сервере." : ""
+          : !source.trim() ? "" : !from ? "Место пишется так: 18C3 или 18C3B."
+          : onPlace.length ? `Уедет партий: ${onPlace.length} — ${onPlace.map((item) => `${item.storage_location} · ${item.name || item.article} · ${item.balance} ${item.unit}`).join("; ")}`
+          : "В загруженном списке на этом месте ничего нет — проверим на сервере."}</p>
+      </>}
+      <h3>Куда</h3>
+      <div className="move-grid">
+        <label>Стеллаж<select aria-label="Стеллаж" value={rack} disabled={!layout} onChange={(event) => { setRack(event.target.value); setShelf(""); }}>
+          <option value="">—</option>
+          {Array.from({ length: layout?.racks ?? 0 }, (_, index) => String(index + 1)).map((value) => <option key={value}>{value}</option>)}
+        </select></label>
+        <label>Полка<select aria-label="Полка" value={shelf} disabled={!rack} onChange={(event) => setShelf(event.target.value)}>
+          <option value="">—</option>
+          {LETTERS.slice(0, shelvesIn).split("").map((value) => <option key={value}>{value}</option>)}
+        </select></label>
+        <label>№ на полке<input aria-label="№ на полке" type="number" min="1" max="999" step="1" disabled={!shelf} className={targetBusy ? "place-busy" : undefined} title={targetBusy ? BUSY_TITLE : undefined} value={num} onChange={(event) => setNum(event.target.value)} /></label>
+        <label>Ячейка<select aria-label="Ячейка" value={slot} disabled={!shelf} className={targetBusy ? "place-busy" : undefined} onChange={(event) => setSlot(event.target.value)}>
+          <option value="">—</option>
+          {LETTERS.split("").map((value) => <option key={value}>{value}</option>)}
+        </select></label>
+      </div>
+      {target && <p className={targetBusy ? "warning-inline" : "page-sub"} role="status">Новое место: <b>{target}</b>{targetBusy ? ` — ${BUSY_TITLE}` : Number(num) === nextNumber ? ` — первый свободный № на полке ${rack}${shelf}` : ""}</p>}
+      {mode === "lot" && <label>Другой склад<select aria-label="Другой склад" value={targetWarehouse} onChange={(event) => setTargetWarehouse(event.target.value)}>
+        <option value="">остаётся тот же</option>
+        {WAREHOUSES.filter((item) => item !== (selected?.warehouse ?? warehouse)).map((item) => <option key={item} value={item}>{item}</option>)}
+      </select></label>}
+      {transfer && <p className="page-sub">Партия уедет на {targetWarehouse} целиком: с остатком и историей списаний{target ? "" : ", место останется прежним"}.</p>}
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="move-actions">
+        <button type="button" className="secondary" onClick={onClose}>Отмена</button>
+        <button className="primary" disabled={busy}>{busy ? "Перемещаем…" : "Переместить"}</button>
+      </div>
+    </form>
+  </div>;
 }
 
 type RowEditField = keyof WarehouseRowEdit;
