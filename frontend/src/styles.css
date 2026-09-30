@@ -650,6 +650,16 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .page-actions + .kit-modal, .page-sub + .page-actions { margin-top: 12px; }
 .kit-spec { margin: 0 0 18px; }
 .kit-spec input { width: 100%; min-width: 60px; }
+/* Снабжение и Спецификация: колонки заданной ширины, чтобы таблицы КБ1, КБ2… шли колонка в колонку; растягивается
+   только «Наименование». Числа и поля с числами — вправо, под своими заголовками. */
+.kit-pane .data-table table.grid.wide { width: 100%; table-layout: fixed; }
+.kit-pane .data-table table.grid.wide { min-width: 1180px; }
+.kit-spec .data-table table.grid.wide { min-width: 1600px; }
+.kit-spec td.num input { text-align: right; font-variant-numeric: tabular-nums; }
+.kit-pane .data-table td.num { font-variant-numeric: tabular-nums; }
+.kit-spec td input { padding: 5px 8px; }
+.kit-pane .data-table .cell-wrap { max-width: none; }
+.kit-supply-summary .panel + .panel { margin-top: 0; }
 .kit-link { display: flex; gap: 4px; align-items: center; }
 .kit-kd { display: flex; gap: 6px; align-items: center; }
 .kit-supply-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 14px; }
