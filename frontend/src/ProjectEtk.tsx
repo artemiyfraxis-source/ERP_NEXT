@@ -13,7 +13,7 @@ import {
 } from "./api";
 import { etkChips, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
-import { defectArt } from "./etkDefectArt";
+import { defectArt, defectGroupCode } from "./etkDefectArt";
 import { parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
@@ -264,7 +264,7 @@ function DefectsView({ text, code, number }: { text: string; code: string; numbe
       {parsed.groups.map((group, index) => <div className="etk-def-group" key={`${group.title}:${index}`}>
         {group.title && <div className="tr-sec-h">{group.title}</div>}
         <div className="etk-def-grid">{group.items.map((item, position) => <div className="etk-def" key={`${item.name}:${position}`}>
-          <span className="etk-def-pic" dangerouslySetInnerHTML={{ __html: defectArt(item.name, item.text, code) }} />
+          <span className="etk-def-pic" dangerouslySetInnerHTML={{ __html: defectArt(item.name, item.text, defectGroupCode(code, group.title)) }} />
           <div><b>{item.name}</b><small>{item.text}</small></div>
         </div>)}</div>
       </div>)}

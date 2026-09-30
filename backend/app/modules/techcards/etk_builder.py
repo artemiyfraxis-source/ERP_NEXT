@@ -120,7 +120,7 @@ def _suffix(op: Mapping[str, Any]) -> str:
     if operation_type == "cutWireStrip":
         return "разделка"
     if operation_type == "cutWireCrimp":
-        return "обжим"
+        return "обжим + лужение" if op.get("tin") else "обжим"
     if operation_type == "cutTut":
         return str(op.get("tutArt") or "ТУТ")
     if operation_type == "insTut":
@@ -155,7 +155,8 @@ def _result_name(
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         cut = "; ".join(filter(None, (_wire_name(item) for item in wires)))
         terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
-        return f"{cut}; {_location(op, config)}: обжат терм. {terminal}" if terminal else cut
+        tinned = f"; {TINNED_END}" if op.get("tin") else ""
+        return f"{cut}; {_location(op, config)}: обжат терм. {terminal}{tinned}" if terminal else cut
     if operation_type == "cutTut":
         material = str(op.get("tutArt") or op.get("tutName") or "ТУТ")
         segments = op.get("tutSegs") if isinstance(op.get("tutSegs"), list) else []
@@ -237,9 +238,14 @@ def _terminal(op: Mapping[str, Any]) -> str:
     return str(endpoint.get("termArt") or endpoint.get("termName") or "")
 
 
-def _wire_result_name(wire: Mapping[str, Any], terminal: str) -> str:
+# Резка с обжимом и лужением (CUT_WIRE+1crimp+tin): второй конец провода станок лудит сам.
+TINNED_END = "другой конец облужен"
+
+
+def _wire_result_name(wire: Mapping[str, Any], terminal: str, tinned: bool = False) -> str:
     """SUPPLYMAP buildWireResultName_ (without the connector tail, which ETK never passes)."""
-    return f"{_wire_name(wire)}, обжатый терминал {terminal}" if terminal else _wire_name(wire)
+    name = f"{_wire_name(wire)}, обжатый терминал {terminal}" if terminal else _wire_name(wire)
+    return f"{name}, {TINNED_END}" if terminal and tinned else name
 
 
 def _double_crimp_rows(op: Mapping[str, Any], config: Mapping[str, Any], wires: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -273,7 +279,7 @@ def _result_rows(op: Mapping[str, Any], config: Mapping[str, Any], result: str, 
         return [_row(single, _format(quantity))]
     if (operation_type in CUT_TYPES or (kind == "prs" and build_side)) and wires:
         terminal = _terminal(op) if kind or operation_type == "cutWireCrimp" else ""
-        return [_row(_wire_result_name(wire, terminal), _per_wire(wire, quantity)) for wire in wires]
+        return [_row(_wire_result_name(wire, terminal, bool(op.get("tin"))), _per_wire(wire, quantity)) for wire in wires]
     norm = ""
     if operation_type == "coaxCutTut":
         norm = _format(max(Decimal(1), _decimal(op.get("units"))) * quantity)
@@ -346,7 +352,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
         setup_per_wire = setup_minutes / len(wires)
         terminal = str(_endpoint(op).get("termArt") or _endpoint(op).get("termName") or "") if operation_type == "cutWireCrimp" or kind else ""
         return [{
-            "name": f"{_wire_name(wire)}{f', обжатый терминал {terminal}' if terminal else ''}",
+            "name": _wire_result_name(wire, terminal, bool(op.get("tin"))),
             "norm": _format((operation_minutes * units(wire) * quantity if operation_minutes else units(wire) * quantity) + setup_per_wire, 2),
         } for wire in wires]
     twist = config.get("twist") if isinstance(config.get("twist"), Mapping) else {}
@@ -473,6 +479,7 @@ def _placeholder_map(
 # that performs that transition on its own, as labelled groups.
 COMBINED_DEFECTS = (
     (re.compile(r"\+\d*crimp", re.IGNORECASE), "PRS_TERMINAL_auto", "Опрессовка"),
+    (re.compile(r"\+tin\b", re.IGNORECASE), "SDR_tin", "Лужение"),
     (re.compile(r"\+\d*mark", re.IGNORECASE), "INS_MARK", "Маркировка"),
     (re.compile(r"^CUT_COAX\+\d*strip", re.IGNORECASE), "STRIP_COAX_auto", "Разделка коаксиала"),
 )
@@ -518,6 +525,21 @@ def _combined_defects(code: str, defects: str, cards_by_code: Mapping[str, Opera
     return "\n".join(parts)
 
 
+# Мерительный инструмент, которым шаг карты велит мерить, а в перечне инструмента карты его нет (шаблоны резки
+# SUPPLYMAP: «…длину зачистки штангенциркулем», у CUT_WIRE+1crimp ещё микрометр и разрывная машина) — дописывается.
+STEP_TOOLS = (
+    (re.compile(r"штангенциркул", re.IGNORECASE), "Штангенциркуль ШЦ-I (ГОСТ 166-89)", ""),
+    (re.compile(r"микрометр", re.IGNORECASE), "EW-2550 | Прибор для измерения высоты опрессовки (микрометр)", "ОБ.034.2"),
+    (re.compile(r"разрывн", re.IGNORECASE), "EW-2510 | Машина испытательная разрывная", "ОБ.033.2"),
+)
+
+
+def _machine_applicator(value: str) -> str:
+    """Станку резки нужен аппликатор автомата (A…) из списка БД.ТЕР «S9/M1/A19»; нет такого — список как есть."""
+    automatic = [token.strip() for token in re.split(r"[/,;]", value) if re.fullmatch(r"[AА]\d+", token.strip(), re.IGNORECASE)]
+    return "/".join(automatic) or value
+
+
 def _resolve_card(
     card: OperationCardTemplate, replacements: Mapping[str, str], fields: Mapping[str, Any],
     cards_by_code: Mapping[str, OperationCardTemplate] | None = None,
@@ -551,13 +573,19 @@ def _resolve_card(
         program = substitute(tool.program)
         free_program = not program or (fields.get("cutCrimp") and program in {"-", "—"})
         if not applicator_set and fields.get("applicator") and tool.section == "Оборудование" and free_program:
-            program = str(fields["applicator"])
+            program = _machine_applicator(str(fields["applicator"])) if fields.get("cutCrimp") else str(fields["applicator"])
             applicator_set = True
         tooling.append({
             "section": tool.section, "number": tool.number, "name": substitute(tool.name),
             "inventory_number": tool.inventory_number, "program": program,
             "parameters": substitute(tool.parameters), "norm": tool.norm, "unit": tool.unit,
         })
+    step_text = " ".join(step["text"] for step in steps)
+    for pattern, name, inventory in STEP_TOOLS:
+        if pattern.search(step_text) and not any(pattern.search(tool["name"]) for tool in tooling):
+            number = sum(1 for tool in tooling if tool["section"] == "Инструмент") + 1
+            tooling.append({"section": "Инструмент", "number": str(number), "name": name, "inventory_number": inventory,
+                            "program": "", "parameters": "", "norm": "", "unit": ""})
     defects = _combined_defects(card.code, card.defects, cards_by_code or {})
     return {"name": card.name, "safety": card.safety, "defects": defects, "steps": steps, "tooling": tooling}
 

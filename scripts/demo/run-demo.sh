@@ -18,6 +18,7 @@ printf 'Preview-2026!\nPreview-2026!\n' | "$PY" -m app.identity_admin create-use
   --email preview@example.com --name 'Артемий' --department 'Руководство' --role admin
 "$PY" -m app.modules.references.load_mirror --source "${SUPPLYMAP_SOURCE_REPOSITORY:-$ROOT/../SUPPLYMAP}"
 "$PY" -m app.modules.techcards.seed_library
+"$PY" -m app.modules.references.erp_corrections
 nohup "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" > "$BACKEND/demo-api.log" 2>&1 &
 echo $! > "$BACKEND/demo-api.pid"
 for _ in $(seq 60); do curl -fs "http://127.0.0.1:$PORT/api/health" >/dev/null && break; sleep 1; done

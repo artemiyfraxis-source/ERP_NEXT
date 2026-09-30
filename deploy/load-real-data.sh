@@ -31,6 +31,7 @@ case "${1:-}" in
     chmod 600 "$ERP_HOME/config/staff-pins.txt"
     cli python -m app.modules.references.load_mirror --source /opt/supplymap
     cli python -m app.modules.techcards.seed_library
+    cli python -m app.modules.references.erp_corrections
     ;;
   projects)
     shift

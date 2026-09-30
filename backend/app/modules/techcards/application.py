@@ -11,7 +11,13 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from .project_cards import ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError
-from .operation_cards import OperationCardTemplate, OperationRecordEdit, normalize_record_edit, parse_operation_library
+from .operation_cards import (
+    OperationCardTemplate,
+    OperationRecordEdit,
+    normalize_record_edit,
+    parse_operation_library,
+    parse_operation_template,
+)
 from .etk_builder import build_etk
 
 
@@ -333,6 +339,52 @@ def edit_operation_record(command: EditOperationRecordCommand, uow: UnitOfWork) 
         ))
         uow.commit()
         return current.with_edit(edit, changed_at=command.now, changed_by=command.actor.name)
+
+
+# Кто «сохранил» шаблон поставки ERP: по этой подписи сид отличает свой шаблон от пересохранённого человеком.
+ERP_TEMPLATE_AUTHOR = "ERP (шаблоны поставки)"
+
+
+@dataclass(frozen=True)
+class SeedErpTemplatesCommand:
+    templates: tuple[dict[str, Any], ...]
+    actor: Actor
+    now: datetime
+
+
+def seed_erp_templates(command: SeedErpTemplatesCommand, uow: UnitOfWork) -> dict[str, list[str]]:
+    """Шаблоны карт, которых нет в БД.ТК SUPPLYMAP (`backend/data/techcard-library-erp.json`), — в библиотеку как
+    сохранённые в ERP: снимок SUPPLYMAP их не затирает. Нет шаблона — создаётся; свой прежний — обновляется, если
+    поставка изменилась; пересохранённый человеком или пришедший из SUPPLYMAP с тем же id — не трогается."""
+    result: dict[str, list[str]] = {"created": [], "updated": [], "kept": []}
+    cards = []
+    for item in command.templates:
+        try:
+            cards.append(parse_operation_template(
+                source_id=str(item.get("id") or ""), title=str(item.get("title") or ""),
+                category=str(item.get("category") or ""), rows=item.get("rows") or [], images=item.get("images"),
+            ))
+        except ValueError as error:
+            raise TechcardValidationError(str(error)) from error
+    with uow:
+        repo = uow.operation_cards
+        for card in cards:
+            row = repo.sheet(card.source_id)
+            same = row is not None and [list(item) for item in row.raw_rows or []] == [list(item) for item in card.raw_rows]
+            if row is not None and (row.saved_by != ERP_TEMPLATE_AUTHOR or same):
+                result["kept"].append(card.title)
+                continue
+            repo.save_sheet(card, description="Шаблон ERP (в БД.ТК SUPPLYMAP его нет)", saved_at=command.now,
+                            saved_by=ERP_TEMPLATE_AUTHOR)
+            result["updated" if row is not None else "created"].append(card.title)
+        if result["created"] or result["updated"]:
+            uow.audit.add(AuditEvent(
+                id=uuid4(), aggregate_id=UUID("00000000-0000-0000-0000-000000000018"),
+                event_type="techcards.erp_templates_seeded", actor=command.actor, occurred_at=command.now,
+                details={"created": "; ".join(result["created"]), "updated": "; ".join(result["updated"])},
+            ))
+        uow.commit()
+    return result
 
 
 def replace_operation_library(command: ReplaceOperationLibraryCommand, uow: UnitOfWork) -> ReplacedOperationLibrary:

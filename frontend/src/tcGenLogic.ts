@@ -99,7 +99,7 @@ export type OpSpec = {
   tutArt?: string; tutName?: string; tutCount?: number; tutSegs?: Array<{ len: string; count: number }>;
   harness?: boolean; units?: number; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
   wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number }>;
-  sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number;
+  sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number; tin?: boolean;
 };
 
 // ── Константы TcGenInline ─────────────────────────────────────────────────
@@ -114,6 +114,11 @@ const SEAL_RE_ = /герметик|силагерм|компаунд|sealant/i;
 const PROTECT_TUBE_RE_ = /тсп[\s-]*\d|стеклотруб/i;
 export const WRAP_SLOTS_ = ["", "2", "3", "4"];
 const CRIMP_CUT_MIN_WIRES_ = 300;
+// Резка + обжим + лужение одним станком (BZW-5.0+Z) выгоднее трёх операций (CUT_WIRE+1strip 600 с + 5 с/пр.,
+// PRS_TERMINAL_auto 1800 + 6, SDR_tin 120 + 5 — против 3600 + 4 по БД.ОП) уже с 90 проводов в партии; 300 у обжима
+// при резке — тот же расчёт без лужения (CUT_WIRE_auto 180 + 3,5 и PRS_TERMINAL_auto против CUT_WIRE+1crimp 3600 + 4).
+const CRIMP_TIN_CUT_MIN_WIRES_ = 90;
+export const CRIMP_TIN_CODE_ = "CUT_WIRE+1crimp+tin";
 
 const OP_CATEGORY_MAP: Record<string, string> = {
   cutWire: "Резка",
@@ -449,17 +454,39 @@ export function makeGen(D: GenData, S: GenState) {
     const r = findTerRecord_(art);
     return !!(r && String(r.applicator || "").split(/[/,;]/).some((s) => /^[AА]\d+$/i.test(s.trim())));
   }
+  /** Можно ли обжать сторону на автомате резки: "" — можно; "applicator" — мешает только то, что у терминала в БД.ТЕР нет
+   *  автоматического аппликатора (A…); "other" — групповой обжим, складывание, RJ, разные терминалы, наконечник, кабель. */
+  function crimpCutBlock_(side: Side): "" | "applicator" | "other" {
+    const eps = endpointsOnSide_(side);
+    if (!eps.length || eps.some((e) => e.method !== "crimp" || !e.termId || e.termId !== eps[0].termId
+        || e.double || (e.fold && isComplex_()) || isRjEndpoint_(e))) return "other";
+    const t = getCompById(eps[0].termId);
+    if (!t || LUG_RE_.test(t.art || t.name || "")) return "other";
+    const routed = new Set(eps.flatMap(routedWireIdxs_));
+    const ws = activeWires_().filter((w) => routed.has(w.idx));
+    if (!ws.length || ws.some((w) => isJacketedCable_(w))) return "other";
+    return terHasAutoApplicator_(t.art || t.name) ? "" : "applicator";
+  }
   function crimpCutSides_(): Side[] {
-    return (["A", "B"] as Side[]).filter((side) => {
-      const eps = endpointsOnSide_(side);
-      if (!eps.length || eps.some((e) => e.method !== "crimp" || !e.termId || e.termId !== eps[0].termId
-          || e.double || (e.fold && isComplex_()) || isRjEndpoint_(e))) return false;
-      const t = getCompById(eps[0].termId);
-      if (!t || LUG_RE_.test(t.art || t.name || "") || !terHasAutoApplicator_(t.art || t.name)) return false;
-      const routed = new Set(eps.flatMap(routedWireIdxs_));
-      const ws = activeWires_().filter((w) => routed.has(w.idx));
-      return ws.length > 0 && ws.every((w) => !isJacketedCable_(w));
-    });
+    return (["A", "B"] as Side[]).filter((side) => !crimpCutBlock_(side));
+  }
+  /** Провода (idx), которые станок резки обжимает на стороне `side` и тут же лудит свободным концом (CUT_WIRE+1crimp+tin):
+   *  стороны В нет, блок «Лужение» включён, провод лудится и заведён в разъёмы стороны. Без карты операции в библиотеке —
+   *  пусто: лужение остаётся отдельной операцией. */
+  function crimpTinWireIdxs_(side: Side | "" | null): Set<number> {
+    if (!side || endpointsOnSide_("B").length || !S.tin.enabled) return new Set();
+    if (!(D.templates || []).some((t) => String(t.title || "").split("|")[0].trim().toLowerCase() === CRIMP_TIN_CODE_.toLowerCase())) return new Set();
+    const active = activeWires_();
+    const tinned = new Set(tinWireIndices_().map((i) => active[i].idx));
+    return new Set(endpointsOnSide_(side).flatMap(routedWireIdxs_).filter((i) => tinned.has(i)));
+  }
+  const crimpCutTin_ = () => crimpTinWireIdxs_(crimpCutSideSelected_()).size > 0;
+  const crimpCutMinWires_ = () => (crimpCutTin_() ? CRIMP_TIN_CUT_MIN_WIRES_ : CRIMP_CUT_MIN_WIRES_);
+  /** Терминал стороны А, из-за которого резка с обжимом и лужением недоступна (нет автоматического аппликатора), или "". */
+  function crimpTinNoApplicator_() {
+    if (endpointsOnSide_("B").length || !S.tin.enabled || !tinWireIndices_().length || crimpCutBlock_("A") !== "applicator") return "";
+    const t = getCompById(endpointsOnSide_("A")[0].termId);
+    return t ? t.art || t.name || "" : "";
   }
   function partQtyFromInfo_() {
     const e = Object.entries(D.assemblyInfo || {}).find(([k]) => /кол[- ]?во|количеств/i.test(k));
@@ -467,7 +494,7 @@ export function makeGen(D: GenData, S: GenState) {
   }
   const batchWires_ = () => activeWires_().reduce((s, w) => s + (Number(w.qty) || 1), 0) * partQtyFromInfo_();
   function crimpCutEnabled_() {
-    return S.crimpCutManual ? S.crimpCut : batchWires_() > CRIMP_CUT_MIN_WIRES_;
+    return S.crimpCutManual ? S.crimpCut : batchWires_() > crimpCutMinWires_();
   }
   function crimpCutSideSelected_(): Side | "" {
     const sides = crimpCutSides_();
@@ -877,6 +904,7 @@ export function makeGen(D: GenData, S: GenState) {
     }
     const tutSegs = Object.keys(tutByLen).map((len) => ({ len, count: tutByLen[len] }));
     const crimpSide = crimpCutSide_();
+    const tinAtCut = crimpTinWireIdxs_(crimpSide);
 
     if (activeWires.length > 0) {
       const nameOf = (w: WireEntry) => { const c = getCompById(w.compId); return c ? (c.name || c.art) : "?"; };
@@ -915,13 +943,14 @@ export function makeGen(D: GenData, S: GenState) {
       const crimpEp = crimpSide ? endpointsOnSide_(crimpSide)[0] : null;
       const crimpSet = new Set(crimpSide ? endpointsOnSide_(crimpSide).flatMap(routedWireIdxs_) : []);
       const rotor = S.rotor;
-      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; crimp: boolean; rot: boolean }> = {};
+      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; crimp: boolean; tin: boolean; rot: boolean }> = {};
       activeWires.forEach((w) => {
         const s = stripOf(w);
         const crimp = crimpSet.has(w.idx);
+        const tin = crimp && tinAtCut.has(w.idx);
         const rot = rotor && isJacketedCable_(w);
-        const sig = `${s.a}|${s.b}|${crimp ? "C" : ""}|${rot ? "R" : ""}`;
-        (groups[sig] || (groups[sig] = { wires: [], a: s.a, b: s.b, crimp, rot })).wires.push(w);
+        const sig = `${s.a}|${s.b}|${crimp ? "C" : ""}${tin ? "T" : ""}|${rot ? "R" : ""}`;
+        (groups[sig] || (groups[sig] = { wires: [], a: s.a, b: s.b, crimp, tin, rot })).wires.push(w);
       });
       let ci = 0;
       Object.keys(groups).forEach((sig) => {
@@ -931,9 +960,10 @@ export function makeGen(D: GenData, S: GenState) {
         const strip = { a: hasA, lenA: g.a === "—" ? "" : g.a, b: hasB, lenB: g.b === "—" ? "" : g.b };
         if (g.crimp && crimpEp && crimpSide) {
           const term = getCompById(crimpEp.termId)!;
+          // С лужением свободного конца тем же станком (BZW-5.0+Z) отдельной операции «Лужение» у этих проводов нет.
           ops.push({ type: "cutWireCrimp", opKey: key, side: crimpSide, crimpEpId: crimpEp.id,
-            label: cutLabel(ws, `Резка с обжимом ${sideRu_(crimpSide)} (${term.art || term.name})`),
-            wireIdxs: ws.map((w) => w.idx), tmplHint: "CUT_WIRE+1crimp", strip });
+            label: cutLabel(ws, `Резка с обжимом ${sideRu_(crimpSide)} (${term.art || term.name})${g.tin ? " и лужением" : ""}`),
+            wireIdxs: ws.map((w) => w.idx), tmplHint: g.tin ? CRIMP_TIN_CODE_ : "CUT_WIRE+1crimp", strip, ...(g.tin ? { tin: true } : {}) });
         } else if (n === 0) {
           ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), wireIdxs: ws.map((w) => w.idx), tmplHint: "CUT_WIRE_auto", cat: "Резка" });
         } else {
@@ -1012,7 +1042,10 @@ export function makeGen(D: GenData, S: GenState) {
       if (firstB >= 0) ops.splice(firstB, 0, twistOp); else ops.push(twistOp);
     }
     const tinOn = endpointsOnSide_("B").length === 0 && S.tin.enabled;
-    if (tinOn && tinWireIndices_().length > 0) ops.push({ type: "tin", opKey: "tin", label: "Лужение", cat: "Лужение" });
+    const tinLeft = tinWireIndices_().map((i) => activeWires[i].idx).filter((idx) => !tinAtCut.has(idx));
+    if (tinOn && tinLeft.length > 0) {
+      ops.push({ type: "tin", opKey: "tin", label: "Лужение", cat: "Лужение", ...(tinAtCut.size ? { wireIdxs: tinLeft } : {}) });
+    }
 
     const dress: OpSpec[] = [];
     const sleeves = harnessSleeves_();
@@ -1282,6 +1315,7 @@ export function makeGen(D: GenData, S: GenState) {
       }
       if (spec.type === "insWrap") { op.wrapArt = spec.wrapArt; op.wrapName = spec.wrapName; op.wrapLen = spec.wrapLen; op.wrapKind = spec.wrapKind; }
       if (spec.type === "insMark") op.marks = spec.marks;
+      if (spec.tin) op.tin = true;
       if (spec.type === "splice" || spec.type === "insHousing") op.units = spec.units || 1;
       if (spec.type === "seal") { op.sealArt = spec.sealArt; op.sealName = spec.sealName; op.sealQty = spec.sealQty; op.sealPlaces = spec.sealPlaces; }
       if (spec.crimpEpId) { op.side = spec.side; op.ep = epSnap(epById_(spec.crimpEpId)); }
@@ -1347,6 +1381,7 @@ export function makeGen(D: GenData, S: GenState) {
   return {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, endpointsOnSide_,
     endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
+    crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,

@@ -181,6 +181,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const cut = gen.cutLengthInfo();
   const hasB = gen.endpointsOnSide_("B").length > 0;
   const crimpSides = gen.crimpCutSides_();
+  const crimpTinTerm = gen.crimpTinNoApplicator_();
   const note = gen.twistNote();
 
   function selectComps(list: Comp[], value: string, onChange: (id: string) => void, label: string, empty = "— нет —") {
@@ -487,9 +488,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>)}</div>
 
       {active.some(gen.isJacketedCable_) && <label className="toggle-row"><input type="checkbox" checked={S.rotor} onChange={(event) => update({ rotor: event.target.checked })} /> Роторный станок — многожильный кабель разделывается при резке (оболочка и жилы)</label>}
-      {crimpSides.length > 0 && <label className="toggle-row"><input type="checkbox" checked={gen.crimpCutEnabled_()} onChange={(event) => update({ crimpCut: event.target.checked, crimpCutManual: true })} /> Обжим на автомате при резке (CUT_WIRE+1crimp) — сторона
+      {crimpSides.length > 0 && <label className="toggle-row"><input type="checkbox" checked={gen.crimpCutEnabled_()} onChange={(event) => update({ crimpCut: event.target.checked, crimpCutManual: true })} />
+        {gen.crimpCutTin_() ? "Обжим и лужение на автомате при резке (CUT_WIRE+1crimp+tin) — сторона" : "Обжим на автомате при резке (CUT_WIRE+1crimp) — сторона"}
         <select aria-label="Сторона обжима при резке" value={gen.crimpCutSideSelected_()} onChange={(event) => update({ crimpCutSide: event.target.value })}>{crimpSides.map((s) => <option key={s} value={s}>{sideRu_(s)}</option>)}</select>
-        <small className="muted">проводов в партии: {gen.batchWires_()}{S.crimpCutManual ? "" : " — по умолчанию вкл при > 300"}</small></label>}
+        <small className="muted">проводов в партии: {gen.batchWires_()}{S.crimpCutManual ? "" : ` — по умолчанию вкл при > ${gen.crimpCutMinWires_()}`}</small></label>}
+      {!crimpSides.length && crimpTinTerm && <small className="muted">Резка с обжимом и лужением (CUT_WIRE+1crimp+tin) недоступна: у {crimpTinTerm} в БД.ТЕР нет аппликатора автомата (A…).</small>}
 
       <label className="toggle-row"><input type="checkbox" checked={S.twist.enabled} onChange={(event) => update((current) => {
         const on = event.target.checked;

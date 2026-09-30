@@ -126,3 +126,60 @@ it("keeps the auto-picked template after the first show (renderOpsCard selectedT
   expect(makeGen(D2, S2).templateIdFor(prs)).toBe(first);
   expect(makeGen(D2, S2).stickTemplates()).toBeNull();
 });
+
+// КБ1 «SHR-02V-S-B to Open-End»: 2 провода на разъём стороны А, стороны В нет, свободные концы лудятся.
+const openEnd = [
+  { id: "w", type: "Провод", name: "Силиконовый 28AWG черный", art: "Сил 28AWG", qty: 0.2 },
+  { id: "t", type: "Терминал", name: "Контакт SH", art: "SSH-003T-P0.2-H", qty: 2 },
+  { id: "c", type: "Соед", name: "Колодка SH 2", art: "SHR-02V-S-B", qty: 1 },
+];
+const tinTemplates = [
+  { id: "cwc", title: "CUT_WIRE+1crimp | Автомат резка + опрессовка", category: "Автомат резка + опрессовка" },
+  { id: "cwct", title: "CUT_WIRE+1crimp+tin | Автомат резка + опрессовка + лужение", category: "Автомат резка + опрессовка" },
+  { id: "tin", title: "SDR_tin | Лужение", category: "Лужение" },
+];
+
+function openEndGen(opts: { applicator?: string; qty?: string; withTinTemplate?: boolean } = {}) {
+  const base = data(openEnd, "Кабельная сборка SHR-02V-S-B to Open-End 28AWG 100mm BUZZ");
+  const D: GenData = {
+    ...base,
+    assemblyInfo: { ...base.assemblyInfo, "Кол-во": opts.qty ?? "50" },
+    templates: [...templates, ...tinTemplates.filter((t) => opts.withTinTemplate !== false || t.id !== "cwct")],
+    ops: [...base.ops, { opNumber: "CUT_WIRE+1crimp+tin", opName: "Автомат резка + опрессовка + лужение", tOp: "4", tPrep: "3600", tMachine: "4" }],
+    terRecords: [{ article: "SSH-003T-P0.2-H", step: "1.00", strip: "1,2", lPlus: "4", lMinus: "", applicator: opts.applicator ?? "S9/M1/A19", awgFrom: "32", awgTo: "28", mm2From: "", mm2To: "" }],
+  };
+  const S0 = initState(D);
+  const S = { ...S0, tin: { enabled: true, wires: null, stripLen: "3" } };
+  return { D, S, g: makeGen(D, S) };
+}
+
+it("Open-End with tinned free ends: one cut + crimp + tin machine operation, no separate crimp or tinning", () => {
+  const { g } = openEndGen();
+  expect(g.endpointsOnSide_("B")).toEqual([]);
+  expect(g.batchWires_()).toBe(100);
+  expect(g.crimpCutMinWires_()).toBe(90);
+  const ops = g.getActiveOps();
+  expect(ops.map((op) => op.type)).toEqual(["cutWireCrimp", "insTerm"]);
+  expect(ops[0]).toMatchObject({ side: "A", tin: true, tmplHint: "CUT_WIRE+1crimp+tin", strip: { a: true, lenA: "1,2", b: true, lenB: "3" } });
+  expect(ops[0].label).toBe("Резка с обжимом А (SSH-003T-P0.2-H) и лужением — Силиконовый 28AWG черный");
+  expect(g.templateIdFor(ops[0])).toBe("cwct");
+  const cfg = g.buildConfig() as Record<string, any>;
+  expect(cfg.ops[0]).toMatchObject({ type: "cutWireCrimp", opNum: "CUT_WIRE+1crimp+tin", tPrep: "3600", tOp: "4", templateId: "cwct", tin: true });
+  expect(g.crimpTinNoApplicator_()).toBe("");
+});
+
+it("keeps crimp and tinning separate when the machine cannot take them", () => {
+  // У терминала в БД.ТЕР нет аппликатора автомата — генератор называет его.
+  const manual = openEndGen({ applicator: "S9/M1" });
+  expect(manual.g.getActiveOps().map((op) => op.type)).toEqual(["cutWireStrip", "prsTerm", "insTerm", "tin"]);
+  expect(manual.g.crimpTinNoApplicator_()).toBe("SSH-003T-P0.2-H");
+  // 80 проводов в партии — не больше 90: переналадка станка не окупается.
+  expect(openEndGen({ qty: "40" }).g.getActiveOps().map((op) => op.type)).toEqual(["cutWireStrip", "prsTerm", "insTerm", "tin"]);
+  // Нет карты CUT_WIRE+1crimp+tin в библиотеке — прежний порог 300 и прежние операции.
+  const noCard = openEndGen({ withTinTemplate: false });
+  expect(noCard.g.crimpCutMinWires_()).toBe(300);
+  expect(noCard.g.getActiveOps().map((op) => op.type)).toEqual(["cutWireStrip", "prsTerm", "insTerm", "tin"]);
+  // Обжим при резке включён вручную, но карты с лужением нет — лужение остаётся отдельной операцией.
+  const forced = makeGen(noCard.D, { ...noCard.S, crimpCutManual: true, crimpCut: true }).getActiveOps();
+  expect(forced.map((op) => [op.type, op.tmplHint ?? ""])).toEqual([["cutWireCrimp", "CUT_WIRE+1crimp"], ["insTerm", expect.any(String)], ["tin", expect.any(String)]]);
+});
