@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  failureText,
   kitsetsApi,
   type KitsetAssembly,
   type KitsetCard,
@@ -87,16 +88,19 @@ function GenTab({ card, principal, index, pick, done }: {
   const [cardId, setCardId] = useState("");
   const [error, setError] = useState("");
   const { card: techcard, setCard: setTechcard, error: loadError } = useTechcard(cardId);
+  const assembly = card.assemblies.find((item) => item.index === index);
+  const known = assembly?.techcard?.card_id || "";
   useEffect(() => {
     let live = true;
-    setCardId(""); setError("");
-    if (!index) return;
+    setError("");
+    // Карточка ТК уже есть — открываем сразу; нет — «Генератор» заводит её первым открытием.
+    setCardId(known);
+    if (!index || known) return;
     kitsetsApi.openTechcard(card.project, index)
       .then((result) => { if (live) setCardId(result.card_id); })
-      .catch((reason) => { if (live) setError(message(reason, "Генератор не открылся")); });
+      .catch((reason) => { if (live) setError(failureText(reason, "Генератор не открылся")); });
     return () => { live = false; };
-  }, [card.project, index]);
-  const assembly = card.assemblies.find((item) => item.index === index);
+  }, [card.project, index, known]);
   return <div className="kit-pane">
     <div className="seg-tabs sub" role="tablist" aria-label="Сборка">{card.assemblies.map((item) =>
       <button key={item.index} role="tab" aria-selected={item.index === index} className={item.index === index ? "on" : ""} onClick={() => pick(item.index)}>{item.index}</button>)}</div>

@@ -546,13 +546,14 @@ def bom(
 ) -> dict:
     """`tcLoadBomFromKit`: состав сборки для генератора — из сохранённой карточки, с правками оператора.
     Аналог по КД → оригинал к применению (kitUseArt_): генератор ищет контакт по артикулу к применению.
-    `calc_ops` — строки листа КБn расчёта по ссылке карточки (`tcCalcOps_`): длины резки и лужение сметчика."""
+    `calc_ops` — строки листа КБn расчёта (`tcCalcOps_`): длины резки и лужение сметчика. Хранятся в карточке с
+    заведения / «Обновить из расчёта»; у старой карточки лист читается один раз и запоминается."""
     kitset = _kitset(request, project)
     assembly = kitset.assembly(index)
     if assembly is None:
         raise HTTPException(status_code=404, detail=f"В наборе «{kitset.project}» нет сборки {index}")
-    return flow.generator_bom(kitset, assembly, flow.calc_ops_by_link(
-        kitset.calc_source, assembly.index, lambda: flow.calc_sheets_reader(request.app.state),
+    return flow.generator_bom(kitset, assembly, flow.assembly_calc_ops(
+        kitset, assembly, lambda: flow.calc_sheets_reader(request.app.state), techcards_factory(request),
     ))
 
 

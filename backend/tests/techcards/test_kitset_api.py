@@ -1,3 +1,4 @@
+from dataclasses import replace
 import base64
 from datetime import datetime
 from decimal import Decimal
@@ -290,6 +291,7 @@ SHEETS = {
         ["Сборка", "Артикул КД", "Тип", "Наименование", "Кол-во на комплект", "Ссылка"],
         ["КБ1", "UL1007 22AWG", "Провод", "", "1,5", ""],
     ],
+    "КБ1": [[], [], [], [], ["", "1", "UL1007", "2", "0,15", "", "", "лудить"]],
 }
 
 
@@ -301,10 +303,32 @@ def test_project_from_calculation_link_reads_google_sheet(kitset_api):
     response = client.post("/api/techcards/kitsets/load", json={"url": LINK})
     assert response.status_code == 200, response.text
     assert response.json()["res"]["project"] == "708К.4.1"
-    assert reader.calls == [("1AbC-calc_id", ("ЗКЗ", "СПЯ"))]
+    # Листы КБn (длины резки для генератора) читаются тем же заведением и хранятся в карточке.
+    assert reader.calls == [("1AbC-calc_id", ("ЗКЗ", "СПЯ")), ("1AbC-calc_id", ("КБ1",))]
     card = client.get("/api/techcards/kitsets/708К.4.1").json()
     assert card["calc_source"] == LINK
     assert [item["art"] for item in card["assemblies"][0]["components"]] == ["UL1007 22AWG"]
+    bom = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
+    assert bom["calc_ops"] == [{"code": "1", "comp": "UL1007", "n": "2", "l": "0,15", "req": "лудить"}]
+    assert len(reader.calls) == 2  # генератор открывается из базы, Google не ждёт
+
+
+def test_old_card_reads_the_kb_sheet_once_and_keeps_it(kitset_api):
+    client, _lot = kitset_api
+    reader = FakeSheets({name: rows for name, rows in SHEETS.items() if name != "КБ1"}, title="708К.4.1 Расчет")
+    app.state.kitset_sheets_reader = reader
+    assert client.post("/api/techcards/kitsets/load", json={"url": LINK}).status_code == 200
+    with app.state.techcards_uow_factory() as uow:  # карточка из времени, когда листы КБn не хранились
+        kitset = uow.kitsets.get("708К.4.1")
+        uow.kitsets.save(replace(kitset, version=kitset.version + 1, assemblies=tuple(
+            replace(item, calc_ops=None) for item in kitset.assemblies)))
+        uow.commit()
+    reader.sheets = SHEETS
+    first = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
+    assert first["calc_ops"][0]["l"] == "0,15"
+    calls = len(reader.calls)
+    assert client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()["calc_ops"] == first["calc_ops"]
+    assert len(reader.calls) == calls
 
 
 def test_calculation_link_refusals(kitset_api):
@@ -335,9 +359,14 @@ def test_generator_bom_reads_kb_sheet_of_the_linked_calculation(kitset_api):
     app.state.kitset_sheets_reader = reader
     assert client.post("/api/techcards/kitsets/load", json={"url": LINK}).status_code == 200
     bom = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
+    assert reader.calls[-1] == ("1AbC-calc_id", ("КБ1",))
+    with app.state.techcards_uow_factory() as uow:  # листы КБn ещё не читались — генератор прочитает сам
+        kitset = uow.kitsets.get("708К.4.1")
+        uow.kitsets.save(replace(kitset, version=kitset.version + 1, assemblies=tuple(
+            replace(item, calc_ops=None) for item in kitset.assemblies)))
+        uow.commit()
     app.state.kitset_sheets_reader = FakeSheets({}, error=CalcSheetError("Нет доступа к таблице расчёта", "access"))
     failed = client.get("/api/techcards/kitsets/708К.4.1/bom/КБ1").json()
-    assert reader.calls[-1] == ("1AbC-calc_id", ("КБ1",))
     assert bom["calc_ops"] == [
         {"code": "CUT_WIRE", "comp": "UL1007 22AWG", "n": "4", "l": "0,16", "req": "L=150мм + SHF-001T"},
         {"code": "SDR_tin", "comp": "", "n": "", "l": "", "req": ""},
