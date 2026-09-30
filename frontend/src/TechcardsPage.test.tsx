@@ -282,7 +282,7 @@ it("lays an ETK operation out in production order with the soldering mode and pi
   const sections = [...document.querySelectorAll(".etk-op .tr-sec-h")].map((item) => item.textContent);
   expect(sections.slice(0, 3)).toEqual(["Инструмент", "Оборудование", "Расходники"]);
   expect(screen.getByText("Недолив припоя")).toBeInTheDocument();
-  expect(document.querySelectorAll(".etk-def-pic svg")).toHaveLength(2);
+  expect(document.querySelectorAll(".etk-def-pic > svg")).toHaveLength(2);
   expect(screen.getByText("Требование безопасности")).toBeInTheDocument();
   expect(screen.getByText("Полуфабрикат")).toBeInTheDocument();
   expect(screen.getByText("Расчётное время, мин")).toBeInTheDocument();
