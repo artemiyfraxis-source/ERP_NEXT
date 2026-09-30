@@ -529,8 +529,8 @@ def test_assign_preview_warns_about_admission_and_applies_speed_coefficient(prod
     assert preview.json()["plan"]["warnings"] == ["Мастер: нет допуска к операции OP-1"]
     assert after["version"] == task["version"]
     assert after["operations"][0]["operator_ids"] == []
-    # 360 с/шт × 10 шт при коэффициенте 2 — 30 минут вместо часа.
-    assert fast.json()["plan"] == {"start": "2026-09-22T09:00:00", "finish": "2026-09-22T09:30:00", "warnings": []}
+    # 360 с/шт × 10 шт при коэффициенте 2 — 30 минут работы вместо часа, на часах 35 (7 ч чистых из 8).
+    assert fast.json()["plan"] == {"start": "2026-09-22T09:00:00", "finish": "2026-09-22T09:35:00", "warnings": []}
     assert codes == [{"code": "OP-1", "name": "Резка"}]
 
 

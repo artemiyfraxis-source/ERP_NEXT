@@ -72,7 +72,7 @@ export function installerLoad(operatorId: string, tasks: ProductionTask[], absen
 // ── Неделя монтажников (владелец, 30.09: «не понимаю, на какой период я закидываю»). Мастер видит загрузку
 // каждого монтажника по дням в часах и ставит операцию кликом в день: сервер планирует её с начала смены этого
 // дня в первое свободное окно (тот же assign и план, что в карточке с Гантом, prodPlan_).
-const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "8" };
+const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const WEEK_DAYS = 7;
 
 function addDays(day: string, count: number) {
@@ -91,24 +91,44 @@ export function workingDay(day: string, shift: ProductionShift, holidays: string
   return shift.weekdays.includes(weekday) && !holidays.includes(day);
 }
 
-// Часы монтажника в день: пересечение плановых окон его невыполненных операций со сменой дня, приведённое
-// к эффективным часам смены (обед и перерывы не считаются).
+// Рабочие отрезки смены без перерывов (обеда), в минутах от полуночи.
+function workSpans(shift: ProductionShift): [number, number][] {
+  let spans: [number, number][] = [[minutes(shift.start), minutes(shift.finish)]];
+  for (const [a, b] of shift.breaks ?? []) {
+    const x = minutes(a), y = minutes(b);
+    spans = spans.flatMap(([from, to]): [number, number][] => y <= from || x >= to ? [[from, to]] : [
+      ...(from < x ? [[from, Math.min(to, x)] as [number, number]] : []),
+      ...(y < to ? [[Math.max(from, y), to] as [number, number]] : []),
+    ]);
+  }
+  return spans;
+}
+
+// Доля чистой работы: обед вычтен, остальные перерывы (туалет, перекуры) размазаны по смене — как на сервере.
+function workRate(shift: ProductionShift) {
+  const available = workSpans(shift).reduce((sum, [from, to]) => sum + to - from, 0) / 60;
+  return available > 0 ? Math.min(1, Number(shift.effective_hours || 7) / available) : 1;
+}
+
+// Часы монтажника в день: пересечение плановых окон его невыполненных операций с рабочими отрезками смены,
+// приведённое к чистому времени (как считает сервер при планировании).
 export function dayHours(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift) {
-  const from = new Date(`${day}T${shift.start}:00`).getTime();
-  const to = new Date(`${day}T${shift.finish}:00`).getTime();
-  const span = Math.max(1, minutes(shift.finish) - minutes(shift.start)) / 60;
-  const ratio = Math.min(1, Number(shift.effective_hours || 8) / span);
+  const spans = workSpans(shift).map(([from, to]) => [new Date(`${day}T${clock(from)}:00`).getTime(), new Date(`${day}T${clock(to)}:00`).getTime()]);
   let total = 0;
   for (const task of tasks) {
     if (task.status === "Отменено") continue;
     for (const operation of task.operations) {
       if (done(operation) || !operation.operator_ids.includes(operatorId) || !operation.planned_start || !operation.planned_finish) continue;
-      const start = Math.max(from, new Date(operation.planned_start).getTime());
-      const finish = Math.min(to, new Date(operation.planned_finish).getTime());
-      if (finish > start) total += (finish - start) / 3_600_000;
+      const a = new Date(operation.planned_start).getTime();
+      const b = new Date(operation.planned_finish).getTime();
+      for (const [from, to] of spans) {
+        const start = Math.max(from, a);
+        const finish = Math.min(to, b);
+        if (finish > start) total += (finish - start) / 3_600_000;
+      }
     }
   }
-  return total * ratio;
+  return total * workRate(shift);
 }
 
 function clock(value: number) {
@@ -229,7 +249,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     void mutate(operation.id, () => productionApi.assign(task.id, operation.id, task.version, operatorIds, `${day}T${time}`));
   }
   const nowTime = clock(new Date().getHours() * 60 + new Date().getMinutes());
-  const capacity = Number(workShift.effective_hours || 8);
+  const capacity = Number(workShift.effective_hours || 7);
 
   function unassign(item: ProductionTask, op: ProductionOperation, operatorId: string) {
     void mutate(op.id, () => productionApi.assign(item.id, op.id, item.version, op.operator_ids.filter((id) => id !== operatorId), null));
@@ -378,7 +398,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           </Fragment>;
         })}</tbody>
       </table>
-      <div className="mb-legend"><span className="mb-cell free">0/8</span> свободен <span className="mb-cell low">3/8</span> частично <span className="mb-cell full">8/8</span> смена занята <span className="mb-cell over">10/8</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
+      <div className="mb-legend"><span className="mb-cell free">0/7</span> свободен <span className="mb-cell low">3/7</span> частично <span className="mb-cell full">7/7</span> смена занята <span className="mb-cell over">9/7</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
     </aside>
   </div>;
 }
