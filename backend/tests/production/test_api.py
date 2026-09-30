@@ -115,7 +115,7 @@ def test_work_goes_only_to_installers(production_api):
     assert "Мастер не монтажник" in refused.json()["detail"]
 
 
-def test_site_master_assigns_only_staff_of_the_own_site(production_api):
+def test_zhuk_staff_are_not_assigned_by_hours(production_api):
     client, operator_id = production_api
     task = launch_from_card(client, "site-master", "591K.3", "КБ1", 10, [("OP-01", "Разделка", 60, 120)]).json()["task"]
     with app.state.production_uow_factory() as uow:
@@ -126,12 +126,33 @@ def test_site_master_assigns_only_staff_of_the_own_site(production_api):
     refused = client.post(path, json={"version": task["version"], "operator_ids": [str(operator_id)]})
     with app.state.production_uow_factory() as uow:
         uow.session.get(IdentityUserRow, UUID("10000000-0000-0000-0000-000000000001")).site = None
+        uow.session.get(IdentityUserRow, operator_id).site = "ЦАР"
         uow.commit()
     allowed = client.post(path, json={"version": task["version"], "operator_ids": [str(operator_id)]})
 
     assert refused.status_code == 422, refused.text
-    assert "Площадка ЦАР" in refused.json()["detail"]
+    # ЖУК работает не нормированно (владелец, 30.09): его людей по часам не ставят, задание отдают площадке целиком.
+    assert "Отдать в ЖУК" in refused.json()["detail"]
     assert allowed.status_code == 200, allowed.text
+
+
+def test_task_is_handed_to_zhuk_whole_and_can_be_taken_back(production_api):
+    client, operator_id = production_api
+    task = launch_from_card(client, "hand-over", "591K.3", "КБ1", 10, [("OP-01", "Разделка", 60, 120)]).json()["task"]
+    path = f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign"
+    assigned = client.post(path, json={"version": task["version"], "operator_ids": [str(operator_id)]}).json()["task"]
+
+    handed = client.post(f"/api/production/tasks/{task['id']}/handover", json={"version": assigned["version"], "site": "ЖУК"})
+    blocked = client.post(path, json={"version": handed.json()["task"]["version"], "operator_ids": [str(operator_id)]})
+    back = client.post(f"/api/production/tasks/{task['id']}/handover", json={"version": handed.json()["task"]["version"], "site": ""})
+
+    assert handed.status_code == 200, handed.text
+    assert handed.json()["task"]["handed_to"] == "ЖУК"
+    assert handed.json()["task"]["operations"][0]["operator_ids"] == []
+    assert handed.json()["task"]["operations"][0]["planned_start"] is None
+    assert blocked.status_code == 422 and "отдано в ЖУК" in blocked.json()["detail"]
+    assert back.status_code == 200, back.text
+    assert back.json()["task"]["handed_to"] == ""
 
 
 def test_master_launches_route_snapshot_assigns_multiple_people_and_preserves_cancelled_task(production_api):

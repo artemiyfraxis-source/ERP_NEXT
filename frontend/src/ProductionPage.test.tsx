@@ -466,18 +466,23 @@ it("lets the master hand out operations of issued projects to installers and lau
   vi.useRealTimers();
 });
 
-it("shows a site master only the installers of the own site", async () => {
-  masterFetch((path) => {
-    if (path === "/api/production/operators") return json({ viewer_site: "ЖУК", operators: [
-      { id: "10000000-0000-0000-0000-000000000002", name: "Рыбкина Ольга", site: "ЦАР", department: "Монтаж" },
-      { id: "10000000-0000-0000-0000-000000000005", name: "Зингер Антон", site: "ЖУК", department: "Монтаж" },
-    ] });
+it("hands a task to ZHUK whole and shows the ZHUK master no hourly grid", async () => {
+  // Владелец, 30.09: ЖУК работает не нормированно — задание отдаётся площадке целиком, без людей и часов.
+  let sent: unknown;
+  masterFetch((path, init) => {
+    if (path === "/api/production/operators") return json({ viewer_site: "ЖУК", operators: [] });
     if (path === "/api/production/launchable") return json({ items: [] });
+    if (path === `/api/production/tasks/${task.id}/handover`) {
+      sent = JSON.parse(String(init?.body));
+      return json({ task: { ...task, handed_to: "ЖУК" } });
+    }
     return null;
   }, [task]);
 
   render(<ProductionPage principal={principal} />);
-  expect(await screen.findByText("Зингер Антон", { selector: ".mb-week th b" })).toBeInTheDocument();
-  expect(screen.queryByText("Рыбкина Ольга", { selector: ".mb-week th b" })).not.toBeInTheDocument();
-  expect(screen.getByText("ЖУК · 1")).toBeInTheDocument();
+  expect(await screen.findByText(/ЖУК работает без раскладки по людям и часам/)).toBeInTheDocument();
+  expect(document.querySelector(".mb-week")).toBeNull();
+  await openBoardProject("591K.3");
+  fireEvent.click(await screen.findByRole("button", { name: "Отдать в ЖУК" }));
+  await waitFor(() => expect(sent).toEqual({ version: task.version, site: "ЖУК" }));
 });
