@@ -188,8 +188,8 @@ it("shows people load under the projects: operations per operator, late, done, a
     await waitFor(() => expect(Array.from(load.querySelectorAll('[data-testid="gantt-row"] .gantt-label strong')).map((item) => item.textContent)).toEqual(["Алексеева А.", "Борисов Б."]));
     const bars = Array.from(load.querySelectorAll('[data-testid="gantt-row"] .gantt-bar'));
     expect(bars.map((bar) => [bar.textContent, bar.className])).toEqual([
-      ["ПЗ-0001 · 708К.4КБ1", "gantt-bar done"],
-      ["ПЗ-0001 · 708К.4КБ1", "gantt-bar late"],
+      ["ПЗ-0001 · 708К.4КБ1 · 3 ч", "gantt-bar done"],
+      ["ПЗ-0001 · 708К.4КБ1 · 6 ч", "gantt-bar late"],
       ["Отпуск", "gantt-bar absent"],
     ]);
     expect(screen.getByText("2 опер. · 4,0 ч по норме")).toBeInTheDocument();

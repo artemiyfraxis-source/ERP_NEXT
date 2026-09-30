@@ -456,14 +456,14 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 
 .gantt-nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
 .gantt-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
-.gantt-grid { display: inline-block; min-width: 100%; }
+.gantt-grid { display: block; min-width: max-content; }
 .gantt-row { display: flex; border-bottom: 1px solid var(--border); min-height: 40px; }
 .gantt-row:last-child { border-bottom: 0; }
 .gantt-label { position: sticky; left: 0; z-index: 3; flex: 0 0 380px; width: 380px; padding: 6px 10px; background: var(--card); border-right: 1px solid var(--border); font-size: 13px; overflow: hidden; }
 .gantt-sub, .gantt-note { color: var(--muted-foreground); font-size: 11.5px; }
 .gantt-note { font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gantt-late { display: inline-block; margin-top: 2px; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: #fdecea; color: #c62828; }
-.gantt-track { position: relative; flex: 0 0 auto; }
+.gantt-track { position: relative; flex: 1 0 auto; }
 .gantt-head { min-height: 34px; background: #f6faf9; }
 .gantt-head .gantt-label { background: #f6faf9; font-weight: 600; }
 .gantt-day { position: absolute; top: 3px; text-align: center; font-size: 10.5px; line-height: 1.25; color: var(--muted-foreground); }
@@ -930,6 +930,12 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .stock-toolbar > select { width: auto; }
 .stock-table th .th-sort { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
 .stock-table .stock-grn { color: var(--muted-foreground); font-size: 12.5px; }
+/* Колонки по содержимому, остаток ширины забирает «Наименование» (последняя): без пустот между колонками на 27". */
+.stock-table > thead > tr > th, .stock-table > tbody > tr:not(.stock-group-row):not(.stock-cards-row) > td { width: 1%; }
+.stock-table > thead > tr > th.stock-name, .stock-table > tbody > tr:not(.stock-group-row):not(.stock-cards-row) > td.stock-name { width: auto; max-width: none; }
+.stock-table > thead > tr > th, .stock-table > tbody > tr > td { white-space: nowrap; }
+.stock-table td.text:not(.stock-name) { white-space: nowrap; min-width: 0; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.stock-table td.stock-name { white-space: normal; }
 .stock-group-row td { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
 .stock-article-row.open td { background: #eaf6f4; }
 .stock-cards-row > td { background: #f6f8f8; padding: 12px 16px; }
