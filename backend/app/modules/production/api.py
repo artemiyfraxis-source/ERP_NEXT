@@ -35,7 +35,7 @@ from .application import (
     set_production_cancelled,
 )
 from .domain import OperatorSkill, ProductionOperation, ProductionTask, ProductionValidationError, WorkShift
-from .launchable import item_id, launched_quantity, operation_codes, route_from_document
+from .launchable import item_id, launched_quantity, operation_code, operation_codes, route_from_document, stage_name
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
@@ -268,8 +268,8 @@ def _result(task: ProductionTask, facts: dict | None = None) -> dict:
         "assigned": sum(bool(operation.operator_ids) for operation in task.operations),
         "operations": [{
             "id": str(operation.id), "position": operation.position,
-            "code": operation.code, "stage": operation.stage,
-            "description": operation.description,
+            "code": operation_code(operation.code), "stage": stage_name(operation.stage),
+            "description": stage_name(operation.description),
             "seconds_per_unit": _number(operation.seconds_per_unit),
             "setup_seconds": _number(operation.setup_seconds),
             "norm_seconds": operation.norm_seconds,

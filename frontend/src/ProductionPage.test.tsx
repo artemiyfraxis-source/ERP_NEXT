@@ -397,8 +397,11 @@ it("lets the master hand out operations of issued projects to installers and lau
   const bodies: Array<{ path: string; body: unknown }> = [];
   const open: ProductionTask = { ...task, assigned: 0, operations: [
     { ...task.operations[0], operator_ids: [] },
-    { ...task.operations[0], id: "71000000-0000-0000-0000-000000000002", position: 2, stage: "Обжим", code: "OP-02", operator_ids: ["10000000-0000-0000-0000-000000000002"] },
+    { ...task.operations[0], id: "71000000-0000-0000-0000-000000000002", position: 2, stage: "Обжим", code: "OP-02", operator_ids: ["10000000-0000-0000-0000-000000000002"],
+      planned_start: "2026-09-22T10:00:00", planned_finish: "2026-09-22T14:00:00" },
   ] };
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T08:00:00"));
   masterFetch((path, init) => {
     if (path === "/api/production/operators") return json({ operators: [
       { id: "10000000-0000-0000-0000-000000000002", name: "Рыбкина Ольга", site: "ЦАР", department: "Монтаж" },
@@ -422,8 +425,10 @@ it("lets the master hand out operations of issued projects to installers and lau
 
   render(<ProductionPage principal={principal} />);
   expect(await screen.findByRole("region", { name: "Проекты и операции" })).toBeInTheDocument();
-  expect(await screen.findByText("Рыбкина Ольга", { selector: ".mb-person b" })).toBeInTheDocument();
-  expect(screen.getByText("1 опер. · 0,2 ч", { exact: false })).toBeInTheDocument();
+  expect(await screen.findByText("Рыбкина Ольга", { selector: ".mb-week th b" })).toBeInTheDocument();
+  // 4 ч в окне смены 09:00–17:30 при 8 эффективных часах: 4 × 8 / 8,5 ≈ 3,8 ч в этот день.
+  expect(screen.getByTitle("Рыбкина Ольга, 22.09: 3,8 из 8 ч")).toHaveTextContent("3,8");
+  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 8 ч")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя: 1")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
   expect(screen.getByText("к запуску 1")).toBeInTheDocument();
@@ -432,11 +437,18 @@ it("lets the master hand out operations of issued projects to installers and lau
 
   await openBoardProject("591K.3");
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат" }));
+  expect(screen.getByText("Обжим")).toBeInTheDocument();
+  expect(screen.getByText("22.09 10:00–14:00")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 23.09" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/assign`,
-    body: { version: 2, operator_ids: ["10000000-0000-0000-0000-000000000003"], requested_start: null, dry: false },
+    body: { version: 2, operator_ids: ["10000000-0000-0000-0000-000000000003"], requested_start: "2026-09-23T09:00", dry: false },
   }));
+  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 22.09" }));
+  await waitFor(() => expect((bodies.at(-1)?.body as { requested_start: unknown }).requested_start).toBeNull());
+  // Снять — крестиком на исполнителе, без отдельной кнопки у каждого.
+  fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
+  await waitFor(() => expect(bodies.at(-1)?.body).toMatchObject({ operator_ids: [] }));
 
   fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
   await openBoardProject("708К.4");
@@ -445,6 +457,7 @@ it("lets the master hand out operations of issued projects to installers and lau
     path: "/api/production/tasks",
     body: { techcard_id: "80000000-0000-0000-0000-000000000009", quantity: 5, deadline: "2026-10-10", fulfillment_request_id: null },
   }));
+  vi.useRealTimers();
 });
 
 it("shows a site master only the installers of the own site", async () => {
@@ -458,7 +471,7 @@ it("shows a site master only the installers of the own site", async () => {
   }, [task]);
 
   render(<ProductionPage principal={principal} />);
-  expect(await screen.findByText("Зингер Антон", { selector: ".mb-person b" })).toBeInTheDocument();
-  expect(screen.queryByText("Рыбкина Ольга", { selector: ".mb-person b" })).not.toBeInTheDocument();
+  expect(await screen.findByText("Зингер Антон", { selector: ".mb-week th b" })).toBeInTheDocument();
+  expect(screen.queryByText("Рыбкина Ольга", { selector: ".mb-week th b" })).not.toBeInTheDocument();
   expect(screen.getByText("ЖУК · 1")).toBeInTheDocument();
 });

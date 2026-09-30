@@ -250,6 +250,44 @@ it("shows the operation field chips and the sketch on the ETK screen (renderEtk_
   expect(screen.getByText("H обжима по жиле: 0,85 мм")).toBeInTheDocument();
 });
 
+it("lays an ETK operation out in production order with the soldering mode and pictured defects", async () => {
+  const soldering: ProjectTechcard = { ...issuedEtk, document: { ...issuedEtk.document, operations: [{
+    position: 1, code: "SDR_XT60", side: "A", connector: "XS1", type: "sdr", result_label: "Полуфабрикат",
+    card: { name: "Пайка", safety: "ВАЖНО! ТРЕБОВАНИЕ БЕЗОПАСНОСТИ:\nЗащитные очки при пайке.",
+      defects: "1. Дефекты паяного соединения:\nНедолив припоя: Чашечка заполнена менее чем на 75%.\n«Холодная» пайка: Матовая поверхность.",
+      steps: [{ number: "1", kind: "Операция", text: "Паяльник ≥80 Вт / станция с массивным жалом; t° 350–380 °C", tolerance: "(+/-) 10 °C" }],
+      tooling: [
+        { section: "Расходники", number: "1", name: "Припой Sn63Pb37" },
+        { section: "Оборудование", number: "1", name: "T21(R) | Станция паяльная" },
+        { section: "Инструмент", number: "1", name: "Микроскоп" },
+      ] },
+    components: [{ art: "XT60-M", name: "Разъём XT60", norm: "1", unit: "шт" }],
+    semis: [{ name: "Провод зачищенный", norm: "2", unit: "шт" }],
+    result: [{ name: "Провод с XT60", norm: "1", unit: "шт" }],
+    time: [{ name: "Пайка", norm: "1,5", unit: "мин" }],
+  }] } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/projects") return json({ items: [soldering] });
+    if (path.endsWith("/revisions")) return json({ items: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="projects" />);
+  const solder = await screen.findByLabelText("Режим пайки");
+  expect(solder).toHaveTextContent(/Жало паяльника.*Массивное/);
+  expect(solder).toHaveTextContent("Температура жала350–380 °C (±10 °C)");
+  const headings = screen.getAllByRole("heading", { level: 4 }).map((item) => item.textContent);
+  expect(headings).toEqual(["1Вход", "2Инструмент, оборудование, расходники", "3Ход операции", "4Типовые дефекты · 2", "5Результат"]);
+  const sections = [...document.querySelectorAll(".etk-op .tr-sec-h")].map((item) => item.textContent);
+  expect(sections.slice(0, 3)).toEqual(["Инструмент", "Оборудование", "Расходники"]);
+  expect(screen.getByText("Недолив припоя")).toBeInTheDocument();
+  expect(document.querySelectorAll(".etk-def-pic svg")).toHaveLength(2);
+  expect(screen.getByText("Требование безопасности")).toBeInTheDocument();
+  expect(screen.getByText("Полуфабрикат")).toBeInTheDocument();
+  expect(screen.getByText("Расчётное время, мин")).toBeInTheDocument();
+});
+
 it("prints the ETK through the shared print contract (etkPrint_)", async () => {
   const written: string[] = [];
   const win = { document: { open: vi.fn(), write: (html: string) => written.push(html), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
