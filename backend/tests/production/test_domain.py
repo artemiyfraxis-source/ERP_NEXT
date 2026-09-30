@@ -60,9 +60,10 @@ def test_launch_keeps_sorted_route_snapshot_without_operation_status():
 
 
 def test_working_calendar_skips_lunch_weekend_and_holiday():
+    # Смена по умолчанию: 8 ч без обеда, чистых 7 ч — час работы занимает 69 минут на часах.
     friday = datetime(2026, 9, 25, 12, 30)
-    assert add_work_seconds(friday, 60 * 60, frozenset()) == datetime(2026, 9, 25, 14, 0)
-    assert add_work_seconds(friday, 5 * 60 * 60, frozenset({date(2026, 9, 28)})) == datetime(2026, 9, 29, 9, 30)
+    assert add_work_seconds(friday, 60 * 60, frozenset()) == datetime(2026, 9, 25, 14, 9)
+    assert add_work_seconds(friday, 5 * 60 * 60, frozenset({date(2026, 9, 28)})) == datetime(2026, 9, 29, 10, 13)
 
 
 def test_multiple_operators_share_unit_work_but_each_has_setup_time():
@@ -89,7 +90,7 @@ def test_auto_plan_finds_first_common_free_window_and_manual_plan_warns():
     )
 
     assert automatic.start == datetime(2026, 9, 22, 10, 0)
-    assert automatic.finish == datetime(2026, 9, 22, 10, 7)
+    assert automatic.finish == datetime(2026, 9, 22, 10, 8)
     assert manual.warnings == ("Старт раньше окончания предыдущего этапа", "Оператор занят(а): ПЗ-0000 · этап 1, 22.09.2026 09:00–22.09.2026 10:00")
 
 

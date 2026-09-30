@@ -17,6 +17,7 @@ from .domain import (
     ProductionValidationError,
     WorkShift,
     _day_spans,
+    work_rate,
     add_work_seconds,
     plan_operation,
 )
@@ -62,7 +63,7 @@ def work_seconds_between(
             if upper > lower:
                 total += int((upper - lower).total_seconds())
         current = datetime.combine(current.date() + timedelta(days=1), datetime.min.time(), current.tzinfo)
-    return total
+    return int(total * work_rate(shift))
 
 
 def batch_sizes(quantity: int) -> tuple[int, ...]:

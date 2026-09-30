@@ -51,17 +51,17 @@ def _skills():
     }
 
 
-def test_shift_uses_breaks_and_effective_hour_budget():
+def test_shift_spreads_effective_hours_over_the_whole_shift():
     shift = WorkShift(
         weekdays=(0,), start=time(9), finish=time(19),
         breaks=((time(12), time(13)),), effective_seconds=6 * 60 * 60,
     )
     assert add_work_seconds(
         datetime(2026, 9, 21, 9), 6 * 60 * 60, frozenset(), shift,
-    ) == datetime(2026, 9, 21, 16)
+    ) == datetime(2026, 9, 21, 19)
     assert add_work_seconds(
         datetime(2026, 9, 21, 9), 7 * 60 * 60, frozenset(), shift,
-    ) == datetime(2026, 9, 28, 10)
+    ) == datetime(2026, 9, 28, 10, 30)
 
 
 def test_auto_schedule_uses_skills_coefficients_and_transfer_batch():

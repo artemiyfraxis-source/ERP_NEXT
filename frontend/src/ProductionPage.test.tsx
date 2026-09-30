@@ -204,7 +204,7 @@ it("saves shop holidays through the production calendar", async () => {
     holidays: ["2026-11-04"], absences: [],
     shift: {
       weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30",
-      breaks: [["13:00", "13:30"]], effective_hours: "8",
+      breaks: [["13:00", "13:30"]], effective_hours: "7",
     },
   }));
 });
@@ -426,9 +426,9 @@ it("lets the master hand out operations of issued projects to installers and lau
   render(<ProductionPage principal={principal} />);
   expect(await screen.findByRole("region", { name: "Проекты и операции" })).toBeInTheDocument();
   expect(await screen.findByText("Рыбкина Ольга", { selector: ".mb-week th b" })).toBeInTheDocument();
-  // 4 ч в окне смены 09:00–17:30 при 8 эффективных часах: 4 × 8 / 8,5 ≈ 3,8 ч в этот день.
-  expect(screen.getByTitle("Рыбкина Ольга, 22.09: 3,8 из 8 ч")).toHaveTextContent("3,8");
-  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 8 ч")).toBeInTheDocument();
+  // Окно 10:00–14:00 без обеда 13:00–13:30 — 3,5 ч на часах; чистых 7 ч из 8 ч смены: 3,5 × 7 / 8 ≈ 3,1 ч.
+  expect(screen.getByTitle("Рыбкина Ольга, 22.09: 3,1 из 7 ч")).toHaveTextContent("3,1/7");
+  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя: 1")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
   expect(screen.getByText("к запуску 1")).toBeInTheDocument();
@@ -439,13 +439,19 @@ it("lets the master hand out operations of issued projects to installers and lau
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
   expect(screen.getByText("Обжим")).toBeInTheDocument();
   expect(screen.getByText("22.09 10:00–14:00")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 23.09" }));
+  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч")).toHaveTextContent("0/7");
+  // Клик по дню — раскладка по часам: у Рыбкиной 10:00–14:00 занято, выбор часа ставит операцию ровно с него.
+  fireEvent.click(screen.getByRole("button", { name: "День Рыбкина Ольга 22.09" }));
+  expect(screen.getByTitle("11:00–12:00: Обжим · 591K.3.КБ1")).toBeInTheDocument();
+  // Занятый час не принимает вторую операцию: на нём нет кнопки, свободные — есть, первый свободный — отдельной кнопкой.
+  expect(screen.queryByRole("button", { name: "Назначить Рыбкина Ольга на 22.09 с 11:00" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Назначить на 22.09 с 09:00" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "День Попов Игнат 23.09" }));
+  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 23.09 с 13:00" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/assign`,
-    body: { version: 2, operator_ids: ["10000000-0000-0000-0000-000000000003"], requested_start: "2026-09-23T09:00", dry: false },
+    body: { version: 2, operator_ids: ["10000000-0000-0000-0000-000000000003"], requested_start: "2026-09-23T13:00", dry: false },
   }));
-  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 22.09" }));
-  await waitFor(() => expect((bodies.at(-1)?.body as { requested_start: unknown }).requested_start).toBeNull());
   // Снять — крестиком на исполнителе, без отдельной кнопки у каждого.
   fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
   await waitFor(() => expect(bodies.at(-1)?.body).toMatchObject({ operator_ids: [] }));

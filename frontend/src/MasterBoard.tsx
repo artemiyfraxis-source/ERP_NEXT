@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   kitsetsApi,
   productionApi,
@@ -72,7 +72,7 @@ export function installerLoad(operatorId: string, tasks: ProductionTask[], absen
 // ── Неделя монтажников (владелец, 30.09: «не понимаю, на какой период я закидываю»). Мастер видит загрузку
 // каждого монтажника по дням в часах и ставит операцию кликом в день: сервер планирует её с начала смены этого
 // дня в первое свободное окно (тот же assign и план, что в карточке с Гантом, prodPlan_).
-const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "8" };
+const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const WEEK_DAYS = 7;
 
 function addDays(day: string, count: number) {
@@ -91,24 +91,72 @@ export function workingDay(day: string, shift: ProductionShift, holidays: string
   return shift.weekdays.includes(weekday) && !holidays.includes(day);
 }
 
-// Часы монтажника в день: пересечение плановых окон его невыполненных операций со сменой дня, приведённое
-// к эффективным часам смены (обед и перерывы не считаются).
+// Рабочие отрезки смены без перерывов (обеда), в минутах от полуночи.
+function workSpans(shift: ProductionShift): [number, number][] {
+  let spans: [number, number][] = [[minutes(shift.start), minutes(shift.finish)]];
+  for (const [a, b] of shift.breaks ?? []) {
+    const x = minutes(a), y = minutes(b);
+    spans = spans.flatMap(([from, to]): [number, number][] => y <= from || x >= to ? [[from, to]] : [
+      ...(from < x ? [[from, Math.min(to, x)] as [number, number]] : []),
+      ...(y < to ? [[Math.max(from, y), to] as [number, number]] : []),
+    ]);
+  }
+  return spans;
+}
+
+// Доля чистой работы: обед вычтен, остальные перерывы (туалет, перекуры) размазаны по смене — как на сервере.
+function workRate(shift: ProductionShift) {
+  const available = workSpans(shift).reduce((sum, [from, to]) => sum + to - from, 0) / 60;
+  return available > 0 ? Math.min(1, Number(shift.effective_hours || 7) / available) : 1;
+}
+
+// Часы монтажника в день: пересечение плановых окон его невыполненных операций с рабочими отрезками смены,
+// приведённое к чистому времени (как считает сервер при планировании).
 export function dayHours(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift) {
-  const from = new Date(`${day}T${shift.start}:00`).getTime();
-  const to = new Date(`${day}T${shift.finish}:00`).getTime();
-  const span = Math.max(1, minutes(shift.finish) - minutes(shift.start)) / 60;
-  const ratio = Math.min(1, Number(shift.effective_hours || 8) / span);
+  const spans = workSpans(shift).map(([from, to]) => [new Date(`${day}T${clock(from)}:00`).getTime(), new Date(`${day}T${clock(to)}:00`).getTime()]);
   let total = 0;
   for (const task of tasks) {
     if (task.status === "Отменено") continue;
     for (const operation of task.operations) {
       if (done(operation) || !operation.operator_ids.includes(operatorId) || !operation.planned_start || !operation.planned_finish) continue;
-      const start = Math.max(from, new Date(operation.planned_start).getTime());
-      const finish = Math.min(to, new Date(operation.planned_finish).getTime());
-      if (finish > start) total += (finish - start) / 3_600_000;
+      const a = new Date(operation.planned_start).getTime();
+      const b = new Date(operation.planned_finish).getTime();
+      for (const [from, to] of spans) {
+        const start = Math.max(from, a);
+        const finish = Math.min(to, b);
+        if (finish > start) total += (finish - start) / 3_600_000;
+      }
     }
   }
-  return total * ratio;
+  return total * workRate(shift);
+}
+
+function clock(value: number) {
+  return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+}
+
+export interface DaySlot { start: string; finish: string; rest: boolean; busy: string[] }
+
+// Раскладка дня монтажника по часам смены: что занято (операция · сборка) и где перерыв.
+export function daySlots(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, skip = ""): DaySlot[] {
+  const slots: DaySlot[] = [];
+  const end = minutes(shift.finish);
+  for (let from = minutes(shift.start); from < end; from += 60) {
+    const to = Math.min(end, from + 60);
+    const a = new Date(`${day}T${clock(from)}:00`).getTime();
+    const b = new Date(`${day}T${clock(to)}:00`).getTime();
+    const busy: string[] = [];
+    for (const task of tasks) {
+      if (task.status === "Отменено") continue;
+      for (const operation of task.operations) {
+        if (operation.id === skip || done(operation) || !operation.operator_ids.includes(operatorId) || !operation.planned_start || !operation.planned_finish) continue;
+        if (new Date(operation.planned_start).getTime() < b && a < new Date(operation.planned_finish).getTime()) busy.push(`${operation.stage} · ${itemId(task)}`);
+      }
+    }
+    const rest = (shift.breaks ?? []).some(([x, y]) => minutes(x) <= from && to <= minutes(y));
+    slots.push({ start: clock(from), finish: clock(to), rest, busy });
+  }
+  return slots;
 }
 
 function oneDecimal(value: number) {
@@ -143,6 +191,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [onlyFree, setOnlyFree] = useState(false);
   const [tiles, setTiles] = useState<{ items: KitsetTile[]; statuses: string[] }>({ items: [], statuses: [] });
   const [openProject, setOpenProjectState] = useState(lastProject);
+  const [openDay, setOpenDay] = useState<{ personId: string; day: string } | null>(null);
   const keys = useRef(new Map<string, string>());
 
   function setOpenProject(project: string) {
@@ -194,12 +243,13 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const workShift = shift ?? DEFAULT_SHIFT;
   const days = Array.from({ length: WEEK_DAYS }, (_, index) => addDays(weekStart, index));
 
-  // Сегодня — «первое свободное время с этого момента»; другой день — с начала его смены.
-  function assign(operatorIds: string[], day: string | null) {
+  // Мастер выбирает день и час начала; операция встаёт ровно с этого часа (занятость видна в раскладке дня).
+  function assign(operatorIds: string[], day: string, time: string) {
     if (!task || !operation) return;
-    const start = day && day > today ? `${day}T${workShift.start}` : null;
-    void mutate(operation.id, () => productionApi.assign(task.id, operation.id, task.version, operatorIds, start));
+    void mutate(operation.id, () => productionApi.assign(task.id, operation.id, task.version, operatorIds, `${day}T${time}`));
   }
+  const nowTime = clock(new Date().getHours() * 60 + new Date().getMinutes());
+  const capacity = Number(workShift.effective_hours || 7);
 
   function unassign(item: ProductionTask, op: ProductionOperation, operatorId: string) {
     void mutate(op.id, () => productionApi.assign(item.id, op.id, item.version, op.operator_ids.filter((id) => id !== operatorId), null));
@@ -281,8 +331,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         </div>
       </div>
       {task && operation
-        ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {itemId(task)} × {task.quantity}. Нажми на день у монтажника — операция встанет с этого дня в первое свободное время.</small><button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
-        : <div className="mb-target muted">{canEdit ? "Выбери операцию слева, затем день у монтажника." : "Загрузка монтажников по дням, часы по норме."}</div>}
+        ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {itemId(task)} × {task.quantity}. Нажми на день у монтажника и выбери час начала.</small><button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
+        : <div className="mb-target muted">{canEdit ? "Выбери операцию слева, затем день и час у монтажника. Занято/смена, ч." : "Занято/смена, ч. Нажми на день — раскладка по часам."}</div>}
       <table className="mb-week">
         <thead><tr><th>Монтажник</th>{days.map((day) => {
           const date = new Date(`${day}T00:00:00`);
@@ -294,27 +344,61 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           const on = Boolean(operation?.operator_ids.includes(person.id));
           const skill = operation?.code ? skills.find((item) => item.operator_id === person.id && item.operation_code === operation.code) : undefined;
           const coded = Boolean(operation?.code && skills.some((item) => item.operation_code === operation.code));
-          return <tr key={person.id} className={on ? "on" : ""}>
+          const expanded = openDay?.personId === person.id ? openDay.day : "";
+          return <Fragment key={person.id}><tr className={`${on ? "on" : ""}${expanded ? " open" : ""}`}>
             <th scope="row"><b>{on ? "✓ " : ""}{person.name}</b><small>{person.site}{coded && (!skill || !skill.allowed) ? <span className="danger-text"> · нет допуска</span> : null}</small></th>
             {days.map((day) => {
               const absent = absences.find((item) => item.operator_id === person.id && item.from_date <= day && day <= item.to_date);
               const working = workingDay(day, workShift, holidays);
               const load = working && !absent ? dayHours(person.id, day, tasks, workShift) : 0;
-              const capacity = Number(workShift.effective_hours || 8);
               const level = load <= 0.05 ? "free" : load < capacity * 0.5 ? "low" : load <= capacity + 0.05 ? "full" : "over";
-              const text = absent ? absent.kind.slice(0, 3).toLowerCase() : !working ? "" : load > 0.05 ? oneDecimal(load) : "";
+              const text = absent ? absent.kind.slice(0, 3).toLowerCase() : !working ? "вых" : `${oneDecimal(load)}/${oneDecimal(capacity)}`;
               const title = `${person.name}, ${formatDay(day)}: ${absent ? absent.kind : !working ? "нерабочий день" : `${oneDecimal(load)} из ${oneDecimal(capacity)} ч`}`;
-              const clickable = Boolean(operation && canEdit && working && !absent && day >= today);
-              const className = `mb-cell ${absent ? "absent" : !working ? "off" : level}${day === today ? " today" : ""}`;
-              return <td key={day} className={className}>{clickable
-                ? <button disabled={Boolean(busy)} title={title} aria-label={`Назначить ${person.name} на ${formatDay(day)}`}
-                  onClick={() => assign(on ? operation!.operator_ids : [...operation!.operator_ids, person.id], day)}>{text || "+"}</button>
+              const className = `mb-cell ${absent ? "absent" : !working ? "off" : level}${day === today ? " today" : ""}${expanded === day ? " picked" : ""}`;
+              return <td key={day} className={className}>{working && !absent
+                ? <button title={title} aria-label={`День ${person.name} ${formatDay(day)}`} aria-expanded={expanded === day}
+                  onClick={() => setOpenDay(expanded === day ? null : { personId: person.id, day })}>{text}</button>
                 : <span title={title}>{text}</span>}</td>;
             })}
-          </tr>;
+          </tr>
+          {expanded && <tr className="mb-day-row"><td colSpan={days.length + 1}>
+            <div className="mb-day">
+              <div className="mb-day-head"><b>{person.name} · {new Date(`${expanded}T00:00:00`).toLocaleDateString("ru-RU", { weekday: "short" })} {formatDay(expanded)}</b>
+                <span>занято {oneDecimal(dayHours(person.id, expanded, tasks, workShift))} из {oneDecimal(capacity)} ч</span>
+                <button className="mb-day-close" aria-label="Закрыть день" onClick={() => setOpenDay(null)}>×</button></div>
+              {(() => {
+                // Своя операция не считается занятостью: её можно передвинуть на другой час.
+                const slots = daySlots(person.id, expanded, tasks, workShift, operation?.id ?? "");
+                const past = (slot: DaySlot) => expanded < today || (expanded === today && slot.finish <= nowTime);
+                const startOf = (slot: DaySlot) => expanded === today && slot.start < nowTime ? nowTime : slot.start;
+                const pick = (slot: DaySlot) => { assign(on ? operation!.operator_ids : [...operation!.operator_ids, person.id], expanded, startOf(slot)); setOpenDay(null); };
+                const first = operation && canEdit ? slots.find((slot) => !past(slot) && !slot.rest && !slot.busy.length) : undefined;
+                return <>
+                  <div className="mb-hours">{slots.map((slot) => {
+                    const can = Boolean(operation && canEdit && !past(slot) && !slot.rest && !slot.busy.length);
+                    const state = slot.rest ? "rest" : slot.busy.length ? "busy" : "free";
+                    const hint = slot.rest ? "перерыв" : slot.busy.length ? slot.busy.join("; ") : "свободно";
+                    return <div key={slot.start} className={`mb-hour ${state}${past(slot) ? " past" : ""}`} title={`${slot.start}–${slot.finish}: ${hint}`}>
+                      {can
+                        ? <button disabled={Boolean(busy)} aria-label={`Назначить ${person.name} на ${formatDay(expanded)} с ${slot.start}`} onClick={() => pick(slot)}>{slot.start}</button>
+                        : <span>{slot.start}</span>}
+                      <small>{slot.rest ? "обед" : slot.busy.length ? slot.busy[0] : ""}</small>
+                    </div>;
+                  })}</div>
+                  {operation && canEdit && <div className="mb-day-hint">
+                    {first
+                      ? <button className="primary small" disabled={Boolean(busy)} onClick={() => pick(first)}>Назначить на {formatDay(expanded)} с {startOf(first)}</button>
+                      : <span className="danger-text">Свободных часов в этот день нет — выбери другой день.</span>}
+                    <span>или нажми на свободный час. Если операция длиннее остатка смены, хвост переходит на следующий рабочий день.</span>
+                  </div>}
+                </>;
+              })()}
+            </div>
+          </td></tr>}
+          </Fragment>;
         })}</tbody>
       </table>
-      <div className="mb-legend"><span className="mb-cell low">ч</span> загружен частично <span className="mb-cell full">ч</span> смена занята <span className="mb-cell over">ч</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
+      <div className="mb-legend"><span className="mb-cell free">0/7</span> свободен <span className="mb-cell low">3/7</span> частично <span className="mb-cell full">7/7</span> смена занята <span className="mb-cell over">9/7</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
     </aside>
   </div>;
 }
