@@ -347,6 +347,7 @@ class SupplyLine:
     stage: str
     received: bool
     rows: tuple[SupplyRow, ...] = field(default_factory=tuple)
+    item_type: str = ""  # of the first spec line with this article: the unit follows it (шт / м)
 
 
 _SUPPLY_RANK = {"Запрос": 1, "Закупка": 2, "Приёмка": 3}
@@ -376,7 +377,7 @@ def supply_lines(kitset: Kitset, rows: Iterable[SupplyRow]) -> tuple[SupplyLine,
             line = lines.get(key)
             if line is None:
                 line = lines[key] = {
-                    "article": component.article, "name": component.name, "kbs": [],
+                    "article": component.article, "name": component.name, "type": component.type, "kbs": [],
                     "need": Decimal("0"), "grn": "", "rows": tuple(by_article.get(key, ())),
                 }
             if assembly.index and assembly.index not in line["kbs"]:
@@ -398,7 +399,7 @@ def supply_lines(kitset: Kitset, rows: Iterable[SupplyRow]) -> tuple[SupplyLine,
         result.append(SupplyLine(
             article=line["article"], name=line["name"], kbs=tuple(line["kbs"]), need=line["need"],
             grn=line["grn"], stage=stage, received=any(row.where == "Приёмка" and row.received for row in found),
-            rows=found,
+            rows=found, item_type=line["type"],
         ))
     return tuple(result)
 

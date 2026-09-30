@@ -2217,6 +2217,8 @@ export interface KitsetComponent {
   per: string;
   scrap: string;
   batch: string;
+  /** шт / м — by type, as the calc import (ZPK_UNIT_BY_TYPE). */
+  unit: string;
   lot: KitsetLot | null;
 }
 
@@ -2298,6 +2300,7 @@ export interface KitsetSupplyLine {
   name: string;
   kbs: string[];
   need: string;
+  unit: string;
   grn: string;
   stage: string;
   received: boolean;
