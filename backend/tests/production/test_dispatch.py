@@ -294,6 +294,8 @@ def test_installer_who_took_the_work_keeps_his_pieces(production_api):
     assert client.post(f"/api/production/work/{started.json()['session']['id']}/cancel", json={}).status_code == 200
     app.dependency_overrides[authenticated_principal] = master
     task = fresh(client, task["id"])
+    # Отменил начало, ничего не сдав, — «взял» снят.
+    assert task["operations"][0]["shares"][0]["started_at"] is None
     after_pause = post_share(client, task, operator_id, remove=True)
     assert after_pause.status_code == 200, after_pause.text
 
@@ -381,3 +383,33 @@ def test_plan_failure_never_loses_the_output(production_api, monkeypatch):
     app.dependency_overrides[authenticated_principal] = master
     item = fresh(client, task["id"])["operations"][0]["shares"][0]
     assert (item["planned_start"][:16], item["planned_finish"][:16], item["finished_at"]) == ("2026-09-22T09:00", "2026-09-22T10:00", None)
+
+
+def test_failed_replan_is_rolled_back_but_the_start_stays(production_api, monkeypatch):
+    # План пишется в точке сохранения: сбой после записи откатывает только план.
+    from app.modules.production import application
+
+    client, operator_id = production_api
+    app.dependency_overrides[moscow_now] = lambda: at(22, 9)
+    first = launch_from_card(client, "rollback-a-v1", "591K.3", "КБ1", 10, [("", "Подготовка", 315, 0)]).json()["task"]
+    second = launch_from_card(client, "rollback-b-v1", "591K.3", "КБ2", 10, [("", "Подготовка", 315, 0)]).json()["task"]
+    first = share(client, first, 1, operator_id, "2026-09-22T09:00:00+03:00")["task"]
+    share(client, second, 1, operator_id, "2026-09-22T10:00:00+03:00")
+    master = app.dependency_overrides[authenticated_principal]
+    original = application._save_moves
+
+    def broken(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("сбой после записи")
+
+    monkeypatch.setattr(application, "_save_moves", broken)
+    as_operator(operator_id)
+    app.dependency_overrides[moscow_now] = lambda: at(22, 9, 30)
+    started = client.post(f"/api/production/tasks/{first['id']}/operations/{first['operations'][0]['id']}/work/start", json={})
+    app.dependency_overrides[authenticated_principal] = master
+
+    assert started.status_code == 200, started.text
+    kept = fresh(client, first["id"])
+    assert kept["version"] == first["version"]
+    assert kept["operations"][0]["shares"][0]["started_at"] is None
+    assert window(fresh(client, second["id"]), 1, operator_id) == ("2026-09-22T10:00", "2026-09-22T11:00")

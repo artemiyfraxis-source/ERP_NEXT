@@ -530,6 +530,8 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
     хвост уходит на следующие рабочие дни, его работа после неё сдвигается. Штуки сверх свободных забираются у
     других долей этой операции (dispatch.split_shares), их окна укорачиваются."""
     with uow:
+        # Факт монтажника по этому заданию (application.record_fact) и мастер пишут по очереди.
+        uow.production.lock(command.task_id)
         loaded = _task(command.task_id, command.expected_version, uow)
         now = command.now
         tasks = _live_tasks(uow, now)
@@ -695,13 +697,31 @@ def record_fact(
         return
     session.flush()
     uow.production.lock(task_id)
-    savepoint = session.begin_nested()
     try:
-        _record_fact(uow, task_id, operation_id, operator_id, actor, now, started, mine, total)
-        savepoint.commit()
+        with session.begin_nested():
+            _record_fact(uow, task_id, operation_id, operator_id, actor, now, started, mine, total)
     except Exception:
-        savepoint.rollback()
         logger.exception("План по факту не сдвинут: задание %s, операция %s", task_id, operation_id)
+
+
+def release_fact(uow, *, task_id: UUID, operation_id: UUID, operator_id: UUID, now: datetime) -> None:
+    """«Отменить начало» без сданных штук — «взял» снимается: долю снова можно переставить или снять."""
+    session = getattr(uow, "session", None)
+    if session is not None:
+        session.flush()
+        uow.production.lock(task_id)
+    task = uow.production.get(task_id)
+    if task is None:
+        return
+    operation = task.operation(operation_id)
+    share = operation.share_of(operator_id)
+    if share is None or share.started_at is None or share.finished_at is not None:
+        return
+    if _progress(uow, (task_id,)).by_operator.get((operation_id, operator_id), Decimal(0)) > 0:
+        return
+    uow.production.add(task.with_operations((operation.with_shares(tuple(
+        replace(item, started_at=None) if item.operator_id == operator_id else item for item in operation.shares
+    ), operation.assigned_by),)))
 
 
 def _record_fact(

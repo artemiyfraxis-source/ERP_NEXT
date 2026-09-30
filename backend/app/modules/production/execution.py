@@ -13,7 +13,7 @@ from app.shared.identity import Actor
 from app.modules.fulfillment.domain import FulfillmentStatus
 from app.modules.shipping.domain import FinishedGood
 
-from .application import CalendarRepository, OperatorRepository, ProductionRepository, SkillRepository, record_fact
+from .application import CalendarRepository, OperatorRepository, ProductionRepository, SkillRepository, record_fact, release_fact
 from .domain import ProductionStatus, ProductionValidationError
 from .traceability import (
     ConsumptionEdge,
@@ -320,6 +320,7 @@ def cancel_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSessio
         cancelled = session.cancel()
         uow.work.save(cancelled)
         _audit(cancelled.id, "production.work_cancelled", command.actor, command.now, {}, uow)
+        release_fact(uow, task_id=session.task_id, operation_id=session.operation_id, operator_id=command.actor.id, now=command.now)
         uow.commit()
         return cancelled
 
