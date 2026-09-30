@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping, Sequence
@@ -18,6 +19,37 @@ class RouteStep:
     description: str
     seconds_per_unit: Decimal
     setup_seconds: Decimal
+
+
+# Типы операций генератора ТК (tcGenLogic ops[].type) по-русски. Конфиг генератора не пишет stage/typeLabel, поэтому
+# маршрут (tcRoutingFromConfig_) падал на служебный type — cutWireStrip, prsTerm… Мастеру нужны названия
+# (владелец, 30.09). Словарь чинит и уже запущенные задания при выдаче: в базе остаётся как было.
+OPERATION_TYPE_NAMES: dict[str, str] = {
+    "cutWire": "Резка", "cutWireStrip": "Резка с разделкой", "cutWireCrimp": "Резка с обжимом",
+    "cutTut": "Резка ТУТ", "prsTerm": "Опрессовка терминалов", "prsTermA": "Опрессовка терминалов (А)",
+    "prsTermB": "Опрессовка терминалов (В)", "insTerm": "Монтаж терминалов", "insTermA": "Монтаж терминалов (А)",
+    "insTermB": "Монтаж терминалов (В)", "insHousing": "Монтаж в корпус", "insTut": "Надеть ТУТ",
+    "heatTut": "Усадка ТУТ", "insWrap": "Обмотка", "insMark": "Маркировка", "tin": "Лужение", "twist": "Свивка",
+    "splice": "Сращивание", "seal": "Герметизация", "solderConn": "Пайка разъёма", "stripCable": "Разделка кабеля",
+    "foldCore": "Загибка жил", "endCap": "Установка заглушек", "coaxCut": "Резка кабеля", "coaxCutTut": "Резка ТУТ",
+    "coaxStrip": "Разделка коаксиала", "coaxShield": "Опрессовка втулки экрана", "coaxSolderShield": "Пайка экрана",
+    "coaxPin": "Пайка центрального контакта", "coaxCapCrimp": "Монтаж крышки (обжим)",
+    "coaxCapScrew": "Монтаж крышки (винт)", "coaxHousing": "Монтаж корпуса", "coaxInsSleeve": "Монтаж втулки экрана",
+    "coaxInsTut": "Монтаж ТУТ", "coaxHeat": "Усадка ТУТ",
+}
+_NO_CODE = re.compile(r"^\s*без\s+кода\s*$", re.IGNORECASE)
+
+
+def stage_name(value: str) -> str:
+    """Русское название этапа: служебный тип генератора → название, остальное как есть."""
+    text = str(value or "").strip()
+    return OPERATION_TYPE_NAMES.get(text, text)
+
+
+def operation_code(value: str) -> str:
+    """Код операции для экрана: заглушка «БЕЗ КОДА» — это отсутствие кода."""
+    text = str(value or "").strip()
+    return "" if _NO_CODE.match(text) else text
 
 
 def item_id(project: str, index: str) -> str:
@@ -49,9 +81,10 @@ def route_from_document(document: Mapping[str, Any] | None) -> tuple[RouteStep, 
         op = config_ops[index] if index < len(config_ops) else {}
         etk = built[index] if index < len(built) else {}
         times = etk.get("times") if isinstance(etk.get("times"), Mapping) else {}
-        stage = str(op.get("stage") or op.get("typeLabel") or etk.get("title") or op.get("type") or etk.get("type") or "").strip()
+        stage = str(op.get("stage") or op.get("typeLabel") or op.get("label") or etk.get("title") or "").strip()
+        stage = stage or stage_name(str(op.get("type") or etk.get("type") or ""))
         stage = stage or f"Этап {index + 1}"
-        code = str(op.get("opNumber") or op.get("code") or etk.get("code") or "").strip()
+        code = operation_code(str(op.get("opNumber") or op.get("code") or etk.get("code") or ""))
         side = str(op.get("side") or etk.get("side") or "").strip()
         description = str(op.get("descr") or op.get("title") or etk.get("title") or stage).strip()
         steps.append(RouteStep(
