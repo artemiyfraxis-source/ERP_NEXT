@@ -260,13 +260,15 @@ function clock(value: number) {
   return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 }
 
-export interface DaySlot { start: string; finish: string; rest: boolean; busy: string[]; pause?: string }
+export interface DaySlot { start: string; finish: string; rest: boolean; busy: string[]; own: boolean; pause?: string }
 
 // Раскладка дня монтажника по часам смены: что занято (операция · сборка) и где перерыв.
 export function daySlots(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, skip = ""): DaySlot[] {
   const slots: DaySlot[] = [];
   const end = minutes(shift.finish);
   const windows = windowsOf(operatorId, tasks, skip);
+  // Выбранная операция у этого монтажника не занятость (её можно передвинуть), но видна в своих часах.
+  const mine = skip ? windowsOf(operatorId, tasks).filter((window) => window.operation.id === skip) : [];
   for (let from = minutes(shift.start); from < end; from += 60) {
     const to = Math.min(end, from + 60);
     const a = new Date(`${day}T${clock(from)}:00`).getTime();
@@ -276,7 +278,8 @@ export function daySlots(operatorId: string, day: string, tasks: ProductionTask[
     const rest = (shift.breaks ?? []).some(([x, y]) => minutes(x) <= from && to <= minutes(y));
     // Перерыв внутри часа (обед 13:00–13:30) — подписью в ячейке: работы в этом часу меньше.
     const inside = (shift.breaks ?? []).find(([x, y]) => minutes(x) < to && from < minutes(y));
-    slots.push({ start: clock(from), finish: clock(to), rest, busy, pause: !rest && inside ? (minutes(inside[0]) <= from ? `обед до ${inside[1]}` : `обед с ${inside[0]}`) : undefined });
+    const own = mine.some((window) => window.start < b && a < window.finish);
+    slots.push({ start: clock(from), finish: clock(to), rest, busy, own, pause: !rest && inside ? (minutes(inside[0]) <= from ? `обед до ${inside[1]}` : `обед с ${inside[0]}`) : undefined });
   }
   return slots;
 }
@@ -287,8 +290,12 @@ function oneDecimal(value: number) {
 
 function planText(operation: ProductionOperation) {
   if (!operation.planned_start || !operation.planned_finish) return "";
-  const start = new Date(operation.planned_start);
-  const finish = new Date(operation.planned_finish);
+  return windowText(operation.planned_start, operation.planned_finish);
+}
+
+function windowText(from: string, to: string) {
+  const start = new Date(from);
+  const finish = new Date(to);
   const time = (date: Date) => date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   const day = (date: Date) => date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
   return day(start) === day(finish) ? `${day(start)} ${time(start)}–${time(finish)}` : `${day(start)} ${time(start)} – ${day(finish)} ${time(finish)}`;
@@ -541,23 +548,29 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                 const append = operation && canEdit && quantity ? appendStart(person.id, expanded, tasks, workShift, operation.id, earliest) : null;
                 const until = append != null ? workFinish(append, seconds, workShift, holidays) : null;
                 const hasFree = slots.some((slot) => !past(slot) && !slot.rest && !slot.busy.length);
+                // Уже назначено этому монтажнику: показываем окно; начатую долю мастер не переставляет.
+                const placed = operation ? sharesOf(operation, person.id).find((share) => share.planned_start && share.planned_finish) : undefined;
+                const locked = Boolean(placed && (placed.started_at || placed.finished_at));
+                // Уже стоит в этом дне — двигают кликом по часу, отдельная кнопка не нужна.
+                const here = Boolean(placed && isoDay(new Date(placed.planned_start!)) <= expanded && expanded <= isoDay(new Date(placed.planned_finish!)));
                 return <>
                   <div className="mb-hours">{slots.map((slot) => {
-                    const can = Boolean(operation && canEdit && quantity && !past(slot) && !slot.rest && !slot.busy.length);
-                    const state = slot.rest ? "rest" : slot.busy.length ? "busy" : "free";
-                    const hint = slot.rest ? "перерыв" : slot.busy.length ? slot.busy.join("; ") : "свободно";
+                    const can = Boolean(operation && canEdit && quantity && !locked && !past(slot) && !slot.rest && !slot.busy.length);
+                    const state = slot.rest ? "rest" : slot.busy.length ? "busy" : slot.own ? "own" : "free";
+                    const hint = slot.rest ? "перерыв" : slot.busy.length ? slot.busy.join("; ") : slot.own ? "эта операция" : "свободно";
                     // Неполный час (конец смены 17:00–17:30) подписан диапазоном, чтобы было видно, где кончается смена.
                     const label = minutes(slot.finish) - minutes(slot.start) < 60 ? `${slot.start}–${slot.finish}` : slot.start;
                     return <div key={slot.start} className={`mb-hour ${state}${past(slot) ? " past" : ""}`} title={`${slot.start}–${slot.finish}: ${hint}`}>
                       {can
                         ? <button disabled={Boolean(busy)} aria-label={`Назначить ${person.name} на ${formatDay(expanded)} с ${at(startOf(slot))}`} onClick={() => pick(startOf(slot))}>{label}</button>
                         : <span>{label}</span>}
-                      <small>{slot.rest ? "обед" : slot.busy.length ? slot.busy[0] : slot.pause ?? ""}</small>
+                      <small>{slot.rest ? "обед" : slot.busy.length ? slot.busy[0] : slot.own ? "эта операция" : slot.pause ?? ""}</small>
                     </div>;
                   })}</div>
                   {operation && canEdit && <div className="mb-day-hint">
-                    {append != null && until != null
-                      ? <><button className="primary small" disabled={Boolean(busy)} onClick={() => pick(append)}>Назначить на {formatDay(expanded)} с {at(append)}</button>
+                    {placed && <b className="mb-placed">Назначено: {windowText(placed.planned_start!, placed.planned_finish!)}{locked ? " · уже взял(а)" : here ? " · передвинуть — нажми свободный час" : ""}</b>}
+                    {locked || here ? null : append != null && until != null
+                      ? <><button className="primary small" disabled={Boolean(busy)} onClick={() => pick(append)}>{placed ? "Переставить" : "Назначить"} на {formatDay(expanded)} с {at(append)}</button>
                         <b className="mb-until">до {isoDay(new Date(until)) === expanded ? at(until) : `${formatDay(isoDay(new Date(until)))} ${at(until)}`}</b></>
                       : <span className="danger-text">{hasFree ? "После работы этого дня места нет — нажми свободный час или выбери другой день." : "Свободных часов в этот день нет — выбери другой день."}</span>}
                     <span>Не влезает в день — хвост уйдёт на следующий рабочий день, работа монтажника после неё сдвинется.</span>
