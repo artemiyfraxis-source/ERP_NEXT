@@ -221,7 +221,7 @@ describe("ProjectsPage", () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = decodeURIComponent(String(input));
       if (url === "/api/techcards/kitsets/708К.4/techcards/КБ1") return json({ card_id: "tc-1" });
-      if (url === "/api/techcards/projects") return json({ items: [etk] });
+      if (url === "/api/techcards/projects/tc-1") return json(etk);
       if (url.endsWith("/revisions")) return json({ items: [] });
       return base(input, init);
     });
@@ -239,6 +239,28 @@ describe("ProjectsPage", () => {
     expect(window.location.search).toBe("?section=projects");
   });
 
+  it("says there is no connection instead of reading the composition forever", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    const etk = {
+      id: "tc-1", version: 1, project: "708К.4", item_index: "КБ1", product_name: "Жгут питания", source_calculation: "",
+      deadline: null, status: "Черновик", revision: 0, document: null, manual_operation_keys: [],
+      created_at: "2026-09-29T10:00:00", updated_at: "2026-09-29T10:00:00", issued_at: null,
+    };
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/techcards/КБ1") return json({ card_id: "tc-1" });
+      if (url === "/api/techcards/projects/tc-1") return json(etk);
+      if (url.includes("/bom/")) throw new TypeError("Failed to fetch");
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", techcards: "edit", tcgen: "edit" } }} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByText("Жгут питания"));
+    expect(await screen.findByText(/Нет связи с ERP/)).toBeTruthy();
+    expect(screen.queryByText("Читаю состав КБ1…")).toBeNull();
+  });
+
   it("shows an issued techcard on its own tab and sends «Пересобрать» to the generator", async () => {
     const fetchMock = vi.mocked(fetch);
     const base = fetchMock.getMockImplementation()!;
@@ -253,7 +275,7 @@ describe("ProjectsPage", () => {
       const url = decodeURIComponent(String(input));
       if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(issuedCard);
       if (url === "/api/techcards/kitsets/708К.4/techcards/КБ1") return json({ card_id: "tc-1" });
-      if (url === "/api/techcards/projects") return json({ items: [etk] });
+      if (url === "/api/techcards/projects/tc-1") return json(etk);
       if (url.endsWith("/revisions")) return json({ items: [] });
       return base(input, init);
     });

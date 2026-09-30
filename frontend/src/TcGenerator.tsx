@@ -60,7 +60,18 @@ function badgeCls(t: string) {
   return "badge-other";
 }
 
-async function loadRefs(): Promise<Refs> {
+/* Справочники генератора (БД.ОП, БД.ТЕР, БД.КОАКС, СПР.КАБ, шаблоны) — одни на все сборки: читаются один раз за
+   сессию страницы, переключение КБ и вкладок их не перечитывает. После правки справочника — `loadRefs(true)`. */
+let refsCache: Promise<Refs> | null = null;
+/** Тесты: каждый тест подменяет справочники своими — кэш сбрасывается после теста (src/test/setup.ts). */
+export function resetGeneratorRefs() { refsCache = null; }
+
+function loadRefs(force = false): Promise<Refs> {
+  if (!refsCache || force) refsCache = readRefs();
+  return refsCache;
+}
+
+async function readRefs(): Promise<Refs> {
   const safe = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
   const noRecords = { metadata: null, columns: [], records: [] };
   const [templates, op, ter, coax, kabAwg, kabCoax] = await Promise.all([
@@ -228,7 +239,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         await referencesApi.createRecord("ter", { terArticle: term.art, ...Object.fromEntries(keys.map(([key, field]) => [field, (edits[key] || "").trim()])) });
       }
       setTerEdits((current) => { const next = { ...current }; delete next[ep.id]; return next; });
-      setRefs(await loadRefs());
+      setRefs(await loadRefs(true));
       setStatus({ text: rec?.id ? "✓ Готово" : "✓ Добавлено в БД", error: false });
     } catch (reason) {
       setStatus({ text: "⚠ " + (reason instanceof Error ? reason.message : "Ошибка"), error: true });
@@ -248,7 +259,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     };
     try {
       await referencesApi.createRecord("coax", coaxRecordFields(payload));
-      const fresh = await loadRefs();
+      const fresh = await loadRefs(true);
       setRefs(fresh);
       setS((current) => onCoaxConnChange({ ...D, ...fresh }, current, side));
       setStatus({ text: `«${s.art}» добавлен в БД.КОАКС`, error: false });

@@ -96,6 +96,9 @@ class KitAssembly:
     name: str
     run: Decimal
     components: tuple[KitComponent, ...] = ()
+    # Строки листа КБn расчёта для генератора (`tcCalcOps_`: длины резки, лужение), прочитанные при заведении или
+    # «Обновить из расчёта». None — ещё не читались (карточка старше), тогда генератор прочитает лист сам и запомнит.
+    calc_ops: tuple[dict[str, str], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -237,7 +240,11 @@ def write_from_calc(
                 link=keep.link or component.link,
                 lot=keep.lot,
             ))
-        assemblies.append(replace(assembly, components=tuple(components)))
+        ops = assembly.calc_ops
+        if ops is None and current is not None:
+            previous = current.assembly(assembly.index)
+            ops = previous.calc_ops if previous is not None else None
+        assemblies.append(replace(assembly, components=tuple(components), calc_ops=ops))
     return Kitset(
         project=data.project,
         customer=data.customer,

@@ -90,6 +90,7 @@ class SqlAlchemyKitsetRepository:
                 KitAssembly(
                     index=item["index"], name=item.get("name", ""), run=Decimal(item.get("run") or "0"),
                     components=tuple(_component(component) for component in item.get("components") or []),
+                    calc_ops=None if item.get("calc_ops") is None else tuple(item["calc_ops"]),
                 )
                 for item in row.assemblies
             ),
@@ -115,6 +116,7 @@ class SqlAlchemyKitsetRepository:
             {
                 "index": assembly.index, "name": assembly.name, "run": str(assembly.run),
                 "components": [_component_json(component) for component in assembly.components],
+                **({} if assembly.calc_ops is None else {"calc_ops": [dict(row) for row in assembly.calc_ops]}),
             }
             for assembly in kitset.assemblies
         ]

@@ -1199,6 +1199,13 @@ function cookie(name: string): string {
   return item ? decodeURIComponent(item.slice(prefix.length)) : "";
 }
 
+/** «Failed to fetch» (TypeError): ERP не ответила — перезапуск при обновлении или сеть. */
+export const NO_CONNECTION = "Нет связи с ERP: сервер перезапускается или недоступен. Обнови страницу через минуту.";
+export function failureText(reason: unknown, fallback: string) {
+  if (reason instanceof TypeError) return NO_CONNECTION;
+  return reason instanceof Error ? reason.message : fallback;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
@@ -2028,6 +2035,8 @@ export interface TerminalResolution {
 
 export const techcardsApi = {
   list: () => api<{ items: ProjectTechcard[] }>("/api/techcards/projects"),
+  /** Одна карточка ТК по id — генератор и вкладка «ТК КБn» не тянут весь список со всеми ЭТК. */
+  get: (cardId: string) => api<ProjectTechcard>(`/api/techcards/projects/${encodeURIComponent(cardId)}`),
   templates: () => api<{
     metadata: null | { source_commit: string; imported_at: string; template_count: number };
     items: OperationCardSummary[];

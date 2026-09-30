@@ -138,7 +138,57 @@ def read_calc_by_link(url: str, reader: Callable[[], CalcSheetsReader]):
     if not spreadsheet_id:
         raise KitsetValidationError(f"Не похоже на ссылку Google Таблицы: {link}")
     title, sheets = reader().read_sheets(spreadsheet_id, (PROJECT_SHEET, SPEC_SHEET))
-    return parse_calc_sheets(sheets, title, link)
+    data = parse_calc_sheets(sheets, title, link)
+    ops = read_calc_ops(link, [assembly.index for assembly in data.assemblies], reader)
+    if ops is None:
+        return data
+    return replace(data, assemblies=tuple(
+        replace(assembly, calc_ops=tuple(ops.get(assembly.index, []))) for assembly in data.assemblies
+    ))
+
+
+def read_calc_ops(
+    calc_source: str, indexes: list[str], reader: Callable[[], CalcSheetsReader],
+) -> dict[str, list[dict[str, str]]] | None:
+    """Листы КБn расчёта одним чтением (`tcCalcOps_` на все сборки) → {КБn: строки}; лист, которого нет, — пусто.
+    None — прочитать не удалось: генератор тогда не ждёт, а карточка помнит, что листы ещё не читались."""
+    source = str(calc_source or "")
+    spreadsheet_id = spreadsheet_id_from_url(source) or source
+    names = tuple(dict.fromkeys(str(index or "") for index in indexes if index))
+    if not spreadsheet_id or not names:
+        return {}
+    try:
+        _title, sheets = reader().read_sheets(spreadsheet_id, names)
+    except Exception as error:  # noqa: BLE001 — SUPPLYMAP logs a WARN and returns []
+        _log.warning("tcCalcOps_: %s", error)
+        return None
+    return {name: calc_ops_from_grid(sheets.get(name) or []) for name in names}
+
+
+def assembly_calc_ops(
+    kitset: Kitset, assembly: KitAssembly, reader: Callable[[], CalcSheetsReader],
+    techcards_uow: Callable[[], TechcardsUnitOfWork],
+) -> list[dict[str, str]]:
+    """Строки КБn для генератора: из базы, если уже прочитаны (заведение / «Обновить из расчёта»), иначе — с листа
+    расчёта один раз, и результат запоминается в карточке: следующее открытие генератора Google не ждёт."""
+    if assembly.calc_ops is not None:
+        return [dict(row) for row in assembly.calc_ops]
+    ops = read_calc_ops(kitset.calc_source, [assembly.index], reader)
+    if ops is None:
+        return []
+    rows = ops.get(assembly.index, [])
+    try:
+        with techcards_uow() as uow:
+            current = uow.kitsets.get(kitset.project)
+            if current is not None and current.assembly(assembly.index) is not None:
+                uow.kitsets.save(replace(current, version=current.version + 1, assemblies=tuple(
+                    replace(item, calc_ops=tuple(rows)) if item.index == assembly.index else item
+                    for item in current.assemblies
+                )))
+                uow.commit()
+    except Exception as error:  # noqa: BLE001 — не запомнили: прочитаем в следующий раз, генератор уже получил строки
+        _log.warning("calc_ops cache %s %s: %s", kitset.project, assembly.index, error)
+    return rows
 
 
 def calc_ops_by_link(calc_source: str, index: str, reader: Callable[[], CalcSheetsReader]) -> list[dict[str, str]]:
@@ -151,12 +201,8 @@ def calc_ops_by_link(calc_source: str, index: str, reader: Callable[[], CalcShee
     name = str(index or "")
     if not spreadsheet_id or not name:
         return []
-    try:
-        _title, sheets = reader().read_sheets(spreadsheet_id, (name,))
-    except Exception as error:  # noqa: BLE001 — SUPPLYMAP logs a WARN and returns []
-        _log.warning("tcCalcOps_: %s", error)
-        return []
-    return calc_ops_from_grid(sheets.get(name) or [])
+    ops = read_calc_ops(source, [name], reader)
+    return (ops or {}).get(name, [])
 
 
 def calc_ops_from_grid(grid: list[list[str]]) -> list[dict[str, str]]:
@@ -677,6 +723,6 @@ __all__ = [
     "LoadKitsetCommand", "LoadKitsetResult", "KitsetFacts", "IssueFromKitsetResult", "PLAN_KINDS",
     "ChangeProjectStatusCommand", "change_project_status",
     "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
-    "generator_bom", "issue_from_kitset", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
+    "assembly_calc_ops", "generator_bom", "issue_from_kitset", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
     "supply_rows",
 ]

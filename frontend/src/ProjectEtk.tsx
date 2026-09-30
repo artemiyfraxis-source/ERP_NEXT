@@ -8,6 +8,7 @@ import {
   type Principal,
   type ProjectTechcard,
   type TechcardRevision,
+  failureText,
 } from "./api";
 import { etkChips, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
@@ -341,7 +342,7 @@ export function GeneratorPane({ card, principal, onChange, onDone }: {
     let live = true;
     void kitsetsApi.bom(card.project, card.item_index)
       .then((result) => { if (live) setKit({ data: result, error: "" }); })
-      .catch((reason) => { if (live) setKit({ data: null, error: reason instanceof Error ? reason.message : "Состав сборки не прочитан" }); });
+      .catch((reason) => { if (live) setKit({ data: null, error: failureText(reason, "Состав сборки не прочитан") }); });
     return () => { live = false; };
   }, [card.project, card.item_index]);
 
@@ -422,9 +423,9 @@ export function useTechcard(cardId: string) {
     let live = true;
     setCard(null); setError("");
     if (!cardId) return;
-    void techcardsApi.list()
-      .then((result) => { if (!live) return; const found = result.items.find((item) => item.id === cardId); if (found) setCard(found); else setError("Техкарта не найдена"); })
-      .catch((reason) => { if (live) setError(reason instanceof Error ? reason.message : "Техкарта не открылась"); });
+    void techcardsApi.get(cardId)
+      .then((found) => { if (live) setCard(found); })
+      .catch((reason) => { if (live) setError(failureText(reason, "Техкарта не открылась")); });
     return () => { live = false; };
   }, [cardId]);
   return { card, setCard, error };
