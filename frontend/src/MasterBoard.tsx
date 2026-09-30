@@ -260,7 +260,7 @@ function clock(value: number) {
   return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 }
 
-export interface DaySlot { start: string; finish: string; rest: boolean; busy: string[] }
+export interface DaySlot { start: string; finish: string; rest: boolean; busy: string[]; pause?: string }
 
 // Раскладка дня монтажника по часам смены: что занято (операция · сборка) и где перерыв.
 export function daySlots(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift, skip = ""): DaySlot[] {
@@ -274,7 +274,9 @@ export function daySlots(operatorId: string, day: string, tasks: ProductionTask[
     const busy = windows.filter((window) => window.start < b && a < window.finish)
       .map((window) => `${window.operation.stage} · ${itemId(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
     const rest = (shift.breaks ?? []).some(([x, y]) => minutes(x) <= from && to <= minutes(y));
-    slots.push({ start: clock(from), finish: clock(to), rest, busy });
+    // Перерыв внутри часа (обед 13:00–13:30) — подписью в ячейке: работы в этом часу меньше.
+    const inside = (shift.breaks ?? []).find(([x, y]) => minutes(x) < to && from < minutes(y));
+    slots.push({ start: clock(from), finish: clock(to), rest, busy, pause: !rest && inside ? (minutes(inside[0]) <= from ? `обед до ${inside[1]}` : `обед с ${inside[0]}`) : undefined });
   }
   return slots;
 }
@@ -544,11 +546,13 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                     const can = Boolean(operation && canEdit && quantity && !past(slot) && !slot.rest && !slot.busy.length);
                     const state = slot.rest ? "rest" : slot.busy.length ? "busy" : "free";
                     const hint = slot.rest ? "перерыв" : slot.busy.length ? slot.busy.join("; ") : "свободно";
+                    // Неполный час (конец смены 17:00–17:30) подписан диапазоном, чтобы было видно, где кончается смена.
+                    const label = minutes(slot.finish) - minutes(slot.start) < 60 ? `${slot.start}–${slot.finish}` : slot.start;
                     return <div key={slot.start} className={`mb-hour ${state}${past(slot) ? " past" : ""}`} title={`${slot.start}–${slot.finish}: ${hint}`}>
                       {can
-                        ? <button disabled={Boolean(busy)} aria-label={`Назначить ${person.name} на ${formatDay(expanded)} с ${at(startOf(slot))}`} onClick={() => pick(startOf(slot))}>{slot.start}</button>
-                        : <span>{slot.start}</span>}
-                      <small>{slot.rest ? "обед" : slot.busy.length ? slot.busy[0] : ""}</small>
+                        ? <button disabled={Boolean(busy)} aria-label={`Назначить ${person.name} на ${formatDay(expanded)} с ${at(startOf(slot))}`} onClick={() => pick(startOf(slot))}>{label}</button>
+                        : <span>{label}</span>}
+                      <small>{slot.rest ? "обед" : slot.busy.length ? slot.busy[0] : slot.pause ?? ""}</small>
                     </div>;
                   })}</div>
                   {operation && canEdit && <div className="mb-day-hint">
