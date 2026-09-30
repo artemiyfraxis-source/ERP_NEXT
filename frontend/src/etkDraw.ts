@@ -2,7 +2,7 @@
 // Одни и те же строки идут и на экран (блок «Эскиз»), и в печать (etkPrint.ts): печатное окно — отдельный
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
-import { connectorFace, connectorPicture, connectorSummary, wireColor } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, wireColor, type HousingBody } from "./connectorArt";
 
 type Row = Record<string, unknown>;
 
@@ -10,7 +10,7 @@ export type EtkHousing = {
   art?: string; title?: string; pitch?: number | null; rows: number; cols: number; n?: number;
   kind?: string; color: string; latch?: string; cavity?: string; labels?: string[] | null;
   grid: number[][]; round?: Array<{ pin: number; x: number; y: number }> | null; conf?: string; note?: string;
-  family?: string; male?: boolean | null;
+  family?: string; male?: boolean | null; body?: HousingBody | null;
 };
 
 export type EtkTopologyData = {
@@ -178,7 +178,7 @@ export function etkHousingSvg(hs: EtkHousing, x: number, y: number, s: number, b
 
 function housingCaption(hs: EtkHousing): string {
   return esc(`${str(hs.art)} · ${str(hs.title)}${hs.pitch ? `, шаг ${String(hs.pitch).replace(".", ",")} мм` : ""}` +
-    (hs.kind === "lug" || hs.kind === "banana" || hs.kind === "barrel" ? "" : ` · вид со стороны проводов${hs.latch === "ramp" || hs.latch === "lever" ? ", защёлка сверху" : hs.latch === "mark" ? ", метка ▽ сверху" : ""}`));
+    (hs.kind === "lug" || hs.kind === "banana" || hs.kind === "barrel" ? "" : ` · вид со стороны проводов${hs.latch === "ramp" || hs.latch === "lever" ? ", защёлка сверху" : hs.latch === "mark" ? ", метка ▽ сверху, над контактом 1" : ""}`));
 }
 
 function housingWarn(hs: EtkHousing): string {
@@ -193,7 +193,7 @@ export function etkDrawHousingOp(operation: Row): string {
   const warn = housingWarn(hs), W = 640, top = warn ? 46 : 30;
   const pictureW = 150, faceArea = W - pictureW - 70;
   const round = hs.kind === "round" || hs.kind === "barrel";
-  const s = round ? 22 : Math.max(16, Math.min(46, faceArea / Math.max(hs.cols + (hs.kind === "dsub" ? 1 : 0), 1) * (hs.kind === "dsub" ? 2 : 1) / 1.15));
+  const s = round ? 22 : Math.max(16, Math.min(46, faceArea / connectorFaceUnits(hs) / 1.15));
   const g = etkHousingSvg(hs, 0, 0, s, byPin), pic = connectorPicture(hs, pictureW, 110, byPin);
   const x0 = Math.max(24, (faceArea - g.w) / 2 + 12);
   let body = `<text x="20" y="16" font-size="11" fill="#5f7470">${housingCaption(hs)}</text>` +

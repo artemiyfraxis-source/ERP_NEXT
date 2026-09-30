@@ -104,3 +104,17 @@ def test_round_auto_layout_spreads_pins_on_a_circle():
     layout = housing_of("GX16M-5")
     assert [point["pin"] for point in layout["round"]] == [1, 2, 3, 4, 5]
     assert layout["round"][0] == {"pin": 1, "x": 0.0, "y": -0.55}
+
+
+def test_jst_sh_follows_the_jst_housing_drawing():
+    # eSH «Housing»: top view with the wire end up, Circuit No.1 ▽ on the left -> from the wire side, ▽ face up,
+    # contact 1 is on the right. B = A + 4.0 with protrusions (-B), A + 2.0 without; 2.8 thick, 5 long.
+    with_protrusions = housing_of("SHR-04V-S-B")
+    plain = housing_of("SHR-04V-S")
+
+    assert with_protrusions["grid"] == [[4, 3, 2, 1]] and with_protrusions["conf"] == "high"
+    assert with_protrusions["body"]["ears"] == 1.0 and "ears" not in plain["body"]
+    assert (with_protrusions["body"]["h"], with_protrusions["body"]["len"]) == (2.8, 5.0)
+    width = lambda layout: (layout["n"] - 1) * layout["pitch"] + layout["body"]["extra"] + 2 * layout["body"].get("ears", 0)
+    assert housing_of("SHR-02V-S-B") and width(housing_of("SHR-02V-S-B")) == 5.0
+    assert width(housing_of("SHR-20V-S-B")) == 23.0 and width(housing_of("SHR-15V-S")) == 16.0
