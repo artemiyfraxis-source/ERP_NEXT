@@ -51,7 +51,10 @@ Log "старт автообновления (каждые $IntervalSec с)"
 while ($true) {
   try {
     git -C $root fetch -q origin main 2>&1 | Out-Null
-    $here = (git -C $root rev-parse HEAD).Trim()
+    # Сравниваем с последней СОБРАННОЙ версией (update-local.ps1 пишет её в backend\<база>.version), а не с HEAD:
+    # checkout без сборки (ручная строка перед -Install) иначе выглядел бы как «уже обновлено».
+    $stamp = Join-Path $root "backend\$DbFile.version"
+    $here = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { '' }
     $there = (git -C $root rev-parse origin/main).Trim()
     if ($here -ne $there -and $there -ne $failed) {
       Log "новая версия $($there.Substring(0, 7))"
