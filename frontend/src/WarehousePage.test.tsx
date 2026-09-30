@@ -419,6 +419,38 @@ it("enters a list of rows and keeps the refused ones with the reason (SK-10)", a
   await waitFor(() => expect(reloads).toBeGreaterThan(before));  // one row was entered → the list reloads
 });
 
+it("shows every filled field of a listed row and brings it back with «Править»", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
+    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  fireEvent.change(screen.getByLabelText("Артикул"), { target: { value: "13-014-" } });
+  fireEvent.change(screen.getByLabelText("Серия"), { target: { value: "13" } });
+  fireEvent.change(screen.getByLabelText("Тип"), { target: { value: "Соединитель" } });
+  fireEvent.change(screen.getByLabelText("Масса 10 шт, г"), { target: { value: "12" } });
+  fireEvent.change(screen.getByLabelText("Производитель"), { target: { value: "Амфенол" } });
+  fireEvent.click(screen.getByRole("button", { name: "+ В список" }));
+
+  const [, row] = within(screen.getByRole("table", { name: "Позиции к внесению" })).getAllByRole("row");
+  expect(row).toHaveTextContent("13-014-");
+  expect(row).toHaveTextContent("Соединитель");
+  expect(row).toHaveTextContent("Масса 10 шт: 12 г · Производитель: Амфенол");
+  expect(row).not.toHaveTextContent("— шт");
+  expect(screen.queryByRole("columnheader", { name: "Не принята" })).toBeNull();
+
+  fireEvent.click(within(row).getByRole("button", { name: "Править строку 1" }));
+  expect(screen.queryByRole("table", { name: "Позиции к внесению" })).toBeNull();
+  expect(screen.getByLabelText("Артикул")).toHaveValue("13-014-");
+  expect(screen.getByLabelText("Тип")).toHaveValue("Соединитель");
+  expect(screen.getByLabelText("Масса 10 шт, г")).toHaveValue("12");
+  expect(screen.getByLabelText("Производитель")).toHaveValue("Амфенол");
+});
+
 it("fills name, series, and type from the current article catalog", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);

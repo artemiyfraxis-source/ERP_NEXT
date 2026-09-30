@@ -23,14 +23,26 @@ const EMPTY_PASSPORT: WarehouseLotPassport = {
 
 /** Lot passport as one line for the operations row (SK-6); empty fields are left out. */
 function passportLine(lot: WarehouseLot) {
+  return passportParts(lot.unit_mass_g ? `Масса 1 шт: ${lot.unit_mass_g} г` : "", lot);
+}
+
+/** The same line for a quick-entry row: the mass as typed (1, 10 or 100 pieces). */
+function manualPassportLine(item: WarehouseManualItem) {
+  const mass = ([["mass_1", 1], ["mass_10", 10], ["mass_100", 100]] as const)
+    .filter(([field]) => String(item[field] ?? "").trim())
+    .map(([field, count]) => `Масса ${count} шт: ${item[field]} г`).join(" · ");
+  return passportParts(mass, item);
+}
+
+function passportParts(mass: string, fields: Partial<Omit<WarehouseLotPassport, "mass_1" | "mass_10" | "mass_100">>) {
   return [
-    lot.unit_mass_g ? `Масса 1 шт: ${lot.unit_mass_g} г` : "",
-    lot.expiry_date ? `Годен до ${lot.expiry_date.split("-").reverse().join(".")}` : "",
-    lot.manufacturer ? `Производитель: ${lot.manufacturer}` : "",
-    lot.description ? `Описание: ${lot.description}` : "",
-    lot.storage_conditions ? `Условия хранения: ${lot.storage_conditions}` : "",
-    lot.datasheet ? `Datasheet: ${lot.datasheet}` : "",
-    lot.certificate ? `Сертификат: ${lot.certificate}` : "",
+    mass,
+    fields.expiry_date ? `Годен до ${fields.expiry_date.split("-").reverse().join(".")}` : "",
+    fields.manufacturer ? `Производитель: ${fields.manufacturer}` : "",
+    fields.description ? `Описание: ${fields.description}` : "",
+    fields.storage_conditions ? `Условия хранения: ${fields.storage_conditions}` : "",
+    fields.datasheet ? `Datasheet: ${fields.datasheet}` : "",
+    fields.certificate ? `Сертификат: ${fields.certificate}` : "",
   ].filter(Boolean).join(" · ");
 }
 
@@ -475,6 +487,21 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
     setArticle(""); setName(""); setSeries(""); setItemType(""); setQuantity("");
     setPassport(EMPTY_PASSPORT); setArticleSource("");
   };
+  // «Править»: the listed row goes back into the form; an unfinished row in the form takes its place in the list.
+  const editRow = (index: number) => {
+    const { item } = rows[index];
+    const current = currentItem();
+    setRows((existing) => existing.flatMap((row, other) => other !== index ? [row] : current ? [{ item: current, error: "" }] : []));
+    setWarehouse(item.warehouse); setArticle(item.article); setSeries(item.series); setName(item.name);
+    setItemType(item.item_type); setPurpose(item.purpose); setUnit(item.unit); setQuantity(item.quantity);
+    setStorageLocation(item.storage_location);
+    setPassport(Object.fromEntries(Object.keys(EMPTY_PASSPORT).map((field) => {
+      const key = field as keyof WarehouseLotPassport;
+      return [key, item[key] ?? EMPTY_PASSPORT[key]];
+    })) as unknown as WarehouseLotPassport);
+    setArticleSource(""); setReport("");
+  };
+  const anyRefused = rows.some((row) => row.error);
   const pending = rows.length + (currentItem() ? 1 : 0);
   const placeHint = usePlaceHint(warehouse, storageLocation,
     rows.filter((row) => row.item.warehouse === warehouse).map((row) => row.item.storage_location));
@@ -537,15 +564,22 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
       </details>
       {articleSource && <p className="page-sub" role="status">{articleSource}</p>}
       {rows.length > 0 && <table className="grid compact manual-stock-rows" aria-label="Позиции к внесению">
-        <thead><tr><th>Артикул</th><th>Наименование</th><th className="num">Кол-во</th><th>Место</th><th>Склад</th><th>Не принята</th><th /></tr></thead>
+        <thead><tr><th>Артикул</th><th>Наименование</th><th>Серия</th><th>Тип</th><th className="num">Кол-во</th><th>Место</th><th>Склад</th><th>Назначение</th><th>Паспорт</th>{anyRefused && <th>Не принята</th>}<th /></tr></thead>
         <tbody>{rows.map((row, index) => <tr key={index}>
           <td>{row.item.article || "—"}</td>
           <td>{row.item.name || "—"}</td>
-          <td className="num">{row.item.quantity || "—"} {row.item.unit}</td>
+          <td>{row.item.series || "—"}</td>
+          <td>{row.item.item_type || "—"}</td>
+          <td className="num">{String(row.item.quantity).trim() ? `${row.item.quantity} ${row.item.unit}` : "—"}</td>
           <td>{row.item.storage_location || "—"}</td>
           <td>{row.item.warehouse}</td>
-          <td className="danger-text">{row.error}</td>
-          <td><button type="button" className="link-button" aria-label="Убрать строку" onClick={() => setRows((current) => current.filter((_, other) => other !== index))}>×</button></td>
+          <td>{row.item.purpose || "—"}</td>
+          <td className="manual-stock-passport-cell">{manualPassportLine(row.item) || "—"}</td>
+          {anyRefused && <td className="danger-text">{row.error}</td>}
+          <td className="manual-stock-row-actions">
+            <button type="button" className="link-button" aria-label={`Править строку ${index + 1}`} onClick={() => editRow(index)}>Править</button>
+            <button type="button" className="link-button" aria-label="Убрать строку" onClick={() => setRows((current) => current.filter((_, other) => other !== index))}>×</button>
+          </td>
         </tr>)}</tbody>
       </table>}
       {report && <p className="page-sub" role="log">{report}</p>}
