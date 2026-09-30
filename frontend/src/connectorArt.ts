@@ -1,0 +1,319 @@
+// Рисунки разъёмов по сериям (владелец, 30.09: «все разъёмы одной общей иконкой — ничего не понятно»).
+// Геометрия — из раскладки семейства (connector_housings.py: шаг, ряды, сетка контактов, защёлка, цвет) в миллиметрах,
+// поэтому SH 1,0 мм и Mini-Fit 4,2 мм выглядят разными, а не одной иконкой. Два вида:
+//  • connectorFace — торец со стороны проводов крупно, с номерами контактов и цветами проводов (эскиз монтажа);
+//  • connectorPicture — объёмный вид корпуса (схема жгута, «База данных → Разъёмы»).
+// Всё — SVG-строки: одни и те же рисунки идут на экран и в печать (etkPrint.ts).
+
+export type ConnectorHousing = {
+  art?: string; family?: string; title?: string; pitch?: number | null; rows: number; cols: number; n?: number;
+  kind?: string; color: string; latch?: string; cavity?: string; labels?: string[] | null; male?: boolean | null;
+  grid: number[][]; round?: Array<{ pin: number; x: number; y: number }> | null; conf?: string; note?: string;
+};
+
+type Pt = [number, number];
+type Box = { w: number; h: number; body: string };
+
+const EDGE = "#17272b";
+const WIRE_COLORS: Array<[RegExp, string]> = [
+  [/желт/i, "#f2c200"], [/зел[её]н/i, "#2e9e4f"], [/черн/i, "#222"], [/красн/i, "#d7322d"], [/бел/i, "#f4f4f4"],
+  [/син/i, "#2463c7"], [/голуб/i, "#5bb4e5"], [/оранж/i, "#f08a1c"], [/коричн/i, "#7a4a24"], [/сер/i, "#8d9297"], [/фиолет/i, "#7b4bb3"],
+];
+const DARK_WIRE = /#(222|2463c7|7a4a24|7b4bb3|d7322d|2e9e4f|6b7c86)/;
+
+/** Цвет жилы по слову в наименовании (как SUPPLYMAP etkWireColor_), иначе серо-синий. */
+export function wireColor(name: unknown): string {
+  const text = name == null ? "" : String(name);
+  for (const [pattern, color] of WIRE_COLORS) if (pattern.test(text)) return color;
+  return "#6b7c86";
+}
+
+function esc(value: unknown): string {
+  return String(value == null ? "" : value)
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+const f = (n: number) => String(Math.round(n * 100) / 100);
+
+function rgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.padEnd(6, "0");
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) || 0) as [number, number, number];
+}
+
+/** Светлее (k > 0) или темнее (k < 0) — грани объёмного корпуса. */
+export function shade(hex: string, k: number): string {
+  const [r, g, b] = rgb(hex);
+  const mix = (c: number) => Math.round(k >= 0 ? c + (255 - c) * k : c * (1 + k));
+  return `#${[r, g, b].map((c) => Math.max(0, Math.min(255, mix(c))).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function isDark(hex: string): boolean {
+  const [r, g, b] = rgb(hex);
+  return r * 0.3 + g * 0.59 + b * 0.11 < 110;
+}
+
+function poly(points: Pt[], fill: string, stroke = EDGE, width = 0.8, extra = ""): string {
+  return `<polygon points="${points.map(([x, y]) => `${f(x)},${f(y)}`).join(" ")}" fill="${fill}" stroke="${stroke}" stroke-width="${width}" stroke-linejoin="round"${extra}/>`;
+}
+
+/** Вид корпуса серии: форма, глубина корпуса вдоль провода, защёлка. Размеры — ориентировочные, по каталогам. */
+type Look = { shape: "rect" | "xt" | "dsub" | "round" | "rj45" | "barrel" | "lug" | "banana"; depth: number; wall: number; latch: string };
+
+export function connectorLook(hs: ConnectorHousing): Look {
+  const family = hs.family || "", pitch = hs.pitch || 2.5;
+  const latch = hs.latch || "none";
+  if (hs.kind === "lug") return { shape: "lug", depth: 0, wall: 0, latch: "none" };
+  if (hs.kind === "banana") return { shape: "banana", depth: 0, wall: 0, latch: "none" };
+  if (hs.kind === "barrel") return { shape: "barrel", depth: 14, wall: 0, latch: "none" };
+  if (hs.kind === "round") return { shape: "round", depth: 16, wall: 0, latch: "none" };
+  if (hs.kind === "dsub") return { shape: "dsub", depth: 12, wall: 1.6, latch: "none" };
+  if (family === "amass-xt" || family === "amass-qs8") return { shape: "xt", depth: 16, wall: 1.6, latch: "none" };
+  if (family === "rj45") return { shape: "rj45", depth: 21, wall: 1.2, latch: "lever" };
+  const depth = /deutsch|superseal/.test(family) ? 26 : /minifit|microfit|jst-vh|jst-sm|multilock/.test(family) ? 12
+    : family === "connfly-ds1071" ? 14 : Math.max(4.5, pitch * 3.2);
+  const wall = /deutsch|superseal/.test(family) ? 2.2 : Math.max(0.55, Math.min(1.6, pitch * 0.38));
+  return { shape: "rect", depth, wall, latch };
+}
+
+/** Раскладка контактов в мм от левого верхнего угла торца: центр каждого контакта сетки. */
+function cavities(hs: ConnectorHousing, pitch: number, wall: number, dsub = false): Array<{ pin: number; x: number; y: number }> {
+  const out: Array<{ pin: number; x: number; y: number }> = [];
+  const dx = dsub ? pitch / 2 : pitch;
+  hs.grid.forEach((row, r) => row.forEach((pin, c) => {
+    if (pin) out.push({ pin, x: wall + (dsub ? pitch / 2 : 0) + c * dx + (dsub ? 0 : pitch / 2), y: wall + r * pitch + pitch / 2 });
+  }));
+  return out;
+}
+
+function faceSize(hs: ConnectorHousing, look: Look, pitch: number): [number, number] {
+  if (look.shape === "dsub") return [((hs.grid[0]?.length || 9) + 1) * pitch / 2 + look.wall * 2 + pitch * 0.4, 2 * pitch + look.wall * 2 + 0.6];
+  if (look.shape === "xt") return [pitch * 2 + look.wall * 2, pitch + look.wall * 2];
+  return [hs.cols * pitch + look.wall * 2, hs.rows * pitch + look.wall * 2];
+}
+
+function facePitch(hs: ConnectorHousing, look: Look): number {
+  if (look.shape === "xt") return hs.family === "amass-qs8" ? 12 : /XT90/i.test(hs.art || "") ? 10.9 : /XT30/i.test(hs.art || "") ? 5 : 7.2;
+  return hs.pitch || (look.shape === "dsub" ? 2.77 : /superseal/.test(hs.family || "") ? 3.5 : 2.5);
+}
+
+/** Контур торца в мм (для объёма и для плоского вида). */
+function outline(look: Look, w: number, h: number): Pt[] {
+  const c = Math.min(w, h) * 0.16;
+  if (look.shape === "xt") {
+    const k = h * 0.32; // скосы с одной стороны — ключ XT/QS
+    return [[0, 0], [w - k, 0], [w, k], [w, h - k], [w - k, h], [0, h]];
+  }
+  if (look.shape === "dsub") {
+    const s = h * 0.18; // трапеция «D»
+    return [[0, 0], [w, 0], [w - s, h], [s, h]];
+  }
+  return [[c * 0.3, 0], [w - c * 0.3, 0], [w, c * 0.3], [w, h - c * 0.3], [w - c * 0.3, h], [c * 0.3, h], [0, h - c * 0.3], [0, c * 0.3]];
+}
+
+function circlePts(cx: number, cy: number, r: number, n = 36): Pt[] {
+  return Array.from({ length: n }, (_, i) => [cx + r * Math.cos((i / n) * 2 * Math.PI), cy + r * Math.sin((i / n) * 2 * Math.PI)] as Pt);
+}
+
+/** Призма: торец `front` вытянут назад на (ox, oy); видимые боковые грани светлее сверху и темнее справа. */
+function prism(front: Pt[], ox: number, oy: number, color: string, width = 0.8): string {
+  const cx = front.reduce((s, p) => s + p[0], 0) / front.length, cy = front.reduce((s, p) => s + p[1], 0) / front.length;
+  const faces: Array<{ pts: Pt[]; light: number; z: number }> = [];
+  front.forEach((a, i) => {
+    const b = front[(i + 1) % front.length];
+    const mx = (a[0] + b[0]) / 2 - cx, my = (a[1] + b[1]) / 2 - cy;
+    let nx = b[1] - a[1], ny = -(b[0] - a[0]);
+    if (nx * mx + ny * my < 0) { nx = -nx; ny = -ny; }
+    if (nx * ox + ny * oy <= 0) return;
+    const len = Math.hypot(nx, ny) || 1;
+    faces.push({ pts: [a, b, [b[0] + ox, b[1] + oy], [a[0] + ox, a[1] + oy]], light: -ny / len * 0.35 - nx / len * 0.28, z: -(my + mx) });
+  });
+  return faces.sort((p, q) => p.z - q.z).map((face) => poly(face.pts, shade(color, face.light), EDGE, width)).join("");
+}
+
+function gradient(id: string, color: string): string {
+  return `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${shade(color, 0.22)}"/>` +
+    `<stop offset="1" stop-color="${shade(color, -0.12)}"/></linearGradient></defs>`;
+}
+
+function gradId(color: string): string {
+  return `cgr${color.replace(/[^0-9a-f]/gi, "")}`;
+}
+
+/** Объёмный вид корпуса разъёма (схема жгута, «База данных → Разъёмы»). Вписывается в maxW × maxH. */
+export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: number, byPin: Record<number, string> | null = null): Box {
+  const look = connectorLook(hs);
+  if (look.shape === "lug" || look.shape === "banana") {
+    const s = Math.min(maxW / 2.7, maxH / 1.3);
+    return { ...flatSmall(hs, look, s, byPin) };
+  }
+  const color = hs.color || "#efe6cf";
+  if (look.shape === "round" || look.shape === "barrel") {
+    const R = look.shape === "barrel" ? 5 : 9, D = look.depth;
+    const k = Math.min(maxW / (R * 2 + D * 0.62 + 1), maxH / (R * 2 + D * 0.4 + 1), 7);
+    const r = R * k, ox = D * k * 0.6, oy = -D * k * 0.38, cx = r + 1, cy = r - oy + 1;
+    let body = prism(circlePts(cx, cy, r), ox, oy, color) + poly(circlePts(cx + ox, cy + oy, r), shade(color, -0.1));
+    body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r)}" fill="${shade(color, 0.08)}" stroke="${EDGE}" stroke-width=".9"/>`;
+    if (look.shape === "barrel") {
+      body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r * 0.62)}" fill="#c9ccd0" stroke="${EDGE}" stroke-width=".7"/>` +
+        `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r * 0.22)}" fill="#e8c35a" stroke="${EDGE}" stroke-width=".6"/>`;
+    } else {
+      body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r * 0.78)}" fill="#2b2b2b" stroke="${EDGE}" stroke-width=".6"/>` +
+        `<rect x="${f(cx - r * 0.1)}" y="${f(cy - r * 0.82)}" width="${f(r * 0.2)}" height="${f(r * 0.18)}" fill="${shade(color, 0.08)}"/>`;
+      (hs.round || []).forEach((p) => {
+        const wn = byPin && byPin[p.pin];
+        body += `<circle cx="${f(cx + p.x * r * 0.95)}" cy="${f(cy + p.y * r * 0.95)}" r="${f(Math.max(1.4, r * 0.1))}" fill="${wn ? wireColor(wn) : "#d8b454"}"/>`;
+      });
+    }
+    return { w: 2 * r + ox + 2, h: 2 * r - oy + 2, body };
+  }
+  const pitch = facePitch(hs, look);
+  const [W, H] = faceSize(hs, look, pitch);
+  const D = look.depth, latchH = look.latch === "lever" ? H * 0.28 + 0.6 : look.latch === "ramp" ? H * 0.2 + 0.3 : 0;
+  const k = Math.min(maxW / (W + D * 0.62), maxH / (H + latchH + D * 0.4), 16);
+  const ox = D * k * 0.62, oy = -D * k * 0.4, top = -oy + latchH * k + 1;
+  const front = outline(look, W, H).map(([x, y]) => [x * k + 1, y * k + top] as Pt);
+  let body = prism(front, ox, oy, color);
+  // Защёлка на верхней грани: рычаг (Mini-Fit, SM, DT, RJ45) или выступ-клин (JST XH/PH/GH).
+  if (look.latch === "lever" || look.latch === "ramp") {
+    const lw = look.latch === "lever" ? Math.min(W * 0.42, 6) : Math.min(W * 0.34, 4), lh = latchH;
+    const lx = (look.shape === "rj45" ? W / 2 : W / 2) - lw / 2;
+    const base: Pt[] = [[lx * k + 1, top], [(lx + lw) * k + 1, top], [(lx + lw) * k + 1, top - lh * k], [lx * k + 1, top - lh * k]];
+    const s0 = 0.18, s1 = look.latch === "lever" ? 0.85 : 0.5;
+    const shift = (p: Pt, t: number): Pt => [p[0] + ox * t, p[1] + oy * t];
+    body += prism(base.map((p) => shift(p, s0)), ox * (s1 - s0), oy * (s1 - s0), shade(color, -0.04), 0.6) +
+      poly(base.map((p) => shift(p, s0)), shade(color, 0.05), EDGE, 0.6);
+  }
+  const dark = isDark(color);
+  body += gradient(gradId(color), color) + poly(front, `url(#${gradId(color)})`, EDGE, 0.9);
+  if (look.shape === "dsub") {
+    const inset = outline(look, W - look.wall * 2, H - look.wall * 2).map(([x, y]) => [(x + look.wall) * k + 1, (y + look.wall) * k + top] as Pt);
+    body += poly(inset, "#2f3b44", EDGE, 0.6);
+  }
+  const holes = cavities(hs, pitch, look.wall + (look.shape === "dsub" ? 0.3 : 0), look.shape === "dsub");
+  const hw = (look.shape === "xt" ? pitch * 0.34 : pitch * 0.34) * k;
+  holes.forEach((c) => {
+    const x = c.x * k + 1, y = c.y * k + top, wn = byPin && byPin[c.pin];
+    const round = hs.cavity === "round" || look.shape === "xt" || look.shape === "dsub";
+    body += round
+      ? `<circle cx="${f(x)}" cy="${f(y)}" r="${f(hw)}" fill="${look.shape === "xt" ? "#d8b454" : dark ? "#5d666b" : "#2f3336"}"/>`
+      : `<rect x="${f(x - hw)}" y="${f(y - hw)}" width="${f(hw * 2)}" height="${f(hw * 2)}" rx="${f(hw * 0.2)}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
+    if (wn) body += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(hw * 0.8)}" fill="${wireColor(wn)}" stroke="#e9eef0" stroke-width=".5"/>`;
+  });
+  return { w: W * k + ox + 2, h: top + H * k + 2, body };
+}
+
+function flatSmall(hs: ConnectorHousing, look: Look, s: number, byPin: Record<number, string> | null): Box {
+  const w0 = byPin && byPin[1];
+  if (look.shape === "lug") {
+    const body = `<rect x="${f(s * 0.9)}" y="${f(s * 0.3)}" width="${f(s * 1.1)}" height="${f(s * 0.5)}" rx="${f(s * 0.1)}" fill="#d64541" stroke="${EDGE}" stroke-width=".8"/>` +
+      `<path d="M${f(s * 2)},${f(s * 0.35)} L${f(s * 2.1)},${f(s * 0.35)} A${f(s * 0.5)},${f(s * 0.5)} 0 1 1 ${f(s * 2.1)},${f(s * 0.75)} L${f(s * 2)},${f(s * 0.75)} z" fill="#e8c35a" stroke="${EDGE}" stroke-width=".8"/>` +
+      `<circle cx="${f(s * 2.4)}" cy="${f(s * 0.55)}" r="${f(s * 0.2)}" fill="#fff" stroke="${EDGE}" stroke-width=".6"/>` +
+      `<rect x="0" y="${f(s * 0.4)}" width="${f(s * 0.9)}" height="${f(s * 0.3)}" fill="${w0 ? wireColor(w0) : "#6b7c86"}" stroke="${EDGE}" stroke-width=".5"/>`;
+    return { w: s * 3, h: s * 1.2, body };
+  }
+  const body = `<rect x="0" y="${f(s * 0.4)}" width="${f(s * 0.9)}" height="${f(s * 0.3)}" fill="${w0 ? wireColor(w0) : "#6b7c86"}" stroke="${EDGE}" stroke-width=".5"/>` +
+    `<rect x="${f(s * 0.9)}" y="${f(s * 0.15)}" width="${f(s * 1.5)}" height="${f(s * 0.8)}" rx="${f(s * 0.15)}" fill="${hs.color}" stroke="${EDGE}" stroke-width=".8"/>` +
+    `<rect x="${f(s * 2.4)}" y="${f(s * 0.4)}" width="${f(s * 1.1)}" height="${f(s * 0.3)}" rx="${f(s * 0.12)}" fill="#d9d9d9" stroke="${EDGE}" stroke-width=".7"/>`;
+  return { w: s * 3.6, h: s * 1.2, body };
+}
+
+/** Торец разъёма со стороны проводов: корпус в масштабе серии, гнёзда, номера, цвета проводов, контакт 1 — красная
+ *  метка. `s` — пикселей на шаг контактов. Отдаёт {w, h, body} от (x, y). */
+export function connectorFace(hs: ConnectorHousing, x: number, y: number, s: number, byPin: Record<number, string> | null): Box {
+  const look = connectorLook(hs);
+  if (look.shape === "lug" || look.shape === "banana") {
+    const g = flatSmall(hs, look, s, byPin);
+    return { w: g.w, h: g.h, body: `<g transform="translate(${f(x)},${f(y)})">${g.body}</g>` };
+  }
+  const color = hs.color || "#efe6cf", dark = isDark(color), fs = Math.max(6.5, s * 0.34);
+  if (look.shape === "round" || look.shape === "barrel") return roundFace(hs, look, x, y, s, byPin);
+  const pitch = facePitch(hs, look), k = s / pitch;
+  const [W, H] = faceSize(hs, look, pitch);
+  const latchH = look.latch === "lever" || look.latch === "ramp" ? Math.max(4, s * 0.42) : 0, top = y + latchH;
+  let body = "";
+  if (latchH) {
+    const lw = look.latch === "lever" ? Math.min(W * k * 0.55, s * 2.2) : Math.min(W * k * 0.45, s * 1.5), lx = x + (W * k - lw) / 2;
+    body += look.latch === "lever"
+      ? `<path d="M${f(lx)},${f(top + 1)} L${f(lx)},${f(y + 1)} L${f(lx + lw)},${f(y + 1)} L${f(lx + lw)},${f(top + 1)}" fill="${shade(color, 0.1)}" stroke="${EDGE}" stroke-width="1"/>` +
+        `<line x1="${f(lx + lw * 0.2)}" y1="${f(y + latchH * 0.55)}" x2="${f(lx + lw * 0.8)}" y2="${f(y + latchH * 0.55)}" stroke="${EDGE}" stroke-width=".7"/>`
+      : `<path d="M${f(lx)},${f(top + 1)} L${f(lx + lw * 0.2)},${f(y)} L${f(lx + lw * 0.8)},${f(y)} L${f(lx + lw)},${f(top + 1)} z" fill="${shade(color, 0.1)}" stroke="${EDGE}" stroke-width="1"/>`;
+  }
+  const front = outline(look, W, H).map(([px, py]) => [x + px * k, top + py * k] as Pt);
+  body += gradient(gradId(color), color) + poly(front, `url(#${gradId(color)})`, EDGE, 1.2);
+  if (look.latch === "friction") {
+    // PicoBlade / Milli-Grid: ключ-рёбрышко сбоку корпуса.
+    body += `<rect x="${f(x - Math.max(2, s * 0.14))}" y="${f(top + H * k * 0.25)}" width="${f(Math.max(2, s * 0.14))}" height="${f(H * k * 0.5)}" fill="${shade(color, -0.08)}" stroke="${EDGE}" stroke-width=".7"/>`;
+  }
+  if (look.latch === "mark") {
+    body += `<path d="M${f(x + W * k / 2 - 4)},${f(top + 2)} L${f(x + W * k / 2 + 4)},${f(top + 2)} L${f(x + W * k / 2)},${f(top + 7)} z" fill="${shade(color, -0.35)}"/>`;
+  }
+  if (look.shape === "dsub") {
+    const inset = outline(look, W - look.wall * 2, H - look.wall * 2).map(([px, py]) => [x + (px + look.wall) * k, top + (py + look.wall) * k] as Pt);
+    body += poly(inset, "#2f3b44", EDGE, 0.8);
+  }
+  const holes = cavities(hs, pitch, look.wall + (look.shape === "dsub" ? 0.3 : 0), look.shape === "dsub");
+  const hw = s * (look.shape === "xt" ? 0.36 : 0.4) * (look.shape === "dsub" ? 0.62 : 1);
+  const round = hs.cavity === "round" || look.shape === "xt" || look.shape === "dsub";
+  holes.forEach((c) => {
+    const cx = x + c.x * k, cy = top + c.y * k, wn = byPin && byPin[c.pin];
+    body += round
+      ? `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(hw)}" fill="${look.shape === "xt" || look.shape === "dsub" ? "#d8b454" : dark ? "#5d666b" : "#2f3336"}"/>`
+      : `<rect x="${f(cx - hw)}" y="${f(cy - hw)}" width="${f(hw * 2)}" height="${f(hw * 2)}" rx="${f(s * 0.08)}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
+    const label = hs.labels ? (hs.labels[c.pin - 1] == null ? c.pin : hs.labels[c.pin - 1]) : c.pin;
+    const lfs = look.shape === "dsub" ? fs * 0.8 : fs;
+    if (wn) {
+      const wc = wireColor(wn);
+      body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(hw * 0.86)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +
+        (label !== "" ? `<text x="${f(cx)}" y="${f(cy + lfs * 0.36)}" text-anchor="middle" font-size="${f(lfs)}" font-weight="700" fill="${DARK_WIRE.test(wc) ? "#fff" : EDGE}">${esc(label)}</text>` : "");
+    } else if (s >= 14 && label !== "") {
+      body += `<text x="${f(cx)}" y="${f(cy + lfs * 0.36)}" text-anchor="middle" font-size="${f(lfs)}" fill="${look.shape === "xt" || look.shape === "dsub" ? EDGE : "#e9eef0"}">${esc(label)}</text>`;
+    }
+    if (c.pin === 1 && !hs.labels) body += pinOneMark(hs, look, c, x, top, W * k, H * k, k, s);
+  });
+  return { w: W * k, h: H * k + latchH + 6, body };
+}
+
+function pinOneMark(hs: ConnectorHousing, look: Look, c: { x: number; y: number }, x: number, top: number, W: number, H: number, k: number, s: number): string {
+  const tw = Math.max(3, s * 0.2), cx = x + c.x * k, cy = top + c.y * k;
+  const edgeCol = look.shape === "dsub" ? false : hs.grid.some((row) => row[0] === 1) || hs.grid.some((row) => row[row.length - 1] === 1);
+  if (edgeCol) {
+    const last = hs.grid.some((row) => row[row.length - 1] === 1) && !hs.grid.some((row) => row[0] === 1);
+    const tx = last ? x + W + 1 : x - 1, d = last ? 1 : -1;
+    return `<path d="M${f(tx + d * tw * 1.5)},${f(cy - tw)} L${f(tx + d * tw * 1.5)},${f(cy + tw)} L${f(tx)},${f(cy)} z" fill="#d7322d"/>`;
+  }
+  const ty = cy < top + H / 2 ? top - 1 : top + H + 1, dir = cy < top + H / 2 ? 1 : -1;
+  return `<path d="M${f(cx - tw)},${f(ty - dir * tw * 1.4)} L${f(cx + tw)},${f(ty - dir * tw * 1.4)} L${f(cx)},${f(ty)} z" fill="#d7322d"/>`;
+}
+
+function roundFace(hs: ConnectorHousing, look: Look, x: number, y: number, s: number, byPin: Record<number, string> | null): Box {
+  const R = s * 2.2, cx = x + R + 2, cy = y + R + 2, pr = Math.max(2.5, s * 0.36), fs = Math.max(6.5, s * 0.34);
+  if (look.shape === "barrel") {
+    const lab = hs.labels || ["центр", "корпус"];
+    const w1 = byPin && byPin[1], w2 = byPin && byPin[2];
+    const body = `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="${hs.color}" stroke="#000" stroke-width="1.2"/>` +
+      `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(R * 0.62)}" fill="${w2 ? wireColor(w2) : "#c9ccd0"}" stroke="${EDGE}" stroke-width="1"/>` +
+      `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(R * 0.24)}" fill="${w1 ? wireColor(w1) : "#e8c35a"}" stroke="${EDGE}" stroke-width=".8"/>` +
+      `<text x="${f(cx + R + 6)}" y="${f(cy - 4)}" font-size="${f(fs)}" fill="${EDGE}">1 — ${esc(lab[0])}</text>` +
+      `<text x="${f(cx + R + 6)}" y="${f(cy + fs + 2)}" font-size="${f(fs)}" fill="${EDGE}">2 — ${esc(lab[1])}</text>`;
+    return { w: R * 2 + 4 + fs * 6, h: R * 2 + 10, body };
+  }
+  let body = `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(R)}" fill="${hs.color}" stroke="#000" stroke-width="1.2"/>` +
+    `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(R * 0.86)}" fill="${isDark(hs.color) ? "#3a4147" : "#2b2b2b"}" stroke="#000" stroke-width=".6"/>` +
+    `<rect x="${f(cx - s * 0.3)}" y="${f(cy - R - 1)}" width="${f(s * 0.6)}" height="${f(s * 0.45)}" fill="#fff" stroke="#000" stroke-width="1"/>`;
+  (hs.round || []).forEach((c) => {
+    const px = cx + c.x * R, py = cy + c.y * R, wn = byPin && byPin[c.pin], wc = wn ? wireColor(wn) : "#c8a24a";
+    body += `<circle cx="${f(px)}" cy="${f(py)}" r="${f(pr)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>`;
+    if (s >= 12) body += `<text x="${f(px)}" y="${f(py - pr - 2)}" text-anchor="middle" font-size="${f(fs)}" fill="#e9eef0">${c.pin}</text>`;
+  });
+  return { w: R * 2 + 4, h: R * 2 + 4 + 6, body };
+}
+
+/** Подпись под рисунком: серия, шаг, число контактов — «JST GH · 1,25 мм · 4 конт.». */
+export function connectorSummary(hs: ConnectorHousing): string {
+  const parts = [String(hs.title || "")];
+  if (hs.pitch && hs.kind !== "round") parts.push(`${String(hs.pitch).replace(".", ",")} мм`);
+  if (hs.n && hs.kind !== "lug" && hs.kind !== "banana") parts.push(`${hs.n} конт.`);
+  if (hs.male != null && (hs.kind === "dsub" || hs.family === "deutsch-dt")) parts.push(hs.male ? "штыри" : "гнёзда");
+  return parts.filter(Boolean).join(" · ");
+}

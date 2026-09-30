@@ -1000,7 +1000,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .etk-schema { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 8px 12px; }
 .etk-schema summary, .etk-revs summary, .etk-warnings summary, .gen-more summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .etk-harness { display: flex; justify-content: center; overflow-x: auto; }
-.etk-harness svg { max-width: 760px; width: 100%; height: auto; }
+.etk-harness svg { max-width: 900px; width: 100%; height: auto; }
 .etk-warnings { border-radius: 10px; padding: 8px 12px; color: #74451f; background: #fff3dd; font-size: 12.5px; }
 .etk-warnings > div { margin-top: 4px; white-space: pre-line; }
 .etk-revs { font-size: 12.5px; }
@@ -1026,7 +1026,20 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .etk-op .etk-steps li.ctl { padding: 4px 8px; border-left: 3px solid #d93025; background: #fdf4f4; border-radius: 0 6px 6px 0; }
 .etk-op .etk-steps li > span { color: #b91c1c; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .etk-op .etk-fig { display: flex; justify-content: center; border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
-.etk-op .housing-view { margin: 0; background: none; border: 1px solid var(--border); }
+.etk-fig-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.etk-fig-row > .etk-fig { flex: 1 1 520px; }
+.etk-sketch { flex: 1 1 320px; display: grid; gap: 8px; align-content: start; padding: 8px; border: 1px dashed var(--border); border-radius: 10px; outline: none; }
+.etk-sketch:focus-visible, .etk-sketch:focus { border-color: var(--primary); }
+.etk-sketch img { display: block; max-width: 100%; max-height: 520px; margin: 0 auto; border-radius: 6px; background: #fff; }
+.etk-sketch-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.conn-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.conn-card { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.conn-card svg { display: block; width: 100%; height: auto; }
+.conn-card b { font-size: 13px; }
+.conn-card small { display: block; color: var(--muted-foreground); font-size: 12px; }
+.conn-card .conn-face { grid-column: 1 / -1; display: flex; justify-content: center; }
+.conn-card .conn-face svg { width: auto; max-width: 100%; }
+.conn-card small.conn-warn { color: #b3261e; }
 .etk-op .tr-tooling { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .etk-op .tr-tooling .tr-sec { margin: 0; padding: 10px 12px; border-left: 1px solid var(--border); align-content: start; }
 .etk-op .tr-tooling .tr-sec:first-child { border-left: 0; }

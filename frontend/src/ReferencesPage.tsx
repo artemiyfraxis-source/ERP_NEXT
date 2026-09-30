@@ -4,6 +4,7 @@ import { hasAccess } from "./navigation";
 import { EquipmentCards } from "./EquipmentCards";
 import { WireLookup } from "./WireLookup";
 import { TechcardsPage } from "./TechcardsPage";
+import { ConnectorGallery } from "./ConnectorGallery";
 import {
   referencesApi,
   type Principal,
@@ -20,7 +21,7 @@ import {
    references read like one database. Project techcards (ЭТК) stay with the projects. */
 
 type MapTab = "suppliers" | "countries";
-export type DbTab = "templates" | TechOperationTab | MapTab;
+export type DbTab = "templates" | "connectors" | TechOperationTab | MapTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
@@ -30,6 +31,7 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
   { title: "Техкарты", tabs: [
     { id: "templates", label: "Операции", base: "tk_templates" },
     { id: "ob", label: "Оборудование", base: "ob" },
+    { id: "connectors", label: "Разъёмы" },
   ] },
   { title: "Разделка и обжим", tabs: [
     { id: "ter", label: "Терминалы", base: "ter" },
@@ -89,7 +91,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const canTemplates = hasAccess(principal.permissions, "erptctpl");
   const canRefs = hasAccess(principal.permissions, "erpref");
   const groups = useMemo(() => GROUPS
-    .map((group) => ({ ...group, tabs: group.tabs.filter((tab) => tab.id === "templates" ? canTemplates : canRefs) }))
+    .map((group) => ({ ...group, tabs: group.tabs.filter((tab) => tab.id === "templates" || tab.id === "connectors" ? canTemplates : canRefs) }))
     .filter((group) => group.tabs.length > 0), [canTemplates, canRefs]);
   const allowed = groups.flatMap((group) => group.tabs.map((tab) => tab.id));
   const [tab, setTab] = useState<DbTab>(() => {
@@ -106,7 +108,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
-  const techTab = !isMapTab(tab) && tab !== "templates" ? tab : null;
+  const techTab = !isMapTab(tab) && tab !== "templates" && tab !== "connectors" ? tab : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
   const canEdit = principal.permissions.erpref === "edit" && !viewOnly;
@@ -251,6 +253,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     {notice && <div className="success-banner">{notice}</div>}
 
     {tab === "templates" && <TechcardsPage principal={principal} view="templates" embedded />}
+    {tab === "connectors" && <ConnectorGallery />}
 
     {isMapTab(tab) && (() => {
       const disabled = !canEditSuppliers;
