@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ProjectEtk, ToolingBySection, editDraft } from "./ProjectEtk";
+import { RECORD_CATEGORIES, recordCategory } from "./etkOperation";
 import {
   referencesApi,
   techcardsApi,
@@ -14,19 +15,10 @@ import {
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
 import { TcTemplateSheets } from "./TcTemplateSheets";
 
-/** Категория карточки по префиксу кода (SUPPLYMAP PortalApp.html TC_REC_CATS_ / tcRecCat_). */
-const RECORD_CATEGORIES: Array<[string, string]> = [
-  ["CUT", "Резка"], ["STRIP", "Разделка"], ["TWIST", "Свивка"], ["PRS", "Опрессовка"], ["SDR", "Пайка и лужение"],
-  ["INS", "Монтаж"], ["HEAT", "Усадка"], ["US", "УЗ-сварка"], ["MOLD", "Литьё"], ["PLASM", "Литьё"],
-];
 const CATEGORY_ORDER = [...new Set([...RECORD_CATEGORIES.map(([, name]) => name), "Прочее"])];
 // Где стороны (A)/(B) расходятся, чья сторона — запись (backend operation_cards.RECORD_SIDE_PICK).
 const RECORD_SIDE_PICK: Record<string, string> = { SDR_COAX_housing: "B", SDR_COAX_pin: "A" };
 
-export function recordCategory(code: string): string {
-  const prefix = String(code).split("_")[0];
-  return RECORD_CATEGORIES.find(([key]) => key === prefix)?.[1] ?? "Прочее";
-}
 
 function shortDate(value: string): string {
   return new Date(value).toLocaleDateString("ru-RU").slice(0, 5);

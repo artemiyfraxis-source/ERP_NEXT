@@ -1048,7 +1048,22 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .etk-def b { display: block; font-size: 12.5px; }
 .etk-def small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--muted-foreground); }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }
-@media (max-width: 1100px) { .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
+/* 6 Результат: таблица «что отдаём дальше — сколько» + плитка расчётного времени отдельной цифрой. */
+.etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(220px, 280px); gap: 10px; align-items: start; }
+.etk-result-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
+.etk-result-table th { padding: 6px 12px; text-align: left; font-size: 11px; font-weight: 700; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; background: var(--accent); }
+.etk-result-table td { padding: 7px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+.etk-result-table .num, .etk-time .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+.etk-result-table th:not(:first-child) { text-align: right; width: 1%; white-space: nowrap; }
+.etk-time { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.etk-time > small { font-size: 11px; color: var(--muted-foreground); }
+.etk-time > small:first-child { font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.etk-time > b { font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.etk-time > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
+.etk-time ul { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; }
+.etk-time li { display: flex; justify-content: space-between; gap: 8px; }
+.etk-result:not(:has(.etk-result-table)) { grid-template-columns: minmax(220px, 280px); }
+@media (max-width: 1100px) { .etk-result { grid-template-columns: 1fr; } .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
 
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
 .seg-tabs.sub { margin-bottom: 8px; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFECT_SCENES, defectArt, defectContext, defectSceneId } from "./etkDefectArt";
+import { DEFECT_SCENES, defectArt, defectContext, defectSceneArt, defectSceneId } from "./etkDefectArt";
 
 describe("defect picture library", () => {
   it("picks the picture by defect name and operation", () => {
@@ -52,6 +52,23 @@ describe("defect picture library", () => {
     expect(art).toContain("✓ Норма");
     expect(art).toContain("✗ Брак");
     expect(art).not.toMatch(/undefined|NaN/);
+  });
+
+  it("keeps every caption inside its panel", () => {
+    // Ширина подписи оценивается как 0,58 кегля на символ — с запасом для кириллицы sans-serif.
+    const clipped: string[] = [];
+    for (const id of DEFECT_SCENES) {
+      for (const panel of defectSceneArt(id).matchAll(/<svg x="[^"]+" y="1" [^>]*viewBox="([^"]+)">(.*?)<\/svg>/g)) {
+        const [minX, , width] = panel[1].split(" ").map(Number);
+        for (const label of panel[2].matchAll(/<text x="([^"]+)"[^>]*font-size="([^"]+)"[^>]*text-anchor="(\w+)"[^>]*>([^<]*)<\/text>/g)) {
+          const [x, size, anchor, value] = [Number(label[1]), Number(label[2]), label[3], label[4]];
+          const span = [...value].length * size * 0.58;
+          const left = anchor === "start" ? x : anchor === "end" ? x - span : x - span / 2;
+          if (left < minX - 0.5 || left + span > minX + width + 0.5) clipped.push(`${id}: ${value}`);
+        }
+      }
+    }
+    expect(clipped).toEqual([]);
   });
 
   it("reads the operation kind from the card code", () => {
