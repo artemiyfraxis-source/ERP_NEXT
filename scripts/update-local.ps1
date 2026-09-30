@@ -7,9 +7,11 @@
 # перечитывается из Google, иначе снимок data\import\projects.json), подмена сайта, запуск API и фонового outbox_worker. Ошибка миграций → база из копии,
 # прежний код, прежний сайт, API снова запущен. В конце — версия и «Что нового» (влитые PR с прошлого
 # обновления; коммит прошлого обновления в backend\<база>.version), то же уходит в version.json для плашки в ERP.
-# Техкарты (владелец 29.09: «отгенерировать ТК по проектам»): выданные в SUPPLYMAP переносятся из листа «Техкарты»,
-# остальным сборкам генератор собирает и выдаёт ЭТК, как кнопка «Создать»; отгруженные и ХОЛД не трогаются, выданные
-# ТК не пересобираются.
+# Проекты (владелец 30.09: «все проекты снесем и буду по одному тебе давать»): разовый снос всех проектов с ТК
+# (app.workflows.projects_wipe — по метке в базе, перед ним копия базы рядом; склад, комплектация и выдачи не
+# трогаются), дальше из Google загружаются только новые номера списка data\projects.txt вместе с их ТК
+# (scripts\projects_import.py load, итог в backend\projects-load.txt). Массовой загрузки проектов и пакетной
+# генерации и пересборки ТК больше нет.
 # Ключ Google erp-reader (только чтение): -Key путь (запоминается), иначе ERP_GOOGLE_SERVICE_ACCOUNT_JSON, иначе
 # запомненный путь (backend\google-key.path, его пишет и load-real-data.ps1), иначе поиск в Загрузках/Документах/Рабочем столе.
 param([string]$DbFile = 'real.db', [int]$Port = 8022, [string]$Key = '')
@@ -134,29 +136,25 @@ else {
 }
 if ($Key) { Set-Content $keyPath $Key; $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = $Key }
 
+Write-Host '== Проекты: разовый снос (владелец 30.09: «все проекты снесем и буду по одному давать»)'
+# Один раз, по метке в самой базе; перед сносом — копия базы рядом (<база>.before-projects-wipe.bak).
+& $py -X utf8 -m app.workflows.projects_wipe
+if ($LASTEXITCODE -ne 0) { Write-Warning 'Проекты не снесены (ошибка выше), база не изменена' }
+
+Write-Host '== Проекты по одному: новые номера из data\projects.txt с их ТК (Google только читается)'
+$report = Join-Path $backend 'projects-load.txt'
+$load = @('-X', 'utf8', '..\scripts\projects_import.py', 'load')
+if ($Key -and (Test-Path $Key)) { $load += @('--key', $Key) }
+& $py @load | Tee-Object -FilePath $report
+if ($LASTEXITCODE -gt 1) { Write-Warning "Проекты из списка не загружены (причина выше, итог: $report)" }
+elseif ($LASTEXITCODE -eq 1) { Write-Warning "Часть проектов из списка не загружена — повтор при следующем обновлении (итог: $report)" }
+
 Write-Host '== Отгруженное по листу цеха «ЗАГРУЗ» (владелец 29.09: отгруженное не нужно, отгруженное из Google — «отгружено»)'
 # С ключом лист перечитывается из Google (только чтение) в снимок data\import\projects.json, без ключа — берётся снимок.
 $shipped = @('-X', 'utf8', '..\scripts\projects_import.py', 'drop-shipped', (Join-Path $root 'data\import\projects.json'))
 if ($Key -and (Test-Path $Key)) { $shipped += @('--key', $Key) }
 & $py @shipped
 if ($LASTEXITCODE -ne 0) { Write-Warning "Отгруженное не перенесено (причина выше)" }
-
-Write-Host '== Техкарты: выданные в SUPPLYMAP (Google только читается) и ЭТК генератором'
-$report = Join-Path $backend 'techcards-report.txt'
-if ($Key) {
-  & $py -X utf8 -m app.workflows.techcards_all supplymap | Tee-Object -FilePath $report
-  if ($LASTEXITCODE -gt 1) { Write-Warning 'Выданные ТК из SUPPLYMAP не перенесены (ошибка выше)' }
-} else {
-  $warn = 'Ключ Google не найден: выданные ТК из SUPPLYMAP не перенесены, длины резки из расчёта не читаются. Один раз: scripts\update-local.ps1 -Key путь\к\ключу.json'
-  Write-Warning $warn
-  $warn | Out-File $report  # UTF-16, как Tee-Object ниже
-}
-& $py -X utf8 -m app.workflows.techcards_all generate | Tee-Object -FilePath $report -Append
-if ($LASTEXITCODE -gt 1) { Write-Warning 'Техкарты не сгенерированы (ошибка выше)' }
-# Выданные ЭТК старой сборки — новой ревизией из их же конфигурации (правки операций сохраняются); повтор ничего не делает.
-& $py -X utf8 -m app.workflows.techcards_all refresh | Tee-Object -FilePath $report -Append
-if ($LASTEXITCODE -gt 1) { Write-Warning 'Выданные ЭТК не пересобраны (ошибка выше)' }
-Write-Host "Итог по техкартам: $report"
 
 $head = (git -C $root rev-parse HEAD).Trim()
 $stamp = "$db.version"

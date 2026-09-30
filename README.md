@@ -242,19 +242,25 @@ $env:ERP_DATABASE_URL = 'postgresql+psycopg://USER:PASSWORD@HOST:5432/erp_next'
 Выгрузку можно взять прямо из Google, без clasp (только чтение, ключ сервисного аккаунта):
 `python ../scripts/stock_export_google.py --key <ключ.json> --out ../data/import`.
 
-### Проекты из SUPPLYMAP (реестр, наборы, журнал плана, лист цеха)
+### Проекты из SUPPLYMAP — по одному (реестр, набор, журнал плана, лист цеха, ТК)
+
+Владелец 30.09.2026: все проекты снесены разово, дальше они приходят по одному — номера в `data/projects.txt`.
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe ..\scripts\projects_import.py snapshot --key <ключ.json> --out projects.json   # только чтение Google
-.\.venv\Scripts\python.exe ..\scripts\projects_import.py apply projects.json                              # в ERP_DATABASE_URL
+.\.venv\Scripts\python.exe -m app.workflows.projects_wipe [--dry-run]                    # разовый снос (метка в базе)
+.\.venv\Scripts\python.exe ..\scripts\projects_import.py load [№ …] --key <ключ.json>    # новые номера списка
 ```
 
-`apply` заводит наборы «Создать проект из расчёта» по их ссылке РАСЧЁТ (расчёт берётся из снимка), переносит
-реестр «Проекты» и «Журнал проектов» SUPPLYMAP и сверяет план с листом цеха «ЗАГРУЗ» по правилам `planShopSync_`.
-Повторный запуск ничего не дублирует.
+`load` читает Google (только чтение) и для каждого нового номера заводит набор «Создать проект из расчёта» по его
+ссылке РАСЧЁТ, переносит строку реестра «Проекты» и «Журнал проектов», сверяет план с листом цеха «ЗАГРУЗ» по
+правилам `planShopSync_`, затем ТК только этого проекта: выданные в SUPPLYMAP переносятся, остальным сборкам —
+генератор, как кнопка «Создать». Загруженный номер запоминается в базе и повторно не грузится; удалённый в ERP проект
+не возвращается; полностью отгруженный по листу цеха не загружается. `projects_wipe` сносит карточки, ТК, реестр,
+журнал, задания цеха, готовую продукцию и отгрузки; склад, запросы на комплектацию и выдачи, заявки, закупки,
+приёмку и КД не трогает; SQLite-базу перед сносом копирует рядом (`<база>.before-projects-wipe.bak`).
 
-Всё вместе на чистой базе (справочники, библиотека техкарт, склад, проекты):
+Всё вместе на чистой базе (справочники, библиотека техкарт, склад, проекты списка):
 `powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key <ключ.json> -DbFile real.db`.
 Обновить такую копию до свежего main без потери данных (копия базы в `.bak`, миграции, сборка сайта,
 перезапуск API на 8022): `powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1`.
@@ -262,15 +268,16 @@ cd backend
 `update-local.ps1`, после перезагрузки поднимает ERP): `powershell -ExecutionPolicy Bypass -File scripts\auto-update-local.ps1 -Install`,
 выключить — `-Uninstall`, журнал `backend\auto-update.log`.
 
-### Техкарты по всем проектам
+### Техкарты по проектам
 
-Два повторяемых шага (`backend`, `ERP_DATABASE_URL` — база приложения; оба есть в `update-local.ps1`,
-`load-real-data.ps1` и `deploy/load-real-data.sh techcards`):
+Два повторяемых шага (`backend`, `ERP_DATABASE_URL` — база приложения). Скрипты обновления и загрузки их по всем
+проектам больше не зовут: `projects_import.py load` делает оба только для загружаемого проекта; `--project №`
+ограничивает шаг одним проектом, без него — все проекты базы:
 
 ```powershell
 $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = 'C:\secrets\erp-reader.json'   # Google только читается
-.\.venv\Scripts\python.exe -m app.workflows.techcards_all supplymap [--dry-run]  # выданные в SUPPLYMAP ТК → выданные ЭТК
-.\.venv\Scripts\python.exe -m app.workflows.techcards_all generate [--dry-run]   # «Создать техкарты» остальным сборкам
+.\.venv\Scripts\python.exe -m app.workflows.techcards_all supplymap [--dry-run] [--project №]  # выданные в SUPPLYMAP ТК → ЭТК
+.\.venv\Scripts\python.exe -m app.workflows.techcards_all generate [--dry-run] [--project №]   # «Создать техкарты» остальным
 ```
 
 `supplymap` читает лист «Техкарты» таблицы «ERP — Производство»: маршрут изделия (этапы, коды, времена, ссылка на
@@ -399,7 +406,7 @@ FIFO-алгоритм: доступная партия привязываетс�
 `scripts/projects_import.py drop-shipped <снимок> [--key ключ.json]` по листу цеха
 «ЗАГРУЗ»: полностью отгруженные проекты убираются, частичная отгрузка из
 комментария («Отгрузили 154 шт») пишется в `before_erp` (одна КБ у проекта).
-Запускают `update-local.ps1`, `apply` и `deploy/load-real-data.sh shipped`.
+Запускают `update-local.ps1`, `projects_import.py load` и `deploy/load-real-data.sh shipped`.
 
 ## Справочники и база техопераций
 

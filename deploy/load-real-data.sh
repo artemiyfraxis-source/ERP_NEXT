@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Real data into the production database — the server twin of scripts/load-real-data.ps1. Google is only read.
-#   deploy/load-real-data.sh base    # admin, staff (+PINs), references mirror, techcard library, projects
+#   deploy/load-real-data.sh base    # admin, staff (+PINs), references mirror, techcard library, projects of the list
 #   deploy/load-real-data.sh stock [--yes]  # ЦАР/ЖУК/СПИСАНИЕ → lots; without --yes only the report. Rerun = top-up:
 #       new lots are created, lots ERP never moved follow Google («догрузка из Google»), moved lots are reported
 #   deploy/load-real-data.sh kd        # КД проектов с Google Диска в базу (Диск только читается)
-#   deploy/load-real-data.sh projects  # re-read projects (idempotent: nothing is duplicated)
+#   deploy/load-real-data.sh projects [№ …]  # new numbers of data/projects.txt (and the arguments) with their ТК:
+#       owner 30.09.2026 — projects come one by one; a loaded number is never reloaded (no bulk load, no bulk ТК)
 #   deploy/load-real-data.sh shipped   # re-read «ЗАГРУЗ» only: shipped projects out, partial shipments → finished goods
-#   deploy/load-real-data.sh techcards # ТК: выданные в SUPPLYMAP → ERP, остальным сборкам — ЭТК генератором
-#       (отгруженные и ХОЛД не трогаются; повтор собирает только то, чего ещё нет)
 # Secrets the owner reads afterwards: $ERP_HOME/config/admin.txt, $ERP_HOME/config/staff-pins.txt (chmod 600).
 set -euo pipefail
 export ERP_HOME=${ERP_HOME:-/opt/erp}
@@ -33,24 +32,20 @@ case "${1:-}" in
     chmod 600 "$ERP_HOME/config/staff-pins.txt"
     cli python -m app.modules.references.load_mirror --source /opt/supplymap
     cli python -m app.modules.techcards.seed_library
-    "$0" projects  # in-process API call: the login cookie stays inside the container, so Secure is off there only
+    # Owner 30.09.2026: every project wiped once (marker in the database), then only the list comes in.
+    cli python -m app.workflows.projects_wipe
+    "$0" projects
     "$0" kd
-    "$0" techcards
     ;;
   projects)
-    cli sh -c "python ../scripts/projects_import.py snapshot --key $key --out /app/data/import/projects.json && \
-               ERP_COOKIE_SECURE=0 python ../scripts/projects_import.py apply /app/data/import/projects.json --login '$login' --password '$password'" || ok_or_report
+    shift
+    cli python ../scripts/projects_import.py load --key $key "$@" || ok_or_report
     ;;
-  shipped)  # отгруженное по листу цеха: полностью отгруженные прочь, частичные — «отгружено до ERP» (apply делает то же)
+  shipped)  # отгруженное по листу цеха: полностью отгруженные прочь, частичные — «отгружено до ERP» (load делает то же после загрузки)
     cli python ../scripts/projects_import.py drop-shipped /app/data/import/projects.json --key $key || ok_or_report
     ;;
   kd)  # старые КД с Google Диска → в базу (Диск только читается); повтор докачивает недостающее
     cli python -m app.modules.techcards.import_kd_from_drive --apply || ok_or_report
-    ;;
-  techcards)
-    cli python -m app.workflows.techcards_all supplymap || ok_or_report
-    cli python -m app.workflows.techcards_all generate || ok_or_report
-    cli python -m app.workflows.techcards_all refresh || ok_or_report
     ;;
   stock)
     if [ "${2:-}" != "--yes" ]; then
@@ -62,5 +57,5 @@ case "${1:-}" in
                  python -m app.modules.warehouse.import_stock --dir /app/data/import" || ok_or_report
     fi
     ;;
-  *) echo "usage: $0 base|projects|shipped|kd|techcards|stock [--yes]" >&2; exit 2 ;;
+  *) echo "usage: $0 base|projects [№ …]|shipped|kd|stock [--yes]" >&2; exit 2 ;;
 esac
