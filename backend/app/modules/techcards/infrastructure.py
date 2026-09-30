@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, String, Text, Uuid, delete, select
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
-from .project_cards import ProjectTechcard, TechcardRevision, TechcardStatus
+from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
 from .template_sheets import TemplateDraft
 
@@ -113,6 +113,37 @@ class OperationCardSnapshotRow(Base):
     template_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class OperationSketchRow(Base):
+    """A picture the technologist attached to one ETK operation (project card + operation key)."""
+
+    __tablename__ = "techcard_operation_sketches"
+    __table_args__ = (
+        Index("ux_techcard_operation_sketches_card_key", "project_card_id", "operation_key", unique=True),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_card_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("techcard_projects.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    operation_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The card lists sketches without the bytes; they are read only when the picture is shown.
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, deferred=True)
+    uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def _sketch(row: OperationSketchRow) -> OperationSketch:
+    return OperationSketch(
+        operation_key=row.operation_key, file_name=row.file_name, content_type=row.content_type,
+        size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at,
+    )
+
+
 class SqlAlchemyTechcardRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -200,6 +231,7 @@ class SqlAlchemyTechcardRepository:
         ids = list(self.session.scalars(select(ProjectTechcardRow.id).where(ProjectTechcardRow.project == project)))
         if not ids:
             return 0, 0
+        self.session.execute(delete(OperationSketchRow).where(OperationSketchRow.project_card_id.in_(ids)))
         revisions = self.session.execute(
             delete(TechcardRevisionRow).where(TechcardRevisionRow.project_card_id.in_(ids))
         ).rowcount or 0
@@ -224,6 +256,36 @@ class SqlAlchemyTechcardRepository:
             )
             for row in rows
         ]
+
+    def sketches(self, card_id: UUID) -> list[OperationSketch]:
+        rows = self.session.scalars(
+            select(OperationSketchRow).where(OperationSketchRow.project_card_id == card_id)
+            .order_by(OperationSketchRow.operation_key)
+        )
+        return [_sketch(row) for row in rows]
+
+    def sketch_content(self, card_id: UUID, operation_key: str) -> tuple[OperationSketch, bytes] | None:
+        row = self._sketch_row(card_id, operation_key)
+        return (_sketch(row), row.content) if row is not None else None
+
+    def put_sketch(self, card_id: UUID, sketch: OperationSketch, content: bytes) -> None:
+        """One picture per operation: a new upload replaces the old one."""
+        row = self._sketch_row(card_id, sketch.operation_key)
+        if row is None:
+            row = OperationSketchRow(id=uuid4(), project_card_id=card_id, operation_key=sketch.operation_key)
+            self.session.add(row)
+        row.file_name, row.content_type, row.size = sketch.file_name, sketch.content_type, sketch.size
+        row.content, row.uploaded_by, row.uploaded_at = content, sketch.uploaded_by, sketch.uploaded_at
+
+    def delete_sketch(self, card_id: UUID, operation_key: str) -> int:
+        return self.session.execute(delete(OperationSketchRow).where(
+            OperationSketchRow.project_card_id == card_id, OperationSketchRow.operation_key == operation_key,
+        )).rowcount or 0
+
+    def _sketch_row(self, card_id: UUID, operation_key: str) -> OperationSketchRow | None:
+        return self.session.scalar(select(OperationSketchRow).where(
+            OperationSketchRow.project_card_id == card_id, OperationSketchRow.operation_key == operation_key,
+        ))
 
 
 class SqlAlchemyOperationCardRepository:

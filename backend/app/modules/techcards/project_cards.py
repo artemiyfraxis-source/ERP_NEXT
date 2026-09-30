@@ -159,3 +159,15 @@ class TechcardRevision:
     actor_name: str
     occurred_at: datetime
     document: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class OperationSketch:
+    """The picture attached to one ETK operation (key = `operation_key`); the bytes travel separately."""
+
+    operation_key: str
+    file_name: str
+    content_type: str
+    size: int
+    uploaded_by: str
+    uploaded_at: datetime

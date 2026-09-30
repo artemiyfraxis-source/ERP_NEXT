@@ -126,10 +126,12 @@ it("shows connector housing pin layout on an installation operation", async () =
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<TechcardsPage principal={engineer} />);
-  expect(await screen.findByText("JST XH")).toBeInTheDocument();
-  expect(screen.getByTitle("Контакт 1: красный")).toBeInTheDocument();
-  expect(screen.getByText(/Со стороны проводов/)).toBeInTheDocument();
+  const { container } = render(<TechcardsPage principal={engineer} />);
+  const sketch = await screen.findByRole("region", { name: "Эскиз" });
+  // Торец серии с номерами контактов и легенда «конт. — провод» — SVG, одна и та же разметка на экране и в печати.
+  expect(sketch.querySelector("svg")?.textContent).toContain("конт. 1 — красный");
+  expect(sketch.textContent).toContain("вид со стороны проводов");
+  expect(container.textContent).toContain("Загрузить картинку эскиза");
 });
 
 it("NAV-1: «Шаблоны техкарт» shows only the operation library", async () => {
@@ -278,7 +280,8 @@ it("lays an ETK operation out in production order with the soldering mode and pi
   expect(solder).toHaveTextContent(/Жало паяльника.*Массивное/);
   expect(solder).toHaveTextContent("Температура жала350–380 °C (±10 °C)");
   const headings = screen.getAllByRole("heading", { level: 4 }).map((item) => item.textContent);
-  expect(headings).toEqual(["1Вход", "2Инструмент, оборудование, расходники", "3Ход операции", "4Типовые дефекты · 2", "5Результат"]);
+  // «Эскиз» есть у каждой операции для технолога: туда загружают свою картинку.
+  expect(headings).toEqual(["1Вход", "2Инструмент, оборудование, расходники", "3Ход операции", "4Типовые дефекты · 2", "5Эскиз", "6Результат"]);
   const sections = [...document.querySelectorAll(".etk-op .tr-sec-h")].map((item) => item.textContent);
   expect(sections.slice(0, 3)).toEqual(["Инструмент", "Оборудование", "Расходники"]);
   expect(screen.getByText("Недолив припоя")).toBeInTheDocument();
