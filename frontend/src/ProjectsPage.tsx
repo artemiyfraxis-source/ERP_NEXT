@@ -586,8 +586,8 @@ function SupplyTab({ project }: { project: string }) {
       columns={[
         { key: "art", title: "Артикул КД", value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
         { key: "name", title: "Наименование", value: (line) => line.name, wrap: true },
-        { key: "kbs", title: "КБ", value: (line) => line.kbs.join(" · ") },
         { key: "need", title: "Нужно", value: (line) => line.need, numeric: true },
+        { key: "kbs", title: "КБ", value: (line) => line.kbs.join(" · ") },
         { key: "stage", title: "Стадия", filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
           {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
         </span> },
