@@ -15,6 +15,7 @@ import {
   type Section,
 } from "./navigation";
 import { LoginPage } from "./LoginPage";
+import { UpdateFailure } from "./UpdateBanner";
 import { FulfillmentPage } from "./FulfillmentPage";
 import { ProcurementPage } from "./ProcurementPage";
 import { ProductionPage } from "./ProductionPage";
@@ -199,6 +200,7 @@ export function App() {
       </aside>
       <main className="workspace main">
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
+        {principal.roles.some((role) => role !== "staff") && <UpdateFailure />}
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
         {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
         {activeSection === "projects" && <ProjectsPage principal={principal} />}

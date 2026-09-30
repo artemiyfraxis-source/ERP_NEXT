@@ -79,8 +79,17 @@ def upgrade() -> None:
     op.bulk_insert(marks, [{"key": "projects_wiped", "marked_at": now, "value": json.dumps(
         {"at": now.isoformat(timespec="seconds"), "backup": backup, "counts": counts}, ensure_ascii=False,
     )}])
-    print("Снос проектов (владелец 30.09): " + ", ".join(f"{label} {counts[name]}" for name, label in REPORTED)
-          + (f"; копия базы до сноса: {backup}" if backup else ""))
+    _say("Снос проектов (владелец 30.09): " + ", ".join(f"{label} {counts[name]}" for name, label in REPORTED)
+         + (f"; копия базы до сноса: {backup}" if backup else ""))
+
+
+def _say(text: str) -> None:
+    """Итог в вывод миграции. Вывод в трубу на Windows (автообновление из планировщика) идёт в кодировке ANSI:
+    символ вне неё не должен откатывать уже сделанный снос вместе со всей миграцией."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", "backslashreplace").decode("ascii"))
 
 
 def downgrade() -> None:
