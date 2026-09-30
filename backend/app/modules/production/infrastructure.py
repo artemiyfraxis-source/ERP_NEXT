@@ -451,6 +451,30 @@ class SqlAlchemyProductionRepository:
         )
         return [self._domain(row) for row in rows]
 
+    def planned(self, since: datetime) -> list[ProductionTask]:
+        """Живые задания, где у кого-то есть окно, кончающееся не раньше since — только их двигает план по факту."""
+        ids = select(ProductionOperationRow.task_id).join(
+            ProductionOperationOperatorRow, ProductionOperationOperatorRow.operation_id == ProductionOperationRow.id,
+        ).where(ProductionOperationOperatorRow.planned_finish >= since)
+        rows = self.session.scalars(select(ProductionTaskRow).where(
+            ProductionTaskRow.id.in_(ids),
+            ProductionTaskRow.status == ProductionStatus.RUNNING.value,
+            ProductionTaskRow.handed_to == "",
+        ).order_by(ProductionTaskRow.created_at, ProductionTaskRow.id))
+        return [self._domain(row) for row in rows]
+
+    def lock(self, task_id: UUID) -> None:
+        """Строка задания под замок до конца транзакции и свежие значения: факты двух монтажников по одному
+        заданию идут по очереди (PostgreSQL; SQLite и так пишет по одному)."""
+        self.session.scalar(
+            select(ProductionTaskRow).where(ProductionTaskRow.id == task_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+        self.session.scalars(
+            select(ProductionOperationRow).where(ProductionOperationRow.task_id == task_id)
+            .execution_options(populate_existing=True)
+        ).all()
+
     def reserve_number(self) -> str:
         row = self.session.scalar(select(ProductionSequenceRow).where(ProductionSequenceRow.name == "task").with_for_update())
         if row is None:

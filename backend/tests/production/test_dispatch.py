@@ -4,10 +4,12 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
+
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.production.dispatch import split_shares
-from app.modules.production.domain import OperationShare, ProductionOperation
+from app.modules.production.domain import OperationShare, ProductionOperation, ProductionValidationError
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
@@ -192,6 +194,14 @@ def test_split_turns_a_crew_into_pieces_and_takes_from_the_latest_finish():
     # Сначала у второго (заканчивает позже) — все 5, остальные 2 — у первого.
     assert [(item.operator_id, item.quantity) for item in taken.others] == [(first, 3)]
     assert taken.dropped == {second}
+    # У того, кто уже взял работу, штуки не забираются.
+    started = ProductionOperation(id=UUID(int=9), shares=(
+        OperationShare(first, 5, at(22, 9), at(22, 10), started_at=at(22, 9)),
+        OperationShare(second, 5, at(23, 9), at(23, 10)),
+    ), **base)
+    assert [(item.operator_id, item.quantity) for item in split_shares(started, 10, third, 5).others] == [(first, 5)]
+    with pytest.raises(ProductionValidationError, match="у начатых"):
+        split_shares(started, 10, third, 7)
 
 
 def test_stage_name_drops_the_code_prefix():
@@ -236,3 +246,138 @@ def test_next_stage_of_the_same_assembly_follows_the_fact(production_api):
     app.dependency_overrides[authenticated_principal] = master
     assert window(fresh(client, task["id"]), 2, SECOND) == ("2026-09-22T10:05", "2026-09-22T11:05")
     assert window(fresh(client, later["id"]), 1, operator_id) == ("2026-09-23T09:00", "2026-09-23T10:00")
+
+
+def add_second():
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(IdentityUserRow(
+            id=SECOND, login="second", email="second@example.test", name="Второй", department="Монтаж",
+            role="staff", site="ЦАР", active=True,
+        ))
+        uow.commit()
+
+
+def post_share(client, task, operator_id, **body):
+    operation = task["operations"][0]
+    return client.post(
+        f"/api/production/tasks/{task['id']}/operations/{operation['id']}/share",
+        json={"version": task["version"], "operator_id": str(operator_id), **body},
+    )
+
+
+def test_installer_who_took_the_work_keeps_his_pieces(production_api):
+    # Проверка PR: мастер мог отдать другому все штуки и снять того, кто уже работает, — выработку тогда не сдать.
+    client, operator_id = production_api
+    app.dependency_overrides[moscow_now] = lambda: at(22, 9)
+    add_second()
+    task = launch_from_card(client, "keep-v1", "591K.3", "КБ1", 10, [("OP", "Обжим", 315, 0)]).json()["task"]
+    task = share(client, task, 1, operator_id, "2026-09-22T09:00:00+03:00", quantity=6)["task"]
+    task = share(client, task, 1, SECOND, "2026-09-22T10:00:00+03:00", quantity=4)["task"]
+    master = app.dependency_overrides[authenticated_principal]
+    as_operator(operator_id)
+    started = client.post(f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/work/start", json={})
+    assert started.status_code == 200, started.text
+    app.dependency_overrides[authenticated_principal] = master
+    task = fresh(client, task["id"])
+
+    taken = post_share(client, task, SECOND, quantity=10, requested_start="2026-09-22T10:00:00+03:00")
+    removed = post_share(client, task, operator_id, remove=True)
+
+    assert taken.status_code == 422 and "у начатых" in taken.json()["detail"]
+    assert removed.status_code == 422 and "сейчас работает" in removed.json()["detail"]
+    # На паузе работа ещё открыта; «Отменить начало» — снять можно.
+    as_operator(operator_id)
+    assert client.post(f"/api/production/work/{started.json()['session']['id']}/pause", json={}).status_code == 200
+    app.dependency_overrides[authenticated_principal] = master
+    assert post_share(client, fresh(client, task["id"]), operator_id, remove=True).status_code == 422
+    as_operator(operator_id)
+    assert client.post(f"/api/production/work/{started.json()['session']['id']}/cancel", json={}).status_code == 200
+    app.dependency_overrides[authenticated_principal] = master
+    task = fresh(client, task["id"])
+    after_pause = post_share(client, task, operator_id, remove=True)
+    assert after_pause.status_code == 200, after_pause.text
+
+
+def test_removing_from_a_crew_stretches_the_window_of_the_rest(production_api):
+    client, operator_id = production_api
+    app.dependency_overrides[moscow_now] = lambda: at(22, 9)
+    add_second()
+    task = launch_from_card(client, "crew-v1", "591K.3", "КБ1", 10, [("OP", "Обжим", 630, 0)]).json()["task"]
+    other = launch_from_card(client, "crew-other-v1", "591K.3", "КБ2", 10, [("OP", "Обжим", 315, 0)]).json()["task"]
+    crew = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(operator_id), str(SECOND)], "requested_start": "2026-09-22T09:00:00+03:00"},
+    )
+    assert crew.status_code == 200, crew.text
+    task = crew.json()["task"]
+    # Вдвоём: 10 × 630 с / 2 = 52,5 мин чистых → час на часах.
+    assert window(task, 1, operator_id) == ("2026-09-22T09:00", "2026-09-22T10:00")
+    share(client, other, 1, operator_id, "2026-09-22T10:00:00+03:00")
+
+    removed = post_share(client, task, SECOND, remove=True)
+
+    assert removed.status_code == 200, removed.text
+    # Один: 105 мин чистых → 2 ч на часах; его следующая работа сдвинута за новый конец.
+    assert window(removed.json()["task"], 1, operator_id) == ("2026-09-22T09:00", "2026-09-22T11:00")
+    assert window(fresh(client, other["id"]), 1, operator_id) == ("2026-09-22T11:00", "2026-09-22T12:00")
+    assert any(line.startswith("Сдвинуто: ") for line in removed.json()["warnings"])
+
+
+def test_new_installer_joins_instead_of_replacing(production_api):
+    client, operator_id = production_api
+    app.dependency_overrides[moscow_now] = lambda: at(22, 9)
+    add_second()
+    task = launch_from_card(client, "join-v1", "591K.3", "КБ1", 10, [("OP", "Обжим", 315, 0)]).json()["task"]
+    task = share(client, task, 1, operator_id, "2026-09-22T09:00:00+03:00")["task"]
+
+    # Штуки не указаны — поровну с уже назначенным.
+    joined = share(client, task, 1, SECOND, "2026-09-22T09:00:00+03:00")
+    assert [(item["operator_id"], item["quantity"]) for item in joined["task"]["operations"][0]["shares"]] == [(str(operator_id), 5), (str(SECOND), 5)]
+
+    # Мастер явно дал второму всё — первый снят, и это сказано.
+    replaced = share(client, joined["task"], 1, SECOND, "2026-09-22T09:00:00+03:00", quantity=10)
+    assert [item["quantity"] for item in replaced["task"]["operations"][0]["shares"]] == [10]
+    assert any(line.startswith("Снят(а) с операции: ") for line in replaced["warnings"])
+
+
+def test_auto_plan_after_an_assigned_stage(production_api):
+    # Проверка PR: «Автоплан» падал с 500, когда у задания уже был назначенный этап (сроки из SQLite без пояса).
+    client, operator_id = production_api
+    app.dependency_overrides[moscow_now] = lambda: at(22, 9)
+    client.put(f"/api/production/skills/{operator_id}", json={"skills": [
+        {"operation_code": "OP-1", "allowed": True, "stars": 5, "coefficient": "1"},
+        {"operation_code": "OP-2", "allowed": True, "stars": 5, "coefficient": "1"},
+    ]})
+    task = launch_from_card(client, "auto-aware-v1", "708К.2", "КБ1", 10, [("OP-1", "Резка", 60, 0), ("OP-2", "Сборка", 120, 0)]).json()["task"]
+    task = share(client, task, 1, operator_id, "2026-09-22T09:00:00+03:00")["task"]
+
+    preview = client.post(f"/api/production/tasks/{task['id']}/schedule", json={"version": task["version"], "replan": False, "max_crew": 1})
+
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["variants"][0]["operations"][0]["start"][:16] == "2026-09-22T09:00"
+
+
+def test_plan_failure_never_loses_the_output(production_api, monkeypatch):
+    from app.modules.production import application
+
+    client, operator_id = production_api
+    app.dependency_overrides[moscow_now] = lambda: at(22, 9)
+    task = launch_from_card(client, "safe-v1", "591K.3", "КБ1", 10, [("", "Подготовка", 315, 0)]).json()["task"]
+    task = share(client, task, 1, operator_id, "2026-09-22T09:00:00+03:00")["task"]
+    master = app.dependency_overrides[authenticated_principal]
+    monkeypatch.setattr(application, "_record_fact", lambda *args, **kwargs: None)
+    as_operator(operator_id)
+    started = client.post(f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/work/start", json={})
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("план не сдвинуть")
+
+    monkeypatch.setattr(application, "_record_fact", broken)
+    submitted = client.post(f"/api/production/work/{started.json()['session']['id']}/submit", json={"good_quantity": "10"})
+
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["output_id"]
+    # Выработка сдана, план остался прежним.
+    app.dependency_overrides[authenticated_principal] = master
+    item = fresh(client, task["id"])["operations"][0]["shares"][0]
+    assert (item["planned_start"][:16], item["planned_finish"][:16], item["finished_at"]) == ("2026-09-22T09:00", "2026-09-22T10:00", None)

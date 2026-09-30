@@ -75,6 +75,15 @@ export function remainderOf(task: ProductionTask, operation: ProductionOperation
   return Math.max(0, task.quantity - shares.reduce((sum, share) => sum + (share.quantity ?? 0), 0));
 }
 
+// Штуки по умолчанию (как на сервере): своя доля (у бригады — поровну), иначе нераспределённое,
+// иначе поровну с уже назначенными — новый человек добавляется к операции, а не вытесняет назначенных.
+export function defaultPieces(task: ProductionTask, operation: ProductionOperation, personId?: string) {
+  const shares = operation.shares ?? [];
+  const own = personId ? shares.find((share) => share.operator_id === personId) : undefined;
+  if (own) return own.quantity ?? Math.ceil(task.quantity / Math.max(1, shares.length));
+  return remainderOf(task, operation) || Math.ceil(task.quantity / (shares.length + 1));
+}
+
 // «· 1500 шт» — только у раздробленной операции; одна доля на всё задание — это просто «вся операция».
 function pieceLabel(task: ProductionTask, operation: ProductionOperation, share: ProductionShare) {
   if (share.quantity == null || (share.quantity >= task.quantity && (operation.shares ?? []).length <= 1)) return "";
@@ -362,7 +371,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
 
   function select(item: ProductionTask, op: ProductionOperation | null) {
     setSelected(op ? { taskId: item.id, operationId: op.id } : null);
-    setPieces(op ? String(remainderOf(item, op) || item.quantity) : "");
+    setPieces(op ? String(defaultPieces(item, op)) : "");
   }
 
   // Мастер выбирает день (и час); доля встаёт с первого свободного времени монтажника, хвост — на следующие дни,
@@ -382,7 +391,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     setOpenDay(open ? { personId, day } : null);
     // Своя доля у монтажника уже есть — переставляем её с теми же штуками.
     const own = open && operation ? sharesOf(operation, personId)[0] : undefined;
-    if (own && task) setPieces(String(own.quantity ?? task.quantity));
+    if (own && task && operation) setPieces(String(defaultPieces(task, operation, personId)));
   }
 
   // ЖУК работает не нормированно (владелец, 30.09): задание отдают площадке целиком, без людей и часов.

@@ -7,6 +7,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from hashlib import sha256
 import json
+import logging
 from math import ceil
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
@@ -48,6 +49,8 @@ from .domain import (
 )
 from .scheduling import ScheduleVariant, schedule_task, schedule_variants
 
+logger = logging.getLogger(__name__)
+
 
 class ConcurrentProductionUpdate(RuntimeError):
     pass
@@ -87,6 +90,8 @@ class ProductionRepository(Protocol):
     def get(self, task_id: UUID) -> ProductionTask | None: ...
     def by_idempotency_key(self, key: str) -> ProductionTask | None: ...
     def list(self, limit: int = 200, after_id: UUID | None = None) -> Sequence[ProductionTask]: ...
+    def planned(self, since: datetime) -> Sequence[ProductionTask]: ...
+    def lock(self, task_id: UUID) -> None: ...
     def reserve_number(self) -> str: ...
     def add(self, task: ProductionTask) -> None: ...
 
@@ -466,8 +471,12 @@ def _progress(uow, task_ids) -> Progress:
     return Progress(by_operation, by_operator)
 
 
+# Работа, которая по плану кончилась больше месяца назад, план по факту уже не двигает — не читаем её.
+PLAN_HORIZON = timedelta(days=30)
+
+
 def _live_tasks(uow: UnitOfWork, now: datetime) -> dict[UUID, ProductionTask]:
-    return {item.id: localize(item, now) for item in uow.production.list(limit=10_000)}
+    return {item.id: localize(item, now) for item in uow.production.planned(now - PLAN_HORIZON)}
 
 
 def _moment(value: datetime) -> str:
@@ -529,22 +538,17 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         operation = task.operation(command.operation_id)
         current = operation.share_of(command.operator_id)
         if command.remove:
-            if current is None:
-                raise ProductionValidationError("Монтажник не назначен на эту операцию")
-            updated = task.with_operations((operation.with_shares(
-                tuple(share for share in operation.shares if share.operator_id != command.operator_id),
-                command.actor.name,
-            ),))
-            uow.production.add(updated)
-            _audit(updated, "production.share_removed", command.actor, now, {
-                "operation_id": str(operation.id), "operator_id": str(command.operator_id),
-            }, uow)
-            uow.commit()
-            return updated, PlanResult(None, None, ()), ()
+            return _remove_share(uow, tasks, task, operation, current, command)
         names = _checked_names(uow, operation, (command.operator_id,), command.actor)
         if current is not None and (current.started_at is not None or current.finished_at is not None):
             raise ProductionValidationError(f"{names[command.operator_id]} уже взял(а) эту операцию — её время идёт по факту")
-        quantity = command.quantity if command.quantity is not None else (remainder(operation, task.quantity) or task.quantity)
+        # Штуки по умолчанию: своя доля (у бригады — поровну), иначе нераспределённое, иначе поровну с назначенными.
+        if command.quantity is not None:
+            quantity = command.quantity
+        elif current is not None:
+            quantity = current.quantity or ceil(task.quantity / len(operation.shares))
+        else:
+            quantity = remainder(operation, task.quantity) or ceil(task.quantity / (len(operation.shares) + 1))
         split = split_shares(operation, task.quantity, command.operator_id, quantity)
         skills = _skills(uow)
         calendar = _dispatch_calendar(uow, now)
@@ -594,6 +598,10 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         check = skill_of(skills, operation.code, command.operator_id)
         if not check.allowed:
             warnings.append(f"{names[command.operator_id]}: нет допуска к операции {operation.code}")
+        if split.dropped:
+            everyone = {item.id: item.name for item in uow.operators.list()}
+            gone = ", ".join(everyone.get(value, "?") for value in split.dropped)
+            warnings.append(f"Снят(а) с операции: {gone} — все штуки у {names[command.operator_id]}")
         earlier = [item for item in updated.operations if item.position < operation.position and item.planned_finish is not None]
         if earlier:
             previous = max(earlier, key=lambda item: item.position)
@@ -609,6 +617,52 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         }, uow)
         uow.commit()
         return tasks[task.id], PlanResult(start, finish, tuple(warnings)), tuple(lines)
+
+
+def _remove_share(
+    uow: UnitOfWork,
+    tasks: dict[UUID, ProductionTask],
+    task: ProductionTask,
+    operation: ProductionOperation,
+    current: OperationShare | None,
+    command: AssignShareCommand,
+) -> tuple[ProductionTask, PlanResult, tuple[str, ...]]:
+    """Снять монтажника с операции. Нельзя, пока у него открыта работа по ней (иначе не сдать выработку) и когда свою часть
+    он уже сделал. Из бригады — окно оставшихся пересчитывается на меньший состав, их работа после сдвигается."""
+    now = command.now
+    if current is None:
+        raise ProductionValidationError("Монтажник не назначен на эту операцию")
+    name = next((item.name for item in uow.operators.list() if item.id == command.operator_id), "Монтажник")
+    work = getattr(uow, "work", None)
+    session = work.current(command.operator_id) if work is not None else None
+    if session is not None and session.task_id == task.id and session.operation_id == operation.id:
+        raise ProductionValidationError(f"{name} сейчас работает над этой операцией — снять можно после сдачи или «Отменить начало»")
+    if current.finished_at is not None:
+        raise ProductionValidationError(f"{name} уже закончил(а) свою часть — снимать нечего")
+    rest = tuple(share for share in operation.shares if share.operator_id != command.operator_id)
+    sources: dict[NodeKey, tuple[datetime, datetime] | None] = {}
+    crew = [share for share in rest if share.quantity is None and share.planned_start is not None and share.planned_finish is not None]
+    if current.quantity is None and crew:
+        skills = _skills(uow)
+        calendar = _dispatch_calendar(uow, now)
+        people = tuple(share.operator_id for share in crew)
+        begin = min(share.planned_start for share in crew)
+        before = (begin, max(share.planned_finish for share in crew))
+        finish = add_work_seconds(begin, share_seconds(operation, None, task.quantity, people, skills), calendar.holidays, calendar.shift)
+        rest = tuple(replace(share, planned_start=begin, planned_finish=finish) if share.quantity is None else share for share in rest)
+        sources[(operation.id, None)] = before
+    updated = task.with_operations((operation.with_shares(rest, command.actor.name),))
+    tasks[task.id] = updated
+    moves = reflow(
+        tasks=tasks.values(), sources=sources, pull=False, now=now,
+        calendar=_dispatch_calendar(uow, now), skills=_skills(uow), progress=_progress(uow, tasks.keys()),
+    ) if sources else {}
+    lines = _save_moves(uow, tasks, {task.id}, moves, command.actor, now, "share_removed")
+    _audit(tasks[task.id], "production.share_removed", command.actor, now, {
+        "operation_id": str(operation.id), "operator_id": str(command.operator_id),
+    }, uow)
+    uow.commit()
+    return tasks[task.id], PlanResult(None, None, ()), tuple(lines)
 
 
 def record_fact(
@@ -627,11 +681,43 @@ def record_fact(
 
     started — «взял»: окно доли начинается сейчас. Иначе сдача выработки (mine — сдано этим монтажником по операции,
     total — всеми): сдал свои штуки — «закончил», окно кончается сейчас; не всё — конец по оставшимся штукам.
-    Работа после доли сдвигается или подтягивается (dispatch.reflow). Вызывается внутри транзакции исполнения."""
-    tasks = _live_tasks(uow, now)
-    task = tasks.get(task_id)
-    if task is None or task.status is not ProductionStatus.RUNNING or task.handed_to:
+    Работа после доли сдвигается или подтягивается (dispatch.reflow). Вызывается внутри транзакции исполнения:
+    план правится в точке сохранения — если не вышло, выработка всё равно сохраняется, план остаётся прежним."""
+    stored = uow.production.get(task_id)
+    if stored is None or stored.status is not ProductionStatus.RUNNING or stored.handed_to:
         return
+    mine_share = stored.operation(operation_id).share_of(operator_id)
+    if mine_share is None or mine_share.planned_start is None or mine_share.planned_finish is None:
+        return
+    session = getattr(uow, "session", None)
+    if session is None:
+        _record_fact(uow, task_id, operation_id, operator_id, actor, now, started, mine, total)
+        return
+    session.flush()
+    uow.production.lock(task_id)
+    savepoint = session.begin_nested()
+    try:
+        _record_fact(uow, task_id, operation_id, operator_id, actor, now, started, mine, total)
+        savepoint.commit()
+    except Exception:
+        savepoint.rollback()
+        logger.exception("План по факту не сдвинут: задание %s, операция %s", task_id, operation_id)
+
+
+def _record_fact(
+    uow,
+    task_id: UUID,
+    operation_id: UUID,
+    operator_id: UUID,
+    actor: Actor,
+    now: datetime,
+    started: bool,
+    mine: Decimal,
+    total: Decimal,
+) -> None:
+    tasks = _live_tasks(uow, now)
+    task = tasks.get(task_id) or localize(uow.production.get(task_id), now)
+    tasks[task.id] = task
     operation = task.operation(operation_id)
     share = operation.share_of(operator_id)
     if share is None or share.planned_start is None or share.planned_finish is None:
@@ -767,7 +853,8 @@ def _auto_schedule(
     uow: UnitOfWork,
     transfer_batch: int | None = None,
 ) -> tuple[ProductionTask, tuple[ScheduleVariant, ...]]:
-    task = _task(command.task_id, command.expected_version, uow)
+    # Сроки из базы — в поясе «сейчас» (SQLite отдаёт их без пояса): иначе закреплённый этап не сравнить с now.
+    task = localize(_task(command.task_id, command.expected_version, uow), command.now)
     # Авторасчёт берёт только монтажников; мастер площадки — только своей (как при ручном назначении).
     assigner = uow.operators.get(command.actor.id)
     operators = tuple(

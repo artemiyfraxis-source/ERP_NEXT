@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProductionShift, ProductionTask } from "./api";
-import { appendStart, earliestStart, remainderOf, workFinish } from "./MasterBoard";
+import { appendStart, defaultPieces, earliestStart, remainderOf, workFinish } from "./MasterBoard";
 
 const shift: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const installer = "10000000-0000-0000-0000-000000000002";
@@ -46,5 +46,14 @@ describe("неделя монтажников: длинная операция �
     expect(remainderOf(task, split)).toBe(1000);
     expect(remainderOf(task, operation)).toBe(0);
     expect(remainderOf(task, task.operations[1])).toBe(2500);
+  });
+
+  it("по умолчанию добавляет нового монтажника к назначенным, а не вытесняет их", () => {
+    // Операция целиком у одного: новому — половина, самому назначенному — его доля.
+    expect(defaultPieces(task, operation)).toBe(1250);
+    expect(defaultPieces(task, operation, installer)).toBe(2500);
+    const split = { ...operation, shares: [{ ...operation.shares[0], quantity: 1500 }] };
+    expect(defaultPieces(task, split)).toBe(1000);
+    expect(defaultPieces(task, task.operations[1])).toBe(2500);
   });
 });

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   fulfillmentApi,
   productionApi,
   type FulfillmentRequest,
@@ -107,6 +108,9 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       }
       await reload();
     } catch (reason) {
+      // Задание успело измениться (монтажник взял или сдал работу, другой мастер) — показываем свежее, чтобы
+      // следующий клик прошёл.
+      if (reason instanceof ApiError && reason.status === 409) await reload();
       setError(reason instanceof Error ? reason.message : "Операция с заданием не выполнена");
     } finally {
       setBusy("");

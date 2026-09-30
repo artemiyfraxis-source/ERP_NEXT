@@ -343,18 +343,22 @@ def split_shares(
     quantity: int,
 ) -> Split:
     """Штуки монтажнику. Бригада превращается в доли поровну на то, что осталось. Не хватает свободных штук —
-    забираем у тех, кто заканчивает позже всех (так операция скорее закончится); законченные доли не трогаем."""
+    забираем у тех, кто заканчивает позже всех (так операция скорее закончится). У начатых и законченных долей
+    штуки не забираются: монтажник уже работает, иначе ему не сдать выработку."""
     if quantity <= 0 or quantity > task_quantity:
         raise ProductionValidationError(f"Штук должно быть от 1 до {task_quantity}")
     others = [share for share in operation.shares if share.operator_id != operator_id]
+    locked = {share.operator_id for share in others if share.started_at is not None or share.finished_at is not None}
     pieces = {share.operator_id: share.quantity for share in others}
     if others and others[0].quantity is None:
         rest = task_quantity - quantity
         for position, share in enumerate(others):
             pieces[share.operator_id] = rest // len(others) + (1 if position < rest % len(others) else 0)
+        if any((pieces[value] or 0) <= 0 for value in locked):
+            raise ProductionValidationError("Столько штук не раздать: кто уже взял операцию, остаётся с ней — дай меньше штук")
     excess = sum(value or 0 for value in pieces.values()) + quantity - task_quantity
     latest_first = sorted(
-        (share for share in others if share.finished_at is None),
+        (share for share in others if share.operator_id not in locked),
         key=lambda share: share.planned_finish.timestamp() if share.planned_finish else float("-inf"),
         reverse=True,
     )
@@ -365,7 +369,7 @@ def split_shares(
         pieces[share.operator_id] = (pieces[share.operator_id] or 0) - take
         excess -= take
     if excess > 0:
-        raise ProductionValidationError("Столько штук не раздать: у законченных долей штуки не забираются")
+        raise ProductionValidationError("Столько штук не раздать: у начатых и законченных долей штуки не забираются — дай меньше штук")
     return Split(
         tuple(replace(share, quantity=pieces[share.operator_id]) for share in others if (pieces[share.operator_id] or 0) > 0),
         frozenset(share.operator_id for share in others if share.quantity != pieces[share.operator_id] and (pieces[share.operator_id] or 0) > 0),
