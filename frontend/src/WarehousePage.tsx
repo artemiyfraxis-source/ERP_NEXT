@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { SuggestInput } from "./SuggestInput";
 import {
   receivingApi,
   requestsApi,
@@ -185,7 +186,6 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
         </select>
       </div>
-      <datalist id="warehouse-item-types">{typeChoices.map((type) => <option key={type} value={type} />)}</datalist>
       {panel === "types" && <ItemTypesPanel
         onClose={() => setPanel("")}
         onChanged={async (types, renamed) => {
@@ -211,6 +211,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       {adding && <ManualStockForm
         busy={Boolean(busy) || loading}
         knownLots={lots}
+        typeChoices={typeChoices}
         onCancel={() => setAdding(false)}
         onAdded={async (items) => {
           requestVersion.current += 1;
@@ -404,9 +405,10 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
   </>;
 }
 
-function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
+function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
   busy: boolean;
   knownLots: WarehouseLot[];
+  typeChoices: string[];
   onCancel: () => void;
   onAdded: (items: WarehouseManualItem[]) => Promise<WarehouseAddResult | null>;
 }) {
@@ -539,7 +541,7 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
         }} /></label>
         <label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
         <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
-        <label>Тип<input list="warehouse-item-types" value={itemType} onChange={(event) => setItemType(event.target.value)} /></label>
+        <label>Тип<SuggestInput options={typeChoices} value={itemType} onChange={setItemType} /></label>
         <label>Количество<input aria-label="Количество для внесения" type="number" min="0.000001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
         <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
@@ -931,10 +933,9 @@ function WriteoffDialog({ lot, disabled, mutate, onClose }: {
       <div className="move-grid two">
         <label>Количество, {lot.unit || "шт"}<input aria-label="Количество" type="number" min="0.000001" step="any" required autoFocus placeholder={`остаток ${lot.balance}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Основание<select aria-label="Основание" value={reason} onChange={(event) => setReason(event.target.value)}>{WRITEOFF_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Назначение<input aria-label="Назначение списания" list="writeoff-projects" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
+        <label>Назначение<SuggestInput aria-label="Назначение списания" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={setPurpose} /></label>
         <label>Дата<input aria-label="Дата списания" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
       </div>
-      <datalist id="writeoff-projects">{projects.map((item) => <option key={item} value={item} />)}</datalist>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="move-actions">
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
@@ -968,9 +969,8 @@ function ReturnDialog({ lot, disabled, mutate, onClose }: {
       <div className="move-grid two">
         <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={lot.written_off} step="any" required autoFocus placeholder={`не больше ${lot.written_off}`} title={`Списано ${lot.written_off} ${lot.unit}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Основание<select aria-label="Основание возврата" value={reason} onChange={(event) => setReason(event.target.value)}>{RETURN_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Откуда<input aria-label="Откуда возврат" list="return-projects" placeholder="проект или фамилия" required pattern=".*\S.*" value={source} onChange={(event) => setSource(event.target.value)} /></label>
+        <label>Откуда<SuggestInput aria-label="Откуда возврат" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" value={source} onChange={setSource} /></label>
       </div>
-      <datalist id="return-projects">{projects.map((item) => <option key={item} value={item} />)}</datalist>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="move-actions">
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
