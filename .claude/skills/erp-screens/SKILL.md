@@ -19,11 +19,11 @@ marketing pages — do not use it here.
   may appear only as a small grey secondary tag where the technologist needs it (ETK header, template
   library), never as the title, never in a list a fitter reads, and never a placeholder when it is empty.
 - Missing name → derive it (template title → category map → operation-card name), do not fall back to the
-  type id. There is no shared code→name map yet: `tcGenLogic.ts` `OP_CATEGORY_MAP` and `TechcardsPage.tsx`
-  `RECORD_CATEGORIES` are partial copies. When you need one, extract a single exported map (e.g.
-  `frontend/src/opNames.ts`) and use it everywhere instead of adding a third copy. Backend leaks to fix at the
-  source: `production/launchable.py` builds `stage` from `op.type`; `workflows/techcards_all.py` writes
-  «БЕЗ КОДА».
+  type id. Backend source of truth: `production/launchable.py` `OPERATION_TYPE_NAMES` / `stage_name()` /
+  `operation_code()` (the master screen already uses them, #128). Frontend has only partial copies
+  (`tcGenLogic.ts` `OP_CATEGORY_MAP`, `TechcardsPage.tsx` `RECORD_CATEGORIES`): send the Russian name from the API
+  or extend that one map — never add another copy. `workflows/techcards_all.py` still writes «БЕЗ КОДА»; treat it
+  as an empty code, never display it.
 - Domain words exactly as in SUPPLYMAP: КБ, ЭТК, ТК, ГРН, партия, комплектация, выдача, отгрузка, статусы
   проекта `Новый→ТК готова→КБ набрана→В работе→КБ на складе→Отгружено`, блокеры ХОЛД/СТОП/ОЖИД ИНФ/ОЖИД
   КОМПЛ/ПАУЗА. A button says what it does, verb first («Назначить на 01.10», «Выдать ЭТК»), and keeps the same
