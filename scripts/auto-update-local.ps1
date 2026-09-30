@@ -11,6 +11,9 @@
 # планировщика (при входе в систему, без окон) и печатает хвост журнала:
 #   powershell -ExecutionPolicy Bypass -File scripts\auto-update-local.ps1 -Install
 # Выключить: ... -Uninstall
+# Вывод update-local.ps1 идёт в файл, ждём только выхода процесса, а не конца трубы. Раньше цикл читал вывод из
+# трубы, а outbox_worker, запущенный с -RedirectStandard*, наследовал её (CreateProcess с наследованием
+# дескрипторов) и держал открытой, пока жив, — цикл молча вставал после первого же обновления.
 param([switch]$Install, [switch]$Uninstall, [switch]$Tick, [switch]$Show, [int]$IntervalSec = 150,
   [string]$DbFile = 'real.db', [int]$Port = 8022)
 # Фоновый цикл не должен падать от stderr git/powershell (в PowerShell 5.1 это ошибка при 'Stop').
@@ -27,6 +30,10 @@ $statusFile = Join-Path $root 'frontend\dist\update-status.json'
 $RetryMin = 10
 $MaxTries = 3
 $FetchAlarmMin = 30
+$UpdateTimeoutMin = 45
+# Git без окон и вопросов: в скрытой задаче запрос пароля ждал бы вечно.
+$env:GIT_TERMINAL_PROMPT = '0'
+$env:GCM_INTERACTIVE = 'never'
 
 function Log($text) {
   Add-Content -Path $log -Value "$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss') $text" -Encoding UTF8
@@ -65,24 +72,52 @@ function Clear-Status($kind) {
   if (-not $kind -or $current -eq $kind) { Remove-Item $statusFile -Force -ErrorAction SilentlyContinue }
 }
 
-# Запуск update-local.ps1: полный вывод — в update-last.log (и на экран при -Show), причина — последняя строка
-# «СБОЙ: …» (иначе последнее предупреждение или ошибка), хвост — 15 строк для журнала и плашки.
+# Запуск update-local.ps1: вывод — в update-last.log (при -Show — ещё и на экран по мере записи), ждём выхода
+# процесса не дольше $UpdateTimeoutMin мин. Причина — последняя строка «СБОЙ: …» (иначе последнее предупреждение
+# или ошибка), хвост — 15 строк для журнала и плашки.
 function Invoke-Update([switch]$StartOnly) {
-  $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $update, '-DbFile', $DbFile, '-Port', $Port)
-  if ($StartOnly) { $arguments += '-StartOnly' }
-  $lines = New-Object Collections.Generic.List[string]
-  & powershell.exe @arguments 2>&1 |
-    ForEach-Object { $line = "$_" -replace "\x1b\[[0-9;]*m", ''; $lines.Add($line); if ($Show) { Write-Host $line } }
-  $code = $LASTEXITCODE
-  Write-Utf8 (Join-Path $backend 'update-last.log') ($lines -join "`r`n")
+  $out = Join-Path $backend 'update-last.log'
+  $err = Join-Path $backend 'update-last.err.log'
+  $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$update`" -DbFile $DbFile -Port $Port"
+  if ($StartOnly) { $arguments += ' -StartOnly' }
+  $process = Start-Process powershell.exe -ArgumentList $arguments -WorkingDirectory $root -WindowStyle Hidden -PassThru `
+    -RedirectStandardOutput $out -RedirectStandardError $err
+  $null = $process.Handle  # PowerShell 5.1: без открытого дескриптора ExitCode после выхода пустой
+  $deadline = (Get-Date).AddMinutes($UpdateTimeoutMin)
+  $reader = $null
+  $timedOut = $false
+  while ($true) {
+    $done = $process.WaitForExit(1000)
+    if ($Show) {
+      if (-not $reader -and (Test-Path $out)) {
+        try { $reader = New-Object IO.StreamReader((New-Object IO.FileStream($out, 'Open', 'Read', 'ReadWrite')), [Text.Encoding]::UTF8) } catch { }
+      }
+      if ($reader) { while ($null -ne ($line = $reader.ReadLine())) { Write-Host $line } }
+    }
+    if ($done) { break }
+    if ((Get-Date) -gt $deadline) {
+      & taskkill.exe /T /F /PID $process.Id 2>&1 | Out-Null
+      $timedOut = $true
+      break
+    }
+  }
+  if ($reader) { $reader.Dispose() }
+  $lines = @()
+  foreach ($file in @($out, $err)) {
+    if (Test-Path $file) { $lines += @(Get-Content $file -Encoding UTF8 -ErrorAction SilentlyContinue | ForEach-Object { "$_" -replace "\x1b\[[0-9;]*m", '' }) }
+  }
+  if ($Show -and (Test-Path $err)) { Get-Content $err -Encoding UTF8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ } }
+  $code = if ($timedOut) { 1 } elseif ($null -ne $process.ExitCode) { $process.ExitCode } else { 1 }
   $reason = $lines | Where-Object { $_ -match '^СБОЙ: ' } | Select-Object -Last 1
-  if ($reason) { $reason = $reason.Substring(6) }
+  if ($timedOut) { $reason = "update-local.ps1 не закончил за $UpdateTimeoutMin мин и остановлен" }
+  elseif ($reason) { $reason = $reason.Substring(6) }
   elseif ($code -ne 0) {
     $reason = $lines | Where-Object { $_ -match 'WARNING|Ошибка|ошибка|Error|error' } | Select-Object -Last 1
     if (-not $reason) { $reason = "update-local.ps1 завершился с кодом $code" }
   }
+  $warnings = @($lines | Where-Object { $_ -match '^WARNING' } | Select-Object -First 5)
   $tail = @($lines | Where-Object { $_.Trim() } | Select-Object -Last 15)
-  @{ code = $code; reason = "$reason".Trim(); tail = $tail }
+  @{ code = $code; reason = "$reason".Trim(); tail = $tail; warnings = $warnings }
 }
 
 function Start-Only {
@@ -98,7 +133,9 @@ function Invoke-Tick {
   $state = Read-State
   $fetch = @(& git -C $root fetch -q origin main 2>&1 | ForEach-Object { "$_" })
   if ($LASTEXITCODE -ne 0) {
-    $why = $fetch | Where-Object { $_.Trim() } | Select-Object -Last 1
+    # «fatal: …» — суть; последняя строка у git бывает хвостом совета («and the repository exists.»).
+    $why = $fetch | Where-Object { $_ -match '^(fatal|error): ' } | Select-Object -First 1
+    if (-not $why) { $why = $fetch | Where-Object { $_.Trim() } | Select-Object -Last 1 }
     if (-not $state.fetchFailSince) { $state.fetchFailSince = (Get-Date).Ticks; Log "нет связи с GitHub: $why" }
     elseif (((Get-Date) - [datetime][long]$state.fetchFailSince).TotalMinutes -ge $FetchAlarmMin) {
       Set-Status 'fetch' "обновления не скачиваются с GitHub больше $FetchAlarmMin мин: $why" $fetch $null
@@ -123,6 +160,7 @@ function Invoke-Tick {
   }
   if ($state.failed -eq $there) {
     if ($state.tries -ge $MaxTries -or (Get-Date).Ticks -lt [long]$state.next) {
+      Save-State $state
       if (-not (Test-Up)) { Start-Only }
       return
     }
@@ -130,14 +168,18 @@ function Invoke-Tick {
 
   $short = $there.Substring(0, 7)
   Log "новая версия $short$(if ($state.tries) { ", попытка $($state.tries + 1) из $MaxTries" })"
+  # Попытка засчитывается до запуска: оборвавшаяся проверка не должна повторять сбойную версию каждые 150 с.
+  $state.failed = $there
+  $state.tries = [int]$state.tries + 1
+  $state.next = (Get-Date).AddMinutes($RetryMin).Ticks
+  Save-State $state
   $result = Invoke-Update
   if ($result.code -eq 0) {
     Log "обновление: готово ($short)"
+    $result.warnings | ForEach-Object { Log "  ! $_" }
     $state.failed = ''; $state.tries = 0; $state.next = 0
     Clear-Status ''
   } else {
-    $state.failed = $there
-    $state.tries = [int]$state.tries + 1
     if ($state.tries -lt $MaxTries) {
       $at = (Get-Date).AddMinutes($RetryMin)
       $state.next = $at.Ticks
@@ -191,10 +233,16 @@ if ($Install) {
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
-  Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-  Start-ScheduledTask -TaskName $task
-  Write-Host ''
-  Write-Host "Автообновление включено: проверка main каждые $IntervalSec с. ERP: http://localhost:$Port"
+  try {
+    Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Settings $settings -Force -ErrorAction Stop | Out-Null
+    Start-ScheduledTask -TaskName $task -ErrorAction Stop
+    Write-Host ''
+    Write-Host "Автообновление включено: проверка main каждые $IntervalSec с. ERP: http://localhost:$Port"
+  } catch {
+    Write-Host ''
+    Write-Host "СБОЙ: задача планировщика не создана: $_"
+    Log "установка: задача планировщика не создана: $_"
+  }
   Write-Host '== Журнал автообновления (backend\auto-update.log), последние 30 строк:'
   Get-Content $log -Tail 30 -Encoding UTF8 | ForEach-Object { Write-Host $_ }
   exit 0
@@ -204,10 +252,20 @@ if ($Tick) {
   exit 0
 }
 
-# Цикл задачи планировщика: только таймер, каждая проверка — свежий процесс по файлу с диска.
+# Цикл задачи планировщика: только таймер, каждая проверка — свежий процесс по файлу с диска. Без трубы: ждём
+# выхода процесса (не дольше часа), ошибки PowerShell самой проверки — из файла в журнал.
 Log "старт автообновления (каждые $IntervalSec с)"
+$tickErr = Join-Path $backend 'auto-update-tick.err.log'
 while ($true) {
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $self -Tick -DbFile $DbFile -Port $Port 2>&1 |
-    ForEach-Object { Log "  ! $_" }
+  try {
+    $check = Start-Process powershell.exe -WindowStyle Hidden -PassThru -RedirectStandardError $tickErr `
+      -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$self`" -Tick -DbFile $DbFile -Port $Port" -WorkingDirectory $root
+    if (-not $check.WaitForExit(3600 * 1000)) {
+      & taskkill.exe /T /F /PID $check.Id 2>&1 | Out-Null
+      Log 'проверка шла больше часа — остановлена'
+    }
+    Get-Content $tickErr -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { "$_".Trim() } |
+      Select-Object -First 20 | ForEach-Object { Log "  ! $_" }
+  } catch { Log "ошибка запуска проверки: $_" }
   Start-Sleep -Seconds $IntervalSec
 }

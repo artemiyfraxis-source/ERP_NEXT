@@ -271,6 +271,8 @@ cd backend; .\.venv\Scripts\python.exe ..\scripts\projects_import.py load 708К.
 новый main → `update-local.ps1`, ERP не отвечает → `-StartOnly`. Сбойная версия повторяется ещё дважды через 10 мин;
 причина и хвост вывода — в `backend\auto-update.log` и в `frontend\dist\update-status.json`, который ERP показывает
 плашкой «Обновление не установилось» (всем, кроме монтажников); полный вывод — `backend\update-last.log`.
+Вывод `update-local.ps1` — только в файл, ждём выхода процесса (не трубу): API и `outbox_worker` наследовали бы
+трубу и держали её, пока живы, — так прежний цикл молча вставал после первого обновления.
 Включить или починить одной строкой (останавливает прежний цикл, обновляет на глазах, ставит задачу, печатает хвост
 журнала): `powershell -ExecutionPolicy Bypass -File scripts\auto-update-local.ps1 -Install`, выключить — `-Uninstall`.
 

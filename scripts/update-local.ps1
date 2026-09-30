@@ -24,6 +24,16 @@ $PSDefaultParameterValues['*:ErrorAction'] = 'Stop'
 # Python в UTF-8 при любой кодировке Windows: вывод в трубу (планировщик) иначе идёт в ANSI, и символ вне неё
 # роняет шаг (UnicodeEncodeError), хотя руками в консоли тот же шаг проходит.
 $env:PYTHONUTF8 = '1'
+# API и outbox_worker запускаются Start-Process с перенаправлением вывода, а Windows тогда отдаёт им по наследству
+# и наш stdout/stderr. Прежний цикл автообновления читал этот вывод трубой и ждал её конца — вечно, пока жив
+# outbox_worker: автообновление молча вставало после первого же обновления. Наследование наших дескрипторов снимаем.
+try {
+  Add-Type -Namespace ErpUpdate -Name Std -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll")] public static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
+'@
+  foreach ($n in @(-10, -11, -12)) { [void][ErpUpdate.Std]::SetHandleInformation([ErpUpdate.Std]::GetStdHandle($n), 1, 0) }
+} catch { }
 # Непойманная ошибка — тоже «СБОЙ: …», а не молчаливый код 1; остановленную ERP сначала поднимаем (версия не
 # записана, автообновление повторит).
 $apiStopped = $false
@@ -81,7 +91,8 @@ function Stop-Tree($id) {
 function Stop-Api {
   foreach ($file in @($workerPid, $namesPid)) {
     if (Test-Path $file) {
-      Stop-Tree ([int](Get-Content $file -Raw).Trim())
+      $id = 0
+      if ([int]::TryParse("$(Get-Content $file -Raw -ErrorAction SilentlyContinue)".Trim(), [ref]$id)) { Stop-Tree $id }
       Remove-Item $file -ErrorAction SilentlyContinue
     }
   }
@@ -127,6 +138,7 @@ function Stop-StrayNode {
 # Откат к прежней версии и её запуск; сбой запуска дописывается к причине, а не заменяет её.
 function Restore-Old($reason) {
   git -C $root checkout --force --detach $old 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { $reason = "$reason; прежний код не вернулся (git checkout $($old.Substring(0, 7)) не прошёл)" }
   if (-not (Test-Up)) {
     try { Start-Api; Start-Background } catch { $reason = "$reason; прежняя версия тоже не поднялась: $_" }
   }
@@ -207,8 +219,12 @@ try {
 }
 
 Write-Host "== Останавливаю API на порту $Port"
-Stop-Api
 $apiStopped = $true
+Stop-Api
+# ERP, запущенная не этим скриптом (другой пользователь, не python), держит порт и базу: миграции поверх неё не
+# запускаем — прежняя версия остаётся работать.
+for ($i = 0; $i -lt 10 -and (Test-Up); $i++) { Start-Sleep 1 }
+if (Test-Up) { Restore-Old "порт $Port занят и не освободился (ERP запущена вручную?), ERP на прежней версии" }
 Set-Location $backend
 try {
   Copy-Item $db "$db.bak" -Force
@@ -220,9 +236,10 @@ try {
   Run 'миграции базы' { & $py -m alembic upgrade head }
 } catch {
   $reason = "$_"
-  Write-Warning 'Миграции не прошли: база возвращена из копии, ERP остаётся на прежней версии.'
-  Copy-Item "$db.bak" $db -Force
-  Restore-Old "$reason — база возвращена из копии, ERP на прежней версии"
+  Write-Warning 'Миграции не прошли: возвращаю базу из копии, ERP остаётся на прежней версии.'
+  $back = 'база возвращена из копии, ERP на прежней версии'
+  try { Copy-Item "$db.bak" $db -Force } catch { $back = "база из копии не вернулась ($_), копия: $db.bak" }
+  Restore-Old "$reason — $back"
 }
 
 Write-Host '== Сотрудники из SUPPLYMAP (выданные PIN не меняются, PIN получают только новые)'
@@ -260,22 +277,25 @@ catch { Write-Warning "version.json не записан: $_" }
 Write-Host '== Новый сайт и запуск API'
 $dist = Join-Path $frontend 'dist'
 $prevDist = Join-Path $frontend 'dist-prev'
+# Флаги — чтобы откат трогал только то, что успели подменить: иначе сбой на первом же шаге стирал живой сайт.
+$moved = $false; $swapped = $false
 try {
   if (Test-Path $prevDist) { Remove-Item $prevDist -Recurse -Force }
-  if (Test-Path $dist) { Move-Item $dist $prevDist }
-  Move-Item $next $dist
+  if (Test-Path $dist) { Move-Item $dist $prevDist; $moved = $true }
+  Move-Item $next $dist; $swapped = $true
   Start-Api
 } catch {
   # Новая версия не поднялась: база из копии, прежние код и сайт, прежняя ERP снова запущена.
   $reason = "новая версия не запустилась ($_)"
   Write-Warning "$reason, возвращаю прежнюю."
-  Stop-Api
-  Copy-Item "$db.bak" $db -Force
-  if (Test-Path $prevDist) {
-    if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
-    Move-Item $prevDist $dist
-  }
-  Restore-Old "$reason — база, код и сайт прежние"
+  $back = 'база, код и сайт прежние'
+  try {
+    Stop-Api
+    Copy-Item "$db.bak" $db -Force
+    if ($swapped) { Remove-Item $dist -Recurse -Force }
+    if ($moved) { Move-Item $prevDist $dist }
+  } catch { $back = "откат не доделан ($_), копия базы: $db.bak" }
+  Restore-Old "$reason — $back"
 }
 # Версия записывается сразу после запуска: дальше только фон, его сбой не делает обновление несостоявшимся.
 Set-Content $stamp $head
