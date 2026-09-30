@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   kitsetsApi,
   productionApi,
@@ -111,6 +111,34 @@ export function dayHours(operatorId: string, day: string, tasks: ProductionTask[
   return total * ratio;
 }
 
+function clock(value: number) {
+  return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+}
+
+export interface DaySlot { start: string; finish: string; rest: boolean; busy: string[] }
+
+// Раскладка дня монтажника по часам смены: что занято (операция · сборка) и где перерыв.
+export function daySlots(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift): DaySlot[] {
+  const slots: DaySlot[] = [];
+  const end = minutes(shift.finish);
+  for (let from = minutes(shift.start); from < end; from += 60) {
+    const to = Math.min(end, from + 60);
+    const a = new Date(`${day}T${clock(from)}:00`).getTime();
+    const b = new Date(`${day}T${clock(to)}:00`).getTime();
+    const busy: string[] = [];
+    for (const task of tasks) {
+      if (task.status === "Отменено") continue;
+      for (const operation of task.operations) {
+        if (done(operation) || !operation.operator_ids.includes(operatorId) || !operation.planned_start || !operation.planned_finish) continue;
+        if (new Date(operation.planned_start).getTime() < b && a < new Date(operation.planned_finish).getTime()) busy.push(`${operation.stage} · ${itemId(task)}`);
+      }
+    }
+    const rest = (shift.breaks ?? []).some(([x, y]) => minutes(x) <= from && to <= minutes(y));
+    slots.push({ start: clock(from), finish: clock(to), rest, busy });
+  }
+  return slots;
+}
+
 function oneDecimal(value: number) {
   return value.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
 }
@@ -143,6 +171,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [onlyFree, setOnlyFree] = useState(false);
   const [tiles, setTiles] = useState<{ items: KitsetTile[]; statuses: string[] }>({ items: [], statuses: [] });
   const [openProject, setOpenProjectState] = useState(lastProject);
+  const [openDay, setOpenDay] = useState<{ personId: string; day: string } | null>(null);
   const keys = useRef(new Map<string, string>());
 
   function setOpenProject(project: string) {
@@ -194,12 +223,13 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const workShift = shift ?? DEFAULT_SHIFT;
   const days = Array.from({ length: WEEK_DAYS }, (_, index) => addDays(weekStart, index));
 
-  // Сегодня — «первое свободное время с этого момента»; другой день — с начала его смены.
-  function assign(operatorIds: string[], day: string | null) {
+  // Мастер выбирает день и час начала; операция встаёт ровно с этого часа (занятость видна в раскладке дня).
+  function assign(operatorIds: string[], day: string, time: string) {
     if (!task || !operation) return;
-    const start = day && day > today ? `${day}T${workShift.start}` : null;
-    void mutate(operation.id, () => productionApi.assign(task.id, operation.id, task.version, operatorIds, start));
+    void mutate(operation.id, () => productionApi.assign(task.id, operation.id, task.version, operatorIds, `${day}T${time}`));
   }
+  const nowTime = clock(new Date().getHours() * 60 + new Date().getMinutes());
+  const capacity = Number(workShift.effective_hours || 8);
 
   function unassign(item: ProductionTask, op: ProductionOperation, operatorId: string) {
     void mutate(op.id, () => productionApi.assign(item.id, op.id, item.version, op.operator_ids.filter((id) => id !== operatorId), null));
@@ -281,8 +311,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         </div>
       </div>
       {task && operation
-        ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {itemId(task)} × {task.quantity}. Нажми на день у монтажника — операция встанет с этого дня в первое свободное время.</small><button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
-        : <div className="mb-target muted">{canEdit ? "Выбери операцию слева, затем день у монтажника." : "Загрузка монтажников по дням, часы по норме."}</div>}
+        ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {itemId(task)} × {task.quantity}. Нажми на день у монтажника и выбери час начала.</small><button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
+        : <div className="mb-target muted">{canEdit ? "Выбери операцию слева, затем день и час у монтажника. Занято/смена, ч." : "Занято/смена, ч. Нажми на день — раскладка по часам."}</div>}
       <table className="mb-week">
         <thead><tr><th>Монтажник</th>{days.map((day) => {
           const date = new Date(`${day}T00:00:00`);
@@ -294,27 +324,48 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           const on = Boolean(operation?.operator_ids.includes(person.id));
           const skill = operation?.code ? skills.find((item) => item.operator_id === person.id && item.operation_code === operation.code) : undefined;
           const coded = Boolean(operation?.code && skills.some((item) => item.operation_code === operation.code));
-          return <tr key={person.id} className={on ? "on" : ""}>
+          const expanded = openDay?.personId === person.id ? openDay.day : "";
+          return <Fragment key={person.id}><tr className={`${on ? "on" : ""}${expanded ? " open" : ""}`}>
             <th scope="row"><b>{on ? "✓ " : ""}{person.name}</b><small>{person.site}{coded && (!skill || !skill.allowed) ? <span className="danger-text"> · нет допуска</span> : null}</small></th>
             {days.map((day) => {
               const absent = absences.find((item) => item.operator_id === person.id && item.from_date <= day && day <= item.to_date);
               const working = workingDay(day, workShift, holidays);
               const load = working && !absent ? dayHours(person.id, day, tasks, workShift) : 0;
-              const capacity = Number(workShift.effective_hours || 8);
               const level = load <= 0.05 ? "free" : load < capacity * 0.5 ? "low" : load <= capacity + 0.05 ? "full" : "over";
-              const text = absent ? absent.kind.slice(0, 3).toLowerCase() : !working ? "" : load > 0.05 ? oneDecimal(load) : "";
+              const text = absent ? absent.kind.slice(0, 3).toLowerCase() : !working ? "вых" : `${oneDecimal(load)}/${oneDecimal(capacity)}`;
               const title = `${person.name}, ${formatDay(day)}: ${absent ? absent.kind : !working ? "нерабочий день" : `${oneDecimal(load)} из ${oneDecimal(capacity)} ч`}`;
-              const clickable = Boolean(operation && canEdit && working && !absent && day >= today);
-              const className = `mb-cell ${absent ? "absent" : !working ? "off" : level}${day === today ? " today" : ""}`;
-              return <td key={day} className={className}>{clickable
-                ? <button disabled={Boolean(busy)} title={title} aria-label={`Назначить ${person.name} на ${formatDay(day)}`}
-                  onClick={() => assign(on ? operation!.operator_ids : [...operation!.operator_ids, person.id], day)}>{text || "+"}</button>
+              const className = `mb-cell ${absent ? "absent" : !working ? "off" : level}${day === today ? " today" : ""}${expanded === day ? " picked" : ""}`;
+              return <td key={day} className={className}>{working && !absent
+                ? <button title={title} aria-label={`День ${person.name} ${formatDay(day)}`} aria-expanded={expanded === day}
+                  onClick={() => setOpenDay(expanded === day ? null : { personId: person.id, day })}>{text}</button>
                 : <span title={title}>{text}</span>}</td>;
             })}
-          </tr>;
+          </tr>
+          {expanded && <tr className="mb-day-row"><td colSpan={days.length + 1}>
+            <div className="mb-day">
+              <div className="mb-day-head"><b>{person.name} · {new Date(`${expanded}T00:00:00`).toLocaleDateString("ru-RU", { weekday: "short" })} {formatDay(expanded)}</b>
+                <span>занято {oneDecimal(dayHours(person.id, expanded, tasks, workShift))} из {oneDecimal(capacity)} ч</span>
+                <button className="mb-day-close" aria-label="Закрыть день" onClick={() => setOpenDay(null)}>×</button></div>
+              <div className="mb-hours">{daySlots(person.id, expanded, tasks, workShift).map((slot) => {
+                const past = expanded < today || (expanded === today && slot.finish <= nowTime);
+                const can = Boolean(operation && canEdit && !past && !slot.rest);
+                const state = slot.rest ? "rest" : slot.busy.length ? "busy" : "free";
+                const hint = slot.rest ? "перерыв" : slot.busy.length ? slot.busy.join("; ") : "свободно";
+                return <div key={slot.start} className={`mb-hour ${state}${past ? " past" : ""}`} title={`${slot.start}–${slot.finish}: ${hint}`}>
+                  {can
+                    ? <button disabled={Boolean(busy)} aria-label={`Назначить ${person.name} на ${formatDay(expanded)} с ${slot.start}`}
+                      onClick={() => { assign(on ? operation!.operator_ids : [...operation!.operator_ids, person.id], expanded, expanded === today && slot.start < nowTime ? nowTime : slot.start); setOpenDay(null); }}>{slot.start}</button>
+                    : <span>{slot.start}</span>}
+                  <small>{slot.rest ? "обед" : slot.busy.length ? slot.busy[0] : ""}</small>
+                </div>;
+              })}</div>
+              {operation && canEdit && <div className="mb-day-hint">Нажми на час — «{operation.stage}» начнётся с него.</div>}
+            </div>
+          </td></tr>}
+          </Fragment>;
         })}</tbody>
       </table>
-      <div className="mb-legend"><span className="mb-cell low">ч</span> загружен частично <span className="mb-cell full">ч</span> смена занята <span className="mb-cell over">ч</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
+      <div className="mb-legend"><span className="mb-cell free">0/8</span> свободен <span className="mb-cell low">3/8</span> частично <span className="mb-cell full">8/8</span> смена занята <span className="mb-cell over">10/8</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
     </aside>
   </div>;
 }
