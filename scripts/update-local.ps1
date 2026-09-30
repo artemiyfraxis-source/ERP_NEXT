@@ -13,7 +13,11 @@
 # Ключ Google erp-reader (только чтение): -Key путь (запоминается), иначе ERP_GOOGLE_SERVICE_ACCOUNT_JSON, иначе
 # запомненный путь (backend\google-key.path, его пишет и load-real-data.ps1), иначе поиск в Загрузках/Документах/Рабочем столе.
 param([string]$DbFile = 'real.db', [int]$Port = 8022, [string]$Key = '')
-$ErrorActionPreference = 'Stop'
+# Из планировщика (auto-update-local.ps1) stderr перенаправлен, и PowerShell 5.1 превращает каждую строку stderr
+# у git/npm/pip («From github.com…», предупреждения) в ошибку — при 'Stop' скрипт падал на первом git fetch.
+# Поэтому: командлеты — Stop (через значения по умолчанию), внешние программы — только по коду выхода (Check).
+$ErrorActionPreference = 'Continue'
+$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $root = (Resolve-Path "$PSScriptRoot\..").Path
 $backend = Join-Path $root 'backend'
