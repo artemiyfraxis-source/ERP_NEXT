@@ -780,6 +780,8 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tcgen .ep-auto { font-size: 11px; color: var(--muted-foreground); }
 .tcgen .ep-sdr { font-size: 12px; } .tcgen .ep-sdr-warn { color: #b45309; }
 .tcgen .ep-pin, .tcgen .twist-pair-row { display: flex; gap: 6px; align-items: center; }
+.tcgen .ep-links { display: grid; gap: 4px; font-size: 12px; }
+.tcgen .ep-links b { font-variant-numeric: tabular-nums; }
 .tcgen .cut-info { padding: 6px 8px; border: 1px solid #bcd8d5; background: #f0f7f6; border-radius: 6px; font-size: 12px; }
 .tcgen .cut-info.warn { border-color: #fde68a; background: #fffbeb; }
 .tcgen .coax-add { border: 1px dashed #e0a800; background: #fff8e1; border-radius: 6px; padding: 8px; display: grid; gap: 6px; }
@@ -1100,6 +1102,10 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .etk-result-table td { padding: 7px 12px; border-top: 1px solid var(--border); vertical-align: top; }
 .etk-result-table .num, .etk-time .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
 .etk-result-table th:not(:first-child) { text-align: right; width: 1%; white-space: nowrap; }
+.etk-links { margin: 8px auto 0; width: auto; min-width: 640px; }
+.etk-links th:not(:first-child) { text-align: left; width: auto; }
+.etk-links th:first-child, .etk-links th:nth-child(4), .etk-links th:nth-child(6) { text-align: right; }
+.etk-links td { padding: 4px 12px; }
 .etk-time { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .etk-time > small { font-size: 11px; color: var(--muted-foreground); }
 .etk-time > small:first-child { font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }

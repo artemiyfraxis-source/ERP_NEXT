@@ -3,7 +3,7 @@
 // оснастка, ход операции, дефекты, эскиз, результат, время, подписи. Идёт через общий контракт print.ts.
 // Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*).
 import type { ProjectTechcard, TechcardRevision } from "./api";
-import { etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
+import { ETK_CONNECTION_COLUMNS, etkConnectionRows, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { solderMode, toolingSections } from "./etkOperation";
 import type { PrintBlock, PrintPage } from "./print";
 
@@ -101,12 +101,14 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const revision = card.revision || 1;
   const operations = rows(document.operations);
   const harness = etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
+  const connections = etkConnectionRows(document.connections);
   const cover: PrintPage = {
     title: "Технологическая карта сборки",
     subtitle: `${text(kit.name)} · ${text(kit.project)} ${text(kit.index)} · ревизия ${revision}`,
     blocks: [
       ...head(kit, revision, ""),
       ...(harness ? [{ heading: "Схема жгута" }, { figure: harness }] as PrintBlock[] : []),
+      ...(connections.length ? [{ heading: "Таблица соединений" }, { table: { columns: ETK_CONNECTION_COLUMNS, rows: connections } }] as PrintBlock[] : []),
       { heading: "Маршрут" },
       { table: {
         columns: ["№", "Код", "Операция", "Разъём / сторона", "Время операции, с", "Подгот., с"],

@@ -68,6 +68,19 @@ it("seeds the form from the kit and sends the SUPPLYMAP config to the build", as
   expect(config).not.toHaveProperty("tcgen");
 });
 
+it("pairs the pin lists of both ends in order and shows the crossover under the connectors", async () => {
+  mockApi();
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+  const [pinsA, pinsB] = await screen.findAllByPlaceholderText("1, 3 или 1-2");
+  expect(screen.getAllByText(/Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне/)).toHaveLength(1);
+  expect(screen.queryByLabelText("Соединения по распиновке")).not.toBeInTheDocument();
+  fireEvent.change(pinsA, { target: { value: "1-2" } });
+  fireEvent.change(pinsB, { target: { value: "2, 1" } });
+  const links = await screen.findByLabelText("Соединения по распиновке");
+  expect(links).toHaveTextContent("МГТФ 0,12 · А1 → В1: 1→2, 2→1");
+  expect(links.querySelectorAll("b")).toHaveLength(2);
+});
+
 it("adds a missing coax connector to БД.КОАКС through the references record", async () => {
   let created: unknown;
   mockApi((path, init) => {

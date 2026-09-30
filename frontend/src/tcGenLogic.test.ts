@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { initState, makeGen, updateEndpoint, type GenData } from "./tcGenLogic";
+import { initState, makeGen, parsePinList_, updateEndpoint, type GenData } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -44,6 +44,42 @@ it("builds the interboard config the /build endpoint reads (TcGenInline buildCon
   expect(cfg.ops[0]).toMatchObject({ opNum: "CUT_WIRE_auto", tOp: "12", tPrep: "60", tMachine: "3" });
   expect(cfg.ops[1]).toMatchObject({ firstTerm: true, ep: { connArt: "XHP-2", termArt: "SXH-001T-P0.6" }, wireSources: [""] });
   expect(cfg.ops[3].wireSources).toEqual(["Колодка XH 2"]);
+});
+
+it("pairs the wire ends by the order of both pin lists: А «1-2», В «2, 1» is a crossover", () => {
+  const D = data(interboard);
+  const plain = initState(D);
+  const w = plain.wires[0].idx;
+  // Без распиновки на обоих концах — конфиг как раньше: ни соединений, ни ключей концов.
+  const before = makeGen(D, updateEndpoint(D, plain, "a1", { pins: { [w]: "1-2" } })).buildConfig() as Record<string, any>;
+  expect(before.connections).toBeUndefined();
+  expect(before.ops.some((op: any) => "epKey" in op)).toBe(false);
+
+  const S = updateEndpoint(D, updateEndpoint(D, plain, "a1", { pins: { [w]: "1-2" } }), "b1", { pins: { [w]: "2, 1" } });
+  const gen = makeGen(D, S);
+  const cfg = gen.buildConfig() as Record<string, any>;
+  expect(cfg.connections).toEqual([
+    { wire: "МГТФ 0,12", from: { end: "А1", conn: "XHP-2", label: "", pin: 1 }, to: { end: "В1", conn: "XHP-2", label: "", pin: 2 } },
+    { wire: "МГТФ 0,12", from: { end: "А1", conn: "XHP-2", label: "", pin: 2 }, to: { end: "В1", conn: "XHP-2", label: "", pin: 1 } },
+  ]);
+  expect(cfg.ops.map((op: any) => [op.type, op.epKey ?? ""])).toEqual([
+    ["cutWire", ""], ["prsTerm", "А1"], ["insTerm", "А1"], ["prsTerm", "В1"], ["insTerm", "В1"],
+  ]);
+  expect(cfg.ops[4].pins).toEqual(["2, 1"]);
+  expect(gen.connections_().warnings).toEqual([]);
+
+  // Разное число контактов — пары до короткого списка и предупреждение перед сборкой.
+  const short = makeGen(D, updateEndpoint(D, S, "b1", { pins: { [w]: "2" } }));
+  expect(short.connections_().list).toHaveLength(1);
+  expect(short.validate().warnings).toContain("МГТФ 0,12: на А1 2 конт., на В1 1 — соединения по порядку только для 1.");
+});
+
+it("reads a pin list in the written order, ranges both ways, repeats kept for double crimp", () => {
+  expect(parsePinList_("3, 1, 2, 4-6")).toEqual([3, 1, 2, 4, 5, 6]);
+  expect(parsePinList_("6-4; 1")).toEqual([6, 5, 4, 1]);
+  expect(parsePinList_("1 1 2 2 x 0")).toEqual([1, 1, 2, 2]);
+  expect(parsePinList_("1-1000")).toHaveLength(200);
+  expect(parsePinList_(undefined)).toEqual([]);
 });
 
 it("routes a solder connector through TUT cut, fit and shrink", () => {

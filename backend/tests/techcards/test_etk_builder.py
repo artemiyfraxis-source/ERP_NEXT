@@ -1,10 +1,11 @@
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from app.modules.techcards.etk_builder import _suffix, build_etk
+from app.modules.techcards.etk_builder import _suffix, _topology, build_etk
 from app.modules.techcards.operation_cards import parse_operation_library
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardValidationError
 from app.modules.references.technology import TerminalRecord
@@ -142,6 +143,42 @@ def test_build_uses_template_id_not_ambiguous_side_title_and_tracks_pinout():
     assert operation["template_id"].endswith("-a")
     assert [item["pins"] for item in operation["fields"]["wires"]] == [[1], [2]]
     assert operation["fields"]["pinout"] is True
+
+
+def test_connections_pair_both_ends_and_show_the_other_end_in_mounting_operations():
+    config = deepcopy(kit("720К.-КБ1")["config"])
+    plain = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    assert "connections" not in plain
+    assert not any("links" in item["fields"] for item in plain["operations"])
+
+    mounts = [index for index, op in enumerate(config["ops"]) if op.get("type") == "insTerm"]
+    assert len(mounts) == 2
+    config["ops"][mounts[0]]["epKey"], config["ops"][mounts[1]]["epKey"] = "А1", "В1"
+    config["connections"] = [
+        {"wire": "черный", "from": {"end": "А1", "conn": "XHP-2", "pin": 1}, "to": {"end": "В1", "conn": "XHP-2", "pin": "3"}},
+        {"wire": "черный", "from": {"end": "А1", "pin": 2}, "to": {"end": "", "pin": 1}},
+        "мусор",
+    ]
+    document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    assert document["connections"] == [{
+        "wire": "черный",
+        "from": {"end": "А1", "conn": "XHP-2", "label": "", "pin": 1},
+        "to": {"end": "В1", "conn": "XHP-2", "label": "", "pin": 3},
+    }]
+    side_a, side_b = (document["operations"][index]["fields"]["links"] for index in mounts)
+    assert side_a == [{"pin": 1, "wire": "черный", "dir": "to", "peer": {"end": "В1", "conn": "XHP-2", "label": "", "pin": 3}}]
+    assert side_b == [{"pin": 3, "wire": "черный", "dir": "from", "peer": {"end": "А1", "conn": "XHP-2", "label": "", "pin": 1}}]
+
+
+def test_harness_links_the_source_connector_named_by_its_bom_name_not_a_phantom_node():
+    ends = {"connArt": "SHR-06V-S-B", "connName": "Корпус SH 6"}
+    config = {"ops": [
+        {"type": "insTerm", "side": "A", "ep": ends, "wires": [{"art": "черный", "qty": 6}], "wireSources": [""]},
+        {"type": "insTerm", "side": "B", "ep": ends, "wires": [{"art": "черный", "qty": 6}], "wireSources": ["Корпус SH 6"]},
+    ]}
+    topology = _topology(config)
+    assert [node["id"] for node in topology["nodes"]] == ["SHR-06V-S-B", "SHR-06V-S-B (В)"]
+    assert [(edge["from"], edge["to"], edge["count"]) for edge in topology["edges"]] == [("SHR-06V-S-B", "SHR-06V-S-B (В)", 6)]
 
 
 def test_project_document_accepts_repeated_code_when_connectors_are_distinct():
