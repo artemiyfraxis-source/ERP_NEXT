@@ -24,16 +24,8 @@ $PSDefaultParameterValues['*:ErrorAction'] = 'Stop'
 # Python в UTF-8 при любой кодировке Windows: вывод в трубу (планировщик) иначе идёт в ANSI, и символ вне неё
 # роняет шаг (UnicodeEncodeError), хотя руками в консоли тот же шаг проходит.
 $env:PYTHONUTF8 = '1'
-# API и outbox_worker запускаются Start-Process с перенаправлением вывода, а Windows тогда отдаёт им по наследству
-# и наш stdout/stderr. Прежний цикл автообновления читал этот вывод трубой и ждал её конца — вечно, пока жив
-# outbox_worker: автообновление молча вставало после первого же обновления. Наследование наших дескрипторов снимаем.
-try {
-  Add-Type -Namespace ErpUpdate -Name Std -MemberDefinition @'
-[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
-[DllImport("kernel32.dll")] public static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
-'@
-  foreach ($n in @(-10, -11, -12)) { [void][ErpUpdate.Std]::SetHandleInformation([ErpUpdate.Std]::GetStdHandle($n), 1, 0) }
-} catch { }
+# Наследование stdin/stdout/stderr НЕ снимать: python.exe из venv — запускатель, он передаёт их настоящему Python и
+# без наследуемого stdin падает «stdin duplication failed» (30.09: API и прежняя версия не поднялись).
 # Непойманная ошибка — тоже «СБОЙ: …», а не молчаливый код 1; остановленную ERP сначала поднимаем (версия не
 # записана, автообновление повторит).
 $apiStopped = $false
@@ -160,7 +152,8 @@ if ($StartOnly) {
 
 # Влитые PR по первой линии main: «Merge pull request #N» (название — первая строка описания) или «… (#N)».
 function Get-News($prev) {
-  $range = if ($prev) { @("$prev..HEAD") } else { @('-15', 'HEAD') }
+  # @(...) снаружи: из if одна строка выходит строкой, и @range раздавал git её по буквам («ambiguous argument 'c'»).
+  $range = @(if ($prev) { "$prev..HEAD" } else { '-15'; 'HEAD' })
   $log = (git -C $root log --first-parent --format='%s%x1f%b%x1e' @range) -join "`n"
   foreach ($entry in ($log -split [char]0x1e)) {
     $parts = $entry.Trim() -split [char]0x1f, 2

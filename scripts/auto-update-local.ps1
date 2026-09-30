@@ -112,10 +112,10 @@ function Invoke-Update([switch]$StartOnly) {
   if ($timedOut) { $reason = "update-local.ps1 не закончил за $UpdateTimeoutMin мин и остановлен" }
   elseif ($reason) { $reason = $reason.Substring(6) }
   elseif ($code -ne 0) {
-    $reason = $lines | Where-Object { $_ -match 'WARNING|Ошибка|ошибка|Error|error' } | Select-Object -Last 1
+    $reason = $lines | Where-Object { $_ -match 'WARNING|ПРЕДУПРЕЖДЕНИЕ|Ошибка|ошибка|Error|error' } | Select-Object -Last 1
     if (-not $reason) { $reason = "update-local.ps1 завершился с кодом $code" }
   }
-  $warnings = @($lines | Where-Object { $_ -match '^WARNING' } | Select-Object -First 5)
+  $warnings = @($lines | Where-Object { $_ -match '^(WARNING|ПРЕДУПРЕЖДЕНИЕ)' } | Select-Object -First 5)
   $tail = @($lines | Where-Object { $_.Trim() } | Select-Object -Last 15)
   @{ code = $code; reason = "$reason".Trim(); tail = $tail; warnings = $warnings }
 }
@@ -145,6 +145,10 @@ function Invoke-Tick {
     return
   }
   if ($state.fetchFailSince) { $state.fetchFailSince = 0; Clear-Status 'fetch'; Log 'связь с GitHub восстановлена' }
+  # Самопочинка: скрипты обновления — всегда из свежего main, а не из собранной версии. Сбойное обновление
+  # откатывает код, и сломанный update-local.ps1 (30.09: «stdin duplication failed») иначе запускался бы снова и
+  # снова, а его починка из main не доезжала. Эта проверка берёт свежий update-local.ps1 сейчас, следующая — и себя.
+  & git -C $root checkout -q origin/main -- scripts/update-local.ps1 scripts/auto-update-local.ps1 2>&1 | Out-Null
 
   # Сравниваем с последней СОБРАННОЙ версией (update-local.ps1 пишет её в backend\<база>.version), а не с HEAD:
   # checkout без сборки иначе выглядел бы как «уже обновлено».
