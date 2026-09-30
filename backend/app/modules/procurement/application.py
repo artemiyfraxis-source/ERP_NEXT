@@ -30,6 +30,7 @@ from .domain import (
     ProcurementLine,
     ProcurementStatus,
     ProcurementValidationError,
+    RECEIPT_STAGES,
     SupplierRequestGroup,
     ReplacementDecision,
     create_backorder_line,
@@ -48,6 +49,7 @@ from .domain import (
     supplier_request_folder,
     supplier_request_letter,
     split_line,
+    stage_from_receipts,
 )
 from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
 
@@ -92,6 +94,7 @@ class ProcurementRepository(Protocol):
     ) -> Sequence[ProcurementLine]: ...
     def buyer_names(self) -> Sequence[str]: ...
     def excluding_statuses(self, statuses: Sequence[str]) -> Sequence[ProcurementLine]: ...
+    def with_statuses(self, statuses: Sequence[str]) -> Sequence[ProcurementLine]: ...
     def add(self, line: ProcurementLine) -> None: ...
     def add_order(self, order: SupplierOrder) -> None: ...
     def get_order(self, order_number: str) -> SupplierOrder | None: ...
@@ -570,6 +573,52 @@ def dispatch_next_procurement_requested(
         uow.outbox.mark_published(message.id, now)
         uow.commit()
         return line
+
+
+class ReceiptStatusLookup(Protocol):
+    """Receiving's statuses of the deliveries of each procurement line (read-only port, see
+    `app.workflows.receipt_stage`). Procurement never reads Receiving's tables itself."""
+
+    def statuses_for(self, procurement_line_ids: Sequence[UUID]) -> dict[UUID, list[str]]: ...
+
+
+def sync_receipt_stages(now: datetime, uow: UnitOfWork, receipts: ReceiptStatusLookup) -> int:
+    """OwnerTick.gs `syncPurchaseStatusFromWaitlist_`: the receiving status of a paid line's deliveries
+    moves the line forward — «В пути» → «Карантин» → «Готово» (only when every batch is accepted).
+    Forward only; «Согласование»/«Отменено» and unpaid lines are never touched. Reads the state on every
+    tick, so a missed tick or an old receipt catches up by itself."""
+    with uow:
+        lines = list(uow.procurement.with_statuses([status.value for status in RECEIPT_STAGES]))
+        if not lines:
+            return 0
+        statuses = receipts.statuses_for([line.id for line in lines])
+        moved = 0
+        for line in lines:
+            stage = stage_from_receipts(statuses.get(line.id, ()))
+            if stage is None:
+                continue
+            updated = line.advance_by_receipt(stage)
+            if updated is line:
+                continue
+            uow.procurement.add(updated)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=line.id,
+                    event_type="procurement.receipt_stage",
+                    actor=SYSTEM_ACTOR,
+                    occurred_at=now,
+                    details={
+                        "legacy_id": line.legacy_id,
+                        "from_status": line.status.value,
+                        "to_status": updated.status.value,
+                    },
+                )
+            )
+            moved += 1
+        if moved:
+            uow.commit()
+        return moved
 
 
 def dispatch_next_backorder_requested(

@@ -3,20 +3,21 @@
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.document_url import normalize_document_url
+from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import Principal, receiving_edit_principal, receiving_view_principal
 from app.shared.unit_mass import mass_fields_from
 
 from .application import (
+    AttachReceivingFileCommand,
     ConcurrentReceivingUpdate,
     InspectBatchesCommand,
     InspectReceivingCommand,
@@ -27,12 +28,14 @@ from .application import (
     SupplierReturnItem,
     UnitOfWork,
     UnpackCommand,
+    attach_receiving_file,
     inspect_receiving,
     inspect_receiving_batches,
     build_putaway_print_sheet,
     open_vk_revision,
     place_receiving,
     receiving_act_sheet,
+    receiving_file_url,
     receiving_queue,
     return_to_supplier,
     supplier_return_candidates,
@@ -44,6 +47,8 @@ from .domain import (
     ReceivingLine,
     ReceivingValidationError,
     SUPPLIER_RETURN_REASONS,
+    grn_prefix_for,
+    normalize_document_url,
     SupplierReturnMode,
     verdict_reference_date,
 )
@@ -112,6 +117,14 @@ class InspectionPayload(BaseModel):
         return normalize_document_url(value)
 
 
+class FilePayload(BaseModel):
+    line_id: UUID
+    kind: Literal["upd", "quality"]
+    file_name: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(default="", max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
+
+
 class UnpackPayload(BaseModel):
     version: int = Field(ge=1)
     quantities: list[Quantity] = Field(min_length=2, max_length=100)
@@ -163,6 +176,8 @@ def _result(line: ReceivingLine) -> dict:
     return {
         "id": str(line.id),
         "legacy_id": line.legacy_id,
+        # grnPrefixForPurpose_: what the ГРН will start with; None — the form asks for CSM or PPM up front.
+        "grn_prefix": grn_prefix_for(purpose=line.purpose, link=line.source_link, goal=line.goal),
         "status": line.status.value,
         "version": line.version,
         "warehouse": line.warehouse,
@@ -435,6 +450,36 @@ def unpack(
         )
     )
     return {"lines": [_result(line) for line in lines]}
+
+
+@router.post("/files")
+def upload_file(
+    payload: FilePayload,
+    principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> dict:
+    """Portal «Документ УПД/М-15 (файл)»: the scan is stored in ERP, its link goes into the ВК form."""
+    content = decode_upload(payload.content_base64, "Файл повреждён")
+    stored = _run(lambda: attach_receiving_file(AttachReceivingFileCommand(
+        line_id=payload.line_id, kind=payload.kind, file_name=payload.file_name, content_type=payload.content_type,
+        content=content, actor=principal.actor, now=now,
+    ), uow_factory()))
+    return {"url": receiving_file_url(stored.id), "file_name": stored.file_name, "size": stored.size}
+
+
+@router.get("/files/{file_id}")
+def download_file(
+    file_id: UUID,
+    _principal: Annotated[Principal, Depends(receiving_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> Response:
+    with uow_factory() as uow:
+        found = uow.files.get(file_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    meta, content = found
+    return file_response(content, meta.content_type, meta.file_name)
 
 
 @router.get("/{line_id}/acts/{kind}")

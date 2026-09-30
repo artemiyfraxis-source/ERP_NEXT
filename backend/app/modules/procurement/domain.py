@@ -175,6 +175,30 @@ MONEY_EDITABLE = frozenset({ProcurementStatus.AWAITING_INVOICE, ProcurementStatu
 
 
 _PAID_STATUSES = frozenset({ProcurementStatus.IN_TRANSIT, ProcurementStatus.QUARANTINE, ProcurementStatus.DONE})
+
+# WAITLIST_TO_PURCHASE_STATUS (Config.gs:206-213): the receiving status of a delivery → the procurement
+# stage. «Ожидание» (a nonconformity without a decision) is the quarantine stage for procurement.
+# «Возврат» and «Архив ВК» are deliberately unmapped: a return to the supplier is a terminal of receiving
+# and the buyer decides on the line by hand; an archived inspection is history.
+RECEIPT_TO_PROCUREMENT_STATUS = {
+    "В пути": ProcurementStatus.IN_TRANSIT,
+    "Ожидание": ProcurementStatus.QUARANTINE,
+    "Карантин": ProcurementStatus.QUARANTINE,
+    "Принято": ProcurementStatus.DONE,
+}
+RECEIPT_STAGES = frozenset({ProcurementStatus.IN_TRANSIT, ProcurementStatus.QUARANTINE})
+
+
+def stage_from_receipts(statuses: Iterable[str]) -> ProcurementStatus | None:
+    """`orderStatusFromPartitions_` (OwnerTick.gs:807-818): the least advanced mapped delivery wins, so a
+    line is «Готово» only when every batch of it is accepted. Unmapped statuses are skipped; none → None."""
+    stages = [RECEIPT_TO_PROCUREMENT_STATUS.get(str(status or "").strip()) for status in statuses]
+    known = [stage for stage in stages if stage is not None]
+    if not known:
+        return None
+    return min(known, key=STATUS_ORDER.index)
+
+
 _BACKORDER_OFFLINE = "У дозавоза свои действия: подтвердить досыл или отменить дозавоз"
 
 
@@ -530,6 +554,15 @@ class ProcurementLine:
             paid_at=paid_at,
             version=self.version + 1,
         )
+
+    def advance_by_receipt(self, stage: ProcurementStatus) -> ProcurementLine:
+        """`syncPurchaseStatusFromWaitlist_`: receiving moves a paid line forward only — В пути → Карантин
+        → Готово. A later stage is never rolled back, and a line outside receiving (offline, unpaid) stays."""
+        if self.status not in RECEIPT_STAGES or stage not in STATUS_ORDER:
+            return self
+        if STATUS_ORDER.index(stage) <= STATUS_ORDER.index(self.status):
+            return self
+        return replace(self, status=stage, version=self.version + 1)
 
     @property
     def is_backorder(self) -> bool:

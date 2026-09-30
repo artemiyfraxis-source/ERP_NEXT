@@ -18,6 +18,7 @@ from app.modules.procurement.application import (
     dispatch_next_backorder_requested,
     dispatch_next_procurement_requested,
     notify_initiators,
+    sync_receipt_stages,
 )
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
 from app.modules.requests.application import PoisonRequestMessage, dispatch_next_reorder_requested
@@ -41,6 +42,7 @@ from app.shared.clock import moscow_now
 from app.workflows.supplier_directory import ReferencesSupplierDirectory
 from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
 from app.workflows.kitset_names import kitset_names_tick
+from app.workflows.receipt_stage import ReceivingStatusLookup
 from app.workflows.owner_alerts import alert_on_dead_letters, daily_overdue_digest, quarantine_escalations
 
 # alertOnErrors_ ran once per owner tick (a minute); the worker loop turns every couple of seconds.
@@ -175,6 +177,16 @@ def run_timers(sessions: sessionmaker[Session]) -> int:
         done += len(quarantine_overdue_waiting(moscow_now(), SqlAlchemyReceivingUnitOfWork(sessions)))
     except (IntegrityError, StaleDataError):
         logging.warning("Receiving line changed during the quarantine timer; retrying next tick")
+    # OwnerTick.gs syncPurchaseStatusFromWaitlist_: receiving moves paid lines to «Карантин»/«Готово». Before
+    # the notifications, so the initiator hears about the new stage in the same tick.
+    try:
+        done += sync_receipt_stages(
+            moscow_now(),
+            SqlAlchemyProcurementUnitOfWork(sessions),
+            ReceivingStatusLookup(lambda: SqlAlchemyReceivingUnitOfWork(sessions)),
+        )
+    except (IntegrityError, StaleDataError):
+        logging.warning("Procurement line changed during the receipt stage sync; retrying next tick")
     # OwnerTick.gs notifyInitiators_: status changes of procurement lines → their initiators.
     try:
         done += notify_initiators(moscow_now(), SqlAlchemyProcurementUnitOfWork(sessions))

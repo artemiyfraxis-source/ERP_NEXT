@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, or_, select, text
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, or_, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.identity import Actor
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
+from .application import StoredReceivingFile
 from .domain import ReceivingLine, ReceivingStatus
 
 
@@ -254,6 +255,45 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
     )
 
 
+class ReceivingFileRow(Base):
+    """Файл УПД/М-15 или документа качества строки приёмки (в SUPPLYMAP — файл на Диске по ссылке)."""
+
+    __tablename__ = "receiving_files"
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    receiving_line_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("receiving_lines.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SqlAlchemyReceivingFileRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, stored: StoredReceivingFile, content: bytes) -> None:
+        self.session.add(ReceivingFileRow(
+            id=stored.id, receiving_line_id=stored.receiving_line_id, kind=stored.kind,
+            file_name=stored.file_name, content_type=stored.content_type, size=stored.size,
+            content=content, uploaded_by=stored.uploaded_by, uploaded_at=stored.uploaded_at,
+        ))
+
+    def get(self, file_id: UUID) -> tuple[StoredReceivingFile, bytes] | None:
+        row = self.session.get(ReceivingFileRow, file_id)
+        if row is None:
+            return None
+        return StoredReceivingFile(
+            id=row.id, receiving_line_id=row.receiving_line_id, kind=row.kind, file_name=row.file_name,
+            content_type=row.content_type, size=row.size, uploaded_by=row.uploaded_by,
+            uploaded_at=row.uploaded_at,
+        ), row.content
+
+
 class SqlAlchemyReceivingRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -319,6 +359,20 @@ class SqlAlchemyReceivingRepository:
         )
         return [_domain(row) for row in rows]
 
+    def statuses_by_procurement_line(self, procurement_line_ids) -> dict[UUID, list[str]]:
+        """Every delivery row of the given procurement lines — live, batch `-ПN` and archived — as statuses."""
+        ids = list(procurement_line_ids)
+        statuses: dict[UUID, list[str]] = {}
+        for start in range(0, len(ids), 500):
+            rows = self.session.execute(
+                select(ReceivingLineRow.procurement_line_id, ReceivingLineRow.status).where(
+                    ReceivingLineRow.procurement_line_id.in_(ids[start:start + 500])
+                )
+            )
+            for procurement_line_id, status in rows:
+                statuses.setdefault(procurement_line_id, []).append(status)
+        return statuses
+
     def by_status(self, status: ReceivingStatus, limit: int = 500) -> list[ReceivingLine]:
         rows = self.session.scalars(
             select(ReceivingLineRow)
@@ -378,6 +432,7 @@ class SqlAlchemyReceivingUnitOfWork:
         self.committed = False
         self.session = self.session_factory()
         self.receiving = SqlAlchemyReceivingRepository(self.session)
+        self.files = SqlAlchemyReceivingFileRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         return self

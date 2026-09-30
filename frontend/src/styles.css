@@ -638,6 +638,8 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .data-table tr.clickable { cursor: pointer; }
 .data-table tr.clickable:hover td, .data-table tr.open td { background: var(--accent); }
 .data-table tr.detail > td { white-space: normal; background: var(--background); }
+/* The card of an opened row: pinned left, as wide as the visible scroll box (DataTable sets --detail-width). */
+.data-table tr.detail > td > .detail-body { position: sticky; left: 0; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 24px); }
 .data-table tr.group-row td { background: var(--accent); font-size: 12px; }
 .data-table tr.group-row strong { display: inline; }
 .data-table .calendar-chips { margin-bottom: 0; }
@@ -674,6 +676,9 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 
 .inline-select { display:flex; gap:6px; align-items:center; font-size:13px; }
 .receiving-card .batches { width:100%; margin:10px 0; border-collapse:collapse; }
+.receiving-card .document-field { display: grid; gap: 4px; align-content: start; }
+.receiving-card .document-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.receiving-card .file-button { display: inline-flex; align-items: center; cursor: pointer; }
 .receiving-card .batches th, .receiving-card .batches td { padding:4px 6px; text-align:left; font-size:13px; }
 .receiving-card .batches input { width:100%; min-width:80px; }
 

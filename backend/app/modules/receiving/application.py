@@ -35,6 +35,7 @@ from .domain import (
     quarantine_notify_targets,
     NOTIFY_SUPPLY,
     NOTIFY_TECHNOLOGIST,
+    RECEIVING_FILE_PATH,
 )
 
 
@@ -83,6 +84,7 @@ class ReceivingRepository(Protocol):
     def waiting_inspected_by(self, day: date, limit: int = 200) -> Sequence[ReceivingLine]: ...
     def awaiting_placement(self, limit: int = 500) -> Sequence[ReceivingLine]: ...
     def by_status(self, status: ReceivingStatus, limit: int = 500) -> Sequence[ReceivingLine]: ...
+    def statuses_by_procurement_line(self, procurement_line_ids: Sequence[UUID]) -> dict[UUID, list[str]]: ...
     def all_grns(self) -> Sequence[str]: ...
     def legacy_ids_starting_with(self, prefix: str) -> Sequence[str]: ...
 
@@ -640,6 +642,97 @@ def unpack_receiving(command: UnpackCommand, uow: UnitOfWork) -> list[ReceivingL
         )
         uow.commit()
         return packages
+
+
+# УПД/М-15 and the quality document are kept in the ERP database; SUPPLYMAP put them in a Drive folder
+# without a cap (owner, 29.09: ≤ 20 МБ, as the shipment УПД). Types as the portal's file picker.
+RECEIVING_FILE_LIMIT = 20 * 1024 * 1024
+RECEIVING_FILE_KINDS = {"upd": "УПД", "quality": "Документ качества"}
+RECEIVING_FILE_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+
+
+@dataclass(frozen=True)
+class StoredReceivingFile:
+    id: UUID
+    receiving_line_id: UUID
+    kind: str
+    file_name: str
+    content_type: str
+    size: int
+    uploaded_by: str
+    uploaded_at: datetime
+
+
+class ReceivingFileRepository(Protocol):
+    def add(self, stored: StoredReceivingFile, content: bytes) -> None: ...
+    def get(self, file_id: UUID) -> tuple[StoredReceivingFile, bytes] | None: ...
+
+
+class ReceivingFileUnitOfWork(UnitOfWork, Protocol):
+    files: ReceivingFileRepository
+
+
+@dataclass(frozen=True)
+class AttachReceivingFileCommand:
+    line_id: UUID
+    kind: str
+    file_name: str
+    content_type: str
+    content: bytes
+    actor: Actor
+    now: datetime
+
+
+def receiving_file_url(file_id: UUID) -> str:
+    return f"{RECEIVING_FILE_PATH}{file_id}"
+
+
+def attach_receiving_file(command: AttachReceivingFileCommand, uow: ReceivingFileUnitOfWork) -> StoredReceivingFile:
+    """Portal «Документ УПД/М-15 (файл)»: the scan goes to the ERP storage and its link fills the ВК form.
+
+    The line itself is not changed here — the link lands on it with the inspection, as SUPPLYMAP wrote the
+    Drive link with `portalSubmitReceive`; a file picked and then not used stays only in the audit."""
+    label = RECEIVING_FILE_KINDS.get(command.kind)
+    if label is None:
+        raise ReceivingValidationError("Неизвестный вид документа")
+    if not command.content:
+        raise ReceivingValidationError("Файл не передан")
+    if len(command.content) > RECEIVING_FILE_LIMIT:
+        raise ReceivingValidationError(f"{label}: файл больше 20 МБ")
+    original = str(command.file_name or "").strip()
+    extension = original[original.rfind("."):].lower() if "." in original else ""
+    if extension not in RECEIVING_FILE_EXTENSIONS:
+        raise ReceivingValidationError(f"{label}: нужен PDF или фото JPG/PNG")
+    with uow:
+        line = uow.receiving.get(command.line_id)
+        if line is None:
+            raise KeyError("Строка приёмки не найдена")
+        if line.status is ReceivingStatus.VK_ARCHIVE:
+            raise ReceivingValidationError("Строка в «Архив ВК» — документы прикладываются к её ревизии")
+        name = " ".join(part for part in (label, line.order_number, line.legacy_id) if part) + extension
+        stored = StoredReceivingFile(
+            id=uuid4(),
+            receiving_line_id=line.id,
+            kind=command.kind,
+            file_name=name,
+            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            size=len(command.content),
+            uploaded_by=command.actor.name,
+            uploaded_at=command.now,
+        )
+        uow.files.add(stored, command.content)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=line.id,
+                event_type="receiving.file_attached",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={"legacy_id": line.legacy_id, "kind": command.kind, "file_id": str(stored.id), "name": name},
+            )
+        )
+        uow.commit()
+        return stored
 
 
 def open_vk_revision(command: OpenVkRevisionCommand, uow: UnitOfWork) -> tuple[ReceivingLine, ReceivingLine]:

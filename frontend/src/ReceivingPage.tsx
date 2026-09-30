@@ -3,6 +3,7 @@ import { receivingApi, type ReceivingLine } from "./api";
 import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import { openPrintSheet } from "./print";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
+import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 
 const MANUAL_CHECKS = [
   "Механическое повреждение / брак",
@@ -11,7 +12,7 @@ const MANUAL_CHECKS = [
 
 const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "legacy_id", title: "System ID", value: (line) => line.legacy_id },
-  { key: "name", title: "Наименование", value: (line) => [line.article, line.name].filter(Boolean).join(" · "), wrap: true },
+  { key: "name", title: "Наименование", value: (line) => itemTitle(line), wrap: true },
   { key: "supplier", title: "Поставщик", value: (line) => line.supplier, filter: true },
   { key: "order", title: "№ заказа", value: (line) => line.order_number ?? "" },
   { key: "expected", title: "Ожид. дата", value: (line) => line.expected_arrival ?? "" },
@@ -26,6 +27,71 @@ const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "fact", title: "Факт", value: (line) => line.fact_quantity ?? "", numeric: true, hidden: true },
   { key: "verdict", title: "Вердикт", value: (line) => line.verdict ?? "", filter: true, hidden: true },
 ];
+
+/** Артикул · наименование; without a design article the order carries the name in both — show it once. */
+function itemTitle(line: ReceivingLine) {
+  return [...new Set([line.article, line.name].map((value) => (value ?? "").trim()).filter(Boolean))].join(" · ");
+}
+
+function readBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** SUPPLYMAP «Документ УПД/М-15 (файл)»: the scan goes to the ERP storage, its link fills the field.
+ *  A link to a document kept elsewhere can still be typed by hand. */
+function DocumentField({ lineId, kind, label, value, required, disabled, hint, onChange }: {
+  lineId: string;
+  kind: "upd" | "quality";
+  label: string;
+  value: string;
+  required?: boolean;
+  disabled: boolean;
+  hint?: string;
+  onChange: (value: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+
+  async function upload(file: File) {
+    setBusy(true);
+    setNote("");
+    setError("");
+    try {
+      const result = await receivingApi.uploadFile(lineId, kind, {
+        name: file.name, type: file.type || "application/octet-stream", base64: await readBase64(file),
+      });
+      onChange(result.url);
+      setNote(result.file_name);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Файл не загружен");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="document-field">
+      <label>{label}{required ? " *" : ""}
+        <input type="text" inputMode="url" placeholder="Файл или ссылка" required={required} value={value} onChange={(event) => { setNote(""); onChange(event.target.value); }} />
+      </label>
+      <div className="document-actions">
+        <label className="secondary small file-button">{busy ? "Загружаем…" : "Файл PDF/фото"}
+          <input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden disabled={disabled || busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(file); }} />
+        </label>
+        {value.trim() && <a href={value.trim()} target="_blank" rel="noreferrer">открыть</a>}
+        {note && <small className="hint">{note}</small>}
+      </div>
+      {!value.trim() && hint && <small className="hint">{hint}</small>}
+      {error && <small className="danger-text" role="alert">{error}</small>}
+    </div>
+  );
+}
 
 const PRESETS: DataPreset<ReceivingLine>[] = [
   { label: "В пути", test: (line) => line.status === "В пути" },
@@ -254,6 +320,7 @@ function ReceivingCard({
   // МАССА 1 ШТ: any one of 1/10/100 pieces; the server prefills the one it was likely weighed with.
   const [mass, setMass] = useState(line.mass_fields ?? { mass_1: "", mass_10: "", mass_100: "" });
   const [location, setLocation] = useState(line.storage_location ?? "");
+  const placeHint = usePlaceHint(line.warehouse, location);
 
   function submitInspection(event: FormEvent) {
     event.preventDefault();
@@ -309,7 +376,7 @@ function ReceivingCard({
   return (
     <article className="panel receiving-card">
       <div className="procurement-title">
-        <div><strong>{line.legacy_id} · {line.article}</strong><small>{line.name ? `${line.name} · ` : ""}{line.supplier} · заказано {line.ordered_quantity} {line.unit} · {line.warehouse}</small></div>
+        <div><strong>{line.legacy_id} · {itemTitle(line)}</strong><small>{line.supplier} · заказано {line.ordered_quantity} {line.unit} · {line.warehouse}</small></div>
         <span className="status">{line.status}</span>
       </div>
       {line.nonconformities.length > 0 && <p className="nonconformity">{line.nonconformities.join(" · ")}</p>}
@@ -319,6 +386,7 @@ function ReceivingCard({
       {inspectable && (
         <form onSubmit={submitInspection}>
           <div className="facts-grid">
+            <DocumentField lineId={line.id} kind="upd" label="Документ УПД/М-15" value={shippingDocument} disabled={disabled} hint="Приложите скан первым делом. Без УПД позиция уйдёт в «Ожидание» с несоответствием документов." onChange={setShippingDocument} />
             <label>№ УПД/М-15<input value={documentNumber} onChange={(event) => setDocumentNumber(event.target.value)} /></label>
             <label>Дата УПД/М-15<input type="date" required={historical} value={documentDate} onChange={(event) => setDocumentDate(event.target.value)} /></label>
             <label className="wide">Наименование по УПД<input value={documentName} onChange={(event) => setDocumentName(event.target.value)} /></label>
@@ -338,10 +406,11 @@ function ReceivingCard({
             <label title="Вес ОДНОЙ штуки. Для крупного: разъём, катушка, корпус.">Масса 1 шт, г<input inputMode="decimal" value={mass.mass_1} onChange={(event) => setMass((current) => ({ ...current, mass_1: event.target.value }))} /></label>
             <label title="Вес ДЕСЯТИ штук — система поделит на 10. Клеммы, наконечники, крепёж.">Масса 10 шт, г<input inputMode="decimal" value={mass.mass_10} onChange={(event) => setMass((current) => ({ ...current, mass_10: event.target.value }))} /></label>
             <label title="Вес СТА штук — самый точный способ для мелочи. Хватит любого ОДНОГО из трёх полей.">Масса 100 шт, г<input inputMode="decimal" value={mass.mass_100} onChange={(event) => setMass((current) => ({ ...current, mass_100: event.target.value }))} /></label>
-            <label>Ссылка на УПД/М-15<input type="url" required value={shippingDocument} onChange={(event) => setShippingDocument(event.target.value)} /></label>
-            <label>Документ качества{line.quality_document_required ? " *" : ""}<input type="url" required={line.quality_document_required} value={qualityDocument} onChange={(event) => setQualityDocument(event.target.value)} /></label>
+            <DocumentField lineId={line.id} kind="quality" label="Документ качества" value={qualityDocument} required={line.quality_document_required} disabled={disabled} onChange={setQualityDocument} />
             <label>Решение<select value={disposition} onChange={(event) => setDisposition(event.target.value)}><option value="">Ещё не принято</option><option>Изолятор</option><option>Использование по разрешению</option><option>Возврат поставщику</option></select></label>
-            <label>Идентификатор ГРН<select value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">Автоматически</option><option>CSM</option><option>PPM</option></select></label>
+            {!line.grn && (line.grn_prefix === null
+              ? <label title="Назначение не распознано — ГРН получит выбранный идентификатор">Идентификатор ГРН *<select required value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">— выберите —</option><option>CSM</option><option>PPM</option></select></label>
+              : <label>Идентификатор ГРН<select value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">{line.grn_prefix ? `Автоматически: ${line.grn_prefix}` : "Автоматически"}</option><option>CSM</option><option>PPM</option></select></label>)}
             <label className="check-field"><input type="checkbox" checked={historical} onChange={(event) => setHistorical(event.target.checked)} />Историческая приёмка: срок годности сверяется с датой УПД</label>
             <label className="wide">Примечание<input value={note} onChange={(event) => setNote(event.target.value)} /></label>
             <label className="wide">Описание несоответствия<input value={description} onChange={(event) => setDescription(event.target.value)} /></label>
@@ -373,8 +442,9 @@ function ReceivingCard({
       )}
       {placeable && (
         <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onPlace(line, location).catch(() => undefined); }}>
-          <label>Место на складе<input required placeholder="1F4" value={location} onChange={(event) => setLocation(event.target.value)} /></label>
+          <label>Место на складе<input required placeholder="1F4" title={placeHint.busy ? BUSY_TITLE : undefined} value={location} onChange={(event) => setLocation(event.target.value)} /></label>
           <button className="primary small" disabled={disabled}>{busy ? "Передаём…" : "Передать на склад"}</button>
+          <PlaceHint {...placeHint} place={location} onPick={setLocation} />
         </form>
       )}
       {unpackable && (packages.length ? (

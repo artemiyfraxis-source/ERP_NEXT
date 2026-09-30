@@ -64,7 +64,7 @@ it("submits document URLs and optimistic version without browser-owned presence 
 
   render(<ReceivingPage />);
   await openRow();
-  fireEvent.change(await screen.findByLabelText("Ссылка на УПД/М-15"), {
+  fireEvent.change(await screen.findByLabelText("Документ УПД/М-15"), {
     target: { value: "https://files.test/upd.pdf" },
   });
   fireEvent.change(screen.getByLabelText("Серия изготовителя"), {
@@ -98,7 +98,7 @@ it("sends the УПД date for a historical receipt so the verdict uses it", asyn
 
   render(<ReceivingPage />);
   await openRow();
-  fireEvent.change(await screen.findByLabelText("Ссылка на УПД/М-15"), {
+  fireEvent.change(await screen.findByLabelText("Документ УПД/М-15"), {
     target: { value: "https://files.test/upd.pdf" },
   });
   expect(screen.getByLabelText("Дата УПД/М-15")).not.toBeRequired();
@@ -129,7 +129,7 @@ it("sends the weighed mass and prefills the sample it was weighed with on repeat
   await openRow();
   expect(await screen.findByLabelText("Масса 100 шт, г")).toHaveValue("0.123");
   fireEvent.change(screen.getByLabelText("Масса 10 шт, г"), { target: { value: "0,5" } });
-  fireEvent.change(screen.getByLabelText("Ссылка на УПД/М-15"), { target: { value: "https://files.test/upd.pdf" } });
+  fireEvent.change(screen.getByLabelText("Документ УПД/М-15"), { target: { value: "https://files.test/upd.pdf" } });
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
 
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
@@ -158,7 +158,7 @@ it("keeps persisted documents and manual defects during repeated control", async
 
   render(<ReceivingPage />);
   await openRow();
-  expect(await screen.findByLabelText("Ссылка на УПД/М-15")).toHaveValue(
+  expect(await screen.findByLabelText("Документ УПД/М-15")).toHaveValue(
     "https://files.test/upd.pdf",
   );
   expect(screen.getByLabelText("Документ качества")).toHaveValue(
@@ -309,7 +309,7 @@ it("RC-13: splits a delivery into manufacturer batches, each with its own quanti
 
   render(<ReceivingPage />);
   await openRow();
-  fireEvent.change(await screen.findByLabelText("Ссылка на УПД/М-15"), { target: { value: "https://files.test/upd.pdf" } });
+  fireEvent.change(await screen.findByLabelText("Документ УПД/М-15"), { target: { value: "https://files.test/upd.pdf" } });
   fireEvent.change(screen.getByLabelText("№ УПД/М-15"), { target: { value: "УПД-512" } });
   fireEvent.click(screen.getByRole("button", { name: "+ партия" }));
   fireEvent.change(screen.getByLabelText("Партия 1: по УПД"), { target: { value: "6" } });
@@ -387,4 +387,49 @@ it("RC-9: prints an issued act from the line card", async () => {
   await openRow();
   fireEvent.click(await screen.findByRole("button", { name: "Акт входного контроля № ВК-20260921-01" }));
   await waitFor(() => expect(requested).toEqual([`/api/receiving/${line.id}/acts/incoming`]));
+});
+
+it("stores the УПД scan in ERP and puts its link into the inspection", async () => {
+  let upload: Record<string, unknown> | undefined;
+  let inspection: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [{ ...line, article: "Разъём", grn_prefix: "FRX" }] });
+    if (path === "/api/receiving/files" && init?.method === "POST") {
+      upload = JSON.parse(String(init.body));
+      return json({ url: "/api/receiving/files/30000000-0000-0000-0000-000000000001", file_name: "УПД SM-20260921-01.pdf", size: 3 });
+    }
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      inspection = JSON.parse(String(init.body));
+      return json({ line });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  expect(await screen.findByText("Разъём")).toBeInTheDocument(); // артикул = наименование — один раз
+  await openRow();
+  expect(screen.getByText("Автоматически: FRX")).toBeInTheDocument();
+  const scan = new File(["pdf"], "скан.pdf", { type: "application/pdf" });
+  fireEvent.change(screen.getAllByText("Файл PDF/фото")[0].querySelector("input")!, { target: { files: [scan] } });
+
+  await waitFor(() => expect(screen.getByLabelText("Документ УПД/М-15")).toHaveValue("/api/receiving/files/30000000-0000-0000-0000-000000000001"));
+  expect(upload).toEqual(expect.objectContaining({ line_id: line.id, kind: "upd", file_name: "скан.pdf", content_type: "application/pdf" }));
+  fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
+  await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
+    shipping_document_url: "/api/receiving/files/30000000-0000-0000-0000-000000000001",
+  })));
+});
+
+it("asks for CSM or PPM up front when the purpose gives no ГРН prefix", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/receiving") return json({ lines: [{ ...line, grn_prefix: null }] });
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(<ReceivingPage />);
+  await openRow();
+  const prefix = await screen.findByLabelText("Идентификатор ГРН *");
+  expect(prefix).toBeRequired();
+  expect(prefix).toHaveValue("");
 });

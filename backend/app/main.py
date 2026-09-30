@@ -41,7 +41,7 @@ app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=1_048_576,
     path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
-                 "/api/procurement/invoice-files": 30 * 1_048_576},
+                 "/api/procurement/invoice-files": 30 * 1_048_576, "/api/receiving/files": 30 * 1_048_576},
 )
 app.add_middleware(IdentitySessionMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
