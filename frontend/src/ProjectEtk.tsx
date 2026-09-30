@@ -12,7 +12,8 @@ import {
 } from "./api";
 import { etkChips, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
-import { defectPicto, parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { defectArt } from "./etkDefectArt";
+import { parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
 
@@ -162,7 +163,7 @@ function EtkOperationCard({ operation, number, total, actions }: { operation: Et
       <span className="operation-number">{number}</span>
       <div>
         <h3>{etkTitle(operation)}{operation.connector && !/^\d+$/.test(operation.connector) && <span className="etk-conn"> — {operation.connector}</span>}</h3>
-        <small><code>{operation.code || "без кода"}</code> · операция {number} из {total}
+        <small>{opCode(operation) && <><code>{opCode(operation)}</code> · </>}операция {number} из {total}
           {operation.edited && <b className="tr-edited"> · правлена {operation.edited.at}{operation.edited.by ? ` · ${operation.edited.by}` : ""}</b>}</small>
       </div>
       {actions}
@@ -188,7 +189,7 @@ function EtkOperationCard({ operation, number, total, actions }: { operation: Et
       <ol className="etk-steps">{operation.card.steps.map((step, index) =>
         <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small>Допуск: {step.tolerance}</small>}</li>
       )}</ol></section> : null}
-    {operation.card?.defects && <DefectsView text={operation.card.defects} number={next()} />}
+    {operation.card?.defects && <DefectsView text={operation.card.defects} code={operation.code || ""} number={next()} />}
     {(figure || (housing && pinned)) && <section className="etk-sec" aria-label="Эскиз">
       <h4><span className="etk-sec-n">{next()}</span>Эскиз</h4>
       {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
@@ -214,8 +215,9 @@ function SolderPanel({ mode }: { mode: SolderMode }) {
   </div>;
 }
 
-/** Типовые дефекты карточкой с пиктограммой на каждый дефект (в Google — сплошной текст). */
-function DefectsView({ text, number }: { text: string; number: number }) {
+/** Типовые дефекты карточками: на каждый дефект рисунок «Норма | Брак» из общей библиотеки (в Google — сплошной
+ *  текст). Рисунок выбирается при показе по названию дефекта и коду операции. */
+function DefectsView({ text, code, number }: { text: string; code: string; number: number }) {
   const parsed = parseDefects(text);
   const count = parsed.groups.reduce((sum, group) => sum + group.items.length, 0);
   return <details className="etk-sec etk-defects" open aria-label="Типовые дефекты">
@@ -225,7 +227,7 @@ function DefectsView({ text, number }: { text: string; number: number }) {
       {parsed.groups.map((group, index) => <div className="etk-def-group" key={`${group.title}:${index}`}>
         {group.title && <div className="tr-sec-h">{group.title}</div>}
         <div className="etk-def-grid">{group.items.map((item, position) => <div className="etk-def" key={`${item.name}:${position}`}>
-          <span className="etk-def-pic" dangerouslySetInnerHTML={{ __html: defectPicto(item.kind) }} />
+          <span className="etk-def-pic" dangerouslySetInnerHTML={{ __html: defectArt(item.name, item.text, code) }} />
           <div><b>{item.name}</b><small>{item.text}</small></div>
         </div>)}</div>
       </div>)}
@@ -236,6 +238,18 @@ function DefectsView({ text, number }: { text: string; number: number }) {
 /** Same key as backend project_cards.operation_key: code::connector::side. */
 function etkOperationKey(operation: EtkOperation): string {
   return `${String(operation.code ?? "").trim()}::${String(operation.connector ?? "").trim()}::${String(operation.side ?? "").trim()}`;
+}
+
+/** Вторая строка пункта маршрута: код карты операции и сторона/разъём; номер разъёма без букв не показываем. */
+function navSub(operation: EtkOperation): string {
+  const connector = String(operation.connector || "").trim();
+  return [opCode(operation), /^\d+$/.test(connector) ? "" : connector].filter(Boolean).join(" · ");
+}
+
+/** Код карты операции; «БЕЗ КОДА» из старых ТК — это пустой код. */
+function opCode(operation: EtkOperation): string {
+  const code = String(operation.code || "").trim();
+  return /^без кода$/i.test(code) ? "" : code;
 }
 
 function etkTitle(operation: EtkOperation): string {
@@ -303,7 +317,7 @@ function EtkView({ card, canEdit, onSaved }: { card: ProjectTechcard; canEdit: b
     <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
       <button key={`${etkOperationKey(item)}:${position}`} className={position === index ? "on" : ""} onClick={() => { setSelected(position); setEditing(false); }}>
         <span className="etk-no">{String(item.position || position + 1).padStart(2, "0")}</span>
-        <span>{etkTitle(item)}{item.edited ? " ✏️" : ""}{item.connector && <small>{item.connector}</small>}</span>
+        <span>{etkTitle(item)}{item.edited ? " ✏️" : ""}{navSub(item) && <small>{navSub(item)}</small>}</span>
       </button>)}
     </nav>
     <div className="etk-main">

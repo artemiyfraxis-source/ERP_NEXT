@@ -1028,10 +1028,11 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .etk-defects:not([open]) > summary h4::after { content: "▸"; }
 .etk-def-intro { display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 11.5px; }
 .etk-def-group { display: grid; gap: 6px; margin-bottom: 10px; }
-.etk-def-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
-.etk-def { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid #f3c7c3; border-left: 3px solid #d93025; border-radius: 0 8px 8px 0; background: #fffafa; }
-.etk-def-pic { flex: 0 0 96px; line-height: 0; }
-.etk-def-pic svg { width: 96px; height: 58px; border-radius: 6px; background: #fff; }
+.etk-def-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
+.etk-def { display: grid; gap: 6px; align-content: start; padding: 8px 10px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.etk-def-pic { line-height: 0; }
+.etk-def-pic > svg { width: 100%; max-width: 460px; height: auto; }
+.etk-def-pic > svg[data-scene="generic"] { width: 64px; }
 .etk-def b { display: block; font-size: 12.5px; }
 .etk-def small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--muted-foreground); }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }

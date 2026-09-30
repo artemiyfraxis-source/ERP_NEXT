@@ -6,18 +6,21 @@ description: Mandatory rules and procedure for creating or changing ANY ERP_NEXT
 # ERP_NEXT screens — rules of this production
 
 The owner runs a cable-assembly shop. His yardstick is Google SUPPLYMAP: «твоя задача делать лучше, а не
-хуже». Every screen is judged by a fitter, a master, a technologist or a buyer who must read it at a glance
+хуже». **Google SUPPLYMAP is the reference for behaviour and block order only**, not for the look: do not copy
+Google's visuals (owner, 2026-09-30: «не тяни дизайн из гугла … придерживайся общего стиля … можно лучше»).
+Visuals follow the ERP's own style (section 5) and should read better than the sheet. Every screen is judged by a fitter, a master, a technologist or a buyer who must read it at a glance
 on a 27" monitor (2560 px) or a 12.7" tablet (~1400 px, touch). Generic design advice
 (`design-critique`) applies on top; where it conflicts, this file wins. `frontend-design` is for
 marketing pages — do not use it here.
 
 ## 1. Words on the screen
 
-- **Russian only.** No English identifiers, type codes or internal ids in visible text: not `cutWireStrip`,
-  `insTerm`, `PRS_TERMINAL_auto`, `CUT_WIRE+1crimp`, not «БЕЗ КОДА», not `undefined/null/NaN`.
-  An operation is shown by its Russian name («Резка с разделкой», «Опрессовка терминалов»). A library code
-  may appear only as a small grey secondary tag where the technologist needs it (ETK header, template
-  library), never as the title, never in a list a fitter reads, and never a placeholder when it is empty.
+- **Russian only.** No English identifiers, type codes or internal ids as a title or label: not `cutWireStrip`,
+  `insTerm`, not «БЕЗ КОДА», not `undefined/null/NaN`.
+  An operation is shown by its Russian name («Резка с разделкой», «Опрессовка терминалов»). The operation-card
+  code (`CUT_COAX+2strip`) is allowed as a small grey second line under that name (ETK route list, ETK header,
+  template library — owner asked for it 2026-09-30); it is forbidden only instead of the name, and an empty
+  code shows nothing (never a placeholder). `shoot.mjs` flags such codes — justify them in the reply.
 - Missing name → derive it (template title → category map → operation-card name), do not fall back to the
   type id. Backend source of truth: `production/launchable.py` `OPERATION_TYPE_NAMES` / `stage_name()` /
   `operation_code()` (the master screen already uses them, #128). Frontend has only partial copies
@@ -53,7 +56,7 @@ ISO `2026-10-01`. When adding a date display, extract a shared helper instead of
 - No frame inside a frame inside a frame. No column of identical buttons (14 × «Назначить»): select, then act
   once, or put the action in the row's hover/menu.
 - Blocks, cards, tabs keep the order and names of the Google screen unless there is a reason, written in
-  `docs/migration/RUNLOG.md`.
+  `docs/migration/RUNLOG.md`. Their look is the ERP's own (tokens, cards, `DataTable`), not Google's.
 - Tablet: touch targets ≥40 px (`pointer: coarse`), sidebar behind «☰», nothing scrolls sideways except a
   wide table inside its own wrapper.
 
@@ -79,7 +82,9 @@ A new colour, radius or font size is a token in `:root`, not a literal in one co
 2. **Оснастка** in three sections: Инструмент · Оборудование · Расходники. For soldering (пайка/лужение) the
    жало and the температурный режим are mandatory lines; if missing in data, show «не задано» in red.
 3. **Ход операции** — numbered steps; КОНТРОЛЬ steps highlighted with their допуск.
-4. **Типовые дефекты** — each with a picture (SVG/sketch) where one exists, name, cause, what to do.
+4. **Типовые дефекты** — each with a «Норма | Брак» picture from the shared library `etkDefectArt.ts` (picked at
+   render time by defect name + operation code, so issued ETKs need no reissue), name, cause. A defect wording
+   that falls to the «!» sign gets a rule (and a scene if none fits) in that library, never a per-ETK picture.
 5. **Эскиз** операции.
 6. **Результат** — полуфабрикат (name, qty, unit) and расчётное время.
 Parameter chips (аппликатор, высота обжима, отрыв, время) stay in the header. Print (`etkPrint.ts`) follows
@@ -89,7 +94,8 @@ the same order.
 
 1. **Reference.** The owner's screenshot, or the Google screen from SUPPLYMAP code (`*.html` in SUPPLYMAP
    root; its harness `SUPPLYMAP/_local/tooling/harness/shoot.mjs` renders the portal with a mocked backend).
-   Write down in 3–5 lines what the Google screen does right and what we do better.
+   Take from it the behaviour and block order, not the look. Write down in 3–5 lines what it does right and
+   what we do better.
 2. **Demo up (cloud/Linux):** `bash scripts/demo/run-demo.sh` → API + built frontend on
    http://127.0.0.1:8021 over `backend/demo.db` with seeded data (Windows: `scripts/demo/run-demo.ps1`).
    After a frontend edit: `cd frontend && npx vite build`, the API serves the new build.
