@@ -58,6 +58,10 @@ class WorkShift:
 
 DEFAULT_SHIFT = WorkShift()
 
+# Площадки без нормирования (владелец, 30.09: ЖУК «работают не нормированно… механизм позже придумаем»): их люди
+# не попадают в загрузку, почасовое назначение и автоплан; работа отдаётся площадке целиком.
+UNPLANNED_SITES = frozenset({"ЖУК"})
+
 
 @dataclass(frozen=True)
 class OperatorSkill:
@@ -160,6 +164,8 @@ class ProductionTask:
     status: ProductionStatus
     launched_by: str
     operations: tuple[ProductionOperation, ...]
+    # Площадка, которой задание отдано целиком (владелец, 30.09: ЖУК работает не нормированно — «отдать все в жук»).
+    handed_to: str = ""
 
     @classmethod
     def create(
@@ -220,6 +226,8 @@ class ProductionTask:
     ) -> ProductionTask:
         if self.status is ProductionStatus.CANCELLED:
             raise ProductionValidationError(f"Задание {self.number} отменено — назначать нельзя")
+        if self.handed_to:
+            raise ProductionValidationError(f"Задание {self.number} отдано в {self.handed_to} — по людям не расписывается")
         operation = self.operation(operation_id)
         assigned = operation.assign(operator_ids, plan, assigned_by)
         return replace(
@@ -235,6 +243,8 @@ class ProductionTask:
     ) -> ProductionTask:
         if self.status is ProductionStatus.CANCELLED:
             raise ProductionValidationError(f"Задание {self.number} отменено — планировать нельзя")
+        if self.handed_to:
+            raise ProductionValidationError(f"Задание {self.number} отдано в {self.handed_to} — по людям не расписывается")
         by_operation = {item[0]: item[1:] for item in assignments}
         if len(by_operation) != len(assignments) or set(by_operation) != {item.id for item in self.operations}:
             raise ProductionValidationError("Автоплан должен содержать все операции задания")
@@ -255,6 +265,21 @@ class ProductionTask:
                 f"Задание {self.number} уже в статусе «{target.value}»"
             )
         return replace(self, status=target, version=self.version + 1)
+
+    def hand_over(self, site: str) -> ProductionTask:
+        """Отдать задание площадке целиком ("" — вернуть на распределение по людям). Назначения и план по часам
+        снимаются: площадка без нормирования раскладывает работу сама."""
+        site = str(site or "").strip()
+        if site and site not in UNPLANNED_SITES:
+            raise ProductionValidationError(f"Отдать целиком можно только в {', '.join(sorted(UNPLANNED_SITES))}")
+        if self.status is ProductionStatus.CANCELLED:
+            raise ProductionValidationError(f"Задание {self.number} отменено")
+        if site == self.handed_to:
+            raise ProductionValidationError(
+                f"Задание {self.number} уже в {site}" if site else f"Задание {self.number} и так распределяется по людям"
+            )
+        operations = tuple(replace(item, operator_ids=(), planned_start=None, planned_finish=None) for item in self.operations) if site else self.operations
+        return replace(self, handed_to=site, operations=operations, version=self.version + 1)
 
 
 def operation_duration_seconds(

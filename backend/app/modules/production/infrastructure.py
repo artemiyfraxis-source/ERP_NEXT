@@ -73,6 +73,7 @@ class ProductionTaskRow(Base):
     deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     launched_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    handed_to: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -402,7 +403,7 @@ class SqlAlchemyProductionRepository:
             source_fingerprint=row.source_fingerprint, version=row.version, created_at=row.created_at,
             project=row.project, item=row.item, name=row.name, quantity=row.quantity,
             fulfillment_request_id=row.fulfillment_request_id, deadline=row.deadline,
-            status=ProductionStatus(row.status), launched_by=row.launched_by,
+            status=ProductionStatus(row.status), launched_by=row.launched_by, handed_to=row.handed_to or "",
             operations=tuple(ProductionOperation(
                 id=operation.id, position=operation.position, code=operation.code,
                 stage=operation.stage, description=operation.description,
@@ -464,6 +465,7 @@ class SqlAlchemyProductionRepository:
         row.deadline = task.deadline
         row.status = task.status.value
         row.launched_by = task.launched_by
+        row.handed_to = task.handed_to
         self.session.flush()
         existing = {item.id: item for item in self.session.scalars(select(ProductionOperationRow).where(ProductionOperationRow.task_id == task.id))}
         for operation in task.operations:

@@ -9,6 +9,7 @@ from app.modules.production.domain import (
     ProductionOperation,
     ProductionStatus,
     ProductionTask,
+    PlanResult,
     ProductionValidationError,
     add_work_seconds,
     operation_duration_seconds,
@@ -102,3 +103,21 @@ def test_cancel_preserves_operations_and_restore_only_changes_task_status():
     assert cancelled.operations == created.operations
     assert restored.status is ProductionStatus.RUNNING
     assert restored.operations == created.operations
+
+
+def test_hand_over_to_unplanned_site_clears_hours_and_blocks_assignment():
+    launched = task(operation())
+    first = launched.operations[0]
+    planned = launched.assign(first.id, (OPERATOR,), PlanResult(datetime(2026, 9, 22, 9), datetime(2026, 9, 22, 10), ()), "Мастер")
+    handed = planned.hand_over("ЖУК")
+    assert handed.handed_to == "ЖУК"
+    assert handed.version == planned.version + 1
+    assert all(not item.operator_ids and item.planned_start is None for item in handed.operations)
+    with pytest.raises(ProductionValidationError, match="отдано в ЖУК"):
+        handed.assign(first.id, (OPERATOR,), PlanResult(datetime(2026, 9, 22, 9), datetime(2026, 9, 22, 10), ()), "Мастер")
+    with pytest.raises(ProductionValidationError, match="уже в ЖУК"):
+        handed.hand_over("ЖУК")
+    with pytest.raises(ProductionValidationError, match="только в ЖУК"):
+        planned.hand_over("ЦАР")
+    back = handed.hand_over("")
+    assert back.handed_to == ""
