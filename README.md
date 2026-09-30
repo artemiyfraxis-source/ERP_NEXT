@@ -264,10 +264,15 @@ cd backend; .\.venv\Scripts\python.exe ..\scripts\projects_import.py load 708К.
 Всё вместе на чистой базе (справочники, библиотека техкарт, склад; проектов нет):
 `powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key <ключ.json> -DbFile real.db`.
 Обновить такую копию до свежего main без потери данных (копия базы в `.bak`, миграции, сборка сайта,
-перезапуск API на 8022): `powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1`.
-Автообновление (задача планировщика Windows при входе, без окон; раз в 150 с смотрит main и вызывает
-`update-local.ps1`, после перезагрузки поднимает ERP): `powershell -ExecutionPolicy Bypass -File scripts\auto-update-local.ps1 -Install`,
-выключить — `-Uninstall`, журнал `backend\auto-update.log`.
+перезапуск API на 8022): `powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1` (уже обновлено — выход
+без пересборки, `-Force` — всё равно; `-StartOnly` — только поднять ERP). Любой сбой — строка `СБОЙ: <причина>`.
+Автообновление (задача планировщика Windows при входе, без окон): задача — только таймер, раз в 150 с запускает
+свежим процессом `auto-update-local.ps1 -Tick` с диска, так что логика проверки обновляется вместе с кодом. Проверка:
+новый main → `update-local.ps1`, ERP не отвечает → `-StartOnly`. Сбойная версия повторяется ещё дважды через 10 мин;
+причина и хвост вывода — в `backend\auto-update.log` и в `frontend\dist\update-status.json`, который ERP показывает
+плашкой «Обновление не установилось» (всем, кроме монтажников); полный вывод — `backend\update-last.log`.
+Включить или починить одной строкой (останавливает прежний цикл, обновляет на глазах, ставит задачу, печатает хвост
+журнала): `powershell -ExecutionPolicy Bypass -File scripts\auto-update-local.ps1 -Install`, выключить — `-Uninstall`.
 
 ### Техкарты по проектам
 

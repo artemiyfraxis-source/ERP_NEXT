@@ -93,3 +93,56 @@ export function UpdateBanner({ pollMs = POLL_MS, idleMs = IDLE_MS }: { pollMs?: 
     </div>
   );
 }
+
+// A failed local auto-update (scripts/auto-update-local.ps1) writes /update-status.json next to the site: the ERP
+// keeps running the previous version, and without this the failure was silent. Office users see why and the tail
+// of the log, so a screenshot is enough to fix it; the next successful update replaces the site and the file.
+export type UpdateStatus = {
+  ok: boolean;
+  kind?: "update" | "start" | "fetch";
+  at?: string;
+  reason?: string;
+  retry?: string | null;
+  log?: string[] | string;
+};
+
+export const STATUS_URL = "/update-status.json";
+
+async function fetchStatus(): Promise<UpdateStatus | null> {
+  try {
+    const response = await fetch(STATUS_URL, { cache: "no-store" });
+    if (!response.ok) return null;
+    const body = (await response.json()) as UpdateStatus;
+    return body && body.ok === false ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+export function UpdateFailure({ pollMs = POLL_MS }: { pollMs?: number }) {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => void fetchStatus().then((next) => { if (!cancelled) setStatus(next); });
+    load();
+    const timer = window.setInterval(load, pollMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pollMs]);
+
+  if (!status) return null;
+  const lines = Array.isArray(status.log) ? status.log : status.log ? [status.log] : [];
+  const title = status.kind === "fetch" ? "Обновления не скачиваются" : "Обновление не установилось";
+  return (
+    <div className="error-banner update-failure" role="alert">
+      <div>
+        <strong>{title}{status.at ? ` ${status.at}` : ""}:</strong> {status.reason || "причина не записана"}
+        {status.retry && <span className="update-failure-retry"> · {status.retry}</span>}
+      </div>
+      {lines.length > 0 && <pre className="update-failure-log">{lines.join("\n")}</pre>}
+    </div>
+  );
+}

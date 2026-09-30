@@ -173,3 +173,23 @@ def test_an_empty_database_gets_the_mark_and_no_copy(tmp_path, monkeypatch):
     engine.dispose()
     assert mark["backup"] == "" and not any(mark["counts"].values())
     assert not path.with_name("fresh.db.before-projects-wipe.bak").exists()
+
+
+def test_the_summary_line_does_not_fail_the_wipe_on_a_non_utf8_pipe(tmp_path, monkeypatch):
+    """Автообновление из планировщика: вывод Python в трубу идёт в кодировке ANSI Windows. Строка итога с
+    кириллицей не должна валить миграцию (раньше UnicodeEncodeError откатывал снос, ERP оставалась прежней)."""
+    import io
+    import sys
+
+    pipe = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+    monkeypatch.setattr(sys, "stdout", pipe)
+    monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
+    path = tmp_path / "pipe.db"
+    command.upgrade(_config(path), WIPE)
+    pipe.flush()
+    assert "30.09" in pipe.buffer.getvalue().decode("ascii")
+    engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
+    with engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT COUNT(*) FROM operations_job_marks WHERE key = 'projects_wiped'")).scalar() == 1
+    engine.dispose()

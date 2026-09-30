@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { UpdateBanner } from "./UpdateBanner";
+import { UpdateBanner, UpdateFailure } from "./UpdateBanner";
 
 function serve(versions: Array<object | null>) {
   const queue = [...versions];
@@ -49,5 +49,54 @@ describe("UpdateBanner", () => {
     expect(reload).not.toHaveBeenCalled();
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
     expect(reload).toHaveBeenCalled();
+  });
+});
+
+describe("UpdateFailure", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows why the auto-update failed and the tail of its log", async () => {
+    const fetchMock = serve([{
+      ok: false, kind: "update", at: "30.09.2026 14:05", retry: "повтор в 14:15",
+      reason: "миграции базы: sqlite3.OperationalError: database is locked — база возвращена из копии",
+      log: ["== Останавливаю API на порту 8022", "sqlite3.OperationalError: database is locked"],
+    }]);
+    render(<UpdateFailure />);
+    expect(await screen.findByText("Обновление не установилось 30.09.2026 14:05:")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("database is locked — база возвращена из копии");
+    expect(screen.getByRole("alert")).toHaveTextContent("повтор в 14:15");
+    expect(screen.getByText(/== Останавливаю API на порту 8022/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/update-status.json", { cache: "no-store" });
+  });
+
+  it("says so when updates do not download at all", async () => {
+    serve([{ ok: false, kind: "fetch", reason: "обновления не скачиваются с GitHub больше 30 мин", log: "fatal: unable to access" }]);
+    render(<UpdateFailure />);
+    expect(await screen.findByText("Обновления не скачиваются:")).toBeInTheDocument();
+    expect(screen.getByText("fatal: unable to access")).toBeInTheDocument();
+  });
+
+  it("shows nothing when there is no failure file or the last update went fine", async () => {
+    const fetchMock = serve([null]);
+    const { unmount } = render(<UpdateFailure />);
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    unmount();
+    serve([{ ok: true }]);
+    render(<UpdateFailure />);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("appears on the next poll when an update fails while the page is open", async () => {
+    vi.useFakeTimers();
+    serve([null, { ok: false, reason: "обновление не собралось (npm ci: EPERM)" }]);
+    render(<UpdateFailure pollMs={1000} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(screen.queryByRole("alert")).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(screen.getByRole("alert")).toHaveTextContent("npm ci: EPERM");
+    vi.useRealTimers();
   });
 });

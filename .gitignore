@@ -7,6 +7,8 @@ backend/*.db
 backend/*.db.bak
 backend/*.db.version
 backend/*.pid
+backend/*.lock
+backend/auto-update.state.json
 backend/*.log
 backend/*.sqlite*
 frontend/dist/
