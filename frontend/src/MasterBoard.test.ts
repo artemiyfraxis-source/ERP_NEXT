@@ -55,6 +55,12 @@ describe("неделя монтажников: длинная операция �
     expect(slots[4].pause).toBe("обед до 13:30");
   });
 
+  it("показывает выбранную операцию в её часах, не считая занятостью (скрин владельца: «не выставилось»)", () => {
+    const slots = daySlots(installer, "2026-09-30", [task], shift, "op-1");
+    expect(slots.filter((slot) => slot.own).map((slot) => slot.start)).toEqual(["10:00", "11:00", "12:00", "13:00", "14:00"]);
+    expect(slots.every((slot) => slot.busy.length === 0)).toBe(true);
+  });
+
   it("по умолчанию добавляет нового монтажника к назначенным, а не вытесняет их", () => {
     // Операция целиком у одного: новому — половина, самому назначенному — его доля.
     expect(defaultPieces(task, operation)).toBe(1250);
