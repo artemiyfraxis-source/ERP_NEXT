@@ -1,14 +1,17 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   receivingApi,
+  requestsApi,
   warehouseApi,
   type WarehouseAddResult,
+  type WarehouseJournal,
   type WarehouseLot,
   type WarehouseLotPassport,
   type WarehouseManualItem,
   type WarehouseRackLayout,
   type WarehouseRowEdit,
 } from "./api";
+import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
@@ -51,7 +54,6 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "article", desc: false });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [panel, setPanel] = useState<"" | "types" | "import" | "journal" | "racks">("");
-  const [journalQuery, setJournalQuery] = useState("");
   const [assigned, setAssigned] = useState<WarehouseAddResult["assigned"]>([]);
   const [copied, setCopied] = useState("");
   // Type suggestions (SK-14): the dictionary + the canonical types already on the stock.
@@ -154,7 +156,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         }}>Выгрузить</button>
         <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>Загрузить правки</button>
         </>}
-        {admin && <button className="secondary compact" onClick={() => { setJournalQuery(""); setPanel((value) => value === "journal" ? "" : "journal"); }}>Журнал склада</button>}
+        {admin && <button className="secondary compact" onClick={() => setPanel((value) => value === "journal" ? "" : "journal")}>Журнал склада</button>}
         {!readOnly && <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>Лист перемещения</button>}
         <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
       </div>
@@ -181,7 +183,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       />}
       {panel === "import" && <StockImportPanel onClose={() => setPanel("")} onApplied={() => reload()} />}
       {panel === "racks" && <RackLayoutPanel onClose={() => setPanel("")} />}
-      {panel === "journal" && <StockJournalPanel key={journalQuery} initialQuery={journalQuery} onClose={() => setPanel("")} />}
+      {panel === "journal" && <StockJournalPanel onClose={() => setPanel("")} />}
       {assigned.length > 0 && <section className="panel" aria-label="Записано на склад">
         <div className="manual-stock-head"><h2>Записано на склад: {assigned.length}</h2><button type="button" className="link-button" onClick={() => { setAssigned([]); setCopied(""); }}>Закрыть</button></div>
         <p className="page-sub">Номера партий, присвоенные строкам. Слева — номер строки, как она стояла на экране.</p>
@@ -249,7 +251,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
             disabled={Boolean(busy) || loading}
             mutate={mutate}
             onMove={(item) => { setMoveLot(item); setMoveOpen(true); }}
-            onHistory={admin ? (grn) => { setJournalQuery(grn); setPanel("journal"); } : undefined}
+            history={admin}
             readOnly={readOnly}
           />)}</tbody>
         </table>
@@ -354,7 +356,7 @@ function quantity(lots: WarehouseLot[], field: "balance" | "available") {
   return String(Math.round(lots.reduce((sum, lot) => sum + Number(lot[field]), 0) * 1_000_000) / 1_000_000);
 }
 
-function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove, onHistory, readOnly }: {
+function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly }: {
   group: WarehouseGroup;
   expanded: Set<string>;
   toggle: (key: string) => void;
@@ -362,7 +364,7 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
   disabled: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   onMove: (lot: WarehouseLot) => void;
-  onHistory?: (grn: string) => void;
+  history: boolean;
   readOnly: boolean;
 }) {
   return <>
@@ -383,7 +385,7 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
           <td>{distinct(item.lots, "warehouse")}</td>
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={9}><div className="lot-cards">
-          {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} onHistory={onHistory} readOnly={readOnly} />)}
+          {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} />)}
         </div></td></tr>}
       </Fragment>;
     })}
@@ -776,11 +778,12 @@ function rowChanges(lot: WarehouseLot, values: Record<RowEditField, string>): Wa
   return changes;
 }
 
-function LotRowEditForm({ lot, disabled, mutate, onClose }: {
+function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
   lot: WarehouseLot;
   disabled: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   onClose: () => void;
+  onSaved: () => void;
 }) {
   const [values, setValues] = useState(() => rowValues(lot));
   const [notice, setNotice] = useState("");
@@ -794,11 +797,14 @@ function LotRowEditForm({ lot, disabled, mutate, onClose }: {
       setNotice("Изменений нет.");
       return;
     }
-    void mutate(lot.id, () => warehouseApi.editRow(lot.id, lot.version, changes)).then(onClose, () => undefined);
+    setNotice("");
+    mutate(lot.id, () => warehouseApi.editRow(lot.id, lot.version, changes))
+      .then(onSaved, (reason) => setNotice(dialogError(reason, "Строка не сохранена")));
   }
 
-  return <form className="inline-action row-edit-form" aria-label="Правка строки" onSubmit={submit}>
+  return <form className="dialog-form" aria-label="Правка строки" onSubmit={submit}>
     <p className="page-sub">ГРН {lot.grn}{lot.package ? ` · пакет ${lot.package}` : ""} · {lot.warehouse} — ключ строки, не правится. Пустое число — не трогать.</p>
+    <div className="move-grid">
     {ROW_EDIT_TEXT.map(([field, label]) => <label key={field}>{label}<input
       type={field === "expiry_date" ? "date" : "text"}
       list={field === "item_type" ? "warehouse-item-types" : undefined}
@@ -812,49 +818,228 @@ function LotRowEditForm({ lot, disabled, mutate, onClose }: {
       value={values[field]}
       onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
     /></label>)}
+    </div>
     <p className="page-sub" role="status">{notice || `Баланс станет: ${balance} ${lot.unit}`}</p>
-    <button className="primary small" disabled={disabled}>Сохранить строку</button>
-    <button type="button" className="link-button" onClick={onClose}>Отмена</button>
+    <div className="move-actions">
+      <button type="button" className="secondary" onClick={onClose}>Назад</button>
+      <button className="primary" disabled={disabled}>Сохранить строку</button>
+    </div>
   </form>;
 }
 
-function LotCard({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
+// SUPPLYMAP wh05Writeoff / wh05Return: the basis is picked from a list — it tells later whether the stock went to
+// production, was scrapped or recounted. A return basis starts with «Возврат» (return_reason on the server).
+const WRITEOFF_REASONS = ["Выдача в производство", "Выдача по заявке", "Брак", "Недостача", "Порча", "Инвентаризация"];
+const RETURN_REASONS = ["Возврат: не израсходовано", "Возврат: ошибочное списание", "Возврат: замена позиции", "Возврат: из брака (годное)"];
+
+/** Open projects for the «Назначение» / «Откуда» suggestions; a surname is still typed by hand. */
+function useProjectChoices() {
+  const [projects, setProjects] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    requestsApi.schema().then((schema) => { if (!cancelled) setProjects(Array.isArray(schema?.projects) ? schema.projects : []); }, () => undefined);
+    return () => { cancelled = true; };
+  }, []);
+  return projects;
+}
+
+/** One window for every lot action — the same overlay and panel as «Переместить». */
+function LotDialog({ title, lot, wide, onClose, children }: {
+  title: string;
   lot: WarehouseLot;
-  busy: boolean;
+  wide?: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
+  return createPortal(<div className="dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className={wide ? "panel move-dialog wide" : "panel move-dialog"} role="dialog" aria-label={title}>
+      <h2>{title}</h2>
+      <div className="move-lot" aria-label="Партия">
+        <strong>ГРН {lot.grn}{lot.package ? ` / пакет ${lot.package}` : ""}</strong>
+        <span>{lotLine(lot)}{Number(lot.written_off) > 0 ? ` · списано ${lot.written_off}` : ""}</span>
+      </div>
+      {children}
+    </div>
+  </div>, document.body);
+}
+
+function dialogError(reason: unknown, fallback: string) {
+  return reason instanceof Error ? reason.message : fallback;
+}
+
+function WriteoffDialog({ lot, disabled, mutate, onClose }: {
+  lot: WarehouseLot;
   disabled: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-  onMove: (lot: WarehouseLot) => void;
-  onHistory?: (grn: string) => void;
-  readOnly: boolean;
+  onClose: () => void;
 }) {
-  // One form at a time, as the buttons on a SUPPLYMAP partition card (− / + / ✎).
-  const [mode, setMode] = useState<"" | "writeoff" | "return" | "edit">("");
-  const toggle = (next: "writeoff" | "return" | "edit") => setMode((current) => current === next ? "" : next);
-  const [writeoffDate, setWriteoffDate] = useState(() => new Date().toLocaleDateString("sv-SE"));
+  const projects = useProjectChoices();
   const [quantity, setQuantity] = useState("");
+  const [reason, setReason] = useState(WRITEOFF_REASONS[0]);
   const [purpose, setPurpose] = useState("");
-  const [reason, setReason] = useState("Выдача");
+  const [date, setDate] = useState(() => new Date().toLocaleDateString("sv-SE"));
+  const [error, setError] = useState("");
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, purpose.trim(), reason, date || undefined))
+      .then(onClose, (reason) => setError(dialogError(reason, "Списание не выполнено")));
+  }
+
+  return <LotDialog title="Списать" lot={lot} onClose={onClose}>
+    <form className="dialog-form" aria-label="Списание" onSubmit={submit}>
+      <div className="move-grid two">
+        <label>Количество, {lot.unit || "шт"}<input aria-label="Количество" type="number" min="0.000001" step="any" required autoFocus placeholder={`остаток ${lot.balance}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+        <label>Основание<select aria-label="Основание" value={reason} onChange={(event) => setReason(event.target.value)}>{WRITEOFF_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
+        <label>Назначение<input aria-label="Назначение списания" list="writeoff-projects" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
+        <label>Дата<input aria-label="Дата списания" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+      </div>
+      <datalist id="writeoff-projects">{projects.map((item) => <option key={item} value={item} />)}</datalist>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="move-actions">
+        <button type="button" className="secondary" onClick={onClose}>Отмена</button>
+        <button className="primary" disabled={disabled}>Списать</button>
+      </div>
+    </form>
+  </LotDialog>;
+}
+
+function ReturnDialog({ lot, disabled, mutate, onClose }: {
+  lot: WarehouseLot;
+  disabled: boolean;
+  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+  onClose: () => void;
+}) {
+  const projects = useProjectChoices();
+  const [quantity, setQuantity] = useState("");
+  const [reason, setReason] = useState(RETURN_REASONS[0]);
+  const [source, setSource] = useState("");
+  const [error, setError] = useState("");
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    mutate(lot.id, () => warehouseApi.returnWriteOff(lot.id, lot.version, quantity, source.trim(), reason))
+      .then(onClose, (reason) => setError(dialogError(reason, "Возврат не выполнен")));
+  }
+
+  return <LotDialog title="Вернуть на склад" lot={lot} onClose={onClose}>
+    <form className="dialog-form" aria-label="Возврат на склад" onSubmit={submit}>
+      <div className="move-grid two">
+        <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={lot.written_off} step="any" required autoFocus placeholder={`не больше ${lot.written_off}`} title={`Списано ${lot.written_off} ${lot.unit}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+        <label>Основание<select aria-label="Основание возврата" value={reason} onChange={(event) => setReason(event.target.value)}>{RETURN_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
+        <label>Откуда<input aria-label="Откуда возврат" list="return-projects" placeholder="проект или фамилия" required pattern=".*\S.*" value={source} onChange={(event) => setSource(event.target.value)} /></label>
+      </div>
+      <datalist id="return-projects">{projects.map((item) => <option key={item} value={item} />)}</datalist>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="move-actions">
+        <button type="button" className="secondary" onClick={onClose}>Отмена</button>
+        <button className="primary" disabled={disabled}>Вернуть</button>
+      </div>
+    </form>
+  </LotDialog>;
+}
+
+function LotEditDialog({ lot, disabled, mutate, onClose }: {
+  lot: WarehouseLot;
+  disabled: boolean;
+  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+  onClose: () => void;
+}) {
   const [article, setArticle] = useState(lot.article);
   const [name, setName] = useState(lot.name);
   const [series, setSeries] = useState(lot.series);
   const [place, setPlace] = useState(lot.storage_location);
   const [editingRow, setEditingRow] = useState(false);
-  const [returnQuantity, setReturnQuantity] = useState("");
-  const [returnSource, setReturnSource] = useState("");
-  const [returnReason, setReturnReason] = useState("");
+  const [error, setError] = useState("");
+  const run = (operation: () => Promise<unknown>) => {
+    setError("");
+    mutate(lot.id, operation).then(onClose, (reason) => setError(dialogError(reason, "Правка не сохранена")));
+  };
+
+  return <LotDialog title="Правка" lot={lot} wide={editingRow} onClose={onClose}>
+    {editingRow ? <LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} onSaved={onClose} /> : <>
+      <form className="dialog-form" aria-label="Карточка партии" onSubmit={(event) => {
+        event.preventDefault();
+        run(() => warehouseApi.editIdentity(lot.id, lot.version, article.trim(), name.trim(), series.trim()));
+      }}>
+        <div className="move-grid three">
+          <label>Артикул<input required value={article} onChange={(event) => setArticle(event.target.value)} /></label>
+          <label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
+        </div>
+        <div className="move-actions"><button className="secondary" disabled={disabled}>Сохранить карточку</button></div>
+      </form>
+      <form className="dialog-form" aria-label="Место партии" onSubmit={(event) => {
+        event.preventDefault();
+        run(() => warehouseApi.correctLocation(lot.id, lot.version, place.trim()));
+      }}>
+        <div className="move-grid three">
+          <label>Место как есть<input aria-label="Место как есть" title="Ручная правка: любой текст (12C7, 12C7B, A-01…), пусто — без места" placeholder="без места" value={place} onChange={(event) => setPlace(event.target.value)} /></label>
+          <button className="secondary dialog-inline-action" disabled={disabled}>Записать место</button>
+        </div>
+      </form>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="move-actions">
+        <button type="button" className="link-button" disabled={disabled} onClick={() => setEditingRow(true)}>Править строку</button>
+        <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
+      </div>
+    </>}
+  </LotDialog>;
+}
+
+/** «История» партии (SUPPLYMAP openStock05Log(grn)): the stock journal of this ГРН and package, newest first. */
+function LotHistoryDialog({ lot, onClose }: { lot: WarehouseLot; onClose: () => void }) {
+  const [journal, setJournal] = useState<WarehouseJournal | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    warehouseApi.journal(lot.grn).then(
+      (loaded) => { if (!cancelled) setJournal(loaded); },
+      (reason) => { if (!cancelled) setError(dialogError(reason, "Не удалось загрузить историю")); },
+    );
+    return () => { cancelled = true; };
+  }, [lot.grn]);
+
+  const rows = (journal?.rows ?? []).filter((row) => {
+    const [grn, pkg = ""] = row.lot.split(" / ");
+    return grn.trim().toUpperCase() === lot.grn.toUpperCase() && (!pkg || !lot.package || pkg.trim() === lot.package);
+  });
+  return <LotDialog title="История" lot={lot} wide onClose={onClose}>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {!error && !journal && <div className="empty">Загрузка…</div>}
+    {!error && journal && (rows.length ? <div className="table-wrap history-table"><table className="grid compact" aria-label="История партии">
+      <thead><tr><th>Когда</th><th>Что</th><th>Подробно</th><th>Склад</th><th>Кто</th></tr></thead>
+      <tbody>{rows.map((row, index) => <tr key={index}>
+        <td>{new Date(row.occurred_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+        <td>{row.kind}</td><td className="text">{row.event}</td><td>{row.warehouse}</td><td>{row.who}</td>
+      </tr>)}</tbody>
+    </table></div> : <div className="empty">По этой партии записей нет.</div>)}
+    <div className="move-actions"><button type="button" className="secondary" onClick={onClose}>Закрыть</button></div>
+  </LotDialog>;
+}
+
+function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
+  lot: WarehouseLot;
+  busy: boolean;
+  disabled: boolean;
+  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+  onMove: (lot: WarehouseLot) => void;
+  history: boolean;
+  readOnly: boolean;
+}) {
+  // Every action is a window over the stock, as the buttons on a SUPPLYMAP partition card (− / + / ✎ / История).
+  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history">("");
+  const close = () => setDialog("");
   const writtenOff = Number(lot.written_off) > 0;
   const passport = passportLine(lot);
-
-  function writeoff(event: FormEvent) {
-    event.preventDefault();
-    void mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, purpose.trim(), reason.trim(), writeoffDate || undefined)).catch(() => undefined);
-  }
-
-  function returnToStock(event: FormEvent) {
-    event.preventDefault();
-    void mutate(lot.id, () => warehouseApi.returnWriteOff(lot.id, lot.version, returnQuantity, returnSource.trim(), returnReason.trim()))
-      .then(() => setMode(""), () => undefined);
-  }
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -868,44 +1053,19 @@ function LotCard({ lot, busy, disabled, mutate, onMove, onHistory, readOnly }: {
         {writtenOff && <span>списано {lot.written_off}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
-      {!readOnly && <div className="lot-card-actions">
-        <button className={mode === "writeoff" ? "secondary small active" : "secondary small"} aria-expanded={mode === "writeoff"} disabled={disabled} title="Снять количество с партии" onClick={() => toggle("writeoff")}>− Списать</button>
-        {writtenOff && <button className={mode === "return" ? "secondary small active" : "secondary small"} aria-expanded={mode === "return"} disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => toggle("return")}>Вернуть на склад</button>}
-        <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
-        <button className={mode === "edit" ? "secondary small active" : "secondary small"} aria-expanded={mode === "edit"} disabled={disabled} onClick={() => toggle("edit")}>✎ Правка</button>
-        {onHistory && <button className="secondary small" onClick={() => onHistory(lot.grn)}>История</button>}
+      {(!readOnly || history) && <div className="lot-card-actions">
+        {!readOnly && <>
+          <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
+          {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}
+          <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
+          <button className="secondary small" disabled={disabled} onClick={() => setDialog("edit")}>✎ Правка</button>
+        </>}
+        {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
       </div>}
-      {readOnly && onHistory && <div className="lot-card-actions"><button className="secondary small" onClick={() => onHistory(lot.grn)}>История</button></div>}
-      {!readOnly && mode === "writeoff" && <div className="stock-actions">
-        <form className="inline-action" onSubmit={writeoff}>
-          <label>Количество<input type="number" min="0.000001" step="any" required value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label>Назначение<input aria-label="Назначение списания" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label><label>Основание<input placeholder="Выдача" value={reason} onChange={(event) => setReason(event.target.value)} /></label><label>Дата<input aria-label="Дата списания" type="date" value={writeoffDate} onChange={(event) => setWriteoffDate(event.target.value)} /></label><button className="primary small" disabled={disabled}>Списать</button>
-        </form>
-      </div>}
-      {!readOnly && mode === "return" && writtenOff && <div className="stock-actions">
-        <form className="inline-action" aria-label="Возврат на склад" onSubmit={returnToStock}>
-          <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={lot.written_off} step="any" required title={`Списано ${lot.written_off} ${lot.unit}`} value={returnQuantity} onChange={(event) => setReturnQuantity(event.target.value)} /></label>
-          <label>Откуда<input aria-label="Откуда возврат" placeholder="проект или фамилия" required pattern=".*\S.*" value={returnSource} onChange={(event) => setReturnSource(event.target.value)} /></label>
-          <label>Основание возврата<input aria-label="Основание возврата" placeholder="Возврат" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label>
-          <button className="primary small" disabled={disabled}>Вернуть</button>
-          <button type="button" className="link-button" onClick={() => setMode("")}>Отмена</button>
-        </form>
-      </div>}
-      {!readOnly && mode === "edit" && <div className="stock-actions">
-        {!editingRow && <button className="secondary small" disabled={disabled} onClick={() => setEditingRow(true)}>Править строку</button>}
-        {editingRow && <LotRowEditForm lot={lot} disabled={disabled} mutate={mutate} onClose={() => setEditingRow(false)} />}
-        <form className="inline-action" onSubmit={(event) => {
-          event.preventDefault();
-          void mutate(lot.id, () => warehouseApi.editIdentity(lot.id, lot.version, article.trim(), name.trim(), series.trim())).catch(() => undefined);
-        }}>
-          <label>Артикул<input required value={article} onChange={(event) => setArticle(event.target.value)} /></label><label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label><button className="secondary small" disabled={disabled}>Сохранить карточку</button>
-        </form>
-        <form className="inline-action" onSubmit={(event) => {
-          event.preventDefault();
-          void mutate(lot.id, () => warehouseApi.correctLocation(lot.id, lot.version, place.trim())).catch(() => undefined);
-        }}>
-          <label>Место как есть<input aria-label="Место как есть" title="Ручная правка: любой текст (12C7, 12C7B, A-01…), пусто — без места" placeholder="без места" value={place} onChange={(event) => setPlace(event.target.value)} /></label><button className="secondary small" disabled={disabled}>Записать место</button>
-        </form>
-      </div>}
+      {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
+      {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
+      {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
+      {history && dialog === "history" && <LotHistoryDialog lot={lot} onClose={close} />}
     </article>
   );
 }

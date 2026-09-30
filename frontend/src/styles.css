@@ -142,6 +142,13 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 .move-lot { display: grid; gap: 2px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent); font-size: 13px; }
 .move-lot span { color: var(--muted-foreground); }
 .move-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.move-dialog.wide { width: min(1040px, 100%); }
+.move-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dialog-form { display: grid; gap: 12px; }
+.move-dialog .move-actions .link-button { margin-right: auto; }
+.move-dialog .history-table { max-height: 60vh; overflow: auto; }
+.move-dialog .history-table table { width: 100%; }
+.move-dialog .dialog-inline-action { align-self: end; justify-self: start; }
 .manual-stock-rows { margin-bottom: 12px; }
 .manual-stock-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 td small, td strong { display: block; }
@@ -935,8 +942,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .lot-card-main small, .lot-card-meta { color: var(--muted-foreground); font-size: 12px; }
 .lot-card-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; }
 .lot-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.lot-card .stock-actions { grid-template-columns: 1fr; gap: 10px; }
-.lot-card:has(.stock-actions) { grid-column: 1 / -1; }
 .mb-tiles { margin-top: 4px; }
 .mb-tile-extra { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 12px; }
 .mb-tile-extra .mb-free, .mb-tile-extra .mb-done, .mb-launch { padding: 1px 7px; border-radius: 6px; background: var(--accent); }
