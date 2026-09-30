@@ -535,7 +535,8 @@ STEP_TOOLS = (
 
 
 def _machine_applicator(value: str) -> str:
-    """Станку резки нужен аппликатор автомата (A…) из списка БД.ТЕР «S9/M1/A19»; нет такого — список как есть."""
+    """Станку резки с обжимом нужен аппликатор автомата (A…) из списка БД.ТЕР «S9/M1/A19»: он и в поле операции, и в
+    программе станка. Нет такого — список как есть."""
     automatic = [token.strip() for token in re.split(r"[/,;]", value) if re.fullmatch(r"[AА]\d+", token.strip(), re.IGNORECASE)]
     return "/".join(automatic) or value
 
@@ -573,7 +574,7 @@ def _resolve_card(
         program = substitute(tool.program)
         free_program = not program or (fields.get("cutCrimp") and program in {"-", "—"})
         if not applicator_set and fields.get("applicator") and tool.section == "Оборудование" and free_program:
-            program = _machine_applicator(str(fields["applicator"])) if fields.get("cutCrimp") else str(fields["applicator"])
+            program = str(fields["applicator"])
             applicator_set = True
         tooling.append({
             "section": tool.section, "number": tool.number, "name": substitute(tool.name),
@@ -693,6 +694,8 @@ def build_etk(
         fields = _fields(op, config, wire_data)
         if op.get("type") == "cutWireCrimp":
             fields["cutCrimp"] = True
+            if fields.get("applicator"):
+                fields["applicator"] = _machine_applicator(str(fields["applicator"]))
         terminal_norm = op.get("terminalNorm")
         if isinstance(terminal_norm, Mapping):
             missing_sections = [

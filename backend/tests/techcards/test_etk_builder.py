@@ -334,6 +334,7 @@ def test_cut_crimp_and_tin_uses_the_erp_template_with_tin_defects_and_the_machin
     # Станку нужен аппликатор автомата, а не ручные S9/M1 из того же списка БД.ТЕР.
     machine = [tool for tool in operation["card"]["tooling"] if tool["section"] == "Оборудование"]
     assert [(tool["inventory_number"], tool["program"]) for tool in machine] == [("ОБ.098", "A19")]
+    assert operation["fields"]["applicator"] == "A19"
     defects = operation["card"]["defects"]
     assert "Подрезка жил:" in defects
     assert "Опрессовка — " in defects
