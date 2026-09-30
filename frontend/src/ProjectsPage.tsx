@@ -584,15 +584,15 @@ function SupplyTab({ project }: { project: string }) {
     <DataTable
       rows={lines}
       columns={[
-        { key: "art", title: "Артикул КД", value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
-        { key: "name", title: "Наименование", value: (line) => line.name, wrap: true },
-        { key: "need", title: "Нужно", value: (line) => line.need, numeric: true },
-        { key: "unit", title: "Ед.", value: (line) => line.unit },
-        { key: "kbs", title: "КБ", value: (line) => line.kbs.join(" · ") },
-        { key: "stage", title: "Стадия", filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
+        { key: "art", title: "Артикул КД", width: 260, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
+        { key: "name", title: "Наименование", width: 420, value: (line) => line.name, wrap: true },
+        { key: "need", title: "Нужно", width: 100, value: (line) => line.need, numeric: true },
+        { key: "unit", title: "Ед.", width: 56, value: (line) => line.unit },
+        { key: "kbs", title: "КБ", wrap: true, value: (line) => line.kbs.join(" · ") },
+        { key: "stage", title: "Стадия", width: 240, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
           {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
         </span> },
-        { key: "rows", title: "Строк", value: (line) => line.rows.length || "—", numeric: true },
+        { key: "rows", title: "Строк", width: 72, value: (line) => line.rows.length || "—", numeric: true },
       ] satisfies DataColumn<KitsetSupplyLine>[]}
       rowKey={(line) => line.art}
       storageKey="kit-supply"
@@ -633,27 +633,27 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
 
   const specRows: SpecRow[] = card.assemblies.flatMap((assembly) => assembly.components.map((component) => ({ assembly, component })));
   const specColumns: DataColumn<SpecRow>[] = [
-    { key: "art", title: "Артикул КД", value: ({ component }) => component.art },
-    { key: "type", title: "Тип", filter: true, value: ({ component }) => component.type },
+    { key: "art", title: "Артикул КД", width: 240, wrap: true, value: ({ component }) => component.art },
+    { key: "type", title: "Тип", width: 130, filter: true, value: ({ component }) => component.type },
     { key: "name", title: "Наименование", value: ({ assembly, component }) => draftOf(assembly, component).name,
       render: ({ assembly, component }) => <input aria-label={`Наименование ${component.art}`} value={draftOf(assembly, component).name} disabled={!canEdit} onChange={(event) => edit(assembly, component, { name: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "link", title: "Ссылка", value: ({ assembly, component }) => draftOf(assembly, component).link, render: ({ assembly, component }) => {
+    { key: "link", title: "Ссылка", width: 340, value: ({ assembly, component }) => draftOf(assembly, component).link, render: ({ assembly, component }) => {
       const link = draftOf(assembly, component).link;
       return <div className="kit-link">
         <input aria-label={`Ссылка ${component.art}`} value={link} placeholder="—" disabled={!canEdit} onChange={(event) => edit(assembly, component, { link: event.target.value })} onBlur={() => void save(assembly, component)} />
         {/^https?:\/\//i.test(link) && <a href={link} target="_blank" rel="noopener" title="Открыть">↗</a>}
       </div>;
     } },
-    { key: "per", title: "На 1 шт", numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).per,
+    { key: "per", title: "На 1 шт", width: 96, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).per,
       render: ({ assembly, component }) => <input aria-label={`На 1 шт ${component.art}`} value={draftOf(assembly, component).per} disabled={!canEdit} onChange={(event) => edit(assembly, component, { per: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "scrap", title: "% брака", numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).scrap,
+    { key: "scrap", title: "% брака", width: 96, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).scrap,
       render: ({ assembly, component }) => <input aria-label={`% брака ${component.art}`} value={draftOf(assembly, component).scrap} disabled={!canEdit} onChange={(event) => edit(assembly, component, { scrap: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "batch", title: "На партию", numeric: true, value: ({ assembly, component }) => {
+    { key: "batch", title: "На партию", width: 104, numeric: true, value: ({ assembly, component }) => {
       const draft = draftOf(assembly, component);
       return kitBatch(draft.per, assembly.run, draft.scrap);
     } },
-    { key: "unit", title: "Ед.", value: ({ component }) => component.unit },
-    { key: "lot", title: "ГРН склада", value: ({ assembly, component }) => {
+    { key: "unit", title: "Ед.", width: 56, value: ({ component }) => component.unit },
+    { key: "lot", title: "ГРН склада", width: 230, value: ({ assembly, component }) => {
       const lot = draftOf(assembly, component).lot;
       return lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "";
     }, render: ({ assembly, component }) => {

@@ -28,7 +28,14 @@ def _jst(identifier: str, series: str, pattern: str, pitch: float, latch: str, *
 
 FAMILIES: tuple[dict[str, Any], ...] = (
     _jst("jst-gh", "GH", r"^GHR-0*(\d+)V-S", 1.25, "ramp", conf="medium"),
-    _jst("jst-sh", "SH", r"^SHR-?0*(\d+)V-S", 1.0, "mark", note="ориентир — метка на корпусе; по детали не сверено"),
+    # SH — checked against the JST eSH housing drawing (owner's screenshot, 30.09): the top view has the wire end with
+    # the protrusions at the top and Circuit No.1 ▽ on the left, so from the wire side with the ▽ face up contact 1 is
+    # on the RIGHT (SUPPLYMAP draws it on the left — mirrored). Body from the same sheet: B = A + 4.0 with protrusions
+    # (-B), A + 2.0 without; 2.8 thick at the wire end, 2.1 at the mating part, 5 long.
+    _jst("jst-sh", "SH", r"^SHR-?0*(\d+)V-S", 1.0, "mark", start="TR", conf="high",
+         note="по чертежу JST eSH: метка ▽ у контакта 1", src="JST eSH, Housing",
+         body={"extra": 2.0, "h": 2.8, "rear_h": 2.1, "len": 5.0, "front_len": 1.8, "ear_len": 1.0, "win": (0.6, 1.3)},
+         body_by=((r"V-S-B", {"ears": 1.0}),)),
     _jst("jst-nsh", "NSH", r"^NSHR-0*(\d+)V-S", 1.0, "ramp"),
     _jst("jst-xh", "XH", r"^XHP-(\d+)", 2.5, "ramp", conf="medium"),
     _jst("jst-ph", "PH", r"^PHR-(\d+)", 2.0, "ramp", conf="medium"),
@@ -186,7 +193,14 @@ def housing_of(article: object) -> dict[str, Any] | None:
         for pattern, replacement in family.get("color_by", ()):
             if re.search(pattern, normalized):
                 color = replacement
-        return _layout(article, family, alias, count, rows, columns, grid, round_layout, male, color)
+        layout = _layout(article, family, alias, count, rows, columns, grid, round_layout, male, color)
+        if family.get("body"):
+            body = dict(family["body"])
+            for pattern, extra in family.get("body_by", ()):
+                if re.search(pattern, normalized):
+                    body.update(extra)
+            layout["body"] = body
+        return layout
     return None
 
 
