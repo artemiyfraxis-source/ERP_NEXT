@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProductionShift, ProductionTask } from "./api";
-import { appendStart, defaultPieces, earliestStart, remainderOf, workFinish } from "./MasterBoard";
+import { appendStart, daySlots, defaultPieces, earliestStart, remainderOf, workFinish } from "./MasterBoard";
 
 const shift: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const installer = "10000000-0000-0000-0000-000000000002";
@@ -46,6 +46,13 @@ describe("неделя монтажников: длинная операция �
     expect(remainderOf(task, split)).toBe(1000);
     expect(remainderOf(task, operation)).toBe(0);
     expect(remainderOf(task, task.operations[1])).toBe(2500);
+  });
+
+  it("последняя ячейка дня — неполный час до конца смены 17:30", () => {
+    const slots = daySlots(installer, "2026-10-01", [task], shift);
+    expect(slots.map((slot) => slot.start)).toEqual(["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"]);
+    expect(slots[slots.length - 1].finish).toBe("17:30");
+    expect(slots[4].pause).toBe("обед до 13:30");
   });
 
   it("по умолчанию добавляет нового монтажника к назначенным, а не вытесняет их", () => {
