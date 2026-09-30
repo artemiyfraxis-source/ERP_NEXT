@@ -1114,6 +1114,21 @@ export interface OperationCardDetail extends OperationCardSummary {
 }
 
 /** SUPPLYMAP tcCardEditForm_ → portalTcRecordSave payload. */
+export interface OperationSketch {
+  operation_key: string;
+  file_name: string;
+  size: number;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
+export interface ConnectorFamily {
+  family: string;
+  title: string;
+  sample: string;
+  housing: import("./connectorArt").ConnectorHousing & { conf?: string; note?: string };
+}
+
 export interface OperationRecordEdit {
   name: string;
   safety: string;
@@ -2128,6 +2143,19 @@ export const techcardsApi = {
     }),
   revisions: (cardId: string) =>
     api<{ items: TechcardRevision[] }>(`/api/techcards/projects/${cardId}/revisions`),
+  /** Свои картинки эскиза к операциям ЭТК (одна на операцию), байты — в базе ERP. */
+  sketches: (cardId: string) => api<{ items: OperationSketch[] }>(`/api/techcards/projects/${cardId}/sketches`),
+  sketchUrl: (cardId: string, operationKey: string, at = "") =>
+    `/api/techcards/projects/${cardId}/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
+  putSketch: (cardId: string, operationKey: string, file: { file_name: string; content_type: string; content_base64: string }) =>
+    api<OperationSketch>(`/api/techcards/projects/${cardId}/sketches/${encodeURIComponent(operationKey)}`, {
+      method: "PUT", body: JSON.stringify(file),
+    }),
+  deleteSketch: (cardId: string, operationKey: string) =>
+    api<{ deleted: number }>(`/api/techcards/projects/${cardId}/sketches/${encodeURIComponent(operationKey)}`, { method: "DELETE" }),
+  /** База разъёмов: семейства корпусов с образцом артикула и раскладкой контактов. */
+  connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null }>(
+    `/api/techcards/connector-families${article ? `?article=${encodeURIComponent(article)}` : ""}`),
   discardDraft: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/etk`, {
       method: "DELETE",

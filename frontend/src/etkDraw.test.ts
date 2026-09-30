@@ -65,7 +65,8 @@ describe("etkDraw* sketches", () => {
       edges: [{ from: "XHP-2", to: "Сростки", wires: ["красный"], count: 2, length: 300 }],
     });
     expect(svg).toContain("2 пров. · 300 мм");
-    expect(svg).toContain("JST XH · сторона А");
+    expect(svg).toContain(">JST XH · 2,5 мм<");
+    expect(svg).toContain(">2 конт. · сторона А<");
   });
 });
 

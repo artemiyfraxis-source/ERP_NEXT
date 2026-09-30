@@ -309,6 +309,8 @@ def infer_article_identity(
     # A 9-digit Molex number inside a description («MOLEX PicoBlade 510470300 корпус вилки…») is an article too.
     number = re.search(r"(?:^|\D)0?(\d{9})(?!\d)", raw)
     housing = housing_of(bare) or housing_of(key) or (housing_of(number[1]) if number else None)
+    if housing and housing.get("erp_only"):
+        housing = None  # ERP-only drawing families: names follow SUPPLYMAP's families (Stock05 parity)
     if housing and housing["kind"] not in {"lug", "banana"} and housing["n"] > 0:
         series = (
             _field(by_series, "terComponent", "product") if by_series

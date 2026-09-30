@@ -5,6 +5,7 @@ import {
   techcardsApi,
   type KitsetBom,
   type OperationRecordEdit,
+  type OperationSketch,
   type Principal,
   type ProjectTechcard,
   type TechcardRevision,
@@ -37,6 +38,7 @@ type EtkOperation = {
   side?: string;
   title?: string;
   connector?: string;
+  connector_article?: string;
   edited?: { at?: string; by?: string };
   card?: null | { name?: string; safety?: string; defects?: string; steps?: EtkStep[]; tooling?: EtkTool[] };
   components?: EtkRow[];
@@ -70,41 +72,28 @@ function topology(document: ProjectTechcard["document"]): EtkTopology | null {
   return value && typeof value === "object" ? value as EtkTopology : null;
 }
 
-function wireColor(value: string) {
-  let hash = 0;
-  for (const char of value) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return `hsl(${hash % 360} 58% 58%)`;
-}
-
-function HousingView({ housing, wires = [] }: { housing: Housing; wires?: EtkWireField[] }) {
-  const byPin = new Map<number, string>();
-  wires.forEach((wire) => (wire.pins ?? []).forEach((pin) => byPin.set(pin, wire.art || wire.name || "провод")));
-  const pin = (number: number, className = "") => <span
-    key={number} className={`housing-pin ${byPin.has(number) ? "occupied" : ""} ${className}`}
-    title={byPin.has(number) ? `Контакт ${number}: ${byPin.get(number)}` : `Контакт ${number}`}
-    style={byPin.has(number) ? { background: wireColor(byPin.get(number) || "") } : undefined}
-  >{number}</span>;
-  return <div className="housing-view">
-    <small>Со стороны проводов · ориентир сверху</small>
-    {housing.round?.length ? <div className="housing-round" style={{ background: housing.color }}>
-      {housing.round.map((item) => <span key={item.pin} style={{ left: `${50 + item.x * 38}%`, top: `${50 + item.y * 38}%` }}>{pin(item.pin)}</span>)}
-    </div> : <div className="housing-grid" style={{ background: housing.color, gridTemplateColumns: `repeat(${housing.cols}, 34px)` }}>
-      {housing.grid.flat().map((number, index) => number ? pin(number) : <span className="housing-pin empty" key={`empty:${index}`} />)}
-    </div>}
-    <strong>{housing.title}</strong><small>{housing.art}</small>
-    {housing.note && <small>{housing.note}</small>}
-  </div>;
-}
-
 /** Схема жгута один раз, компактной SVG-картинкой, как в SUPPLYMAP (etkDrawHarness_): разъёмы, пучок жил, число
     проводов и длина. Раскладку контактов показывает только операция монтажа, где она нужна. */
-function HarnessView({ value }: { value: EtkTopology | null }) {
-  const svg = etkDrawHarness(value as EtkTopologyData | null);
+function HarnessView({ value, list }: { value: EtkTopology | null; list: EtkOperation[] }) {
+  const svg = etkDrawHarness(value as EtkTopologyData | null, harnessPins(list));
   if (!svg) return null;
   return <details className="etk-schema" open>
     <summary>Схема жгута</summary>
     <div className="etk-harness" dangerouslySetInnerHTML={{ __html: svg }} />
   </details>;
+}
+
+/** Распиновка из операций монтажа — по узлу схемы «артикул разъёма::сторона»: провода видны в своих гнёздах. */
+export function harnessPins(list: EtkOperation[]): Record<string, Record<number, string>> {
+  const out: Record<string, Record<number, string>> = {};
+  list.forEach((operation) => {
+    const article = String(operation.connector_article || "").trim();
+    if (!article) return;
+    (operation.fields?.wires ?? []).forEach((wire) => (wire.pins ?? []).forEach((pin) => {
+      (out[`${article}::${operation.side || ""}`] ||= {})[pin] = wire.art || wire.name || "";
+    }));
+  });
+  return out;
 }
 
 function defaultConfig(card: ProjectTechcard): Record<string, unknown> {
@@ -191,15 +180,13 @@ function PartRows({ rows }: { rows?: EtkRow[] }) {
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
  *  1 вход: комплектующие и полуфабрикаты → 2 инструмент, оборудование, расходники + режим пайки (жало, температура) →
  *  3 ход операции → 4 типовые дефекты с пиктограммами → 5 эскиз → 6 результат и расчётное время. */
-function EtkOperationCard({ operation, number, total, batch = "", actions }: {
-  operation: EtkOperation; number: number; total: number; batch?: string; actions?: ReactNode;
+function EtkOperationCard({ operation, number, total, batch = "", actions, sketch }: {
+  operation: EtkOperation; number: number; total: number; batch?: string; actions?: ReactNode; sketch?: ReactNode;
 }) {
   const raw = operation as Record<string, unknown>;
-  // Раскладка корпуса при монтаже — только если известно, какой провод в какой контакт: пустая сетка повторяла бы
-  // схему жгута. Остальные эскизы — SVG-строки etkDraw (как в печати).
-  const pinned = (operation.fields?.wires ?? []).some((wire) => wire.pins?.length);
-  const housing = operation.housing && operation.type === "insTerm" ? operation.housing : null;
-  const figure = housing ? "" : etkFigure(raw);
+  // Эскизы — SVG-строки etkDraw (как в печати); монтаж в разъём — торец серии с номерами контактов всегда, даже без
+  // распиновки в генераторе (тогда под ним список проводов «по КД»). `sketch` — своя картинка технолога и кнопки.
+  const figure = etkFigure(raw);
   const tooling = operation.card?.tooling ?? [];
   const solder = solderMode(raw);
   const safety = String(operation.card?.safety || "").replace(SAFETY_HEAD, "").trim();
@@ -241,10 +228,12 @@ function EtkOperationCard({ operation, number, total, batch = "", actions }: {
         <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small>Допуск: {step.tolerance}</small>}</li>
       )}</ol></section> : null}
     {operation.card?.defects && <DefectsView text={operation.card.defects} code={operation.code || ""} number={next()} />}
-    {(figure || (housing && pinned)) && <section className="etk-sec" aria-label="Эскиз">
+    {(figure || sketch) && <section className="etk-sec" aria-label="Эскиз">
       <h4><span className="etk-sec-n">{next()}</span>Эскиз</h4>
-      {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
-      {housing && pinned && <HousingView housing={housing} wires={operation.fields?.wires} />}
+      <div className="etk-fig-row">
+        {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
+        {sketch}
+      </div>
     </section>}
     {hasResult && <section className="etk-sec" aria-label="Результат">
       <h4><span className="etk-sec-n">{next()}</span>Результат</h4>
@@ -318,6 +307,54 @@ function toolSub(tool: EtkTool): string {
 
 /** Оснастка по разделам: инструмент → оборудование → расходники → прочее; номер считается внутри раздела
  *  (SUPPLYMAP renderEtk_ / renderCard). */
+const SKETCH_TYPES = "image/png,image/jpeg,image/webp,image/gif";
+
+/** Своя картинка эскиза к операции (владелец 30.09: «нет схемы и некуда её добавлять»): хранится в базе ERP, одна на
+ *  операцию; «Загрузить» — файлом или вставкой скриншота (Ctrl+V), «Заменить», «Убрать». */
+function OperationSketchView({ cardId, operationKey, canEdit, sketch, onChanged }: {
+  cardId: string; operationKey: string; canEdit: boolean; sketch?: OperationSketch; onChanged: () => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!sketch && !canEdit) return null;
+
+  function upload(file: File | null | undefined) {
+    if (!file || busy) return;
+    if (!SKETCH_TYPES.split(",").includes(file.type)) { setError("Эскиз — картинка PNG, JPG, WEBP или GIF"); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setBusy(true); setError("");
+      void techcardsApi.putSketch(cardId, operationKey, {
+        file_name: file.name && file.name !== "image.png" ? file.name : "", content_type: file.type, content_base64: String(reader.result || ""),
+      }).then(onChanged).catch((reason) => setError(failureText(reason, "Картинка не загружена"))).finally(() => setBusy(false));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function remove() {
+    if (busy || !window.confirm("Убрать картинку эскиза из этой операции?")) return;
+    setBusy(true); setError("");
+    try { await techcardsApi.deleteSketch(cardId, operationKey); onChanged(); }
+    catch (reason) { setError(failureText(reason, "Картинка не убрана")); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="etk-sketch" tabIndex={canEdit ? 0 : undefined}
+    onPaste={canEdit ? (event) => upload(Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/"))) : undefined}>
+    {sketch && <a href={techcardsApi.sketchUrl(cardId, operationKey, sketch.uploaded_at)} target="_blank" rel="noreferrer">
+      <img src={techcardsApi.sketchUrl(cardId, operationKey, sketch.uploaded_at)} alt="Эскиз операции" />
+    </a>}
+    {canEdit && <div className="etk-sketch-bar">
+      <input ref={input} type="file" accept={SKETCH_TYPES} hidden onChange={(event) => { upload(event.target.files?.[0]); event.target.value = ""; }} />
+      <button className="secondary small" disabled={busy} onClick={() => input.current?.click()}>{sketch ? "Заменить картинку" : "Загрузить картинку эскиза"}</button>
+      {sketch && <button className="secondary small" disabled={busy} onClick={() => void remove()}>Убрать</button>}
+      <small className="muted">{sketch ? `${sketch.uploaded_by} · ${new Date(sketch.uploaded_at).toLocaleDateString("ru-RU")}` : "или вставьте скриншот: щёлкните здесь и Ctrl+V"}</small>
+    </div>}
+    {error && <div className="error-banner" role="alert">{error}</div>}
+  </div>;
+}
+
 export function ToolingBySection({ tooling }: { tooling: EtkTool[] }) {
   if (!tooling.length) return <div className="empty">Инструмент, оборудование и расходники не указаны.</div>;
   const sections = toolingSections(tooling.map((tool) => tool.section || ""));
@@ -347,7 +384,10 @@ export function editDraft(name: string, card: { safety?: string; defects?: strin
 
 
 /** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_). */
-function EtkView({ card, canEdit, onSaved }: { card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void }) {
+function EtkView({ card, canEdit, onSaved, sketches, onSketches }: {
+  card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void;
+  sketches: OperationSketch[]; onSketches: () => void;
+}) {
   const list = operations(card.document);
   const [selected, setSelected] = useState(0);
   const [editing, setEditing] = useState(false);
@@ -383,7 +423,9 @@ function EtkView({ card, canEdit, onSaved }: { card: ProjectTechcard; canEdit: b
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
           batch={String(record(card.document?.kit).part_quantity ?? "")}
-          actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>✏️ Править</button> : null} />
+          actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>✏️ Править</button> : null}
+          sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit}
+            sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />
         <div className="etk-nav">
           <button className="secondary small" disabled={!index} onClick={() => setSelected(index - 1)}>← Назад</button>
           <button className="secondary small" disabled={!next} onClick={() => setSelected(index + 1)}>Далее: {next ? etkTitle(next) : "—"} →</button>
@@ -411,9 +453,12 @@ export function EtkSheet({ card, principal, title, onChange, onRebuild }: {
   const canGenerate = Boolean(principal.permissions.tcgen);
   const list = operations(card.document);
   const issued = card.status === "Выдана";
+  const [sketches, setSketches] = useState<OperationSketch[]>([]);
   useEffect(() => {
     void techcardsApi.revisions(card.id).then((result) => setRevisions(result.items)).catch(() => setRevisions([]));
   }, [card.id, card.version]);
+  const loadSketches = () => void techcardsApi.sketches(card.id).then((result) => setSketches(result?.items ?? [])).catch(() => setSketches([]));
+  useEffect(loadSketches, [card.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function issue() {
     if (busy) return;
@@ -430,7 +475,8 @@ export function EtkSheet({ card, principal, title, onChange, onRebuild }: {
     <div className="etk-top">
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
         <span className="muted">{list.length} операций · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
-      {list.length > 0 && <button className="secondary small" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions))}>🖨 Печать / PDF</button>}
+      {list.length > 0 && <button className="secondary small" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, Object.fromEntries(sketches.map((item) =>
+        [item.operation_key, window.location.origin + techcardsApi.sketchUrl(card.id, item.operation_key, item.uploaded_at)]))))}>🖨 Печать / PDF</button>}
       {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>⚙️ Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}
     </div>
@@ -438,8 +484,8 @@ export function EtkSheet({ card, principal, title, onChange, onRebuild }: {
     {notice && <div className="success-banner">{notice}</div>}
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>⚠ Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
-    <HarnessView value={topology(card.document)} />
-    <EtkView key={card.id} card={card} canEdit={canEdit} onSaved={(updated) => {
+    <HarnessView value={topology(card.document)} list={list} />
+    <EtkView key={card.id} card={card} canEdit={canEdit} sketches={sketches} onSketches={loadSketches} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} />

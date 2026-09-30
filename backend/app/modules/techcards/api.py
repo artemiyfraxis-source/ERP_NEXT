@@ -15,12 +15,13 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
+from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import (
     Principal, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
     tctemplates_edit_principal, tctemplates_view_principal,
@@ -54,10 +55,11 @@ from .domain.coax import КоаксСборка
 from .domain.coax import Сторона as КоаксСторона
 from .domain.coax import построить_коакс
 from .domain.harness import Провод, Разъём, Сборка, построить
-from .project_cards import ProjectTechcard, TechcardRevision, TechcardValidationError
+from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardValidationError
+from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
 from .grapher_import import GrapherComponent, GrapherImportError, read_export
-from .connector_housings import attach_housings
+from .connector_housings import attach_housings, connector_catalog, housing_of
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
 from .template_sheet_service import (
@@ -635,6 +637,120 @@ def project_etk_revisions(
             raise HTTPException(status_code=404, detail="Карточка проекта не найдена")
         revisions = uow.techcards.revisions(card_id)
     return {"items": [_revision_result(revision) for revision in revisions]}
+
+
+# ── эскиз операции: своя картинка технолога ─────────────────────────────────
+
+SKETCH_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+MAX_SKETCH_BYTES = 10 * 1024 * 1024
+
+
+class SketchPayload(BaseModel):
+    file_name: str = Field(default="", max_length=512)
+    content_type: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1, max_length=14_000_000)
+
+
+def _sketch_result(sketch: OperationSketch) -> dict:
+    return {
+        "operation_key": sketch.operation_key, "file_name": sketch.file_name, "size": sketch.size,
+        "uploaded_by": sketch.uploaded_by, "uploaded_at": sketch.uploaded_at.isoformat(),
+    }
+
+
+def _operation_keys(card: ProjectTechcard) -> set[str]:
+    keys = set()
+    for item in (card.document or {}).get("operations") or []:
+        try:
+            keys.add(etk_operation_key(item))
+        except TechcardValidationError:
+            continue
+    return keys
+
+
+def _card_or_404(uow, card_id: UUID) -> ProjectTechcard:
+    card = uow.techcards.get(card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Карточка проекта не найдена")
+    return card
+
+
+@router.get("/techcards/projects/{card_id}/sketches", dependencies=[Depends(techcards_view_principal)])
+def operation_sketches(
+    card_id: UUID,
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        _card_or_404(uow, card_id)
+        sketches = uow.techcards.sketches(card_id)
+    return {"items": [_sketch_result(sketch) for sketch in sketches]}
+
+
+@router.get("/techcards/projects/{card_id}/sketches/{operation_key:path}", dependencies=[Depends(techcards_view_principal)])
+def operation_sketch(
+    card_id: UUID,
+    operation_key: str,
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> Response:
+    with uow_factory() as uow:
+        found = uow.techcards.sketch_content(card_id, operation_key)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Эскиз не найден")
+    sketch, content = found
+    return file_response(content, sketch.content_type, sketch.file_name)
+
+
+@router.put("/techcards/projects/{card_id}/sketches/{operation_key:path}")
+def put_operation_sketch(
+    card_id: UUID,
+    operation_key: str,
+    payload: SketchPayload,
+    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    """Картинка эскиза к операции ЭТК — хранится в базе ERP, одна на операцию (новая заменяет старую)."""
+    content_type = payload.content_type.strip().lower()
+    if content_type not in SKETCH_TYPES:
+        raise HTTPException(status_code=422, detail="Эскиз — картинка PNG, JPG, WEBP или GIF")
+    content = decode_upload(payload.content_base64.split(",", 1)[-1], "Картинка передана не в base64")
+    if not content:
+        raise HTTPException(status_code=422, detail="Картинка пустая")
+    if len(content) > MAX_SKETCH_BYTES:
+        raise HTTPException(status_code=422, detail="Картинка эскиза больше 10 МБ")
+    with uow_factory() as uow:
+        card = _card_or_404(uow, card_id)
+        if operation_key not in _operation_keys(card):
+            raise HTTPException(status_code=404, detail="Операция не найдена в ЭТК")
+        sketch = OperationSketch(
+            operation_key=operation_key,
+            file_name=payload.file_name.strip() or f"эскиз{SKETCH_TYPES[content_type]}",
+            content_type=content_type, size=len(content), uploaded_by=principal.actor.name, uploaded_at=now,
+        )
+        uow.techcards.put_sketch(card_id, sketch, content)
+        uow.commit()
+    return _sketch_result(sketch)
+
+
+@router.delete("/techcards/projects/{card_id}/sketches/{operation_key:path}")
+def delete_operation_sketch(
+    card_id: UUID,
+    operation_key: str,
+    _principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        _card_or_404(uow, card_id)
+        deleted = uow.techcards.delete_sketch(card_id, operation_key)
+        uow.commit()
+    return {"deleted": deleted}
+
+
+@router.get("/techcards/connector-families", dependencies=[Depends(tctemplates_view_principal)])
+def connector_families(article: str = "") -> dict:
+    """База разъёмов: семейства корпусов с рисунком по образцу артикула — чтобы видеть, что умеет схема.
+    `article` — проверить свой артикул: какой корпус нарисует ЭТК (или None — серия не распознана)."""
+    return {"items": connector_catalog(), "match": housing_of(article[:255]) if article.strip() else None}
 
 
 # ── жгут ────────────────────────────────────────────────────────────────────

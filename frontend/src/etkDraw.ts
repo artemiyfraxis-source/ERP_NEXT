@@ -1,6 +1,8 @@
 // Эскизы электронной ТК строкой SVG — порт SUPPLYMAP PortalApp.html etkDraw* / etkHousing_ / etkChips (renderEtk_).
 // Одни и те же строки идут и на экран (блок «Эскиз»), и в печать (etkPrint.ts): печатное окно — отдельный
-// документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP, без доработок.
+// документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
+// серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
+import { connectorFace, connectorPicture, connectorSummary, wireColor } from "./connectorArt";
 
 type Row = Record<string, unknown>;
 
@@ -8,6 +10,7 @@ export type EtkHousing = {
   art?: string; title?: string; pitch?: number | null; rows: number; cols: number; n?: number;
   kind?: string; color: string; latch?: string; cavity?: string; labels?: string[] | null;
   grid: number[][]; round?: Array<{ pin: number; x: number; y: number }> | null; conf?: string; note?: string;
+  family?: string; male?: boolean | null;
 };
 
 export type EtkTopologyData = {
@@ -33,16 +36,9 @@ function str(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
-const WIRE_COLORS: Array<[RegExp, string]> = [
-  [/желт/i, "#f2c200"], [/зел[её]н/i, "#2e9e4f"], [/черн/i, "#222"], [/красн/i, "#d7322d"], [/бел/i, "#f4f4f4"],
-  [/син/i, "#2463c7"], [/голуб/i, "#5bb4e5"], [/оранж/i, "#f08a1c"], [/коричн/i, "#7a4a24"], [/сер/i, "#8d9297"], [/фиолет/i, "#7b4bb3"],
-];
-
 /** SUPPLYMAP etkWireColor_: цвет жилы по слову в наименовании, иначе серо-синий. */
 export function etkWireColor(name: unknown): string {
-  const text = str(name);
-  for (const [pattern, color] of WIRE_COLORS) if (pattern.test(text)) return color;
-  return "#6b7c86";
+  return wireColor(name);
 }
 
 export function etkUnwrap(value: unknown): string {
@@ -175,98 +171,37 @@ export function etkDrawCrimp(operation: Row): string {
   return svg(560, cy + 72, body);
 }
 
-/** Корпус разъёма по раскладке семейства: вид со стороны проводов (etkHousing_). Отдаёт {w, h, body} от (x, y). */
+/** Корпус разъёма по раскладке семейства: вид со стороны проводов (etkHousing_ → рисунок серии). {w, h, body} от (x, y). */
 export function etkHousingSvg(hs: EtkHousing, x: number, y: number, s: number, byPin: Record<number, string> | null) {
-  const dark = /^#(1|2|3)/.test(hs.color), hole = dark ? "#6d767b" : "#2f3336", pad = Math.max(3, s * 0.28);
-  const latchH = (hs.latch !== "ramp" && hs.latch !== "lever") ? 0 : Math.max(4, s * 0.42);
-  const W = hs.cols * s + pad * 2, H = hs.rows * s + pad * 2, top = y + latchH;
-  const edge = dark ? "#000" : "#8a7d5c", fs = Math.max(6.5, s * 0.34);
-  let body = "";
-  if (hs.kind === "lug") {
-    const w0 = byPin && byPin[1];
-    body += `<rect x="${x}" y="${y + s * 0.3}" width="${s * 1.3}" height="${s * 0.5}" rx="${s * 0.1}" fill="#d9d9d9" stroke="#17272b" stroke-width=".8"/>` +
-      `<circle cx="${x + s * 1.9}" cy="${y + s * 0.55}" r="${s * 0.55}" fill="#e8c35a" stroke="#17272b" stroke-width=".8"/>` +
-      `<circle cx="${x + s * 1.9}" cy="${y + s * 0.55}" r="${s * 0.22}" fill="#fff" stroke="#17272b" stroke-width=".6"/>` +
-      (w0 ? `<rect x="${x - s * 0.9}" y="${y + s * 0.4}" width="${s * 0.9}" height="${s * 0.3}" fill="${etkWireColor(w0)}" stroke="#17272b" stroke-width=".5"/>` : "");
-    return { w: s * 2.5, h: s * 1.2, body };
-  }
-  if (hs.kind === "banana") {
-    const wb = byPin && byPin[1];
-    body += (wb ? `<rect x="${x - s * 0.9}" y="${y + s * 0.4}" width="${s * 0.9}" height="${s * 0.3}" fill="${etkWireColor(wb)}" stroke="#17272b" stroke-width=".5"/>` : "") +
-      `<rect x="${x}" y="${y + s * 0.15}" width="${s * 1.5}" height="${s * 0.8}" rx="${s * 0.15}" fill="${hs.color}" stroke="#17272b" stroke-width=".8"/>` +
-      `<rect x="${x + s * 1.5}" y="${y + s * 0.4}" width="${s * 1.1}" height="${s * 0.3}" rx="${s * 0.12}" fill="#d9d9d9" stroke="#17272b" stroke-width=".7"/>` +
-      `<ellipse cx="${x + s * 2.05}" cy="${y + s * 0.55}" rx="${s * 0.3}" ry="${s * 0.21}" fill="#d9d9d9" stroke="#17272b" stroke-width=".7"/>`;
-    return { w: s * 2.7, h: s * 1.2, body };
-  }
-  if (hs.kind === "round" && hs.round) {
-    const R = s * 2.2, ccx = x + R + 2, ccy = y + R + 2, pr = Math.max(2.5, s * 0.36);
-    body += `<circle cx="${ccx}" cy="${ccy}" r="${R}" fill="${hs.color}" stroke="#000" stroke-width="1.2"/>` +
-      `<rect x="${ccx - s * 0.3}" y="${ccy - R - 1}" width="${s * 0.6}" height="${s * 0.45}" fill="#fff" stroke="#000" stroke-width="1"/>`;
-    hs.round.forEach((c) => {
-      const px = ccx + c.x * R, py = ccy + c.y * R, wn = byPin && byPin[c.pin], wc = wn ? etkWireColor(wn) : "#c8a24a";
-      body += `<circle cx="${px}" cy="${py}" r="${pr}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>`;
-      if (s >= 12) body += `<text x="${px}" y="${py - pr - 2}" text-anchor="middle" font-size="${fs}" fill="#e9eef0">${c.pin}</text>`;
-    });
-    return { w: R * 2 + 4, h: R * 2 + 4 + 6, body };
-  }
-  if (latchH) {
-    const lw = hs.latch === "lever" ? W * 0.62 : Math.min(W * 0.5, s * 1.6), lx = x + (W - lw) / 2;
-    body += hs.latch === "lever"
-      ? `<path d="M${lx},${top + 1} L${lx},${y + 1} L${lx + lw},${y + 1} L${lx + lw},${top + 1}" fill="${hs.color}" stroke="${edge}" stroke-width="1"/>` +
-        `<line x1="${lx + lw * 0.2}" y1="${y + latchH * 0.55}" x2="${lx + lw * 0.8}" y2="${y + latchH * 0.55}" stroke="${edge}" stroke-width=".7"/>`
-      : `<path d="M${lx},${top + 1} L${lx + lw * 0.2},${y} L${lx + lw * 0.8},${y} L${lx + lw},${top + 1} z" fill="${hs.color}" stroke="${edge}" stroke-width="1"/>`;
-  }
-  body += `<rect x="${x}" y="${top}" width="${W}" height="${H}" rx="${Math.max(2, s * 0.18)}" fill="${hs.color}" stroke="${edge}" stroke-width="1.2"/>`;
-  hs.grid.forEach((row, r) => {
-    row.forEach((pin, c) => {
-      if (!pin) return;
-      const cx = x + pad + c * s + s / 2, cy = top + pad + r * s + s / 2, hw = s * 0.4, wn = byPin && byPin[pin];
-      body += hs.cavity === "round"
-        ? `<circle cx="${cx}" cy="${cy}" r="${hw}" fill="${hole}"/>`
-        : `<rect x="${cx - hw}" y="${cy - hw}" width="${hw * 2}" height="${hw * 2}" rx="${s * 0.08}" fill="${hole}"/>`;
-      const label = hs.labels ? (hs.labels[pin - 1] == null ? pin : hs.labels[pin - 1]) : pin;
-      if (wn) {
-        const wc = etkWireColor(wn);
-        body += `<circle cx="${cx}" cy="${cy}" r="${hw * 0.86}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +
-          `<text x="${cx}" y="${cy + fs * 0.36}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="` +
-            `${/#(222|2463c7|7a4a24|7b4bb3|d7322d|2e9e4f|6b7c86)/.test(wc) ? "#fff" : "#17272b"}">${esc(label)}</text>`;
-      } else if (s >= 14) {
-        body += `<text x="${cx}" y="${cy + fs * 0.36}" text-anchor="middle" font-size="${fs}" fill="#e9eef0">${esc(label)}</text>`;
-      }
-      if (pin === 1 && !hs.labels) {
-        const tw = Math.max(3, s * 0.2), last = c === hs.cols - 1;
-        if (last || c === 0) {
-          const tx = last ? x + W + 1 : x - 1, d = last ? 1 : -1;
-          body += `<path d="M${tx + d * tw * 1.5},${cy - tw} L${tx + d * tw * 1.5},${cy + tw} L${tx},${cy} z" fill="#d7322d"/>`;
-        } else {
-          const ty = r === 0 ? top - 1 : top + H + 1, dir = r === 0 ? 1 : -1;
-          body += `<path d="M${cx - tw},${ty - dir * tw * 1.4} L${cx + tw},${ty - dir * tw * 1.4} L${cx},${ty} z" fill="#d7322d"/>`;
-        }
-      }
-    });
-  });
-  return { w: W, h: H + latchH + 6, body };
+  return connectorFace(hs, x, y, s, byPin);
 }
 
 function housingCaption(hs: EtkHousing): string {
   return esc(`${str(hs.art)} · ${str(hs.title)}${hs.pitch ? `, шаг ${String(hs.pitch).replace(".", ",")} мм` : ""}` +
-    (hs.kind === "lug" || hs.kind === "banana" ? "" : ` · вид со стороны проводов${hs.latch === "ramp" || hs.latch === "lever" ? ", защёлка сверху" : hs.latch === "mark" ? ", метка ▽ сверху" : ""}`));
+    (hs.kind === "lug" || hs.kind === "banana" || hs.kind === "barrel" ? "" : ` · вид со стороны проводов${hs.latch === "ramp" || hs.latch === "lever" ? ", защёлка сверху" : hs.latch === "mark" ? ", метка ▽ сверху" : ""}`));
 }
 
 function housingWarn(hs: EtkHousing): string {
   return hs.conf === "high" ? "" : `⚠ нумерация не сверена с чертежом производителя${hs.note ? ` — ${hs.note}` : ""}`;
 }
 
-/** Монтаж в разъём: корпус крупно + легенда «конт. — провод» (etkDrawHousingOp_). */
+/** Монтаж в разъём: торец со стороны проводов крупно, рядом вид корпуса, ниже легенда «конт. — провод»
+ *  (etkDrawHousingOp_). Без распиновки в генераторе — список проводов «контакт по КД». */
 export function etkDrawHousingOp(operation: Row): string {
   const hs = operation.housing as EtkHousing, byPin: Record<number, string> = {}, ws = list(obj(operation.fields).wires);
   ws.forEach((w) => (Array.isArray(w.pins) ? w.pins as number[] : []).forEach((p) => { byPin[p] = str(w.art || w.name); }));
-  const warn = housingWarn(hs), W = 640, s = Math.max(16, Math.min(44, 520 / Math.max(hs.cols, 1))), top = warn ? 46 : 30;
-  const g = etkHousingSvg(hs, 0, 0, s, byPin), x0 = Math.max(20, (W - g.w) / 2);
+  const warn = housingWarn(hs), W = 640, top = warn ? 46 : 30;
+  const pictureW = 150, faceArea = W - pictureW - 70;
+  const round = hs.kind === "round" || hs.kind === "barrel";
+  const s = round ? 22 : Math.max(16, Math.min(46, faceArea / Math.max(hs.cols + (hs.kind === "dsub" ? 1 : 0), 1) * (hs.kind === "dsub" ? 2 : 1) / 1.15));
+  const g = etkHousingSvg(hs, 0, 0, s, byPin), pic = connectorPicture(hs, pictureW, 110, byPin);
+  const x0 = Math.max(24, (faceArea - g.w) / 2 + 12);
   let body = `<text x="20" y="16" font-size="11" fill="#5f7470">${housingCaption(hs)}</text>` +
     (warn ? `<text x="20" y="32" font-size="10.5" fill="#b3261e">${esc(warn.length > 110 ? `${warn.slice(0, 109)}…` : warn)}</text>` : "") +
-    `<g transform="translate(${x0},${top})">${g.body}</g>`;
-  let ly = top + g.h + 22;
+    `<g transform="translate(${x0},${top + 6})">${g.body}</g>` +
+    `<g transform="translate(${W - pictureW - 20},${top})">${pic.body}</g>` +
+    `<text x="${W - pictureW / 2 - 20}" y="${top + pic.h + 14}" text-anchor="middle" font-size="10" fill="#5f7470">${esc(connectorSummary(hs))}</text>`;
+  let ly = top + Math.max(g.h + 6, pic.h + 18) + 22;
   const pins = Object.keys(byPin).map(Number).sort((a, b) => a - b);
   if (pins.length) {
     pins.forEach((pin, i) => {
@@ -276,7 +211,7 @@ export function etkDrawHousingOp(operation: Row): string {
     });
     ly += Math.ceil(pins.length / 2) * 17;
   } else {
-    body += `<text x="40" y="${ly}" font-size="11" fill="#5f7470">Распиновка в генераторе не задана — контакт каждого провода по КД:</text>`;
+    body += `<text x="40" y="${ly}" font-size="11" fill="#b3261e">Распиновка в генераторе не задана — контакт каждого провода по КД:</text>`;
     ly += 18;
     ws.slice(0, 12).forEach((w, i) => {
       const cx = 40 + (i % 2) * 300, cy = ly + Math.floor(i / 2) * 17;
@@ -355,8 +290,10 @@ function cut(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
-/** Схема жгута: разъёмы по слоям слева направо, связи — пучок жил, число проводов и длина (etkDrawHarness_). */
-export function etkDrawHarness(topo: EtkTopologyData | null | undefined): string {
+/** Схема жгута: разъёмы по слоям слева направо — рисунком своей серии (connectorArt), связи — пучок жил, число
+ *  проводов и длина (etkDrawHarness_). `pins` — распиновка по узлу «разъём::сторона» из операций монтажа: провода
+ *  видны цветом в своих гнёздах. */
+export function etkDrawHarness(topo: EtkTopologyData | null | undefined, pins: Record<string, Record<number, string>> = {}): string {
   const nodes = topo?.nodes ?? [];
   if (nodes.length < 2) return "";
   const cols: Record<number, typeof nodes> = {};
@@ -364,18 +301,22 @@ export function etkDrawHarness(topo: EtkTopologyData | null | undefined): string
   const depths = Object.keys(cols).map(Number).sort((a, b) => a - b);
   const maxRows = Math.max(...depths.map((d) => cols[d].length));
   const withHs = nodes.some((n) => n.housing);
-  const bw = 160, bh = withHs ? 84 : 38, gapY = 26, colW = depths.length > 1 ? Math.min(300, 620 / (depths.length - 1)) : 0;
+  const picH = 78, bw = withHs ? 196 : 160, bh = withHs ? picH + 62 : 38, gapY = 26;
+  const colW = depths.length > 1 ? Math.min(320, Math.max(bw + 120, 620 / (depths.length - 1))) : 0;
   const span = (depths.length - 1) * colW + bw, W = Math.max(640, span + 80), x0 = (W - span) / 2, H = 30 + maxRows * (bh + gapY);
-  const pos: Record<string, { x: number; y: number }> = {};
+  const pos: Record<string, { x: number; y: number; ay: number }> = {};
   depths.forEach((d, ci) => {
     const col = cols[d], top = (H - col.length * (bh + gapY) + gapY) / 2;
-    col.forEach((n, i) => { pos[n.id] = { x: x0 + ci * colW, y: top + i * (bh + gapY) }; });
+    col.forEach((n, i) => {
+      const y = top + i * (bh + gapY);
+      pos[n.id] = { x: x0 + ci * colW, y, ay: n.housing ? y + 8 + picH / 2 : y + bh / 2 };
+    });
   });
   let body = "";
   (topo?.edges ?? []).forEach((e) => {
     const a = pos[e.from], b = pos[e.to];
     if (!a || !b) return;
-    const x1 = a.x + bw, y1 = a.y + bh / 2, x2 = b.x, y2 = b.y + bh / 2, mx = (x1 + x2) / 2;
+    const x1 = a.x + bw, y1 = a.ay, x2 = b.x, y2 = b.ay, mx = (x1 + x2) / 2;
     const strands = (e.wires || []).slice(0, 8), k = 2.6;
     body += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="#17272b" stroke-width="${strands.length * k + 1.6}" stroke-linecap="round"/>`;
     strands.forEach((wn, i) => {
@@ -388,24 +329,29 @@ export function etkDrawHarness(topo: EtkTopologyData | null | undefined): string
   });
   nodes.forEach((n) => {
     const p = pos[n.id], name = String(n.conn);
-    let ty = p.y + bh - 22;
-    body += `<rect x="${p.x}" y="${p.y}" width="${bw}" height="${bh}" rx="7" fill="#e0efed" stroke="#00706a" stroke-width="1.2"/>`;
+    let ty = p.y + bh - (n.housing ? 38 : 26);
+    body += `<rect x="${p.x}" y="${p.y}" width="${bw}" height="${bh}" rx="7" fill="#f3f8f7" stroke="#00706a" stroke-width="1.2"/>`;
     if (n.housing) {
-      const hs = n.housing, s = Math.max(4, Math.min(12, 136 / Math.max(hs.cols, 1), 40 / Math.max(hs.rows, 1)));
-      const g = etkHousingSvg(hs, 0, 0, s, null);
-      body += `<g transform="translate(${p.x + (bw - g.w) / 2},${p.y + Math.max(4, (bh - 26 - g.h) / 2 + 2)})">${g.body}</g>`;
+      const hs = n.housing, g = connectorPicture(hs, bw - 40, picH - 6, pins[`${name}::${n.side || ""}`] || null);
+      body += `<g transform="translate(${p.x + (bw - g.w) / 2},${p.y + 6 + (picH - g.h) / 2})">${g.body}</g>`;
     } else if (n.kind === "splice") {
-      const cx = p.x + bw / 2, cy = p.y + (bh - 26) / 2 + 4;
+      const cx = p.x + bw / 2, cy = p.y + (withHs ? picH / 2 + 8 : (bh - 26) / 2 + 4);
       body += `<line x1="${cx - 44}" y1="${cy}" x2="${cx + 44}" y2="${cy}" stroke="#6b7c86" stroke-width="4" stroke-linecap="round"/>` +
         `<rect x="${cx - 20}" y="${cy - 8}" width="40" height="16" rx="4" fill="#d9d9d9" stroke="#17272b" stroke-width="1"/>` +
         `<line x1="${cx - 8}" y1="${cy - 8}" x2="${cx - 8}" y2="${cy + 8}" stroke="#17272b"/>` +
         `<line x1="${cx + 8}" y1="${cy - 8}" x2="${cx + 8}" y2="${cy + 8}" stroke="#17272b"/>`;
       if (!withHs) ty = p.y + bh - 8;
-    } else ty = p.y + 16;
-    body += `<text x="${p.x + bw / 2}" y="${ty}" text-anchor="middle" font-size="11.5" font-weight="700" fill="#00554f">` +
-        `${esc(name.length > 24 ? `${name.slice(0, 23)}…` : name)}</text>` +
-      `<text x="${p.x + bw / 2}" y="${ty + 13}" text-anchor="middle" font-size="10" fill="#5f7470">` +
-        `${esc(cut(`${n.housing ? `${str(n.housing.title)} · ` : ""}${n.side ? `сторона ${n.side === "B" ? "В" : "А"}` : ""}`, 30))}</text>`;
+    } else ty = withHs ? p.y + picH / 2 + 4 : p.y + 16;
+    const side = n.side ? `сторона ${n.side === "B" ? "В" : "А"}` : "";
+    // Две строки под рисунком: серия · шаг · контакты, затем сторона — в одну не влезает.
+    const hs = n.housing, pitch = hs?.pitch && hs.kind !== "round" ? `${String(hs.pitch).replace(".", ",")} мм` : "";
+    const lines = hs
+      ? [[hs.title, pitch].filter(Boolean).join(" · "), [connectorSummary(hs).split(" · ").filter((part) => part !== hs.title && part !== pitch).join(" · "), side].filter(Boolean).join(" · ")]
+      : [side];
+    body += `<text x="${p.x + bw / 2}" y="${ty + 4}" text-anchor="middle" font-size="12" font-weight="700" fill="#00554f">` +
+        `${esc(name.length > 26 ? `${name.slice(0, 25)}…` : name)}</text>` +
+      lines.filter(Boolean).map((line, i) => `<text x="${p.x + bw / 2}" y="${ty + 18 + i * 12}" text-anchor="middle" font-size="10" fill="#5f7470">` +
+        `${esc(cut(line, 36))}</text>`).join("");
   });
   return svg(W, H, body);
 }

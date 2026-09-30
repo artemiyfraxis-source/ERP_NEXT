@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0076_production_operation_shares"
-down_revision: str | None = "0075_production_handed_to"
+revision: str = "0077_production_operation_shares"
+down_revision: str | None = "0076_techcard_operation_sketches"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

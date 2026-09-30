@@ -358,7 +358,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       {showRouting && (single
         ? <details className="ep-pinout" open={!active.every((w) => routed.has(w.idx))}><summary>Провода в этот разъём — {active.every((w) => routed.has(w.idx)) ? "все" : "не все: остальные — свободные концы"}</summary><div className="ep-route">{chips}</div></details>
         : <div className="field-label">Провода в этот разъём<div className="ep-route">{chips}</div></div>)}
-      {complex && active.length > 0 && <details className="ep-pinout" open={active.some((w) => routed.has(w.idx) && ep.pins?.[w.idx])}>
+      {active.length > 0 && <details className="ep-pinout" open={active.some((w) => routed.has(w.idx) && ep.pins?.[w.idx])}>
         <summary>Распиновка — контакты разъёма{active.some((w) => routed.has(w.idx) && ep.pins?.[w.idx]) ? " ✓" : ""}</summary>
         {active.filter((w) => routed.has(w.idx)).map((w) => <div className="ep-pin" key={w.idx}>
           <span>{compLabel(w.compId)}{w.qty > 1 ? ` ×${w.qty}` : ""}</span>

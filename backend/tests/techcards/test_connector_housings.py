@@ -75,3 +75,32 @@ def test_alias_rule_bl2018p_resolves_to_jst_smp_plug():
     assert housing_of("BL2018P-14") is None  # SM is capped at 12 contacts
     assert housing_of("SMR-04V-B")["family"] == "jst-sm-r" and housing_of("SMP-02V-BC")["family"] == "jst-sm-p"
     assert housing_of("LP-12")["family"] == "cnlinko-lp12"
+
+
+def test_series_bought_for_projects_have_drawings():
+    expected = {
+        "DS1033-09FUNSISS-CT": ("dsub", 9), "I-DS1033-09M": ("dsub", 9), "DT06-4S": ("deutsch-dt", 4),
+        "282106-1": ("te-superseal", 4), "282080-1": ("te-superseal", 2), "GX12M-2A": ("aviation-gx", 2),
+        "DC5.5x2.1": ("dc-barrel", 2), "SHR05V-S-B": ("jst-sh", 5), "PHDR-14VS": ("jst-phd", 14),
+        "Molex 430200400": ("molex-microfit-plug", 4), "Molex 436400400": ("molex-microfit-plug-1r", 4),
+        "MOLEX 5025780600": ("molex-clikmate", 6), "Molex 5011892010": ("molex-picoclasp", 20),
+        "Molex 51110-2051": ("molex-milligrid", 20), "FI-X30HL": ("jae-fix", 30), "RJ45": ("rj45", 8),
+    }
+    assert {
+        article: (layout["family"], layout["n"]) for article in expected if (layout := housing_of(article))
+    } == expected
+
+
+def test_dsub_wire_side_mirrors_between_socket_and_pin_sides():
+    socket, pins = housing_of("DS1033-09F"), housing_of("DS1033-09M")
+
+    assert socket["grid"] == [[1, 0, 2, 0, 3, 0, 4, 0, 5], [0, 6, 0, 7, 0, 8, 0, 9, 0]]
+    assert pins["grid"] == [list(reversed(row)) for row in socket["grid"]]
+    assert socket["male"] is False and pins["male"] is True
+    assert housing_of("DS1033-11F") is None
+
+
+def test_round_auto_layout_spreads_pins_on_a_circle():
+    layout = housing_of("GX16M-5")
+    assert [point["pin"] for point in layout["round"]] == [1, 2, 3, 4, 5]
+    assert layout["round"][0] == {"pin": 1, "x": 0.0, "y": -0.55}

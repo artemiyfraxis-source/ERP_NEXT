@@ -67,17 +67,40 @@ function solderRows(operation: Row): string[][] {
   ];
 }
 
+function operationKeyOf(operation: Row): string {
+  return `${text(operation.code).trim()}::${text(operation.connector).trim()}::${text(operation.side).trim()}`;
+}
+
+function sketchImg(url: string | undefined): string {
+  return url ? `<img class="etk-sketch-print" src="${url.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}" alt="Эскиз" style="max-width:100%;max-height:120mm;display:block;margin-top:4mm"/>` : "";
+}
+
+/** Распиновка по узлу схемы «артикул::сторона» — как harnessPins на экране. */
+function harnessPinsOf(operations: Row[]): Record<string, Record<number, string>> {
+  const out: Record<string, Record<number, string>> = {};
+  operations.forEach((operation) => {
+    const article = text(operation.connector_article).trim();
+    const wires = rows(object(operation.fields).wires);
+    if (!article) return;
+    wires.forEach((wire) => (Array.isArray(wire.pins) ? wire.pins as number[] : []).forEach((pin) => {
+      (out[`${article}::${text(operation.side)}`] ||= {})[pin] = text(wire.art || wire.name);
+    }));
+  });
+  return out;
+}
+
 function sortedTooling(items: Row[]): Row[] {
   const order = toolingSections(items.map((tool) => text(tool.section)));
   return order.flatMap((section) => items.filter((tool) => text(tool.section) === section));
 }
 
-export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[]): PrintPage[] {
+/** `sketches` — своя картинка эскиза по ключу операции (код::разъём::сторона), абсолютной ссылкой на файл в ERP. */
+export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[], sketches: Record<string, string> = {}): PrintPage[] {
   const document = object(card.document);
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(document.kit) };
   const revision = card.revision || 1;
   const operations = rows(document.operations);
-  const harness = etkDrawHarness(document.topology as EtkTopologyData | undefined);
+  const harness = etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
   const cover: PrintPage = {
     title: "Технологическая карта сборки",
     subtitle: `${text(kit.name)} · ${text(kit.project)} ${text(kit.index)} · ревизия ${revision}`,
@@ -141,7 +164,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           rows: rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text), text(step.tolerance)]),
         } },
         { text: text(opCard.defects) },
-        { figure: etkFigure(operation) },
+        { figure: etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]) },
         { table: {
           columns: ["№", text(operation.result_label) || "Результат", "Норма", "Факт / брак", "Ед."],
           rows: numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", text(item.unit)]),
