@@ -122,7 +122,7 @@ it("writes off stock with its optimistic version and stated reason", async () =>
   }));
 });
 
-it("offers «Выдача» as the write-off basis and needs a purpose before writing off", async () => {
+it("offers «Выдача в производство» as the write-off basis and needs a purpose before writing off", async () => {
   let writeoff: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -137,7 +137,8 @@ it("offers «Выдача» as the write-off basis and needs a purpose before wr
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
   fireEvent.click(await screen.findByRole("button", { name: "− Списать" }));
-  expect(screen.getByLabelText("Основание")).toHaveValue("Выдача");
+  expect(screen.getByRole("dialog", { name: "Списать" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Основание")).toHaveValue("Выдача в производство");
   fireEvent.change(screen.getByLabelText("Количество"), { target: { value: "1" } });
   fireEvent.change(screen.getByLabelText("Назначение списания"), { target: { value: "   " } });
   expect(screen.getByLabelText("Назначение списания")).toBeInvalid();
@@ -145,7 +146,8 @@ it("offers «Выдача» as the write-off basis and needs a purpose before wr
   expect(screen.getByLabelText("Назначение списания")).toBeValid();
   fireEvent.click(screen.getByRole("button", { name: "Списать" }));
 
-  await waitFor(() => expect(writeoff).toEqual({ version: 4, quantity: "1", purpose: "Иванов", reason: "Выдача", date: new Date().toLocaleDateString("sv-SE") }));
+  await waitFor(() => expect(writeoff).toEqual({ version: 4, quantity: "1", purpose: "Иванов", reason: "Выдача в производство", date: new Date().toLocaleDateString("sv-SE") }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Списать" })).not.toBeInTheDocument());
 });
 
 it("returns a write-off to the lot with where it comes back from", async () => {
@@ -168,14 +170,14 @@ it("returns a write-off to the lot with where it comes back from", async () => {
   expect(screen.getByLabelText("Откуда возврат")).toBeRequired();
   fireEvent.change(screen.getByLabelText("Количество возврата"), { target: { value: "3" } });
   fireEvent.change(screen.getByLabelText("Откуда возврат"), { target: { value: " FRX.001 " } });
-  fireEvent.change(screen.getByLabelText("Основание возврата"), { target: { value: "не израсходовано" } });
+  fireEvent.change(screen.getByLabelText("Основание возврата"), { target: { value: "Возврат: ошибочное списание" } });
   fireEvent.click(screen.getByRole("button", { name: "Вернуть" }));
 
   await waitFor(() => expect(returned).toEqual({
     version: 4,
     quantity: "3",
     source: "FRX.001",
-    reason: "не израсходовано",
+    reason: "Возврат: ошибочное списание",
   }));
   await waitFor(() => expect(screen.queryByLabelText("Откуда возврат")).not.toBeInTheDocument());
 });
@@ -731,11 +733,18 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   expect(requested.every((call) => call === "GET /api/stock")).toBe(true);
 });
 
-it("«История» on a lot opens the stock journal filtered by its ГРН (administrator)", async () => {
+it("«История» on a lot opens a window with the journal of its ГРН only (administrator)", async () => {
   const requested: string[] = [];
+  const at = "2026-09-01T10:00:00+00:00";
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path.startsWith("/api/stock/journal")) { requested.push(path); return json({ rows: [], total: 0, truncated: 0 }); }
+    if (path.startsWith("/api/stock/journal")) {
+      requested.push(path);
+      return json({ rows: [
+        { occurred_at: at, kind: "Списание", lot: "FRX.26.0000001", name: "Разъём", event: "2 шт · Выдача в производство", warehouse: "ЦАР", who: "Иванов" },
+        { occurred_at: at, kind: "Приход", lot: "FRX.26.00000011", name: "Другое", event: "5 шт", warehouse: "ЦАР", who: "Петров" },
+      ], total: 2, truncated: 0 });
+    }
     return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
   });
 
@@ -743,8 +752,12 @@ it("«История» on a lot opens the stock journal filtered by its ГРН (
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
   fireEvent.click(screen.getByRole("button", { name: "История" }));
 
-  expect(await screen.findByLabelText("Поиск по журналу склада")).toHaveValue("FRX.26.0000001");
-  await waitFor(() => expect(requested.some((path) => path.includes("FRX.26.0000001"))).toBe(true));
+  const dialog = within(await screen.findByRole("dialog", { name: "История" }));
+  expect(await dialog.findByText("2 шт · Выдача в производство")).toBeInTheDocument();
+  expect(dialog.queryByText("Петров")).toBeNull();
+  expect(requested.some((path) => path.includes("FRX.26.0000001"))).toBe(true);
+  fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("dialog", { name: "История" })).not.toBeInTheDocument();
 });
 
 it("shows the ГРН assigned to entered rows and copies them tab-separated", async () => {
