@@ -12,6 +12,7 @@ import {
 } from "./api";
 import { etkChips, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
+import { defectPicto, parseDefects, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
 
@@ -137,6 +138,9 @@ function PartRows({ rows }: { rows?: EtkRow[] }) {
   )}</div>;
 }
 
+/** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
+ *  1 вход: комплектующие и полуфабрикаты → 2 инструмент, оборудование, расходники + режим пайки (жало, температура) →
+ *  3 ход операции → 4 типовые дефекты с пиктограммами → 5 эскиз → 6 результат и расчётное время. */
 function EtkOperationCard({ operation, number, total, actions }: { operation: EtkOperation; number: number; total: number; actions?: ReactNode }) {
   const raw = operation as Record<string, unknown>;
   // Раскладка корпуса при монтаже — только если известно, какой провод в какой контакт: пустая сетка повторяла бы
@@ -145,6 +149,14 @@ function EtkOperationCard({ operation, number, total, actions }: { operation: Et
   const housing = operation.housing && operation.type === "insTerm" ? operation.housing : null;
   const figure = housing ? "" : etkFigure(raw);
   const tooling = operation.card?.tooling ?? [];
+  const solder = solderMode(raw);
+  const safety = String(operation.card?.safety || "").replace(SAFETY_HEAD, "").trim();
+  const resultLabel = String(raw.result_label || "") || "Результат";
+  const hasInput = Boolean(operation.components?.length || operation.semis?.length);
+  const hasResult = Boolean(operation.result?.length || operation.time?.length);
+  // Номера разделов подряд по показанным блокам (эскиза бывает нет).
+  let shown = 0;
+  const next = () => ++shown;
   return <article className="etk-op">
     <header className="etk-op-head">
       <span className="operation-number">{number}</span>
@@ -157,19 +169,68 @@ function EtkOperationCard({ operation, number, total, actions }: { operation: Et
     </header>
     {etkChips(raw).length > 0 && <div className="etk-chips" aria-label="Параметры операции">{etkChips(raw).map(([label, value]) =>
       <span key={label}><small>{label}</small>{value}</span>)}</div>}
-    <div className="etk-flow">
-      <PartRows rows={operation.components} />
-      <Rows title="Вход" rows={operation.semis} />
-      <Rows title="Результат" rows={operation.result} />
-      <Rows title="Время, мин" rows={operation.time} />
-    </div>
-    {operation.card?.steps?.length ? <section className="etk-sec"><h4>Ход операции</h4><ol className="etk-steps">{operation.card.steps.map((step, index) =>
-      <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && <small>Допуск: {step.tolerance}</small>}</li>
-    )}</ol></section> : <div className="warning-inline">Карточка операции отсутствует в библиотеке.</div>}
-    {figure && <section className="etk-sec"><h4>Эскиз</h4><div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} /></section>}
-    {housing && pinned && <section className="etk-sec"><h4>Раскладка контактов</h4><HousingView housing={housing} wires={operation.fields?.wires} /></section>}
-    {tooling.length > 0 && <section className="etk-sec"><h4>Оснастка</h4><ToolingBySection tooling={tooling} /></section>}
+    {safety && <details className="etk-safety"><summary>Требование безопасности</summary><div>{safety}</div></details>}
+    {!operation.card && <div className="warning-inline">Карточка операции отсутствует в библиотеке.</div>}
+    <section className="etk-sec" aria-label="Вход">
+      <h4><span className="etk-sec-n">{next()}</span>Вход</h4>
+      {hasInput ? <div className="etk-flow">
+        <PartRows rows={operation.components} />
+        <Rows title="Полуфабрикат на входе" rows={operation.semis} />
+      </div> : <div className="empty">Комплектующих и полуфабрикатов на входе нет.</div>}
+    </section>
+    <section className="etk-sec" aria-label="Инструмент, оборудование, расходники">
+      <h4><span className="etk-sec-n">{next()}</span>Инструмент, оборудование, расходники</h4>
+      {solder && <SolderPanel mode={solder} />}
+      <ToolingBySection tooling={tooling} />
+    </section>
+    {operation.card?.steps?.length ? <section className="etk-sec" aria-label="Ход операции">
+      <h4><span className="etk-sec-n">{next()}</span>Ход операции</h4>
+      <ol className="etk-steps">{operation.card.steps.map((step, index) =>
+        <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small>Допуск: {step.tolerance}</small>}</li>
+      )}</ol></section> : null}
+    {operation.card?.defects && <DefectsView text={operation.card.defects} number={next()} />}
+    {(figure || (housing && pinned)) && <section className="etk-sec" aria-label="Эскиз">
+      <h4><span className="etk-sec-n">{next()}</span>Эскиз</h4>
+      {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
+      {housing && pinned && <HousingView housing={housing} wires={operation.fields?.wires} />}
+    </section>}
+    {hasResult && <section className="etk-sec" aria-label="Результат">
+      <h4><span className="etk-sec-n">{next()}</span>Результат</h4>
+      <div className="etk-flow">
+        <Rows title={resultLabel} rows={operation.result} />
+        <Rows title="Расчётное время, мин" rows={operation.time} />
+      </div>
+    </section>}
   </article>;
+}
+
+/** Режим пайки: жало и температура обязательны. Не из карты операции — помечено «по умолчанию ERP». */
+function SolderPanel({ mode }: { mode: SolderMode }) {
+  const assumed = <span className="etk-assumed" title="В карте операции не указано — значение по умолчанию ERP для Sn63Pb37. Уточнить технологу и вписать в карту операции.">по умолчанию, уточнить</span>;
+  return <div className="etk-solder" aria-label="Режим пайки">
+    <div><small>{mode.method === "bath" ? "Паяльник" : "Жало паяльника"}</small><b>{mode.tip}</b>{mode.tipAssumed && assumed}</div>
+    <div><small>{mode.method === "bath" ? "Температура ванны" : mode.method === "induction" ? "Нагрев" : "Температура жала"}</small>
+      <b>{mode.temperature}{mode.tolerance && ` (${mode.tolerance})`}</b>{mode.temperatureAssumed && assumed}</div>
+  </div>;
+}
+
+/** Типовые дефекты карточкой с пиктограммой на каждый дефект (в Google — сплошной текст). */
+function DefectsView({ text, number }: { text: string; number: number }) {
+  const parsed = parseDefects(text);
+  const count = parsed.groups.reduce((sum, group) => sum + group.items.length, 0);
+  return <details className="etk-sec etk-defects" open aria-label="Типовые дефекты">
+    <summary><h4><span className="etk-sec-n">{number}</span>Типовые дефекты{count ? ` · ${count}` : ""}</h4></summary>
+    {count ? <>
+      {parsed.intro.length > 0 && <small className="etk-def-intro">{parsed.intro.join(" · ")}</small>}
+      {parsed.groups.map((group, index) => <div className="etk-def-group" key={`${group.title}:${index}`}>
+        {group.title && <div className="tr-sec-h">{group.title}</div>}
+        <div className="etk-def-grid">{group.items.map((item, position) => <div className="etk-def" key={`${item.name}:${position}`}>
+          <span className="etk-def-pic" dangerouslySetInnerHTML={{ __html: defectPicto(item.kind) }} />
+          <div><b>{item.name}</b><small>{item.text}</small></div>
+        </div>)}</div>
+      </div>)}
+    </> : <div className="etk-def-text">{text}</div>}
+  </details>;
 }
 
 /** Same key as backend project_cards.operation_key: code::connector::side. */
@@ -189,10 +250,11 @@ function toolSub(tool: EtkTool): string {
   ].filter(Boolean).join(" · ");
 }
 
-/** Оснастка по разделам: номер считается внутри раздела (SUPPLYMAP renderEtk_ / renderCard). */
+/** Оснастка по разделам: инструмент → оборудование → расходники → прочее; номер считается внутри раздела
+ *  (SUPPLYMAP renderEtk_ / renderCard). */
 export function ToolingBySection({ tooling }: { tooling: EtkTool[] }) {
-  if (!tooling.length) return <div className="empty">Оснастка не указана.</div>;
-  const sections = [...new Set(tooling.map((tool) => tool.section || ""))];
+  if (!tooling.length) return <div className="empty">Инструмент, оборудование и расходники не указаны.</div>;
+  const sections = toolingSections(tooling.map((tool) => tool.section || ""));
   return <div className="tr-tooling">{sections.map((section) => <div className="tr-sec" key={section}>
     {section && <div className="tr-sec-h">{section}</div>}
     {tooling.filter((tool) => (tool.section || "") === section).map((tool, index) => <div className="tr-tool" key={`${section}:${index}`}>

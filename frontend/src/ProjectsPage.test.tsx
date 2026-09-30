@@ -132,6 +132,22 @@ describe("ProjectsPage", () => {
     await waitFor(() => expect(posted).toEqual([{ kind: "note", text: "позвонили заказчику", deadline: null }]));
   });
 
+  it("hides projects with an active blocker on request", async () => {
+    const more = [...tiles, { ...tiles[1], project: "620К.1", status: "Новый", blocker: "СТОП" }];
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => String(input).startsWith("/api/techcards/kitsets?sort=")
+      ? json({ items: more, statuses }) : base(input, init));
+    render(<ProjectsPage principal={editor} />);
+    expect(await screen.findByText("620К.1")).toBeTruthy();
+    const before = more.filter((item) => item.status !== "Отгружено").length;
+    const blocked = more.filter((item) => item.status !== "Отгружено" && item.blocker).length;
+    expect(screen.getByText(`показано ${before} из ${more.length}`)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Скрыть с блокерами"));
+    expect(screen.queryByText("620К.1")).toBeNull();
+    expect(screen.getByText(`показано ${before - blocked} из ${more.length}`)).toBeTruthy();
+  });
+
   it("shows the status as a plain badge to a viewer", async () => {
     render(<ProjectsPage principal={viewer} />);
     expect(await screen.findByText("708К.4")).toBeTruthy();

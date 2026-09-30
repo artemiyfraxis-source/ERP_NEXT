@@ -38,9 +38,10 @@ function remember(key: string, value: string) {
 
 /* Переключатели «Скрыть …» над списком проектов: чтобы отгруженные и закрытые по техкартам проекты не засоряли
    список. Помнятся у каждого пользователя отдельно; «Скрыть отгруженные» включён, пока его не выключили. */
-type HideKey = "shipped" | "tcReady" | "tcChecked";
+type HideKey = "shipped" | "tcReady" | "tcChecked" | "blocked";
 const HIDES: Array<[HideKey, string, boolean]> = [
   ["shipped", "Скрыть отгруженные", true], ["tcReady", "Скрыть с готовыми ТК", false], ["tcChecked", "Скрыть с проверенными ТК", false],
+  ["blocked", "Скрыть с блокерами", false],
 ];
 
 function hidden(item: KitsetTile, hide: Record<HideKey, boolean>, status: string) {
@@ -49,6 +50,7 @@ function hidden(item: KitsetTile, hide: Record<HideKey, boolean>, status: string
   if (hide.shipped && item.status === "Отгружено" && status !== "Отгружено") return true;
   if (hide.tcReady && total > 0 && tc === total) return true;             // бейдж «ТК ✓»
   if (hide.tcChecked && total > 0 && tc === total && !unreviewed) return true; // «ТК ✓» без «не проверено»
+  if (hide.blocked && item.blocker) return true;                           // ХОЛД, СТОП, ОЖИД ИНФ, ОЖИД КОМПЛ, ПАУЗА
   return false;
 }
 

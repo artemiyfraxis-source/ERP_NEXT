@@ -4,6 +4,7 @@
 // Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*).
 import type { ProjectTechcard, TechcardRevision } from "./api";
 import { etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
+import { solderMode, toolingSections } from "./etkOperation";
 import type { PrintBlock, PrintPage } from "./print";
 
 type Row = Record<string, unknown>;
@@ -53,6 +54,22 @@ function facts(fields: Row): string {
     fields.cutTolerance && `Допуск реза: ${text(fields.cutTolerance)}`,
     fields.twist && `Шаг свивки: ${twist.pitch ? `${text(twist.pitch)} мм` : "по КД"}`,
   ].filter(Boolean).join(" · ");
+}
+
+/** Режим пайки строками таблицы оснастки: жало и температура обязательны (значение ERP по умолчанию помечено). */
+function solderRows(operation: Row): string[][] {
+  const mode = solderMode(operation);
+  if (!mode) return [];
+  const mark = (assumed: boolean) => assumed ? " (по умолчанию ERP, уточнить)" : "";
+  return [
+    ["Режим пайки", "", `${mode.method === "bath" ? "Паяльник" : "Жало паяльника"}: ${mode.tip}${mark(mode.tipAssumed)}`, "", "", "", ""],
+    ["Режим пайки", "", `${mode.method === "bath" ? "Температура ванны" : mode.method === "induction" ? "Нагрев" : "Температура жала"}: ${mode.temperature}${mode.tolerance ? ` (${mode.tolerance})` : ""}${mark(mode.temperatureAssumed)}`, "", "", "", ""],
+  ];
+}
+
+function sortedTooling(items: Row[]): Row[] {
+  const order = toolingSections(items.map((tool) => text(tool.section)));
+  return order.flatMap((section) => items.filter((tool) => text(tool.section) === section));
 }
 
 export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[]): PrintPage[] {
@@ -113,11 +130,11 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         } },
         { table: {
           columns: ["Раздел", "№", "Наименование", "Инв. №", "№ прог. / параметры", "Норма", "Ед."],
-          rows: rows(opCard.tooling).map((tool) => [
+          rows: [...solderRows(operation), ...sortedTooling(rows(opCard.tooling)).map((tool) => [
             text(tool.section), text(tool.number), text(tool.name), text(tool.inventory_number),
             [tool.program && tool.program !== "-" ? text(tool.program) : "", text(tool.parameters)].filter(Boolean).join(" · "),
             text(tool.norm), text(tool.unit),
-          ]),
+          ])],
         } },
         { table: {
           columns: ["Тип", "№", "Описание операции, материалов и оснастки", "Допуск"],
