@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { failureText, techcardsApi, type ConnectorFamily } from "./api";
-import { connectorFace, connectorPicture, connectorSummary, type ConnectorHousing } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, type ConnectorHousing } from "./connectorArt";
 
 /* «База данных → Разъёмы»: все серии, которые схема жгута и эскиз монтажа рисуют своим корпусом (владелец 30.09:
    «собрать более реальную базу разъёмов»). Сверху — проверка своего артикула: какой корпус нарисует ЭТК. */
@@ -8,7 +8,7 @@ import { connectorFace, connectorPicture, connectorSummary, type ConnectorHousin
 function Drawing({ housing }: { housing: ConnectorHousing }) {
   const picture = connectorPicture(housing, 150, 90);
   const round = housing.kind === "round" || housing.kind === "barrel";
-  const step = round ? 20 : Math.max(12, Math.min(34, 250 / Math.max(housing.cols + (housing.kind === "dsub" ? 1 : 0), 1) * (housing.kind === "dsub" ? 2 : 1)));
+  const step = round ? 20 : Math.max(12, Math.min(34, 250 / connectorFaceUnits(housing)));
   const face = connectorFace(housing, 10, 4, step, null);
   return <>
     <svg viewBox={`0 0 ${picture.w} ${picture.h}`} role="img" aria-label={`Корпус ${housing.title}`} dangerouslySetInnerHTML={{ __html: picture.body }} />
