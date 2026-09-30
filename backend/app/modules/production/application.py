@@ -15,6 +15,7 @@ from app.shared.identity import Actor
 from .domain import (
     BusyInterval,
     DEFAULT_SHIFT,
+    UNPLANNED_SITES,
     OperatorSkill,
     PlanResult,
     ProductionOperation,
@@ -44,8 +45,12 @@ class Operator:
     @property
     def installer(self) -> bool:
         """Монтажник (владелец, 29.09: «тут только монтажники должны быть»): активный «Сотрудник» цеха — с площадкой
-        ЦАР/ЖУК или из отдела «Монтаж». Директора, мастера, снабжение и админ-учётки работу не получают."""
-        return self.active and self.role == "staff" and (bool(self.site) or "монтаж" in self.department.lower())
+        ЦАР/ЖУК или из отдела «Монтаж». Директора, мастера, снабжение и админ-учётки работу не получают.
+        Люди площадок без нормирования (ЖУК, владелец 30.09) по часам не расписываются — им отдают задание целиком."""
+        return (
+            self.active and self.role == "staff" and (bool(self.site) or "монтаж" in self.department.lower())
+            and self.site not in UNPLANNED_SITES
+        )
 
 
 @dataclass(frozen=True)
@@ -127,6 +132,15 @@ class AssignProductionCommand:
     actor: Actor
     now: datetime
     dry: bool = False
+
+
+@dataclass(frozen=True)
+class HandOverProductionCommand:
+    task_id: UUID
+    expected_version: int
+    site: str
+    actor: Actor
+    now: datetime
 
 
 @dataclass(frozen=True)
@@ -298,6 +312,10 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
             operator = uow.operators.get(operator_id)
             if operator is None or not operator.active:
                 raise ProductionValidationError("Оператора нет в справочнике сотрудников")
+            if operator.site in UNPLANNED_SITES and operator_id not in operation.operator_ids:
+                raise ProductionValidationError(
+                    f"{operator.name} — площадка {operator.site}: по людям не расписывается, отдайте задание «Отдать в {operator.site}»"
+                )
             if not operator.installer and operator_id not in operation.operator_ids:
                 raise ProductionValidationError(f"{operator.name} не монтажник: работу назначают только монтажникам")
             names[operator_id] = operator.name
@@ -366,6 +384,16 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
         }, uow)
         uow.commit()
         return updated, plan
+
+
+def hand_over_production(command: HandOverProductionCommand, uow: UnitOfWork) -> ProductionTask:
+    with uow:
+        task = _task(command.task_id, command.expected_version, uow)
+        updated = task.hand_over(command.site)
+        uow.production.add(updated)
+        _audit(updated, "production.handed_over", command.actor, command.now, {"site": updated.handed_to}, uow)
+        uow.commit()
+        return updated
 
 
 def set_production_cancelled(command: SetProductionCancelledCommand, uow: UnitOfWork) -> ProductionTask:

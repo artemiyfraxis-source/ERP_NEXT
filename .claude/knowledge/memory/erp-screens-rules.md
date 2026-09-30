@@ -16,5 +16,12 @@ metadata:
 - Tooling: `scripts/demo/run-demo.sh` (Linux demo on 8021, seeded via `seed_demo.py`), `scripts/demo/shoot.mjs`
   (27" + tablet PNGs and a lint for English ids / raw codes / stuck loading / sideways scroll).
 
+- 2026-09-30 (later) the owner: «не тяни дизайн из гугла … придерживайся общего стиля … можно лучше» — Google is the
+  reference for behaviour and block order only, never for the look. Also «под операцией хотелось бы видеть ее код»:
+  the operation-card code is allowed as a grey second line under the Russian name (ETK route list), never instead of it.
+- ETK «Типовые дефекты» pictures: shared library `frontend/src/etkDefectArt.ts` (82 «Норма | Брак» scenes, picked at
+  render time by defect name + operation code; the owner found one icon for all defects unreadable). New wording → a
+  rule there.
+
 Why: the owner judges by Google SUPPLYMAP and wants better, not worse; he should not have to correct each section.
 How to apply: load `erp-screens` before any UI change. Hub: [[erp-next-hub]] · [[owner-working-rules]] · [[module-techcards]] · [[module-production]].

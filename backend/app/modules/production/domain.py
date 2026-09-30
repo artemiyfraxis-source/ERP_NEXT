@@ -39,7 +39,8 @@ class WorkShift:
     start: time = time(9, 0)
     finish: time = time(17, 30)
     breaks: tuple[tuple[time, time], ...] = ((time(13, 0), time(13, 30)),)
-    effective_seconds: int = 8 * 60 * 60
+    # Чистое рабочее время в день (владелец, 30.09: смена 9:00–17:30, обед 30 минут, ещё час на туалет и перекуры).
+    effective_seconds: int = 7 * 60 * 60
 
     def __post_init__(self) -> None:
         if not self.weekdays or any(day < 0 or day > 6 for day in self.weekdays):
@@ -56,6 +57,10 @@ class WorkShift:
 
 
 DEFAULT_SHIFT = WorkShift()
+
+# Площадки без нормирования (владелец, 30.09: ЖУК «работают не нормированно… механизм позже придумаем»): их люди
+# не попадают в загрузку, почасовое назначение и автоплан; работа отдаётся площадке целиком.
+UNPLANNED_SITES = frozenset({"ЖУК"})
 
 
 @dataclass(frozen=True)
@@ -159,6 +164,8 @@ class ProductionTask:
     status: ProductionStatus
     launched_by: str
     operations: tuple[ProductionOperation, ...]
+    # Площадка, которой задание отдано целиком (владелец, 30.09: ЖУК работает не нормированно — «отдать все в жук»).
+    handed_to: str = ""
 
     @classmethod
     def create(
@@ -219,6 +226,8 @@ class ProductionTask:
     ) -> ProductionTask:
         if self.status is ProductionStatus.CANCELLED:
             raise ProductionValidationError(f"Задание {self.number} отменено — назначать нельзя")
+        if self.handed_to:
+            raise ProductionValidationError(f"Задание {self.number} отдано в {self.handed_to} — по людям не расписывается")
         operation = self.operation(operation_id)
         assigned = operation.assign(operator_ids, plan, assigned_by)
         return replace(
@@ -234,6 +243,8 @@ class ProductionTask:
     ) -> ProductionTask:
         if self.status is ProductionStatus.CANCELLED:
             raise ProductionValidationError(f"Задание {self.number} отменено — планировать нельзя")
+        if self.handed_to:
+            raise ProductionValidationError(f"Задание {self.number} отдано в {self.handed_to} — по людям не расписывается")
         by_operation = {item[0]: item[1:] for item in assignments}
         if len(by_operation) != len(assignments) or set(by_operation) != {item.id for item in self.operations}:
             raise ProductionValidationError("Автоплан должен содержать все операции задания")
@@ -254,6 +265,21 @@ class ProductionTask:
                 f"Задание {self.number} уже в статусе «{target.value}»"
             )
         return replace(self, status=target, version=self.version + 1)
+
+    def hand_over(self, site: str) -> ProductionTask:
+        """Отдать задание площадке целиком ("" — вернуть на распределение по людям). Назначения и план по часам
+        снимаются: площадка без нормирования раскладывает работу сама."""
+        site = str(site or "").strip()
+        if site and site not in UNPLANNED_SITES:
+            raise ProductionValidationError(f"Отдать целиком можно только в {', '.join(sorted(UNPLANNED_SITES))}")
+        if self.status is ProductionStatus.CANCELLED:
+            raise ProductionValidationError(f"Задание {self.number} отменено")
+        if site == self.handed_to:
+            raise ProductionValidationError(
+                f"Задание {self.number} уже в {site}" if site else f"Задание {self.number} и так распределяется по людям"
+            )
+        operations = tuple(replace(item, operator_ids=(), planned_start=None, planned_finish=None) for item in self.operations) if site else self.operations
+        return replace(self, handed_to=site, operations=operations, version=self.version + 1)
 
 
 def operation_duration_seconds(
@@ -311,16 +337,36 @@ def _day_spans(
             if break_finish < finish:
                 split.append((max(start, break_finish), finish))
         minute_spans = split
-    budget = shift.effective_seconds
     result: list[tuple[datetime, datetime]] = []
     for start, finish in minute_spans:
         span_start = datetime.combine(moment.date(), start, moment.tzinfo)
-        raw_finish = datetime.combine(moment.date(), finish, moment.tzinfo)
-        seconds = min(max(0, int((raw_finish - span_start).total_seconds())), budget)
-        budget -= seconds
-        if seconds:
-            result.append((span_start, span_start + timedelta(seconds=seconds)))
+        span_finish = datetime.combine(moment.date(), finish, moment.tzinfo)
+        if span_finish > span_start:
+            result.append((span_start, span_finish))
     return tuple(result)
+
+
+def work_rate(shift: WorkShift = DEFAULT_SHIFT) -> Decimal:
+    """Доля чистой работы в смене без обеда: мелкие перерывы (туалет, перекуры) размазаны по всему дню,
+    поэтому норма 7 ч при 8 ч смены без обеда занимает весь день 9:00–17:30, а не заканчивается в 16:30."""
+    available = 0
+    spans = [(shift.start, shift.finish)]
+    for break_start, break_finish in sorted(shift.breaks):
+        split: list[tuple[time, time]] = []
+        for start, finish in spans:
+            if break_finish <= start or break_start >= finish:
+                split.append((start, finish))
+                continue
+            if start < break_start:
+                split.append((start, min(finish, break_start)))
+            if break_finish < finish:
+                split.append((max(start, break_finish), finish))
+        spans = split
+    for start, finish in spans:
+        available += (finish.hour * 3600 + finish.minute * 60) - (start.hour * 3600 + start.minute * 60)
+    if available <= 0:
+        return Decimal(1)
+    return min(Decimal(1), Decimal(shift.effective_seconds) / Decimal(available))
 
 
 def next_working_moment(
@@ -344,7 +390,12 @@ def add_work_seconds(
     shift: WorkShift = DEFAULT_SHIFT,
 ) -> datetime:
     current = next_working_moment(moment, holidays, shift)
-    remaining = max(0, seconds)
+    rate = work_rate(shift)
+    # Норматив — чистые секунды работы; на часах он растягивается на долю перерывов внутри смены.
+    remaining = Decimal(max(0, seconds))
+    if rate < 1:
+        # Растянутое время округляем до минуты вверх, чтобы в плане не было секунд.
+        remaining = Decimal(ceil(remaining / rate / 60) * 60)
     if not remaining:
         return current
     for _ in range(400):
@@ -354,7 +405,7 @@ def add_work_seconds(
             segment_start = max(current, start)
             available = int((finish - segment_start).total_seconds())
             if remaining <= available:
-                return segment_start + timedelta(seconds=remaining)
+                return segment_start + timedelta(seconds=int(remaining))
             remaining -= available
         current = next_working_moment(
             datetime.combine(current.date() + timedelta(days=1), time.min, current.tzinfo),

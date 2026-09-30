@@ -126,7 +126,7 @@ def test_assignment_uses_calendar_and_cancel_keeps_history():
     ), uow)
 
     assert plan.start == datetime(2026, 9, 22, 16, 0)
-    assert plan.finish == datetime(2026, 9, 22, 16, 12)
+    assert plan.finish == datetime(2026, 9, 22, 16, 14)
     assert assigned.operations[0].operator_ids == (OPERATOR,)
     assert cancelled.status is ProductionStatus.CANCELLED
     assert cancelled.operations == assigned.operations

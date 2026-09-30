@@ -72,7 +72,9 @@ export function installerLoad(operatorId: string, tasks: ProductionTask[], absen
 // ── Неделя монтажников (владелец, 30.09: «не понимаю, на какой период я закидываю»). Мастер видит загрузку
 // каждого монтажника по дням в часах и ставит операцию кликом в день: сервер планирует её с начала смены этого
 // дня в первое свободное окно (тот же assign и план, что в карточке с Гантом, prodPlan_).
-const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "8" };
+// Площадка без нормирования: задание ей отдают целиком (сервер: UNPLANNED_SITES).
+const HANDOVER_SITE = "ЖУК";
+const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const WEEK_DAYS = 7;
 
 function addDays(day: string, count: number) {
@@ -91,24 +93,44 @@ export function workingDay(day: string, shift: ProductionShift, holidays: string
   return shift.weekdays.includes(weekday) && !holidays.includes(day);
 }
 
-// Часы монтажника в день: пересечение плановых окон его невыполненных операций со сменой дня, приведённое
-// к эффективным часам смены (обед и перерывы не считаются).
+// Рабочие отрезки смены без перерывов (обеда), в минутах от полуночи.
+function workSpans(shift: ProductionShift): [number, number][] {
+  let spans: [number, number][] = [[minutes(shift.start), minutes(shift.finish)]];
+  for (const [a, b] of shift.breaks ?? []) {
+    const x = minutes(a), y = minutes(b);
+    spans = spans.flatMap(([from, to]): [number, number][] => y <= from || x >= to ? [[from, to]] : [
+      ...(from < x ? [[from, Math.min(to, x)] as [number, number]] : []),
+      ...(y < to ? [[Math.max(from, y), to] as [number, number]] : []),
+    ]);
+  }
+  return spans;
+}
+
+// Доля чистой работы: обед вычтен, остальные перерывы (туалет, перекуры) размазаны по смене — как на сервере.
+function workRate(shift: ProductionShift) {
+  const available = workSpans(shift).reduce((sum, [from, to]) => sum + to - from, 0) / 60;
+  return available > 0 ? Math.min(1, Number(shift.effective_hours || 7) / available) : 1;
+}
+
+// Часы монтажника в день: пересечение плановых окон его невыполненных операций с рабочими отрезками смены,
+// приведённое к чистому времени (как считает сервер при планировании).
 export function dayHours(operatorId: string, day: string, tasks: ProductionTask[], shift: ProductionShift) {
-  const from = new Date(`${day}T${shift.start}:00`).getTime();
-  const to = new Date(`${day}T${shift.finish}:00`).getTime();
-  const span = Math.max(1, minutes(shift.finish) - minutes(shift.start)) / 60;
-  const ratio = Math.min(1, Number(shift.effective_hours || 8) / span);
+  const spans = workSpans(shift).map(([from, to]) => [new Date(`${day}T${clock(from)}:00`).getTime(), new Date(`${day}T${clock(to)}:00`).getTime()]);
   let total = 0;
   for (const task of tasks) {
     if (task.status === "Отменено") continue;
     for (const operation of task.operations) {
       if (done(operation) || !operation.operator_ids.includes(operatorId) || !operation.planned_start || !operation.planned_finish) continue;
-      const start = Math.max(from, new Date(operation.planned_start).getTime());
-      const finish = Math.min(to, new Date(operation.planned_finish).getTime());
-      if (finish > start) total += (finish - start) / 3_600_000;
+      const a = new Date(operation.planned_start).getTime();
+      const b = new Date(operation.planned_finish).getTime();
+      for (const [from, to] of spans) {
+        const start = Math.max(from, a);
+        const finish = Math.min(to, b);
+        if (finish > start) total += (finish - start) / 3_600_000;
+      }
     }
   }
-  return total * ratio;
+  return total * workRate(shift);
 }
 
 function clock(value: number) {
@@ -199,17 +221,19 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   projects.sort((a, b) => (deadlineOf(a) || "9999").localeCompare(deadlineOf(b) || "9999") || a.localeCompare(b, "ru"));
 
   const shown = projects.find((project) => project === openProject) ?? "";
-  const freeOf = (project: string) => live.filter((item) => item.project === project)
+  const freeOf = (project: string) => live.filter((item) => item.project === project && !item.handed_to)
     .reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
   function tileFacts(project: string) {
     const deadline = deadlineOf(project);
     const free = freeOf(project);
-    const total = live.filter((item) => item.project === project).reduce((sum, item) => sum + item.operations.length, 0);
+    const total = live.filter((item) => item.project === project && !item.handed_to).reduce((sum, item) => sum + item.operations.length, 0);
     const toLaunch = waiting.filter((item) => item.project === project).length;
+    const handed = live.filter((item) => item.project === project && item.handed_to).length;
     return <>
       {deadline && <span className="mb-deadline">ДЛ {formatDay(deadline)}</span>}
       {total > 0 && <span className={free ? "mb-free" : "mb-done"}>{free ? `без исполнителя ${free} из ${total}` : `распределено ${total}`}</span>}
       {toLaunch > 0 && <span className="mb-launch">к запуску {toLaunch}</span>}
+      {handed > 0 && <span className="mb-handed">в {HANDOVER_SITE}: {handed}</span>}
     </>;
   }
 
@@ -218,7 +242,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const today = isoDay(new Date());
   const task = selected ? live.find((item) => item.id === selected.taskId) ?? null : null;
   const operation = task?.operations.find((item) => item.id === selected?.operationId) ?? null;
-  const unassigned = live.reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
+  const unassigned = live.filter((item) => !item.handed_to).reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
 
   const workShift = shift ?? DEFAULT_SHIFT;
   const days = Array.from({ length: WEEK_DAYS }, (_, index) => addDays(weekStart, index));
@@ -229,10 +253,16 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     void mutate(operation.id, () => productionApi.assign(task.id, operation.id, task.version, operatorIds, `${day}T${time}`));
   }
   const nowTime = clock(new Date().getHours() * 60 + new Date().getMinutes());
-  const capacity = Number(workShift.effective_hours || 8);
+  const capacity = Number(workShift.effective_hours || 7);
 
   function unassign(item: ProductionTask, op: ProductionOperation, operatorId: string) {
     void mutate(op.id, () => productionApi.assign(item.id, op.id, item.version, op.operator_ids.filter((id) => id !== operatorId), null));
+  }
+
+  // ЖУК работает не нормированно (владелец, 30.09): задание отдают площадке целиком, без людей и часов.
+  function handOver(item: ProductionTask, site: string) {
+    if (selected?.taskId === item.id) setSelected(null);
+    void mutate(`handover:${item.id}`, () => productionApi.handOver(item.id, item.version, site));
   }
 
   function launch(item: ProductionLaunchable) {
@@ -274,7 +304,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               <div className="mb-task-head">
                 <button className="link-button" onClick={() => openTask(item.id)}>{item.number} · Гант</button>
                 <span><b>{itemId(item)}</b> × {item.quantity}{item.name ? ` · ${item.name}` : ""}</span>
-                <small>назначено {item.assigned} из {item.operations.length}</small>
+                {item.handed_to
+                  ? <><span className="mb-handed">Отдано в {item.handed_to}</span>{canEdit && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, "")}>Вернуть на распределение</button>}</>
+                  : <><small>назначено {item.assigned} из {item.operations.length}</small>{canEdit && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, HANDOVER_SITE)}>Отдать в {HANDOVER_SITE}</button>}</>}
               </div>
               <table className="mb-ops">
                 <thead><tr><th>№</th><th>Операция</th><th>Норма</th><th>Исполнители</th><th>План</th></tr></thead>
@@ -283,11 +315,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                   const people = op.operator_ids.map((id) => ({ id, name: operators.find((operator) => operator.id === id)?.name ?? "?" }));
                   return <tr key={op.id} className={`${active ? "active" : ""}${done(op) ? " done" : ""}`}>
                     <td>{op.position}</td>
-                    <td>{canEdit && !done(op)
+                    <td>{canEdit && !done(op) && !item.handed_to
                       ? <button className="mb-op" aria-pressed={active} onClick={() => setSelected(active ? null : { taskId: item.id, operationId: op.id })}>{op.stage}{op.code ? <small> {op.code}</small> : null}</button>
                       : <span>{op.stage}{op.code ? <small> {op.code}</small> : null}</span>}</td>
                     <td>{hours(op.norm_seconds)}</td>
-                    <td>{done(op) ? <span className="mb-done">выполнена</span> : people.length ? people.map((person) => <span className="mb-chip" key={person.id}>{person.name}{canEdit && <button className="mb-chip-x" aria-label={`Снять ${person.name}`} title="Снять с операции" disabled={Boolean(busy)} onClick={() => unassign(item, op, person.id)}>×</button>}</span>) : <span className="mb-free">не назначено</span>}</td>
+                    <td>{done(op) ? <span className="mb-done">выполнена</span> : item.handed_to ? <span className="mb-handed-text">—</span> : people.length ? people.map((person) => <span className="mb-chip" key={person.id}>{person.name}{canEdit && <button className="mb-chip-x" aria-label={`Снять ${person.name}`} title="Снять с операции" disabled={Boolean(busy)} onClick={() => unassign(item, op, person.id)}>×</button>}</span>) : <span className="mb-free">не назначено</span>}</td>
                     <td className="mb-plan">{planText(op)}</td>
                   </tr>;
                 })}</tbody>
@@ -310,10 +342,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           <button className="secondary small" aria-label="Неделя вперёд" onClick={() => setWeekStart(addDays(weekStart, WEEK_DAYS))}>›</button>
         </div>
       </div>
-      {task && operation
+      {site === HANDOVER_SITE ? null : task && operation
         ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {itemId(task)} × {task.quantity}. Нажми на день у монтажника и выбери час начала.</small><button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
         : <div className="mb-target muted">{canEdit ? "Выбери операцию слева, затем день и час у монтажника. Занято/смена, ч." : "Занято/смена, ч. Нажми на день — раскладка по часам."}</div>}
-      <table className="mb-week">
+      {site === HANDOVER_SITE && <div className="mb-target muted">{HANDOVER_SITE} работает без раскладки по людям и часам: сюда падают задания с пометкой «Отдано в {HANDOVER_SITE}».</div>}
+      {site !== HANDOVER_SITE && <table className="mb-week">
         <thead><tr><th>Монтажник</th>{days.map((day) => {
           const date = new Date(`${day}T00:00:00`);
           return <th key={day} className={`${workingDay(day, workShift, holidays) ? "" : "off"}${day === today ? " today" : ""}`}>
@@ -377,8 +410,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           </td></tr>}
           </Fragment>;
         })}</tbody>
-      </table>
-      <div className="mb-legend"><span className="mb-cell free">0/8</span> свободен <span className="mb-cell low">3/8</span> частично <span className="mb-cell full">8/8</span> смена занята <span className="mb-cell over">10/8</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
+      </table>}
+      <div className="mb-legend"><span className="mb-cell free">0/7</span> свободен <span className="mb-cell low">3/7</span> частично <span className="mb-cell full">7/7</span> смена занята <span className="mb-cell over">9/7</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
     </aside>
   </div>;
 }

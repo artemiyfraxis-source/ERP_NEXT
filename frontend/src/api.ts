@@ -611,6 +611,7 @@ export interface ProductionTask {
   deadline: string | null;
   status: string;
   launched_by: string;
+  handed_to?: string;
   planned_start: string | null;
   planned_finish: string | null;
   assigned: number;
@@ -1877,6 +1878,11 @@ export const productionApi = {
       method: "POST",
       body: JSON.stringify({ version, cancelled }),
       }),
+  handOver: (taskId: string, version: number, site: string) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/handover`, {
+      method: "POST",
+      body: JSON.stringify({ version, site }),
+    }),
   schedule: (taskId: string, version: number, replan: boolean, maxCrew: number) =>
     api<{ variants: ProductionScheduleVariant[] }>(`/api/production/tasks/${taskId}/schedule`, {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew }),

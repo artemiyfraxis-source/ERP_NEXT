@@ -33,6 +33,8 @@ from .application import (
     replace_production_calendar,
     replace_operator_skills,
     set_production_cancelled,
+    hand_over_production,
+    HandOverProductionCommand,
 )
 from .domain import OperatorSkill, ProductionOperation, ProductionTask, ProductionValidationError, WorkShift
 from .launchable import item_id, launched_quantity, operation_code, operation_codes, route_from_document, stage_name
@@ -86,6 +88,11 @@ class AssignPayload(BaseModel):
     operator_ids: list[UUID] = Field(max_length=100)
     requested_start: datetime | None = None
     dry: bool = False
+
+
+class HandOverPayload(BaseModel):
+    version: int = Field(ge=1)
+    site: str = Field(default="", max_length=32)
 
 
 class CancelPayload(BaseModel):
@@ -262,7 +269,7 @@ def _result(task: ProductionTask, facts: dict | None = None) -> dict:
         "item": task.item, "name": task.name, "quantity": task.quantity,
         "fulfillment_request_id": str(task.fulfillment_request_id) if task.fulfillment_request_id else None,
         "deadline": task.deadline.isoformat() if task.deadline else None,
-        "status": task.status.value, "launched_by": task.launched_by,
+        "status": task.status.value, "launched_by": task.launched_by, "handed_to": task.handed_to,
         "planned_start": min(starts).isoformat() if starts else None,
         "planned_finish": max(finishes).isoformat() if finishes else None,
         "assigned": sum(bool(operation.operator_ids) for operation in task.operations),
@@ -923,6 +930,20 @@ def cancel(
 ) -> dict:
     return _run(lambda: set_production_cancelled(SetProductionCancelledCommand(
         task_id=task_id, expected_version=payload.version, cancelled=payload.cancelled,
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+
+
+@router.post("/tasks/{task_id}/handover")
+def hand_over(
+    task_id: UUID,
+    payload: HandOverPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    return _run(lambda: hand_over_production(HandOverProductionCommand(
+        task_id=task_id, expected_version=payload.version, site=payload.site,
         actor=principal.actor, now=now,
     ), uow_factory()))
 

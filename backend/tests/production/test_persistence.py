@@ -53,5 +53,5 @@ def test_task_route_assignment_and_calendar_persist_together():
     assert stored == assigned
     assert stored.number == "ПЗ-0001"
     assert stored.operations[0].operator_ids == (operator_id,)
-    assert stored.operations[0].planned_finish == datetime(2026, 9, 22, 9, 12)
+    assert stored.operations[0].planned_finish == datetime(2026, 9, 22, 9, 14)
     engine.dispose()
