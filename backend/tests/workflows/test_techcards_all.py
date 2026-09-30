@@ -181,6 +181,22 @@ def test_generate_builds_and_issues_only_where_a_techcard_is_missing_and_skips_s
     assert again.skipped["ЭТК уже выдана"] == ["708К.4 КБ1", "708К.4 КБ2", "710К.1 КБ1"]
 
 
+def test_only_limits_both_steps_to_the_loaded_project(state):
+    """Загрузка по одному (projects_import.py load): ТК только загружаемого проекта, остальные не трогаются."""
+    moved = import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True, only={"710К.1"})
+    assert moved.done == [] and moved.skipped == {}
+    asked = []
+
+    def generator(payload):
+        asked.extend(item["bom"]["index"] for item in payload["items"])
+        return {"items": [{"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]]}
+
+    report = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True, only={"710К.1"})
+    assert [line.split(" — ")[0] for line in report.done] == ["710К.1 КБ1", "710К.1 КБ2"]
+    assert asked == ["КБ1", "КБ2"]
+    assert {project for project, _index in _cards(state)} == {"710К.1"}
+
+
 def test_a_build_that_cannot_be_issued_stays_a_draft_and_is_rebuilt_next_time(state):
     no_length = {**CONFIG, "wires": [{**wire, "length": 0} for wire in CONFIG["wires"]]}
 

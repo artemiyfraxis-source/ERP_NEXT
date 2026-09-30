@@ -1,8 +1,12 @@
-"""Техкарты по всем проектам ERP разом (владелец 29.09.2026: «отгенерировать ТК по проектам, что заведены …
-отгруженные не трогай и холд тоже»). Два шага, оба повторяемые:
+"""Техкарты по проектам ERP (владелец 29.09.2026: «отгенерировать ТК по проектам, что заведены … отгруженные не
+трогай и холд тоже»). Два шага, оба повторяемые:
 
-    python -m app.workflows.techcards_all supplymap [--dry-run]   # выданные в SUPPLYMAP ТК → выданные ЭТК ERP
-    python -m app.workflows.techcards_all generate [--dry-run]    # «Создать техкарты» для остальных сборок
+    python -m app.workflows.techcards_all supplymap [--dry-run] [--project №]   # выданные в SUPPLYMAP ТК → ЭТК ERP
+    python -m app.workflows.techcards_all generate [--dry-run] [--project №]    # «Создать техкарты» остальным сборкам
+
+С 30.09.2026 скрипты обновления и загрузки эти шаги не зовут: владелец снёс проекты и заводит их сам или по одному
+(`scripts/projects_import.py load` делает оба шага только для загружаемого проекта). Без --project шаг идёт по всем
+проектам базы — только руками.
 
 ``supplymap`` читает лист «Техкарты» таблицы «ERP — Производство» (Google только читается, ключ erp-reader из
 ``ERP_GOOGLE_SERVICE_ACCOUNT_JSON``). Маршрут каждого выданного там изделия (ИЗДЕЛИЕ = проект + КБ, как
@@ -232,14 +236,18 @@ def supplymap_document(item: str, route: Mapping[str, Any], read_at: datetime) -
 
 def import_supplymap(
     grid: list[list[str]], techcards_factory: Callable[[], Any], *, actor: Actor, now: datetime, apply: bool,
+    only: set[str] | None = None,
 ) -> Report:
+    """only — номера проектов (`project_key`), которыми ограничиться: загрузка по одному (projects_import.py load)."""
     report = Report()
     with techcards_factory() as uow:
-        kitsets = list(uow.kitsets.list())
+        kitsets = [kitset for kitset in uow.kitsets.list() if only is None or project_key(kitset.project) in only]
         cards = {_card_key(card.project, card.item_index): card for card in uow.techcards.list()}
     by_project = {project_key(kitset.project): kitset for kitset in kitsets}
     for item, route in supplymap_routes(grid).items():
         project, index = split_item(item)
+        if only is not None and project_key(project) not in only:
+            continue
         kitset = by_project.get(project_key(project)) if index else None
         assembly = kitset.assembly(index) if kitset is not None else None
         if assembly is None:
@@ -344,12 +352,13 @@ class GeneratorUnavailable(RuntimeError):
 
 def generate(
     state: Any, generator: Callable[[dict], dict], reader: SheetsReader | None, *,
-    actor: Actor, now: datetime, apply: bool,
+    actor: Actor, now: datetime, apply: bool, only: set[str] | None = None,
 ) -> Report:
+    """only — как у `import_supplymap`."""
     report = Report()
     techcards = state.techcards_uow_factory
     with techcards() as uow:
-        kitsets = list(uow.kitsets.list())
+        kitsets = [kitset for kitset in uow.kitsets.list() if only is None or project_key(kitset.project) in only]
     facts = kitset_facts(
         techcards, getattr(state, "production_uow_factory", None),
         getattr(state, "fulfillment_uow_factory", None), getattr(state, "shipping_uow_factory", None),
@@ -474,7 +483,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Техкарты по всем проектам ERP: перенос выданных из SUPPLYMAP и генерация остальных.")
     parser.add_argument("step", choices=("supplymap", "generate", "refresh"))
     parser.add_argument("--dry-run", action="store_true", help="только показать, что будет сделано")
+    parser.add_argument("--project", action="append", default=[], help="только этот № проекта (можно несколько)")
     args = parser.parse_args(argv)
+    only = {project_key(project) for project in args.project} or None
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     url = os.getenv("ERP_DATABASE_URL", "").strip()
@@ -499,7 +510,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"В «ERP — Производство» нет листа «{TECHCARDS_SHEET}»", file=sys.stderr)
                 return 2
             report = import_supplymap(sheets[TECHCARDS_SHEET], holder.state.techcards_uow_factory,
-                                      actor=actor, now=moscow_now(), apply=not args.dry_run)
+                                      actor=actor, now=moscow_now(), apply=not args.dry_run, only=only)
             print(format_report("Выданные ТК из SUPPLYMAP", report, apply=not args.dry_run, done_title="Перенесено"))
         elif args.step == "refresh":
             report = refresh(holder.state, actor=actor, now=moscow_now(), apply=not args.dry_run)
@@ -507,7 +518,7 @@ def main(argv: list[str] | None = None) -> int:
                                 done_title="Пересобрано"))
         else:
             report = generate(holder.state, node_generator(), _google_reader(),
-                              actor=actor, now=moscow_now(), apply=not args.dry_run)
+                              actor=actor, now=moscow_now(), apply=not args.dry_run, only=only)
             print(format_report("Генерация ТК по проектам", report, apply=not args.dry_run,
                                 done_title="Собрано и выдано ЭТК"))
     except (GeneratorUnavailable, CalcSheetError) as error:

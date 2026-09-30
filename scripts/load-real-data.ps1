@@ -1,5 +1,6 @@
 ﻿# Чистая база ERP с реальными данными из Google (только чтение Google): справочники из зеркала SUPPLYMAP,
-# библиотека техкарт, склад ЦАР/ЖУК/СПИСАНИЕ, проекты SUPPLYMAP (наборы, реестр, журнал, лист цеха).
+# библиотека техкарт, склад ЦАР/ЖУК/СПИСАНИЕ. Проектов нет (владелец 30.09: заводит сам в ERP или по одному через
+# чат); один проект из Google по запросу — scripts\load-project.ps1 <№>.
 # Запуск из корня копии ERP_NEXT, API этой базы должен быть остановлен:
 #   powershell -ExecutionPolicy Bypass -File scripts\load-real-data.ps1 -Key C:\путь\ключ-erp-reader.json -DbFile demo.db
 # База -DbFile (не -Db: в PowerShell 5.1 это алиас -Debug) (SQLite) пересоздаётся с нуля. Боевая PostgreSQL: -DatabaseUrl postgresql+psycopg://... — пустая база,
@@ -31,7 +32,6 @@ if ($StockOnly) {
 
 Write-Host '== Снимки из Google (только чтение)'
 Run ..\scripts\stock_export_google.py --key $Key --out $data
-Run ..\scripts\projects_import.py snapshot --key $Key --out (Join-Path $data 'projects.json')
 
 if (-not $DatabaseUrl) { Write-Host "== Пересоздаю базу $DbFile"; Remove-Item -ErrorAction SilentlyContinue $DbFile }
 Run -m alembic upgrade head
@@ -44,16 +44,7 @@ Run -m app.modules.techcards.seed_library
 
 Write-Host '== Склад'
 Run -m app.modules.warehouse.import_stock --dir $data
-Write-Host '== Проекты'
-Run ..\scripts\projects_import.py apply (Join-Path $data 'projects.json') --login $Login --password $Password
-Run -m app.outbox_worker --once
-Write-Host '== Наименования комплектующих с сайтов поставщиков'
-Run -m app.workflows.kitset_names
-Write-Host '== Техкарты: выданные в SUPPLYMAP и ЭТК генератором (генератору нужен npm run build:tcgen в frontend)'
 Set-Content (Join-Path $backend 'google-key.path') $Key  # update-local.ps1 берёт ключ отсюда
 $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = $Key
-foreach ($step in 'supplymap', 'generate') {
-    & $py -X utf8 -m app.workflows.techcards_all $step
-    if ($LASTEXITCODE -gt 1) { Write-Warning "Техкарты ($step) не сделаны (ошибка выше)" }
-}
+Run -m app.outbox_worker --once
 Write-Host "Готово: база $env:ERP_DATABASE_URL. Запустите API над ней (ERP_DATABASE_URL=$env:ERP_DATABASE_URL)."
