@@ -1,7 +1,11 @@
 # Third-party skills — sources & licenses
 
 Copied 2026-09-29 from SUPPLYMAP `.claude/skills` (commit d0a030b) — only the skills that fit ERP_NEXT;
-the table below is SUPPLYMAP's and also names skills not copied here. `migrate-next`, `migrate-cloud` are ERP_NEXT's own.
+the table below is SUPPLYMAP's and also names skills not copied here. `migrate-next`, `migrate-cloud`, `erp-screens` are ERP_NEXT's own.
+
+Added 2026-09-30: `design-critique` from github.com/anthropics/knowledge-work-plugins (`design/skills`,
+commit da38ec1), Apache-2.0 (`LICENSE.txt`). Changed: the CONNECTORS.md pointer line replaced by a pointer to
+`erp-screens`. `frontend-design` description narrowed so it does not trigger on ERP screens.
 
 Skills imported into `.claude/skills/` from public repos (2026-07-23/24 night run №2).
 Bodies are agent-facing guidance; bundled scripts are NOT auto-run.

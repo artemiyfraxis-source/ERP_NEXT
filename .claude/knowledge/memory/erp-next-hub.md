@@ -9,7 +9,7 @@ ERP_NEXT = FastAPI + React successor of SUPPLYMAP (Google Apps Script) for a cab
 Owner: Артемий. Project knowledge lives in this folder (mounted into the Obsidian vault as
 `projects/ERP_NEXT`, see brain note memory-topology), so every note here is one node of the graph.
 
-- How the owner wants agents to work → [[owner-working-rules]]
+- How the owner wants agents to work → [[owner-working-rules]]; screens → [[erp-screens-rules]] (skill `erp-screens`)
 - Launch dates and waves → [[launch-plan]]; production server → [[erp-server]]
 - Staff, roles, sites (ЦАР / ЖУК), PIN login → [[staff-and-sites]]
 - Parity with SUPPLYMAP and deliberate differences → [[supplymap-parity]]; owner decisions stored in SUPPLYMAP memory → [[supplymap-domain-decisions]]
