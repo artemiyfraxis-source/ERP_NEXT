@@ -39,6 +39,22 @@ describe("defect picture library", () => {
     for (const [name, code, scene] of cases) expect([name, defectSceneId(name, "", code)]).toEqual([name, scene]);
   });
 
+  it("draws the coax pin soldering defects on the pin itself (SDR_COAX_pin)", () => {
+    const cases: Array<[string, string]> = [
+      ["«Холодная» пайка / Непрогрев", "cxCold"],
+      ["Недостаток припоя", "cxLack"],
+      ["Избыток припоя / Наплывы", "cxExcess"],
+      ["Нарушение фиксации", "cxShift"],
+      ["Оплавление диэлектрика", "cxMelt"],
+      ["Нарушение изоляционного зазора", "cxGap"],
+      ["Деформация контакта", "cxBent"],
+      ["Выступание проволочек", "cxStrays"],
+    ];
+    for (const [name, scene] of cases) expect([name, defectSceneId(name, "", "SDR_COAX_pin")]).toEqual([name, scene]);
+    expect(defectContext("SDR_COAX_pin_R/A")).toBe("solder");
+    expect(defectSceneId("Оплавление диэлектрика", "", "SDR_DB")).toBe("connMelt");
+  });
+
   it("falls back to the explanation, then to a warning sign", () => {
     expect(defectSceneId("Дефект А", "Припой затёк под изоляцию, затекание", "SDR_DB")).toBe("wicking");
     expect(defectSceneId("Что-то новое")).toBe("generic");

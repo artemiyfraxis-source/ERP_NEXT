@@ -228,14 +228,14 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       />}
       {flat ? <div className="table-wrap">
         <table className="grid wide compact stock-table" aria-label="Таблица склада">
-          <thead><tr><th>Тип</th><th>ГРН</th><th className="num">Остаток</th><th className="num">Доступно</th><th>Место</th><th>Серия</th><th>Артикул</th><th>Наименование</th><th>Назначение</th><th>Склад</th></tr></thead>
+          <thead><tr><th>Тип</th><th>ГРН</th><th className="num">Остаток</th><th className="num">Доступно</th><th>Место</th><th>Склад</th><th>Назначение</th><th>Серия</th><th>Артикул</th><th className="stock-name">Наименование</th></tr></thead>
           <tbody>{lots.map((lot) => <tr key={lot.id}>
-            <td>{lot.item_type || "—"}</td><td>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</td><td className="num"><strong>{lot.balance} {lot.unit}</strong></td><td className="num">{lot.available}</td><td>{lot.storage_location || "—"}</td><td>{lot.series || "—"}</td><td className="text">{lot.article || "—"}</td><td className="text">{lot.name || "—"}</td><td>{lot.purpose || "—"}</td><td>{lot.warehouse}</td>
+            <td>{lot.item_type || "—"}</td><td>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</td><td className="num"><strong>{lot.balance} {lot.unit}</strong></td><td className="num">{lot.available}</td><td>{lot.storage_location || "—"}</td><td>{lot.warehouse}</td><td>{lot.purpose || "—"}</td><td>{lot.series || "—"}</td><td className="text" title={lot.article || undefined}>{lot.article || "—"}</td><td className="text stock-name">{lot.name || "—"}</td>
           </tr>)}</tbody>
         </table>
       </div> : <div className="table-wrap">
         <table className="grid wide compact stock-table">
-          <thead><tr>{SORT_COLUMNS.map(([key, label]) => <th key={key} className={key === "balance" || key === "lots" ? "num" : undefined} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : undefined}>
+          <thead><tr>{SORT_COLUMNS.map(([key, label]) => <th key={key} className={key === "balance" || key === "lots" ? "num" : key === "name" ? "stock-name" : undefined} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : undefined}>
             <button type="button" className="th-sort" onClick={() => setSort((current) => ({ key, desc: current.key === key ? !current.desc : false }))}>{label}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}</button>
           </th>)}</tr></thead>
           <tbody>{groupedLots.map((group) => <ArticleGroup
@@ -287,8 +287,8 @@ function shelf(location: string) {
 type SortKey = "type" | "grn" | "balance" | "lots" | "place" | "series" | "article" | "name" | "warehouse";
 
 const SORT_COLUMNS: Array<[SortKey, string]> = [
-  ["type", "Тип"], ["grn", "ГРН"], ["balance", "Остаток"], ["lots", "Партий"], ["place", "Места"],
-  ["series", "Серия"], ["article", "Артикул"], ["name", "Наименование"], ["warehouse", "Склад"],
+  ["type", "Тип"], ["grn", "ГРН"], ["balance", "Остаток"], ["lots", "Партий"], ["place", "Места"], ["warehouse", "Склад"],
+  ["series", "Серия"], ["article", "Артикул"], ["name", "Наименование"],
 ];
 
 function sortValue(item: WarehouseArticle, key: SortKey): string | number {
@@ -379,10 +379,10 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
           <td className="num"><strong>{quantity(item.lots, "balance")}{unit ? ` ${unit}` : ""}</strong></td>
           <td className="num">{item.lots.length}</td>
           <td>{places(item.lots)}</td>
-          <td>{distinct(item.lots, "series")}</td>
-          <td className="text">{item.article || "—"}</td>
-          <td className="text"><button className="link-button table-link" aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(item.key); }}>{distinct(item.lots, "name") || item.article || "Без наименования"}</button></td>
           <td>{distinct(item.lots, "warehouse")}</td>
+          <td>{distinct(item.lots, "series")}</td>
+          <td className="text" title={item.article || undefined}>{item.article || "—"}</td>
+          <td className="text stock-name"><button className="link-button table-link" aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(item.key); }}>{distinct(item.lots, "name") || item.article || "Без наименования"}</button></td>
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={9}><div className="lot-cards">
           {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} />)}

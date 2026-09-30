@@ -12,7 +12,7 @@ const PLAST = "#efe6cf", PLAST_E = "#8a7d5c";
 const TUBE = "#3b4147";
 const RED = "#d93025", GREEN = "#188038", MUTED = "#5f7470";
 
-type Ctx = "cut" | "tube" | "strip" | "coax" | "crimp" | "lug" | "solder" | "shrink" | "mark" | "assembly" | "mold" | "weld" | "other";
+type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "crimp" | "lug" | "solder" | "shrink" | "mark" | "assembly" | "mold" | "weld" | "other";
 
 // ── примитивы ────────────────────────────────────────────────────────────────────────────────────────────
 const rect = (x: number, y: number, w: number, h: number, fill: string, extra = "") =>
@@ -126,10 +126,43 @@ function braid(x1: number, x2: number, y = 34, h = 12): string {
   return rect(x1, y - h / 2, x2 - x1, h, "#e2e5e8", ` stroke="${E}" stroke-width=".6"`) + hatch;
 }
 
+/** Пайка пина коаксиала сбоку: оболочка, оплётка, диэлектрик, центральная жила в хвостовике пина (хвостовик в разрезе,
+ *  отверстие под пайку), дальше буртик и рабочая часть пина. */
+type CoaxPin = { diel?: number; fill?: "ok" | "cold" | "lack" | "excess"; tilt?: boolean; melt?: boolean; bent?: boolean; strays?: boolean };
+function coaxPinJoint(o: CoaxPin = {}): string {
+  const d = o.diel ?? 50, fill = o.fill || "ok";
+  let cable = ins(2, 16, 34, 18, "#3f474d") + braid(16, 26, 34, 14) + ins(26, d, 34, 10, "#f4f4f2");
+  if (o.melt) cable += path(`M${d - 14},29 Q${d - 8},22 ${d - 1},27 Q${d + 2},34 ${d - 1},41 Q${d - 8},46 ${d - 14},39 z`, "#c9b184", "#8a6d3b", 0.7) +
+    circle(d - 8, 31, 1.3, "#6b4f2a", "none", 0) + circle(d - 5, 37, 1.1, "#6b4f2a", "none", 0);
+  cable += cond(d, 57, 34, 3.4);
+  if (o.tilt) cable = `<g transform="rotate(7 56 34)">${cable}</g>`;
+  const solderColor = fill === "cold" ? "#a4aaae" : SOLDER;
+  // Отверстие в разрезе: припой заполняет его целиком, жила просвечивает; при недостатке видна пустота и жила.
+  let bore = rect(56, 30.4, 20, 7.2, "#fff");
+  if (fill === "lack") bore += rect(56, 35.6, 20, 2, SOLDER) + cond(56, 74, 34, 3.4);
+  else bore += rect(56, 30.4, 20, 7.2, solderColor) + `<g opacity=".4">${cond(56, 74, 34, 3.4)}</g>`;
+  if (fill === "cold") bore += [59, 63, 67, 71, 61, 65, 69].map((x, i) => circle(x, i < 4 ? 31.8 : 36.4, 0.8, "#7d8488", "none", 0)).join("");
+  let fillet = "";
+  if (fill === "ok" || fill === "excess") fillet = path("M56,30.4 Q56,32.3 51.5,32.3 L51.5,35.7 Q56,35.7 56,37.6 z", SOLDER, TIN_LO, 0.5);
+  if (fill === "cold") fillet = path("M56,29.6 C51,27.5 48.5,31 50.5,34 C48.5,37 51,40.5 56,38.4 z", "#a4aaae", TIN_LO, 0.6);
+  const walls = rect(56, 28, 20, 2.4, TIN, ` stroke="${E}" stroke-width=".6"`) + rect(56, 37.6, 20, 2.4, TIN, ` stroke="${E}" stroke-width=".6"`) +
+    rect(76, 28, 6, 12, TIN, ` stroke="${E}" stroke-width=".6"`);
+  const tipPart = rect(86, 31.5, 22, 5, TIN, ` stroke="${E}" stroke-width=".6"`) + path("M108,31.5 L113,34 L108,36.5 z", TIN, E, 0.6) + line(87, 32.6, 107, 32.6, "#fff", 0.8);
+  const tip = (o.bent ? `<g transform="rotate(-16 86 34)">${tipPart}</g>` : tipPart) + rect(82, 29, 4, 10, TIN_HI, ` stroke="${E}" stroke-width=".6"`);
+  let excess = "";
+  if (fill === "excess") excess = path("M50,34 C50,24 58,21 66,22 C74,21 82,24 81,30 L81,38 C82,45 72,47 64,46 C56,46 50,42 50,34 z", SOLDER, TIN_LO, 0.7) +
+    path("M66,22 L68,13 L70,22", SOLDER, TIN_LO, 0.6) + path("M56,25 C62,23 70,23 76,25", "none", "#fff", 1.1);
+  let strays = "";
+  if (o.strays) strays = path("M51,33 Q54,26 63,24", "none", CU, 1.2) + path("M52,35 Q56,43 66,45", "none", CU, 1.2) + path("M52,34 Q55,29 60,27.5", "none", CU, 1);
+  return cable + bore + fillet + walls + tip + excess + strays;
+}
+
 // ── сцены: каждая — рисунок «норма» и «брак» в поле 116×70 ─────────────────────────────────────────────
 /** view — окно рисунка (viewBox) для крупного плана, по умолчанию всё поле 0 0 116 70. */
 type Scene = { ok: string; ng: string; view?: string };
 const CLOSE_UP = "6 14 80 50";
+/** Пайка пина коаксиала: крупнее, без оболочки кабеля. */
+const CX_VIEW = "24 12 92 44";
 const W = { ins: (x2 = 58) => ins(4, x2), bare: (x1 = 58, x2 = 100) => cond(x1, x2) };
 
 const SCENES: Record<string, () => Scene> = {
@@ -232,6 +265,35 @@ const SCENES: Record<string, () => Scene> = {
     ok: circle(58, 34, 26, TIN, E, 0.8) + circle(58, 34, 17, "#f4f4f2", E, 0.6) + circle(58, 34, 4, CU_HI, E, 0.6) + line(40, 34, 76, 34, GREEN, 0.5, ' stroke-dasharray="2 2"') + line(58, 16, 58, 52, GREEN, 0.5, ' stroke-dasharray="2 2"'),
     ng: circle(58, 34, 26, TIN, E, 0.8) + circle(58, 34, 17, "#f4f4f2", E, 0.6) + circle(66, 28, 4, CU_HI, E, 0.6) + line(40, 34, 76, 34, MUTED, 0.5, ' stroke-dasharray="2 2"') + line(58, 16, 58, 52, MUTED, 0.5, ' stroke-dasharray="2 2"') + mark(66, 28, 8),
   }),
+  // Пайка пина коаксиала (SDR_COAX_pin): все рисунки на одном виде соединения, дефекты по IPC/WHMA-A-620F разд. 4 и 13.
+  cxCold: () => ({ view: CX_VIEW, ok: coaxPinJoint(), ng: coaxPinJoint({ fill: "cold" }) + mark(58, 34, 10, 9) }),
+  cxLack: () => ({
+    view: CX_VIEW,
+    ok: coaxPinJoint() + dim(56, 76, 22, "100 %", GREEN),
+    ng: coaxPinJoint({ fill: "lack" }) + dim(56, 76, 22, "< 75 %", RED) + mark(66, 33, 12, 6),
+  }),
+  cxExcess: () => ({
+    view: CX_VIEW,
+    ok: coaxPinJoint() + line(46, 28, 84, 28, GREEN, 0.6, ' stroke-dasharray="3 2"') + line(46, 40, 84, 40, GREEN, 0.6, ' stroke-dasharray="3 2"') + text(66, 54, "в Ø контакта", GREEN),
+    ng: coaxPinJoint({ fill: "excess" }) + line(40, 28, 90, 28, RED, 0.6, ' stroke-dasharray="3 2"') + line(40, 40, 90, 40, RED, 0.6, ' stroke-dasharray="3 2"') + mark(66, 30, 20, 19),
+  }),
+  cxShift: () => ({
+    view: CX_VIEW,
+    ok: coaxPinJoint() + line(24, 34, 116, 34, GREEN, 0.5, ' stroke-dasharray="3 2"'),
+    ng: coaxPinJoint({ tilt: true }) + line(24, 34, 116, 34, MUTED, 0.5, ' stroke-dasharray="3 2"') + path("M53,31 l2,2 l-2,2 l2,2", "none", RED, 1) + mark(54, 34, 7, 8),
+  }),
+  cxMelt: () => ({ view: CX_VIEW, ok: coaxPinJoint(), ng: coaxPinJoint({ melt: true }) + mark(43, 34, 11, 12) }),
+  cxGap: () => ({
+    view: CX_VIEW,
+    ok: coaxPinJoint() + dim(50, 56, 22, "по КД", GREEN),
+    ng: coaxPinJoint({ diel: 40 }) + dim(40, 56, 22, "голая жила", RED) + mark(48, 34, 10, 7),
+  }),
+  cxBent: () => ({
+    view: CX_VIEW,
+    ok: coaxPinJoint() + line(80, 34, 115, 34, GREEN, 0.5, ' stroke-dasharray="3 2"'),
+    ng: coaxPinJoint({ bent: true }) + line(80, 34, 115, 34, MUTED, 0.5, ' stroke-dasharray="3 2"') + mark(100, 27, 13, 9),
+  }),
+  cxStrays: () => ({ view: CX_VIEW, ok: coaxPinJoint(), ng: coaxPinJoint({ strays: true }) + mark(57, 34, 11, 13) }),
   crimpIns: () => ({
     ok: ins(2, 34) + cond(34, 78, 34, 6) + terminal(14),
     ng: ins(2, 52) + cond(52, 78, 34, 6) + terminal(14) + rect(42, 30.5, 10, 7, INS, ` opacity=".85"`) + mark(46, 34, 9, 10),
@@ -514,6 +576,14 @@ const SCENES: Record<string, () => Scene> = {
 type Rule = [string, RegExp, Ctx[]?];
 
 const RULES: Rule[] = [
+  ["cxCold", /холодн|непрогрев/i, ["coaxSolder"]],
+  ["cxLack", /недостат|недолив|менее чем/i, ["coaxSolder"]],
+  ["cxExcess", /избыт|наплыв|сосульк/i, ["coaxSolder"]],
+  ["cxShift", /фиксац|смещени/i, ["coaxSolder"]],
+  ["cxGap", /зазор/i, ["coaxSolder"]],
+  ["cxMelt", /оплав|вспуч|перегрев/i, ["coaxSolder"]],
+  ["cxBent", /деформ|погнут|сплющ/i, ["coaxSolder"]],
+  ["cxStrays", /проволоч|торчат|вылет/i, ["coaxSolder"]],
   ["pull", /pull|отрыв|вырыв/i],
   ["test", /прозвон/i],
   ["time", /окна времени|до высыхани|время выдерж/i],
@@ -616,6 +686,7 @@ export function defectContext(code: string): Ctx {
   if (/^CUT/.test(c)) return /\+\d?(STRIP|CRIMP)/.test(c) ? (/CRIMP/.test(c) ? "crimp" : "strip") : "cut";
   if (/^STRIP|^PREP/.test(c)) return "strip";
   if (/^PRS/.test(c)) return "crimp";
+  if (/^SDR_COAX_PIN$/.test(c)) return "coaxSolder";
   if (/^SDR/.test(c)) return "solder";
   if (/^HEAT|^INS_TUT|_TUT/.test(c)) return "shrink";
   if (/^INS_MARK|MARK$/.test(c)) return "mark";

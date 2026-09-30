@@ -3,7 +3,8 @@ import { useState, type ReactNode } from "react";
 // Shared timeline (SUPPLYMAP PortalApp prodGantt_ / prodWeekNav_ / prodX_): a 21-day scale from the
 // Monday of the shown week, a working day 9:00–17:30 fills its whole cell, weekends and holidays are
 // shaded, today has a left edge. Used by the production plan; the resource-planning task and
-// operation Gantts reuse it with their own rows.
+// operation Gantts reuse it with their own rows. The scale stretches to the width of the screen (a day is at
+// least `dayWidth` px, then the grid scrolls sideways).
 
 export type GanttTone = "default" | "late" | "partial" | "busy" | "new" | "done" | "absent";
 
@@ -35,7 +36,10 @@ export interface GanttProps {
   /** ISO dates (YYYY-MM-DD) of non-working days besides weekends — GET /api/production/calendar. */
   holidays?: string[];
   days?: number;
+  /** Minimal day width in px; wider screens stretch the scale to their full width. */
   dayWidth?: number;
+  /** One plaque per row and day: short bars of one day merge into «3 опер. · …» (people load). */
+  mergeDay?: boolean;
   /** Week offset from the current one; omit to let the component keep it. */
   week?: number;
   onWeekChange?: (week: number) => void;
@@ -91,8 +95,44 @@ export function finishesLate(bar: GanttBar, deadline: string | null | undefined)
   return Boolean(end && finish && finish > end);
 }
 
+const TONE_RANK: Record<string, number> = { late: 3, partial: 2, new: 2, busy: 1, default: 1, "": 1, done: 0 };
+
+/** People load: bars of one row that start and finish on the same day become one plaque over that whole day
+ *  («9 оп. · 2 ч · …», worst tone wins), so a day of short operations is readable; the exact windows stay
+ *  in the tooltip. Multi-day bars and absences are kept as they are. */
+function timeRange(bar: GanttBar) {
+  const hm = (value: string | null) => { const moment = parseMoment(value); return moment ? `${moment.getHours()}:${String(moment.getMinutes()).padStart(2, "0")}` : ""; };
+  return `${hm(bar.start)}–${hm(bar.finish)}`;
+}
+
+export function mergeDayBars(bars: GanttBar[]): GanttBar[] {
+  const out: GanttBar[] = [];
+  const days = new Map<string, GanttBar[]>();
+  for (const bar of bars) {
+    const from = parseMoment(bar.start), to = parseMoment(bar.finish);
+    if (!from || !to || bar.tone === "absent" || isoDay(from) !== isoDay(new Date(to.getTime() - 1))) { out.push(bar); continue; }
+    const key = isoDay(from);
+    if (!days.has(key)) days.set(key, []);
+    days.get(key)!.push(bar);
+  }
+  for (const [key, group] of days) {
+    const day = parseMoment(key)!;
+    const next = isoDay(new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1));
+    const tone = group.reduce<GanttTone>((worst, bar) => (TONE_RANK[bar.tone ?? ""] > TONE_RANK[worst] ? bar.tone ?? "default" : worst), "done");
+    const texts = [...new Set(group.map((bar) => bar.text).filter(Boolean))];
+    const minutes = group.reduce((sum, bar) => sum + (parseMoment(bar.finish)!.getTime() - parseMoment(bar.start)!.getTime()) / 60_000, 0);
+    const hours = `${String(Number((minutes / 60).toFixed(1))).replace(".", ",")} ч`;
+    const title = group.map((bar) => `${timeRange(bar)} ${bar.title || bar.text || ""}`.trim()).join("\n");
+    out.push({
+      start: key, finish: next, tone, title,
+      text: group.length === 1 ? `${texts[0] ?? ""} · ${hours}` : `${group.length} оп. · ${hours} · ${texts.join(", ")}`,
+    });
+  }
+  return out;
+}
+
 export function Gantt({
-  rows, labelHead, holidays = [], days = 21, dayWidth = 34, week, onWeekChange, now, empty,
+  rows, labelHead, holidays = [], days = 21, dayWidth = 34, mergeDay = false, week, onWeekChange, now, empty,
 }: GanttProps) {
   const [ownWeek, setOwnWeek] = useState(0);
   const shown = week ?? ownWeek;
@@ -107,12 +147,14 @@ export function Gantt({
     return day;
   });
   const width = days * dayWidth;
+  // Positions in % of the track: the track fills the free width, never narrower than days × dayWidth.
+  const pct = (value: number) => `${(value / days) * 100}%`;
   const background = scale.map((day, index) => {
     const holiday = day.getDay() === 0 || day.getDay() === 6 || off.has(isoDay(day));
     const isToday = day.getTime() === today;
     if (!holiday && !isToday) return null;
     return <i key={index} className={`gantt-bg${holiday ? " off" : ""}${isToday ? " today" : ""}`}
-      data-day={isoDay(day)} style={{ left: index * dayWidth, width: dayWidth }} />;
+      data-day={isoDay(day)} style={{ left: pct(index), width: pct(1) }} />;
   });
 
   function drawBar(bar: GanttBar, index: number, deadline: string | null | undefined) {
@@ -126,7 +168,7 @@ export function Gantt({
     const tone = late ? "late" : bar.tone && bar.tone !== "default" ? bar.tone : "";
     const title = `${bar.title ?? ""}${late ? " · позже дедлайна" : ""}`;
     return <span key={index} className={`gantt-bar ${tone}`.trim()} title={title}
-      style={{ left: a * dayWidth, width: Math.max(4, (z - a) * dayWidth) }}>{bar.text ?? ""}</span>;
+      style={{ left: pct(a), width: `max(4px, ${pct(z - a)})` }}>{bar.text ?? ""}</span>;
   }
 
   function drawDeadline(deadline: string | null | undefined) {
@@ -134,7 +176,7 @@ export function Gantt({
     if (!end) return null;
     const x = dayOffset(end, day0);
     if (x <= 0 || x > days) return null;
-    return <span className="gantt-mark" data-testid="gantt-deadline" title={`Дедлайн ${deadline}`} style={{ left: x * dayWidth - 2 }} />;
+    return <span className="gantt-mark" data-testid="gantt-deadline" title={`Дедлайн ${deadline}`} style={{ left: `calc(${pct(x)} - 2px)` }} />;
   }
 
   return <div className="gantt">
@@ -146,8 +188,8 @@ export function Gantt({
     {rows.length ? <div className="gantt-wrap"><div className="gantt-grid">
       <div className="gantt-row gantt-head">
         <div className="gantt-label">{labelHead}</div>
-        <div className="gantt-track" style={{ width }}>{background}{scale.map((day, index) => (
-          <span key={index} className="gantt-day" style={{ left: index * dayWidth, width: dayWidth }}>
+        <div className="gantt-track" style={{ minWidth: width }}>{background}{scale.map((day, index) => (
+          <span key={index} className="gantt-day" style={{ left: pct(index), width: pct(1) }}>
             {DAY_NAMES[day.getDay()]}<br />{String(day.getDate()).padStart(2, "0")}.{String(day.getMonth() + 1).padStart(2, "0")}
           </span>
         ))}</div>
@@ -164,9 +206,9 @@ export function Gantt({
             {late && <span className="gantt-late">позже дедлайна</span>}
             {row.note && <div className="gantt-note">{row.note}</div>}
           </div>
-          <div className="gantt-track" style={{ width }}>
+          <div className="gantt-track" style={{ minWidth: width }}>
             {background}
-            {row.bars.map((bar, index) => drawBar(bar, index, row.deadline))}
+            {(mergeDay ? mergeDayBars(row.bars) : row.bars).map((bar, index) => drawBar(bar, index, row.deadline))}
             {drawDeadline(row.deadline)}
           </div>
         </div>;

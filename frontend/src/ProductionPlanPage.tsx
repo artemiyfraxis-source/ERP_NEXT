@@ -148,7 +148,7 @@ function nextDay(value: string) {
   return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
 }
 
-const LOAD_DAYS = 28;
+const LOAD_DAYS = 21;
 
 export function ProductionPlanPage({ principal, openProjectCard }: {
   principal: Principal;
@@ -279,7 +279,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
       </div>
       {loadError
         ? <div className="empty">Загрузка людей недоступна: {loadError}</div>
-        : <Gantt labelHead="Сотрудник" holidays={holidays} days={LOAD_DAYS} week={week} onWeekChange={setWeek}
+        : <Gantt labelHead="Сотрудник" holidays={holidays} days={LOAD_DAYS} mergeDay week={week} onWeekChange={setWeek}
           empty={<div className="empty">Сотрудников цеха пока нет.</div>}
           rows={loadRows} />}
       <div className="plan-legend"><span className="gantt-bar">операция</span><span className="gantt-bar late">позже дедлайна</span><span className="gantt-bar done">выполнена</span><span className="gantt-bar absent">отсутствие</span></div>
