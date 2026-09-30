@@ -2,16 +2,13 @@
 # Запуск из корня копии: powershell -ExecutionPolicy Bypass -File scripts\update-local.ps1
 # Порядок безопасный: сначала новый код, зависимости и сборка сайта в frontend\dist-next — старая ERP в это
 # время работает. Ошибка на этом шаге → код возвращается на прежнюю версию, ERP не останавливалась.
-# Потом остановка API, копия базы в backend\<база>.bak, миграции, сотрудники (без --reset-pins), отгруженное по
-# листу цеха «ЗАГРУЗ» (полностью отгруженные проекты прочь, частичные отгрузки — в готовую продукцию; с ключом лист
-# перечитывается из Google, иначе снимок data\import\projects.json), подмена сайта, запуск API и фонового outbox_worker. Ошибка миграций → база из копии,
+# Потом остановка API, копия базы в backend\<база>.bak, миграции, сотрудники (без --reset-pins), подмена сайта,
+# запуск API и фонового outbox_worker. Ошибка миграций → база из копии,
 # прежний код, прежний сайт, API снова запущен. В конце — версия и «Что нового» (влитые PR с прошлого
 # обновления; коммит прошлого обновления в backend\<база>.version), то же уходит в version.json для плашки в ERP.
-# Проекты (владелец 30.09: «все проекты снесем и буду по одному тебе давать»): разовый снос всех проектов с ТК
-# (app.workflows.projects_wipe — по метке в базе, перед ним копия базы рядом; склад, комплектация и выдачи не
-# трогаются), дальше из Google загружаются только новые номера списка data\projects.txt вместе с их ТК
-# (scripts\projects_import.py load, итог в backend\projects-load.txt). Массовой загрузки проектов и пакетной
-# генерации и пересборки ТК больше нет.
+# Проекты (владелец 30.09: «все проекты снесем», «я сам буду заводить, либо через тебя по одному»): обновление их
+# не грузит, не генерирует им ТК и не трогает по листу цеха. Разовый снос — миграция 0078_wipe_projects_once (копия
+# базы рядом: <база>.before-projects-wipe.bak). Один проект из Google по запросу — scripts\load-project.ps1 <№>.
 # Ключ Google erp-reader (только чтение): -Key путь (запоминается), иначе ERP_GOOGLE_SERVICE_ACCOUNT_JSON, иначе
 # запомненный путь (backend\google-key.path, его пишет и load-real-data.ps1), иначе поиск в Загрузках/Документах/Рабочем столе.
 param([string]$DbFile = 'real.db', [int]$Port = 8022, [string]$Key = '')
@@ -135,26 +132,6 @@ else {
   if ($found) { $Key = $found.FullName; Write-Host "Ключ Google найден: $Key" }
 }
 if ($Key) { Set-Content $keyPath $Key; $env:ERP_GOOGLE_SERVICE_ACCOUNT_JSON = $Key }
-
-Write-Host '== Проекты: разовый снос (владелец 30.09: «все проекты снесем и буду по одному давать»)'
-# Один раз, по метке в самой базе; перед сносом — копия базы рядом (<база>.before-projects-wipe.bak).
-& $py -X utf8 -m app.workflows.projects_wipe
-if ($LASTEXITCODE -ne 0) { Write-Warning 'Проекты не снесены (ошибка выше), база не изменена' }
-
-Write-Host '== Проекты по одному: новые номера из data\projects.txt с их ТК (Google только читается)'
-$report = Join-Path $backend 'projects-load.txt'
-$load = @('-X', 'utf8', '..\scripts\projects_import.py', 'load')
-if ($Key -and (Test-Path $Key)) { $load += @('--key', $Key) }
-& $py @load | Tee-Object -FilePath $report -Append
-if ($LASTEXITCODE -gt 1) { Write-Warning "Проекты из списка не загружены (причина выше, итог: $report)" }
-elseif ($LASTEXITCODE -eq 1) { Write-Warning "Часть проектов из списка не загружена — повтор при следующем обновлении (итог: $report)" }
-
-Write-Host '== Отгруженное по листу цеха «ЗАГРУЗ» (владелец 29.09: отгруженное не нужно, отгруженное из Google — «отгружено»)'
-# С ключом лист перечитывается из Google (только чтение) в снимок data\import\projects.json, без ключа — берётся снимок.
-$shipped = @('-X', 'utf8', '..\scripts\projects_import.py', 'drop-shipped', (Join-Path $root 'data\import\projects.json'))
-if ($Key -and (Test-Path $Key)) { $shipped += @('--key', $Key) }
-& $py @shipped
-if ($LASTEXITCODE -ne 0) { Write-Warning "Отгруженное не перенесено (причина выше)" }
 
 $head = (git -C $root rev-parse HEAD).Trim()
 $stamp = "$db.version"

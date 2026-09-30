@@ -92,3 +92,14 @@ def test_sync_keeps_a_shipped_project_that_already_moved_in_erp(kitset_api):  # 
     assert client.get("/api/techcards/kitsets/714К.1").status_code == 200
     assert not [line for line in done if "714К.1" in line]
     assert any("714К.1" in line and "не удаляю" in line for line in skipped)
+
+
+def test_sync_limited_to_the_loaded_projects_leaves_the_rest_alone(kitset_api):  # noqa: F811
+    client, _lot = kitset_api
+    assert _load(client, number="714К.1").status_code == 200  # завёл владелец сам, в листе цеха — отгружен
+    actor = Actor(id=uuid4(), name="перенос", department="")
+
+    done, skipped = projects_import.sync_shipped(SHEET, app.state, actor, datetime(2026, 9, 30, 9, 0), only={"713К.3"})
+
+    assert client.get("/api/techcards/kitsets/714К.1").status_code == 200
+    assert done == [] and all("713К.3" in line for line in skipped)

@@ -17,7 +17,6 @@ COPY backend/requirements.lock.txt ./
 RUN pip install -r requirements.lock.txt
 COPY backend/ ./
 COPY scripts/ /app/scripts/
-COPY data/projects.txt /app/data/projects.txt
 COPY --from=web /src/frontend/dist /app/frontend/dist
 COPY --from=web /src/frontend/dist-tools /app/frontend/dist-tools
 RUN useradd --system --uid 10001 erp && chown -R erp /app

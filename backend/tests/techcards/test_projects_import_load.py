@@ -1,4 +1,4 @@
-"""scripts/projects_import.py load: проекты по одному (владелец 30.09.2026) — только номера списка, один раз."""
+"""scripts/projects_import.py load: один проект из Google по запросу (владелец 30.09.2026) — только названные номера."""
 
 import importlib.util
 from datetime import date, datetime
@@ -9,7 +9,6 @@ import pytest
 
 from app.database import configure_database
 from app.shared.persistence import create_schema
-from app.workflows.projects_wipe import loaded_projects, mark_loaded
 from tests.techcards.calc_sheets import FakeSheets
 from tests.techcards.test_kitset_api import CALC
 
@@ -54,13 +53,12 @@ def state(tmp_path):
     engine.dispose()
 
 
-def test_only_listed_numbers_come_in_with_registry_journal_and_shop_sheet(state):
+def test_only_named_numbers_come_in_with_registry_journal_and_shop_sheet(state):
     report = projects_import.load_projects(["708К.4", "714К.1", "555К.1"], PROD, SHOP, FakeSheets(), state, now=NOW)
 
     assert report["loaded"] == ["708К.4: КБ 2, строк 3"]
     assert report["skipped"] == ["714К.1: отгружен по листу цеха «ЗАГРУЗ» — не загружаю"]
     assert report["failed"] == ["555К.1: номера нет ни в «Наборы», ни в «Проекты», ни в листе цеха"]
-    assert sorted(report["done"]) == ["708К.4", "714К.1"]
     assert any("ТК генератором не собраны" in note for note in report["notes"])
     with state.techcards_uow_factory() as uow:
         assert [kitset.project for kitset in uow.kitsets.list()] == ["708К.4"]
@@ -74,38 +72,24 @@ def test_only_listed_numbers_come_in_with_registry_journal_and_shop_sheet(state)
     assert any(event.who.startswith("план цеха") for event in events)
 
 
-def test_a_rerun_duplicates_nothing(state):
+def test_a_project_already_in_erp_is_left_alone(state):
     projects_import.load_projects(["708К.4"], PROD, SHOP, FakeSheets(), state, now=NOW)
     with state.production_uow_factory() as uow:
         before = len(list(uow.plan_events.list()))
 
-    again = projects_import.load_projects(["708К.4"], PROD, SHOP, FakeSheets(), state, now=NOW)
+    again = projects_import.load_projects(["708 к.4"], PROD, SHOP, FakeSheets(), state, now=NOW)
 
-    assert again["loaded"] == [] and again["done"] == ["708К.4"]
+    assert again["loaded"] == [] and again["skipped"] == ["708 к.4: уже есть в ERP — не трогаю"]
     with state.production_uow_factory() as uow:
         assert len(list(uow.plan_events.list())) == before
 
 
-def test_list_file_takes_the_first_word_and_skips_comments(tmp_path):
-    path = tmp_path / "projects.txt"
-    path.write_text("# шапка\n\n708К.4   # проверить КБ2\n  591К.3\n", encoding="utf-8")
-    assert projects_import.read_list(path) == ["708К.4", "591К.3"]
-    assert projects_import.read_list(tmp_path / "нет.txt") == []
-
-
-def test_cli_skips_loaded_numbers_without_google(tmp_path, monkeypatch, capsys, state):
-    engine = state.database_engine
-    mark_loaded(engine, ["708К.4"], NOW)
-    path = tmp_path / "projects.txt"
-    path.write_text("708К.4\n", encoding="utf-8")
-    monkeypatch.setenv("ERP_DATABASE_URL", str(engine.url))
+def test_cli_needs_numbers_and_a_key(monkeypatch, capsys, state):
+    monkeypatch.setenv("ERP_DATABASE_URL", str(state.database_engine.url))
     monkeypatch.delenv("ERP_GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
-    args = SimpleNamespace(numbers=[], list=str(path), key=None, prod="", shop="")
+    args = SimpleNamespace(numbers=["708К.4"], key=None, prod="", shop="")
 
-    assert projects_import.load(args) == 0
-    assert "новых 0" in capsys.readouterr().out
-    assert loaded_projects(engine) == {"708К.4"}
-
-    path.write_text("708К.4\n591К.3\n", encoding="utf-8")
-    assert projects_import.load(args) == 2  # новый номер, а ключа Google нет — не загружен, повтор в следующий раз
-    assert loaded_projects(engine) == {"708К.4"}
+    assert projects_import.load(args) == 2
+    assert "Ключ Google не задан" in capsys.readouterr().err
+    with state.techcards_uow_factory() as uow:
+        assert list(uow.kitsets.list()) == []

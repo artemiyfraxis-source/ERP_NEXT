@@ -1,15 +1,15 @@
 #!/usr/bin/env python
-"""Производственные проекты SUPPLYMAP → ERP по одному (владелец 30.09.2026: «все проекты снесем и буду по одному
-тебе давать, чтобы я проверял»). Массовой загрузки больше нет: проекты снесены разово (app.workflows.projects_wipe),
-дальше в ERP попадают только номера из списка data/projects.txt.
+"""Один производственный проект SUPPLYMAP → ERP командой, по запросу. Владелец 30.09.2026: все проекты снесены
+(миграция 0078_wipe_projects_once), дальше проекты заводит он сам в ERP («Создать проект из расчёта») или по одному
+через чат. Сами ни обновление, ни сервер проекты не грузят.
 
     cd backend
-    ERP_DATABASE_URL=sqlite+pysqlite:///real.db .venv/bin/python ../scripts/projects_import.py load \
-        --list ../data/projects.txt [№ …] --key <sa.json>
+    ERP_DATABASE_URL=sqlite+pysqlite:///real.db .venv/bin/python ../scripts/projects_import.py load 708К.4 --key <sa.json>
+    # на ПК владельца одной строкой: powershell -ExecutionPolicy Bypass -File scripts\\load-project.ps1 708К.4
 
 Google только читается: «ERP — Производство» (Проекты, Журнал проектов, Наборы, Техкарты), расчёт проекта по его
-ссылке РАСЧЁТ (ЗКЗ, СПЯ и листы КБn) и лист цеха «ЗАГРУЗ» («Производственный план v.0.1»). Для каждого нового
-номера, как это лежит в SUPPLYMAP:
+ссылке РАСЧЁТ (ЗКЗ, СПЯ и листы КБn) и лист цеха «ЗАГРУЗ» («Производственный план v.0.1»). Для каждого номера, как
+это лежит в SUPPLYMAP:
 1. Набор — «Создать проект из расчёта» (`load_kitset`): карточка, строка реестра, очередь отгрузки.
 2. Реестр «Проекты» — строка плана (№, заказчик, дата, дедлайн, статус).
 3. «Журнал проектов» — записи журнала плана как есть: дата, кто, вид, блокер, текст, КБ, значение.
@@ -18,18 +18,13 @@ Google только читается: «ERP — Производство» (Пр
    реестре — заводится строкой (№ + заказчик).
 5. Отгруженное по листу цеха (`sync_shipped`), затем ТК: выданные в SUPPLYMAP переносятся, остальным сборкам —
    генератор, как кнопка «Создать» (`app.workflows.techcards_all` только для этого проекта).
-Загруженный номер запоминается в базе (`projects_loaded`): повторный прогон его не трогает, удалённый в ERP проект
-не возвращается. Полностью отгруженный по листу цеха проект не загружается. Номер, которого нет в Google, или
-расчёт, который не прочитался, пробуется снова при следующем прогоне.
-
-`drop-shipped` — отгруженное по листу цеха в уже загруженную базу (его зовут update-local.ps1 и
-deploy/load-real-data.sh shipped).
+Проект, который уже есть в ERP (карточка или строка реестра), не трогается. Полностью отгруженный по листу цеха не
+загружается.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -250,20 +245,7 @@ def shop_sync(sheet: list[dict], portal: list[dict]) -> dict:
 # ── Заведение в ERP ───────────────────────────────────────────────────────────────────────────
 
 
-LIST_FILE = Path(__file__).resolve().parent.parent / "data" / "projects.txt"
 TECHCARDS_SHEET = "Техкарты"
-
-
-def read_list(path: Path) -> list[str]:
-    """data/projects.txt: № проекта — первое слово строки; «#» и всё после него, пустые строки — прочь."""
-    if not path.exists():
-        return []
-    numbers = []
-    for line in path.read_text(encoding="utf-8-sig").splitlines():
-        words = line.split("#", 1)[0].split()
-        if words:
-            numbers.append(words[0])
-    return numbers
 
 
 def _retrying(read):
@@ -314,9 +296,9 @@ def plan_rows(state, today: date) -> list[dict]:
 
 def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_grid: list[list[str]], reader, state, *,
                   now: datetime, generator=None) -> dict:
-    """Новые номера — в ERP шагами 1–5 (см. модуль). reader — Google Sheets (`read_sheets`), им читаются расчёты;
+    """Номера — в ERP шагами 1–5 (см. модуль). reader — Google Sheets (`read_sheets`), им читаются расчёты;
     generator — форма генератора ТК (`techcards_all.node_generator`), None — ТК только из SUPPLYMAP.
-    → {"done": номера, которые больше не грузить, "loaded", "skipped", "failed", "notes", "techcards": строки итога}."""
+    → {"loaded", "skipped", "failed", "notes", "techcards": строки итога}."""
     from app.modules.production.plan import PLAN_KINDS, PlanEvent, PlanProjectSnapshot, normalize_project_number as key
     from app.modules.production.plan_application import (
         AddPlanEventCommand, ReplacePlanProjectsCommand, add_plan_event, replace_plan_projects,
@@ -338,26 +320,27 @@ def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_gri
     sheet = shop_rows(shop_grid) if shop_grid else []
     shipped = shipped_projects(sheet)
     importer = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP", department="")
-    report: dict[str, list[str]] = {"done": [], "loaded": [], "skipped": [], "failed": [], "notes": [], "techcards": []}
+    report: dict[str, list[str]] = {"loaded": [], "skipped": [], "failed": [], "notes": [], "techcards": []}
     for k in sorted(wanted.keys() & shipped):
         report["skipped"].append(f"{wanted[k]}: отгружен по листу цеха «ЗАГРУЗ» — не загружаю")
-        report["done"].append(k)
-    active = set(wanted) - shipped
-    if not active:
-        return report
     production = state.production_uow_factory
     techcards = state.techcards_uow_factory
-
-    # 1. Набор — из расчёта по ссылке РАСЧЁТ, тем же путём, что кнопка «Создать проект из расчёта».
+    # Проект, уже заведённый в ERP (владельцем или прошлой загрузкой), не трогается: его правят в ERP.
     with techcards() as uow:
         existing = {key(item.project) for item in uow.kitsets.list()}
+    with production() as uow:
+        existing |= {key(item.project) for item in uow.plan_projects.list()}
+    for k in sorted((set(wanted) - shipped) & existing):
+        report["skipped"].append(f"{wanted[k]}: уже есть в ERP — не трогаю")
+    active = set(wanted) - shipped - existing
+    if not active:
+        return report
+
+    # 1. Набор — из расчёта по ссылке РАСЧЁТ, тем же путём, что кнопка «Создать проект из расчёта».
     queue = getattr(state, "kitset_name_queue", None)
     for k in sorted(active & kit_rows.keys()):
         row = kit_rows[k]
         number = row.get("№ ПРОЕКТА", "")
-        if k in existing:
-            report["notes"].append(f"{number}: карточка уже есть в ERP — не перезагружаю из расчёта")
-            continue
         try:
             data = _retrying(lambda: read_calc_by_link(row.get("РАСЧЁТ", ""), lambda: reader))
             result = load_kitset(LoadKitsetCommand(
@@ -453,22 +436,20 @@ def load_projects(numbers: list[str], prod: dict[str, list[list[str]]], shop_gri
             report["notes"].append(f"{entry['project']} {entry['kind']}: {error}")
     report["notes"].append(f"журнал: перенесено {journal_added}, из листа цеха {shop_added}")
 
-    # Что теперь в ERP. Номер с набором в «Наборы» готов, только когда есть карточка; без набора — строка реестра.
+    # Что теперь в ERP: без расчёта в «Наборы» — только строка реестра; нигде нет — не загружен.
     with techcards() as uow:
         cards = {key(item.project): item.project for item in uow.kitsets.list()}
     with production() as uow:
         registered = {key(item.project) for item in uow.plan_projects.list()}
-    for k in sorted(active):
-        if k in cards or (k not in kit_rows and k in registered):
-            report["done"].append(k)
-            if k not in cards:
-                report["notes"].append(f"{wanted[k]}: в «Наборы» нет расчёта — заведена только строка реестра")
-        elif k not in kit_rows and k not in registered:
+    for k in sorted(active - cards.keys() - kit_rows.keys()):
+        if k in registered:
+            report["notes"].append(f"{wanted[k]}: в «Наборы» нет расчёта — заведена только строка реестра")
+        else:
             report["failed"].append(f"{wanted[k]}: номера нет ни в «Наборы», ни в «Проекты», ни в листе цеха")
 
-    # 5. Отгруженное по листу цеха (частичные отгрузки — в готовую продукцию), затем ТК этих проектов.
+    # 5. Частичные отгрузки этих проектов по листу цеха — в готовую продукцию, затем их ТК.
     if shop_grid:
-        _done, skipped = sync_shipped(shop_grid, state, shop, now)
+        _done, skipped = sync_shipped(shop_grid, state, shop, now, only=active)
         report["notes"] += [f"не перенесено: {line}" for line in skipped]
     only = {project_key(cards[k]) for k in active if k in cards}
     if only:
@@ -495,45 +476,32 @@ def _no_generator():
 
 
 def load(args: argparse.Namespace) -> int:
-    """Новые номера списка (и аргументов) — в базу ERP_DATABASE_URL; уже загруженные пропускаются без Google."""
+    """Номера из аргументов — в базу ERP_DATABASE_URL (сервер можно не останавливать)."""
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     url = os.getenv("ERP_DATABASE_URL", "").strip()
     if not url:
         print("Задайте ERP_DATABASE_URL (база, куда заводить)", file=sys.stderr)
         return 2
+    raw = args.key or os.getenv("ERP_GOOGLE_SERVICE_ACCOUNT_JSON", "")  # JSON-ключ или путь к нему
+    if not raw.strip():
+        print("Ключ Google не задан (--key или ERP_GOOGLE_SERVICE_ACCOUNT_JSON)", file=sys.stderr)
+        return 2
     from types import SimpleNamespace
 
     from app.database import configure_database
-    from app.modules.production.plan import normalize_project_number as key
     from app.modules.requests.google_sheets import GoogleSheetsCalcReader, load_service_account
     from app.shared.clock import moscow_now
-    from app.workflows.projects_wipe import loaded_projects, mark_loaded
     from app.workflows.techcards_all import node_generator
 
-    numbers = list(args.numbers) + (read_list(Path(args.list)) if args.list else [])
+    reader = GoogleSheetsCalcReader(load_service_account(raw))
+    _title, prod = _retrying(lambda: reader.read_sheets(args.prod, PROD_SHEETS + (TECHCARDS_SHEET,)))
+    _title, shop = _retrying(lambda: reader.read_sheets(args.shop, (SHOP_SHEET,)))
     holder = SimpleNamespace(state=SimpleNamespace())
     engine = configure_database(holder, url)
     try:
-        loaded = loaded_projects(engine)
-        pending: list[str] = []
-        for number in numbers:
-            if key(number) and key(number) not in loaded and key(number) not in {key(n) for n in pending}:
-                pending.append(number)
-        print(f"== Проекты по одному: в списке {len(numbers)}, загружено раньше {len(loaded)}, новых {len(pending)}")
-        if not pending:
-            return 0
-        raw = args.key or os.getenv("ERP_GOOGLE_SERVICE_ACCOUNT_JSON", "")  # JSON-ключ или путь к нему
-        if not raw.strip():
-            print(f"Ключ Google не задан — не загружены: {', '.join(pending)}", file=sys.stderr)
-            return 2
-        reader = GoogleSheetsCalcReader(load_service_account(raw))
-        _title, prod = _retrying(lambda: reader.read_sheets(args.prod, PROD_SHEETS + (TECHCARDS_SHEET,)))
-        _title, shop = _retrying(lambda: reader.read_sheets(args.shop, (SHOP_SHEET,)))
-        now = moscow_now()
-        report = load_projects(pending, prod, shop.get(SHOP_SHEET) or [], reader, holder.state, now=now,
-                               generator=node_generator)
-        mark_loaded(engine, report["done"], now)
+        report = load_projects(list(args.numbers), prod, shop.get(SHOP_SHEET) or [], reader, holder.state,
+                               now=moscow_now(), generator=node_generator)
     finally:
         engine.dispose()
     for line in report["loaded"]:
@@ -545,17 +513,16 @@ def load(args: argparse.Namespace) -> int:
     for block in report["techcards"]:
         print(block)
     for line in report["failed"]:
-        print("НЕ ЗАГРУЖЕН (попробую при следующем обновлении): " + line)
+        print("НЕ ЗАГРУЖЕН: " + line)
     return 1 if report["failed"] else 0
 
 
-
-def sync_shipped(shop_grid: list[list[str]], state, actor, now) -> tuple[list[str], list[str]]:
+def sync_shipped(shop_grid: list[list[str]], state, actor, now, only: set[str] | None = None) -> tuple[list[str], list[str]]:
     """Отгруженное по листу цеха — в базу. Полностью отгруженные проекты уходят (владелец 29.09: отгруженное не
     нужно): набор каскадом, как «Удалить проект» в карточке, без набора — строка реестра. Частичные отгрузки —
     в готовую продукцию «отгружено до ERP», если КБ у проекта одна (у нескольких не угадать, какая уехала).
     Проект, у которого в ERP уже есть своё движение готовой продукции или отправка, не трогается. Повтор ничего
-    не меняет. → (что сделано, что не перенесено)."""
+    не меняет. only — только эти проекты (`normalize_project_number`). → (что сделано, что не перенесено)."""
     from app.modules.production.plan import normalize_project_number as key
     from app.modules.production.plan_application import ReplacePlanProjectsCommand, replace_plan_projects
     from app.modules.shipping.application import DropProjectCommand, ShipBeforeErpCommand, drop_project, ship_before_erp
@@ -564,6 +531,9 @@ def sync_shipped(shop_grid: list[list[str]], state, actor, now) -> tuple[list[st
     sheet = shop_rows(shop_grid)
     shipped = shipped_projects(sheet)
     partial = partial_shipments(sheet)
+    if only is not None:
+        shipped &= only
+        partial = {k: item for k, item in partial.items() if k in only}
     done: list[str] = []
     skipped: list[str] = []
     with state.shipping_uow_factory() as uow:
@@ -614,67 +584,15 @@ def sync_shipped(shop_grid: list[list[str]], state, actor, now) -> tuple[list[st
     return done, skipped
 
 
-def _read_shop(key_path: str | None) -> list[list[str]]:
-    from app.modules.requests.google_sheets import GoogleSheetsCalcReader, load_service_account
-
-    raw = Path(key_path).read_text(encoding="utf-8") if key_path else os.getenv("ERP_GOOGLE_SERVICE_ACCOUNT_JSON", "")
-    _title, shop = GoogleSheetsCalcReader(load_service_account(raw)).read_sheets(SHOP_SPREADSHEET, (SHOP_SHEET,))
-    return shop.get(SHOP_SHEET) or []
-
-
-def drop_shipped(args: argparse.Namespace) -> None:
-    """Отгруженное по листу цеха — в уже загруженную базу (`sync_shipped`). С --key лист «ЗАГРУЗ» сначала
-    перечитывается из Google (только чтение) и сохраняется в снимок; без ключа — берётся из снимка.
-    Сотрудники, склад и остальное не трогаются."""
-    if not os.getenv("ERP_DATABASE_URL"):
-        raise SystemExit("Задайте ERP_DATABASE_URL")
-    from app.main import app
-    from app.shared.clock import moscow_now
-    from app.shared.identity import Actor
-
-    snapshot = Path(args.snapshot)
-    data = json.loads(snapshot.read_text(encoding="utf-8")) if snapshot.exists() else None
-    if args.key:
-        try:
-            shop = _read_shop(args.key)
-        except Exception as error:  # noqa: BLE001 — нет сети или ключа: работаем по снимку, если он есть
-            print(f"ВНИМАНИЕ: лист цеха из Google не прочитан ({error}) — беру снимок")
-        else:
-            data = {**(data or {}), "shop": shop, "shop_read_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-            snapshot.parent.mkdir(parents=True, exist_ok=True)
-            snapshot.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            print(f"Лист цеха «{SHOP_SHEET}» перечитан из Google: {len(shop)} строк")
-    if not data or not data.get("shop"):
-        print(f"ВНИМАНИЕ: снимка листа цеха {snapshot} нет — отгруженные проекты не убраны. "
-              "Нужен ключ Google: scripts\\update-local.ps1 -Key <ключ.json> (запомнится) или load-real-data.ps1.")
-        sys.exit(1)
-    actor = Actor(id=uuid.uuid4(), name="перенос из SUPPLYMAP: отгружено по листу цеха", department="")
-    done, skipped = sync_shipped(data["shop"], app.state, actor, moscow_now())
-    read_at = data.get("shop_read_at") or data.get("read_at") or "?"
-    print(f"Отгруженное по листу цеха (снимок {read_at}): изменений {len(done)}, не перенесено {len(skipped)}")
-    for line in done:
-        print("  " + line)
-    for line in skipped:
-        print("  НЕ ПЕРЕНЕСЕНО: " + line)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    run = sub.add_parser("load", help="новые номера списка data/projects.txt (и аргументов) — в базу ERP_DATABASE_URL")
-    run.add_argument("numbers", nargs="*", help="№ проекта, как в «Наборы» (например 708К.4)")
-    run.add_argument("--list", default=str(LIST_FILE), help="файл со списком номеров (по умолчанию data/projects.txt)")
+    run = sub.add_parser("load", help="проект(ы) по номеру из Google — в базу ERP_DATABASE_URL, по запросу")
+    run.add_argument("numbers", nargs="+", help="№ проекта, как в «Наборы» (например 708К.4)")
     run.add_argument("--key", help="JSON-ключ сервисного аккаунта (иначе ERP_GOOGLE_SERVICE_ACCOUNT_JSON)")
     run.add_argument("--prod", default=PROD_SPREADSHEET)
     run.add_argument("--shop", default=SHOP_SPREADSHEET)
-    drop = sub.add_parser("drop-shipped", help="отгруженное по листу цеха: отгруженные проекты прочь, частичные — в ГП")
-    drop.add_argument("snapshot")
-    drop.add_argument("--key", help="перечитать «ЗАГРУЗ» из Google этим ключом и сохранить в снимок")
-    args = parser.parse_args()
-    if args.command == "load":
-        return load(args)
-    drop_shipped(args)
-    return 0
+    return load(parser.parse_args())
 
 
 if __name__ == "__main__":
