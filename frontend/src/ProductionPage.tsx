@@ -43,6 +43,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [holidays, setHolidays] = useState<string[]>([]);
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
   const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
+  const [shift, setShift] = useState<ProductionShift | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedOperationId, setSelectedOperationId] = useState("");
   const [week, setWeek] = useState(0);
@@ -77,11 +78,12 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       if (!mine && canOverview) {
         // Праздники — для подсветки Ганта, компетенции — для метки допуска в карточке назначения (prodSkillTag_).
         const [calendarResult, skillResult] = await Promise.all([
-          productionApi.calendar().catch(() => ({ holidays: [] as string[], absences: [] as ProductionAbsence[] })),
+          productionApi.calendar().catch(() => ({ holidays: [] as string[], absences: [] as ProductionAbsence[], shift: null as ProductionShift | null })),
           productionApi.skills().catch(() => ({ skills: [] as ProductionSkill[] })),
         ]);
         setHolidays(calendarResult.holidays);
         setAbsences(calendarResult.absences ?? []);
+        setShift(calendarResult.shift ?? null);
         setSkills(skillResult.skills);
       }
     } catch (reason) {
@@ -148,6 +150,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     />}
     {!mine && !selectedTask && loaded && canOverview && <MasterBoard
       tasks={tasks} operators={operators} site={viewerSite} skills={skills} absences={absences}
+      shift={shift} holidays={holidays}
       canEdit={canEdit} busy={busy} mutate={mutate}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
