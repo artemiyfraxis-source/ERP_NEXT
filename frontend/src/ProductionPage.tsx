@@ -170,7 +170,7 @@ function CalendarForm({ operators, close }: { operators: ProductionOperator[]; c
   const [error, setError] = useState("");
   const [shift, setShift] = useState<ProductionShift>({
     weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30",
-    breaks: [["13:00", "13:30"]], effective_hours: "8",
+    breaks: [["13:00", "13:30"]], effective_hours: "7",
   });
 
   useEffect(() => {
@@ -206,10 +206,10 @@ function CalendarForm({ operators, close }: { operators: ProductionOperator[]; c
     <div className="manual-stock-head"><h2>Календарь цеха</h2><button className="link-button" onClick={close}>Закрыть</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="shift-editor">
-      <div><strong>Смена</strong><small>Эффективные часы снимаются с начала смены после вычета перерывов.</small></div>
+      <div><strong>Смена</strong><small>Чистое время — без обеда и мелких перерывов (туалет, перекуры); они размазываются по всей смене.</small></div>
       <label>Начало<input aria-label="Начало смены" type="time" value={shift.start} onChange={(event) => setShift({ ...shift, start: event.target.value })} /></label>
       <label>Конец<input aria-label="Конец смены" type="time" value={shift.finish} onChange={(event) => setShift({ ...shift, finish: event.target.value })} /></label>
-      <label>Эффективно, ч<input aria-label="Эффективные часы" type="number" min="0.25" max="24" step="0.25" value={shift.effective_hours} onChange={(event) => setShift({ ...shift, effective_hours: event.target.value })} /></label>
+      <label>Чистое время, ч<input aria-label="Эффективные часы" type="number" min="0.25" max="24" step="0.25" value={shift.effective_hours} onChange={(event) => setShift({ ...shift, effective_hours: event.target.value })} /></label>
       <label>Перерыв с<input aria-label="Перерыв с" type="time" value={shift.breaks[0]?.[0] ?? ""} onChange={(event) => setShift({ ...shift, breaks: event.target.value || shift.breaks[0]?.[1] ? [[event.target.value, shift.breaks[0]?.[1] ?? ""]] : [] })} /></label>
       <label>Перерыв до<input aria-label="Перерыв до" type="time" value={shift.breaks[0]?.[1] ?? ""} onChange={(event) => setShift({ ...shift, breaks: shift.breaks[0]?.[0] || event.target.value ? [[shift.breaks[0]?.[0] ?? "", event.target.value]] : [] })} /></label>
       <div className="weekday-picker">{["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map((label, day) => <label key={label}><input type="checkbox" checked={shift.weekdays.includes(day)} onChange={(event) => setShift({ ...shift, weekdays: event.target.checked ? [...shift.weekdays, day].sort() : shift.weekdays.filter((value) => value !== day) })} />{label}</label>)}</div>
