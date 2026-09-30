@@ -150,6 +150,9 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 .move-dialog .history-table table { width: 100%; }
 .move-dialog .dialog-inline-action { align-self: end; justify-self: start; }
 .manual-stock-rows { margin-bottom: 12px; }
+.manual-stock-rows .manual-stock-passport-cell { max-width: 420px; color: var(--muted-foreground); }
+.manual-stock-rows .manual-stock-row-actions { white-space: nowrap; text-align: right; }
+.manual-stock-rows .manual-stock-row-actions .link-button + .link-button { margin-left: 10px; }
 .manual-stock-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 td small, td strong { display: block; }
 td small { margin-top: 4px; color: #7b857e; }
