@@ -11,6 +11,7 @@ backend/*.log
 backend/*.sqlite*
 frontend/dist/
 frontend/dist-next/
+frontend/dist-prev/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts

@@ -85,6 +85,10 @@ try {
   Write-Warning "Обновление не собралось, ERP остаётся на прежней версии: $_"
   Set-Location $root
   git checkout --force --detach $old | Out-Null
+  # ERP могла быть уже остановлена (сбой, перезагрузка) — поднять прежнюю версию, если сайт от неё есть.
+  if (-not (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)) {
+    try { Start-Api; Start-Worker } catch { Write-Warning "Прежняя версия тоже не поднялась: $_" }
+  }
   exit 1
 }
 
@@ -157,9 +161,21 @@ $info = [ordered]@{ version = $head; date = $date; news = $news } | ConvertTo-Js
 
 Write-Host '== Новый сайт и запуск API'
 $dist = Join-Path $frontend 'dist'
-if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
+$prevDist = Join-Path $frontend 'dist-prev'
+if (Test-Path $prevDist) { Remove-Item $prevDist -Recurse -Force }
+if (Test-Path $dist) { Move-Item $dist $prevDist }
 Move-Item $next $dist
-Start-Api
+try { Start-Api } catch {
+  # Новая версия не поднялась: база из копии, прежние код и сайт, прежняя ERP снова запущена.
+  Write-Warning "Новая версия не запустилась ($_), возвращаю прежнюю."
+  Stop-Api
+  Copy-Item "$db.bak" $db -Force
+  git -C $root checkout --force --detach $old | Out-Null
+  Remove-Item $dist -Recurse -Force
+  if (Test-Path $prevDist) { Move-Item $prevDist $dist }
+  Start-Api; Start-Worker
+  exit 1
+}
 Start-Worker
 # Наименования комплектующих с сайтов поставщиков (tcKitFetchNames): разовый добор наборов с пустыми
 # наименованиями — фоном, сайт уже работает. Дальше новые наборы проходит outbox_worker. Журнал: backend\names-fill.log.
