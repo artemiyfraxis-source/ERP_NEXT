@@ -413,3 +413,72 @@ def test_project_status_in_one_click(kitset_api):
     card = noted.json()["card"]
     assert card["deadline"] == "2026-10-20"
     assert [event["kind"] for event in card["journal"][:2]] == ["Дедлайн", "Этап КБ"]
+
+
+class FakeZpk:
+    """«Из расчёта» reader fake: the ЗКП sheet of the same calculation."""
+
+    def __init__(self, grid):
+        self.grid, self.calls = grid, 0
+
+    def read_calc(self, spreadsheet_id):
+        from app.modules.requests.application import CalcSpreadsheet
+
+        self.calls += 1
+        return CalcSpreadsheet(title="708К.4 Расчет", zpk_grid=self.grid, project_cell="708К.4")
+
+
+ZPK = [
+    ["№", "Тип", "Обозначение", "На проект", "Цена  без НДС", "Цена с НДС", "Ссылка", "Место поставки"],
+    ["1", "Провод", "UL1007 22AWG", "15", "10", "12", "https://snab.example/ul1007", ""],
+    ["2", "Разъём", "43025-0400", "20", "", "", "", ""],
+    ["3", "Разъём", "БЕЗ КОЛ-ВА", "", "", "", "", ""],
+]
+REQUESTS = {"purpose": "Обеспечение производства", "delivery_point": "г. Москва, ул. 6-я Радиальная, д. 17",
+            "procurement_deadline": "2026-10-06"}
+
+
+def test_project_with_requests_files_them_once(kitset_api):
+    client, _lot = kitset_api
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "newrequest": "edit"})
+    app.state.calc_spreadsheet_reader = reader = FakeZpk(ZPK)
+    try:
+        plain = _load(client).json()["res"]
+        assert (plain["requests"], plain["requests_error"]) == (None, "")
+        assert reader.calls == 0
+
+        res = _load(client, requests=REQUESTS).json()["res"]
+        assert res["requests_error"] == ""
+        assert res["requests"] == {"created": 2, "existing": 0, "skipped": ["БЕЗ КОЛ-ВА"]}
+        with app.state.uow_factory() as uow:
+            rows = sorted(uow.requests.recent(100), key=lambda row: row.name)
+        assert [(row.name, row.quantity, row.unit, row.project_reference, row.quality_document,
+                 str(row.planned_date), row.delivery_point) for row in rows] == [
+            ("43025-0400", Decimal("20"), "шт", "708К.4", "Нет", "2026-10-06", REQUESTS["delivery_point"]),
+            ("UL1007 22AWG", Decimal("15"), "м", "708К.4", "Нет", "2026-10-06", REQUESTS["delivery_point"]),
+        ]
+
+        again = _load(client, requests=REQUESTS).json()["res"]
+        assert again["requests"] == {"created": 0, "existing": 2, "skipped": []}
+        with app.state.uow_factory() as uow:
+            assert len(uow.requests.recent(100)) == 2
+    finally:
+        del app.state.calc_spreadsheet_reader
+
+
+def test_project_requests_need_newrequest_right_and_never_fail_the_project(kitset_api):
+    client, _lot = kitset_api
+    app.state.calc_spreadsheet_reader = FakeZpk(ZPK)
+    try:
+        refused = _load(client, requests=REQUESTS)
+        assert refused.status_code == 200
+        res = refused.json()["res"]
+        assert (res["project"], res["requests"]) == ("708К.4", None)
+        assert "Оформить заявку" in res["requests_error"]
+
+        app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "newrequest": "edit"})
+        app.state.calc_spreadsheet_reader = FakeZpk([ZPK[0]])
+        empty = _load(client, requests=REQUESTS).json()["res"]
+        assert empty["requests"] is None and empty["requests_error"]
+    finally:
+        del app.state.calc_spreadsheet_reader

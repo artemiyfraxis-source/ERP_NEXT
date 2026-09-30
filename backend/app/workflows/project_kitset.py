@@ -50,8 +50,23 @@ from app.modules.production.plan_application import (
     add_plan_event,
     replace_plan_projects,
 )
-from app.modules.requests.application import CalcSheetError
-from app.modules.requests.domain import Request, spreadsheet_id_from_url
+from app.modules.requests.application import (
+    CalcSheetError,
+    CalcSpreadsheetReader,
+    CreateRequestsCommand,
+    UnitOfWork as RequestsUnitOfWork,
+    create_requests,
+    extract_from_calc,
+)
+from app.modules.requests.domain import (
+    CalcImport,
+    CalcImportItem,
+    Request,
+    ValidationError as RequestValidationError,
+    build_import_drafts,
+    parse_calc_number,
+    spreadsheet_id_from_url,
+)
 from app.modules.shipping.application import (
     DropProjectCommand,
     QueueProjectCommand,
@@ -328,6 +343,91 @@ def load_kitset(
         except Exception:  # noqa: BLE001 — очередь имён не роняет заведение
             logging.exception("tcKitNamesEnqueue_:%s", kitset.project)
     return result
+
+
+@dataclass(frozen=True)
+class KitsetRequestsCommand:
+    """«Сразу создать заявки на закупку» при заведении проекта: те же заявки, что «Оформить заявку из расчёта»
+    (ЗКП расчёта → `importRequests_`), с настройками формы по умолчанию — категория «Общепром», документ по
+    качеству «Нет», план. дата поступления = дедлайн закупки."""
+
+    project: str
+    url: str
+    purpose: str
+    delivery_point: str
+    procurement_deadline: date
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class KitsetRequestsResult:
+    created: int = 0
+    existing: int = 0
+    skipped: tuple[str, ...] = ()
+
+
+def requests_calc_reader(state: Any) -> CalcSpreadsheetReader:
+    """The ЗКП reader of «Из расчёта» in «Заявках»: a test fake on ``app.state.calc_spreadsheet_reader``,
+    otherwise the service-account adapter from env."""
+    reader = getattr(state, "calc_spreadsheet_reader", None)
+    if reader is not None:
+        return reader
+    from app.modules.requests.google_sheets import reader_from_env
+
+    return reader_from_env()
+
+
+def project_request_count(project: str, requests: Iterable[Request]) -> int:
+    """Requests already filed for the project — by project reference, purpose or `project.NNN` designation."""
+    canon = normalize_project_number(project)
+    count = 0
+    for request in requests:
+        targets = (
+            normalize_project_number(request.project_reference) if request.project_reference else "",
+            project_from_purpose(request.purpose),
+            project_from_purpose(request.designation),
+        )
+        count += canon in targets
+    return count
+
+
+def create_kitset_requests(
+    command: KitsetRequestsCommand,
+    requests_uow: Callable[[], RequestsUnitOfWork],
+    reader: Callable[[], CalcSpreadsheetReader],
+) -> KitsetRequestsResult:
+    """A project that already has requests gets none: re-creating it never doubles the purchase. Rows without a
+    readable quantity are left for the manual form and named in the result."""
+    with requests_uow() as uow:
+        existing = project_request_count(command.project, uow.requests.recent(10_000))
+    if existing:
+        return KitsetRequestsResult(existing=existing)
+    extract = extract_from_calc(command.url, reader())
+    items, skipped = [], []
+    for item in extract.items:
+        quantity = parse_calc_number(item.quantity)
+        if quantity is None or quantity <= 0:
+            skipped.append(item.name)
+            continue
+        items.append(CalcImportItem(
+            item_type=item.item_type, name=item.name, quantity=quantity, unit=item.unit,
+            quality_document="Нет", planned_date=command.procurement_deadline, category="Общепром",
+            link=item.link or None, price=parse_calc_number(item.price),
+            price_with_vat=parse_calc_number(item.price_with_vat),
+        ))
+    if not items:
+        raise RequestValidationError("В листе ЗКП нет позиций с количеством")
+    drafts = build_import_drafts(CalcImport(
+        project=command.project, purpose=command.purpose, delivery_point=command.delivery_point,
+        procurement_deadline=command.procurement_deadline, items=tuple(items),
+    ))
+    created = create_requests(CreateRequestsCommand(
+        creation_key=f"kitset-requests:{normalize_project_number(command.project)}",
+        drafts=tuple(drafts), actor=command.actor, now=command.now,
+        designation_base=command.project.strip(), source="import",
+    ), requests_uow())
+    return KitsetRequestsResult(created=len(created), skipped=tuple(skipped))
 
 
 def register_project(
@@ -724,5 +824,5 @@ __all__ = [
     "ChangeProjectStatusCommand", "change_project_status",
     "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
     "assembly_calc_ops", "generator_bom", "issue_from_kitset", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
-    "supply_rows",
+    "supply_rows", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
 ]
