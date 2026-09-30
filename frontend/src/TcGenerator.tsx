@@ -35,6 +35,7 @@ import {
   updateWire,
   wireDiaFromRecords,
   type Comp,
+  type Connection,
   type Endpoint,
   type GenData,
   type GenState,
@@ -51,6 +52,18 @@ const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex
 const WRAP_KINDS: Array<[WrapKind, string]> = [
   ["tape", "Лента — последней операцией"], ["braid", "Оплётка — до термоусадки"], ["under", "Лента под оплётку — перед ней"],
 ];
+
+/** Сводка соединений формы: по проводу и паре разъёмов — «провод · А1 → В1» и пары контактов по порядку. */
+function linkGroups(list: Connection[]) {
+  const groups: Array<{ key: string; title: string; pairs: Array<[number, number]> }> = [];
+  list.forEach((item) => {
+    const key = `${item.wire}::${item.from.end}::${item.to.end}`;
+    let group = groups.find((g) => g.key === key);
+    if (!group) groups.push(group = { key, title: `${item.wire || "Провод"} · ${item.from.end} → ${item.to.end}`, pairs: [] });
+    group.pairs.push([item.from.pin, item.to.pin]);
+  });
+  return groups;
+}
 
 function badgeCls(t: string) {
   const lc = (t || "").toLowerCase();
@@ -178,6 +191,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const wireOptions = gen.wireComps_();
   const active = gen.activeWires_();
   const compLabel = (id: string) => { const c = gen.getCompById(id); return c ? c.art || c.name : "?"; };
+  const links = gen.connections_();
   const cut = gen.cutLengthInfo();
   const hasB = gen.endpointsOnSide_("B").length > 0;
   const crimpSides = gen.crimpCutSides_();
@@ -370,6 +384,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             set({ pins });
           }} />
         </div>)}
+        {ep.side === "B" && S.endpoints.some((e) => e.side === "A") && <small className="muted">Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне. Перекрёст: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1, 3→2…</small>}
       </details>}
     </div>;
   }
@@ -486,6 +501,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {gen.endpointsOnSide_(side).length ? gen.endpointsOnSide_(side).map(endpointCard) : <div className="empty small">Разъёмов нет — добавьте кнопкой ниже</div>}
         {complex && <button className="btn-add" onClick={() => update((current) => addEndpoint(current, side))}>+ Разъём (сторона {sideRu_(side)})</button>}
       </div>)}</div>
+      {(links.list.length > 0 || links.warnings.length > 0) && <div className="gcard ep-links" aria-label="Соединения по распиновке">
+        <span className="field-label">Соединения по распиновке</span>
+        {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>
+          <span key={i}>{i ? ", " : ""}{a === b ? `${a}→${b}` : <b>{a}→{b}</b>}</span>)}</div>)}
+        {links.warnings.map((warning) => <div className="warning-inline" key={warning}>{warning}</div>)}
+      </div>}
 
       {active.some(gen.isJacketedCable_) && <label className="toggle-row"><input type="checkbox" checked={S.rotor} onChange={(event) => update({ rotor: event.target.checked })} /> Роторный станок — многожильный кабель разделывается при резке (оболочка и жилы)</label>}
       {crimpSides.length > 0 && <label className="toggle-row"><input type="checkbox" checked={gen.crimpCutEnabled_()} onChange={(event) => update({ crimpCut: event.target.checked, crimpCutManual: true })} />

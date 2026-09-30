@@ -404,6 +404,45 @@ def _pins(value: object) -> list[int]:
     return result
 
 
+def _connection_end(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        pin = int(value.get("pin"))
+    except (TypeError, ValueError):
+        return None
+    end = str(value.get("end") or "").strip()
+    if pin <= 0 or not end:
+        return None
+    return {"end": end, "conn": str(value.get("conn") or ""), "label": str(value.get("label") or ""), "pin": pin}
+
+
+def _connections(config: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Wire-by-wire links «end·pin → end·pin» the generator pairs from both ends' pin lists (list order = pairing)."""
+    raw = config.get("connections")
+    result: list[dict[str, Any]] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        start, finish = _connection_end(item.get("from")), _connection_end(item.get("to"))
+        if start and finish:
+            result.append({"wire": str(item.get("wire") or ""), "from": start, "to": finish})
+    return result
+
+
+def _links(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Per mounting operation: own pin → the other end of the same wire, for the sketch legend."""
+    key = str(op.get("epKey") or "")
+    if not key or not _kind(op):
+        return []
+    links: list[dict[str, Any]] = []
+    for item in _connections(config):
+        for own, peer, direction in (("from", "to", "to"), ("to", "from", "from")):
+            if item[own]["end"] == key:
+                links.append({"pin": item[own]["pin"], "wire": item["wire"], "dir": direction, "peer": item[peer]})
+    return links
+
+
 def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping[str, Any]) -> dict[str, Any]:
     operation_type = str(op.get("type") or "")
     fields: dict[str, Any] = {}
@@ -440,6 +479,9 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         } for index, wire in enumerate(wires)]
         if any(item["pins"] for item in fields["wires"]):
             fields["pinout"] = True
+    links = _links(op, config)
+    if links:
+        fields["links"] = links
     terminal_norm = op.get("terminalNorm")
     if isinstance(terminal_norm, Mapping):
         for source, target in (("applicator", "applicator"), ("crimpHeight", "crimpHeight"), ("pullForce", "pullForce"), ("bySection", "crimpBySection")):
@@ -596,6 +638,8 @@ def _topology(config: Mapping[str, Any]) -> dict[str, Any]:
     by_id: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str], dict[str, Any]] = {}
     splice = next((item for item in config.get("ops") or [] if item.get("type") == "splice"), None)
+    # wireSources name the source connector by its BOM name (connName), nodes are keyed by article: map both.
+    aliases: dict[str, str] = {}
 
     def node(identifier: str, connector: str, side: str = "") -> dict[str, Any]:
         if identifier not in by_id:
@@ -614,10 +658,14 @@ def _topology(config: Mapping[str, Any]) -> dict[str, Any]:
         if op.get("side") == "B" and identifier in by_id and by_id[identifier]["side"] == "A":
             identifier += " (В)"
         node(identifier, connector, str(op.get("side") or ""))
+        for alias in (endpoint.get("connName"), endpoint.get("connArt")):
+            if alias:
+                aliases.setdefault(str(alias), identifier)
         per_edge: dict[tuple[str, str], float] = {}
         sources = op.get("wireSources") if isinstance(op.get("wireSources"), list) else []
         for index, wire in enumerate(_wires(op, config)):
             source = str(sources[index] or "") if index < len(sources) else ""
+            source = aliases.get(source, source)
             if source and source != identifier:
                 node(source, source)
                 pair = (source, identifier)
@@ -737,6 +785,7 @@ def build_etk(
             previous_result = result
             previous_norm = _output_norm(op, config)
 
+    connections = _connections(config)
     return {
         "schema_version": ETK_VERSION,
         "kit": {
@@ -746,6 +795,7 @@ def build_etk(
         },
         "operations": built,
         "topology": _topology(config),
+        **({"connections": connections} if connections else {}),
         "warnings": warnings,
         "build_config": deepcopy(dict(config)),
         "source": {

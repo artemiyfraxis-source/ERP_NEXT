@@ -11,7 +11,7 @@ import {
   type TechcardRevision,
   failureText,
 } from "./api";
-import { etkChips, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
+import { ETK_CONNECTION_COLUMNS, etkChips, etkConnectionRows, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
 import { defectArt, defectGroupCode } from "./etkDefectArt";
 import { parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
@@ -73,13 +73,19 @@ function topology(document: ProjectTechcard["document"]): EtkTopology | null {
 }
 
 /** Схема жгута один раз, компактной SVG-картинкой, как в SUPPLYMAP (etkDrawHarness_): разъёмы, пучок жил, число
-    проводов и длина. Раскладку контактов показывает только операция монтажа, где она нужна. */
-function HarnessView({ value, list }: { value: EtkTopology | null; list: EtkOperation[] }) {
+    проводов и длина. Раскладку контактов показывает только операция монтажа, где она нужна. Под схемой — таблица
+    соединений провод за проводом, когда распиновка задана на обоих концах (перекрёст виден по номерам контактов). */
+function HarnessView({ value, list, connections }: { value: EtkTopology | null; list: EtkOperation[]; connections: string[][] }) {
   const svg = etkDrawHarness(value as EtkTopologyData | null, harnessPins(list));
-  if (!svg) return null;
+  if (!svg && !connections.length) return null;
   return <details className="etk-schema" open>
-    <summary>Схема жгута</summary>
-    <div className="etk-harness" dangerouslySetInnerHTML={{ __html: svg }} />
+    <summary>{svg ? "Схема жгута" : "Таблица соединений"}{svg && connections.length > 0 ? " и таблица соединений" : ""}</summary>
+    {svg && <div className="etk-harness" dangerouslySetInnerHTML={{ __html: svg }} />}
+    {connections.length > 0 && <table className="etk-result-table etk-links" aria-label="Таблица соединений">
+      <thead><tr>{ETK_CONNECTION_COLUMNS.map((column, index) => <th key={index}>{column}</th>)}</tr></thead>
+      <tbody>{connections.map((row) => <tr key={row[0]}>{row.map((cell, index) =>
+        <td key={index} className={index === 0 || index === 3 || index === 5 ? "num" : undefined}>{cell}</td>)}</tr>)}</tbody>
+    </table>}
   </details>;
 }
 
@@ -484,7 +490,7 @@ export function EtkSheet({ card, principal, title, onChange, onRebuild }: {
     {notice && <div className="success-banner">{notice}</div>}
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>⚠ Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
-    <HarnessView value={topology(card.document)} list={list} />
+    <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)} />
     <EtkView key={card.id} card={card} canEdit={canEdit} sketches={sketches} onSketches={loadSketches} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);

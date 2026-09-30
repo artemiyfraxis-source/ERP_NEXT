@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  etkChips, etkDrawCoax, etkDrawCrimp, etkDrawHarness, etkDrawPinout, etkDrawTwist, etkDrawWires, etkFigure, etkWireColor,
+  etkChips, etkConnectionRows, etkDrawCoax, etkDrawCrimp, etkDrawHarness, etkDrawPinout, etkDrawTwist, etkDrawWires, etkFigure, etkWireColor,
 } from "./etkDraw";
 import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
@@ -58,6 +58,18 @@ describe("etkDraw* sketches", () => {
     expect(etkFigure({ type: "prsTerm", fields: { crimpHeight: "1", pinout: true, wires: [{ art: "a", pins: [1] }] } })).toContain("обжим по жиле");
   });
 
+  it("shows the other end of each wire in the housing legend and lists the connections", () => {
+    const links = [{ pin: 3, wire: "черный", dir: "from", peer: { end: "А1", pin: 1 } }, { pin: 1, wire: "черный", dir: "from", peer: { end: "А1", pin: 2 } }];
+    const svg = etkDrawPinout({ type: "insTerm", housing, fields: { wires: [{ art: "черный", pins: [3, 1] }], links } });
+    expect(svg).toContain("конт. 1 — черный <tspan font-weight=\"700\" fill=\"#00554f\">← А1 конт. 2</tspan>");
+    expect(svg).toContain("конт. 3 — черный <tspan font-weight=\"700\" fill=\"#00554f\">← А1 конт. 1</tspan>");
+    expect(etkConnectionRows([
+      { wire: "черный", from: { end: "А1", conn: "SHR-06V-S-B", label: "", pin: 1 }, to: { end: "В1", conn: "SHR-06V-S-B", label: "GIMBAL", pin: 3 } },
+      "мусор",
+    ])).toEqual([["1", "черный", "А1 · SHR-06V-S-B", "1", "В1 GIMBAL · SHR-06V-S-B", "3"]]);
+    expect(etkConnectionRows(undefined)).toEqual([]);
+  });
+
   it("draws the harness scheme only from two nodes", () => {
     expect(etkDrawHarness({ nodes: [{ id: "A", conn: "A" }], edges: [] })).toBe("");
     const svg = etkDrawHarness({
@@ -79,5 +91,8 @@ describe("etkPrint with sketches (etkPrintHtml_)", () => {
     const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
     expect(html).toContain("<h2>Схема жгута</h2><div class=\"fig\"><svg");
     expect(html).toContain("L = 100 мм");
+    expect(html).not.toContain("Таблица соединений");
+    (card.document as Record<string, unknown>).connections = [{ wire: "x", from: { end: "А1", conn: "A", pin: 1 }, to: { end: "В1", conn: "B", pin: 3 } }];
+    expect(buildPrintDocumentHtml("ТК", etkPrintPages(card, []))).toMatch(/<h2>Таблица соединений<\/h2>[\s\S]*А1 · A[\s\S]*В1 · B/);
   });
 });

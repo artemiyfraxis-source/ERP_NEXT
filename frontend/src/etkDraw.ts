@@ -204,12 +204,9 @@ export function etkDrawHousingOp(operation: Row): string {
   let ly = top + Math.max(g.h + 6, pic.h + 18) + 22;
   const pins = Object.keys(byPin).map(Number).sort((a, b) => a - b);
   if (pins.length) {
-    pins.forEach((pin, i) => {
-      const cx = 40 + (i % 2) * 300, cy = ly + Math.floor(i / 2) * 17;
-      body += `<rect x="${cx}" y="${cy - 9}" width="12" height="12" fill="${etkWireColor(byPin[pin])}" stroke="#17272b" stroke-width=".6"/>` +
-        `<text x="${cx + 18}" y="${cy + 1}" font-size="11" fill="#17272b">конт. ${pin} — ${esc(byPin[pin])}</text>`;
-    });
-    ly += Math.ceil(pins.length / 2) * 17;
+    const legend = pinLegend(pins, (pin) => byPin[pin], pinPeers(obj(operation.fields)), ly);
+    body += legend.body;
+    ly += legend.h;
   } else {
     body += `<text x="40" y="${ly}" font-size="11" fill="#b3261e">Распиновка в генераторе не задана — контакт каждого провода по КД:</text>`;
     ly += 18;
@@ -241,13 +238,46 @@ export function etkDrawPinout(operation: Row): string {
       `<text x="${x + cw / 2}" y="${y0 - 5}" text-anchor="middle" font-size="${cw < 22 ? 9 : 11}" fill="#17272b">${p}</text>`;
   }
   const used = Object.keys(byPin).map(Number).sort((a, b) => a - b);
-  const ly = y0 + cw + 20, colW = 300;
-  used.forEach((pin, i) => {
-    const cx = 40 + (i % 2) * colW, cy = ly + Math.floor(i / 2) * 17, w = byPin[pin];
-    body += `<rect x="${cx}" y="${cy - 9}" width="12" height="12" fill="${etkWireColor(w.art || w.name)}" stroke="#17272b" stroke-width=".6"/>` +
-      `<text x="${cx + 18}" y="${cy + 1}" font-size="11" fill="#17272b">конт. ${pin} — ${esc(w.art || w.name)}</text>`;
+  const ly = y0 + cw + 20;
+  const legend = pinLegend(used, (pin) => str(byPin[pin].art || byPin[pin].name), pinPeers(f), ly);
+  return svg(W, ly + legend.h + 6, body + legend.body);
+}
+
+/** Другой конец провода из генератора (fields.links, etk_builder._links): контакт → «→ В1 конт. 3» / «← А1 конт. 1». */
+function pinPeers(fields: Row): Record<number, string[]> {
+  const out: Record<number, string[]> = {};
+  list(fields.links).forEach((link) => {
+    const peer = obj(link.peer), pin = num(link.pin);
+    if (!pin || !peer.end) return;
+    (out[pin] ||= []).push(`${link.dir === "from" ? "←" : "→"} ${str(peer.end)} конт. ${str(peer.pin)}`);
   });
-  return svg(W, ly + Math.ceil(used.length / 2) * 17 + 6, body);
+  return out;
+}
+
+/** Легенда «конт. — провод» под торцом разъёма; с соединениями — в одну колонку, другой конец провода жирным. */
+function pinLegend(pins: number[], wireOf: (pin: number) => string, peers: Record<number, string[]>, y: number): { body: string; h: number } {
+  const cols = pins.some((pin) => peers[pin]) ? 1 : 2;
+  const body = pins.map((pin, i) => {
+    const cx = 40 + (i % cols) * 300, cy = y + Math.floor(i / cols) * 17, wire = wireOf(pin);
+    return `<rect x="${cx}" y="${cy - 9}" width="12" height="12" fill="${etkWireColor(wire)}" stroke="#17272b" stroke-width=".6"/>` +
+      `<text x="${cx + 18}" y="${cy + 1}" font-size="11" fill="#17272b">конт. ${pin} — ${esc(wire)}` +
+      (peers[pin] ? ` <tspan font-weight="700" fill="#00554f">${esc(peers[pin].join(", "))}</tspan>` : "") + "</text>";
+  }).join("");
+  return { body, h: Math.ceil(pins.length / cols) * 17 };
+}
+
+export const ETK_CONNECTION_COLUMNS = ["№", "Провод", "Откуда", "Конт.", "Куда", "Конт."];
+
+function connectionEnd(end: Row): string {
+  return [[str(end.end), str(end.label)].filter(Boolean).join(" "), str(end.conn)].filter(Boolean).join(" · ");
+}
+
+/** Таблица соединений сборки (документ ЭТК `connections`, etk_builder._connections) строками — экран и печать. */
+export function etkConnectionRows(value: unknown): string[][] {
+  return list(value).map((item, i) => {
+    const from = obj(item.from), to = obj(item.to);
+    return [String(i + 1), str(item.wire), connectionEnd(from), str(from.pin), connectionEnd(to), str(to.pin)];
+  });
 }
 
 /** Свивка: пары двумя синусоидами в их цветах, шаг — размером (etkDrawTwist_). */

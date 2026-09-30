@@ -49,6 +49,9 @@ export type Endpoint = {
   label: string; solderStrip: string; tutLen: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
   pins?: Record<number, string>;
 };
+/** Один провод «разъём · контакт → разъём · контакт» (end — «А1»/«В1» как на карточке разъёма). */
+export type ConnectionEnd = { end: string; conn: string; label: string; pin: number };
+export type Connection = { wire: string; from: ConnectionEnd; to: ConnectionEnd };
 export type WireEntry = { idx: number; compId: string; length: number; qty: number; cores?: number; jacket?: string };
 export type WrapKind = "tape" | "braid" | "under";
 export type WrapSlot = { mat: string; kind: WrapKind; len: string };
@@ -213,6 +216,19 @@ function endpointOpKey_(side: Side, ordinal: number, kind: "prs" | "ins" | "sold
 }
 export const sideRu_ = (s: string) => (s === "B" ? "В" : "А");
 
+/** Распиновка провода в порядке записи: «3, 1, 2» → [3, 1, 2], «1-6» → 1…6, «6-1» → 6…1. Повторы остаются (двойной
+ *  обжим: «1, 1, 2, 2»), мусор отбрасывается, диапазон не длиннее 200 (etk_builder._pins — то же, но для рисунка). */
+export function parsePinList_(value: unknown): number[] {
+  const out: number[] = [];
+  String(value ?? "").split(/[,;\s]+/).forEach((token) => {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(token);
+    if (!m) return;
+    const a = Number(m[1]), b = m[2] ? Number(m[2]) : a, step = b >= a ? 1 : -1;
+    for (let p = a, n = 0; n < 200; p += step, n++) { out.push(p); if (p === b) break; }
+  });
+  return out.filter((p) => p > 0);
+}
+
 /** calcCutMm_ (TcGenInline.html:2295): «L=…мм» из требований строки КБn, иначе колонка L (м). */
 export function calcCutMm_(o: CalcOp) {
   const m = /L\s*=\s*(\d+(?:[.,]\d+)?)\s*мм/i.exec(o.req || "");
@@ -282,6 +298,37 @@ export function makeGen(D: GenData, S: GenState) {
     if (!isComplex_() || !ep.wireIdxs || !ep.wireIdxs.length) return allIdx.slice();
     const set = new Set(ep.wireIdxs);
     return allIdx.filter((i) => set.has(i));
+  }
+  const endKey_ = (ep: Endpoint) => sideRu_(ep.side) + endpointOrdinal_(ep);
+
+  /** Соединения провод за проводом: k-й контакт в распиновке первого разъёма провода (А раньше В) ↔ k-й контакт у
+   *  следующих разъёмов того же провода, по порядку списков. Перекрёст задаётся порядком: А «1-6», В «3, 1, 2, 4, 5, 6»
+   *  → 1→3, 2→1, 3→2… Разные длины списков — пары до короткого и предупреждение. */
+  function connections_(): { list: Connection[]; warnings: string[] } {
+    const list: Connection[] = [], warnings: string[] = [];
+    const ordered = (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side));
+    const end = (ep: Endpoint, pin: number): ConnectionEnd => {
+      const conn = getCompById(ep.connId);
+      return { end: endKey_(ep), conn: conn ? (conn.art || conn.name || "") : "", label: isComplex_() ? (ep.label || "").trim() : "", pin };
+    };
+    activeWires_().forEach((w) => {
+      const ends = ordered.filter((ep) => routedWireIdxs_(ep).includes(w.idx))
+        .map((ep) => ({ ep, pins: parsePinList_(ep.pins?.[w.idx]) })).filter((x) => x.pins.length);
+      if (ends.length < 2) return;
+      const comp = getCompById(w.compId);
+      const wire = comp ? (comp.art || comp.name || "") : "";
+      const [from, ...rest] = ends;
+      let k = 0;
+      rest.forEach((x) => x.pins.forEach((pin) => {
+        if (k < from.pins.length) list.push({ wire, from: end(from.ep, from.pins[k]), to: end(x.ep, pin) });
+        k++;
+      }));
+      if (k !== from.pins.length) {
+        warnings.push(`${wire || "Провод"}: на ${endKey_(from.ep)} ${from.pins.length} конт., на ${rest.map((x) => endKey_(x.ep)).join(" + ")} ${k} — ` +
+          `соединения по порядку только для ${Math.min(k, from.pins.length)}.`);
+      }
+    });
+    return { list, warnings };
   }
 
   // ── Списки состава ──
@@ -1296,6 +1343,7 @@ export function makeGen(D: GenData, S: GenState) {
       };
     };
     const welded = spliceWelded_();
+    const links = connections_().list;
     const ops = getActiveOps().map((spec) => {
       const row = opRow(spec);
       const op: Record<string, unknown> = {
@@ -1325,6 +1373,7 @@ export function makeGen(D: GenData, S: GenState) {
         const det = routedDetail_(ep);
         op.wires = det.wires; op.wireSources = det.sources;
         if (det.pins.some(Boolean)) op.pins = det.pins;
+        if (links.length) op.epKey = endKey_(ep);
       }
       return op;
     });
@@ -1346,7 +1395,7 @@ export function makeGen(D: GenData, S: GenState) {
     const bigAssembly = S.endpoints.filter((e) => e.connId || e.termId).length > 2;
     return {
       assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
-      bigAssembly, wires, twist, tin, strip, ops,
+      bigAssembly, wires, twist, tin, strip, ops, ...(links.length ? { connections: links } : {}),
     };
   }
   function bomWarnings_(cfg: Record<string, unknown>) {
@@ -1375,11 +1424,11 @@ export function makeGen(D: GenData, S: GenState) {
       if (!S.advancedLength && !sharedLength()) return { cfg, error: 'Укажите длину кабелей (поле "Длина, мм" вверху секции).', warnings: [] };
       if (S.advancedLength && (cfg.wires as Array<{ length: number }>).some((w) => !w.length)) return { cfg, error: "Укажите длину для каждого кабеля.", warnings: [] };
     }
-    return { cfg: { ...cfg, ops, materialsSheet: S.materialsSheet }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg)) };
+    return { cfg: { ...cfg, ops, materialsSheet: S.materialsSheet }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings) };
   }
 
   return {
-    getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, endpointsOnSide_,
+    getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
     endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
