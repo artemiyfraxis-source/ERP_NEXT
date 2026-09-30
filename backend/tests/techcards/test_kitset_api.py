@@ -143,6 +143,12 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
     assert {line["art"]: line["stage"] for line in supply["lines"]} == {
         "UL1007 22AWG": "не заведено", "43025-0400": "не заведено", "43030-0007": "не заведено",
     }
+    # Unit by the spec line's type, as the calc import (unitForType_): wire in metres, the rest in pieces.
+    assert {line["art"]: line["unit"] for line in supply["lines"]} == {
+        "UL1007 22AWG": "м", "43025-0400": "шт", "43030-0007": "шт",
+    }
+    card = client.get("/api/techcards/kitsets/708К.4").json()
+    assert card["assemblies"][0]["components"][0]["unit"] == "м"
 
     marked = client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ1", "kind": "stage", "value": "В работе"})
     assert marked.status_code == 200, marked.text

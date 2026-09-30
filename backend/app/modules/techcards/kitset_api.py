@@ -21,6 +21,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.modules.fulfillment.domain import FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
+from app.modules.requests.domain import unit_for_type
 from app.modules.production.plan import (
     KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, summarize_journal,
 )
@@ -307,7 +308,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
             "components": [{
                 "art": component.article, "type": component.type, "name": component.name, "link": component.link,
                 "per": _number(component.per_unit), "scrap": _number(component.scrap_pct),
-                "batch": _number(component.batch(assembly.run)),
+                "batch": _number(component.batch(assembly.run)), "unit": unit_for_type(component.type),
                 "lot": None if component.lot is None else {
                     "lot_id": str(component.lot.lot_id) if component.lot.lot_id else None,
                     "warehouse": component.lot.warehouse, "grn": component.lot.grn,
@@ -384,6 +385,7 @@ def supply(
     lines = supply_lines(kitset, flow.supply_rows(kitset.project, requests, procurement))
     return {"project": kitset.project, "lines": [{
         "art": line.article, "name": line.name, "kbs": list(line.kbs), "need": _number(line.need),
+        "unit": unit_for_type(line.item_type),
         "grn": line.grn, "stage": line.stage, "received": line.received,
         "rows": [{"where": row.where, "status": row.status, "source_id": row.source_id} for row in line.rows],
     } for line in lines]}

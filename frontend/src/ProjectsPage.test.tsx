@@ -33,8 +33,8 @@ const card = {
     stage: { index: "КБ1", status: "Новый", manual: false, tc: false, kit: false, review: null },
     techcard: null, kd: [],
     components: [
-      { art: "UL1007 22AWG", type: "Провод", name: "", link: "", per: "1.5", scrap: "5", batch: "15.75", lot: null },
-      { art: "43025-0400", type: "Разъём", name: "Корпус Molex", link: "Склад", per: "2", scrap: "5", batch: "21", lot: null },
+      { art: "UL1007 22AWG", type: "Провод", name: "", link: "", per: "1.5", scrap: "5", batch: "15.75", unit: "м", lot: null },
+      { art: "43025-0400", type: "Разъём", name: "Корпус Molex", link: "Склад", per: "2", scrap: "5", batch: "21", unit: "шт", lot: null },
     ],
   }],
 };
