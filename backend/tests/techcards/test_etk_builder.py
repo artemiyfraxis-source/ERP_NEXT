@@ -15,11 +15,13 @@ ROOT = Path(__file__).resolve().parents[2]
 LIBRARY = json.loads((ROOT / "data" / "techcard-library.json").read_text(encoding="utf-8"))
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "current-etk.json").read_text(encoding="utf-8"))
 CARDS = parse_operation_library(LIBRARY["templates"])
+ERP_LIBRARY = json.loads((ROOT / "data" / "techcard-library-erp.json").read_text(encoding="utf-8"))
 
 
 def test_welded_splice_tubes_have_their_own_sheet_suffixes():
     assert _suffix({"type": "insTut", "spliceWeld": True}) == "на сростки"
     assert _suffix({"type": "heatTut", "spliceWeld": True}) == "на сростках"
+    assert _suffix({"type": "cutWireCrimp", "tin": True}) == "обжим + лужение"
 
 
 def kit(name: str) -> dict:
@@ -309,3 +311,53 @@ def test_combined_marking_and_coax_cards_add_their_transition_defects():
     assert "Разделка коаксиала — " in coax
     plain = by_code["CUT_WIRE_auto"].defects
     assert _combined_defects("CUT_WIRE_auto", plain, by_code) == plain.rstrip()
+
+
+def test_cut_crimp_and_tin_uses_the_erp_template_with_tin_defects_and_the_machine_applicator():
+    cards = CARDS + parse_operation_library(ERP_LIBRARY["templates"])
+    wire = {"name": "Силиконовый 28AWG черный", "art": "ПВ28", "qty": 2, "length": 100}
+    config = {
+        "assemblyName": "Кабельная сборка", "partQty": 50, "wires": [wire],
+        "ops": [{
+            "type": "cutWireCrimp", "templateId": "cut-wire-1crimp-tin-автомат-резка-опрессовка-лужение",
+            "opNum": "CUT_WIRE+1crimp+tin", "side": "A", "tin": True, "tPrep": 60, "tOp": 4, "wires": [wire],
+            "strip": {"a": True, "lenA": "1,2", "b": True, "lenB": "3"},
+            "ep": {"connArt": "SHR-02V-S-B", "termArt": "SSH-003T-P0.2-H", "termName": "Терминал"},
+            "terminalNorm": {"applicator": "S9/M1/A19"},
+        }, {"type": "insTerm", "opNum": "INS_terminal", "side": "A", "ep": {"connArt": "SHR-02V-S-B"}}],
+    }
+    operation = build_etk(config, cards, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+
+    assert operation["card"]["name"] == "Автомат резка + опрессовка + лужение"
+    assert operation["result"][0]["name"] == "ПВ28 100мм, обжатый терминал SSH-003T-P0.2-H, другой конец облужен"
+    assert operation["time"][0]["name"] == operation["result"][0]["name"]
+    # Станку нужен аппликатор автомата, а не ручные S9/M1 из того же списка БД.ТЕР.
+    machine = [tool for tool in operation["card"]["tooling"] if tool["section"] == "Оборудование"]
+    assert [(tool["inventory_number"], tool["program"]) for tool in machine] == [("ОБ.098", "A19")]
+    assert operation["fields"]["applicator"] == "A19"
+    defects = operation["card"]["defects"]
+    assert "Подрезка жил:" in defects
+    assert "Опрессовка — " in defects
+    assert "Лужение — " in defects
+
+
+def test_cut_cards_list_the_measuring_tools_their_steps_use():
+    config = {
+        "assemblyName": "Жгут", "partQty": 10,
+        "wires": [{"name": "Провод", "art": "ПВ3", "qty": 1, "length": 250}],
+        "ops": [{
+            "type": "cutWireCrimp", "templateId": "cut-wire-1crimp-автомат-резка-опрессовка",
+            "opNum": "CUT_WIRE+1crimp", "side": "A", "tPrep": 60, "tOp": 2,
+            "wires": [{"name": "Провод", "art": "ПВ3", "qty": 1, "length": 250}],
+            "strip": {"a": True, "lenA": "3,5", "b": False, "lenB": ""},
+            "ep": {"connArt": "XHP-2", "termArt": "SXH-001T-P0.6", "termName": "Терминал"},
+            "terminalNorm": {"applicator": "A16"},
+        }, {"type": "insTerm", "opNum": "INS_terminal", "side": "A", "ep": {"connArt": "XHP-2"}}],
+    }
+    tooling = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]["card"]["tooling"]
+    tools = [tool["name"] for tool in tooling if tool["section"] == "Инструмент"]
+    assert "Штангенциркуль ШЦ-I (ГОСТ 166-89)" in tools
+    assert any("микрометр" in name for name in tools)
+    assert any("разрывная" in name for name in tools)
+    numbers = [tool["number"] for tool in tooling if tool["section"] == "Инструмент"]
+    assert numbers == [str(index) for index in range(1, len(numbers) + 1)]

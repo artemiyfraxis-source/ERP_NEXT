@@ -266,6 +266,14 @@ else {
   else { Write-Host 'Новых сотрудников нет.' }
 }
 
+# То, чего нет в SUPPLYMAP: шаблоны карт ERP (резка + обжим + лужение) и правки справочников «Технология».
+# Оба шага идемпотентны и не трогают шаблоны и записи, которые уже правили в ERP руками.
+Write-Host '== Шаблоны карт и правки справочников ERP'
+& $py -m app.modules.techcards.seed_library --erp-only 2>&1 | ForEach-Object { Write-Host "$_" }
+if ($LASTEXITCODE -ne 0) { Write-Warning 'Шаблоны карт ERP не записаны (ошибка выше)' }
+& $py -m app.modules.references.erp_corrections 2>&1 | ForEach-Object { Write-Host "$_" }
+if ($LASTEXITCODE -ne 0) { Write-Warning 'Правки справочников не записаны (ошибка выше)' }
+
 # Ключ Google: только чтение таблиц; запоминается путь, не сам ключ.
 $keyPath = Join-Path $backend 'google-key.path'
 try {

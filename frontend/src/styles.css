@@ -800,7 +800,8 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tcgen .radio-row label, .tcgen .ep-method label, .tcgen .chip-row label, .tcgen .ep-route label, .tcgen .toggle-row, .tcgen .ep-otp { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .tcgen .toggle-row, .tcgen .ep-otp { display: flex; }
 .tcgen .toggle-row { font-size: 13px; padding: 2px 0; }
-.tcgen .ep-otp { font-weight: 500; }
+/* Подпись длиннее строки переносится внутри себя, а не уезжает под галочку целиком («Двойной обжим — …»). */
+.tcgen .ep-otp { font-weight: 500; flex-wrap: nowrap; }
 .project-etk .etk-empty { color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
 .tcgen .ep-otp input[type="number"] { width: 52px; }
 .tcgen .gen-tabs { gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 4px; }

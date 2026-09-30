@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFECT_SCENES, defectArt, defectContext, defectSceneArt, defectSceneId } from "./etkDefectArt";
+import { DEFECT_SCENES, defectArt, defectContext, defectGroupCode, defectSceneArt, defectSceneId } from "./etkDefectArt";
 
 describe("defect picture library", () => {
   it("picks the picture by defect name and operation", () => {
@@ -53,6 +53,23 @@ describe("defect picture library", () => {
     for (const [name, scene] of cases) expect([name, defectSceneId(name, "", "SDR_COAX_pin")]).toEqual([name, scene]);
     expect(defectContext("SDR_COAX_pin_R/A")).toBe("solder");
     expect(defectSceneId("Оплавление диэлектрика", "", "SDR_DB")).toBe("connMelt");
+  });
+
+  it("draws the tinning defects on the tinned wire end itself (SDR_tin), not in a contact", () => {
+    const cases: Array<[string, string]> = [
+      ["Избыток припоя", "tnExcess"],
+      ["Недостаток припоя (Непропай)", "tnLack"],
+      ["Матовая, зернистая поверхность", "tnCold"],
+      ["Оплавление / Обугливание изоляции", "tnMelt"],
+      ["Затекание припоя (Wicking)", "tnWick"],
+      ["Распушение", "tnSplay"],
+    ];
+    for (const [name, scene] of cases) expect([name, defectSceneId(name, "", "SDR_tin")]).toEqual([name, scene]);
+    expect(defectContext("SDR_tin")).toBe("tin");
+    // Лужение внутри резки с обжимом (CUT_WIRE+1crimp+tin) рисуется как лужение, опрессовка — как опрессовка.
+    expect(defectGroupCode("CUT_WIRE+1crimp+tin", "Лужение — дефекты покрытия (смачиваемости)")).toBe("SDR_tin");
+    expect(defectGroupCode("CUT_WIRE+1crimp+tin", "Опрессовка — нарушение геометрии зоны обжатия жилы")).toBe("CUT_WIRE+1crimp+tin");
+    expect(defectSceneId("Затекание припоя (Wicking)", "", "SDR_DB")).toBe("wicking");
   });
 
   it("falls back to the explanation, then to a warning sign", () => {

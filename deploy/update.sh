@@ -17,6 +17,9 @@ cd "$ERP_HOME/app/deploy"
 ./erp.sh up -d
 for i in $(seq 1 60); do
   if ./erp.sh exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)" 2>/dev/null; then
+    # То, чего нет в SUPPLYMAP: шаблоны карт ERP и правки справочников (идемпотентно, ручные правки не трогает).
+    ./erp.sh cli python -m app.modules.techcards.seed_library --erp-only || echo "Шаблоны карт ERP не записаны" >&2
+    ./erp.sh cli python -m app.modules.references.erp_corrections || echo "Правки справочников не записаны" >&2
     echo "OK: $(cat "$ERP_HOME/app/REVISION" 2>/dev/null)"; exit 0
   fi
   sleep 3

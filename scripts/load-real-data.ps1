@@ -41,6 +41,7 @@ Remove-Item Env:ERP_NEW_USER_PASSWORD
 $supplymap = if ($env:SUPPLYMAP_SOURCE_REPOSITORY) { $env:SUPPLYMAP_SOURCE_REPOSITORY } else { Join-Path $root '..\SUPPLYMAP' }
 Run -m app.modules.references.load_mirror --source $supplymap
 Run -m app.modules.techcards.seed_library
+Run -m app.modules.references.erp_corrections
 
 Write-Host '== Склад'
 Run -m app.modules.warehouse.import_stock --dir $data

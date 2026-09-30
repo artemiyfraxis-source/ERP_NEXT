@@ -12,7 +12,7 @@ const PLAST = "#efe6cf", PLAST_E = "#8a7d5c";
 const TUBE = "#3b4147";
 const RED = "#d93025", GREEN = "#188038", MUTED = "#5f7470";
 
-type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "crimp" | "lug" | "solder" | "shrink" | "mark" | "assembly" | "mold" | "weld" | "other";
+type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "tin" | "crimp" | "lug" | "solder" | "shrink" | "mark" | "assembly" | "mold" | "weld" | "other";
 
 // ── примитивы ────────────────────────────────────────────────────────────────────────────────────────────
 const rect = (x: number, y: number, w: number, h: number, fill: string, extra = "") =>
@@ -157,6 +157,17 @@ function coaxPinJoint(o: CoaxPin = {}): string {
   return cable + bore + fillet + walls + tip + excess + strays;
 }
 
+/** Лужёный конец провода (SDR_tin): припой покрывает проволоки, повив виден сквозь него; dull — матовый, без блеска. */
+function tinEnd(x1: number, x2: number, y = 34, h = 6, o: { dull?: boolean; lay?: boolean } = {}): string {
+  let out = rect(x1, y - h / 2, x2 - x1, h, o.dull ? "#a4aaae" : SOLDER, ` rx="${h / 2}" stroke="${TIN_LO}" stroke-width=".6"`);
+  if (o.lay !== false) for (let x = x1 + 2; x < x2 - 3; x += 3.2) out += line(x, y + h / 2 - 0.6, x + 2.4, y - h / 2 + 0.6, TIN_LO, 0.5);
+  if (!o.dull) out += line(x1 + 2, y - h / 2 + 1.3, x2 - 3, y - h / 2 + 1.3, "#fff", 1);
+  return out;
+}
+/** Провод с лужёным концом: изоляция, у её торца зазор без припоя (0,5–1,5 мм), дальше облуженная жила. */
+const TN = { ins: () => ins(4, 50), gap: () => cond(50, 55), end: (o: { dull?: boolean; lay?: boolean } = {}) => tinEnd(55, 104, 34, 6, o) };
+const tinOk = () => TN.ins() + TN.gap() + TN.end();
+
 // ── сцены: каждая — рисунок «норма» и «брак» в поле 116×70 ─────────────────────────────────────────────
 /** view — окно рисунка (viewBox) для крупного плана, по умолчанию всё поле 0 0 116 70. */
 type Scene = { ok: string; ng: string; view?: string };
@@ -266,6 +277,39 @@ const SCENES: Record<string, () => Scene> = {
     ng: circle(58, 34, 26, TIN, E, 0.8) + circle(58, 34, 17, "#f4f4f2", E, 0.6) + circle(66, 28, 4, CU_HI, E, 0.6) + line(40, 34, 76, 34, MUTED, 0.5, ' stroke-dasharray="2 2"') + line(58, 16, 58, 52, MUTED, 0.5, ' stroke-dasharray="2 2"') + mark(66, 28, 8),
   }),
   // Пайка пина коаксиала (SDR_COAX_pin): все рисунки на одном виде соединения, дефекты по IPC/WHMA-A-620F разд. 4 и 13.
+  // Лужение свободного конца погружением (SDR_tin, IPC/WHMA-A-620 разд. 4): рисунок — сам лужёный конец, без контакта.
+  tnExcess: () => ({
+    ok: tinOk() + text(58, 58, "контур жил виден", GREEN),
+    ng: TN.ins() + TN.gap() + path("M55,29.5 L94,29.5 C103,28.5 108,33 107,38 C107,43 103,46 99,45 C98,50 97,54 95,55 C94,52 94,48 94,45 L94,38.5 L55,38.5 Q53,34 55,29.5 z", SOLDER, TIN_LO, 0.7) +
+      line(58, 31.3, 92, 31.3, "#fff", 1.1) + mark(96, 40, 13, 13) + text(58, 62, "наплыв, жил не видно", RED),
+  }),
+  tnLack: () => ({
+    ok: tinOk() + text(58, 58, "припой по всей длине", GREEN),
+    ng: TN.ins() + cond(50, 104) + tinEnd(56, 66, 34, 6, { lay: false }) + tinEnd(76, 84, 34, 6, { lay: false }) +
+      path("M103,32 L110,28 M103,36 L111,39", "none", CU, 1.2) + mark(88, 34, 20, 10) + text(58, 58, "видна медь", RED),
+  }),
+  tnCold: () => ({
+    ok: tinOk() + text(58, 58, "гладкий, блестящий", GREEN),
+    ng: TN.ins() + TN.gap() + TN.end({ dull: true, lay: false }) +
+      [59, 65, 71, 77, 83, 89, 95, 62, 68, 74, 80, 86, 92, 99].map((x, i) => circle(x, i < 7 ? 32.4 : 35.8, 0.8, "#6f777c", "none", 0)).join("") +
+      mark(80, 34, 25, 9) + text(58, 58, "матовый, зернистый", RED),
+  }),
+  tnMelt: () => ({
+    ok: tinOk() + text(58, 58, "изоляция целая", GREEN),
+    ng: ins(4, 42) + path("M40,28 Q47,23 52,27 Q56,34 52,41 Q47,45 40,40 z", "#4a3a2e", E, 0.6) + rect(43, 30, 5, 2, "#2a211b") +
+      cond(51, 55) + TN.end() + mark(47, 34, 11, 12) + text(58, 60, "изоляция оплавлена", RED),
+  }),
+  tnWick: () => ({
+    ok: tinOk() + dim(50, 55, 22, "зазор", GREEN) + text(30, 58, "жила гибкая", GREEN),
+    ng: ins(4, 50) + rect(26, 31, 26, 6, SOLDER, ` rx="2" opacity=".85"`) + path("M26,30 L50,30 M26,38 L50,38", "none", RED, 0.9, ' stroke-dasharray="2 2"') +
+      tinEnd(50, 104) + mark(38, 34, 14, 10) + text(58, 58, "припой под изоляцией", RED),
+  }),
+  tnSplay: () => ({
+    ok: tinOk() + text(58, 58, "повив ровный", GREEN),
+    ng: TN.ins() + TN.gap() + path("M55,32 C68,24 84,21 100,23 M55,33 C70,29 86,29 102,30 M55,35 C70,39 86,39 102,38 M55,36 C68,44 84,47 100,45", "none", TIN_LO, 2.6) +
+      path("M55,32 C68,24 84,21 100,23 M55,33 C70,29 86,29 102,30 M55,35 C70,39 86,39 102,38 M55,36 C68,44 84,47 100,45", "none", SOLDER, 1.6) +
+      mark(82, 34, 24, 15) + text(58, 62, "проволоки врозь, залиты", RED),
+  }),
   cxCold: () => ({ view: CX_VIEW, ok: coaxPinJoint(), ng: coaxPinJoint({ fill: "cold" }) + mark(58, 34, 10, 9) }),
   cxLack: () => ({
     view: CX_VIEW,
@@ -576,6 +620,12 @@ const SCENES: Record<string, () => Scene> = {
 type Rule = [string, RegExp, Ctx[]?];
 
 const RULES: Rule[] = [
+  ["tnWick", /затекан|wicking|капилляр|зазор/i, ["tin"]],
+  ["tnExcess", /избыт|наплыв|сосульк|капл/i, ["tin"]],
+  ["tnLack", /недостат|непропай|открыт[а-яё]* мед|несмачив|раковин|пор[ыа]/i, ["tin"]],
+  ["tnCold", /холодн|матов|зернист/i, ["tin"]],
+  ["tnMelt", /оплав|обугл|перегрев|изоляци/i, ["tin"]],
+  ["tnSplay", /распуш|ёрш|ерш|расплет|проволок/i, ["tin"]],
   ["cxCold", /холодн|непрогрев/i, ["coaxSolder"]],
   ["cxLack", /недостат|недолив|менее чем/i, ["coaxSolder"]],
   ["cxExcess", /избыт|наплыв|сосульк/i, ["coaxSolder"]],
@@ -687,6 +737,7 @@ export function defectContext(code: string): Ctx {
   if (/^STRIP|^PREP/.test(c)) return "strip";
   if (/^PRS/.test(c)) return "crimp";
   if (/^SDR_COAX_PIN$/.test(c)) return "coaxSolder";
+  if (/^SDR_TIN$/.test(c)) return "tin";
   if (/^SDR/.test(c)) return "solder";
   if (/^HEAT|^INS_TUT|_TUT/.test(c)) return "shrink";
   if (/^INS_MARK|MARK$/.test(c)) return "mark";
@@ -694,6 +745,12 @@ export function defectContext(code: string): Ctx {
   if (/^US_WELD/.test(c)) return "weld";
   if (/^(INS|SEAL|TWIST)/.test(c)) return "assembly";
   return "other";
+}
+
+/** Код для рисунков группы дефектов комбинированной операции: группа «Лужение — …» из карты SDR_tin
+ *  (CUT_WIRE+1crimp+tin) рисуется как лужение, остальные — по коду самой операции. */
+export function defectGroupCode(code: string, groupTitle: string): string {
+  return /^Лужение\s+—/i.test(groupTitle || "") ? "SDR_tin" : code;
 }
 
 /** Какой рисунок библиотеки подходит дефекту; «generic» — подходящего нет. */

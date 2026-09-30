@@ -60,7 +60,8 @@ export function solderMode(operation: Row): SolderMode | null {
   const tooling = list(card.tooling);
   const equipment = tooling.filter((tool) => str(tool.section) === "Оборудование");
   const equipmentNames = equipment.map((tool) => str(tool.name)).join(" ");
-  const method: SolderMode["method"] = /ванн/i.test(equipmentNames) ? "bath" : /индукц/i.test(equipmentNames) ? "induction" : "iron";
+  // Станок резки с модулем лужения (BZW-5.0+Z «обжим+лужение») лудит погружением, как ванна.
+  const method: SolderMode["method"] = /ванн|лужени/i.test(equipmentNames) ? "bath" : /индукц/i.test(equipmentNames) ? "induction" : "iron";
   const stepText = steps.map((step) => str(step.text)).join("\n");
   const sources = [...equipment.map((tool) => `${str(tool.parameters)} ${str(tool.program)}`), stepText];
   let temperature = "";

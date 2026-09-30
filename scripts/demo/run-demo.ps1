@@ -17,6 +17,7 @@ $env:ERP_COOKIE_SECURE = '0'
 $supplymap = if ($env:SUPPLYMAP_SOURCE_REPOSITORY) { $env:SUPPLYMAP_SOURCE_REPOSITORY } else { Join-Path $root '..\SUPPLYMAP' }
 & $py -m app.modules.references.load_mirror --source $supplymap
 & $py -m app.modules.techcards.seed_library
+& $py -m app.modules.references.erp_corrections
 $api = Start-Process $py -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port',"$ApiPort" -WorkingDirectory $backend -PassThru
 for ($i = 0; $i -lt 60; $i++) { try { Invoke-RestMethod http://127.0.0.1:$ApiPort/api/health | Out-Null; break } catch { Start-Sleep 1 } }
 & $py (Join-Path $root 'scripts\demo\seed_demo.py')
