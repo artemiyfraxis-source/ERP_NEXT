@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { SuggestInput } from "./SuggestInput";
 import { techcardsApi, type TemplateSheet, type TemplateSheetDraft } from "./api";
 
 const DRAFT_PREFIX = "Черновик — ";
@@ -79,8 +80,7 @@ function DraftEditor({ draft, catalog, onClose, onSaved }: {
       <p className="page-sub">{existing ? `Пересохранение существующего шаблона «${existing.title}» (контент заменится).` : "Создание нового шаблона из черновика."}</p>
       <div className="form-grid">
         <label>Название<input aria-label="Название шаблона" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label>
-        <label>Категория<input aria-label="Категория шаблона" list="tc-sheet-categories" value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} /></label>
-        <datalist id="tc-sheet-categories">{categories.map((name) => <option key={name} value={name} />)}</datalist>
+        <label>Категория<SuggestInput aria-label="Категория шаблона" options={categories} value={form.category} onChange={(category) => setForm({ ...form, category })} /></label>
         <label>Описание<textarea aria-label="Описание шаблона" rows={2} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
       </div>
       <div className="form-actions">

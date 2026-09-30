@@ -44,6 +44,11 @@ $db = Join-Path $backend $DbFile
 if (-not (Test-Path $db)) { Fail "нет базы $db — сначала scripts\load-real-data.ps1" }
 $env:ERP_DATABASE_URL = "sqlite+pysqlite:///$DbFile"
 $env:ERP_COOKIE_SECURE = '0'
+# Файл-стоп: API, outbox_worker и добор наименований этой копии завершаются сами, когда он обновляется
+# (app/shared/stop_file.py). ERP, запущенную из окна администратора, процесс планировщика иначе не остановит:
+# taskkill — «Отказано в доступе», порт занят (30.09 15:20).
+$stopFile = Join-Path $backend 'erp.stop'
+$env:ERP_STOP_FILE = $stopFile
 
 # Внешняя программа: вывод на экран (и в журнал автообновления), код ≠ 0 — ошибка с её последней строкой.
 function Run($what, [scriptblock]$command) {
@@ -74,13 +79,25 @@ if (-not $lock) { Fail 'другое обновление идёт больше 
 $workerPid = Join-Path $backend 'outbox-worker.pid'
 $namesPid = Join-Path $backend 'names-fill.pid'
 function Test-Up { [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) }
+$stopProblem = ''
 function Stop-Tree($id) {
   # Только python: PID из файла мог достаться чужому процессу. /T — вместе с дочерним (venv-запускатель).
   if ($id -and (Get-Process -Id $id -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'python*' })) {
-    & taskkill.exe /T /F /PID $id 2>&1 | Out-Null
+    $said = @(& taskkill.exe /T /F /PID $id 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    if ($LASTEXITCODE -ne 0 -and $said) { $script:stopProblem = "taskkill: $($said[-1])" }
   }
 }
+function Get-PortHolder {
+  $owner = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)[0].OwningProcess
+  if (-not $owner) { return 'неизвестный процесс' }
+  $process = Get-Process -Id $owner -ErrorAction SilentlyContinue
+  if ($process) { "$($process.ProcessName), PID $owner" } else { "PID $owner" }
+}
 function Stop-Api {
+  # Сначала просим процессы ERP завершиться самим (файл-стоп), потом добиваем по PID и порту — те, что
+  # запущены до появления файла-стопа.
+  try { Set-Content $stopFile (Get-Date -Format 'dd.MM.yyyy HH:mm:ss') } catch { Write-Warning "Файл-стоп не записан: $_" }
+  for ($i = 0; $i -lt 8 -and (Test-Up); $i++) { Start-Sleep 1 }
   foreach ($file in @($workerPid, $namesPid)) {
     if (Test-Path $file) {
       $id = 0
@@ -217,7 +234,12 @@ Stop-Api
 # ERP, запущенная не этим скриптом (другой пользователь, не python), держит порт и базу: миграции поверх неё не
 # запускаем — прежняя версия остаётся работать.
 for ($i = 0; $i -lt 10 -and (Test-Up); $i++) { Start-Sleep 1 }
-if (Test-Up) { Restore-Old "порт $Port занят и не освободился (ERP запущена вручную?), ERP на прежней версии" }
+if (Test-Up) {
+  $holder = Get-PortHolder
+  $why = if ($stopProblem) { "; $stopProblem" } else { '' }
+  Write-Host "Порт $Port держит $holder$why"
+  Restore-Old "ERP на порту $Port не остановилась ($holder$why) — новая версия не ставилась, ERP работает на прежней. Если ERP запускали из окна администратора, это снимет перезагрузка ПК"
+}
 Set-Location $backend
 try {
   Copy-Item $db "$db.bak" -Force

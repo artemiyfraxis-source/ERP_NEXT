@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { SuggestInput } from "./SuggestInput";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
   requestsApi,
@@ -760,8 +761,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                   <label className="half">Назначение *<select value={common.purpose} onChange={(e) => setCommonField("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
                   <label className="half">Цель (проект)
                     {/* Ручная заявка: номер проекта вписывают руками, пусто — без проекта; реестр только подсказывает. */}
-                    <input list="request-projects" value={common.project_reference} onChange={(e) => setCommonField("project_reference", e.target.value)} placeholder="пусто — без проекта, например 591К.3" />
-                    <datalist id="request-projects">{projects.map((item) => <option key={item} value={item} />)}</datalist>
+                    <SuggestInput options={projects} value={common.project_reference} onChange={(value) => setCommonField("project_reference", value)} placeholder="пусто — без проекта, например 591К.3" />
                   </label>
                   <label className="wide">Точка отгрузки *<select value={common.delivery_point} onChange={(e) => setCommonField("delivery_point", e.target.value)}><option value="">Выберите точку</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
                   <label>Категория<select value={common.category} onChange={(e) => setCommonField("category", e.target.value)}>{schema?.categories.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -769,7 +769,6 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                   <label>Срок закупки *<input type="date" value={common.procurement_deadline} onChange={(e) => setCommonField("procurement_deadline", e.target.value)} /></label>
                   <label>Плановая дата *<input type="date" value={common.planned_date} onChange={(e) => setCommonField("planned_date", e.target.value)} /></label>
                 </fieldset>
-                <datalist id="request-item-types">{(schema?.item_types ?? []).map((item) => <option key={item} value={item} />)}</datalist>
                 {positions.map((position, index) => {
                   const own = COMMON_KEYS.filter((key) => position[key] && position[key] !== common[key]);
                   return (
@@ -783,7 +782,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                         <p className="wide page-sub">Своё у позиции: {own.map((key) => `${LABEL_BY_KEY[key]} — ${position[key]}`).join("; ")}</p>
                       )}
                       <label className="wide">Наименование *<input value={position.name} onChange={(e) => setPositionField(index, "name", e.target.value)} /></label>
-                      <label>Тип *<input list="request-item-types" placeholder="выбрать/вписать" value={position.item_type} onChange={(e) => setPositionField(index, "item_type", e.target.value)} /></label>
+                      <label>Тип *<SuggestInput options={schema?.item_types ?? []} placeholder="выбрать/вписать" value={position.item_type} onChange={(value) => setPositionField(index, "item_type", value)} /></label>
                       <label>Артикул КД<input value={position.design_article} onChange={(e) => setPositionField(index, "design_article", e.target.value)} /></label>
                       <label>Количество *<input type="number" min="0.000001" step="any" value={position.quantity} onChange={(e) => setPositionField(index, "quantity", e.target.value)} /></label>
                       <label>Единица *<select value={position.unit} onChange={(e) => setPositionField(index, "unit", e.target.value)}><option value="">—</option>{schema?.units.map((item) => <option key={item}>{item}</option>)}</select></label>

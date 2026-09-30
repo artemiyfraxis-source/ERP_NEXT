@@ -430,7 +430,7 @@ describe("RequestsPage", () => {
     expect(names).toHaveLength(2);
     fireEvent.change(names[0], { target: { value: "Разъём" } });
     // Ручной ввод: номер не из реестра вписывается как есть, реестр только подсказывает.
-    expect(screen.getByRole("combobox", { name: "Цель (проект)" })).toHaveAttribute("list", "request-projects");
+    expect(screen.getByRole("combobox", { name: "Цель (проект)" })).toHaveAttribute("aria-autocomplete", "list");
     fireEvent.change(screen.getByLabelText("Цель (проект)"), { target: { value: "48К.13" } });
     fireEvent.change(screen.getByLabelText("Категория"), { target: { value: "ОП" } });
     fireEvent.change(screen.getAllByLabelText("Артикул КД")[0], { target: { value: "АБВГ.123" } });

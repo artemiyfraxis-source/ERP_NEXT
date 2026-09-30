@@ -39,6 +39,7 @@ from app.modules.operations.application import PoisonNotificationMessage, dispat
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.shared.clock import moscow_now
+from app.shared.stop_file import watch_stop_file
 from app.workflows.supplier_directory import ReferencesSupplierDirectory
 from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
 from app.workflows.kitset_names import kitset_names_tick
@@ -256,6 +257,7 @@ def main() -> None:
     if not database_url:
         raise SystemExit("Set ERP_DATABASE_URL before starting the worker")
     configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, not a receipt
+    watch_stop_file()  # local PC copy: the updater stops the worker with a stop file (scripts/update-local.ps1)
 
     engine = build_engine(database_url)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)

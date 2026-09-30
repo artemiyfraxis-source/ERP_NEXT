@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { SuggestInput } from "./SuggestInput";
 import { warehouseApi, type WarehouseBulkResult, type WarehouseItemTypes, type WarehouseJournal, type WarehouseRackLayout, type WarehouseReferenceEdit } from "./api";
 import { decodeStockTable, stockTableBytes, stockTableEdits, stockTableText } from "./warehouseTable";
 
@@ -76,7 +77,7 @@ export function ItemTypesPanel({ onClose, onChanged }: {
         <td className="num">{counts[type]}</td>
         <td>{renaming === type
           ? <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void rename(); }}>
-            <label>Новый тип<input aria-label={`Новый тип для «${type}»`} list="warehouse-item-types" required value={target} onChange={(event) => setTarget(event.target.value)} /></label>
+            <label>Новый тип<SuggestInput aria-label={`Новый тип для «${type}»`} options={data?.choices ?? []} required value={target} onChange={setTarget} /></label>
             <button className="primary small" disabled={busy || !target.trim()}>Переименовать {counts[type]} строк</button>
             <button type="button" className="link-button" onClick={() => setRenaming("")}>Отмена</button>
           </form>

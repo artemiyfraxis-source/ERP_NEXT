@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { SuggestInput } from "./SuggestInput";
 import {
   receivingApi,
   requestsApi,
@@ -23,14 +24,26 @@ const EMPTY_PASSPORT: WarehouseLotPassport = {
 
 /** Lot passport as one line for the operations row (SK-6); empty fields are left out. */
 function passportLine(lot: WarehouseLot) {
+  return passportParts(lot.unit_mass_g ? `Масса 1 шт: ${lot.unit_mass_g} г` : "", lot);
+}
+
+/** The same line for a quick-entry row: the mass as typed (1, 10 or 100 pieces). */
+function manualPassportLine(item: WarehouseManualItem) {
+  const mass = ([["mass_1", 1], ["mass_10", 10], ["mass_100", 100]] as const)
+    .filter(([field]) => String(item[field] ?? "").trim())
+    .map(([field, count]) => `Масса ${count} шт: ${item[field]} г`).join(" · ");
+  return passportParts(mass, item);
+}
+
+function passportParts(mass: string, fields: Partial<Omit<WarehouseLotPassport, "mass_1" | "mass_10" | "mass_100">>) {
   return [
-    lot.unit_mass_g ? `Масса 1 шт: ${lot.unit_mass_g} г` : "",
-    lot.expiry_date ? `Годен до ${lot.expiry_date.split("-").reverse().join(".")}` : "",
-    lot.manufacturer ? `Производитель: ${lot.manufacturer}` : "",
-    lot.description ? `Описание: ${lot.description}` : "",
-    lot.storage_conditions ? `Условия хранения: ${lot.storage_conditions}` : "",
-    lot.datasheet ? `Datasheet: ${lot.datasheet}` : "",
-    lot.certificate ? `Сертификат: ${lot.certificate}` : "",
+    mass,
+    fields.expiry_date ? `Годен до ${fields.expiry_date.split("-").reverse().join(".")}` : "",
+    fields.manufacturer ? `Производитель: ${fields.manufacturer}` : "",
+    fields.description ? `Описание: ${fields.description}` : "",
+    fields.storage_conditions ? `Условия хранения: ${fields.storage_conditions}` : "",
+    fields.datasheet ? `Datasheet: ${fields.datasheet}` : "",
+    fields.certificate ? `Сертификат: ${fields.certificate}` : "",
   ].filter(Boolean).join(" · ");
 }
 
@@ -173,7 +186,6 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
         </select>
       </div>
-      <datalist id="warehouse-item-types">{typeChoices.map((type) => <option key={type} value={type} />)}</datalist>
       {panel === "types" && <ItemTypesPanel
         onClose={() => setPanel("")}
         onChanged={async (types, renamed) => {
@@ -199,6 +211,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       {adding && <ManualStockForm
         busy={Boolean(busy) || loading}
         knownLots={lots}
+        typeChoices={typeChoices}
         onCancel={() => setAdding(false)}
         onAdded={async (items) => {
           requestVersion.current += 1;
@@ -392,9 +405,10 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
   </>;
 }
 
-function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
+function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
   busy: boolean;
   knownLots: WarehouseLot[];
+  typeChoices: string[];
   onCancel: () => void;
   onAdded: (items: WarehouseManualItem[]) => Promise<WarehouseAddResult | null>;
 }) {
@@ -475,6 +489,21 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
     setArticle(""); setName(""); setSeries(""); setItemType(""); setQuantity("");
     setPassport(EMPTY_PASSPORT); setArticleSource("");
   };
+  // «Править»: the listed row goes back into the form; an unfinished row in the form takes its place in the list.
+  const editRow = (index: number) => {
+    const { item } = rows[index];
+    const current = currentItem();
+    setRows((existing) => existing.flatMap((row, other) => other !== index ? [row] : current ? [{ item: current, error: "" }] : []));
+    setWarehouse(item.warehouse); setArticle(item.article); setSeries(item.series); setName(item.name);
+    setItemType(item.item_type); setPurpose(item.purpose); setUnit(item.unit); setQuantity(item.quantity);
+    setStorageLocation(item.storage_location);
+    setPassport(Object.fromEntries(Object.keys(EMPTY_PASSPORT).map((field) => {
+      const key = field as keyof WarehouseLotPassport;
+      return [key, item[key] ?? EMPTY_PASSPORT[key]];
+    })) as unknown as WarehouseLotPassport);
+    setArticleSource(""); setReport("");
+  };
+  const anyRefused = rows.some((row) => row.error);
   const pending = rows.length + (currentItem() ? 1 : 0);
   const placeHint = usePlaceHint(warehouse, storageLocation,
     rows.filter((row) => row.item.warehouse === warehouse).map((row) => row.item.storage_location));
@@ -512,7 +541,7 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
         }} /></label>
         <label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
         <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
-        <label>Тип<input list="warehouse-item-types" value={itemType} onChange={(event) => setItemType(event.target.value)} /></label>
+        <label>Тип<SuggestInput options={typeChoices} value={itemType} onChange={setItemType} /></label>
         <label>Количество<input aria-label="Количество для внесения" type="number" min="0.000001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
         <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
@@ -537,15 +566,22 @@ function ManualStockForm({ busy, knownLots, onCancel, onAdded }: {
       </details>
       {articleSource && <p className="page-sub" role="status">{articleSource}</p>}
       {rows.length > 0 && <table className="grid compact manual-stock-rows" aria-label="Позиции к внесению">
-        <thead><tr><th>Артикул</th><th>Наименование</th><th className="num">Кол-во</th><th>Место</th><th>Склад</th><th>Не принята</th><th /></tr></thead>
+        <thead><tr><th>Артикул</th><th>Наименование</th><th>Серия</th><th>Тип</th><th className="num">Кол-во</th><th>Место</th><th>Склад</th><th>Назначение</th><th>Паспорт</th>{anyRefused && <th>Не принята</th>}<th /></tr></thead>
         <tbody>{rows.map((row, index) => <tr key={index}>
           <td>{row.item.article || "—"}</td>
           <td>{row.item.name || "—"}</td>
-          <td className="num">{row.item.quantity || "—"} {row.item.unit}</td>
+          <td>{row.item.series || "—"}</td>
+          <td>{row.item.item_type || "—"}</td>
+          <td className="num">{String(row.item.quantity).trim() ? `${row.item.quantity} ${row.item.unit}` : "—"}</td>
           <td>{row.item.storage_location || "—"}</td>
           <td>{row.item.warehouse}</td>
-          <td className="danger-text">{row.error}</td>
-          <td><button type="button" className="link-button" aria-label="Убрать строку" onClick={() => setRows((current) => current.filter((_, other) => other !== index))}>×</button></td>
+          <td>{row.item.purpose || "—"}</td>
+          <td className="manual-stock-passport-cell">{manualPassportLine(row.item) || "—"}</td>
+          {anyRefused && <td className="danger-text">{row.error}</td>}
+          <td className="manual-stock-row-actions">
+            <button type="button" className="link-button" aria-label={`Править строку ${index + 1}`} onClick={() => editRow(index)}>Править</button>
+            <button type="button" className="link-button" aria-label="Убрать строку" onClick={() => setRows((current) => current.filter((_, other) => other !== index))}>×</button>
+          </td>
         </tr>)}</tbody>
       </table>}
       {report && <p className="page-sub" role="log">{report}</p>}
@@ -897,10 +933,9 @@ function WriteoffDialog({ lot, disabled, mutate, onClose }: {
       <div className="move-grid two">
         <label>Количество, {lot.unit || "шт"}<input aria-label="Количество" type="number" min="0.000001" step="any" required autoFocus placeholder={`остаток ${lot.balance}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Основание<select aria-label="Основание" value={reason} onChange={(event) => setReason(event.target.value)}>{WRITEOFF_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Назначение<input aria-label="Назначение списания" list="writeoff-projects" placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
+        <label>Назначение<SuggestInput aria-label="Назначение списания" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={setPurpose} /></label>
         <label>Дата<input aria-label="Дата списания" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
       </div>
-      <datalist id="writeoff-projects">{projects.map((item) => <option key={item} value={item} />)}</datalist>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="move-actions">
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
@@ -934,9 +969,8 @@ function ReturnDialog({ lot, disabled, mutate, onClose }: {
       <div className="move-grid two">
         <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={lot.written_off} step="any" required autoFocus placeholder={`не больше ${lot.written_off}`} title={`Списано ${lot.written_off} ${lot.unit}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Основание<select aria-label="Основание возврата" value={reason} onChange={(event) => setReason(event.target.value)}>{RETURN_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Откуда<input aria-label="Откуда возврат" list="return-projects" placeholder="проект или фамилия" required pattern=".*\S.*" value={source} onChange={(event) => setSource(event.target.value)} /></label>
+        <label>Откуда<SuggestInput aria-label="Откуда возврат" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" value={source} onChange={setSource} /></label>
       </div>
-      <datalist id="return-projects">{projects.map((item) => <option key={item} value={item} />)}</datalist>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="move-actions">
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
