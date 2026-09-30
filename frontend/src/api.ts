@@ -2288,6 +2288,9 @@ export interface KitsetLoadResult {
   ship_error: string;
   ship_to_error: string;
   deadline_error: string;
+  /** «Сразу создать заявки на закупку»: null — галочка не стояла или заявки не созданы (см. requests_error). */
+  requests?: { created: number; existing: number; skipped: string[] } | null;
+  requests_error?: string;
 }
 
 export interface KitsetSupplyLine {
@@ -2348,6 +2351,7 @@ export const kitsetsApi = {
     number?: string;
     deadline?: string | null;
     ship?: { shipping_point: string; contact: string; phone: string } | null;
+    requests?: { purpose: string; delivery_point: string; procurement_deadline: string } | null;
   }) => api<{ res: KitsetLoadResult }>("/api/techcards/kitsets/load", { method: "POST", body: JSON.stringify(payload) }),
   saveLines: (project: string, edits: KitsetLineEdit[]) =>
     api<{ res: { updated: number } }>(`${kitsetPath(project)}/lines`, { method: "PUT", body: JSON.stringify({ edits }) }),

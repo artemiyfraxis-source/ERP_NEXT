@@ -207,6 +207,38 @@ describe("ProjectsPage", () => {
     expect(body.content_b64).toBeUndefined();
   });
 
+  it("files purchase requests with the project only when the box is ticked", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/requests/schema") return json({ purposes: ["RND", "Обеспечение производства"], delivery_points: ["Москва", "Раменское"] });
+      if (url === "/api/techcards/kitsets/load") return json({ res: {
+        project: "708К.4", assemblies: 1, lines: 2, erp_error: "", ship_error: "", ship_to_error: "", deadline_error: "",
+        requests: { created: 5, existing: 0, skipped: [] }, requests_error: "",
+      } });
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit" as const, newrequest: "edit" as const } }} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Создать проект из расчёта" }));
+    fireEvent.change(screen.getByLabelText("Ссылка на расчёт"), { target: { value: "https://docs.google.com/spreadsheets/d/1AbC/edit" } });
+    fireEvent.click(screen.getByLabelText("Сразу создать заявки на закупку по листу ЗКП"));
+    await waitFor(() => expect((screen.getByLabelText("Назначение заявок") as HTMLSelectElement).value).toBe("Обеспечение производства"));
+    fireEvent.change(screen.getByLabelText("Дедлайн закупки"), { target: { value: "2026-10-06" } });
+    fireEvent.click(screen.getByRole("button", { name: "Создать проект и заявки" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/techcards/kitsets/load")).toBe(true));
+    const [, init] = fetchMock.mock.calls.find(([url]) => String(url) === "/api/techcards/kitsets/load")!;
+    expect(JSON.parse(String(init?.body)).requests).toEqual({
+      purpose: "Обеспечение производства", delivery_point: "Москва", procurement_deadline: "2026-10-06",
+    });
+  });
+
+  it("hides the requests box without the right to file requests", async () => {
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Создать проект из расчёта" }));
+    expect(screen.queryByLabelText("Сразу создать заявки на закупку по листу ЗКП")).toBeNull();
+  });
+
   it("refreshes from the stored calculation link with the card's own number (kitRefresh)", async () => {
     const fetchMock = vi.mocked(fetch);
     const base = fetchMock.getMockImplementation()!;

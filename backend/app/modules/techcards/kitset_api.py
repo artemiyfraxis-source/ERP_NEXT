@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
@@ -159,6 +160,14 @@ class ShipPayload(BaseModel):
     phone: str = Field(default="", max_length=128)
 
 
+class RequestsPayload(BaseModel):
+    """«Сразу создать заявки на закупку»: общие поля пачки «Оформить заявку → Из расчёта»."""
+
+    purpose: str = Field(min_length=1, max_length=128)
+    delivery_point: str = Field(min_length=1, max_length=512)
+    procurement_deadline: date
+
+
 class LoadPayload(BaseModel):
     """Расчёт — ссылкой на Google Таблицу, как в SUPPLYMAP (`portalKitsetLoad(token, url, ship, opts)`)."""
 
@@ -166,6 +175,7 @@ class LoadPayload(BaseModel):
     number: str = Field(default="", max_length=255)
     deadline: date | None = None
     ship: ShipPayload | None = None
+    requests: RequestsPayload | None = None
 
 
 def _decode(value: str) -> bytes:
@@ -201,11 +211,38 @@ def load(
         actor=principal.actor, now=now,
     ), techcards_factory(request), production_factory(request), shipping_factory(request),
         _name_queue(request)))
+    requests, requests_error = _project_requests(payload, request, principal, result.project, now)
     return {"res": {
         "project": result.project, "assemblies": result.assemblies, "lines": result.lines,
         "erp": result.erp, "erp_error": result.erp_error, "ship": result.ship, "ship_error": result.ship_error,
         "ship_to_error": result.ship_to_error, "deadline_error": result.deadline_error,
+        "requests": requests, "requests_error": requests_error,
     }}
+
+
+def _project_requests(
+    payload: LoadPayload, request: Request, principal: Principal, project: str, now: datetime,
+) -> tuple[dict[str, Any] | None, str]:
+    """Заявки не роняют заведение проекта: сбой — в `requests_error`, как прочие побочные шаги."""
+    options = payload.requests
+    if options is None:
+        return None, ""
+    if principal.permissions.get("newrequest") != "edit":
+        return None, "раздел «Оформить заявку» вам не открыт"
+    factory = requests_factory(request)
+    if factory is None:
+        return None, "база заявок не настроена"
+    try:
+        created = flow.create_kitset_requests(flow.KitsetRequestsCommand(
+            project=project, url=payload.url, purpose=options.purpose, delivery_point=options.delivery_point,
+            procurement_deadline=options.procurement_deadline, actor=principal.actor, now=now,
+        ), factory, lambda: flow.requests_calc_reader(request.app.state))
+    except (ValueError, CalcSheetError) as error:
+        return None, str(error)
+    except Exception:  # noqa: BLE001 — проект уже заведён, заявку оформят кнопкой
+        logging.exception("kitset requests:%s", project)
+        return None, "заявки не созданы — оформи кнопкой «Оформить заявку из расчёта»"
+    return {"created": created.created, "existing": created.existing, "skipped": list(created.skipped)}, ""
 
 
 @router.get("/lots")

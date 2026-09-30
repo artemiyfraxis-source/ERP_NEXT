@@ -3,10 +3,12 @@ import {
   ApiError,
   failureText,
   kitsetsApi,
+  requestsApi,
   type KitsetAssembly,
   type KitsetCard,
   type KitsetComponent,
   type KitsetDeleteResult,
+  type KitsetLoadResult,
   type KitsetLot,
   type KitsetStockLot,
   type KitsetSupplyLine,
@@ -152,10 +154,10 @@ export function ProjectsPage({ principal }: { principal: Principal }) {
   const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).get("project") || "");
   const canRequest = principal.permissions.newrequest === "edit";
   if (open) return <KitsetCardView project={open} principal={principal} canEdit={canEdit} canRequest={canRequest} back={() => setOpen("")} />;
-  return <KitsetHub canEdit={canEdit} user={principal.user.id} openProject={setOpen} />;
+  return <KitsetHub canEdit={canEdit} canRequest={canRequest} user={principal.user.id} openProject={setOpen} />;
 }
 
-function KitsetHub({ canEdit, user, openProject }: { canEdit: boolean; user: string; openProject: (project: string) => void }) {
+function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolean; canRequest: boolean; user: string; openProject: (project: string) => void }) {
   const [all, setAll] = useState<KitsetTile[] | null>(null);
   const [statuses, setStatuses] = useState<string[]>([]);
   const [lists, setLists] = useState<{ stages?: string[]; terminals?: string[]; blockers?: string[] }>({});
@@ -197,7 +199,7 @@ function KitsetHub({ canEdit, user, openProject }: { canEdit: boolean; user: str
     <header className="page-head"><h1>Проекты</h1>{all && <span className="page-count">{all.length}</span>}</header>
     <p className="page-sub">Проект заводится из расчёта: номер, заказчик, сборки с тиражом и состав каждой. Он же попадает в реестр ERP вместе с позициями, поэтому техкарты, задания и план видят те же КБ. Внутри проекта — состав, спецификация и техкарты по каждой сборке.</p>
     {canEdit && <div className="page-actions"><button className="primary" onClick={() => setCreating(true)}>Создать проект из расчёта</button></div>}
-    {creating && <CreateFromCalc close={() => setCreating(false)} done={(project, note, bad) => {
+    {creating && <CreateFromCalc canRequest={canRequest} close={() => setCreating(false)} done={(project, note, bad) => {
       setCreating(false);
       if (bad) setError(note); else setNotice(note);
       openProject(project);
@@ -231,31 +233,68 @@ function KitsetHub({ canEdit, user, openProject }: { canEdit: boolean; user: str
   </section>;
 }
 
-function CreateFromCalc({ close, done }: {
-  close: () => void; done: (project: string, note: string, bad: boolean) => void;
+function dateAfter(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/** Итог «Сразу создать заявки на закупку» для строки после заведения проекта. */
+function requestsNote(res: KitsetLoadResult): string {
+  const made = res.requests;
+  if (!made) return "";
+  if (made.existing) return `заявки по проекту уже есть (${made.existing}) — новые не созданы`;
+  return `заявок на закупку ${made.created}` + (made.skipped.length ? `, без количества пропущены: ${made.skipped.join(", ")}` : "");
+}
+
+function CreateFromCalc({ canRequest, close, done }: {
+  canRequest: boolean; close: () => void; done: (project: string, note: string, bad: boolean) => void;
 }) {
   const [url, setUrl] = useState("");
   const [form, setForm] = useState({ number: "", deadline: "", shipping_point: "", contact: "", phone: "" });
+  const [withRequests, setWithRequests] = useState(false);
+  const [purchase, setPurchase] = useState({ purpose: "", delivery_point: "", procurement_deadline: dateAfter(7) });
+  const [lists, setLists] = useState<{ purposes: string[]; points: string[] }>({ purposes: [], points: [] });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // Справочники пачки — те же, что у «Оформить заявку → Из расчёта»; назначение по умолчанию «Обеспечение производства».
+  useEffect(() => {
+    if (!withRequests || lists.purposes.length) return;
+    requestsApi.schema().then((schema) => {
+      setLists({ purposes: schema.purposes, points: schema.delivery_points });
+      setPurchase((current) => ({
+        ...current,
+        purpose: current.purpose || schema.purposes.find((item) => item === "Обеспечение производства") || schema.purposes[0] || "",
+        delivery_point: current.delivery_point || schema.delivery_points[0] || "",
+      }));
+    }).catch((reason) => setError(message(reason, "Справочники заявок не загружены")));
+  }, [withRequests]);
 
   async function submit() {
     if (busy) return;
     if (!url.trim()) { setError("Вставь ссылку на расчёт"); return; }
+    if (withRequests && !(purchase.purpose && purchase.delivery_point && purchase.procurement_deadline)) {
+      setError("Для заявок нужны назначение, точка отгрузки и дедлайн закупки"); return;
+    }
     setBusy(true); setError("");
     try {
       const { res } = await kitsetsApi.load({
         url: url.trim(), number: form.number,
         deadline: form.deadline || null,
         ship: { shipping_point: form.shipping_point, contact: form.contact, phone: form.phone },
+        requests: withRequests ? purchase : null,
       });
       const problems = [
         res.erp_error && `реестр ERP: ${res.erp_error}`,
         res.deadline_error && `дедлайн не записан: ${res.deadline_error}`,
         res.ship_to_error && `адресат не сохранён: ${res.ship_to_error}`,
         res.ship_error && `очередь отгрузки: ${res.ship_error}`,
+        res.requests_error && `заявки не созданы: ${res.requests_error}`,
       ].filter(Boolean);
-      done(res.project, `Проект «${res.project}»: сборок ${res.assemblies}, позиций ${res.lines}` + (problems.length ? ` · ${problems.join(" · ")}` : ""), problems.length > 0);
+      const made = requestsNote(res);
+      done(res.project, `Проект «${res.project}»: сборок ${res.assemblies}, позиций ${res.lines}` + (made ? `, ${made}` : "")
+        + (problems.length ? ` · ${problems.join(" · ")}` : ""), problems.length > 0);
     } catch (reason) {
       setError(message(reason, "Проект не заведён"));
     } finally { setBusy(false); }
@@ -272,10 +311,20 @@ function CreateFromCalc({ close, done }: {
       <label>Контактное лицо<input value={form.contact} placeholder="кто принимает" onChange={(event) => setForm({ ...form, contact: event.target.value })} /></label>
       <label>Телефон<input value={form.phone} placeholder="для связи" onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
       <label className="wide">Адрес отгрузки<input value={form.shipping_point} placeholder="можно позже — в окне «Отгрузить»" onChange={(event) => setForm({ ...form, shipping_point: event.target.value })} /></label>
+      {canRequest && <label className="wide check-inline"><input type="checkbox" checked={withRequests} onChange={(event) => setWithRequests(event.target.checked)} />Сразу создать заявки на закупку по листу ЗКП</label>}
+      {withRequests && <>
+        <label>Назначение заявок<select aria-label="Назначение заявок" value={purchase.purpose} onChange={(event) => setPurchase({ ...purchase, purpose: event.target.value })}>
+          {lists.purposes.map((item) => <option key={item}>{item}</option>)}
+        </select></label>
+        <label>Дедлайн закупки<input type="date" aria-label="Дедлайн закупки" value={purchase.procurement_deadline} onChange={(event) => setPurchase({ ...purchase, procurement_deadline: event.target.value })} /></label>
+        <label className="wide half">Точка отгрузки заявок<select aria-label="Точка отгрузки заявок" value={purchase.delivery_point} onChange={(event) => setPurchase({ ...purchase, delivery_point: event.target.value })}>
+          {lists.points.map((item) => <option key={item}>{item}</option>)}
+        </select></label>
+      </>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="page-actions">
-      <button className="primary" disabled={busy} onClick={() => void submit()}>{busy ? "Читаю расчёт…" : "Создать"}</button>
+      <button className="primary" disabled={busy} onClick={() => void submit()}>{busy ? "Читаю расчёт…" : withRequests ? "Создать проект и заявки" : "Создать"}</button>
       <button className="secondary" onClick={close}>Отмена</button>
     </div>
   </div>;
@@ -351,8 +400,8 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
       {canEdit && <button className="secondary small" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "🔄 Обновить из расчёта"}</button>}
       {canEdit && <button className="secondary small" onClick={() => void remove()}>🗑 Удалить карточку</button>}
       <button className="secondary small" onClick={() => openSection("shipping", { ship_project: card.project })}>🚚 Отгрузить</button>
-      {/* Заявка — отдельный шаг, как в SUPPLYMAP: заведение проекта её не создаёт; кнопка открывает «Оформить заявку →
-          Из расчёта» с этой ссылкой и номером, оператор проверяет строки и отправляет. */}
+      {/* Заявка — отдельный шаг, как в SUPPLYMAP (заведение создаёт её только по галочке «Сразу создать заявки»);
+          кнопка открывает «Оформить заявку → Из расчёта» с этой ссылкой и номером, оператор проверяет строки. */}
       {canRequest && card.calc_source && <button className="secondary small" onClick={() => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project })}>📝 Оформить заявку из расчёта</button>}
       {note && <span className="muted">{note}</span>}
     </div>
