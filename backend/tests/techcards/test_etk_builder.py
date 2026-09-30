@@ -185,7 +185,14 @@ def test_cut_and_crimp_operation_tracks_terminal_material_strip_and_applicator()
     assert operation["components"][-1] == {"art": "SXH-001T-P0.6", "name": "Терминал", "norm": "200", "unit": "Шт."}
     assert operation["fields"]["strip"]["lenA"] == "3,5"
     assert operation["fields"]["applicator"] == "A16"
-    assert "обжат терм. SXH-001T-P0.6" in operation["result"][0]["name"]
+    # SUPPLYMAP etkResult_: резка с обжимом отдаёт каждый провод отдельной строкой, количество = провода × партия.
+    assert operation["result"] == [{"name": "ПВ3 250мм, обжатый терминал SXH-001T-P0.6", "norm": "200", "unit": "Шт."}]
+    assert operation["time"] == [{"name": "ПВ3 250мм, обжатый терминал SXH-001T-P0.6", "norm": "7,67"}]
+    # Комбинированная карта несёт и дефекты опрессовки, а не только резки и зачистки.
+    defects = operation["card"]["defects"]
+    assert "Подрезка жил:" in defects
+    assert "Опрессовка — нарушение геометрии зоны обжатия жилы:" in defects
+    assert "Несоответствие высоты опрессовки или усилия на разрыв:" in defects
 
 
 def test_splice_topology_and_strip_cable_do_not_advance_main_chain():
@@ -274,3 +281,31 @@ def test_coax_strip_carries_side_dimensions_for_the_sketch():
         "l1": "3", "l2": "5", "l3": "9", "lPlus": "", "lMinus": "",
     }
     assert operations[1]["fields"]["coax"]["connector"] == "BNC-F"
+
+
+def test_720_result_and_input_carry_quantities_like_supplymap_etk_result():
+    """SUPPLYMAP etkResult_/etkSemis_: сторона B опрессовки отдаёт одну заготовку на изделие, её норма = партия."""
+    config = kit("720К.-КБ1")["config"]
+    batch = str(config["partQty"])
+    operations = build("720К.-КБ1")["operations"]
+    side_b = operations[3]
+    assert side_b["code"] == "PRS_TERMINAL_auto" and side_b["side"] == "B"
+    assert [row["norm"] for row in side_b["result"]] == [batch]
+    assert [row["norm"] for row in operations[4]["semis"]] == [batch]
+    assert all(row["norm"] for item in operations for row in item["result"] + item["semis"])
+    # Время одной строкой — время операции на партию, без повтора наименования в интерфейсе.
+    assert side_b["time"][0]["name"] == side_b["result"][0]["name"]
+
+
+def test_combined_marking_and_coax_cards_add_their_transition_defects():
+    from app.modules.techcards.etk_builder import _combined_defects
+
+    by_code = {}
+    for card in CARDS:
+        by_code.setdefault(card.code, card)
+    marking = _combined_defects("CUT_WIRE+1strip+1mark", by_code["CUT_WIRE+1strip+1mark"].defects, by_code)
+    assert marking.endswith("Маркировка:\nпропуск/неверная маркировка; нечитаемый текст; смещение; прожог ТУТ-бирки.")
+    coax = _combined_defects("CUT_COAX+1strip", by_code["CUT_COAX+1strip"].defects, by_code)
+    assert "Разделка коаксиала — " in coax
+    plain = by_code["CUT_WIRE_auto"].defects
+    assert _combined_defects("CUT_WIRE_auto", plain, by_code) == plain.rstrip()

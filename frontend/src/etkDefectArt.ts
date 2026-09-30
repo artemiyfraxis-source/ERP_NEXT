@@ -248,8 +248,8 @@ const SCENES: Record<string, () => Scene> = {
     view: CLOSE_UP,
   }),
   crimpHeight: () => ({
-    ok: crimpSection(50, 34, "ok") + vdim(86, 21, 47, "H по КД", GREEN),
-    ng: crimpSection(50, 34, "loose") + vdim(86, 17, 47, "H > КД", RED),
+    ok: crimpSection(44, 34, "ok") + vdim(76, 21, 47, "H по КД", GREEN),
+    ng: crimpSection(44, 34, "loose") + vdim(76, 17, 47, "H > КД", RED),
   }),
   crimpFlash: () => ({
     ok: crimpSection(58, 34, "ok"),
@@ -326,7 +326,7 @@ const SCENES: Record<string, () => Scene> = {
   },
   wicking: () => ({
     ok: ins(4, 50) + cond(50, 64) + tinned(64, 66) + cup(62) + dim(50, 64, 20, "жила гибкая", GREEN),
-    ng: ins(4, 50) + tinned(30, 66, 34, 6) + rect(30, 28, 20, 12, "#fff", ` opacity=".35"`) + path("M30,27 L50,26 L50,42 L30,41", "none", RED, 0.9, ' stroke-dasharray="2 2"') + cup(62) + mark(40, 34, 14, 10) + text(40, 58, "припой под изоляцией", RED),
+    ng: ins(4, 50) + tinned(30, 66, 34, 6) + rect(30, 28, 20, 12, "#fff", ` opacity=".35"`) + path("M30,27 L50,26 L50,42 L30,41", "none", RED, 0.9, ' stroke-dasharray="2 2"') + cup(62) + mark(40, 34, 14, 10) + text(58, 60, "припой под изоляцией", RED),
   }),
   gapIns: () => ({
     ok: ins(4, 50) + tinned(50, 58) + cup(56) + path("M56,30 C66,29 84,29 94,29 L94,40 L56,40 z", SOLDER, TIN_LO, 0.6) + dim(50, 56, 20, "≤ 2d", GREEN),
@@ -646,6 +646,11 @@ export function defectArt(name: string, note = "", code = ""): string {
       `<path d="M58 14 L92 70 L24 70 Z" fill="#fdecea" stroke="${RED}" stroke-width="2"/>` + text(58, 63, "!", RED, 28, "middle", 700) + `</svg>`;
   }
   return pair(SCENES[id](), id);
+}
+
+/** Рисунок библиотеки по его id (для проверки и витрины библиотеки). */
+export function defectSceneArt(id: string): string {
+  return id in SCENES && id !== "generic" ? pair(SCENES[id](), id) : defectArt("");
 }
 
 function pair(scene: Scene, id: string): string {

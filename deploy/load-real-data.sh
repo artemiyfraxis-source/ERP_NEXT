@@ -50,6 +50,7 @@ case "${1:-}" in
   techcards)
     cli python -m app.workflows.techcards_all supplymap || ok_or_report
     cli python -m app.workflows.techcards_all generate || ok_or_report
+    cli python -m app.workflows.techcards_all refresh || ok_or_report
     ;;
   stock)
     if [ "${2:-}" != "--yes" ]; then

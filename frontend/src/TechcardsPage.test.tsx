@@ -284,8 +284,36 @@ it("lays an ETK operation out in production order with the soldering mode and pi
   expect(screen.getByText("Недолив припоя")).toBeInTheDocument();
   expect(document.querySelectorAll(".etk-def-pic > svg")).toHaveLength(2);
   expect(screen.getByText("Требование безопасности")).toBeInTheDocument();
-  expect(screen.getByText("Полуфабрикат")).toBeInTheDocument();
-  expect(screen.getByText("Расчётное время, мин")).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Полуфабрикат" })).toBeInTheDocument();
+  expect(screen.getByRole("row", { name: "Провод с XT60 1 шт" })).toBeInTheDocument();
+  // Время — отдельной цифрой, без повтора наименования полуфабриката.
+  const time = screen.getByLabelText("Расчётное время");
+  expect(time).toHaveTextContent("Расчётное время1,5 мин");
+  expect(time).not.toHaveTextContent("Провод с XT60");
+});
+
+it("shows per-wire times beside their rows and no «— Шт.» for a missing norm", async () => {
+  const cutting: ProjectTechcard = { ...issuedEtk, document: { ...issuedEtk.document, kit: { part_quantity: "100" }, operations: [{
+    position: 1, code: "CUT_WIRE+1crimp", side: "A", connector: "обжим", type: "cutWireCrimp", result_label: "Полуфабрикат",
+    title: "CUT_WIRE+1crimp | Автомат резка + опрессовка", card: null,
+    semis: [{ name: "Сростки", norm: "", unit: "Шт." }],
+    result: [{ name: "ПВ3 250мм, обжатый терминал T1", norm: "200", unit: "Шт." }, { name: "ПВ3 300мм, обжатый терминал T1", norm: "100", unit: "Шт." }],
+    time: [{ name: "ПВ3 250мм, обжатый терминал T1", norm: "100,5" }, { name: "ПВ3 300мм, обжатый терминал T1", norm: "69,5" }],
+  }] } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/projects") return json({ items: [cutting] });
+    if (path.endsWith("/revisions")) return json({ items: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="projects" />);
+  const time = await screen.findByLabelText("Расчётное время");
+  expect(time).toHaveTextContent("Расчётное время, итого170 мин2 ч 50 мин · на партию 100 шт.");
+  expect(screen.getByRole("row", { name: "ПВ3 250мм, обжатый терминал T1 200 Шт. 100,5" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent(/^Автомат резка \+ опрессовка/);
+  expect(document.querySelector(".etk-op")).not.toHaveTextContent("— Шт.");
+  expect(document.querySelector(".etk-op")).not.toHaveTextContent("cutWireCrimp");
 });
 
 it("prints the ETK through the shared print contract (etkPrint_)", async () => {

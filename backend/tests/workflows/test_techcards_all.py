@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 from datetime import datetime
 from pathlib import Path
@@ -24,7 +25,9 @@ from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
+from app.modules.techcards.etk_builder import ETK_VERSION
 from app.workflows.techcards_all import (
+    refresh,
     generate,
     import_supplymap,
     split_item,
@@ -211,3 +214,28 @@ def test_generator_errors_are_reported_and_leave_no_card(state):
     ]
     assert report.failed[2] == "709К.1 КБ1: генератор не вернул конфигурацию"
     assert _cards(state) == {}
+
+
+def test_refresh_rebuilds_issued_etks_of_an_older_builder_and_keeps_supplymap_ones(state):
+    import_supplymap(SHEET, state.techcards_uow_factory, actor=ACTOR, now=NOW, apply=True)
+    generate(state, lambda payload: {"items": [
+        {"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]
+    ]}, None, actor=ACTOR, now=NOW, apply=True)
+    stale = _cards(state)[("710К.1", "КБ1")]
+    old_document = {**stale.document, "schema_version": 1}
+    for operation in old_document["operations"]:
+        operation["result"] = [{**row, "norm": ""} for row in operation["result"]]
+    with state.techcards_uow_factory() as uow:
+        uow.techcards.save(replace(stale, document=old_document))
+        uow.commit()
+
+    dry = refresh(state, actor=ACTOR, now=NOW, apply=False)
+    assert dry.done == ["710К.1 КБ1"]
+    report = refresh(state, actor=ACTOR, now=NOW, apply=True)
+    assert report.done == ["710К.1 КБ1 — ревизия 2"] and report.failed == []
+    rebuilt = _cards(state)[("710К.1", "КБ1")]
+    assert rebuilt.document["schema_version"] == ETK_VERSION
+    assert all(row["norm"] for operation in rebuilt.document["operations"] for row in operation["result"]
+               if operation["type"] != "splice")
+    assert _cards(state)[("708К.4", "КБ1")].revision == 1  # перенесённую из SUPPLYMAP не трогаем
+    assert refresh(state, actor=ACTOR, now=NOW, apply=True).done == []
