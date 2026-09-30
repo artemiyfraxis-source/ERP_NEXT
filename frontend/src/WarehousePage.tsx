@@ -691,9 +691,7 @@ function MoveStockDialog({ preset, lots, busy, mutate, onClose }: {
   return <div className="dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <form className="panel move-dialog" role="dialog" aria-label="Переместить" onSubmit={(event) => void submit(event)}>
       <h2>Переместить</h2>
-      <p className="page-sub">{mode === "lot"
-        ? "Переезжает партия целиком: новое место и/или другой склад. Пустой стеллаж — место не меняем."
-        : "Всё, что лежит на месте, уезжает на новое в пределах склада. 18C3 — вместе с ячейками (18C3B → 20B5B), 18C3B — только ячейка."}</p>
+      {mode === "location" && <p className="page-sub">18C3 уезжает вместе с ячейками (18C3B → 20B5B), 18C3B — только эта ячейка.</p>}
       <div className="seg-tabs move-modes">
         <button type="button" className={mode === "lot" ? "on" : ""} aria-pressed={mode === "lot"} onClick={() => switchMode("lot")}>Одну партию (ГРН)</button>
         <button type="button" className={mode === "location" ? "on" : ""} aria-pressed={mode === "location"} onClick={() => switchMode("location")}>Всё место целиком</button>
