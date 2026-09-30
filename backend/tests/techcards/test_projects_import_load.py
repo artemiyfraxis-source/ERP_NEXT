@@ -9,6 +9,7 @@ import pytest
 
 from app.database import configure_database
 from app.shared.persistence import create_schema
+from app.shared.warehouse_location import set_rack_layout_loader
 from tests.techcards.calc_sheets import FakeSheets
 from tests.techcards.test_kitset_api import CALC
 
@@ -50,6 +51,7 @@ def state(tmp_path):
     engine = configure_database(holder, f"sqlite+pysqlite:///{tmp_path / 'real.db'}")
     create_schema(engine)
     yield holder.state
+    set_rack_layout_loader(None)  # configure_database ставит глобальный загрузчик раскладки склада
     engine.dispose()
 
 
