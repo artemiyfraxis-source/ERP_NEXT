@@ -4,18 +4,37 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from hashlib import sha256
 import json
+import logging
+from math import ceil
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
+from .dispatch import (
+    DispatchCalendar,
+    Move,
+    NodeKey,
+    Progress,
+    apply_moves,
+    local,
+    localize,
+    place,
+    reflow,
+    remainder,
+    share_seconds,
+    split_shares,
+)
+from .launchable import stage_name
 from .domain import (
     BusyInterval,
     DEFAULT_SHIFT,
     UNPLANNED_SITES,
+    OperationShare,
     OperatorSkill,
     PlanResult,
     ProductionOperation,
@@ -23,9 +42,14 @@ from .domain import (
     ProductionTask,
     ProductionValidationError,
     WorkShift,
+    add_work_seconds,
+    next_working_moment,
     plan_operation,
+    skill_of,
 )
 from .scheduling import ScheduleVariant, schedule_task, schedule_variants
+
+logger = logging.getLogger(__name__)
 
 
 class ConcurrentProductionUpdate(RuntimeError):
@@ -66,6 +90,8 @@ class ProductionRepository(Protocol):
     def get(self, task_id: UUID) -> ProductionTask | None: ...
     def by_idempotency_key(self, key: str) -> ProductionTask | None: ...
     def list(self, limit: int = 200, after_id: UUID | None = None) -> Sequence[ProductionTask]: ...
+    def planned(self, since: datetime) -> Sequence[ProductionTask]: ...
+    def lock(self, task_id: UUID) -> None: ...
     def reserve_number(self) -> str: ...
     def add(self, task: ProductionTask) -> None: ...
 
@@ -132,6 +158,20 @@ class AssignProductionCommand:
     actor: Actor
     now: datetime
     dry: bool = False
+
+
+@dataclass(frozen=True)
+class AssignShareCommand:
+    """Доля операции монтажнику с экрана мастера: штуки и момент, с которого ставить (или снять долю)."""
+    task_id: UUID
+    expected_version: int
+    operation_id: UUID
+    operator_id: UUID
+    quantity: int | None
+    requested_start: datetime | None
+    actor: Actor
+    now: datetime
+    remove: bool = False
 
 
 @dataclass(frozen=True)
@@ -273,13 +313,14 @@ def _busy(tasks: Sequence[ProductionTask], task_id: UUID, operation_id: UUID, re
         for operation in task.operations:
             if task.id == task_id and operation.id == operation_id:
                 continue
-            if operation.planned_start is None or operation.planned_finish is None:
-                continue
-            for operator_id in operation.operator_ids:
-                result.setdefault(operator_id, []).append(BusyInterval(
+            # Занятость — по долям: у раздробленной операции у каждого своё окно.
+            for share in operation.shares:
+                if share.planned_start is None or share.planned_finish is None:
+                    continue
+                result.setdefault(share.operator_id, []).append(BusyInterval(
                     f"{task.number} · этап {operation.position}",
-                    _same_timezone(operation.planned_start, reference),
-                    _same_timezone(operation.planned_finish, reference),
+                    _same_timezone(share.planned_start, reference),
+                    _same_timezone(share.planned_finish, reference),
                 ))
     return {key: tuple(value) for key, value in result.items()}
 
@@ -303,37 +344,52 @@ def _with_absences(
     return {key: tuple(value) for key, value in result.items()}
 
 
+def _checked_names(
+    uow: UnitOfWork,
+    operation: ProductionOperation,
+    operator_ids: tuple[UUID, ...],
+    actor: Actor,
+) -> dict[UUID, str]:
+    names: dict[UUID, str] = {}
+    for operator_id in operator_ids:
+        operator = uow.operators.get(operator_id)
+        if operator is None or not operator.active:
+            raise ProductionValidationError("Оператора нет в справочнике сотрудников")
+        if operator.site in UNPLANNED_SITES and operator_id not in operation.operator_ids:
+            raise ProductionValidationError(
+                f"{operator.name} — площадка {operator.site}: по людям не расписывается, отдайте задание «Отдать в {operator.site}»"
+            )
+        if not operator.installer and operator_id not in operation.operator_ids:
+            raise ProductionValidationError(f"{operator.name} не монтажник: работу назначают только монтажникам")
+        names[operator_id] = operator.name
+    # Площадка мастера (владелец, 29.09: в Жуковском распределяет свой мастер): мастер с площадкой ставит только
+    # сотрудников своей площадки; без площадки (директор, технолог, снабжение) — всех. Уже стоящих не выгоняем.
+    assigner = uow.operators.get(actor.id)
+    if assigner is not None and assigner.site:
+        strangers = [
+            names[operator_id] for operator_id in operator_ids
+            if operator_id not in operation.operator_ids and uow.operators.get(operator_id).site != assigner.site
+        ]
+        if strangers:
+            raise ProductionValidationError(
+                f"Площадка {assigner.site}: назначать можно только своих сотрудников, не {', '.join(strangers)}"
+            )
+    return names
+
+
+def _skills(uow: UnitOfWork) -> dict[str, dict[UUID, OperatorSkill]]:
+    skills: dict[str, dict[UUID, OperatorSkill]] = {}
+    for item in uow.skills.list():
+        skills.setdefault(item.operation_code, {})[item.operator_id] = item
+    return skills
+
+
 def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tuple[ProductionTask, PlanResult]:
     with uow:
         task = _task(command.task_id, command.expected_version, uow)
         operation = task.operation(command.operation_id)
-        names: dict[UUID, str] = {}
-        for operator_id in command.operator_ids:
-            operator = uow.operators.get(operator_id)
-            if operator is None or not operator.active:
-                raise ProductionValidationError("Оператора нет в справочнике сотрудников")
-            if operator.site in UNPLANNED_SITES and operator_id not in operation.operator_ids:
-                raise ProductionValidationError(
-                    f"{operator.name} — площадка {operator.site}: по людям не расписывается, отдайте задание «Отдать в {operator.site}»"
-                )
-            if not operator.installer and operator_id not in operation.operator_ids:
-                raise ProductionValidationError(f"{operator.name} не монтажник: работу назначают только монтажникам")
-            names[operator_id] = operator.name
-        # Площадка мастера (владелец, 29.09: в Жуковском распределяет свой мастер): мастер с площадкой ставит только
-        # сотрудников своей площадки; без площадки (директор, технолог, снабжение) — всех. Уже стоящих не выгоняем.
-        assigner = uow.operators.get(command.actor.id)
-        if assigner is not None and assigner.site:
-            strangers = [
-                names[operator_id] for operator_id in command.operator_ids
-                if operator_id not in operation.operator_ids and uow.operators.get(operator_id).site != assigner.site
-            ]
-            if strangers:
-                raise ProductionValidationError(
-                    f"Площадка {assigner.site}: назначать можно только своих сотрудников, не {', '.join(strangers)}"
-                )
-        skills: dict[str, dict[UUID, OperatorSkill]] = {}
-        for item in uow.skills.list():
-            skills.setdefault(item.operation_code, {})[item.operator_id] = item
+        names = _checked_names(uow, operation, command.operator_ids, command.actor)
+        skills = _skills(uow)
         tasks = uow.production.list(limit=10_000)
         busy = _with_absences(
             _busy(tasks, task.id, operation.id, command.now),
@@ -384,6 +440,365 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
         }, uow)
         uow.commit()
         return updated, plan
+
+
+def _dispatch_calendar(uow: UnitOfWork, now: datetime) -> DispatchCalendar:
+    absences: dict[UUID, list[tuple[datetime, datetime]]] = {}
+    for absence in uow.calendar.absences():
+        absences.setdefault(absence.operator_id, []).append((
+            datetime.combine(absence.from_date, time.min, now.tzinfo),
+            datetime.combine(absence.to_date + timedelta(days=1), time.min, now.tzinfo),
+        ))
+    return DispatchCalendar(
+        uow.calendar.holidays(), _shift(uow.calendar),
+        {key: tuple(value) for key, value in absences.items()},
+    )
+
+
+def _progress(uow, task_ids) -> Progress:
+    """Сданное по операциям — чтобы начатую и выполненную работу не двигать."""
+    outputs = getattr(uow, "outputs", None)
+    ids = tuple(task_ids)
+    if outputs is None or not ids:
+        return Progress.empty()
+    by_operation: dict[UUID, Decimal] = {}
+    by_operator: dict[tuple[UUID, UUID], Decimal] = {}
+    for output in outputs.active_for_tasks(ids):
+        amount = output.good_quantity + output.defect_quantity
+        by_operation[output.operation_id] = by_operation.get(output.operation_id, Decimal(0)) + amount
+        key = (output.operation_id, output.operator_id)
+        by_operator[key] = by_operator.get(key, Decimal(0)) + amount
+    return Progress(by_operation, by_operator)
+
+
+# Работа, которая по плану кончилась больше месяца назад, план по факту уже не двигает — не читаем её.
+PLAN_HORIZON = timedelta(days=30)
+
+
+def _live_tasks(uow: UnitOfWork, now: datetime) -> dict[UUID, ProductionTask]:
+    return {item.id: localize(item, now) for item in uow.production.planned(now - PLAN_HORIZON)}
+
+
+def _moment(value: datetime) -> str:
+    return f"{value:%d.%m %H:%M}"
+
+
+def _save_moves(
+    uow: UnitOfWork,
+    tasks: dict[UUID, ProductionTask],
+    touched: set[UUID],
+    moves: dict[NodeKey, Move],
+    actor: Actor,
+    now: datetime,
+    reason: str,
+) -> list[str]:
+    """Сохраняет сдвинутую работу (версия задания +1 один раз) и возвращает строки для мастера."""
+    by_task: dict[UUID, list[Move]] = {}
+    for move in moves.values():
+        by_task.setdefault(move.task.id, []).append(move)
+    names = {item.id: item.name for item in uow.operators.list()}
+    lines: list[str] = []
+    for task_id, items in by_task.items():
+        updated = apply_moves(tasks[task_id], items)
+        if task_id not in touched:
+            updated = replace(updated, version=updated.version + 1)
+        tasks[task_id] = updated
+        touched.add(task_id)
+        _audit(updated, "production.replanned", actor, now, {
+            "reason": reason,
+            "moves": [{
+                "operation_id": str(item.operation.id),
+                "operator_ids": [str(value) for value in item.operator_ids],
+                "planned_start": item.start.isoformat(), "planned_finish": item.finish.isoformat(),
+            } for item in items],
+        }, uow)
+        for item in sorted(items, key=lambda move: move.start):
+            people = ", ".join(names.get(value, "?") for value in item.operator_ids)
+            lines.append(
+                f"Сдвинуто: {updated.number} · этап {item.operation.position} «{stage_name(item.operation.stage)}» "
+                f"({people}) — {_moment(item.start)}–{_moment(item.finish)}"
+            )
+    for task_id in touched:
+        uow.production.add(tasks[task_id])
+    return lines
+
+
+def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[ProductionTask, PlanResult, tuple[str, ...]]:
+    """Экран мастера: доля операции монтажнику — штуки и момент, с которого ставить.
+
+    Доля встаёт в первое свободное время монтажника с этого момента (dispatch.place): не влезает в остаток дня —
+    хвост уходит на следующие рабочие дни, его работа после неё сдвигается. Штуки сверх свободных забираются у
+    других долей этой операции (dispatch.split_shares), их окна укорачиваются."""
+    with uow:
+        # Факт монтажника по этому заданию (application.record_fact) и мастер пишут по очереди.
+        uow.production.lock(command.task_id)
+        loaded = _task(command.task_id, command.expected_version, uow)
+        now = command.now
+        tasks = _live_tasks(uow, now)
+        task = tasks.get(loaded.id) or localize(loaded, now)
+        tasks[task.id] = task
+        operation = task.operation(command.operation_id)
+        current = operation.share_of(command.operator_id)
+        if command.remove:
+            return _remove_share(uow, tasks, task, operation, current, command)
+        names = _checked_names(uow, operation, (command.operator_id,), command.actor)
+        if current is not None and (current.started_at is not None or current.finished_at is not None):
+            raise ProductionValidationError(f"{names[command.operator_id]} уже взял(а) эту операцию — её время идёт по факту")
+        # Штуки по умолчанию: своя доля (у бригады — поровну), иначе нераспределённое, иначе поровну с назначенными.
+        if command.quantity is not None:
+            quantity = command.quantity
+        elif current is not None:
+            quantity = current.quantity or ceil(task.quantity / len(operation.shares))
+        else:
+            quantity = remainder(operation, task.quantity) or ceil(task.quantity / (len(operation.shares) + 1))
+        split = split_shares(operation, task.quantity, command.operator_id, quantity)
+        skills = _skills(uow)
+        calendar = _dispatch_calendar(uow, now)
+        progress = _progress(uow, tasks.keys())
+        sources: dict[NodeKey, tuple[datetime, datetime] | None] = {}
+        crew_window = (
+            (operation.planned_start, operation.planned_finish)
+            if operation.shares and not operation.split and operation.planned_start is not None else None
+        )
+        # Сначала доли остальных (штуки могли уменьшиться — окно короче от прежнего начала), потом окно новой доли.
+        others: dict[UUID, OperationShare] = {}
+        for share in split.others:
+            if share.operator_id in split.resized and share.planned_start is not None:
+                seconds = share_seconds(operation, share.quantity, task.quantity, (share.operator_id,), skills)
+                sources[(operation.id, share.operator_id)] = crew_window or (share.planned_start, share.planned_finish)
+                share = replace(share, planned_finish=add_work_seconds(share.planned_start, seconds, calendar.holidays, calendar.shift))
+            others[share.operator_id] = share
+        interim = replace(task, operations=tuple(
+            item.with_shares(tuple(others.values()), item.assigned_by) if item.id == operation.id else item
+            for item in task.operations
+        ))
+        requested = local(command.requested_start, now) if command.requested_start is not None else now
+        start, finish = place(
+            tasks=[interim if item.id == task.id else item for item in tasks.values()],
+            task=interim, operation=interim.operation(operation.id), operator_id=command.operator_id,
+            quantity=quantity, requested_start=requested, calendar=calendar, skills=skills, progress=progress,
+        )
+        target = OperationShare(command.operator_id, quantity, start, finish)
+        ordered = [
+            target if share.operator_id == command.operator_id else others[share.operator_id]
+            for share in operation.shares
+            if share.operator_id == command.operator_id or share.operator_id in others
+        ]
+        if current is None:
+            ordered.append(target)
+        updated = task.with_operations((operation.with_shares(tuple(ordered), command.actor.name),))
+        tasks[task.id] = updated
+        moved_before = current is not None and current.quantity is not None and current.planned_start is not None
+        sources[(operation.id, command.operator_id)] = (current.planned_start, current.planned_finish) if moved_before else None
+        moves = reflow(
+            tasks=tasks.values(), sources=sources, pull=False, now=now,
+            calendar=calendar, skills=skills, progress=progress,
+        )
+        touched = {task.id}
+        lines = _save_moves(uow, tasks, touched, moves, command.actor, now, "share_assigned")
+        warnings: list[str] = []
+        check = skill_of(skills, operation.code, command.operator_id)
+        if not check.allowed:
+            warnings.append(f"{names[command.operator_id]}: нет допуска к операции {operation.code}")
+        if split.dropped:
+            everyone = {item.id: item.name for item in uow.operators.list()}
+            gone = ", ".join(everyone.get(value, "?") for value in split.dropped)
+            warnings.append(f"Снят(а) с операции: {gone} — все штуки у {names[command.operator_id]}")
+        earlier = [item for item in updated.operations if item.position < operation.position and item.planned_finish is not None]
+        if earlier:
+            previous = max(earlier, key=lambda item: item.position)
+            if start < local(previous.planned_finish, now):
+                warnings.append(
+                    f"Этап {previous.position} идёт до {_moment(local(previous.planned_finish, now))} — "
+                    f"этот этап начнётся внахлёст"
+                )
+        _audit(updated, "production.share_assigned", command.actor, now, {
+            "operation_id": str(operation.id), "operator_id": str(command.operator_id), "quantity": quantity,
+            "planned_start": start.isoformat(), "planned_finish": finish.isoformat(),
+            "resized": [str(value) for value in split.resized], "dropped": [str(value) for value in split.dropped],
+        }, uow)
+        uow.commit()
+        return tasks[task.id], PlanResult(start, finish, tuple(warnings)), tuple(lines)
+
+
+def _remove_share(
+    uow: UnitOfWork,
+    tasks: dict[UUID, ProductionTask],
+    task: ProductionTask,
+    operation: ProductionOperation,
+    current: OperationShare | None,
+    command: AssignShareCommand,
+) -> tuple[ProductionTask, PlanResult, tuple[str, ...]]:
+    """Снять монтажника с операции. Нельзя, пока у него открыта работа по ней (иначе не сдать выработку) и когда свою часть
+    он уже сделал. Из бригады — окно оставшихся пересчитывается на меньший состав, их работа после сдвигается."""
+    now = command.now
+    if current is None:
+        raise ProductionValidationError("Монтажник не назначен на эту операцию")
+    name = next((item.name for item in uow.operators.list() if item.id == command.operator_id), "Монтажник")
+    work = getattr(uow, "work", None)
+    session = work.current(command.operator_id) if work is not None else None
+    if session is not None and session.task_id == task.id and session.operation_id == operation.id:
+        raise ProductionValidationError(f"{name} сейчас работает над этой операцией — снять можно после сдачи или «Отменить начало»")
+    if current.finished_at is not None:
+        raise ProductionValidationError(f"{name} уже закончил(а) свою часть — снимать нечего")
+    rest = tuple(share for share in operation.shares if share.operator_id != command.operator_id)
+    sources: dict[NodeKey, tuple[datetime, datetime] | None] = {}
+    crew = [share for share in rest if share.quantity is None and share.planned_start is not None and share.planned_finish is not None]
+    if current.quantity is None and crew:
+        skills = _skills(uow)
+        calendar = _dispatch_calendar(uow, now)
+        people = tuple(share.operator_id for share in crew)
+        begin = min(share.planned_start for share in crew)
+        before = (begin, max(share.planned_finish for share in crew))
+        finish = add_work_seconds(begin, share_seconds(operation, None, task.quantity, people, skills), calendar.holidays, calendar.shift)
+        rest = tuple(replace(share, planned_start=begin, planned_finish=finish) if share.quantity is None else share for share in rest)
+        sources[(operation.id, None)] = before
+    updated = task.with_operations((operation.with_shares(rest, command.actor.name),))
+    tasks[task.id] = updated
+    moves = reflow(
+        tasks=tasks.values(), sources=sources, pull=False, now=now,
+        calendar=_dispatch_calendar(uow, now), skills=_skills(uow), progress=_progress(uow, tasks.keys()),
+    ) if sources else {}
+    lines = _save_moves(uow, tasks, {task.id}, moves, command.actor, now, "share_removed")
+    _audit(tasks[task.id], "production.share_removed", command.actor, now, {
+        "operation_id": str(operation.id), "operator_id": str(command.operator_id),
+    }, uow)
+    uow.commit()
+    return tasks[task.id], PlanResult(None, None, ()), tuple(lines)
+
+
+def record_fact(
+    uow,
+    *,
+    task_id: UUID,
+    operation_id: UUID,
+    operator_id: UUID,
+    actor: Actor,
+    now: datetime,
+    started: bool = False,
+    mine: Decimal = Decimal(0),
+    total: Decimal = Decimal(0),
+) -> None:
+    """Факт монтажника двигает план (владелец, 30.09: «если он раньше/позже сделал, план корректировался»).
+
+    started — «взял»: окно доли начинается сейчас. Иначе сдача выработки (mine — сдано этим монтажником по операции,
+    total — всеми): сдал свои штуки — «закончил», окно кончается сейчас; не всё — конец по оставшимся штукам.
+    Работа после доли сдвигается или подтягивается (dispatch.reflow). Вызывается внутри транзакции исполнения:
+    план правится в точке сохранения — если не вышло, выработка всё равно сохраняется, план остаётся прежним."""
+    stored = uow.production.get(task_id)
+    if stored is None or stored.status is not ProductionStatus.RUNNING or stored.handed_to:
+        return
+    mine_share = stored.operation(operation_id).share_of(operator_id)
+    if mine_share is None or mine_share.planned_start is None or mine_share.planned_finish is None:
+        return
+    session = getattr(uow, "session", None)
+    if session is None:
+        _record_fact(uow, task_id, operation_id, operator_id, actor, now, started, mine, total)
+        return
+    session.flush()
+    uow.production.lock(task_id)
+    try:
+        with session.begin_nested():
+            _record_fact(uow, task_id, operation_id, operator_id, actor, now, started, mine, total)
+    except Exception:
+        logger.exception("План по факту не сдвинут: задание %s, операция %s", task_id, operation_id)
+
+
+def release_fact(uow, *, task_id: UUID, operation_id: UUID, operator_id: UUID, now: datetime) -> None:
+    """«Отменить начало» без сданных штук — «взял» снимается: долю снова можно переставить или снять."""
+    session = getattr(uow, "session", None)
+    if session is not None:
+        session.flush()
+        uow.production.lock(task_id)
+    task = uow.production.get(task_id)
+    if task is None:
+        return
+    operation = task.operation(operation_id)
+    share = operation.share_of(operator_id)
+    if share is None or share.started_at is None or share.finished_at is not None:
+        return
+    if _progress(uow, (task_id,)).by_operator.get((operation_id, operator_id), Decimal(0)) > 0:
+        return
+    uow.production.add(task.with_operations((operation.with_shares(tuple(
+        replace(item, started_at=None) if item.operator_id == operator_id else item for item in operation.shares
+    ), operation.assigned_by),)))
+
+
+def _record_fact(
+    uow,
+    task_id: UUID,
+    operation_id: UUID,
+    operator_id: UUID,
+    actor: Actor,
+    now: datetime,
+    started: bool,
+    mine: Decimal,
+    total: Decimal,
+) -> None:
+    tasks = _live_tasks(uow, now)
+    task = tasks.get(task_id) or localize(uow.production.get(task_id), now)
+    tasks[task.id] = task
+    operation = task.operation(operation_id)
+    share = operation.share_of(operator_id)
+    if share is None or share.planned_start is None or share.planned_finish is None:
+        return
+    skills = _skills(uow)
+    calendar = _dispatch_calendar(uow, now)
+    crew = share.quantity is None
+    whole = not started and total >= task.quantity
+    # Какие узлы плана меняются: бригада — целиком; вся операция сдана — все доли; иначе — доля монтажника.
+    groups: list[tuple[NodeKey, list[OperationShare]]] = []
+    if crew:
+        groups.append(((operation.id, None), [item for item in operation.shares if item.quantity is None]))
+    elif whole:
+        groups.extend(((operation.id, item.operator_id), [item]) for item in operation.shares if item.finished_at is None)
+    else:
+        groups.append(((operation.id, operator_id), [share]))
+    changed: dict[UUID, OperationShare] = {}
+    sources: dict[NodeKey, tuple[datetime, datetime] | None] = {}
+    for key, members in groups:
+        members = [item for item in members if item.planned_start is not None and item.planned_finish is not None]
+        if not members:
+            continue
+        before = (min(item.planned_start for item in members), max(item.planned_finish for item in members))
+        people = tuple(item.operator_id for item in members)
+        finished = False
+        if started:
+            if share.started_at is not None:
+                return
+            begin = next_working_moment(now, calendar.holidays, calendar.shift)
+            seconds = share_seconds(operation, share.quantity, task.quantity, people, skills)
+            window = (begin, add_work_seconds(begin, seconds, calendar.holidays, calendar.shift))
+        else:
+            target = task.quantity if crew else (members[0].quantity or task.quantity)
+            done = total if crew else (mine if members[0].operator_id == operator_id else Decimal(0))
+            finished = whole or done >= target
+            if finished:
+                window = (min(before[0], now), now)
+            else:
+                rate = sum((skill_of(skills, operation.code, value).coefficient for value in people), Decimal(0))
+                rest = ceil(operation.seconds_per_unit * (Decimal(target) - done) / (rate if rate > 0 else Decimal(1)))
+                begin = next_working_moment(now, calendar.holidays, calendar.shift)
+                window = (min(before[0], now), add_work_seconds(begin, rest, calendar.holidays, calendar.shift))
+        for item in members:
+            changed[item.operator_id] = replace(
+                item, planned_start=window[0], planned_finish=window[1],
+                started_at=now if started and item.operator_id == operator_id else item.started_at,
+                finished_at=now if finished else item.finished_at,
+            )
+        if abs((window[0] - before[0]).total_seconds()) >= 60 or abs((window[1] - before[1]).total_seconds()) >= 60:
+            sources[key] = before
+    if not changed:
+        return
+    updated = task.with_operations((operation.with_shares(
+        tuple(changed.get(item.operator_id, item) for item in operation.shares), operation.assigned_by,
+    ),))
+    tasks[task.id] = updated
+    moves = reflow(
+        tasks=tasks.values(), sources=sources, pull=True, now=now,
+        calendar=calendar, skills=skills, progress=_progress(uow, tasks.keys()),
+    ) if sources else {}
+    _save_moves(uow, tasks, {task.id}, moves, actor, now, "started" if started else "output")
 
 
 def hand_over_production(command: HandOverProductionCommand, uow: UnitOfWork) -> ProductionTask:
@@ -458,7 +873,8 @@ def _auto_schedule(
     uow: UnitOfWork,
     transfer_batch: int | None = None,
 ) -> tuple[ProductionTask, tuple[ScheduleVariant, ...]]:
-    task = _task(command.task_id, command.expected_version, uow)
+    # Сроки из базы — в поясе «сейчас» (SQLite отдаёт их без пояса): иначе закреплённый этап не сравнить с now.
+    task = localize(_task(command.task_id, command.expected_version, uow), command.now)
     # Авторасчёт берёт только монтажников; мастер площадки — только своей (как при ручном назначении).
     assigner = uow.operators.get(command.actor.id)
     operators = tuple(

@@ -443,18 +443,26 @@ it("lets the master hand out operations of issued projects to installers and lau
   // Клик по дню — раскладка по часам: у Рыбкиной 10:00–14:00 занято, выбор часа ставит операцию ровно с него.
   fireEvent.click(screen.getByRole("button", { name: "День Рыбкина Ольга 22.09" }));
   expect(screen.getByTitle("11:00–12:00: Обжим · 591K.3.КБ1")).toBeInTheDocument();
-  // Занятый час не принимает вторую операцию: на нём нет кнопки, свободные — есть, первый свободный — отдельной кнопкой.
+  // Занятый час не принимает вторую операцию: на нём нет кнопки, свободные — есть. «Назначить на день» ставит после
+  // работы этого дня (ничего не сдвигая) и показывает, до скольких: 10 шт × 60 с / 1,2 + 120 с на 8/7 → 12 мин.
   expect(screen.queryByRole("button", { name: "Назначить Рыбкина Ольга на 22.09 с 11:00" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Назначить на 22.09 с 09:00" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Назначить на 22.09 с 14:00" })).toBeInTheDocument();
+  expect(screen.getByText("до 14:12")).toBeInTheDocument();
+  // Дробление: штук монтажнику — по умолчанию все 10; Попову ставим 4 с обеда — начало сдвигается на конец обеда.
+  expect(screen.getByLabelText("Штук монтажнику")).toHaveValue(10);
+  fireEvent.change(screen.getByLabelText("Штук монтажнику"), { target: { value: "4" } });
   fireEvent.click(screen.getByRole("button", { name: "День Попов Игнат 23.09" }));
-  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 23.09 с 13:00" }));
+  fireEvent.click(screen.getByRole("button", { name: "Назначить Попов Игнат на 23.09 с 13:30" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
-    path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/assign`,
-    body: { version: 2, operator_ids: ["10000000-0000-0000-0000-000000000003"], requested_start: "2026-09-23T13:00", dry: false },
+    path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/share`,
+    body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 4, requested_start: "2026-09-23T13:30" },
   }));
   // Снять — крестиком на исполнителе, без отдельной кнопки у каждого.
   fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
-  await waitFor(() => expect(bodies.at(-1)?.body).toMatchObject({ operator_ids: [] }));
+  await waitFor(() => expect(bodies.at(-1)).toEqual({
+    path: `/api/production/tasks/${open.id}/operations/${open.operations[1].id}/share`,
+    body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000002", remove: true },
+  }));
 
   fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
   await openBoardProject("708К.4");

@@ -40,9 +40,17 @@ OPERATION_TYPE_NAMES: dict[str, str] = {
 _NO_CODE = re.compile(r"^\s*без\s+кода\s*$", re.IGNORECASE)
 
 
+_CODE_PREFIX = re.compile(r"^\s*([^|\s]+)\s*\|\s*(.+)$")
+_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+
+
 def stage_name(value: str) -> str:
-    """Русское название этапа: служебный тип генератора → название, остальное как есть."""
+    """Русское название этапа: служебный тип генератора → название; «CUT_WIRE+1crimp | Автомат резка» → название
+    без кода (владелец, 30.09: в ячейках часов служебный код вместо названия; код показывается отдельно)."""
     text = str(value or "").strip()
+    prefixed = _CODE_PREFIX.match(text)
+    if prefixed and not _CYRILLIC.search(prefixed.group(1)):
+        text = prefixed.group(2).strip()
     return OPERATION_TYPE_NAMES.get(text, text)
 
 

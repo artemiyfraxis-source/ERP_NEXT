@@ -81,6 +81,27 @@ class OperatorSkill:
 
 
 @dataclass(frozen=True)
+class OperationShare:
+    """Доля операции одного монтажника (владелец, 30.09: «дробить операцию между людьми»): свои штуки и своё время.
+
+    quantity None — вся операция бригадой, как в SUPPLYMAP: у всей бригады одно окно, норма делится на сумму
+    коэффициентов. started_at / finished_at — факт («взял» — первая работа по доле, «закончил» — сдано всё по доле),
+    по нему план монтажника и следующих этапов сдвигается (dispatch.reflow)."""
+    operator_id: UUID
+    quantity: int | None = None
+    planned_start: datetime | None = None
+    planned_finish: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.quantity is not None and self.quantity <= 0:
+            raise ProductionValidationError("Доля должна быть больше нуля штук")
+        if (self.planned_start is None) != (self.planned_finish is None):
+            raise ProductionValidationError("У доли нужен плановый интервал целиком")
+
+
+@dataclass(frozen=True)
 class ProductionOperation:
     id: UUID
     position: int
@@ -94,6 +115,44 @@ class ProductionOperation:
     planned_start: datetime | None = None
     planned_finish: datetime | None = None
     assigned_by: str | None = None
+    # Доли по людям — источник правды; operator_ids и плановое окно операции выводятся из них (окно — от первой
+    # доли до последней). Без долей (старые вызовы) доли строятся из operator_ids: бригада с одним окном.
+    shares: tuple[OperationShare, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.shares:
+            if self.operator_ids:
+                object.__setattr__(self, "shares", tuple(
+                    OperationShare(operator_id, None, self.planned_start, self.planned_finish)
+                    for operator_id in self.operator_ids
+                ))
+            return
+        ids = tuple(share.operator_id for share in self.shares)
+        if len(set(ids)) != len(ids):
+            raise ProductionValidationError("Оператор выбран дважды")
+        if self.operator_ids and self.operator_ids != ids:
+            raise ProductionValidationError("Исполнители операции расходятся с долями")
+        if len({share.quantity is None for share in self.shares}) > 1:
+            raise ProductionValidationError("Операция делится либо бригадой, либо по штукам")
+        starts = [share.planned_start for share in self.shares if share.planned_start is not None]
+        finishes = [share.planned_finish for share in self.shares if share.planned_finish is not None]
+        object.__setattr__(self, "operator_ids", ids)
+        object.__setattr__(self, "planned_start", min(starts) if starts else None)
+        object.__setattr__(self, "planned_finish", max(finishes) if finishes else None)
+
+    @property
+    def split(self) -> bool:
+        """Операция раздроблена по штукам между людьми (у каждого своя доля и своё время)."""
+        return any(share.quantity is not None for share in self.shares)
+
+    def share_of(self, operator_id: UUID) -> OperationShare | None:
+        return next((share for share in self.shares if share.operator_id == operator_id), None)
+
+    def with_shares(self, shares: tuple[OperationShare, ...], assigned_by: str | None) -> ProductionOperation:
+        return replace(
+            self, shares=shares, operator_ids=(), planned_start=None, planned_finish=None,
+            assigned_by=str(assigned_by or "").strip() or None,
+        )
 
     @classmethod
     def create(
@@ -138,13 +197,16 @@ class ProductionOperation:
             raise ProductionValidationError("Для назначения нужен плановый интервал")
         if not operator_ids and (plan.start is not None or plan.finish is not None):
             raise ProductionValidationError("Без операторов плановый интервал должен быть пустым")
-        return replace(
-            self,
-            operator_ids=operator_ids,
-            planned_start=plan.start,
-            planned_finish=plan.finish,
-            assigned_by=str(assigned_by or "").strip() or None,
-        )
+        # Бригада с одним окном (prodAssign_). Факт «взял»/«закончил» остающихся в бригаде сохраняется.
+        kept = {share.operator_id: share for share in self.shares}
+        return self.with_shares(tuple(
+            OperationShare(
+                operator_id, None, plan.start, plan.finish,
+                kept[operator_id].started_at if operator_id in kept else None,
+                kept[operator_id].finished_at if operator_id in kept else None,
+            )
+            for operator_id in operator_ids
+        ), assigned_by)
 
 
 @dataclass(frozen=True)
@@ -249,7 +311,9 @@ class ProductionTask:
         if len(by_operation) != len(assignments) or set(by_operation) != {item.id for item in self.operations}:
             raise ProductionValidationError("Автоплан должен содержать все операции задания")
         operations = tuple(
-            operation.assign(
+            # Назначенное раньше автоплан оставляет как есть (replan = false): доли по штукам и факт не теряются.
+            operation if (operation.operator_ids, operation.planned_start, operation.planned_finish) == by_operation[operation.id]
+            else operation.assign(
                 by_operation[operation.id][0],
                 PlanResult(by_operation[operation.id][1], by_operation[operation.id][2], ()),
                 assigned_by,
@@ -257,6 +321,21 @@ class ProductionTask:
             for operation in self.operations
         )
         return replace(self, operations=operations, version=self.version + 1)
+
+    def with_operations(self, operations: tuple[ProductionOperation, ...]) -> ProductionTask:
+        """Задание с изменёнными долями операций (раздача по штукам, сдвиг плана по факту)."""
+        if self.status is ProductionStatus.CANCELLED:
+            raise ProductionValidationError(f"Задание {self.number} отменено — назначать нельзя")
+        if self.handed_to:
+            raise ProductionValidationError(f"Задание {self.number} отдано в {self.handed_to} — по людям не расписывается")
+        changed = {operation.id: operation for operation in operations}
+        if not set(changed) <= {operation.id for operation in self.operations}:
+            raise ProductionValidationError("Операция задания не найдена")
+        return replace(
+            self,
+            operations=tuple(changed.get(operation.id, operation) for operation in self.operations),
+            version=self.version + 1,
+        )
 
     def set_cancelled(self, cancelled: bool) -> ProductionTask:
         target = ProductionStatus.CANCELLED if cancelled else ProductionStatus.RUNNING
@@ -278,7 +357,7 @@ class ProductionTask:
             raise ProductionValidationError(
                 f"Задание {self.number} уже в {site}" if site else f"Задание {self.number} и так распределяется по людям"
             )
-        operations = tuple(replace(item, operator_ids=(), planned_start=None, planned_finish=None) for item in self.operations) if site else self.operations
+        operations = tuple(item.with_shares((), item.assigned_by) for item in self.operations) if site else self.operations
         return replace(self, handed_to=site, operations=operations, version=self.version + 1)
 
 

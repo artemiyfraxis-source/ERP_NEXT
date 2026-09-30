@@ -18,7 +18,7 @@ from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinis
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .application import Absence, Operator
-from .domain import DEFAULT_SHIFT, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, WorkShift
+from .domain import DEFAULT_SHIFT, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, WorkShift
 from .plan import PlanEvent, PlanProjectSnapshot
 from .genealogy import (
     BoxConsumptionSnapshot,
@@ -104,6 +104,12 @@ class ProductionOperationOperatorRow(Base):
     operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="CASCADE"), primary_key=True)
     operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), primary_key=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Доля монтажника: штуки (NULL — вся операция бригадой), своё плановое окно и факт «взял»/«закончил».
+    quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    planned_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    planned_finish: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ProductionHolidayRow(Base):
@@ -389,15 +395,23 @@ class SqlAlchemyProductionRepository:
         operation_rows = list(self.session.scalars(
             select(ProductionOperationRow).where(ProductionOperationRow.task_id == row.id).order_by(ProductionOperationRow.position)
         ))
+        # Колонки, а не строки ORM: add() удаляет и заново вставляет доли с теми же ключами.
+        share_row = ProductionOperationOperatorRow
         operators = list(self.session.execute(
-            select(ProductionOperationOperatorRow.operation_id, ProductionOperationOperatorRow.operator_id)
+            select(
+                share_row.operation_id, share_row.operator_id, share_row.quantity, share_row.planned_start,
+                share_row.planned_finish, share_row.started_at, share_row.finished_at,
+            )
             .join(ProductionOperationRow, ProductionOperationRow.id == ProductionOperationOperatorRow.operation_id)
             .where(ProductionOperationRow.task_id == row.id)
             .order_by(ProductionOperationOperatorRow.operation_id, ProductionOperationOperatorRow.position)
         ))
-        by_operation: dict[UUID, list[UUID]] = {}
-        for operation_id, operator_id in operators:
-            by_operation.setdefault(operation_id, []).append(operator_id)
+        by_operation: dict[UUID, list[OperationShare]] = {}
+        for share in operators:
+            by_operation.setdefault(share.operation_id, []).append(OperationShare(
+                share.operator_id, share.quantity, share.planned_start, share.planned_finish,
+                share.started_at, share.finished_at,
+            ))
         return ProductionTask(
             id=row.id, number=row.number, source_idempotency_key=row.source_idempotency_key,
             source_fingerprint=row.source_fingerprint, version=row.version, created_at=row.created_at,
@@ -409,9 +423,8 @@ class SqlAlchemyProductionRepository:
                 stage=operation.stage, description=operation.description,
                 seconds_per_unit=operation.seconds_per_unit, setup_seconds=operation.setup_seconds,
                 norm_seconds=operation.norm_seconds,
-                operator_ids=tuple(by_operation.get(operation.id, ())),
-                planned_start=operation.planned_start, planned_finish=operation.planned_finish,
                 assigned_by=operation.assigned_by,
+                shares=tuple(by_operation.get(operation.id, ())),
             ) for operation in operation_rows),
         )
 
@@ -437,6 +450,30 @@ class SqlAlchemyProductionRepository:
             statement.order_by(ProductionTaskRow.created_at.desc(), ProductionTaskRow.id.desc()).limit(limit)
         )
         return [self._domain(row) for row in rows]
+
+    def planned(self, since: datetime) -> list[ProductionTask]:
+        """Живые задания, где у кого-то есть окно, кончающееся не раньше since — только их двигает план по факту."""
+        ids = select(ProductionOperationRow.task_id).join(
+            ProductionOperationOperatorRow, ProductionOperationOperatorRow.operation_id == ProductionOperationRow.id,
+        ).where(ProductionOperationOperatorRow.planned_finish >= since)
+        rows = self.session.scalars(select(ProductionTaskRow).where(
+            ProductionTaskRow.id.in_(ids),
+            ProductionTaskRow.status == ProductionStatus.RUNNING.value,
+            ProductionTaskRow.handed_to == "",
+        ).order_by(ProductionTaskRow.created_at, ProductionTaskRow.id))
+        return [self._domain(row) for row in rows]
+
+    def lock(self, task_id: UUID) -> None:
+        """Строка задания под замок до конца транзакции и свежие значения: факты двух монтажников по одному
+        заданию идут по очереди (PostgreSQL; SQLite и так пишет по одному)."""
+        self.session.scalar(
+            select(ProductionTaskRow).where(ProductionTaskRow.id == task_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+        self.session.scalars(
+            select(ProductionOperationRow).where(ProductionOperationRow.task_id == task_id)
+            .execution_options(populate_existing=True)
+        ).all()
 
     def reserve_number(self) -> str:
         row = self.session.scalar(select(ProductionSequenceRow).where(ProductionSequenceRow.name == "task").with_for_update())
@@ -484,8 +521,12 @@ class SqlAlchemyProductionRepository:
             stored.planned_finish = operation.planned_finish
             stored.assigned_by = operation.assigned_by
             self.session.execute(delete(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operation_id == operation.id))
-            for position, operator_id in enumerate(operation.operator_ids):
-                self.session.add(ProductionOperationOperatorRow(operation_id=operation.id, operator_id=operator_id, position=position))
+            for position, share in enumerate(operation.shares):
+                self.session.add(ProductionOperationOperatorRow(
+                    operation_id=operation.id, operator_id=share.operator_id, position=position,
+                    quantity=share.quantity, planned_start=share.planned_start, planned_finish=share.planned_finish,
+                    started_at=share.started_at, finished_at=share.finished_at,
+                ))
         for stale in existing.values():
             self.session.delete(stale)
 

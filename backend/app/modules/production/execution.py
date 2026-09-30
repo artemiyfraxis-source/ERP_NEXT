@@ -13,7 +13,7 @@ from app.shared.identity import Actor
 from app.modules.fulfillment.domain import FulfillmentStatus
 from app.modules.shipping.domain import FinishedGood
 
-from .application import ProductionRepository
+from .application import CalendarRepository, OperatorRepository, ProductionRepository, SkillRepository, record_fact, release_fact
 from .domain import ProductionStatus, ProductionValidationError
 from .traceability import (
     ConsumptionEdge,
@@ -62,6 +62,7 @@ class OutputRepository(Protocol):
     def active_for_box(self, box_id: UUID) -> Sequence[ProductionOutput]: ...
     def list_for_task(self, task_id: UUID) -> Sequence[ProductionOutput]: ...
     def total_for_operation(self, operation_id: UUID) -> Decimal: ...
+    def active_for_tasks(self, task_ids: tuple[UUID, ...]) -> Sequence[ProductionOutput]: ...
 
 
 class ConsumptionRepository(Protocol):
@@ -110,6 +111,10 @@ class AppendOnlyRepository(Protocol):
 
 class ExecutionUnitOfWork(Protocol):
     production: ProductionRepository
+    # Смена, отсутствия и компетенции — чтобы факт «взял»/«закончил» двигал план (application.record_fact).
+    calendar: CalendarRepository
+    skills: SkillRepository
+    operators: OperatorRepository
     boxes: BoxRepository
     work: WorkRepository
     outputs: OutputRepository
@@ -272,6 +277,11 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
             "inputs": [str(item.box_id) for item in inputs],
             "materials": {str(item.fulfillment_line_id): str(item.quantity) for item in command.materials},
         }, uow)
+        # «Взял»: окно доли начинается сейчас, работа после неё сдвигается или подтягивается.
+        record_fact(
+            uow, task_id=task.id, operation_id=operation.id, operator_id=command.actor.id,
+            actor=command.actor, now=command.now, started=True,
+        )
         uow.commit()
         return session
 
@@ -310,6 +320,7 @@ def cancel_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSessio
         cancelled = session.cancel()
         uow.work.save(cancelled)
         _audit(cancelled.id, "production.work_cancelled", command.actor, command.now, {}, uow)
+        release_fact(uow, task_id=session.task_id, operation_id=session.operation_id, operator_id=command.actor.id, now=command.now)
         uow.commit()
         return cancelled
 
@@ -324,6 +335,10 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
             raise ProductionValidationError("Сумма годных и брака должна быть положительной")
         materials = tuple(uow.work.material_inputs(session.id))
         done = uow.outputs.total_for_operation(operation.id)
+        mine = sum((
+            item.good_quantity + item.defect_quantity for item in uow.outputs.active_for_tasks((task.id,))
+            if item.operation_id == operation.id and item.operator_id == command.actor.id
+        ), Decimal(0))
         if done + good + defect > Decimal(task.quantity):
             left = max(Decimal(0), Decimal(task.quantity) - done)
             raise ProductionValidationError(
@@ -400,6 +415,11 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
             "task_id": str(task.id), "operation_id": str(operation.id),
             "good": str(good), "defect": str(defect), "box_id": str(output_box.id),
         }, uow)
+        # Сдал свои штуки — «закончил»: окно доли кончается сейчас; не всё — конец по оставшимся штукам.
+        record_fact(
+            uow, task_id=task.id, operation_id=operation.id, operator_id=command.actor.id,
+            actor=command.actor, now=command.now, mine=mine + good + defect, total=done + good + defect,
+        )
         uow.commit()
         return completed, output_box, output, defect_record
 

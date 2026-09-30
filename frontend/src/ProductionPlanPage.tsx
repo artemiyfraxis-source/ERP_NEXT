@@ -11,6 +11,7 @@ import {
 } from "./api";
 import { matchesWords } from "./DataTable";
 import { Gantt, deadlineEnd, parseMoment, type GanttBar, type GanttRow } from "./Gantt";
+import { sharesOf } from "./MasterBoard";
 
 const emptyPlan: ProductionPlanResult = { blockers: [], stages: [], review_values: [], rows: [] };
 
@@ -103,21 +104,26 @@ export function operatorLoadRows(
     const bars: GanttBar[] = [];
     for (const task of live) {
       for (const operation of task.operations) {
-        if (!operation.operator_ids.includes(operator.id) || !operation.planned_start || !operation.planned_finish) continue;
-        const start = parseMoment(operation.planned_start);
-        const finish = parseMoment(operation.planned_finish);
-        const done = operation.state === "выполнена";
-        const end = deadlineEnd(task.deadline);
-        const late = Boolean(!done && end && finish && finish > end);
-        bars.push({
-          start: operation.planned_start, finish: operation.planned_finish,
-          tone: done ? "done" : late ? "late" : "default",
-          text: `${task.number} · ${itemId(task)}`,
-          title: `${task.number} · ${itemId(task)} × ${task.quantity} · этап ${operation.position} ${operation.stage}${task.deadline ? ` · дедлайн ${shortDate(task.deadline)}` : ""}${done ? " · выполнена" : ""}`,
-        });
-        if (start && finish && finish > span.from && start < span.to) {
-          count += 1;
-          seconds += operation.norm_seconds / Math.max(1, operation.operator_ids.length);
+        // По долям: у раздробленной по штукам операции у каждого своё окно и своя норма.
+        for (const share of sharesOf(operation, operator.id)) {
+          if (!share.planned_start || !share.planned_finish) continue;
+          const start = parseMoment(share.planned_start);
+          const finish = parseMoment(share.planned_finish);
+          const done = operation.state === "выполнена" || Boolean(share.finished_at);
+          const end = deadlineEnd(task.deadline);
+          const late = Boolean(!done && end && finish && finish > end);
+          bars.push({
+            start: share.planned_start, finish: share.planned_finish,
+            tone: done ? "done" : late ? "late" : "default",
+            text: `${task.number} · ${itemId(task)}`,
+            title: `${task.number} · ${itemId(task)} × ${task.quantity} · этап ${operation.position} ${operation.stage}${share.quantity != null ? ` · ${share.quantity} шт` : ""}${task.deadline ? ` · дедлайн ${shortDate(task.deadline)}` : ""}${done ? " · выполнена" : ""}`,
+          });
+          if (start && finish && finish > span.from && start < span.to) {
+            count += 1;
+            seconds += share.quantity != null
+              ? Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * share.quantity
+              : operation.norm_seconds / Math.max(1, operation.operator_ids.length);
+          }
         }
       }
     }

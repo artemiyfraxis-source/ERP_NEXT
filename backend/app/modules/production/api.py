@@ -19,6 +19,7 @@ from app.shared.http_auth import Principal, production_edit_principal, productio
 from .application import (
     Absence,
     AssignProductionCommand,
+    AssignShareCommand,
     AutoScheduleCommand,
     ConcurrentProductionUpdate,
     LaunchProductionCommand,
@@ -27,6 +28,7 @@ from .application import (
     SetProductionCancelledCommand,
     UnitOfWork,
     assign_production,
+    assign_share,
     apply_auto_schedule,
     launch_production,
     preview_auto_schedule,
@@ -88,6 +90,15 @@ class AssignPayload(BaseModel):
     operator_ids: list[UUID] = Field(max_length=100)
     requested_start: datetime | None = None
     dry: bool = False
+
+
+class SharePayload(BaseModel):
+    # Экран мастера: доля операции монтажнику — штуки и момент, с которого ставить; remove — снять долю.
+    version: int = Field(ge=1)
+    operator_id: UUID
+    quantity: int | None = Field(default=None, ge=1, le=1_000_000)
+    requested_start: datetime | None = None
+    remove: bool = False
 
 
 class HandOverPayload(BaseModel):
@@ -284,6 +295,14 @@ def _result(task: ProductionTask, facts: dict | None = None) -> dict:
             "planned_start": operation.planned_start.isoformat() if operation.planned_start else None,
             "planned_finish": operation.planned_finish.isoformat() if operation.planned_finish else None,
             "assigned_by": operation.assigned_by,
+            # Доли по людям: штуки (None — вся операция бригадой), своё окно, факт «взял»/«закончил».
+            "shares": [{
+                "operator_id": str(share.operator_id), "quantity": share.quantity,
+                "planned_start": share.planned_start.isoformat() if share.planned_start else None,
+                "planned_finish": share.planned_finish.isoformat() if share.planned_finish else None,
+                "started_at": share.started_at.isoformat() if share.started_at else None,
+                "finished_at": share.finished_at.isoformat() if share.finished_at else None,
+            } for share in operation.shares],
             **(_fact_result(facts.get(operation.id), task.quantity) if facts is not None else {}),
         } for operation in task.operations],
     }
@@ -444,12 +463,18 @@ def my_operations(
         for index, operation in enumerate(task.operations):
             if principal.actor.id in operation.operator_ids:
                 # prodMyOps_: напарники по операции и первый ли это этап (вход без коробок).
+                share = operation.share_of(principal.actor.id)
                 operations.append({**result, "operations": [{
                     **result["operations"][index],
+                    # Своя доля монтажника: у раздробленной операции своё окно и свои штуки.
+                    "my_share": next(item for item in result["operations"][index]["shares"] if item["operator_id"] == str(share.operator_id)) if share else None,
                     "first": operation.position == first,
                     "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != principal.actor.id],
                 }]})
-    operations.sort(key=lambda item: (item["operations"][0]["planned_start"] or "9999", item["number"], item["operations"][0]["position"]))
+    operations.sort(key=lambda item: (
+        (item["operations"][0]["my_share"] or {}).get("planned_start") or item["operations"][0]["planned_start"] or "9999",
+        item["number"], item["operations"][0]["position"],
+    ))
     return {"tasks": operations}
 
 
@@ -917,6 +942,36 @@ def assign(
     response["warnings"] = result["warnings"]
     response["plan"] = result["plan"]
     response["dry"] = payload.dry
+    return response
+
+
+@router.post("/tasks/{task_id}/operations/{operation_id}/share")
+def assign_operation_share(
+    task_id: UUID,
+    operation_id: UUID,
+    payload: SharePayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    result: dict = {}
+    def execute():
+        task, plan, moved = assign_share(AssignShareCommand(
+            task_id=task_id, expected_version=payload.version, operation_id=operation_id,
+            operator_id=payload.operator_id, quantity=payload.quantity,
+            requested_start=payload.requested_start, remove=payload.remove,
+            actor=principal.actor, now=now,
+        ), uow_factory())
+        result["plan"] = {
+            "start": plan.start.isoformat() if plan.start else None,
+            "finish": plan.finish.isoformat() if plan.finish else None,
+            "warnings": list(plan.warnings),
+        }
+        # Экран мастера показывает warnings строкой уведомления: что встало и что сдвинулось.
+        result["warnings"] = [*plan.warnings, *moved[:5], *([f"…и ещё сдвинуто: {len(moved) - 5}"] if len(moved) > 5 else [])]
+        return task
+    response = _run(execute)
+    response.update(result)
     return response
 
 
