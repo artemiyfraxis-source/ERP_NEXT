@@ -11,6 +11,7 @@ from .modules.identity import api as identity_api
 from .modules.identity.middleware import IdentitySessionMiddleware
 from .shared.http_limits import RequestBodyLimitMiddleware
 from .shared.security_headers import SecurityHeadersMiddleware
+from .shared.stop_file import watch_stop_file
 from .shared.warehouse_location import configured_rack_layout
 from .modules.procurement import api as procurement_api
 from .modules.receiving import api as receiving_api
@@ -65,6 +66,7 @@ app.include_router(operations_api.router)
 
 if database_url := os.getenv("ERP_DATABASE_URL"):
     configure_database(app, database_url)
+watch_stop_file()  # локальная ERP на ПК: обновление останавливает API файлом-стопом (scripts/update-local.ps1)
 
 
 @app.get("/api/health")
