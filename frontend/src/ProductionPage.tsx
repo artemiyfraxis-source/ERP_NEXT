@@ -638,24 +638,28 @@ function MyQueue({ tasks, session, busy, mutate }: {
   return <div className="my-queue">{tasks.map((task) => {
     const operation = task.operations[0];
     if (!operation) return null;
-    const startAt = parseDate(operation.planned_start);
-    const finishAt = parseDate(operation.planned_finish);
+    // Своя доля: у раздробленной операции у монтажника свои штуки и своё время.
+    const share = operation.my_share;
+    const plannedStart = share?.planned_start ?? operation.planned_start;
+    const plannedFinish = share?.planned_finish ?? operation.planned_finish;
+    const startAt = parseDate(plannedStart);
+    const finishAt = parseDate(plannedFinish);
     const title = dayTitle(startAt);
     const header = title !== last ? <div className="mo-day">{title}</div> : null;
     last = title;
     const running = Boolean(session && session.task_id === task.id && session.operation_id === operation.id);
-    const done = operation.state === "выполнена";
+    const done = operation.state === "выполнена" || Boolean(share?.finished_at);
     const late = Boolean(finishAt && finishAt < now && !done);
     const key = `${task.id}:${operation.id}`;
     const processed = Number(operation.fact?.processed ?? 0);
     return <div key={key}>
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
-        <div className="mo-h"><b>{operation.stage || `Этап ${operation.position}`}</b>{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(operation.planned_start)} → ${formatDate(operation.planned_finish)}` : "время не назначено"}</span></div>
-        <div className="mo-s">{task.number} · этап {operation.position} · <b>{itemId(task)}</b> × {task.quantity}{task.name ? ` · ${task.name}` : ""}</div>
+        <div className="mo-h"><b>{operation.stage || `Этап ${operation.position}`}</b>{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(plannedStart)} → ${formatDate(plannedFinish)}` : "время не назначено"}</span></div>
+        <div className="mo-s">{task.number} · этап {operation.position} · <b>{itemId(task)}</b> × {task.quantity}{task.name ? ` · ${task.name}` : ""}{share?.quantity != null ? <> · <b>твои {share.quantity} шт</b></> : null}</div>
         {operation.description && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
-        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {task.quantity}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}</div>
+        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {task.quantity}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatDate(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatDate(share.finished_at)}` : ""}</div>
         {!running && !done && <div className="mo-act">
           <button className="primary small" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>
         </div>}

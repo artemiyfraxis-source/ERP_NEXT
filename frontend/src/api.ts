@@ -572,11 +572,23 @@ export interface ProductionOperation {
   planned_start: string | null;
   planned_finish: string | null;
   assigned_by: string | null;
+  // Доли по людям: штуки (null — вся операция бригадой), своё окно, факт «взял»/«закончил».
+  shares?: ProductionShare[];
+  my_share?: ProductionShare | null;
   fact?: { good: string; defect: string; processed: string };
   state?: "не начата" | "в работе" | "выполнена";
   wip?: { ok: string; closed: string };
   first?: boolean;
   mates?: string[];
+}
+
+export interface ProductionShare {
+  operator_id: string;
+  quantity: number | null;
+  planned_start: string | null;
+  planned_finish: string | null;
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 export interface ProductionLaunchable {
@@ -1872,6 +1884,14 @@ export const productionApi = {
     api<{ task: ProductionTask; warnings: string[]; plan: ProductionAssignPlan; dry: boolean }>(`/api/production/tasks/${taskId}/operations/${operationId}/assign`, {
       method: "POST",
       body: JSON.stringify({ version, operator_ids: operatorIds, requested_start: requestedStart, dry }),
+    }),
+  // Экран мастера: доля операции монтажнику (штуки, с какого момента) или снять её.
+  share: (taskId: string, operationId: string, version: number, operatorId: string, quantity: number | null, requestedStart: string | null, remove = false) =>
+    api<{ task: ProductionTask; warnings: string[]; plan: { start: string | null; finish: string | null; warnings: string[] } }>(`/api/production/tasks/${taskId}/operations/${operationId}/share`, {
+      method: "POST",
+      body: JSON.stringify(remove
+        ? { version, operator_id: operatorId, remove: true }
+        : { version, operator_id: operatorId, quantity, requested_start: requestedStart }),
     }),
   cancel: (taskId: string, version: number, cancelled: boolean) =>
     api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/cancel`, {

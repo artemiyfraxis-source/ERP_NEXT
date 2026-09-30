@@ -9,4 +9,5 @@ metadata:
 - A master sees only his site → [[staff-and-sites]].
 - Boxes as in SUPPLYMAP (PX-6); numbering → [[supplymap-parity]].
 - Bug fixed in #50: second single-operation assign gave 500 (naive vs aware datetime in `_result`).
+- Operation shares (2026-09-30, migration 0076): each fitter on an operation has a share — crew (no quantity, one window) or pieces (own window by norm). Assigning places from the first free time with the tail on next working days and pushes the fitter's later work (`production/dispatch.py` place/reflow). Fact moves the plan: «▶ Начать» = took it, all own pieces submitted = finished; earlier pulls adjacent work (gap ≤ 1 h), later pushes, incl. the next stage. «Назначить на день» appends after the day's work.
 - Postponed items → [[deferred-by-owner]]. Operations come from [[module-techcards]]. Decisions: [[runlog-decisions]]. Hub: [[erp-next-hub]].

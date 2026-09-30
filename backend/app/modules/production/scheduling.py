@@ -197,10 +197,13 @@ def schedule_task(
     for operation in task.operations:
         if operation.id not in fixed_ids:
             continue
-        for operator_id in operation.operator_ids:
-            occupied.setdefault(operator_id, []).append(BusyInterval(
+        # Занятость — по долям: у раздробленной по штукам операции у каждого своё окно.
+        for share in operation.shares:
+            if share.planned_start is None or share.planned_finish is None:
+                continue
+            occupied.setdefault(share.operator_id, []).append(BusyInterval(
                 f"{task.number} · этап {operation.position}",
-                operation.planned_start, operation.planned_finish,
+                share.planned_start, share.planned_finish,
             ))
 
     result: list[ScheduledOperation] = []
