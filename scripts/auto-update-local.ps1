@@ -116,7 +116,11 @@ function Invoke-Update([switch]$StartOnly) {
     if (-not $reason) { $reason = "update-local.ps1 завершился с кодом $code" }
   }
   $warnings = @($lines | Where-Object { $_ -match '^(WARNING|ПРЕДУПРЕЖДЕНИЕ)' } | Select-Object -First 5)
-  $tail = @($lines | Where-Object { $_.Trim() } | Select-Object -Last 15)
+  # Хвост — шаг, на котором упало (от последней строки «== …»), без самой строки «СБОЙ» (она — причина):
+  # иначе в плашке был вывод сборки сайта, а не то, что сломалось.
+  $shown = @($lines | Where-Object { $_.Trim() -and $_ -notmatch '^СБОЙ: ' })
+  for ($i = $shown.Count - 1; $i -gt 0; $i--) { if ($shown[$i] -match '^== ') { $shown = @($shown[$i..($shown.Count - 1)]); break } }
+  $tail = @($shown | Select-Object -Last 15)
   @{ code = $code; reason = "$reason".Trim(); tail = $tail; warnings = $warnings }
 }
 

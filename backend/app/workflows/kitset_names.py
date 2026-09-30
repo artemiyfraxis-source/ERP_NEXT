@@ -172,7 +172,9 @@ def main(argv: list[str] | None = None) -> int:
     import sys
 
     from app.database import build_engine
+    from app.shared.stop_file import watch_stop_file
 
+    watch_stop_file()  # локальная ERP: обновление останавливает и разовый добор файлом-стопом
     parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument("--enqueue-only", action="store_true", help="только поставить в очередь, добор — фоном")
     args = parser.parse_args(argv)

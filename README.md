@@ -273,6 +273,9 @@ cd backend; .\.venv\Scripts\python.exe ..\scripts\projects_import.py load 708К.
 плашкой «Обновление не установилось» (всем, кроме монтажников); полный вывод — `backend\update-last.log`.
 Вывод `update-local.ps1` — только в файл, ждём выхода процесса (не трубу): API и `outbox_worker` наследовали бы
 трубу и держали её, пока живы, — так прежний цикл молча вставал после первого обновления.
+ERP останавливается файлом-стопом `backend\erp.stop` (переменная `ERP_STOP_FILE`, `app/shared/stop_file.py`): API,
+`outbox_worker` и добор наименований завершаются сами, когда файл новее их старта, — так останавливается и ERP,
+запущенная из окна администратора; затем taskkill по PID и порту. Без `ERP_STOP_FILE` (сервер, тесты) ничего не делает.
 Включить или починить одной строкой (останавливает прежний цикл, обновляет на глазах, ставит задачу, печатает хвост
 журнала): `powershell -ExecutionPolicy Bypass -File scripts\auto-update-local.ps1 -Install`, выключить — `-Uninstall`.
 
