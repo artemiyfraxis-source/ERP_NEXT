@@ -10,6 +10,12 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
   scope since 2026-09-29 — another block, another programmer).
 - `README.md` — every command and env var.
 
+## Screens — mandatory skill
+- Any change to a screen (`frontend/src/*.tsx`, `styles.css`) or an owner screenshot with a UI complaint → load the
+  `erp-screens` skill first and follow it: Russian labels only (no type codes like `cutWireStrip`), a visible date/period
+  on anything that plans, dense Google-like tables and forms, fixed ETK block order, before/after shots via
+  `scripts/demo/run-demo.sh` + `scripts/demo/shoot.mjs`, then `design-critique` on the after-shots.
+
 ## Sibling repos (expected next to this one in `Projects\`)
 - `../SUPPLYMAP` — live GAS system and the **source of domain rules**. Read-only from here: port the
   rules, not the GAS files or the sheet layout. `SUPPLYMAP_SOURCE_REPOSITORY` overrides the path.
