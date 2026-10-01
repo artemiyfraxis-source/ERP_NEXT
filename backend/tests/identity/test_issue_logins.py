@@ -87,3 +87,26 @@ def test_the_list_opens_with_cyrillic(sessions, tmp_path, monkeypatch):
     assert raw.startswith(b"\xef\xbb\xbf")  # UTF-8 BOM: Excel and Notepad show Cyrillic as is
     rows = list(csv.DictReader(out.open(encoding="utf-8-sig"), delimiter=";"))
     assert rows[0]["ФИО"] == "Безменов Никита" and rows[0]["Логин"] == "bezmenov"
+
+
+def test_a_run_without_new_logins_keeps_the_list(sessions, tmp_path, monkeypatch):
+    """update.sh runs the command after every deploy: the list with real passwords must survive."""
+    from app.modules.identity import issue_logins
+
+    add(sessions, "Безменов Никита", "bezmenov.nikita@fraxis.local")
+    engine = sessions.kw["bind"]
+    monkeypatch.setattr(issue_logins, "build_engine", lambda url: engine)
+    monkeypatch.setattr(engine, "dispose", lambda: None)
+    monkeypatch.setenv("ERP_DATABASE_URL", "sqlite://")
+    out = tmp_path / "logins.csv"
+    monkeypatch.setattr("sys.argv", ["issue_logins", "--out", str(out)])
+    issue_logins.main()
+    first = out.read_bytes()
+    issue_logins.main()
+    assert out.read_bytes() == first
+
+    add(sessions, "Иванов Пётр", "ivanov@fraxis.local")
+    issue_logins.main()
+    kept = [p for p in tmp_path.iterdir() if p.name.startswith("logins-")]
+    assert len(kept) == 1 and kept[0].read_bytes() == first
+    assert "ivanov" in out.read_text(encoding="utf-8-sig")
