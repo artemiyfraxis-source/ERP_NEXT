@@ -15,7 +15,9 @@ function Drawing({ housing }: { housing: ConnectorHousing }) {
     <div>
       <b>{housing.art}</b>
       <small>{connectorSummary(housing)}</small>
-      {housing.conf !== "high" && <small className="conn-warn" title={housing.note || undefined}>нумерация не сверена с чертежом</small>}
+      {housing.conf !== "high"
+        ? <small className="conn-warn" title={housing.note || undefined}>нумерация не сверена с чертежом</small>
+        : housing.src && <small title={housing.note || undefined}>сверено: {housing.src}</small>}
     </div>
     <div className="conn-face"><svg width={face.w + 20} height={face.h + 8} viewBox={`0 0 ${face.w + 20} ${face.h + 8}`}
       role="img" aria-label="Вид со стороны проводов" dangerouslySetInnerHTML={{ __html: face.body }} /></div>

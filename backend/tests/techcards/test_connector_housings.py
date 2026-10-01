@@ -118,3 +118,30 @@ def test_jst_sh_follows_the_jst_housing_drawing():
     width = lambda layout: (layout["n"] - 1) * layout["pitch"] + layout["body"]["extra"] + 2 * layout["body"].get("ears", 0)
     assert housing_of("SHR-02V-S-B") and width(housing_of("SHR-02V-S-B")) == 5.0
     assert width(housing_of("SHR-20V-S-B")) == 23.0 and width(housing_of("SHR-15V-S")) == 16.0
+
+
+def test_jst_gh_xh_ph_zh_and_microfit_follow_the_maker_drawings():
+    # eGH/eXH: front view = lock face, wire end up; eGH has circuit 1 on the right, eXH's mating view (lock up) on the
+    # right -> from the wire side, lock up, contact 1 is on the LEFT. ePH/eZH: front view = lance-window face, circuit 1
+    # on the left -> from the wire side, windows down, contact 1 on the left. Body widths are the catalogue B (C for XH).
+    width = lambda layout: (layout["cols"] - 1) * layout["pitch"] + layout["body"]["extra"]
+    cases = {"GHR-04V-S": ("jst-gh", 6.25), "XHP-4": ("jst-xh", 12.3), "PHR-4": ("jst-ph", 9.8), "ZHR-4": ("jst-zh", 7.5)}
+    for article, (family, catalogue_width) in cases.items():
+        layout = housing_of(article)
+        assert layout["family"] == family and layout["conf"] == "high" and layout["src"]
+        assert layout["grid"] == [[1, 2, 3, 4]]
+        assert round(width(layout), 2) == catalogue_width
+    assert housing_of("GHR-15V-S") and round(width(housing_of("GHR-15V-S")), 2) == 20.0
+    assert round(width(housing_of("XHP-20")), 2) == 52.3 and round(width(housing_of("PHR-16")), 2) == 33.8
+    assert housing_of("PHR-4")["latch"] == housing_of("ZHR-4")["latch"] == "windows"
+    assert housing_of("GHR-04V-S")["body"]["lock_h"] and housing_of("XHP-4")["body"]["lock_h"]
+
+    # SDA-43025: mating view, latch up — 1 bottom-left, last top-right; the wire side mirrors it. A = 3.00·cols + 0.85.
+    microfit = housing_of("43025-0600")
+    assert microfit["conf"] == "high" and microfit["grid"] == [[6, 5, 4], [3, 2, 1]]
+    assert round(width(microfit), 2) == 9.85 and round(width(housing_of("43025-2400")), 2) == 36.85
+
+
+def test_series_without_a_checked_drawing_keep_the_warning():
+    for article in ("51021-0400", "43645-0400", "43020-0400", "43640-0400", "22-55-2081", "DS1033-09F"):
+        assert housing_of(article)["conf"] != "high", article
