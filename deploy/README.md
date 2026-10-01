@@ -32,7 +32,8 @@ Let's Encrypt), ночные копии базы. Файлы (УПД, счета
 ## Команды
 С компьютера владельца (PowerShell, из `Projects\ERP_NEXT`; рабочую копию не трогает, берёт `origin/main`):
 ```powershell
-.\deploy\push.ps1 -Server erp-server -GoogleKey <ключ erp-reader.json>   # первый раз — установка
+.\deploy\push.ps1 -Server 192.168.1.85 -GoogleKey <ключ erp-reader.json> -LoadBase   # первый раз: подготовка машины
+#   (prepare-host.sh: убрать microk8s, закрепить IP, расширить /, RAID под копии), установка, база; пароли → erp-server-secrets
 .\deploy\push.ps1 -Server erp-server                 # обновление (перед ним копия базы)
 .\deploy\push.ps1 -Server erp-server -Ref <коммит>   # откат кода
 ```

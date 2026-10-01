@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# First start on a fresh Ubuntu 22.04/24.04 machine, as root. Idempotent: re-running keeps the existing .env.
+# First start on a fresh Ubuntu 22.04/24.04/26.04 machine, as root. Idempotent: re-running keeps the existing .env.
 #   bash /opt/erp/app/deploy/bootstrap.sh [lan|<domain>]
 # lan (default): the shop-floor server, site at http://<LAN IP>; from outside through Tailscale (HTTPS, *.ts.net).
 # <domain>: a public machine, Caddy gets a Let's Encrypt certificate for it.
@@ -9,8 +9,15 @@ here=$(cd "$(dirname "$0")" && pwd)
 
 if ! command -v docker >/dev/null; then
   apt-get update && apt-get install -y ca-certificates curl
-  curl -fsSL https://get.docker.com | sh || apt-get install -y docker.io docker-compose-v2
+  # get.docker.com lags behind new Ubuntu releases (26.04 on the shop-floor server): fall back to Ubuntu's own packages
+  # and drop the half-added Docker apt source so later `apt-get update` stays clean.
+  if ! curl -fsSL https://get.docker.com | sh; then
+    rm -f /etc/apt/sources.list.d/docker.list /etc/apt/sources.list.d/docker.sources
+    apt-get update && apt-get install -y docker.io
+    apt-get install -y docker-compose-v2 || apt-get install -y docker-compose-plugin || apt-get install -y docker-compose
+  fi
 fi
+docker compose version >/dev/null || { echo "!! docker compose не установился" >&2; exit 1; }
 systemctl enable --now docker   # containers restart:unless-stopped come back after a power cut
 # Docker Hub is unreliable from Russian networks: try the provider mirrors first, Hub last.
 if [ ! -f /etc/docker/daemon.json ]; then

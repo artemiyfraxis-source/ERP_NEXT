@@ -4,6 +4,9 @@
 #   .\deploy\push.ps1 -Server erp-server                 # ERP from origin/main (сервер в цеху, пользователь erp)
 #   .\deploy\push.ps1 -Server 203.0.113.10 -Ref <sha>    # a specific commit (rollback)
 #   .\deploy\push.ps1 -Server 203.0.113.10 -GoogleKey $HOME\Downloads\techmap-498119-….json   # first time
+#   .\deploy\push.ps1 -Server 192.168.1.85 -GoogleKey … -LoadBase   # + admin, staff, references; secrets come back to
+#       $HOME\Documents\AI\Projects\erp-server-secrets (admin.txt, staff-pins.txt — not in git)
+# The first install also runs prepare-host.sh (static IP, root LV, RAID for backups); -Prepare reruns it.
 param(
   [Parameter(Mandatory = $true)][string]$Server,
   [string]$Ref = 'origin/main',
@@ -11,6 +14,8 @@ param(
   [string]$Domain = 'lan',
   [string]$User = 'erp',     # sudo без пароля (см. deploy/README.md)
   [string]$GoogleKey = '',   # JSON-ключ erp-reader: кладётся в /opt/erp/config/secrets до установки
+  [switch]$Prepare,          # повторить prepare-host.sh (при первой установке идёт сам)
+  [switch]$LoadBase,         # после выкладки: deploy/load-real-data.sh base и пароли на этот ПК
 
   [string]$ErpRepo = (Split-Path $PSScriptRoot -Parent),
   [string]$SupplymapRepo = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'SUPPLYMAP')
@@ -37,16 +42,21 @@ if ($GoogleKey) {
   if ($LASTEXITCODE) { throw 'scp key failed' }
   & ssh @ssh $target "${sudo}sh -c 'mkdir -p /opt/erp/config/secrets && chmod 700 /opt/erp/config && chmod 755 /opt/erp/config/secrets && install -o 10001 -m 600 /tmp/google-service-account.json /opt/erp/config/secrets/ && rm -f /tmp/google-service-account.json'"
 }
+$prep = if ($Prepare) { 1 } else { 0 }
 $remote = @"
 set -e
 mkdir -p /opt/erp/supplymap
 if [ -f /tmp/supplymap.tar.gz ]; then rm -rf /opt/erp/supplymap/*; tar -xzf /tmp/supplymap.tar.gz -C /opt/erp/supplymap; fi
 if [ -d /opt/erp/app ]; then
   rm -rf /opt/erp/app.new; mkdir -p /opt/erp/app.new; tar -xzf /tmp/app.tar.gz -C /opt/erp/app.new
-  echo $rev > /opt/erp/app.new/REVISION; bash /opt/erp/app.new/deploy/update.sh
+  echo $rev > /opt/erp/app.new/REVISION
+  if [ "$prep" = 1 ]; then bash /opt/erp/app.new/deploy/prepare-host.sh; fi
+  bash /opt/erp/app.new/deploy/update.sh
 else
   mkdir -p /opt/erp/app; tar -xzf /tmp/app.tar.gz -C /opt/erp/app
-  echo $rev > /opt/erp/app/REVISION; bash /opt/erp/app/deploy/bootstrap.sh $Domain
+  echo $rev > /opt/erp/app/REVISION
+  bash /opt/erp/app/deploy/prepare-host.sh
+  bash /opt/erp/app/deploy/bootstrap.sh $Domain
 fi
 rm -f /tmp/app.tar.gz /tmp/supplymap.tar.gz
 "@
@@ -55,3 +65,13 @@ $remote | & ssh @ssh $target "${sudo}bash -s"
 if ($LASTEXITCODE) { throw "deploy failed on $Server" }
 Remove-Item -Recurse -Force $tmp
 Write-Host "Выложено: $rev"
+if ($LoadBase) {
+  & ssh @ssh $target "${sudo}bash /opt/erp/app/deploy/load-real-data.sh base"
+  if ($LASTEXITCODE) { throw "load-real-data base failed on $Server" }
+  $secrets = Join-Path $HOME 'Documents\AI\Projects\erp-server-secrets'
+  New-Item -ItemType Directory -Force $secrets | Out-Null
+  foreach ($f in 'admin.txt', 'staff-pins.txt') {
+    & ssh @ssh $target "${sudo}cat /opt/erp/config/$f" | Set-Content -Encoding utf8 (Join-Path $secrets $f)
+  }
+  Write-Host "Пароль админа и PIN сотрудников: $secrets"
+}

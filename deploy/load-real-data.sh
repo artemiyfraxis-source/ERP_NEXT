@@ -21,6 +21,13 @@ login=$(sed -n 's/^login=//p' "$admin_file"); password=$(sed -n 's/^password=//p
 cli() { ./erp.sh cli "$@"; }
 ok_or_report() { local code=$?; [ $code -le 1 ] || exit $code; }   # exit 1 = «есть расхождения, см. отчёт»
 
+# Right after bootstrap the api container may still be migrating the database: wait for it before writing.
+for _ in $(seq 60); do
+  ./erp.sh exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)" \
+    2>/dev/null && break
+  sleep 5
+done
+
 case "${1:-}" in
   base)
     if ! ./erp.sh run --rm -e ERP_NEW_USER_PASSWORD="$password" api python -m app.identity_admin create-user \
