@@ -63,6 +63,7 @@ services:
       ERP_DOMAIN: ${ERP_DOMAIN:?set ERP_DOMAIN in deploy/.env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${ERP_HOME:-/opt/erp}/status:/srv/status:ro
       - caddy_data:/data
       - caddy_config:/config
 

@@ -33,7 +33,7 @@ if command -v ufw >/dev/null; then
 fi
 timedatectl set-timezone Europe/Moscow 2>/dev/null || true
 
-mkdir -p "$ERP_HOME"/{config/secrets,supplymap,import,backups}
+mkdir -p "$ERP_HOME"/{config/secrets,supplymap,import,backups,status}
 chmod 700 "$ERP_HOME/config"
 chown 10001 "$ERP_HOME/import"  # the container user writes the Google snapshots there
 chmod 755 "$ERP_HOME/config/secrets"

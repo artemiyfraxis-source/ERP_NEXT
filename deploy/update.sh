@@ -13,6 +13,7 @@ if [ "$new" != "$ERP_HOME/app" ]; then
   mv "$new" "$ERP_HOME/app"
 fi
 cd "$ERP_HOME/app/deploy"
+mkdir -p "$ERP_HOME/status"
 ./erp.sh build api
 ./erp.sh up -d
 for i in $(seq 1 60); do
