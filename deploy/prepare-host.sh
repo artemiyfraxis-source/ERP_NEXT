@@ -53,8 +53,9 @@ fi
 root_dev=$(findmnt -no SOURCE /)
 if lvs "$root_dev" >/dev/null 2>&1; then
   vg=$(lvs --noheadings -o vg_name "$root_dev" | tr -d ' ')
-  free=$(vgs --noheadings --units g --nosuffix -o vg_free "$vg" | tr -d ' ')
-  if [ "${free%.*}" -ge 1 ] 2>/dev/null; then say "расширяю / на ${free} ГБ"; lvextend -r -l +100%FREE "$root_dev"; fi
+  # LC_ALL=C: a Russian locale prints «828,46», and the integer test silently skipped the extension (01.10.2026)
+  free=$(LC_ALL=C vgs --noheadings --units g --nosuffix -o vg_free "$vg" | tr -d ' ')
+  if [ "${free%.*}" -ge 1 ]; then say "расширяю / на ${free} ГБ"; lvextend -r -l +100%FREE "$root_dev"; fi
 fi
 df -h / | tail -1
 

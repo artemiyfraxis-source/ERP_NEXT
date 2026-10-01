@@ -125,3 +125,25 @@ def test_the_demo_preview_account_is_switched_off(sessions):
     assert "preview" not in {r["Логин"] for r in rows}
     with pytest.raises(Exception):
         login("preview", "Preview-2026!", NOW, SqlAlchemyIdentityUnitOfWork(sessions), client_key="t")
+
+
+def test_the_command_saves_the_switch_off_even_without_new_logins(sessions, tmp_path, monkeypatch):
+    """Server 01.10: the list existed, nothing new was issued, and the early exit dropped preview's active=False."""
+    from app.modules.identity import issue_logins
+
+    engine = sessions.kw["bind"]
+    monkeypatch.setattr(issue_logins, "build_engine", lambda url: engine)
+    monkeypatch.setattr(engine, "dispose", lambda: None)
+    monkeypatch.setenv("ERP_DATABASE_URL", "sqlite://")
+    out = tmp_path / "logins.csv"
+    out.write_text("old list", encoding="utf-8")
+    with sessions() as session:
+        user = IdentityUser(id=uuid4(), login="preview", email="preview@example.com", name="Артемий",
+                            department="Руководство", role="admin", site=None, active=True)
+        provision_user(session, user, hash_password("Preview-2026!"))
+        session.commit()
+    monkeypatch.setattr("sys.argv", ["issue_logins", "--out", str(out)])
+    issue_logins.main()
+    assert out.read_text(encoding="utf-8") == "old list"
+    with pytest.raises(Exception):
+        login("preview", "Preview-2026!", NOW, SqlAlchemyIdentityUnitOfWork(sessions), client_key="t")
