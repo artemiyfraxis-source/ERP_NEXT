@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { SuggestInput } from "./SuggestInput";
 import { techcardsApi, type TemplateSheet, type TemplateSheetDraft } from "./api";
+import { formatDate } from "./format";
 
 const DRAFT_PREFIX = "Черновик — ";
 const MIN_COLUMNS = 7;
@@ -179,7 +180,7 @@ export function TcTemplateSheets({ canEdit, onBack, onChanged }: { canEdit: bool
     <div className="table-wrap"><table><thead><tr><th>Название</th><th>Категория</th><th>Размер</th><th>Обновлён</th><th></th></tr></thead><tbody>
       {shown.map((item) => <tr key={item.id}>
         <td>{item.title}{item.description && <div className="muted">{item.description}</div>}</td>
-        <td>{item.category}</td><td>{item.size}</td><td>{item.updatedAt.slice(0, 10)}</td>
+        <td>{item.category}</td><td>{item.size}</td><td>{formatDate(item.updatedAt.slice(0, 10))}</td>
         <td className="nowrap">{canEdit && <>
           <button className="secondary small" disabled={busy} aria-label={`Редактировать ${item.title}`} onClick={() => void openDraft(item.id, "")}>✏️</button>{" "}
           <button className="secondary small" disabled={busy} aria-label={`Удалить ${item.title}`} title="Удалить шаблон" onClick={() => deleteSheet(item)}>🗑</button>

@@ -69,7 +69,7 @@ it("locks the full-access role columns so they cannot be reduced", async () => {
 
   render(<AccessPage />);
   // The note names the four always-full roles, and the admin (Технолог) column has no editable cell — only a lock.
-  expect(await screen.findByText(/всегда имеют полный доступ ко всем разделам/)).toBeInTheDocument();
+  expect(await screen.findByText(/роль всегда с полным доступом/)).toBeInTheDocument();
   expect(screen.queryByLabelText("Сотрудники · Технолог")).toBeNull();
   expect(screen.getAllByText("полный 🔒").length).toBeGreaterThan(0);
 });

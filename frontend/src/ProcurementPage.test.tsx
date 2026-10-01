@@ -346,7 +346,7 @@ it("forms supplier requests for ready lines in one batch and shows the letters",
 
   expect(await screen.findByText("Сформировано запросов: 1; строк других закупщиков не тронуто: 2")).toBeInTheDocument();
   expect(screen.getByText("ООО А · REQ# 16.09.2026 - MR#D-1 PO-001")).toBeInTheDocument();
-  expect(await screen.findByText("Заказ PO-001 от 2026-09-16")).toBeInTheDocument();
+  expect(await screen.findByText("Заказ PO-001 от 16.09.2026")).toBeInTheDocument();
   expect(screen.getByText("Запросы поставщикам/2026/09 Сентябрь/ООО А/PO-001 от 16.09.2026.html")).toBeInTheDocument();
   const links = screen.getAllByRole("link", { name: "Открыть документ" });
   expect(links.map((link) => link.getAttribute("href"))).toEqual([

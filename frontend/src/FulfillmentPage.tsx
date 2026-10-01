@@ -18,14 +18,12 @@ import { openPrintSheet } from "./print";
 const MODES = {
   pick: {
     title: "Запросы на комплектацию",
-    sub: "Набор комплекта под КБ: закрыть каждую позицию ГРН склада → «Укомплектован» → «Отправить на выдачу» с местом. «Недоукомплектован» заявка встаёт сама при первой привязке. Склад на этом этапе только резервирует.",
     stages: ["Новая", "Недоукомплектован", "Укомплектован", "Готов к выдаче"],
     hidden: ["Готов к выдаче"],
     empty: "Заявок на комплектацию нет. Они появятся из состава производственного комплекта.",
   },
   give: {
     title: "Выдача со списанием",
-    sub: "Передача собранного комплекта в цех: выдача списывает со склада, возврат принимает остаток и брак.",
     stages: ["Готов к выдаче", "КБ Выдана", "КБ Возвращена"],
     hidden: [] as string[],
     empty: "Заявок к выдаче нет. Сюда приходят укомплектованные заявки, отправленные на выдачу.",
@@ -305,12 +303,13 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
     <section className="page">
       <header className="page-head">
         <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{shown.length}</span>
+        <div className="page-actions">
         {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => { setArchive((value) => !value); setStage(""); setOpenId(null); }}>{archive ? "Активные" : "Архив"}</button>}
         {canEdit && mode !== "give" && !archive && <button className="primary small" onClick={() => { setCreating((value) => !value); setFromCalc(false); }}>+ Заявка</button>}
         {canEdit && mode !== "give" && !archive && <button className="secondary small" onClick={() => { setFromCalc((value) => !value); setCreating(false); }}>Заявка по расчёту</button>}
         <button className="secondary small" onClick={() => switchView(view === "tiles" ? "table" : "tiles")}>{view === "tiles" ? "Таблицей" : "Плитками"}</button>
+        </div>
       </header>
-      <p className="page-sub">{screen?.sub ?? "Партии выбирает человек. Заявка ждёт поставки, а в цех уходит только полностью собранный комплект."}</p>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
       {fromCalc && <CalcRequestForm onClose={() => setFromCalc(false)} onCreated={async () => { setFromCalc(false); await reload(); }} />}

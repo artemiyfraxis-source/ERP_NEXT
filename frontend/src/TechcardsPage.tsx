@@ -319,7 +319,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     </>}
     {showLibrary && <>
     {!embedded && <header className="page-head library-head"><h2>Библиотека операций</h2><span className="page-count">{records.length}</span></header>}
-    <p className="page-sub">Снимок SUPPLYMAP {libraryCommit ? libraryCommit.slice(0, 8) : "не загружен"}; карточка сохраняется внутри каждой собранной ЭТК. Карточка операции — то, из чего собирается лист техкарты: шаги, контроль с допусками, оснастка, безопасность, дефекты и строка БД.ОП (машина, программа, провод, разъём, время). Пунктиром — операции БД.ОП без шаблона листа. Открой карточку, чтобы посмотреть{canEdit ? " или поправить" : ""}.</p>
+    <p className="page-sub">Снимок SUPPLYMAP {libraryCommit ? libraryCommit.slice(0, 8) : "не загружен"} · пунктиром — операции БД.ОП без шаблона листа.</p>
     {sheetsOpen ? <TcTemplateSheets canEdit={canEditTemplates} onBack={() => setSheetsOpen(false)} onChanged={() => {
       void techcardsApi.templates().then((library) => setTemplates(library.items)).catch(() => undefined);
     }} /> : selectedOp ? <OpOnlyDetail record={selectedOp} canEdit={canEditOps} onSaved={replaceOp} onBack={() => setSelectedOpCode("")} /> : templateDetail && selectedTemplateId ? (editingTemplate ? <TcCardEditForm

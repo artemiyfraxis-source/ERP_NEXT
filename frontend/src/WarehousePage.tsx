@@ -174,7 +174,6 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
       </div>
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
-      <p className="page-sub stock-hint">Остатки склада. Ищи по артикулу, наименованию, серии, месту или ГРН — слова можно в любом порядке. «Списать» снимает количество с партии (выдача в производство, брак, недостача), «Вернуть» кладёт назад неизрасходованное — не больше, чем с партии списано. Открой наименование — его партии идут карточками, действия кнопками в каждой.</p>
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">
         <input className="search stock-search" aria-label="Поиск по складу" placeholder="поиск: резистор 6-1 …" value={query} onChange={(event) => setQuery(event.target.value)} />

@@ -500,7 +500,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           <label className="mb-pieces">Штук монтажнику<input type="number" min={1} max={task.quantity} step={1} value={pieces} aria-label="Штук монтажнику" onChange={(event) => setPieces(event.target.value)} /><span>из {task.quantity}{free > 0 && free < task.quantity ? ` · не распределено ${free}` : ""} · норма {hours(Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * quantity)}</span></label>
           {quantity > free && free < task.quantity && <small>Сверх нераспределённых штуки заберём у того, кто заканчивает позже.</small>}
           <button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
-        : <div className="mb-target muted">{canEdit ? "Выбери операцию слева, затем день и час у монтажника. Занято/смена, ч." : "Занято/смена, ч. Нажми на день — раскладка по часам."}</div>}
+        : <div className="mb-target muted">{canEdit ? "Выберите операцию слева, затем день и час у монтажника. Занято/смена, ч." : "Занято/смена, ч. Нажмите на день — раскладка по часам."}</div>}
       {site === HANDOVER_SITE && <div className="mb-target muted">{HANDOVER_SITE} работает без раскладки по людям и часам: сюда падают задания с пометкой «Отдано в {HANDOVER_SITE}».</div>}
       {site !== HANDOVER_SITE && <table className="mb-week">
         <thead><tr><th>Монтажник</th>{days.map((day) => {

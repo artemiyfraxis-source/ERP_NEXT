@@ -229,7 +229,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
 
   return <section className="page production-plan-page">
     <header className="page-head">
-      <div><h1>Производственный план</h1><p className="page-sub">Сверху — проекты в работе и их дедлайны, ниже — загрузка людей по заданиям. Нажми на проект — откроется его карточка: статус, блокер, журнал и техкарты.</p></div>
+      <h1>Производственный план</h1>
       <span className="page-count">{rows.length}</span>
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}

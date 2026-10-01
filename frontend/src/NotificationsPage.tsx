@@ -40,10 +40,9 @@ export function NotificationsPage() {
   }
 
   return <section className="page notifications-page">
-    <header className="page-head"><h1>Уведомления</h1><span className="page-count">{unread}</span></header>
-    <p className="page-sub">Персональная лента из бизнес-событий ERP. Адресат всегда берётся из вашей сессии.</p>
+    <header className="page-head"><h1>Уведомления</h1><span className="page-count">{unread}</span>
+      {unread > 0 && <div className="page-actions"><button className="secondary" disabled={busy} onClick={() => void markRead()}>Прочитать все</button></div>}</header>
     {error && <div className="error-banner" role="alert">{error}</div>}
-    {unread > 0 && <div className="page-actions"><button className="secondary" disabled={busy} onClick={() => void markRead()}>Прочитать все</button></div>}
     <div className="notification-list">{items.map((item) => <article className={`panel notification-card ${item.read ? "read" : "unread"}`} key={item.id}>
       <div className="procurement-title"><div><strong>{item.title}</strong><small>{new Date(item.created_at).toLocaleString("ru-RU")}{item.reference ? ` · ${item.reference}` : ""}</small></div><span className="status">{item.type}</span></div>
       <p>{item.body}</p>
