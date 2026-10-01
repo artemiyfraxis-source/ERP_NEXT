@@ -7,7 +7,9 @@
 A short login is the transliterated surname («Безменов Никита» → bezmenov; a clash adds the first letter of the name,
 then a digit). The e-mail keeps working as a login too. Whoever already has a short login (no «@») keeps it and their
 password unless --reset; the technical «admin» account is left alone. The list is a CSV in UTF-8 with BOM and «;» —
-Excel and Notepad open the Cyrillic as is. Passwords are printed nowhere else.
+Excel and Notepad open the Cyrillic as is. Passwords are printed nowhere else. A run that issues nothing leaves the
+list alone; a run that issues something keeps the previous list as logins-<stamp>.csv. update.sh runs it after every
+deploy, so a new employee gets a login on the next update.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import argparse
 import csv
 import os
 import secrets
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -97,7 +100,13 @@ def main() -> None:
     try:
         with Session(engine) as session:
             rows = issue(session, reset=args.reset)
+            issued = sum(1 for r in rows if r["Пароль"] != "(прежний)")
             out = Path(args.out)
+            if not issued and out.exists():
+                print(f"Новых логинов нет, список {args.out} не тронут")
+                return
+            if out.exists():  # the previous list still holds passwords nobody else has — keep it
+                out.rename(out.with_name(f"{out.stem}-{datetime.now():%Y%m%d-%H%M%S}{out.suffix}"))
             with out.open("w", encoding="utf-8-sig", newline="") as handle:
                 writer = csv.DictWriter(handle, fieldnames=list(rows[0]) if rows else ["ФИО"], delimiter=";")
                 writer.writeheader()
@@ -106,7 +115,6 @@ def main() -> None:
             session.commit()
     finally:
         engine.dispose()
-    issued = sum(1 for r in rows if r["Пароль"] != "(прежний)")
     print(f"Сотрудников: {len(rows)}, выдано паролей: {issued}. Список: {args.out}")
 
 
