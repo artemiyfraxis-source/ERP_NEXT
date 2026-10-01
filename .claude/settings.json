@@ -5,6 +5,10 @@
     "commit": "",
     "pr": ""
   },
+  "statusLine": {
+    "type": "command",
+    "command": "node .claude/statusline.mjs"
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -13,6 +17,18 @@
             "type": "command",
             "command": "node scripts/setup-env.mjs && node .claude/hooks/cloud-siblings.mjs && node .claude/hooks/supplymap-drift.mjs",
             "timeout": 600
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/guard-migrations.mjs",
+            "timeout": 15
           }
         ]
       }
@@ -28,7 +44,11 @@
       "Bash(git diff:*)"
     ],
     "deny": [
-      "Read(./backend/.env)"
+      "Read(./backend/.env)",
+      "Read(**/pins-local.md)",
+      "Read(**/erp-reader*.json)",
+      "Read(**/erp-calc-reader*.json)",
+      "Read(//c/secrets/**)"
     ]
   },
   "extraKnownMarketplaces": {

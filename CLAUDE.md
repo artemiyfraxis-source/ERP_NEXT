@@ -41,6 +41,8 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 ## Commands
 - `npm run check` (repo root) — THE gate: architecture tests + backend pytest + frontend tests + build.
   Run it after every slice. Backend alone: `npm run test:backend`; frontend: `npm run test:frontend`.
+- GitHub CI (`.github/workflows/check.yml`) runs the same gate on every PR and push to `main`, minus the
+  architecture tests (they need the sibling SUPPLYMAP checkout). Don't merge a PR whose `check` is red.
 - Known red: architecture tests pin each module's `SOURCE.json` to a SUPPLYMAP commit, so they fail
   whenever SUPPLYMAP `main` moves on. Only techcards and the operation library
   have a `npm run sync:*` script; run it for those. For every other module, re-baseline by hand, and
@@ -89,3 +91,5 @@ The cloud never pushes `main`.
 - No GAS tooling here: no clasp, no `deploy.ps1`. SUPPLYMAP's rules live in its own repo.
 - Never write to the live warehouse (SUPPLYMAP Склад: ЦАР / ЖУК / СПИСАНИЕ). Imports read from git
   snapshots; any importer that touches live Google data must be dry-run first.
+- Never edit an Alembic migration that is already on `main` — add a new one after the head.
+  `.claude/hooks/guard-migrations.mjs` (PreToolUse) enforces it where `.claude/settings.json` applies.
