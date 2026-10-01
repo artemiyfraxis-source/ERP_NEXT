@@ -47,8 +47,28 @@ case "\${1:-status}" in
 esac
 CMD
 chmod 755 /usr/local/bin/erp-update
+# Out-of-schedule requests from GitHub (button «Обновить сервер»), see deploy/update-request.sh.
+cat > /etc/systemd/system/erp-update-request.service <<UNIT
+[Unit]
+Description=ERP update request from GitHub (branch update-request)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+Environment=ERP_HOME=$ERP_HOME
+ExecStart=/bin/bash $ERP_HOME/app/deploy/update-request.sh
+UNIT
+cat > /etc/systemd/system/erp-update-request.timer <<UNIT
+[Unit]
+Description=ERP: check GitHub for an update request every 2 minutes
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+[Install]
+WantedBy=timers.target
+UNIT
 systemctl daemon-reload
-systemctl enable --now erp-auto-update.timer >/dev/null
+systemctl enable --now erp-auto-update.timer erp-update-request.timer >/dev/null
 
 export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 if git ls-remote git@github.com:artemiyfraxis-source/ERP_NEXT.git main >/dev/null 2>&1; then

@@ -1,0 +1,21 @@
+# «Обновить сервер» — out-of-schedule server update from anywhere (GitHub web/phone: Actions → Обновить сервер → Run
+# workflow; a Claude thread: `gh workflow run update-server.yml`). Pushes a new commit to the branch `update-request`;
+# the server (deploy/update-request.sh, every 2 min) sees it and runs `erp-update now`: backup, latest main, health check.
+name: Обновить сервер
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - run: |
+          git config user.name "update-request"
+          git config user.email "update-request@users.noreply.github.com"
+          git commit --allow-empty -q -m "запрос обновления сервера: ${{ github.actor }} $(date -u +%FT%TZ)"
+          git push -f origin HEAD:refs/heads/update-request
+          echo "Запрос отправлен. Сервер начнёт обновление в течение 2 минут."
