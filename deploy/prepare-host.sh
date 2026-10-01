@@ -6,7 +6,8 @@
 # 2. pins the current DHCP address as static (netplan), with an automatic rollback if the network does not come back;
 # 3. grows the root LV to the whole volume group (the installer gives / only 100 GB of the SSD);
 # 4. mounts the empty Intel RST RAID volume at /opt/erp/backups for the nightly dumps. A volume that already has
-#    data is NOT formatted — it is mounted read-only at /mnt/old-raid and listed, the decision stays with a human.
+#    data is NOT formatted — it is mounted read-only at /mnt/old-raid and listed, the decision stays with a human;
+# 5. announces the host name on the shop LAN (mDNS + LLMNR): http://erp-server and http://erp-server.local.
 set -uo pipefail
 ERP_HOME=${ERP_HOME:-/opt/erp}
 say() { echo "== $*"; }
@@ -101,4 +102,22 @@ else
   fi
 fi
 grep -E '^md|blocks|resync|recovery' /proc/mdstat || true
+
+# 5. The name on the shop LAN: http://erp-server and http://erp-server.local (mDNS + LLMNR), only for the local subnet.
+mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nMulticastDNS=yes\nLLMNR=yes\n' > /etc/systemd/resolved.conf.d/erp-lan-name.conf
+if [ -n "$iface" ]; then
+  for net in /run/systemd/network/*"$iface".network; do
+    [ -f "$net" ] || continue
+    mkdir -p "/etc/systemd/network/$(basename "$net").d"
+    printf '[Network]\nMulticastDNS=yes\nLLMNR=yes\n' > "/etc/systemd/network/$(basename "$net").d/erp-lan-name.conf"
+  done
+  networkctl reload 2>/dev/null || true
+fi
+systemctl restart systemd-resolved
+if command -v ufw >/dev/null && [ -n "$addr" ]; then
+  subnet=$(python3 -c "import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1]).network)" "$addr")
+  ufw allow from "$subnet" to any port 5353,5355 proto udp >/dev/null
+fi
+say "имя в сети цеха: http://$(hostname) и http://$(hostname).local"
 exit 0
