@@ -27,7 +27,15 @@ def _jst(identifier: str, series: str, pattern: str, pitch: float, latch: str, *
 
 
 FAMILIES: tuple[dict[str, Any], ...] = (
-    _jst("jst-gh", "GH", r"^GHR-0*(\d+)V-S", 1.25, "ramp", conf="medium"),
+    # GH, XH, PH, ZH — checked against the JST catalogue sheets (eGH, eXH, ePH, eZH «Housing», copies of the JST PDFs
+    # found on GitHub, 01.10). Each front view has the wire end up; GH and XH show the lock face, PH and ZH the face with
+    # the contact-lance windows (ZH moulds the circuit numbers there). Turned to the wire side: lock up (GH, XH) or
+    # windows down (PH, ZH) -> contact 1 on the LEFT, as before. PH/ZH cross-check: their header front view has circuit 1
+    # on the right, so the mated housing shows the header its smooth back — the windows face away from the header wall.
+    # `body`: B = A + extra (A = (n−1)·pitch), h — thickness at the wire end without the lock, lock_* — the lock on top.
+    _jst("jst-gh", "GH", r"^GHR-0*(\d+)V-S", 1.25, "ramp", conf="high", src="JST eGH, Housing",
+         note="по чертежу JST eGH: защёлка сверху, контакт 1 слева",
+         body={"extra": 2.5, "h": 2.85, "len": 5.7, "lock_inset": 2.5, "lock_h": 1.3, "win": (0.7, 1.2)}),
     # SH — checked against the JST eSH housing drawing (owner's screenshot, 30.09): the top view has the wire end with
     # the protrusions at the top and Circuit No.1 ▽ on the left, so from the wire side with the ▽ face up contact 1 is
     # on the RIGHT (SUPPLYMAP draws it on the left — mirrored). Body from the same sheet: B = A + 4.0 with protrusions
@@ -37,10 +45,16 @@ FAMILIES: tuple[dict[str, Any], ...] = (
          body={"extra": 2.0, "h": 2.8, "rear_h": 2.1, "len": 5.0, "front_len": 1.8, "ear_len": 1.0, "win": (0.6, 1.3)},
          body_by=((r"V-S-B", {"ears": 1.0}),)),
     _jst("jst-nsh", "NSH", r"^NSHR-0*(\d+)V-S", 1.0, "ramp"),
-    _jst("jst-xh", "XH", r"^XHP-(\d+)", 2.5, "ramp", conf="medium"),
-    _jst("jst-ph", "PH", r"^PHR-(\d+)", 2.0, "ramp", conf="medium"),
+    _jst("jst-xh", "XH", r"^XHP-(\d+)", 2.5, "ramp", conf="high", src="JST eXH, Housing",
+         note="по чертежу JST eXH: защёлка сверху, контакт 1 слева",
+         body={"extra": 4.8, "h": 4.1, "len": 7.75, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}),
+    _jst("jst-ph", "PH", r"^PHR-(\d+)", 2.0, "windows", conf="high", src="JST ePH, Housing",
+         note="по чертежу JST ePH: окна фиксаторов снизу, контакт 1 слева",
+         body={"extra": 3.8, "h": 4.5, "len": 6.85, "win": (1.0, 1.6)}),
     _jst("jst-eh", "EH", r"^EHR-(\d+)", 2.5, "ramp"),
-    _jst("jst-zh", "ZH", r"^ZHR-(\d+)", 1.5, "ramp"),
+    _jst("jst-zh", "ZH", r"^ZHR-(\d+)", 1.5, "windows", conf="high", src="JST eZH, Housing",
+         note="по чертежу JST eZH: окна фиксаторов и цифры снизу, контакт 1 слева",
+         body={"extra": 3.0, "h": 3.4, "len": 4.8, "win": (0.8, 1.3)}),
     _jst("jst-vh", "VH", r"^VHR-(\d+)", 3.96, "lever"),
     _jst("jst-pa", "PA", r"^PAP-0*(\d+)V", 2.0, "lever"),
     _jst("jst-ze", "ZE", r"^ZER-0*(\d+)V", 1.5, "lever"),
@@ -51,7 +65,12 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     _jst("jst-sm-p", "SM (вилка)", r"^SMP-0*(\d+)V", 2.5, "lever", max=12, start="TR", conf="high", color_by=((r"V-B", BLACK),)),
     {"id": "molex-picoblade", "title": "Molex PicoBlade", "pattern": r"^51021-?0?(\d{1,2})00$|^51047-?0?(\d{1,2})00$", "count_groups": (1, 2), "pitch": 1.25, "rows": 1, "order": "row", "start": "TR", "latch": "friction", "color": IVORY, "conf": "medium"},
     {"id": "molex-minifit-jr", "title": "Molex Mini-Fit Jr.", "pattern": r"^39-?01-?2(\d{2})\d$|^5557-(\d{2})R", "count_groups": (1, 2), "pitch": 4.2, "rows": 2, "order": "row", "start": "BR", "latch": "lever", "color": IVORY, "conf": "medium"},
-    {"id": "molex-microfit", "title": "Molex Micro-Fit 3.0", "pattern": r"^43025-?(\d{2})0\d$", "pitch": 3.0, "rows": 2, "order": "row", "start": "BR", "latch": "lever", "color": BLACK, "conf": "medium"},
+    # Micro-Fit 43025 — Molex sales drawing SDA-43025: mating view (top view, latch up) has circuit 1 bottom-left and the
+    # last circuit top-right; from the wire side that mirrors to 1 bottom-right, rows counted right to left (as before).
+    # Width (A) = 3.00 per column + 0.85, 6.86 across the rows, 14.0 long, latch 3.86 wide.
+    {"id": "molex-microfit", "title": "Molex Micro-Fit 3.0", "pattern": r"^43025-?(\d{2})0\d$", "pitch": 3.0, "rows": 2, "order": "row", "start": "BR", "latch": "lever", "color": BLACK, "conf": "high",
+     "src": "Molex SDA-43025", "note": "по чертежу Molex SDA-43025: защёлка сверху, контакт 1 внизу справа",
+     "body": {"extra": 3.85, "h": 6.86, "len": 14.0, "lock_w": 3.86, "lock_h": 1.4, "win": (2.2, 2.2)}},
     {"id": "molex-microfit-1r", "title": "Molex Micro-Fit 3.0 (1 ряд)", "pattern": r"^43645-?0?(\d{1,2})00$", "pitch": 3.0, "rows": 1, "order": "row", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
     {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "pattern": r"^22-?55-?2(\d{2})1$", "pitch": 2.54, "rows": 2, "order": "col", "start": "TR", "latch": "friction", "color": BLACK, "conf": "low"},
     {"id": "te-multilock-040", "title": "TE Multilock 040", "pattern": r"^1740(?:47|45|46|44)-\d$", "fixed": 20, "pitch": 2.5, "rows": 2, "order": "col", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
@@ -78,7 +97,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "hirose-df11", "title": "Hirose DF11 (2 ряда)", "pattern": r"^DF11-(\d+)DS", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
     {"id": "jae-fix", "title": "JAE FI-X", "pattern": r"^FI-X(\d+)H", "pitch": 1.0, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": "#b9c0c6", "erp_only": True, "conf": "low"},
     # D-Sub: two staggered rows; the standard numbering is mirrored between the socket and the pin side.
-    {"id": "dsub", "title": "D-Sub", "pattern": r"^I?-?DS1033-0?(\d+)([FM])|^D-?SUB-?0?(\d+)([FM])|^D[BE]-?0?(9|15|25)([FMPS])", "kind": "dsub", "count_groups": (1, 3, 5), "gender_groups": (2, 4, 6), "pitch": 2.77, "color": "#c9ccd0", "erp_only": True, "conf": "high", "note": ""},
+    {"id": "dsub", "title": "D-Sub", "pattern": r"^I?-?DS1033-0?(\d+)([FM])|^D-?SUB-?0?(\d+)([FM])|^D[BE]-?0?(9|15|25)([FMPS])", "kind": "dsub", "count_groups": (1, 3, 5), "gender_groups": (2, 4, 6), "pitch": 2.77, "color": "#c9ccd0", "erp_only": True, "conf": "low", "note": "по стандарту D-Sub, чертёж производителя не сверен"},
     {"id": "deutsch-dt", "title": "Deutsch DT", "pattern": r"^DT0([46])-(\d+)([PS])", "kind": "dt", "count_group": 2, "pitch": 4.0, "rows": 2, "order": "row", "start": "TL", "snake": True, "latch": "lever", "color": "#8d9297", "cavity": "round", "erp_only": True, "conf": "low", "note": "нумерация по кругу; сверить с цифрами на корпусе"},
     {"id": "te-superseal", "title": "TE Superseal 1.5", "pattern": r"^(28210[4-8]|28208[0789]|282090)-1$", "table": {"282104": 2, "282105": 3, "282106": 4, "282107": 5, "282108": 6, "282080": 2, "282087": 3, "282088": 4, "282089": 5, "282090": 6}, "pitch": 3.5, "rows": 1, "order": "row", "start": "TL", "latch": "lever", "color": BLACK, "cavity": "round", "erp_only": True, "conf": "low"},
     {"id": "aviation-gx", "title": "Авиационный GX", "pattern": r"^GX(12|16|20)M?-(\d+)", "kind": "round", "count_group": 2, "round_auto": True, "color": "#b9c0c6", "erp_only": True, "conf": "low", "note": "нумерация — по цифрам на изоляторе"},
@@ -217,6 +236,7 @@ def _layout(
         "grid": grid, "round": round_layout, "male": male, "erp_only": bool(family.get("erp_only")),
         "conf": "low" if alias else family.get("conf", "low"),
         "note": f"в наборе артикул без исполнения — нарисован {alias}" if alias else family.get("note", ""),
+        "src": family.get("src", ""),
     }
 
 

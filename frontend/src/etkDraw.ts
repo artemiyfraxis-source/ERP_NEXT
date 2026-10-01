@@ -178,7 +178,7 @@ export function etkHousingSvg(hs: EtkHousing, x: number, y: number, s: number, b
 
 function housingCaption(hs: EtkHousing): string {
   return esc(`${str(hs.art)} · ${str(hs.title)}${hs.pitch ? `, шаг ${String(hs.pitch).replace(".", ",")} мм` : ""}` +
-    (hs.kind === "lug" || hs.kind === "banana" || hs.kind === "barrel" ? "" : ` · вид со стороны проводов${hs.latch === "ramp" || hs.latch === "lever" ? ", защёлка сверху" : hs.latch === "mark" ? ", метка ▽ сверху, над контактом 1" : ""}`));
+    (hs.kind === "lug" || hs.kind === "banana" || hs.kind === "barrel" ? "" : ` · вид со стороны проводов${hs.latch === "ramp" || hs.latch === "lever" ? ", защёлка сверху" : hs.latch === "mark" ? ", метка ▽ сверху, над контактом 1" : hs.latch === "windows" ? ", окна фиксаторов снизу" : ""}`));
 }
 
 function housingWarn(hs: EtkHousing): string {
