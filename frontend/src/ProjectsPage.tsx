@@ -196,9 +196,8 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
   }
 
   return <section className="page projects-page">
-    <header className="page-head"><h1>Проекты</h1>{all && <span className="page-count">{all.length}</span>}</header>
-    <p className="page-sub">Проект заводится из расчёта: номер, заказчик, сборки с тиражом и состав каждой. Он же попадает в реестр ERP вместе с позициями, поэтому техкарты, задания и план видят те же КБ. Внутри проекта — состав, спецификация и техкарты по каждой сборке.</p>
-    {canEdit && <div className="page-actions"><button className="primary" onClick={() => setCreating(true)}>Создать проект из расчёта</button></div>}
+    <header className="page-head"><h1>Проекты</h1>{all && <span className="page-count">{all.length}</span>}
+      {canEdit && <div className="page-actions"><button className="primary" onClick={() => setCreating(true)}>Создать проект из расчёта</button></div>}</header>
     {creating && <CreateFromCalc canRequest={canRequest} close={() => setCreating(false)} done={(project, note, bad) => {
       setCreating(false);
       if (bad) setError(note); else setNotice(note);
@@ -207,7 +206,7 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {all === null && !error && <div className="empty">Загрузка…</div>}
-    {all && !all.length && <div className="empty">Наборов пока нет — загрузи первый из расчёта.</div>}
+    {all && !all.length && <div className="empty">Проектов пока нет — создайте первый из расчёта.</div>}
     {all && all.length > 0 && <>
       <div className="kit-filters">
         <label>Сортировка <select aria-label="Сортировка" value={sort} onChange={(event) => { setSort(event.target.value as SortKey); remember("kitSort", event.target.value); }}>
@@ -303,7 +302,7 @@ function CreateFromCalc({ canRequest, close, done }: {
   const title = "Создать проект из расчёта";
   return <div className="panel kit-modal" role="dialog" aria-label={title}>
     <h3>{title}</h3>
-    <p className="page-sub">Нужна только ссылка: номер проекта, заказчик, сборки и состав читаются из листов ЗКЗ и СПЯ. Проект заведётся в реестре ERP вместе с позициями. Если он уже есть — обновится состав, правки количеств сохранятся, статус и дедлайн не тронутся.</p>
+    <p className="page-sub">Номер, заказчик, сборки и состав читаются из листов ЗКЗ и СПЯ расчёта.</p>
     <div className="form-grid">
       <label className="wide">Ссылка на расчёт<input aria-label="Ссылка на расчёт" value={url} placeholder="https://docs.google.com/spreadsheets/…" onChange={(event) => setUrl(event.target.value)} /></label>
       <label>№ проекта<input value={form.number} placeholder="пусто — возьмём из расчёта" onChange={(event) => setForm({ ...form, number: event.target.value })} /></label>
@@ -538,7 +537,6 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
   /* SUPPLYMAP renderSostav_: простая таблица без поиска и колонок — сборок в проекте единицы. Клик по строке
      открывает генератор этой сборки; «готова · N эт.» ведёт на вкладку её ТК. */
   return <div className="kit-pane">
-    <p className="page-sub">Позиции проекта: сборки, их количество и приложенная КД. Клик по строке открывает генератор этой сборки. Состав каждой — на вкладке «Спецификация», техкарта собирается в «Генераторе». КД хранится в ERP.</p>
     <input ref={fileRef} type="file" hidden data-testid="kd-file" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
     {!card.assemblies.length ? <div className="empty">В проекте нет сборок.</div> : <div className="table-wrap kit-sostav"><table aria-label="Состав проекта">
       <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th></tr></thead>
@@ -576,7 +574,6 @@ function SupplyTab({ project }: { project: string }) {
   const stock = lines.filter((line) => line.stage === "со склада").length;
   const tone = (line: KitsetSupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : line.stage === "со склада" ? "info" : "warn";
   return <div className="kit-pane">
-    <p className="page-sub">Позиции спецификации против закупки. Связь — по артикулу КД и проекту в заявках и закупке. «Не заведено» — позиции, по которым заявки нет вообще.</p>
     <div className="kit-supply-summary">
       {([["Принято на склад", received, "ok"], ["В работе снабжения", lines.length - missing - received - stock, "warn"], ["Со склада, без закупки", stock, "info"], ["Не заведено", missing, "danger"]] as Array<[string, number, string]>).map(([label, value, toneName]) =>
         <div key={label} className="panel kit-supply-count"><strong className={`tone-${toneName}`}>{value}</strong><span>{label}</span></div>)}
@@ -665,7 +662,7 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
   ];
 
   return <div className="kit-pane">
-    <p className="page-sub">Артикул КД, тип и ссылка — из расчёта. Наименование — то, что закуплено под этот артикул КД, пустое — впиши сам. По типу генератор раскладывает состав по операциям. «На партию» = расход на штуку × кол-во с учётом брака. «ГРН склада» — с какой складской строки брать: выбери, и при отправке на комплектацию количество зарезервируется. Не выбрал — позиция всё равно уедет заявкой и будет ждать поставки, ГРН к ней подцепит кладовщик после приёмки. Правки сохраняются сами и переживают обновление из расчёта.</p>
+    <p className="page-sub">«ГРН склада» резервируется при отправке на комплектацию; без ГРН позиция ждёт поставки. Правки сохраняются сами.</p>
     {canEdit
       ? <div className="page-actions"><button className="primary" onClick={() => setIssuing(true)}>Отправить на комплектацию</button><span className="muted kit-autosave">{autosave}</span></div>
       : <p className="page-sub">Раздел открыт на просмотр — править и отправлять нельзя.</p>}
@@ -739,7 +736,7 @@ function IssueDialog({ project, close, done }: { project: string; close: () => v
   }
   return <div className="panel kit-modal" role="dialog" aria-label="Отправить на комплектацию">
     <h3>Отправить на комплектацию</h3>
-    <p className="page-sub">На каждую сборку набора уйдёт отдельная заявка: назначение — {project} и индекс КБ. Позиции с выбранным ГРН сразу встают в резерв, остальные уедут в заявку ждать поставки — кладовщик подцепит к ним ГРН после приёмки.</p>
+    <p className="page-sub">По заявке на каждую КБ проекта {project}. Позиции с ГРН встают в резерв, остальные ждут поставки.</p>
     <label>Дедлайн<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="page-actions">

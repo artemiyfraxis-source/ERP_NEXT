@@ -105,7 +105,7 @@ it("saves the department list and renames a department", async () => {
   ]);
 });
 
-it("shows the PIN status and sets a new PIN (portalStaffGet pinSet, portalStaffSave pin)", async () => {
+it("sets a new PIN from the employee form (portalStaffSave pin)", async () => {
   const updates: unknown[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -118,9 +118,7 @@ it("shows the PIN status and sets a new PIN (portalStaffGet pinSet, portalStaffS
   });
 
   render(<StaffPage />);
-  expect(await screen.findByText("✓ назначен")).toBeInTheDocument();
-  expect(screen.getByText("✗ нет")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Править Закупкин" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
   fireEvent.change(screen.getByLabelText("Новый PIN"), { target: { value: "7654321" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 

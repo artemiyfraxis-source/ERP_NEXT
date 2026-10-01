@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { displayCell } from "./format";
 
 /* Общая таблица разделов — то, что в SUPPLYMAP давал лист Google и портальные таблицы (portalGetView,
    portalSaveUserCols): поиск по всем словам, фильтр по значениям колонки, сортировка по заголовку,
@@ -299,8 +300,8 @@ export function DataTable<T>({
           {visible.map((column, index) => (
             <td key={column.key} className={[column.numeric ? "num" : column.wrap ? "text" : "", index === 0 ? "key" : ""].join(" ").trim() || undefined}>
               {column.wrap
-                ? <div className="cell-wrap">{column.render ? column.render(row) : column.value(row) ?? ""}</div>
-                : column.render ? column.render(row) : column.value(row) ?? ""}
+                ? <div className="cell-wrap">{column.render ? column.render(row) : displayCell(column.value(row)) ?? ""}</div>
+                : column.render ? column.render(row) : displayCell(column.value(row)) ?? ""}
             </td>
           ))}
         </tr>

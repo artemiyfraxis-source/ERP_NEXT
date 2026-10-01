@@ -190,12 +190,7 @@ export function AccessPage() {
 
   return <section className="page access-page">
     <header className="page-head"><h1>Доступы</h1></header>
-    <p className="page-sub">
-      Кто какие разделы видит. Раздел открыт, только если <b>выдан явно</b>: пустая ячейка — <b>закрыт</b>{" "}
-      (у технолога-администратора пустая ячейка — <b>полный</b>), <b>просмотр</b> снимает правку. Персональное
-      исключение сильнее роли. Технолог, снабжение, директор производства и генеральный директор всегда имеют полный
-      доступ ко всем разделам — их урезать нельзя. «Доступы» всегда открыты администратору.
-    </p>
+    <p className="page-sub">Пустая ячейка — раздел закрыт, «просмотр» — без правки. Исключение по сотруднику сильнее роли. «полный 🔒» — роль всегда с полным доступом.</p>
     <div className="shipping-tabs">
       <button className={tab === "roles" ? "secondary active" : "secondary"} onClick={() => setTab("roles")}>Роли × разделы</button>
       <button className={tab === "people" ? "secondary active" : "secondary"} onClick={() => setTab("people")}>Исключения по сотрудникам</button>
@@ -204,10 +199,6 @@ export function AccessPage() {
     {notice && <div className="success-banner">{notice}</div>}
     {data && tab === "roles" && <>
       <Legend />
-      <p className="access-note">
-        Технолог, специалист по снабжению, директор производства и генеральный директор всегда имеют полный доступ ко
-        всем разделам — их колонки показаны как «полный 🔒» и не редактируются, урезать эти роли нельзя.
-      </p>
       <div className="access-matrix">
         <DataTable label="Матрица доступов" rows={data.sections} rowKey={(section) => section.key} columns={matrixColumns} emptyText="Разделов нет" />
       </div>

@@ -4,6 +4,7 @@ import {
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { openPrintSheets } from "./print";
+import { formatDate } from "./format";
 
 /* Отгрузка — вкладки SUPPLYMAP openShipHub: «Проекты» (карточка отгрузки проекта), «Отправки» (реестр всех
    отправок) и «Готовая продукция» (склад ГП). Все три — над одними данными, как portalShipList. */
@@ -77,7 +78,6 @@ export function ShippingPage({ principal }: { principal: Principal }) {
   const context = { goods, shipments, addressees, canManage, canWarehouse, canEdit, busy, mutate };
   return <section className="page shipping-page">
     <header className="page-head"><h1>Готовая продукция и отгрузка</h1><span className="page-count">{tab === "goods" ? goods.length : tab === "shipments" ? shipments.length : new Set(goods.map((good) => good.project)).size}</span></header>
-    <p className="page-sub">Один реестр хранит остаток ГП: принято минус отобрано в отправки.</p>
     <div className="shipping-tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? "secondary active" : "secondary"} onClick={() => setTab(key)}>{label}</button>)}</div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
@@ -165,7 +165,6 @@ function ProjectsTab(context: Context) {
     { key: "stage", title: "Этап", value: (row) => stageName(row.stage), filter: true },
   ];
   return <>
-    <p className="muted">Карточка отгрузки встаёт сама при заведении проекта — по строке на КБ. В карточке: принять от цеха, упаковать, сформировать отгрузочные и отправить.</p>
     <DataTable label="Проекты на отгрузку" storageKey="shipping-projects" rows={rows} columns={columns} rowKey={(row) => row.project}
       groupBy={(row) => stageName(row.stage)} exportName="Отгрузка — проекты"
       emptyText="Проектов на отгрузку нет — карточки встают при заведении проекта из расчёта."
@@ -250,7 +249,7 @@ function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, busy
   const rows = useMemo(() => shipmentRows(shipments), [shipments]);
   const columns: DataColumn<Shipment>[] = [
     { key: "status", title: "Статус", value: (row) => row.status, filter: true },
-    { key: "number", title: "№ отправки", value: (row) => row.number, render: (row) => <><strong>{row.number}</strong><small>{row.created_at.slice(0, 10)}</small></> },
+    { key: "number", title: "№ отправки", value: (row) => row.number, render: (row) => <><strong>{row.number}</strong><small>{formatDate(row.created_at.slice(0, 10))}</small></> },
     { key: "receiver", title: "Получатель · точка отгрузки", value: (row) => `${row.receiver || row.customer} ${row.shipping_point}`, wrap: true,
       render: (row) => <>{row.receiver || row.customer || "—"}<small>{row.shipping_point || "точка не указана"}{row.deadline ? ` · до ${row.deadline}` : ""}</small>{overdue(row) && <small className="danger-text">просрочена</small>}</> },
     { key: "projects", title: "Проект · КБ", value: (row) => [...new Set(row.lines.map((line) => `${line.project} ${line.item_index}`))].join(", "), wrap: true },
@@ -423,7 +422,7 @@ function BoxesEditor({ shipment, busy, mutate, onDone }: { shipment: Shipment; b
   const fields: Array<[keyof BoxDraft, string, string]> = [["kind", "Вид упаковки", "Короб"], ["dims", "Габариты ШхДхВ, см", "30х30х30"], ["net", "Вес нетто, кг", "13,6"], ["gross", "Вес брутто, кг", "14,2"], ["seal", "Пломба №", ""]];
   return <div className="panel shipping-boxes">
     <strong>{shipment.pl_number ? "Перевыпустить документы" : "Отгрузочные документы"} · {shipment.number}</strong>
-    <p className="muted">Разложи упакованное по коробам: на каждый короб — своя упаковочная ведомость, отгрузочная — одна на отправку.{shipment.pl_number ? ` Номера ${shipment.pl_number} и ${shipment.dn_number} сохранятся.` : ""}</p>
+    <p className="muted">Разложите упакованное по коробам: на каждый короб — своя упаковочная ведомость, отгрузочная — одна на отправку.{shipment.pl_number ? ` Номера ${shipment.pl_number} и ${shipment.dn_number} сохранятся.` : ""}</p>
     <label>Коробов<input aria-label="Коробов" type="number" min="1" max="30" value={boxes.length} onChange={(event) => resize(Number(event.target.value))} /></label>
     <div className="table-scroll"><table><thead><tr><th>КБ</th><th>Упак.</th>{boxes.map((_, index) => <th key={index}>BXN {index + 1}</th>)}</tr></thead><tbody>
       {packed.map((item) => <tr key={item.index}><td><strong>{item.index}</strong><small>{item.name}</small></td><td>{item.qty}</td>{boxes.map((box, index) => <td key={index}><input aria-label={`${item.index} в BXN ${index + 1}`} value={box.q[item.index] ?? ""} onChange={(event) => change(index, { q: { ...box.q, [item.index]: event.target.value } })} /></td>)}</tr>)}

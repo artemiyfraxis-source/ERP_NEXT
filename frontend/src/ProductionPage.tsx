@@ -123,7 +123,6 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       <span className="page-count">{tasks.length}</span>
       {canEdit && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></div>}
     </header>
-    <p className="page-sub">{mine ? "Берите в работу только подтверждённые коробки предыдущего этапа. Выработка и расход сохраняются без перезаписи." : "Маршрут копируется из техкарты при запуске. Автоплан учитывает смену, отсутствия, компетенции и передаточную партию."}</p>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
@@ -910,7 +909,7 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
         <label>Годные ОТК<input aria-label={`Годные ОТК ${box.number}`} type="number" min="0" step="1" value={draft.accepted} onChange={(event) => update(box.id, { accepted: event.target.value })} /></label>
         <label>Брак ОТК<input aria-label={`Брак ОТК ${box.number}`} type="number" min="0" step="1" value={draft.rejected} onChange={(event) => update(box.id, { rejected: event.target.value })} /></label>
         {Number(draft.rejected) > 0 && <><label>Характер<input value={draft.character} onChange={(event) => update(box.id, { character: event.target.value })} /></label><label>Описание<textarea value={draft.description} onChange={(event) => update(box.id, { description: event.target.value })} /></label></>}
-        <label>Средства измерения<select multiple aria-label={`Средства измерения ${box.number}`} value={draft.instrumentIds} onChange={(event) => update(box.id, { instrumentIds: Array.from(event.target.selectedOptions, (option) => option.value) })}>{instruments.filter((item) => item.status === "Действует").map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · поверка до {item.verification_due.slice(0, 10)}</option>)}</select></label>
+        <label>Средства измерения<select multiple aria-label={`Средства измерения ${box.number}`} value={draft.instrumentIds} onChange={(event) => update(box.id, { instrumentIds: Array.from(event.target.selectedOptions, (option) => option.value) })}>{instruments.filter((item) => item.status === "Действует").map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · поверка до {formatDay(item.verification_due)}</option>)}</select></label>
         {!totalMatches && <small className="danger-text">Сумма должна быть {box.available}.</small>}
         <button className="primary small" disabled={busy || !totalMatches || (Number(draft.rejected) > 0 && (!draft.character.trim() || !draft.description.trim()))} onClick={() => void mutate(`qc:${box.id}`, () => productionApi.inspectBox(box.id, {
           version: box.version, accepted: Number(draft.accepted), rejected: Number(draft.rejected),
@@ -932,7 +931,7 @@ function InstrumentRegistry({ instruments, busy, mutate }: {
   return <div className="panel instrument-registry">
     <div className="manual-stock-head"><h2>Средства измерения</h2><button className="secondary small" onClick={() => setShow((value) => !value)}>+ Добавить СИ</button></div>
     {show && <div className="production-launch-grid">{(["inventory_number", "name", "instrument_type", "verification_number"] as const).map((field) => <label key={field}>{({ inventory_number: "Инв. №", name: "Наименование", instrument_type: "Тип", verification_number: "№ поверки" })[field]}<input value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} /></label>)}<label>Поверено<input type="datetime-local" value={draft.verified_at} onChange={(event) => setDraft({ ...draft, verified_at: event.target.value })} /></label><label>Поверка до<input type="datetime-local" value={draft.verification_due} onChange={(event) => setDraft({ ...draft, verification_due: event.target.value })} /></label><button className="primary small" disabled={busy || Object.values(draft).some((value) => !value.trim())} onClick={() => void mutate("instrument:new", () => productionApi.registerInstrument(draft))}>Сохранить СИ</button></div>}
-    <div className="calendar-absences">{instruments.map((item) => <div key={item.id}><span><strong>{item.inventory_number}</strong> · {item.name} · {item.instrument_type}</span><small>{item.verification_number} · до {item.verification_due.slice(0, 10)} · {item.status}</small></div>)}</div>
+    <div className="calendar-absences">{instruments.map((item) => <div key={item.id}><span><strong>{item.inventory_number}</strong> · {item.name} · {item.instrument_type}</span><small>{item.verification_number} · до {formatDay(item.verification_due)} · {item.status}</small></div>)}</div>
   </div>;
 }
 

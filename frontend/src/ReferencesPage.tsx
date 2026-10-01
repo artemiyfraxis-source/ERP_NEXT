@@ -237,7 +237,6 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
 
   return <section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{current && count(current) !== null && <span className="page-count">{count(current)}</span>}</header>
-    <p className="page-sub">Операции и шаблоны техкарт, оборудование, терминалы, коаксиальные разъёмы, провода и материалы, СПР.КАБ и карты соответствий — одна база, каждая вкладка как лист. Техкарты конкретных проектов открываются из «Проектов».</p>
     <nav className="db-tabs" aria-label="Вкладки базы данных">
       {groups.map((group) => <div className="db-tab-group" key={group.title}>
         <span className="db-tab-group-title">{group.title}</span>

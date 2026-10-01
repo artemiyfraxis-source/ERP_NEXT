@@ -11,7 +11,7 @@ const MANUAL_CHECKS = [
 ];
 
 const COLUMNS: DataColumn<ReceivingLine>[] = [
-  { key: "legacy_id", title: "System ID", value: (line) => line.legacy_id },
+  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id },
   { key: "name", title: "Наименование", value: (line) => itemTitle(line), wrap: true },
   { key: "supplier", title: "Поставщик", value: (line) => line.supplier, filter: true },
   { key: "order", title: "№ заказа", value: (line) => line.order_number ?? "" },
@@ -225,13 +225,14 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
 
   return (
     <section className="page">
-      <header className="page-header">
-        <div><span className="eyebrow">Входной контроль</span><h1>Приёмка</h1><p>{readOnly ? "Приёмка открыта вам только на просмотр." : "Проверка поставки, ГРН и передача на склад."}</p></div>
-        <div className="header-actions">
+      <header className="page-head">
+        <h1>Приёмка</h1><span className="page-count">{lines.length}</span>
+        <div className="page-actions">
           {!readOnly && <button className="secondary" disabled={Boolean(busy)} onClick={() => setReturning((current) => !current)}>Возврат поставщику</button>}
           <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
         </div>
       </header>
+      {readOnly && <p className="page-sub">Приёмка открыта вам только на просмотр.</p>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {returning && <SupplierReturnPanel onDone={() => void reload()} onClose={() => setReturning(false)} />}
       {notice && <div className="success-banner" role="status">{notice}</div>}
