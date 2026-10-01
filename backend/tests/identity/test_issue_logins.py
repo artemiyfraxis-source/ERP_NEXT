@@ -110,3 +110,18 @@ def test_a_run_without_new_logins_keeps_the_list(sessions, tmp_path, monkeypatch
     kept = [p for p in tmp_path.iterdir() if p.name.startswith("logins-")]
     assert len(kept) == 1 and kept[0].read_bytes() == first
     assert "ivanov" in out.read_text(encoding="utf-8-sig")
+
+
+def test_the_demo_preview_account_is_switched_off(sessions):
+    """A local base moved to the server brings the «preview» admin with the password printed in scripts/demo."""
+    with sessions() as session:
+        user = IdentityUser(id=uuid4(), login="preview", email="preview@example.com", name="Артемий",
+                            department="Руководство", role="admin", site=None, active=True)
+        provision_user(session, user, hash_password("Preview-2026!"))
+        session.commit()
+    with sessions() as session:
+        rows = issue(session, reset=False)
+        session.commit()
+    assert "preview" not in {r["Логин"] for r in rows}
+    with pytest.raises(Exception):
+        login("preview", "Preview-2026!", NOW, SqlAlchemyIdentityUnitOfWork(sessions), client_key="t")
