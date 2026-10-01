@@ -3,7 +3,7 @@
 #   bash /opt/erp/app/deploy/install-auto-update.sh
 # Creates the read-only deploy key and prints its public half: add it once at
 #   https://github.com/artemiyfraxis-source/ERP_NEXT/settings/keys/new  (title erp-server, «Allow write access» OFF)
-# then installs the systemd timer (8:30 and 18:00 MSK) and the `erp-update` command:
+# then installs the systemd timer (2:00 and 6:00 MSK) and the `erp-update` command:
 #   erp-update now     # update right away (a minute of downtime — better not in the middle of the shift)
 #   erp-update status  # last run, revision, banner
 set -euo pipefail
@@ -30,8 +30,8 @@ cat > /etc/systemd/system/erp-auto-update.timer <<UNIT
 [Unit]
 Description=ERP auto-update before and after the shift
 [Timer]
-OnCalendar=*-*-* 08:30:00
-OnCalendar=*-*-* 18:00:00
+OnCalendar=*-*-* 02:00:00
+OnCalendar=*-*-* 06:00:00
 Persistent=false
 [Install]
 WantedBy=timers.target
@@ -52,7 +52,7 @@ systemctl enable --now erp-auto-update.timer >/dev/null
 
 export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 if git ls-remote git@github.com:artemiyfraxis-source/ERP_NEXT.git main >/dev/null 2>&1; then
-  echo "Автообновление включено: GitHub доступен, обновление в 8:30 и 18:00, вручную — erp-update now."
+  echo "Автообновление включено: GitHub доступен, обновление в 2:00 и 6:00, вручную — erp-update now."
 else
   echo "Автообновление включено, но GitHub пока не пускает. Добавь ключ (только чтение) один раз:"
   echo "  https://github.com/artemiyfraxis-source/ERP_NEXT/settings/keys/new"
