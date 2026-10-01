@@ -234,6 +234,46 @@ def update_employee(
         return updated
 
 
+@dataclass(frozen=True)
+class RemovedEmployee:
+    user: IdentityUser
+    deleted: bool  # True — erased; False — has history, so switched off and hidden (the id keeps owning it)
+
+
+def remove_employee(user_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> RemovedEmployee:
+    """«Удалить» on «Сотрудники» (owner 2026-10-01 «функцию по удалению сотрудника»). An employee nobody's work points
+    at (never assigned, never moved stock, only signed in at most) is erased with their login. One with history is
+    switched off instead — login closed, sessions revoked, gone from every pick list — because operations, ЖУК, stock
+    moves and the audit still name them. Deleting a switched-off employee with history changes nothing (409)."""
+    if user_id == actor.id:
+        raise StaffConflict("Себя удалить нельзя — это сделает другой администратор.")
+    now = as_utc(now)
+    with uow:
+        current = uow.identity.user_for_update(user_id)
+        if current is None:
+            raise KeyError("Сотрудник не найден.")
+        if current.role == "admin" and current.active:
+            ensure_access_keeper(uow, user=replace(current, active=False))
+        details = {"login": current.login, "name": current.name}
+        if uow.identity.user_history(user_id) == 0:
+            uow.identity.delete_user(user_id)
+            _audit(uow, user_id, "identity.user_deleted", actor, now, details)
+            uow.commit()
+            return RemovedEmployee(user=replace(current, active=False), deleted=True)
+        if not current.active:
+            raise StaffConflict(
+                f"У сотрудника {current.name} есть история работы, поэтому стереть его нельзя; он уже отключён и скрыт."
+            )
+        updated = replace(current, active=False)
+        uow.identity.update_user(updated)
+        uow.identity.revoke_user_sessions(user_id, now)
+        _audit(uow, user_id, "identity.user_updated", actor, now, {
+            **details, "changes": json.dumps({"active": [True, False]}, ensure_ascii=False), "reason": "удаление",
+        })
+        uow.commit()
+        return RemovedEmployee(user=updated, deleted=False)
+
+
 def ensure_admin_remains(user_id: UUID, uow: UnitOfWork) -> None:
     """The same last-admin rule for the standalone deactivation route; call inside an open unit of work."""
     current = uow.identity.user_for_update(user_id)

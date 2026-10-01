@@ -17,6 +17,7 @@ export function StaffPage() {
   const [renameSource, setRenameSource] = useState("");
   const [renameTarget, setRenameTarget] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showOff, setShowOff] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -67,6 +68,16 @@ export function StaffPage() {
     return parts.join(", ");
   });
 
+  const remove = (user: Employee) => {
+    if (!window.confirm(`Удалить сотрудника ${user.name}? Если за ним есть операции, выдачи или другие записи, он будет отключён и скрыт, история останется.`)) return;
+    void run(async () => {
+      const { deleted } = await staffApi.remove(user.id);
+      if (editing?.id === user.id) setEditing(null);
+      await load();
+      return deleted ? `Сотрудник ${user.name} удалён` : `Сотрудник ${user.name} отключён и скрыт: за ним есть история работы`;
+    });
+  };
+
   const saveDepartments = () => run(async () => {
     const saved = await staffApi.saveDepartments(departments.split(/\r?\n/));
     setData((current) => current && { ...current, departments: saved.departments });
@@ -88,12 +99,16 @@ export function StaffPage() {
   }
 
   const roleLabel = (key: string) => data?.roles.find((role) => role.key === key)?.label ?? key;
+  const offCount = data?.users.filter((user) => !user.active).length ?? 0;
+  const shown = data?.users.filter((user) => showOff || user.active) ?? [];
 
   return <section className="page staff-page">
-    <header className="page-head"><h1>Сотрудники</h1><span className="page-count">{data?.users.length ?? 0}</span></header>
+    <header className="page-head"><h1>Сотрудники</h1><span className="page-count">{shown.length}</span>
+      {offCount > 0 && <label className="check-inline"><input type="checkbox" checked={showOff} onChange={(event) => setShowOff(event.target.checked)} /> Показать отключённых ({offCount})</label>}
+    </header>
     <p className="page-sub">
       <b>Роль</b> — что сотруднику открыто, <b>отдел</b> — где он работает; одно из другого не выводится.
-      Отключённый сотрудник не может войти, его история остаётся. Должен остаться хотя бы один администратор.
+      Отключённый сотрудник не может войти и скрыт из списков, его история остаётся. «Удалить» стирает сотрудника без истории, остальных отключает. Должен остаться хотя бы один администратор.
     </p>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
@@ -101,7 +116,7 @@ export function StaffPage() {
       <div className="table-wrap"><table aria-label="Сотрудники">
         <thead><tr><th>ФИО</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>PIN</th><th>Вход</th><th /></tr></thead>
         <tbody>
-          {data.users.map((user) => <tr key={user.id} className={user.active ? undefined : "muted"}>
+          {shown.map((user) => <tr key={user.id} className={user.active ? undefined : "muted"}>
             <td className="text"><strong>{user.name}</strong></td>
             <td className="text">{user.login}{user.email !== user.login && <><br /><small>{user.email}</small></>}</td>
             <td>{user.department || "—"}</td>
@@ -109,7 +124,10 @@ export function StaffPage() {
             <td>{roleLabel(user.role)}</td>
             <td>{user.pin_set ? "✓ назначен" : "✗ нет"}</td>
             <td>{user.active ? "активен" : "отключён"}</td>
-            <td><button className="secondary small" aria-label={`Править ${user.name}`} onClick={() => startEdit(user)}>Править</button></td>
+            <td className="row-actions">
+              <button className="secondary small" aria-label={`Править ${user.name}`} onClick={() => startEdit(user)}>Править</button>{" "}
+              <button className="secondary small" aria-label={`Удалить ${user.name}`} disabled={busy} onClick={() => remove(user)}>Удалить</button>
+            </td>
           </tr>)}
         </tbody>
       </table></div>
