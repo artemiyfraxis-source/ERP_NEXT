@@ -6,8 +6,8 @@
 
 A short login is the transliterated surname («Безменов Никита» → bezmenov; a clash adds the first letter of the name,
 then a digit). The e-mail keeps working as a login too. Whoever already has a short login (no «@») keeps it and their
-password unless --reset or the password is one printed in this repo (PUBLIC_PASSWORDS); the technical «admin»
-account is left alone. The list is a CSV in UTF-8 with BOM and «;» —
+password unless --reset; the technical «admin» account is left alone. An account whose password is printed in this
+repo (PUBLIC_PASSWORDS — the demo «preview») is switched off. The list is a CSV in UTF-8 with BOM and «;» —
 Excel and Notepad open the Cyrillic as is. Passwords are printed nowhere else. A run that issues nothing leaves the
 list alone; a run that issues something keeps the previous list as logins-<stamp>.csv. update.sh runs it after every
 deploy, so a new employee gets a login on the next update.
@@ -36,8 +36,8 @@ TRANSLIT = {
 }
 # No 0/O, 1/l/I: the list is read off paper.
 ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-# Passwords printed in this repo (the local demo «preview» account, scripts/demo). An account moved from a local base
-# with one of them would be open to anyone who reads the repo, so it always gets a fresh password.
+# Passwords printed in this repo (the local demo «preview» admin, scripts/demo). An account moved from a local base
+# with one of them would be open to anyone who reads the repo, so it is switched off (active=False, reversible).
 PUBLIC_PASSWORDS = ("Preview-2026!",)
 
 
@@ -79,8 +79,11 @@ def issue(session: Session, *, reset: bool) -> list[dict[str, str]]:
             session.add(IdentityIdentifierRow(identifier=login, user_id=user.id))  # the e-mail identifier stays
             user.login = login
         credential = session.get(IdentityCredentialRow, user.id)
-        public = credential is not None and any(verify_password(p, credential.password_hash) for p in PUBLIC_PASSWORDS)
-        if not has_short or reset or public:
+        if credential is not None and any(verify_password(p, credential.password_hash) for p in PUBLIC_PASSWORDS):
+            user.active = False
+            print(f"Отключён вход {user.login}: пароль из демо записан в репозитории")
+            continue
+        if not has_short or reset:
             password = new_password()
             if credential is None:
                 session.add(IdentityCredentialRow(user_id=user.id, password_hash=hash_password(password)))

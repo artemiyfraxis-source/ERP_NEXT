@@ -112,8 +112,8 @@ def test_a_run_without_new_logins_keeps_the_list(sessions, tmp_path, monkeypatch
     assert "ivanov" in out.read_text(encoding="utf-8-sig")
 
 
-def test_the_demo_preview_password_is_always_replaced(sessions):
-    """A local base moved to the server brings «preview» with the password printed in scripts/demo."""
+def test_the_demo_preview_account_is_switched_off(sessions):
+    """A local base moved to the server brings the «preview» admin with the password printed in scripts/demo."""
     with sessions() as session:
         user = IdentityUser(id=uuid4(), login="preview", email="preview@example.com", name="Артемий",
                             department="Руководство", role="admin", site=None, active=True)
@@ -122,9 +122,6 @@ def test_the_demo_preview_password_is_always_replaced(sessions):
     with sessions() as session:
         rows = issue(session, reset=False)
         session.commit()
-    password = {r["Логин"]: r["Пароль"] for r in rows}["preview"]
-    assert password != "(прежний)"
-    uow = SqlAlchemyIdentityUnitOfWork(sessions)
-    assert login("preview", password, NOW, uow, client_key="t").principal.email == "preview@example.com"
-    with sessions() as session:
-        assert {r["Логин"]: r["Пароль"] for r in issue(session, reset=False)}["preview"] == "(прежний)"
+    assert "preview" not in {r["Логин"] for r in rows}
+    with pytest.raises(Exception):
+        login("preview", "Preview-2026!", NOW, SqlAlchemyIdentityUnitOfWork(sessions), client_key="t")
