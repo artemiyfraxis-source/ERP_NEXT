@@ -122,8 +122,8 @@ function OperationCards({ entries, onOpen, toolbar }: { entries: OperationEntry[
           const machine = entry.op?.["Машина"]?.trim();
           const type = entry.op?.["Тип операции"]?.trim();
           return <button type="button" key={entry.key} className={entry.template ? "tr-card" : "tr-card tr-card-op"} onClick={() => onOpen(entry)}>
-            <strong className="tr-code">{entry.code}</strong>
-            <span className="tr-name">{entry.name || "—"}</span>
+            <strong className="tr-name">{entry.name || recordCategory(entry.code)}</strong>
+            <span className="tr-code">{entry.code}</span>
             {entry.template ? (entry.template.first_step && <span className="tr-first">{entry.template.first_step}</span>)
               : <span className="tr-first"><b className="danger-text">нет шаблона ТК</b> · только строка БД.ОП</span>}
             {(machine || type) && <span className="tr-meta">{[machine, type].filter(Boolean).join(" · ")}</span>}

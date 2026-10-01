@@ -403,6 +403,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tr-card { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; }
 .tr-card:hover { border-color: var(--primary); }
 .tr-name { font-weight: 600; font-size: 13px; }
+.tr-card .tr-code { margin-top: -3px; color: var(--muted-foreground); font-size: 11.5px; }
 .tr-first { color: var(--muted-foreground); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .tr-meta { color: var(--muted-foreground); font-size: 11.5px; }
 .tr-paper { display: grid; gap: 12px; }
@@ -1253,3 +1254,4 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .staff-dep-list { display: grid; gap: 8px; width: min(100%, 420px); }
 .staff-dep-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .staff-dep-rename input { width: 240px; }
+.operations-queue { margin-left: auto; color: var(--muted-foreground); font-size: 13px; }
