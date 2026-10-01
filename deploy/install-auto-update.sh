@@ -39,7 +39,7 @@ UNIT
 cat > /usr/local/bin/erp-update <<CMD
 #!/usr/bin/env bash
 case "\${1:-status}" in
-  now) touch $ERP_HOME/update-now && systemctl start erp-auto-update.service; tail -3 $ERP_HOME/status/update-last.log ;;
+  now) touch $ERP_HOME/update-now && systemctl start erp-auto-update.service; journalctl -u erp-auto-update -n 2 --no-pager -o cat ;;
   status) echo "версия: \$(cat $ERP_HOME/app/REVISION)"; systemctl list-timers erp-auto-update.timer --no-pager | head -2
           [ -f $ERP_HOME/status/update-status.json ] && cat $ERP_HOME/status/update-status.json && echo
           tail -5 $ERP_HOME/status/update-last.log 2>/dev/null ;;

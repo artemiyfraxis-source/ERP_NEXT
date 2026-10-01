@@ -53,7 +53,8 @@ current=$(cat "$ERP_HOME/app/REVISION" 2>/dev/null || echo none)
 # 2. Up to date (REVISION may be a short sha written by push.ps1).
 if [ -n "$current" ] && [ "${full#"$current"}" != "$full" ]; then
   [ -f "$status" ] && clear_status update
-  exit 0
+  rm -f "$ERP_HOME/update-now"
+  echo "уже последняя версия: $current"; exit 0
 fi
 
 # Retry budget for a failing commit: 3 scheduled runs; `erp-update now` ($ERP_HOME/update-now) always tries.
