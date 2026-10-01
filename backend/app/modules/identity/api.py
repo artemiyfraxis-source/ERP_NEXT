@@ -47,6 +47,7 @@ from .staff import (
     StaffConflict,
     create_employee,
     pin_assigned,
+    remove_employee,
     rename_department,
     save_departments,
     staff_directory,
@@ -395,6 +396,20 @@ def update_employee_route(
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     return {"user": _employee(user, pin_assigned(user.id, uow_factory()))}
+
+
+@router.delete("/staff/{user_id}")
+def remove_employee_route(
+    user_id: UUID,
+    principal: Annotated[Principal, Depends(staffdir_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    try:
+        removed = remove_employee(user_id, principal.actor, now, uow_factory())
+    except _STAFF_ERRORS as error:
+        raise _staff_errors(error) from error
+    return {"user": _employee(removed.user), "deleted": removed.deleted}
 
 
 @router.put("/departments")

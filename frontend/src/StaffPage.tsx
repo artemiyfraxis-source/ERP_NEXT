@@ -17,6 +17,7 @@ export function StaffPage() {
   const [renameSource, setRenameSource] = useState("");
   const [renameTarget, setRenameTarget] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showOff, setShowOff] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -67,6 +68,16 @@ export function StaffPage() {
     return parts.join(", ");
   });
 
+  const remove = (user: Employee) => {
+    if (!window.confirm(`Удалить сотрудника ${user.name}? Если за ним есть операции, выдачи или другие записи, он будет отключён и скрыт, история останется.`)) return;
+    void run(async () => {
+      const { deleted } = await staffApi.remove(user.id);
+      if (editing?.id === user.id) setEditing(null);
+      await load();
+      return deleted ? `Сотрудник ${user.name} удалён` : `Сотрудник ${user.name} отключён и скрыт: за ним есть история работы`;
+    });
+  };
+
   const saveDepartments = () => run(async () => {
     const saved = await staffApi.saveDepartments(departments.split(/\r?\n/));
     setData((current) => current && { ...current, departments: saved.departments });
@@ -88,9 +99,12 @@ export function StaffPage() {
   }
 
   const roleLabel = (key: string) => data?.roles.find((role) => role.key === key)?.label ?? key;
+  const offCount = data?.users.filter((user) => !user.active).length ?? 0;
+  const shown = data?.users.filter((user) => showOff || user.active) ?? [];
 
   return <section className="page staff-page">
-    <header className="page-head"><h1>Сотрудники</h1><span className="page-count">{data?.users.length ?? 0}</span>
+    <header className="page-head"><h1>Сотрудники</h1><span className="page-count">{shown.length}</span>
+      {offCount > 0 && <label className="check-inline"><input type="checkbox" checked={showOff} onChange={(event) => setShowOff(event.target.checked)} /> Показать отключённых ({offCount})</label>}
       {data && !editing && <div className="page-actions"><button className="primary" onClick={() => setEditing({ id: null, draft: { ...EMPTY_DRAFT } })}>+ Сотрудник</button></div>}</header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
@@ -98,14 +112,17 @@ export function StaffPage() {
       <div className="table-wrap"><table aria-label="Сотрудники">
         <thead><tr><th>ФИО</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>Вход</th><th /></tr></thead>
         <tbody>
-          {data.users.map((user) => <tr key={user.id} className={user.active ? "clickable" : "clickable muted"} onClick={() => startEdit(user)}>
+          {shown.map((user) => <tr key={user.id} className={user.active ? "clickable" : "clickable muted"} onClick={() => startEdit(user)}>
             <td className="text"><strong>{user.name}</strong></td>
             <td className="text">{user.login}{user.email !== user.login && <><br /><small>{user.email}</small></>}</td>
             <td>{user.department || "—"}</td>
             <td>{user.site || "все"}</td>
             <td>{roleLabel(user.role)}</td>
             <td>{user.active ? "активен" : "отключён"}</td>
-            <td className="row-action-cell"><button className="secondary small row-action" aria-label={`Править ${user.name}`} onClick={(event) => { event.stopPropagation(); startEdit(user); }}>Править</button></td>
+            <td className="row-action-cell"><span className="row-actions">
+              <button className="secondary small row-action" aria-label={`Править ${user.name}`} onClick={(event) => { event.stopPropagation(); startEdit(user); }}>Править</button>
+              <button className="secondary small row-action" aria-label={`Удалить ${user.name}`} disabled={busy} onClick={(event) => { event.stopPropagation(); remove(user); }}>Удалить</button>
+            </span></td>
           </tr>)}
         </tbody>
       </table></div>

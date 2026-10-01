@@ -1334,6 +1334,9 @@ export const staffApi = {
     api<{ user: Employee; pin: string }>("/api/auth/staff", { method: "POST", body: JSON.stringify(payload) }),
   update: (id: string, payload: EmployeeUpdate) =>
     api<{ user: Employee }>(`/api/auth/staff/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  /** Erases an employee without history; one with history is switched off and hidden (`deleted: false`). */
+  remove: (id: string) =>
+    api<{ user: Employee; deleted: boolean }>(`/api/auth/staff/${encodeURIComponent(id)}`, { method: "DELETE" }),
   saveDepartments: (departments: string[]) =>
     api<{ departments: string[] }>("/api/auth/departments", { method: "PUT", body: JSON.stringify({ departments }) }),
   renameDepartment: (source: string, target: string) =>

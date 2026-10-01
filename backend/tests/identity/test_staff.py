@@ -4,6 +4,7 @@
 import json
 import sqlite3
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
@@ -29,10 +30,12 @@ from app.modules.identity.domain import (
 )
 from app.modules.identity.infrastructure import (
     IdentityRoleAccessRow,
+    IdentityUserRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
     seed_role_matrix,
 )
+from app.modules.production.infrastructure import ProductionOperatorSkillRow
 from app.modules.requests.api import moscow_now
 from app.shared.persistence import AuditEventRow, create_schema
 
@@ -284,6 +287,58 @@ def test_edit_of_unknown_employee_is_404(staff_api):
     admin = _client("admin", "admin-password")
     response = admin.put("/api/auth/staff/30000000-0000-0000-0000-00000000dead", json=_edit())
     assert response.status_code == 404
+
+
+def _user_row(sessions, user_id: UUID):
+    with sessions() as session:
+        return session.get(IdentityUserRow, user_id)
+
+
+def test_delete_erases_an_employee_without_history_with_their_settings(staff_api):
+    _client("receiver", "recv-password")  # signing in alone is not history
+    with staff_api() as session:
+        session.add(ProductionOperatorSkillRow(
+            operator_id=RECEIVER_ID, operation_code="ОП-1", allowed=True, stars=3, coefficient=Decimal("1"),
+        ))
+        session.commit()
+    admin = _client("admin", "admin-password")
+
+    response = admin.delete(f"/api/auth/staff/{RECEIVER_ID}")
+
+    assert response.status_code == 200 and response.json()["deleted"] is True
+    assert _user_row(staff_api, RECEIVER_ID) is None
+    with staff_api() as session:
+        assert session.scalars(select(ProductionOperatorSkillRow)).all() == []
+    assert TestClient(app).post("/api/auth/login", json={"login": "receiver", "password": "recv-password"}).status_code == 401
+    [event] = _events(staff_api, "identity.user_deleted")
+    assert event.details["login"] == "receiver"
+    assert all(user["id"] != str(RECEIVER_ID) for user in admin.get("/api/auth/staff").json()["users"])
+
+
+def test_delete_of_an_employee_with_history_switches_them_off(staff_api):
+    buyer = _client("buyer", "buyer-password")
+    assert buyer.put("/api/auth/departments", json={"departments": ["Цех"]}).status_code == 200  # work done
+    admin = _client("admin", "admin-password")
+
+    response = admin.delete(f"/api/auth/staff/{BUYER_ID}")
+
+    assert response.status_code == 200 and response.json()["deleted"] is False
+    assert _user_row(staff_api, BUYER_ID).active is False
+    assert buyer.get("/api/auth/me").status_code == 401
+    assert TestClient(app).post("/api/auth/login", json={"login": "buyer", "password": "buyer-password"}).status_code == 401
+    again = admin.delete(f"/api/auth/staff/{BUYER_ID}")
+    assert again.status_code == 409 and "уже отключён" in again.json()["detail"]
+
+
+def test_delete_refuses_self_last_admin_unknown_and_non_admin(staff_api):
+    admin = _client("admin", "admin-password")
+    assert admin.delete(f"/api/auth/staff/{ADMIN_ID}").status_code == 409
+    buyer = _client("buyer", "buyer-password")
+    last = buyer.delete(f"/api/auth/staff/{ADMIN_ID}")
+    assert last.status_code == 409 and "хотя бы один администратор" in last.json()["detail"]
+    assert admin.delete("/api/auth/staff/30000000-0000-0000-0000-00000000dead").status_code == 404
+    assert _client("receiver", "recv-password").delete(f"/api/auth/staff/{BUYER_ID}").status_code == 403
+    assert _user_row(staff_api, BUYER_ID).active is True
 
 
 def test_department_list_keeps_departments_in_use_and_drops_roles(staff_api):

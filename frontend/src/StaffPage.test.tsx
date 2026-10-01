@@ -127,3 +127,28 @@ it("sets a new PIN from the employee form (portalStaffSave pin)", async () => {
   ]));
   expect(await screen.findByText("Сохранено: Закупкин, PIN назначен")).toBeInTheDocument();
 });
+
+it("deletes an employee after confirmation and hides switched-off ones until asked", async () => {
+  let directory: StaffDirectory = DIRECTORY;
+  const deleted: string[] = [];
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/auth/staff/u2" && init?.method === "DELETE") {
+      deleted.push(path);
+      directory = { ...DIRECTORY, users: DIRECTORY.users.map((user) => user.id === "u2" ? { ...user, active: false } : user) };
+      return json({ user: { ...DIRECTORY.users[1], active: false }, deleted: false });
+    }
+    if (path === "/api/auth/staff") return json(directory);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Удалить Закупкин" }));
+
+  expect(await screen.findByText("Сотрудник Закупкин отключён и скрыт: за ним есть история работы")).toBeInTheDocument();
+  expect(deleted).toEqual(["/api/auth/staff/u2"]);
+  expect(screen.queryByText("Закупкин")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Показать отключённых (1)"));
+  expect(screen.getByText("Закупкин")).toBeInTheDocument();
+});

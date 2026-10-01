@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -15,6 +16,7 @@ from sqlalchemy import (
     String,
     Uuid,
     delete,
+    func,
     select,
     text,
     update,
@@ -138,6 +140,28 @@ class IdentityLoginThrottleRow(Base):
     )
     failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rate_limit_audited_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+
+
+# Audit rows the employee leaves just by signing in; they stay in the log but do not make the employee «used».
+_OWN_SESSION_EVENTS = (
+    "identity.login_succeeded", "identity.logout", "identity.own_password_changed", "identity.pin_revealed",
+    "identity.admin_mode_off",
+)
+_PERSON_COLUMN = re.compile(
+    r"(^|_)(actor|operator|inspector|user|recipient|requester|buyer|initiator|manager|author|assignee|employee|worker)_id$"
+)
+
+
+def _references_user(column) -> list:
+    return [key for key in column.foreign_keys if key.column.table.name == IdentityUserRow.__tablename__]
+
+
+def _cascades_from_user(column) -> bool:
+    return any((key.ondelete or "").upper() == "CASCADE" for key in _references_user(column))
+
+
+def _points_at_person(column) -> bool:
+    return bool(_references_user(column)) or (isinstance(column.type, Uuid) and bool(_PERSON_COLUMN.search(column.name)))
 
 
 def _user_domain(row: IdentityUserRow) -> IdentityUser:
@@ -355,6 +379,32 @@ class SqlAlchemyIdentityRepository:
         self, user: IdentityUser, password_hash: str, role_access: dict[str, AccessMode], pin_hash: str | None = None,
     ) -> None:
         provision_user(self.session, user, password_hash, role_access=role_access, pin_hash=pin_hash)
+
+    def user_history(self, user_id: UUID) -> int:
+        """Rows anywhere in the database that record what the employee did or was given: a RESTRICT foreign key to
+        the user, or a UUID column named like a person (actor_id, operator_id, buyer_id, manager_id …). The employee's own
+        settings (CASCADE: credentials, sessions, access, skills, absences) and their own sign-ins are not history."""
+        total = 0
+        for table in Base.metadata.sorted_tables:
+            if table.name.startswith("identity_"):
+                continue
+            for column in table.columns:
+                if _cascades_from_user(column) or not _points_at_person(column):
+                    continue
+                query = select(func.count()).select_from(table).where(column == user_id)
+                if table.name == "audit_events":
+                    query = query.where(table.c.event_type.not_in(_OWN_SESSION_EVENTS))
+                total += self.session.scalar(query) or 0
+        return total
+
+    def delete_user(self, user_id: UUID) -> None:
+        """Erases an employee without history. Dependent CASCADE rows go first, explicitly: SQLite (tests, preview)
+        does not enforce foreign keys, so ON DELETE CASCADE alone would leave orphans there."""
+        for table in reversed(Base.metadata.sorted_tables):
+            for column in table.columns:
+                if _cascades_from_user(column):
+                    self.session.execute(table.delete().where(column == user_id))
+        self.session.execute(delete(IdentityUserRow).where(IdentityUserRow.id == user_id))
 
     def update_user(self, user: IdentityUser) -> None:
         row = self.session.get(IdentityUserRow, user.id)
