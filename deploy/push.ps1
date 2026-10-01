@@ -40,7 +40,9 @@ if ($LASTEXITCODE) { throw 'scp failed' }
 if ($GoogleKey) {
   & scp @ssh $GoogleKey "${target}:/tmp/google-service-account.json"
   if ($LASTEXITCODE) { throw 'scp key failed' }
-  & ssh @ssh $target "${sudo}sh -c 'mkdir -p /opt/erp/config/secrets && chmod 700 /opt/erp/config && chmod 755 /opt/erp/config/secrets && install -o 10001 -m 600 /tmp/google-service-account.json /opt/erp/config/secrets/ && rm -f /tmp/google-service-account.json'"
+  & ssh @ssh $target "${sudo}sh -c 'mkdir -p /opt/erp/config/secrets && chmod 700 /opt/erp/config && chmod 755 /opt/erp/config/secrets && cp /tmp/google-service-account.json /opt/erp/config/secrets/ && chown 10001:10001 /opt/erp/config/secrets/google-service-account.json && chmod 600 /opt/erp/config/secrets/google-service-account.json && rm -f /tmp/google-service-account.json'"
+  # install -o 10001 падает на Ubuntu 26.04 (uutils: «invalid user»), поэтому cp + chown по числовому uid
+  if ($LASTEXITCODE) { throw 'install key failed' }
 }
 $prep = if ($Prepare) { 1 } else { 0 }
 $remote = @"
