@@ -21,6 +21,10 @@ for i in $(seq 1 60); do
     # То, чего нет в SUPPLYMAP: шаблоны карт ERP и правки справочников (идемпотентно, ручные правки не трогает).
     ./erp.sh cli python -m app.modules.techcards.seed_library --erp-only || echo "Шаблоны карт ERP не записаны" >&2
     ./erp.sh cli python -m app.modules.references.erp_corrections || echo "Правки справочников не записаны" >&2
+    # The auto-update timer and command come from this repo too: refresh them when they are installed.
+    if [ -f /etc/systemd/system/erp-auto-update.timer ]; then
+      bash "$ERP_HOME/app/deploy/install-auto-update.sh" >/dev/null || echo "Таймер автообновления не обновлён" >&2
+    fi
     echo "OK: $(cat "$ERP_HOME/app/REVISION" 2>/dev/null)"; exit 0
   fi
   sleep 3

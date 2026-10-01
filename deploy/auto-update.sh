@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Server auto-update (owner 01.10.2026: «обновления давай утром и вечером или вручную»). A systemd timer runs this at
-# 8:30 and 18:00 MSK (before and after the 9:00–17:30 shift); `erp-update now` runs it at once. Install it once with
+# 2:00 and 6:00 MSK (owner 01.10: «давай обновы в 6 и в 2 ночи»; nightly backup is 3:00); `erp-update now` runs it at once. Install it once with
 # deploy/install-auto-update.sh. Each run:
 #   1. fetches main from GitHub with the read-only deploy key ($ERP_HOME/config/github-deploy-key);
 #   2. nothing new → clears a stale failure banner and exits;
@@ -53,7 +53,8 @@ current=$(cat "$ERP_HOME/app/REVISION" 2>/dev/null || echo none)
 # 2. Up to date (REVISION may be a short sha written by push.ps1).
 if [ -n "$current" ] && [ "${full#"$current"}" != "$full" ]; then
   [ -f "$status" ] && clear_status update
-  exit 0
+  rm -f "$ERP_HOME/update-now"
+  echo "уже последняя версия: $current"; exit 0
 fi
 
 # Retry budget for a failing commit: 3 scheduled runs; `erp-update now` ($ERP_HOME/update-now) always tries.

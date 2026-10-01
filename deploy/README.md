@@ -34,7 +34,7 @@ Let's Encrypt), ночные копии базы. Файлы (УПД, счета
 ```powershell
 .\deploy\push.ps1 -Server 192.168.1.85 -GoogleKey <ключ erp-reader.json> -LoadBase   # первый раз: подготовка машины
 #   (prepare-host.sh: убрать microk8s, закрепить IP, расширить /, RAID под копии), установка, база; пароли → erp-server-secrets
-# Автообновление с GitHub в 8:30 и 18:00 (копия базы, откат и плашка при сбое): один раз
+# Автообновление с GitHub в 2:00 и 6:00 (копия базы, откат и плашка при сбое): один раз
 #   sudo bash /opt/erp/app/deploy/install-auto-update.sh; потом erp-update status | erp-update now (сразу)
 # Второй проект на этом сервере — отдельный пользователь: sudo bash /opt/erp/app/deploy/add-tenant.sh <имя> <ключ.pub>
 .\deploy\push.ps1 -Server erp-server                 # обновление (перед ним копия базы)
