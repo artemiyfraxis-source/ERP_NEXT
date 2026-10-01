@@ -119,10 +119,10 @@ export function StaffPage() {
             <td>{user.site || "все"}</td>
             <td>{roleLabel(user.role)}</td>
             <td>{user.active ? "активен" : "отключён"}</td>
-            <td className="row-action-cell">
-              <button className="secondary small row-action" aria-label={`Править ${user.name}`} onClick={(event) => { event.stopPropagation(); startEdit(user); }}>Править</button>{" "}
+            <td className="row-action-cell"><span className="row-actions">
+              <button className="secondary small row-action" aria-label={`Править ${user.name}`} onClick={(event) => { event.stopPropagation(); startEdit(user); }}>Править</button>
               <button className="secondary small row-action" aria-label={`Удалить ${user.name}`} disabled={busy} onClick={(event) => { event.stopPropagation(); remove(user); }}>Удалить</button>
-            </td>
+            </span></td>
           </tr>)}
         </tbody>
       </table></div>
