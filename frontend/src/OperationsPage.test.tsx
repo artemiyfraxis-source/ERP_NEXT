@@ -66,8 +66,10 @@ it("shows audit records and outbox failures", async () => {
 
   render(<OperationsPage />);
 
-  expect(await screen.findByText("shipping.closed")).toBeInTheDocument();
-  expect(screen.getByText("warehouse.received")).toBeInTheDocument();
+  expect(await screen.findByText("Отправка закрыта")).toBeInTheDocument();
+  expect(screen.getByText("shipping.closed")).toBeInTheDocument();
+  expect(screen.getByText("Приход на склад")).toBeInTheDocument();
   expect(screen.getByText("invalid payload")).toBeInTheDocument();
-  expect(screen.getByText("ОТГ-1", { exact: false })).toBeInTheDocument();
+  expect(screen.getByText("№: ОТГ-1")).toBeInTheDocument();
+  expect(screen.queryByText(/30000000-0000/)).not.toBeInTheDocument();
 });

@@ -255,7 +255,7 @@ it("opens the restricted operations journal for management", async () => {
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Системный журнал", level: 1 })).toBeInTheDocument();
-  expect(await screen.findByText("Событий по выбранному фильтру нет.")).toBeInTheDocument();
+  expect(await screen.findByText("Событий в этом разделе нет.")).toBeInTheDocument();
 });
 
 it("does not pretend to log out when the server cannot revoke the session", async () => {
