@@ -73,7 +73,9 @@ if ($LoadBase) {
   $secrets = Join-Path $HOME 'Documents\AI\Projects\erp-server-secrets'
   New-Item -ItemType Directory -Force $secrets | Out-Null
   foreach ($f in 'admin.txt', 'staff-pins.txt') {
-    & ssh @ssh $target "${sudo}cat /opt/erp/config/$f" | Set-Content -Encoding utf8 (Join-Path $secrets $f)
+    # Bytes via base64: a plain `ssh … cat | Set-Content` decodes the UTF-8 names as cp866 (01.10: mojibake).
+    $b64 = (& ssh @ssh $target "${sudo}base64 -w0 /opt/erp/config/$f") -join ''
+    [IO.File]::WriteAllBytes((Join-Path $secrets $f), [Convert]::FromBase64String($b64))
   }
   Write-Host "Пароль админа и PIN сотрудников: $secrets"
 }
