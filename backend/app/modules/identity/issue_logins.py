@@ -111,6 +111,7 @@ def main() -> None:
             issued = sum(1 for r in rows if r["Пароль"] != "(прежний)")
             out = Path(args.out)
             if not issued and out.exists():
+                session.commit()  # still saves switched-off demo accounts
                 print(f"Новых логинов нет, список {args.out} не тронут")
                 return
             if out.exists():  # the previous list still holds passwords nobody else has — keep it
