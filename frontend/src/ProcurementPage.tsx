@@ -14,6 +14,7 @@ import { openPrintSheet, printStoredDocument } from "./print";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementFillForm } from "./ProcurementFillForm";
+import { formatDate } from "./format";
 
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
@@ -24,7 +25,7 @@ const availableColumns: DataColumn<ProcurementLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>рев. {line.revision}</small></> },
   { key: "name", title: "Позиция", value: (line) => line.calculated_name, render: (line) => <>{line.calculated_name}<small>{line.designation}</small></> },
   { key: "project", title: "Проект", value: (line) => line.project_reference, render: (line) => <>{line.project_reference || "—"}<small>{line.delivery_point}</small></> },
-  { key: "planned", title: "Срок", value: (line) => line.planned_date, render: (line) => <>{line.planned_date}<small>{line.priority}</small></> },
+  { key: "planned", title: "Срок", value: (line) => line.planned_date, render: (line) => <>{formatDate(line.planned_date)}<small>{line.priority}</small></> },
   { key: "priority", title: "Приоритет", value: (line) => line.priority, filter: true, hidden: true },
   { key: "qty", title: "Кол-во", value: (line) => `${line.calculated_quantity} ${line.calculated_unit}` },
 ];
@@ -474,7 +475,7 @@ function ProcurementCard({
         <label>Уточнённое наименование<input value={draft.calculated_name} onChange={(e) => field("calculated_name", e.target.value)} /></label>
         <label className="wide">Ссылка<input type="url" value={draft.link} onChange={(e) => field("link", e.target.value)} placeholder="https://…" /></label>
       </div>
-      <div className="card-footer"><small>Версия {line.version} · план {line.planned_date}</small><button className="primary small" disabled={disabled}>{busy ? "Сохраняем…" : "Сохранить"}</button></div></form>}
+      <div className="card-footer"><small>Версия {line.version} · план {formatDate(line.planned_date)}</small><button className="primary small" disabled={disabled}>{busy ? "Сохраняем…" : "Сохранить"}</button></div></form>}
       {REPLACEMENT_STATUSES.has(line.status) && (
         <ReplacementControl line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
       )}
@@ -487,7 +488,7 @@ function ProcurementCard({
       )}
       {line.order_number && (
         <div className="supplier-document">
-          <small className="hint">Заказ {line.order_number} от {line.order_date}</small>
+          <small className="hint">Заказ {line.order_number} от {formatDate(line.order_date)}</small>
           {line.order_url && <>
             <a className="secondary small" href={line.order_url} target="_blank" rel="noreferrer">Открыть документ</a>
             <button type="button" className="secondary small" onClick={() => printStoredDocument(line.order_url!)}>Печать</button>

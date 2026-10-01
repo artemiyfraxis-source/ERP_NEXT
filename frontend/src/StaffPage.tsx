@@ -90,44 +90,42 @@ export function StaffPage() {
   const roleLabel = (key: string) => data?.roles.find((role) => role.key === key)?.label ?? key;
 
   return <section className="page staff-page">
-    <header className="page-head"><h1>Сотрудники</h1><span className="page-count">{data?.users.length ?? 0}</span></header>
-    <p className="page-sub">
-      <b>Роль</b> — что сотруднику открыто, <b>отдел</b> — где он работает; одно из другого не выводится.
-      Отключённый сотрудник не может войти, его история остаётся. Должен остаться хотя бы один администратор.
-    </p>
+    <header className="page-head"><h1>Сотрудники</h1><span className="page-count">{data?.users.length ?? 0}</span>
+      {data && !editing && <div className="page-actions"><button className="primary" onClick={() => setEditing({ id: null, draft: { ...EMPTY_DRAFT } })}>+ Сотрудник</button></div>}</header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {data && <>
       <div className="table-wrap"><table aria-label="Сотрудники">
-        <thead><tr><th>ФИО</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>PIN</th><th>Вход</th><th /></tr></thead>
+        <thead><tr><th>ФИО</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>Вход</th><th /></tr></thead>
         <tbody>
-          {data.users.map((user) => <tr key={user.id} className={user.active ? undefined : "muted"}>
+          {data.users.map((user) => <tr key={user.id} className={user.active ? "clickable" : "clickable muted"} onClick={() => startEdit(user)}>
             <td className="text"><strong>{user.name}</strong></td>
             <td className="text">{user.login}{user.email !== user.login && <><br /><small>{user.email}</small></>}</td>
             <td>{user.department || "—"}</td>
             <td>{user.site || "все"}</td>
             <td>{roleLabel(user.role)}</td>
-            <td>{user.pin_set ? "✓ назначен" : "✗ нет"}</td>
             <td>{user.active ? "активен" : "отключён"}</td>
-            <td><button className="secondary small" aria-label={`Править ${user.name}`} onClick={() => startEdit(user)}>Править</button></td>
+            <td className="row-action-cell"><button className="secondary small row-action" aria-label={`Править ${user.name}`} onClick={(event) => { event.stopPropagation(); startEdit(user); }}>Править</button></td>
           </tr>)}
         </tbody>
       </table></div>
-      {editing
-        ? <EmployeeForm data={data} editing={editing} busy={busy} onChange={(draft) => setEditing({ ...editing, draft })} onSave={() => void saveEmployee()} onCancel={() => setEditing(null)} />
-        : <div className="form-actions"><button className="secondary" onClick={() => setEditing({ id: null, draft: { ...EMPTY_DRAFT } })}>+ Сотрудник</button></div>}
-      <article className="panel">
-        <h2>Отделы (список для выпадашки)</h2>
-        <p className="page-sub">По одному на строку. Отдел, который у кого-то проставлен, из списка не уйдёт — переименуйте его. Названия ролей отделом не становятся.</p>
-        <textarea aria-label="Список отделов" rows={Math.min(Math.max(data.departments.length + 1, 4), 14)} value={departments} onChange={(event) => setDepartments(event.target.value)} />
-        <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveDepartments()}>Сохранить отделы</button></div>
-        <div className="filters">
+      {editing && <EmployeeForm data={data} editing={editing} busy={busy} onChange={(draft) => setEditing({ ...editing, draft })} onSave={() => void saveEmployee()} onCancel={() => setEditing(null)} />}
+      <article className="panel staff-departments">
+        <h2>Отделы</h2>
+        <div className="staff-dep-body">
+        <div className="staff-dep-list">
+          <textarea aria-label="Список отделов" rows={Math.min(Math.max(data.departments.length + 1, 4), 14)} value={departments} onChange={(event) => setDepartments(event.target.value)} />
+          <small className="muted">По одному на строку. Отдел, который у кого-то проставлен, из списка не уйдёт — переименуйте его.</small>
+          <div><button className="primary" disabled={busy} onClick={() => void saveDepartments()}>Сохранить отделы</button></div>
+        </div>
+        <div className="staff-dep-rename">
           <select aria-label="Переименовать отдел" value={renameSource} onChange={(event) => setRenameSource(event.target.value)}>
             <option value="">Переименовать отдел…</option>
             {data.departments.map((name) => <option key={name} value={name}>{name}</option>)}
           </select>
           <input aria-label="Новое название отдела" placeholder="Новое название" value={renameTarget} onChange={(event) => setRenameTarget(event.target.value)} />
           <button className="secondary" disabled={busy || !renameSource || !renameTarget.trim()} onClick={() => void rename()}>Переименовать</button>
+        </div>
         </div>
       </article>
     </>}

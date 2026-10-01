@@ -86,11 +86,6 @@ function applyCategoryRule<T extends Pick<Draft, "category" | "quality_document"
 }
 
 const TITLES = { all: "Заявки", create: "Оформить заявку", mine: "Мои заявки" };
-const SUBTITLES = {
-  all: "Все позиции заявок и передача закупщику. Новая заявка — в «Оформить заявку».",
-  create: "Новые позиции: после сохранения они появятся в «Моих заявках».",
-  mine: "Позиции, которые оформили вы, и на каком они этапе.",
-};
 
 const MINE_PAGE_SIZE = 50;
 const HANDOFF_LIMIT = 100;
@@ -714,8 +709,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       value: () => "",
       render: (row) => (
         <>
-          {row.status === "Новый" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => void handoff([row.id]).catch(() => undefined)}>В закупку</button>}
-          {row.status === "В работе" && canHandoff && <button className="secondary small" disabled={busy} onClick={() => void handoff([row.id], true).catch(() => undefined)}>Повторно в закупку</button>}
+          {row.status === "Новый" && canHandoff && <button className="secondary small row-action" disabled={busy} onClick={() => void handoff([row.id]).catch(() => undefined)}>В закупку</button>}
+          {row.status === "В работе" && canHandoff && <button className="secondary small row-action" disabled={busy} onClick={() => void handoff([row.id], true).catch(() => undefined)}>Повторно в закупку</button>}
         </>
       ),
     },
@@ -732,9 +727,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
 
   return (
     <section className="page">
-      <header className="page-header">
-        <div><span className="eyebrow">Снабжение</span><h1>{TITLES[view ?? "all"]}</h1><p>{SUBTITLES[view ?? "all"]}</p></div>
-        {view !== "create" && <span className="counter">{shownCount} строк</span>}
+      <header className="page-head">
+        <h1>{TITLES[view ?? "all"]}</h1>
+        {view !== "create" && <span className="page-count">{shownCount}</span>}
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
@@ -751,11 +746,6 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
 
             {createMode === "manual" && (
               <form onSubmit={submit}>
-                <p className="page-sub">
-                  Одна карточка = одна позиция. Общее (назначение, цель, точка отгрузки, категория, док. качества,
-                  дедлайн, план. дата) заполняется один раз сверху и попадает во все позиции. Назначение — зачем
-                  берём, цель — номер проекта, если закупка проектная.
-                </p>
                 <fieldset className="form-grid">
                   <legend>Общее для всех позиций</legend>
                   <label className="half">Назначение *<select value={common.purpose} onChange={(e) => setCommonField("purpose", e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -805,8 +795,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
             {createMode === "excel" && (
               <div className="import-panel">
                 <p className="page-sub">
-                  Порядок: возьми шаблон заявки ниже (скопируй заголовки в строку 1 Excel или скачай .csv), заполни строки,
-                  затем скопируй диапазон вместе со строкой заголовков и вставь его в поле — «Распознать».
+                  Заполните строки по шаблону ниже, скопируйте диапазон вместе со строкой заголовков и вставьте в поле — «Распознать».
                 </p>
                 <div className="rc-tpl-box">
                   <p className="page-sub">
@@ -835,7 +824,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
 
             {createMode === "calc" && (
               <div className="import-panel">
-                <p className="page-sub">Вставь ссылку на Google-таблицу расчёта — позиции листа ЗКП станут заявками.</p>
+                <p className="page-sub">Вставьте ссылку на Google-таблицу расчёта — позиции листа ЗКП станут заявками.</p>
                 <div className="form-grid">
                   <label className="wide">Ссылка на расчёт<input type="text" placeholder="https://docs.google.com/spreadsheets/d/…" value={calcUrl} onChange={(e) => { calcPreset.current = null; setCalcUrl(e.target.value); }} /></label>
                   <label>Назначение (на всю пачку) *<select value={calcPurpose} onChange={(e) => setCalcPurpose(e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -863,7 +852,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                   <>
                     <p className="page-sub">Проект: <b>{calcPreview.project || "—"}</b> · Позиций: <b>{calcPreview.items.length}</b></p>
                     {calcWarnings.map((warning) => <p key={warning} className="page-sub" role="status">Предупреждение: {warning}</p>)}
-                    <p className="page-sub">Поправь Ед.изм / Док. по качеству / План. дату при необходимости и нажми «Создать заявки».</p>
+                    <p className="page-sub">Поправьте Ед.изм / Док. по качеству / План. дату при необходимости и нажмите «Создать заявки».</p>
                     <div className="form-actions">
                       <label>Категория — всем<select defaultValue="" onChange={(e) => e.target.value && bulkApplyCategory(e.target.value)}><option value="">— всем —</option><option>Общепром</option><option>ИП</option><option>ОП</option></select></label>
                       <label>Документ по качеству — всем<select defaultValue="" onChange={(e) => e.target.value && bulkApplyQuality(e.target.value)}><option value="">— всем —</option><option>Да</option><option>Нет</option></select></label>

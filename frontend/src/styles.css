@@ -1240,3 +1240,16 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .mb-handed { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #fef0c7; color: #93370d; font-size: 12px; font-weight: 600; }
 .mb-handed-text { color: #93370d; font-size: 12px; }
 .mb-task-head .secondary.small { margin-left: auto; }
+
+/* A row's own action shows on hover (or focus) instead of a column of identical buttons; touch keeps it visible. */
+tr .row-action { visibility: hidden; }
+tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibility: visible; }
+@media (pointer: coarse) { tr .row-action { visibility: visible; } }
+.row-action-cell { width: 1%; white-space: nowrap; text-align: right; }
+.table-wrap tr.clickable { cursor: pointer; }
+.table-wrap tr.clickable:hover td { background: var(--accent); }
+
+.staff-departments .staff-dep-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; padding: 0 20px 18px; }
+.staff-dep-list { display: grid; gap: 8px; width: min(100%, 420px); }
+.staff-dep-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.staff-dep-rename input { width: 240px; }
