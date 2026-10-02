@@ -1,15 +1,14 @@
 import { useEffect, useState } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { accessApi, type AccessMode, type AccessOverview, type AccessRow, type AccessSetting } from "./api";
+// Full-access roles (owner 2026-09-29): their columns show a locked «полный» and take no edits.
+import { FULL_ACCESS_ROLES } from "./navigation";
 
 /** NAV-ACCESS «Доступы» (SUPPLYMAP Portal.gs portalAccessGet/portalAccessSave, PortalApp.html openAccessHub and the
  *  per-person «Доступ» of «Сотрудники»): the role × section matrix and personal exceptions that are stronger than the
  *  role. An empty cell = «закрыто», as SUPPLYMAP has since 01.09.2026; the administrator has «полный» everywhere unless
  *  a cell says otherwise (`defaults`). */
 
-// Roles with full access to every section that cannot be reduced (owner 2026-09-29): технолог, специалист по
-// снабжению, директор производства, генеральный директор. Their columns show a locked «полный» and take no edits.
-const FULL_ACCESS_ROLES = new Set(["admin", "buyer", "prodhead", "management"]);
 const MODE_LABEL: Record<AccessSetting, string> = { none: "закрыт", view: "просмотр", edit: "полный" };
 const SETTINGS: AccessSetting[] = ["none", "view", "edit"];
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;

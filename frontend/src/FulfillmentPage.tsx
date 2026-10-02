@@ -8,6 +8,7 @@ import {
   type FulfillmentRequest,
   type Principal,
 } from "./api";
+import { canAct } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
 
@@ -197,9 +198,10 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false);
-  const canEdit = principal.permissions.fulfillment === "edit" && principal.roles.some((role) => ["engineer", "receiver", "admin"].includes(role));
+  // Full-access roles (директор производства, …) pick and hand out for the storekeeper, as the backend allows.
+  const canEdit = canAct(principal, "fulfillment", ["engineer", "receiver", "admin"]);
   // NAV-SECTIONS: handing out writes off stock and has its own key; picking (reserve) stays on `fulfillment`.
-  const canHandout = principal.permissions.handout === "edit" && principal.roles.some((role) => ["receiver", "admin"].includes(role));
+  const canHandout = canAct(principal, "handout", ["receiver", "admin"]);
   // FF-5: deleting is the administrator's cleanup (portalIssueDelete + portalRealAdmin_).
   const isAdmin = canEdit && principal.roles.includes("admin");
 

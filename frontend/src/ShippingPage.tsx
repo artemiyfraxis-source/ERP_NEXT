@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   productionApi, shippingApi, type FinishedGood, type FinishedGoodsReadyBox, type Principal, type ProjectAddressee, type Shipment,
 } from "./api";
+import { canAct } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { openPrintSheets } from "./print";
 import { formatDate } from "./format";
@@ -42,9 +43,8 @@ export function ShippingPage({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
-  const canEditSection = principal.permissions.shipping === "edit";
-  const canManage = canEditSection && principal.roles.some((item) => ["pm", "admin"].includes(item));
-  const canWarehouse = canEditSection && principal.roles.some((item) => ["receiver", "admin"].includes(item));
+  const canManage = canAct(principal, "shipping", ["pm", "admin"]);
+  const canWarehouse = canAct(principal, "shipping", ["receiver", "admin"]);
   const canEdit = canManage || canWarehouse;
 
   async function reload() {

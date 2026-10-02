@@ -125,6 +125,48 @@ it("does not load lots or show editing actions to a view-only production role", 
   expect(screen.queryByRole("button", { name: "Удалить заявку" })).not.toBeInTheDocument();
 });
 
+// Owner 02.10.2026: the production director could not pick a kit for the storekeeper — the server gives a full-access
+// role every section on edit and lets it past the route role lists (require_section), the screen hid the buttons.
+const director: Principal = { ...principal, roles: ["prodhead"], permissions: { fulfillment: "edit", handout: "edit" } };
+
+it("lets the production director pick a kit for the storekeeper (full-access role)", async () => {
+  const posts: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") { posts.push(path); return json({ request }); }
+    if (path === "/api/issues") return json({ requests: [{ ...request, status: "Недоукомплектован", lines: [boundLine], at_work: "2026-09-22T11:00:00" }], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<FulfillmentPage principal={director} />);
+  await expand("FRX-ISS-26-0001");
+  expect(await screen.findByRole("button", { name: "Снять резерв" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "+ Заявка" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Укомплектован" }));
+  await waitFor(() => expect(posts).toEqual([`/api/issues/${request.id}/complete`]));
+  // Deleting stays the administrator's cleanup.
+  expect(screen.queryByRole("button", { name: "Удалить заявку" })).not.toBeInTheDocument();
+});
+
+it("lets the production director hand a kit out (full-access role)", async () => {
+  const posts: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") { posts.push(path); return json({ request }); }
+    if (path === "/api/issues") return json({ requests: [{ ...request, status: "Готов к выдаче", handout_location: "1B3", lines: [boundLine] }], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<FulfillmentPage principal={director} mode="give" />);
+  await expand("FRX-ISS-26-0001");
+  fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
+  await waitFor(() => expect(posts).toEqual([`/api/issues/${request.id}/issue`]));
+});
+
 it("prints the issue sheet and, once something is issued, offers the return sheet too", async () => {
   const printedPaths: string[] = [];
   const printWindow = { document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };

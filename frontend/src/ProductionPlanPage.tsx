@@ -9,6 +9,7 @@ import {
   type ProductionPlanRow,
   type ProductionTask,
 } from "./api";
+import { canAct } from "./navigation";
 import { matchesWords } from "./DataTable";
 import { Gantt, deadlineEnd, parseMoment, type GanttBar, type GanttRow } from "./Gantt";
 import { sharesOf } from "./MasterBoard";
@@ -168,8 +169,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const canEdit = principal.permissions.production === "edit"
-    && principal.roles.some((role) => ["master", "admin"].includes(role));
+  const canEdit = canAct(principal, "production", ["master", "admin"]);
 
   async function reload() {
     setError("");
