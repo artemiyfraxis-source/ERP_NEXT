@@ -22,7 +22,10 @@ export interface NavItem {
   /** Opens when any of these keys is granted (a section made of tabs with their own keys). */
   anyPermission?: string[];
   minimum?: AccessMode;
+  /** Roles the backend route admits; a full-access role passes any list (`hasRole`). */
   roles?: string[];
+  /** The administrator's only, outside the matrix: no full-access role passes (backend access_admin_principal). */
+  adminOnly?: boolean;
   block?: BlockId;
   /** A screen opened from another section, not a card or menu item of its own: SUPPLYMAP opens the ЭТК inside
    *  «Проекты» (hub 'tc'), so the menu highlights that section instead. */
@@ -79,7 +82,7 @@ export const NAV: NavItem[] = [
   { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", roles: ["master", "prodhead", "management", "admin"], block: "mgmt" },
   { id: "staff", label: "Сотрудники", sub: "справочник, роли, отделы", permission: "staffdir", minimum: "edit", roles: ["admin"], block: "mgmt" },
   // NAV-ACCESS: always the administrator's, outside the matrix (SUPPLYMAP portalButtons_ pushes it for role admin).
-  { id: "access", label: "Доступы", sub: "роли × разделы · исключения по сотрудникам", roles: ["admin"], block: "mgmt" },
+  { id: "access", label: "Доступы", sub: "роли × разделы · исключения по сотрудникам", adminOnly: true, block: "mgmt" },
   { id: "notifications", label: "Уведомления", sub: "мои события", block: "mgmt" },
   { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", roles: ["management", "admin"], block: "mgmt" },
 ];
@@ -94,11 +97,28 @@ export function hasAccess(
   return actual === "edit" || (minimum === "view" && actual === "view");
 }
 
+// Owner 2026-09-29 (backend identity FULL_ACCESS_ROLES): технолог, специалист по снабжению, директор производства and
+// генеральный директор have every section on edit, and backend `require_section` lets them past a route's role list.
+// The screens follow the same rule, or a director sees a section without its buttons (owner 02.10.2026: the production
+// director could not pick a kit for the storekeeper).
+export const FULL_ACCESS_ROLES: ReadonlySet<string> = new Set(["admin", "buyer", "prodhead", "management"]);
+
+/** A route's role list as backend `require_section` reads it: one of these roles, or a full-access role. */
+export function hasRole(principal: Principal, roles: readonly string[]) {
+  return principal.roles.some((role) => roles.includes(role) || FULL_ACCESS_ROLES.has(role));
+}
+
+/** «Режим просмотра» (ID-6): edit controls only when the backend *_edit_principal would pass too. */
+export function canAct(principal: Principal, section: string, roles: readonly string[]) {
+  return principal.permissions[section] === "edit" && hasRole(principal, roles);
+}
+
 export function hasNavAccess(principal: Principal, item: NavItem) {
   return (
     hasAccess(principal.permissions, item.permission, item.minimum) &&
     (!item.anyPermission || item.anyPermission.some((key) => hasAccess(principal.permissions, key, item.minimum))) &&
-    (!item.roles || item.roles.some((role) => principal.roles.includes(role)))
+    (!item.roles || hasRole(principal, item.roles)) &&
+    (!item.adminOnly || principal.roles.includes("admin"))
   );
 }
 

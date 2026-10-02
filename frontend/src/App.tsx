@@ -6,6 +6,7 @@ import {
   type Principal,
 } from "./api";
 import {
+  canAct,
   isBlock,
   isSection,
   visibleBlocks,
@@ -33,11 +34,6 @@ import { ProjectsPage } from "./ProjectsPage";
 import { StaffPage } from "./StaffPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
-
-// «Режим просмотра» (ID-6): edit controls only when the backend *_edit_principal would pass too.
-function canEdit(principal: Principal, permission: string, roles: string[]) {
-  return principal.permissions[permission] === "edit" && roles.some((role) => principal.roles.includes(role));
-}
 
 type Place = { section: Section; block: BlockId | null };
 
@@ -209,9 +205,9 @@ export function App() {
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
-        {activeSection === "procurement" && <ProcurementPage readOnly={!canEdit(principal, "procurement", ["buyer", "admin"])} />}
-        {activeSection === "receiving" && <ReceivingPage readOnly={!canEdit(principal, "receiving", ["receiver", "admin"])} />}
-        {activeSection === "stock" && <WarehousePage admin={principal.roles.includes("admin")} readOnly={!canEdit(principal, "warehouse", ["receiver", "admin"])} />}
+        {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement", ["buyer", "admin"])} />}
+        {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving", ["receiver", "admin"])} />}
+        {activeSection === "stock" && <WarehousePage admin={principal.roles.includes("admin")} readOnly={!canAct(principal, "warehouse", ["receiver", "admin"])} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}

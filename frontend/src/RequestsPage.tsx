@@ -8,6 +8,7 @@ import {
   type RequestRow,
   type RequestSchema,
 } from "./api";
+import { canAct } from "./navigation";
 
 type Draft = {
   purpose: string;
@@ -272,9 +273,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const [busy, setBusy] = useState(false);
   const [serverQuery, setServerQuery] = useState("");
   const canEdit = principal.permissions.newrequest === "edit";
-  const canHandoff =
-    principal.permissions.procurement === "edit" &&
-    principal.roles.some((role) => role === "buyer" || role === "admin");
+  const canHandoff = canAct(principal, "procurement", ["buyer", "admin"]);
 
   const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">("manual");
 

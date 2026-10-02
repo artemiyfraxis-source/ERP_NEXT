@@ -22,6 +22,7 @@ import {
   type ProductionTask,
   type ProductionWorkSession,
 } from "./api";
+import { canAct, hasRole } from "./navigation";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { MasterBoard } from "./MasterBoard";
 
@@ -48,9 +49,9 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedOperationId, setSelectedOperationId] = useState("");
   const [week, setWeek] = useState(0);
-  const canEdit = principal.permissions.production === "edit" && principal.roles.some((role) => ["master", "admin"].includes(role));
-  const canQuality = principal.permissions.production === "edit" && principal.roles.some((role) => ["qc", "admin"].includes(role));
-  const canOverview = principal.roles.some((role) => ["master", "prodhead", "management", "qc", "admin"].includes(role));
+  const canEdit = canAct(principal, "production", ["master", "admin"]);
+  const canQuality = canAct(principal, "production", ["qc", "admin"]);
+  const canOverview = hasRole(principal, ["master", "prodhead", "management", "qc", "admin"]);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
 
   async function reload() {

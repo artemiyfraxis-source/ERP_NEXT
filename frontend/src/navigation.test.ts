@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { AccessMode, Principal } from "./api";
-import { BLOCKS, visibleBlocks } from "./navigation";
+import { BLOCKS, canAct, hasRole, visibleBlocks } from "./navigation";
 
 const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "КБ" };
 
@@ -120,6 +120,32 @@ it("opens techcards, templates and the reference book by their own keys to any r
 it("opens «Доступы» to every administrator and «Сотрудники» by staffdir", () => {
   expect(layout(as("admin", { ...ALL_EDIT, staffdir: "view" }))["Менеджмент"]).toContain("Доступы");
   expect(layout(as("admin", { ...ALL_EDIT, staffdir: "view" }))["Менеджмент"]).not.toContain("Сотрудники");
-  expect(layout(as("buyer", { staffdir: "edit" }))["Менеджмент"]).toEqual(["Уведомления"]);
+  expect(layout(as("staff", { staffdir: "edit" }))["Менеджмент"]).toEqual(["Уведомления"]);
   expect(layout(as("admin", { staffdir: "edit" }))["Менеджмент"]).toEqual(["Сотрудники", "Доступы", "Уведомления"]);
+});
+
+// Owner 2026-09-29: технолог, снабжение, директор производства, генеральный директор have every section on edit and
+// pass any route role list (backend require_section). «Доступы» stays the administrator's alone.
+it("opens every section to a full-access role, «Доступы» only to the administrator", () => {
+  for (const role of ["buyer", "prodhead", "management"]) {
+    expect(layout(as(role, ALL_EDIT))).toEqual({
+      "Производство": ["Проекты", "Ресурсное планирование", "Задания"],
+      "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
+      "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
+      "Менеджмент": ["Производственный план", "Сотрудники", "Уведомления", "Системный журнал"],
+      "Справочники": ["База данных"],
+    });
+  }
+});
+
+it("lets a full-access role act where the route names another role, and no one else", () => {
+  const director = as("prodhead", ALL_EDIT);
+  expect(canAct(director, "fulfillment", ["engineer", "receiver", "admin"])).toBe(true);
+  expect(canAct(director, "handout", ["receiver", "admin"])).toBe(true);
+  expect(hasRole(director, ["qc"])).toBe(true);
+  // A view grant still reads only.
+  expect(canAct({ ...director, permissions: { fulfillment: "view" } }, "fulfillment", ["receiver"])).toBe(false);
+  // An ordinary role outside the list stays out even with an edit grant.
+  expect(canAct(as("master", { fulfillment: "edit" }), "fulfillment", ["engineer", "receiver", "admin"])).toBe(false);
+  expect(canAct(as("receiver", { fulfillment: "edit" }), "fulfillment", ["engineer", "receiver", "admin"])).toBe(true);
 });
