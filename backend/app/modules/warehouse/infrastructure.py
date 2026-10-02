@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from decimal import Decimal
 from uuid import UUID
 
@@ -203,6 +205,22 @@ def _row(lot: StockLot) -> StockLotRow:
     )
 
 
+# Names come from Google as typed: «Разъём» with ё, Latin look-alikes inside Cyrillic words («Cрок», «EAЭC»),
+# non-breaking spaces, «0,35» next to «0.35», «200х3.6» with a Cyrillic х. The stock search folds both the query
+# and the lot text the same way, so «разъем мгтф 0.35» finds what the storekeeper sees on screen.
+_LOOKALIKES = str.maketrans({
+    "ё": "е", "a": "а", "b": "в", "c": "с", "e": "е", "h": "н", "k": "к", "m": "м", "o": "о", "p": "р", "t": "т",
+    "x": "х", "y": "у", "×": "х",
+})
+_DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
+
+
+def search_text(value: str) -> str:
+    """Text for the substring search: NFKC, case-folded, ё = е, Latin look-alikes as Cyrillic, comma = dot."""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold().translate(_LOOKALIKES)
+    return _DECIMAL_COMMA.sub(".", text)
+
+
 def _domain(row: StockLotRow) -> StockLot:
     return StockLot(
         id=row.id,
@@ -352,8 +370,8 @@ class SqlAlchemyWarehouseRepository:
 
     @staticmethod
     def _matches(lot: StockLot, query: str) -> bool:
-        words = str(query or "").casefold().split()
-        haystack = " ".join((
+        words = search_text(query).split()
+        haystack = search_text(" ".join((
             lot.grn,
             lot.package,
             lot.article,
@@ -362,7 +380,7 @@ class SqlAlchemyWarehouseRepository:
             lot.item_type,
             lot.purpose,
             lot.storage_location,
-        )).casefold()
+        )))
         return all(word in haystack for word in words)
 
     def audit_trail(self, lot_id: UUID) -> list[tuple[str, dict]]:
