@@ -14,5 +14,6 @@ metadata:
 - Usage limits: threads spend the owner's subscription window; owner said «не останавливайся» — don't throttle threads for the limit.
 - New routines only on request. Effort/model levels follow brain `_global/CLAUDE.md`.
 - Commits/PRs carry no Claude attribution (ERP_NEXT `CLAUDE.md`).
+- Back to VS Code (2026-10-02): the owner wants a planning orchestrator that hands out tasks. Local main session = orchestrator (`CLAUDE.md` «Orchestrator mode», skill `orchestrate`, agents `erp-planner` / `erp-worker` / `erp-verifier`). Owner's Claude account is used only from his PC through a proxy — cloud sessions don't replace the local one.
 
 Why: the owner runs production and has no time for agent questions. How to apply: act, log the decision, report the result in 2–5 Russian lines. Hub: [[erp-next-hub]].

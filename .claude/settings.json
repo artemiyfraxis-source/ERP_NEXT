@@ -9,6 +9,13 @@
     "type": "command",
     "command": "node .claude/statusline.mjs"
   },
+  "worktree": {
+    "baseRef": "head",
+    "symlinkDirectories": [
+      "frontend/node_modules",
+      "backend/.venv"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
