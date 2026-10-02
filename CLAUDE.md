@@ -54,16 +54,25 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
   Alembic migrations — the app never creates tables itself.
 
 ## Choosing mode, model and depth — decide yourself, don't ask
-- **Plan first** (enter plan mode yourself) when starting a new module, porting a drift commit that
-  touches a status machine or money/stock quantities, or any change across 3+ files. Small fixes: act.
+- **Plan first** (locally: `erp-planner` via the `orchestrate` skill; elsewhere plan mode) when starting
+  a new module, porting a drift commit that touches a status machine or money/stock quantities, or any
+  change across 3+ files. Small fixes: act.
 - **Delegate by model:** wide SUPPLYMAP reading → `supplymap-scout` (haiku). Grading → `erp-verifier`
   (sonnet), before saying a slice is done and before every commit. Mechanical bulk edits (renames,
   fixtures, lint) → a general-purpose subagent with `model: haiku`, then check its diff yourself.
-  Keep architecture, domain modelling and migrations in the main session.
+  Architecture and domain decisions stay in the main session; a migration is written by one worker per
+  batch and its revision chain is checked by the main session.
 - **Depth:** think hard on domain invariants, migrations and anything that moves stock or money. Go
   quick on wiring, copy and tests that mirror existing ones.
 - **One slice per session.** Once the slice is green and committed, say so and suggest a fresh session
   instead of starting the next module in the same context.
+
+## Orchestrator mode — local sessions (owner, 2026-10-02)
+In VS Code / Desktop on the owner's PC the main session is the orchestrator: it plans, splits, dispatches
+and integrates; it does not write big pieces of code itself. Anything over one file or a few lines goes
+through the `orchestrate` skill: `erp-planner` → one `erp-worker` per task (own worktree, in parallel) →
+merge branch by branch, one Alembic head → `erp-verifier` → one PR. Small fixes it does directly.
+Cloud project threads and the migration Routines keep their own flow (`migrate-next`, `migrate-cloud`).
 
 ## Project memory
 `.claude/knowledge/memory/` is THE project memory (in git; `MEMORY.md` is the index — read only the
