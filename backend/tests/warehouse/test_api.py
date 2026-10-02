@@ -219,6 +219,38 @@ def test_stock_searches_article_and_series(warehouse_api):
     assert by_series.json()["lots"][0]["series"] == "LOT-2409"
 
 
+def test_stock_searches_name_as_typed_in_google(warehouse_api):
+    """Names keep ё, a Latin «C» inside a Cyrillic word, a non-breaking space and a decimal comma."""
+    client, _ = warehouse_api
+
+    response = client.post(
+        "/api/stock/batches",
+        json={"items": [
+            {"warehouse": "ЦАР", "article": "MGTF-035", "name": "Провод МГТФ 0,35\u00a0мм² белый",
+             "quantity": "10", "unit": "м", "storage_location": "2A1"},
+            {"warehouse": "ЦАР", "article": "SMA-J", "name": "Разъём SMA вилка, Cтяжка 200х3.6",
+             "quantity": "2", "storage_location": "2A1"},
+        ]},
+    )
+    assert response.status_code == 200, response.text
+
+    def found(query: str) -> list[str]:
+        result = client.get("/api/stock", params={"q": query})
+        assert result.status_code == 200, result.text
+        return [lot["article"] for lot in result.json()["lots"]]
+
+    assert found("провод") == ["MGTF-035"]
+    assert found("ПРОВ бел") == ["MGTF-035"]
+    assert found("мгтф 0.35 мм2") == ["MGTF-035"]
+    assert found("Провод МГТФ 0,35 мм² белый") == ["MGTF-035"]
+    assert found("разъем sma") == ["SMA-J"]
+    assert found("разъём вил") == ["SMA-J"]
+    assert found("разъем") == found("разъём")
+    assert found("стяжка 200x3.6") == ["SMA-J"]
+    assert found("sma-j") == ["SMA-J"]
+    assert found("розетка") == []
+
+
 def test_stock_article_info_infers_current_supplymap_coax_codes(warehouse_api):
     client, _ = warehouse_api
 
