@@ -6,12 +6,15 @@ import pytest
 
 from app.modules.techcards.kitset_calc import calc_project_number, parse_calc_sheets
 from app.modules.techcards.kitsets import (
+    KitComponent,
     KitLot,
     KitsetValidationError,
     SupplyRow,
     batch_quantity,
+    default_scrap,
     issue_tasks,
     kit_number,
+    manual_kitset,
     project_key,
     sort_kitsets,
     supply_lines,
@@ -32,9 +35,35 @@ def test_numbers_and_batch_follow_tc_kit_num_and_batch_qty():
     assert kit_number(" 2 ") == Decimal("2")
     assert kit_number("") == 0
     assert kit_number("abc") == 0
-    # 1,5 × 10 × 1,05 = 15,75; 0,333 × 3 × 1,05 = 1,04895 → 1,05 (вверх до сотых по правилам JS round)
-    assert batch_quantity("1,5", 10, 5) == Decimal("15.75")
-    assert batch_quantity("0.333", 3, 5) == Decimal("1.05")
+    # Метры: 1,5 × 10 × 1,05 = 15,75; 0,333 × 3 × 1,05 = 1,04895 → 1,05 (вверх до сотых по правилам JS round)
+    assert batch_quantity("1,5", 10, 5, "м") == Decimal("15.75")
+    assert batch_quantity("0.333", 3, 5, "м") == Decimal("1.05")
+    assert batch_quantity("1,5", 3, 5, "м") == Decimal("4.73")
+
+
+def test_piece_batch_rounds_up_to_whole_pieces_after_scrap():
+    """Василий, 04.10: «округлять шт, половинки быть не может» — после брака вверх до целого."""
+    assert batch_quantity("1,5", 3, 5, "шт") == Decimal("5")  # 4,725
+    assert batch_quantity("0.333", 3, 5, "шт") == Decimal("2")  # 1,05
+    assert batch_quantity("1,5", 10, 5, "шт") == Decimal("16")  # 15,75
+    # Целое остаётся целым: сначала до сотых, потом вверх, — 2 × 10 × 1,05 = 21, а 0,1 × 30 не станет 4.
+    assert batch_quantity("2", 10, 5, "шт") == Decimal("21")
+    assert batch_quantity("0.1", 30, 0, "шт") == Decimal("3")
+    assert batch_quantity("", 10, 5, "шт") == Decimal("0")
+    # Единица — по типу строки, как в импорте из расчёта: провод в метрах, разъём штучный.
+    assert KitComponent(article="W", type="Провод", per_unit=Decimal("1.5"), scrap_pct=Decimal("5")).batch(
+        Decimal("3")) == Decimal("4.73")
+    assert KitComponent(article="X", type="Разъём", per_unit=Decimal("1.5"), scrap_pct=Decimal("5")).batch(
+        Decimal("3")) == Decimal("5")
+
+
+def test_scrap_default_is_zero_for_pieces_and_five_for_wire():
+    assert [default_scrap(kind) for kind in ("Разъём", "Контакт", "", "Провод", "Кабель", "ТУТ", "Шлейф")] == [
+        Decimal("0"), Decimal("0"), Decimal("0"), Decimal("5"), Decimal("5"), Decimal("5"), Decimal("5"),
+    ]
+    assert KitComponent(article="X", type="Разъём").scrap_pct == Decimal("0")
+    assert KitComponent(article="W", type="Провод").scrap_pct == Decimal("5")
+    assert KitComponent(article="W", type="Провод", scrap_pct=Decimal("0")).scrap_pct == Decimal("0")
 
 
 def test_calc_number_takes_file_name_only_when_it_refines_the_cell():
@@ -54,7 +83,7 @@ def test_parse_calc_reads_zkz_assemblies_and_spa_composition():
     first = data.assemblies[0].components
     assert [(c.article, c.type, c.per_unit, c.scrap_pct) for c in first] == [
         ("UL1007 22AWG", "Провод", Decimal("1.5"), Decimal("5")),
-        ("43025-0400", "Разъём", Decimal("2"), Decimal("5")),
+        ("43025-0400", "Разъём", Decimal("2"), Decimal("0")),
     ]
     assert first[0].link == "https://snab.example/ul1007"
 
@@ -92,6 +121,30 @@ def test_refresh_keeps_person_edits_and_lot_binding():
     assert cleared.assembly("КБ1").components[0].lot is None
 
 
+def test_refresh_keeps_hand_set_piece_scrap_and_defaults_only_new_lines():
+    data = parse(calc_sheets(), "708К.4")
+    first = write_from_calc(data, None, who="Технолог", now=NOW)
+    edited, _ = first.with_edits([{"index": "КБ1", "art": "43025-0400", "per": "2", "scrap": "3"}],
+                                 who="Технолог", now=NOW)
+    refreshed = write_from_calc(data, edited, who="Технолог", now=NOW)
+    assert refreshed.assembly("КБ1").components[1].scrap_pct == Decimal("3")
+    assert refreshed.assembly("КБ2").components[0].scrap_pct == Decimal("0")  # «Контакт», не правили
+
+
+def test_manual_card_defaults_scrap_by_type_and_keeps_typed_value():
+    kitset = manual_kitset(project="708К.4", customer="", who="Т", now=NOW, assemblies=[{
+        "index": "кб1", "run": "3", "components": [
+            {"art": "W", "type": "Провод", "per": "1,5"},
+            {"art": "X", "type": "Разъём", "per": "1,5", "scrap": ""},
+            {"art": "Y", "type": "Разъём", "per": "1,5", "scrap": "5"},
+        ],
+    }])
+    components = kitset.assembly("КБ1").components
+    assert [(c.article, c.scrap_pct, c.batch(Decimal("3"))) for c in components] == [
+        ("W", Decimal("5"), Decimal("4.73")), ("X", Decimal("0"), Decimal("5")), ("Y", Decimal("5"), Decimal("5")),
+    ]
+
+
 def test_supply_takes_latest_stage_and_marks_stock_and_missing():
     kitset = write_from_calc(parse(calc_sheets(), "708К.4"), None, who="Т", now=NOW)
     kitset, _ = kitset.with_edits([{"index": "КБ2", "art": "43030-0007", "per": "8", "scrap": "5",
@@ -117,6 +170,19 @@ def test_issue_tasks_one_per_assembly_and_waiting_notes():
     assert tasks[0].waiting[0] == "UL1007 22AWG: ГРН не выбран (15.75)"
     assert tasks[1].waiting == ()
     assert tasks[1].items[0].need == Decimal("32.00")
+
+
+def test_issue_and_supply_take_piece_batch_in_whole_pieces():
+    kitset = write_from_calc(parse(calc_sheets(), "708К.4"), None, who="Т", now=NOW)
+    kitset, _ = kitset.with_edits([{"index": "КБ1", "art": "43025-0400", "per": "1,5", "scrap": "5"}],
+                                  who="Т", now=NOW)
+    first = issue_tasks(kitset, set())[0]
+    assert [(item.article, item.need) for item in first.items] == [
+        ("UL1007 22AWG", Decimal("15.75")), ("43025-0400", Decimal("16")),
+    ]
+    assert first.waiting[1] == "Корпус Molex: ГРН не выбран (16)"
+    need = {line.article: line.need for line in supply_lines(kitset, [])}
+    assert (need["UL1007 22AWG"], need["43025-0400"]) == (Decimal("15.75"), Decimal("16"))
 
 
 def test_sort_kitsets_like_portal():

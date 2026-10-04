@@ -136,6 +136,31 @@ def test_spec_edits_survive_refresh_and_issue_reserves_picked_lot(kitset_api):
     assert sum(line.requirement for line in kb1.lines if line.name == "Корпус Molex") == Decimal("20")
 
 
+def test_piece_lines_default_to_no_scrap_and_batch_in_whole_pieces_up_to_the_issue(kitset_api):
+    """Василий, 04.10: «округлять шт, половинки быть не может. Пока даём без брака»."""
+    client, _lot = kitset_api
+    _load(client)
+    card = client.get("/api/techcards/kitsets/708К.4").json()
+    wire, housing = card["assemblies"][0]["components"]
+    assert (wire["unit"], wire["scrap"], wire["batch"]) == ("м", "5", "15.75")
+    assert (housing["unit"], housing["scrap"], housing["batch"]) == ("шт", "0", "20")
+
+    client.put("/api/techcards/kitsets/708К.4/lines", json={"edits": [
+        {"index": "КБ1", "art": "43025-0400", "per": "1.5", "scrap": "5"},
+    ]})
+    housing = client.get("/api/techcards/kitsets/708К.4").json()["assemblies"][0]["components"][1]
+    assert housing["batch"] == "16"  # 1,5 × 10 × 1,05 = 15,75 → 16 шт
+
+    issued = client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"})
+    assert issued.status_code == 200, issued.text
+    with app.state.fulfillment_uow_factory() as uow:
+        kb1 = next(request for request in uow.fulfillment.list(limit=10) if "КБ1" in request.purpose)
+    need = {}
+    for line in kb1.lines:
+        need[line.name] = need.get(line.name, Decimal("0")) + line.requirement
+    assert need == {"UL1007 22AWG": Decimal("15.75"), "Корпус Molex": Decimal("16")}
+
+
 def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
     client, _lot = kitset_api
     _load(client)
@@ -179,7 +204,7 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
 
     bom = client.get("/api/techcards/kitsets/708К.4/bom/КБ1").json()
     assert [(c["art"], c["qty"], c["scrap"]) for c in bom["components"]] == [
-        ("UL1007 22AWG", "1.5", "0.05"), ("43025-0400", "2", "0.05"),
+        ("UL1007 22AWG", "1.5", "0.05"), ("43025-0400", "2", "0"),
     ]
     opened = client.post("/api/techcards/kitsets/708К.4/techcards/КБ1", json={})
     again = client.post("/api/techcards/kitsets/708К.4/techcards/КБ1", json={})
