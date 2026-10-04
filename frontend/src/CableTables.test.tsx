@@ -9,6 +9,7 @@ import type { CableRow, Principal } from "./api";
 const admin: Principal = {
   user: { id: "10000000-0000-0000-0000-000000000001", email: "admin@example.test", name: "Администратор", department: "ERP" },
   roles: ["admin"],
+  access_level: "admin",
   permissions: { erpref: "edit", erptctpl: "edit", procurement: "edit" },
 };
 const COLUMNS = ["Марка", "Тип провода", "Сечение, мм2", "AWG", "Число жил", "Наружный диаметр, мм", "Волновое сопротивление, Ом"];
@@ -183,7 +184,7 @@ it("moves a cable to another list from its editor", async () => {
 
 it("shows the cable lists read-only without the reference edit right", async () => {
   mockApi();
-  render(<ReferencesPage principal={{ ...admin, roles: ["receiver"], permissions: { erpref: "view" } }} initialTab="cab_coax" />);
+  render(<ReferencesPage principal={{ ...admin, roles: ["foreman"], access_level: "foreman", permissions: { erpref: "view" } }} initialTab="cab_coax" />);
   fireEvent.click(await screen.findByText("RG316"));
   expect(screen.queryByLabelText("D1 кабеля")).toBeNull();
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();

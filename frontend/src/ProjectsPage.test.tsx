@@ -4,7 +4,7 @@ import { ProjectsPage, deleteSummary, kitBatch } from "./ProjectsPage";
 
 const editor = {
   user: { id: "u1", email: "engineer@example.test", name: "Технолог", department: "Производство" },
-  roles: ["engineer"], permissions: { projects: "edit" as const },
+  roles: ["tech_lead"], access_level: "tech_lead", permissions: { projects: "edit" as const },
 };
 const viewer = { ...editor, permissions: { projects: "view" as const } };
 

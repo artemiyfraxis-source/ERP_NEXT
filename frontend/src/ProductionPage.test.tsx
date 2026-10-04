@@ -11,7 +11,8 @@ const principal: Principal = {
     name: "Мастер",
     department: "Производство",
   },
-  roles: ["master"],
+  roles: ["foreman"],
+  access_level: "foreman",
   permissions: { production: "edit" },
 };
 
@@ -269,7 +270,7 @@ it("starts the first operation from an issued GRN and package", async () => {
   let payload: unknown;
   const operatorPrincipal: Principal = {
     user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
-    roles: ["staff"], permissions: { production: "view" },
+    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
   };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -303,7 +304,7 @@ it("corrects one output of a returned box and shows that it waits for the master
   const requests: Array<{ path: string; body: unknown }> = [];
   const operatorPrincipal: Principal = {
     user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
-    roles: ["staff"], permissions: { production: "view" },
+    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
   };
   const returned = {
     id: "74000000-0000-0000-0000-000000000002", number: "000002-6", version: 4,
@@ -352,7 +353,7 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
   const requests: Array<{ path: string; body: unknown }> = [];
   const operatorPrincipal: Principal = {
     user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
-    roles: ["staff"], permissions: { production: "view" },
+    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
   };
   const later = { ...task, operations: [{ ...task.operations[0], position: 2 }] };
   const session = {
@@ -392,7 +393,7 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
 it("groups the operator queue by plan day and hides start for a completed operation", async () => {
   const operatorPrincipal: Principal = {
     user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
-    roles: ["staff"], permissions: { production: "view" },
+    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
   };
   const now = new Date();
   const at = (days: number, hour: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, hour).toISOString();
@@ -546,7 +547,7 @@ const branched: ProductionTask = { ...task, assigned: 0, operations: [
 const FEEDS = "из этапов 1 «Нарезка А», 2 «Нарезка Б» ×2";
 const operatorPrincipal: Principal = {
   user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
-  roles: ["staff"], permissions: { production: "view" },
+  roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
 };
 
 it("shows on the task Gantt where the assembly takes its parts from, and how many each branch must hand in", async () => {
@@ -630,7 +631,7 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
 
 // Owner 04.10.2026: «почему эти два блока вообще тут» — очередь ОТК, брак и средства измерения живут в разделе «ОТК».
 it("keeps only planning and the master's box confirmation on the resource planning screen", async () => {
-  const adminPrincipal: Principal = { ...principal, roles: ["admin"], permissions: { production: "edit" } };
+  const adminPrincipal: Principal = { ...principal, roles: ["admin"], access_level: "admin", permissions: { production: "edit" } };
   const box = (id: string, number: string, status: string) => ({
     id, number, version: 1, task_id: task.id, operation_id: task.operations[0].id, item: task.item,
     operation_position: 1, operator_id: "10000000-0000-0000-0000-000000000002", quantity: "5", consumed: "0", reserved: "0", rejected: "0",
@@ -658,4 +659,40 @@ it("keeps only planning and the master's box confirmation on the resource planni
   expect(requested).not.toContain("/api/production/defects");
   expect(requested).not.toContain("/api/production/instruments");
   expect(requested).not.toContain("/api/production/qc/rejections");
+});
+
+// Access levels (owner 04.10.2026): the planning actions belong to edit on «Ресурсное планирование» (`production`), whoever
+// holds it; a view grant reads the board, and «Задания» (`myops`) is a screen of its own.
+it("gives the planning actions by edit on production alone, whatever the level is called", async () => {
+  for (const level of ["tech_lead", "foreman", "operator", "commercial"]) {
+    masterFetch(() => null, [task]);
+    const view = render(<ProductionPage principal={{ ...principal, roles: [level], access_level: level, permissions: { production: "edit" } }} />);
+    expect(await screen.findByRole("button", { name: "+ Запустить задание" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Календарь цеха" })).toBeInTheDocument();
+    view.unmount();
+    vi.restoreAllMocks();
+  }
+});
+
+it("keeps the planning actions away from a view grant on production", async () => {
+  const requested: string[] = [];
+  masterFetch((path) => { requested.push(path); return null; }, [task]);
+  render(<ProductionPage principal={{ ...principal, roles: ["commercial"], access_level: "commercial", permissions: { production: "view" } }} />);
+
+  await waitFor(() => expect(requested).toContain("/api/production/operators"));
+  expect(screen.getByRole("heading", { name: "Ресурсное планирование", level: 1 })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ Запустить задание" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Календарь цеха" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Коробки на подтверждение" })).not.toBeInTheDocument();
+});
+
+it("asks for nothing of the planning board without a view on production", async () => {
+  const requested: string[] = [];
+  masterFetch((path) => { requested.push(path); return null; }, [task]);
+  render(<ProductionPage principal={{ ...principal, roles: ["operator"], access_level: "operator", permissions: { myops: "edit" } }} />);
+
+  await waitFor(() => expect(requested).toContain("/api/production/tasks"));
+  expect(requested).not.toContain("/api/production/operators");
+  expect(requested).not.toContain("/api/production/boxes");
+  expect(screen.queryByRole("button", { name: "+ Запустить задание" })).not.toBeInTheDocument();
 });

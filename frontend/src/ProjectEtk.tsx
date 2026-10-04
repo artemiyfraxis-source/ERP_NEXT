@@ -19,6 +19,7 @@ import { defectArt, defectGroupCode } from "./etkDefectArt";
 import { parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
+import { hasFullAccess } from "./navigation";
 
 /* Электронная ТК сборки проекта и её генератор — вкладки «Генератор» и «ТК КБn» карточки проекта (SUPPLYMAP
    PortalApp kitCardRender_ → mountGen_ / renderTc_ → renderEtk_). */
@@ -637,7 +638,7 @@ export function GeneratorPane({ card, principal, onChange, onDone }: {
     <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft}
       onConfig={(config) => { generatedConfig.current = config; }}
       /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
-      more={!principal.roles.includes("admin") ? undefined : <div className="build-config">
+      more={!hasFullAccess(principal) ? undefined : <div className="build-config">
         <label>JSON-конфигурация генератора (для эксперта)<textarea aria-label="Конфигурация автоматической сборки" rows={12} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>
         <div className="form-actions">
           <button className="secondary small" onClick={() => { if (generatedConfig.current) setConfigText(JSON.stringify(generatedConfig.current, null, 2)); }}>Взять из формы</button>

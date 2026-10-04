@@ -1,6 +1,22 @@
 export type AccessMode = "view" | "edit";
 export const AUTH_REQUIRED_EVENT = "erp:auth-required";
 
+/** Access levels (owner 04.10.2026), strongest first; names as in backend identity LEVEL_LABELS. */
+export const ACCESS_LEVEL_LABELS: Readonly<Record<string, string>> = {
+  superadmin: "Суперадминистратор",
+  admin: "Администратор",
+  commercial: "Коммерческое руководство",
+  tech_lead: "Технический руководитель",
+  foreman: "Бригадир",
+  operator: "Оператор",
+};
+
+/** The level's Russian name; an unknown key is shown as is, an empty one as a dash. */
+export function accessLevelLabel(level: string | null | undefined): string {
+  const key = String(level ?? "").trim();
+  return ACCESS_LEVEL_LABELS[key] ?? (key || "—");
+}
+
 export interface Principal {
   user: {
     id: string;
@@ -8,9 +24,13 @@ export interface Principal {
     name: string;
     department: string;
   };
+  /** The access level key, one element (backend keeps the legacy name for one release); `access_level` is the same key. */
   roles: string[];
+  /** superadmin | admin | commercial | tech_lead | foreman | operator — the effective level, the admin mode included. */
+  access_level?: string;
+  /** Section → mode. superadmin/admin carry every section on edit; the screens never read anything else. */
   permissions: Record<string, AccessMode>;
-  /** portalState_ roleLabel: the effective role, «· режим» while the admin mode is on. */
+  /** portalState_ roleLabel: the level's name, «· режим» while the admin mode is on. */
   role_label?: string;
   /** «Режим админа» (portalToggleAdmin): the account may switch it / it is on for this session. */
   can_admin_mode?: boolean;
@@ -1401,8 +1421,11 @@ export interface OwnProfile {
   login: string;
   email: string;
   department: string;
+  /** Legacy position key; the level is `access_level`. */
   role: string;
   role_label: string;
+  access_level?: string;
+  access_level_label?: string;
   site: string;
   site_label: string;
   /** «Личная карточка»: кадровые поля, blank until the administrator fills them. */

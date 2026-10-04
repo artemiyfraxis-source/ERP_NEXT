@@ -124,7 +124,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const [busy, setBusy] = useState(false);
   const [serverQuery, setServerQuery] = useState("");
   const canEdit = principal.permissions.newrequest === "edit";
-  const canHandoff = canAct(principal, "procurement", ["buyer", "admin"]);
+  const canHandoff = canAct(principal, "procurement");
 
   const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">("manual");
 

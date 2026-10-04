@@ -22,10 +22,8 @@ export interface NavItem {
   /** Opens when any of these keys is granted (a section made of tabs with their own keys). */
   anyPermission?: string[];
   minimum?: AccessMode;
-  /** Roles the backend route admits; a full-access role passes any list (`hasRole`). */
-  roles?: string[];
-  /** The administrator's only, outside the matrix: no full-access role passes (backend access_admin_principal). */
-  adminOnly?: boolean;
+  /** superadmin / admin only, outside the matrix (backend require_full_access: «Доступы», «Сотрудники»). */
+  fullAccessOnly?: boolean;
   block?: BlockId;
   /** A screen opened from another section, not a card or menu item of its own: SUPPLYMAP opens the ЭТК inside
    *  «Проекты» (hub 'tc'), so the menu highlights that section instead. */
@@ -42,9 +40,8 @@ export const BLOCKS: Array<{ id: BlockId; icon: string; title: string; sub: stri
   { id: "refs", icon: "📚", title: "Справочники", sub: "база данных · шаблоны техкарт" },
 ];
 
-// ID-6: view grants open these sections read-only; the role sets mirror backend *_view_principal.
-const FULFILLMENT_ROLES = ["engineer", "receiver", "prodhead", "master", "admin"];
-
+// Access levels (owner 04.10.2026): a card opens by its section key and nothing else — no role lists. superadmin / admin
+// pass every card (backend `section_allowed`); the keys and minimums mirror backend level_migration.GATES.
 // Array order = card order inside a block = sidebar order.
 export const NAV: NavItem[] = [
   { id: "cabinet", label: "Личный кабинет" },
@@ -65,34 +62,35 @@ export const NAV: NavItem[] = [
   // its access key, so the card opens on either; ?section=tctemplates still lands on the templates tab.
   { id: "references", label: "База данных", sub: "операции · оборудование · терминалы · коаксиал · провода · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "refs" },
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "refs", within: "references" },
-  { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", roles: ["master", "prodhead", "management", "qc", "admin"], block: "prod" },
-  { id: "myops", label: "Задания", sub: "мои операции", permission: "production", roles: ["staff", "master", "admin"], block: "prod" },
-  // «ОТК» (owner, 04.10.2026): очередь на проверку, брак цеха и ОТК, средства измерения — не часть планирования. Открывается
-  // тем, кто и раньше видел эти блоки: правка раздела производства у мастера (решает по браку), ОТК (проверяет, ведёт реестр)
-  // и администратора; роли с полным доступом проходят список (hasRole).
-  { id: "quality", label: "ОТК", sub: "очередь на проверку · брак · средства измерения", permission: "production", minimum: "edit", roles: ["master", "qc", "admin"], block: "prod" },
+  { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", block: "prod" },
+  // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
+  // «ОТК»: очередь на проверку, брак цеха и ОТК, средства измерения; приёмку и реестр ведёт правка `quality`, решение по
+  // браку — правка `production` (экран сам прячет то, что не открыто).
+  { id: "myops", label: "Задания", sub: "мои операции", permission: "myops", block: "prod" },
+  { id: "quality", label: "ОТК", sub: "очередь на проверку · брак · средства измерения", permission: "quality", block: "prod" },
   // Снабжение. «Оформить заявку» and «Мои заявки» are sections of their own, not actions inside «Заявки»
   // (SUPPLYMAP Portal.gs PORTAL_SECTIONS_, owner 27.08.2026): a rank-and-file user needs the form and own rows.
   // NAV-SECTIONS: each has its own access key, so «Заявки» can be closed without taking them away.
   { id: "newrequest", label: "Оформить заявку", sub: "вручную · из Excel · из расчёта", permission: "newrequest", minimum: "edit", block: "supply" },
   { id: "myrequests", label: "Мои заявки", sub: "мои позиции и на каком они этапе", permission: "myrequests", block: "supply" },
   { id: "requests", label: "Заявки", sub: "проверить и передать в закупку", permission: "requests", block: "supply" },
-  { id: "procurement", label: "Лист закупки", sub: "работа и взять в работу", permission: "procurement", roles: ["buyer", "receiver", "prodhead", "management", "admin"], block: "supply" },
+  { id: "procurement", label: "Лист закупки", sub: "работа и взять в работу", permission: "procurement", block: "supply" },
   // Склад
-  { id: "receiving", label: "Приёмка", sub: "входной контроль и оприходование", permission: "receiving", roles: ["receiver", "prodhead", "management", "master", "staff", "admin"], block: "stock" },
-  { id: "stock", label: "Склад", sub: "остатки · внести · переместить", permission: "warehouse", roles: ["receiver", "buyer", "prodhead", "management", "master", "staff", "admin"], block: "stock" },
+  { id: "receiving", label: "Приёмка", sub: "входной контроль и оприходование", permission: "receiving", block: "stock" },
+  { id: "stock", label: "Склад", sub: "остатки · внести · переместить", permission: "warehouse", block: "stock" },
   // Picking only reserves, handout writes off: two sections over one request (SUPPLYMAP, owner 02.09.2026), each with
   // its own access key (NAV-SECTIONS) so picking and writing off can go to different people.
-  { id: "issues", label: "Запросы на комплектацию", sub: "заявки под КБ · набрать комплект", permission: "fulfillment", roles: FULFILLMENT_ROLES, block: "stock" },
-  { id: "handout", label: "Выдача со списанием", sub: "передать в цех · списать со склада", permission: "handout", roles: FULFILLMENT_ROLES, block: "stock" },
-  { id: "shipping", label: "Отгрузка", sub: "готовая продукция · отправки", permission: "shipping", roles: ["pm", "receiver", "master", "prodhead", "management", "admin"], block: "stock" },
+  { id: "issues", label: "Запросы на комплектацию", sub: "заявки под КБ · набрать комплект", permission: "fulfillment", block: "stock" },
+  { id: "handout", label: "Выдача со списанием", sub: "передать в цех · списать со склада", permission: "handout", block: "stock" },
+  // «Отгрузка» (менеджер) и «Отгрузка — склад» (кладовщик) — два ключа матрицы, одна карточка: список читает любой из них.
+  { id: "shipping", label: "Отгрузка", sub: "готовая продукция · отправки", anyPermission: ["shipping", "shipping_goods"], block: "stock" },
   // Менеджмент
-  { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", roles: ["master", "prodhead", "management", "admin"], block: "mgmt" },
-  { id: "staff", label: "Сотрудники", sub: "справочник, роли, отделы", permission: "staffdir", minimum: "edit", roles: ["admin"], block: "mgmt" },
-  // NAV-ACCESS: always the administrator's, outside the matrix (SUPPLYMAP portalButtons_ pushes it for role admin).
-  { id: "access", label: "Доступы", sub: "роли × разделы · исключения по сотрудникам", adminOnly: true, block: "mgmt" },
+  { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", block: "mgmt" },
+  // «Сотрудники» и «Доступы»: только superadmin / admin, вне матрицы (backend staffdir_principal, access_admin_principal).
+  { id: "staff", label: "Сотрудники", sub: "справочник, уровни, отделы", fullAccessOnly: true, block: "mgmt" },
+  { id: "access", label: "Доступы", sub: "уровни × разделы · исключения по сотрудникам", fullAccessOnly: true, block: "mgmt" },
   { id: "notifications", label: "Уведомления", sub: "мои события", block: "mgmt" },
-  { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", roles: ["management", "admin"], block: "mgmt" },
+  { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", block: "mgmt" },
 ];
 
 export function hasAccess(
@@ -105,29 +103,57 @@ export function hasAccess(
   return actual === "edit" || (minimum === "view" && actual === "view");
 }
 
-// Owner 2026-09-29 (backend identity FULL_ACCESS_ROLES): технолог, специалист по снабжению, директор производства and
-// генеральный директор have every section on edit, and backend `require_section` lets them past a route's role list.
-// The screens follow the same rule, or a director sees a section without its buttons (owner 02.10.2026: the production
-// director could not pick a kit for the storekeeper).
-export const FULL_ACCESS_ROLES: ReadonlySet<string> = new Set(["admin", "buyer", "prodhead", "management"]);
+/** Levels that edit every section and alone see «Доступы», «Сотрудники» and the administrator's tools (backend
+ *  identity FULL_ACCESS_LEVELS). */
+export const FULL_ACCESS_LEVELS: ReadonlySet<string> = new Set(["superadmin", "admin"]);
 
-/** A route's role list as backend `require_section` reads it: one of these roles, or a full-access role. */
-export function hasRole(principal: Principal, roles: readonly string[]) {
-  return principal.roles.some((role) => roles.includes(role) || FULL_ACCESS_ROLES.has(role));
+/** The effective access level key: `access_level`, or the one element of `roles` (it holds the level key too). */
+export function accessLevelOf(principal: Principal): string {
+  return principal.access_level ?? principal.roles[0] ?? "";
 }
 
-/** «Режим просмотра» (ID-6): edit controls only when the backend *_edit_principal would pass too. */
-export function canAct(principal: Principal, section: string, roles: readonly string[]) {
-  return principal.permissions[section] === "edit" && hasRole(principal, roles);
+/** superadmin / admin: every section on edit and the administrator's tools, whatever the matrix says. */
+export function hasFullAccess(principal: Principal): boolean {
+  return FULL_ACCESS_LEVELS.has(accessLevelOf(principal));
+}
+
+/** The section is open at `minimum` (default: for reading): a full-access level, or the matrix says so. */
+export function canSee(principal: Principal, section: string, minimum: AccessMode = "view"): boolean {
+  return hasFullAccess(principal) || hasAccess(principal.permissions, section, minimum);
+}
+
+/** «Режим просмотра» (ID-6): edit controls only when the backend would pass the write too — the section is on edit
+ *  (`minimum` can ask for less), or the level is a full-access one. */
+export function canAct(principal: Principal, section: string, minimum: AccessMode = "edit"): boolean {
+  return canSee(principal, section, minimum);
+}
+
+// The sections of one's own work: filing and own rows, own operations. Edit rights here do not make a person someone
+// who runs the shop or the system.
+const OWN_WORK_SECTIONS: readonly string[] = ["newrequest", "myrequests", "myops"];
+
+/** Edits something beyond one's own work, or has full access: who is told that an update failed. A rank-and-file
+ *  operator (own operations and own requests only) is not. */
+export function runsTheSystem(principal: Principal): boolean {
+  return hasFullAccess(principal) || Object.entries(principal.permissions)
+    .some(([section, mode]) => mode === "edit" && !OWN_WORK_SECTIONS.includes(section));
 }
 
 export function hasNavAccess(principal: Principal, item: NavItem) {
+  if (item.fullAccessOnly) return hasFullAccess(principal);
+  if (hasFullAccess(principal)) return true;
   return (
     hasAccess(principal.permissions, item.permission, item.minimum) &&
-    (!item.anyPermission || item.anyPermission.some((key) => hasAccess(principal.permissions, key, item.minimum))) &&
-    (!item.roles || hasRole(principal, item.roles)) &&
-    (!item.adminOnly || principal.roles.includes("admin"))
+    (!item.anyPermission || item.anyPermission.some((key) => hasAccess(principal.permissions, key, item.minimum)))
   );
+}
+
+/** The card opens for reading only: every key that opens it is granted as «view» (never for a full-access level). */
+export function isViewOnly(principal: Principal, item: NavItem): boolean {
+  if (hasFullAccess(principal)) return false;
+  const keys = item.permission ? [item.permission] : item.anyPermission ?? [];
+  const modes = keys.map((key) => principal.permissions[key]).filter(Boolean);
+  return modes.length > 0 && !modes.includes("edit");
 }
 
 export function visibleNav(principal: Principal) {

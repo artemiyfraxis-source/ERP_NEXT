@@ -6,7 +6,8 @@ import type { Principal, ProductionPlanResult } from "./api";
 
 const principal: Principal = {
   user: { id: "1", email: "master@example.test", name: "Мастер", department: "Производство" },
-  roles: ["master"],
+  roles: ["foreman"],
+  access_level: "foreman",
   permissions: { production: "edit" },
 };
 
@@ -336,7 +337,7 @@ it("edits sheet cells inline: a checkbox, back to the ERP value, the status, a d
 
 it("draws the calendar: work days in the project colour, quantity on the first day, deadline and arrival marks", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
-  render(<ProductionPlanPage principal={{ ...principal, roles: ["engineer"], permissions: { production: "view" } }} />);
+  render(<ProductionPlanPage principal={{ ...principal, roles: ["tech_lead"], access_level: "tech_lead", permissions: { production: "view" } }} />);
   await screen.findByRole("button", { name: "708К.4" });
   const days = Array.from(sheetRow("708К.4").querySelectorAll(".zg-day"));
 
