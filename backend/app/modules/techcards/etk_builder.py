@@ -388,12 +388,24 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
     return [{"name": result_name, "norm": _format(norm, 2)}]
 
 
-def _cut_tolerance(wire_data: Mapping[str, Any]) -> str:
+def _cut_tolerance(op: Mapping[str, Any], wire_data: Mapping[str, Any]) -> str:
+    """Допуск длины реза: введённый технологом в операции — как есть; иначе ±3 мм до 500 мм длины и ±5 мм длиннее
+    (владелец 04.10: «(+/-)1мм» по 0,7 % длины из SUPPLYMAP слишком строг)."""
+    manual = str(op.get("cutTolerance") or "").strip()
+    if manual:
+        return manual
     length = _decimal(str(wire_data.get("length") or "").split("\n", 1)[0])
     if not length:
         return ""
-    tolerance = max(1, int((length * Decimal(7) / 1000).to_integral_value(rounding="ROUND_CEILING")))
-    return f"(+/-){tolerance}мм"
+    return "±3 мм" if length <= 500 else "±5 мм"
+
+
+def _tin_strip_length(config: Mapping[str, Any], end: str) -> str:
+    """Длина зачистки под лужение свободного конца `end` из конфигурации генератора: блок «Лужение», иначе общая
+    зачистка этого конца (генератор кладёт туда длину под лужение, когда стороны В нет)."""
+    tin = config.get("tin") if isinstance(config.get("tin"), Mapping) else {}
+    strip = config.get("strip") if isinstance(config.get("strip"), Mapping) else {}
+    return str(tin.get("stripLen") or (strip.get(f"len{end.upper()}") if strip.get(end) else "") or "").strip()
 
 
 def _pins(value: object) -> list[int]:
@@ -452,12 +464,17 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
     operation_type = str(op.get("type") or "")
     fields: dict[str, Any] = {}
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
-        fields["cutTolerance"] = _cut_tolerance(wire_data)
+        fields["cutTolerance"] = _cut_tolerance(op, wire_data)
         first_length = str(wire_data.get("length") or "").split("\n", 1)[0]
         fields["lengthKd"] = f"{first_length}мм" if first_length else ""
     strip = config.get("strip") if operation_type == "cutWire" else op.get("strip") if operation_type in {"cutWireStrip", "cutWireCrimp"} else None
     if isinstance(strip, Mapping):
         fields["strip"] = {"a": bool(strip.get("a")), "b": bool(strip.get("b")), "lenA": strip.get("lenA") or "", "lenB": strip.get("lenB") or ""}
+        if operation_type == "cutWireCrimp" and op.get("tin"):
+            # Свободный конец станок зачищает и лудит: без своей длины у операции — длина зачистки под лужение.
+            end = "a" if op.get("side") == "B" else "b"
+            fields["strip"][end] = True
+            fields["strip"][f"len{end.upper()}"] = fields["strip"][f"len{end.upper()}"] or _tin_strip_length(config, end)
     if operation_type == "twist":
         twist = config.get("twist") if isinstance(config.get("twist"), Mapping) else {}
         wires = config.get("wires") or []

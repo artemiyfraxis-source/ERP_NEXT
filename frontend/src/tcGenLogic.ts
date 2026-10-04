@@ -982,9 +982,12 @@ export function makeGen(D: GenData, S: GenState) {
           if (len === null) return;
           if (e.side === "A") a = len; else b = len;
         });
-        if (!b && !endpointsOnSide_("B").length && S.freeStrip.enabled) b = (S.freeStrip.len || "").trim() || "—";
-        if (!b && !endpointsOnSide_("B").length && S.tin.enabled && tinIdx.includes(activeWires.indexOf(w)))
-          b = (S.tin.stripLen || "").trim() || "—";
+        // Лужёный свободный конец зачищают под лужение: его длина главнее «Зачистки свободных концов» (тот блок — без
+        // лужения); пустая длина свободной зачистки больше не прячет длину под лужение (719К.2 КБ1 «B ?», 04.10).
+        const tinned = !endpointsOnSide_("B").length && S.tin.enabled && tinIdx.includes(activeWires.indexOf(w));
+        const freeLen = S.freeStrip.enabled ? (S.freeStrip.len || "").trim() : "";
+        if (!b && tinned) b = (S.tin.stripLen || "").trim() || freeLen || "—";
+        if (!b && !endpointsOnSide_("B").length && S.freeStrip.enabled) b = freeLen || "—";
         return { a, b };
       };
       const crimpEp = crimpSide ? endpointsOnSide_(crimpSide)[0] : null;
@@ -1382,7 +1385,7 @@ export function makeGen(D: GenData, S: GenState) {
       pitch: (S.twist.pitch || "").trim(), wireDia: (twistDiaValue() || "").trim(),
     };
     applyTwistAllowance_(wires, twist);
-    const tin = { enabled: !sideB && S.tin.enabled, wireIndices: tinWireIndices_() };
+    const tin = { enabled: !sideB && S.tin.enabled, wireIndices: tinWireIndices_(), stripLen: (S.tin.stripLen || "").trim() };
     const otpA = !!(epA && epA.otp), otpB = !!(epB && epB.otp);
     const tinOn = !sideB && S.tin.enabled && tinWireIndices_().length > 0;
     const stripSides = { a: !!(termA && otpA), b: !!(termB && otpB) || tinOn };
