@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -20,7 +20,7 @@ from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWo
 from app.modules.production.traceability import ProductionBox, format_box_number
 from app.shared.clock import MOSCOW, moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import create_schema
+from app.shared.persistence import AuditEventRow, create_schema
 from tests.factories import Actor
 
 
@@ -328,6 +328,55 @@ def test_production_plan_persists_manual_kit_stage_and_review(production_api):
     assert review.status_code == 201, review.text
     assert review.json()["event"]["item_index"] == "КБ1"
     assert review.json()["event"]["value"] == "с погрешностями"
+
+
+def test_production_plan_sheet_columns_and_manual_marks_persist(production_api):
+    client, _operator_id = production_api
+    card = issue_card("708К.4", "КБ1", [("OP-1", "Резка", 60, 0)])
+    client.put("/api/production/plan/projects-snapshot", json={"projects": [{
+        "project": "708К.4", "customer": "Заказчик", "deadline": "2026-10-01", "status": "Новый", "terminal": False,
+    }]})
+    client.post("/api/production/tasks", headers={"Idempotency-Key": "sheet-708k4"},
+                json={"techcard_id": str(card.id), "quantity": 10})
+
+    marks = [
+        {"field": "status", "value": "холд, к запус"},
+        {"field": "comment", "text": "ждём ответ заказчика"},
+        {"field": "kit_arrival", "value": "2026-10-09"},
+        {"field": "test_sb", "value": "да"},
+        {"field": "in_plan", "value": "да"},
+        {"field": "in_plan", "value": "авто"},
+        {"field": "day:2026-09-25", "value": "П"},
+    ]
+    saved = [client.post("/api/production/plan/events", json={"project": "708К.4", "kind": "mark", **mark}) for mark in marks]
+    bad = client.post("/api/production/plan/events", json={"project": "708К.4", "kind": "mark", "field": "ready", "value": "300"})
+    loaded = client.get("/api/production/plan")
+
+    assert [response.status_code for response in saved] == [201] * len(marks), [r.text for r in saved]
+    assert saved[0].json()["event"]["value"] == "ХОЛД, К ЗАПУСК"
+    assert saved[0].json()["event"]["field"] == "status"
+    assert saved[0].json()["event"]["kind"] == "Отметка плана"
+    assert bad.status_code == 422
+    body = loaded.json()
+    assert "ОТГРУЖЕН" in body["shop_statuses"]
+    assert (body["calendar_from"], body["calendar_to"]) == ("2026-09-15", "2026-11-21")
+    row = body["rows"][0]
+    sheet = row["sheet"]
+    assert sheet["status"] == {"value": "ХОЛД, К ЗАПУСК", "auto": "В РАБОТЕ", "manual": True}
+    assert row["group"] == "hold"
+    assert sheet["comment"]["value"] == "ждём ответ заказчика"
+    assert sheet["kit_arrival"]["value"] == "2026-10-09" and sheet["kit_arrival"]["manual"] is True
+    assert sheet["test_sb"]["value"] == "да"
+    assert sheet["in_plan"] == {"value": "нет", "auto": "нет", "manual": False}
+    assert sheet["tc_ready"]["value"] == "да"
+    assert sheet["ready"]["value"] == "0"
+    assert row["calendar"]["notes"] == {"2026-09-25": "П"}
+    with app.state.production_uow_factory() as uow:
+        audit = [row.details for row in uow.session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "production.plan_event_added"))]
+    mark_audit = [details for details in audit if details["kind"] == "Отметка плана"]
+    assert len(mark_audit) == len(marks)
+    assert {"project": "708К.4", "kind": "Отметка плана", "field": "status", "value": "ХОЛД, К ЗАПУСК"} in mark_audit
 
 
 def test_production_plan_rejects_note_for_unknown_project(production_api):

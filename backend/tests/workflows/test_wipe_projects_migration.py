@@ -63,6 +63,10 @@ def database(tmp_path, monkeypatch):
     path = tmp_path / "real.db"
     command.upgrade(_config(path), BEFORE)
     engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}", connect_args={"check_same_thread": False})
+    # Колонки поздних миграций, которые читает ORM этих API: база остаётся на 0077, но запросы идут текущим кодом.
+    with engine.begin() as connection:
+        connection.execute(text(
+            "ALTER TABLE production_plan_events ADD COLUMN field VARCHAR(32) NOT NULL DEFAULT ''"))
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)
     app.state.techcards_uow_factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)

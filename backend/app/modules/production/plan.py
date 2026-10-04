@@ -19,6 +19,7 @@ PLAN_KINDS = {
     "stage": "Этап КБ",
     "tcReview": "Проверка ТК",
     "status": "Статус проекта",
+    "mark": "Отметка плана",
 }
 PLAN_BLOCKERS = ("ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА")
 KIT_STAGES = ("Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено")
@@ -27,6 +28,26 @@ PLAN_STAGE_AUTO = "авто"
 # ERP_PROJ_TERMINALS_ (Schema.gs): решение человека перекрывает вычисленный этап. В SUPPLYMAP — СТАТУС листа
 # «Проекты»; в ERP ставится записью журнала «Статус проекта» (value «авто» — вернуть в работу), она сильнее снимка.
 PROJECT_TERMINALS = ("Отказ", "Слился", "Отменён")
+# Лист цеха «ЗАГРУЗ» (владелец 04.10: «тут вот такое представление я хочу»): статусы ячейки «Статус», в одной
+# ячейке их может быть несколько через запятую. Порядок — как в выпадающем списке листа.
+SHOP_STATUSES = (
+    "ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ",
+    "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН",
+)
+# ProdPlan.gs planShopStatus_: статусы в листе набраны руками — опечатки к словарю.
+_SHOP_STATUS_TYPOS = {"К ЗАПУС": "К ЗАПУСК", "ОЖД ИНФ": "ОЖИД ИНФ", "ОЖИД КОМП": "ОЖИД КОМПЛ"}
+# Отметки плана (запись журнала «Отметка плана», поле `field`): ручное значение колонки листа поверх
+# вычисленного; value «авто» (или пусто) возвращает вычисленное. Комментарий хранится в text.
+PLAN_MARK_FLAGS = ("да", "нет")
+PLAN_MARK_SUPPLIED = ("НЕТ", "ДА", "Ч/Т")
+PLAN_MARK_ARRIVAL = ("Склад", "Ждем", "???")
+PLAN_MARK_FIELDS = (
+    "comment", "status", "ready", "in_plan", "customer_supplied", "kit_checked", "kit_present",
+    "zkp", "kit_arrival", "tc_ready", "test_sb", "kit_picked",
+)
+PLAN_MARK_FLAG_FIELDS = ("in_plan", "kit_checked", "kit_present", "zkp", "tc_ready", "test_sb", "kit_picked")
+PLAN_DAY_FIELD_PREFIX = "day:"
+PLAN_DAY_NOTE_MAX = 16
 _KIT_STAGE_FACTS = ("", "tc", "kit", "work", "stock", "shipped")
 _HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
 
@@ -228,6 +249,8 @@ class PlanEvent:
     value: str = ""
     sequence: int = 0
     id: UUID = field(default_factory=uuid4)
+    # Колонка листа «ЗАГРУЗ» у записи «Отметка плана» (comment, status, … или day:ГГГГ-ММ-ДД).
+    field: str = ""
 
 
 @dataclass(frozen=True)
@@ -317,6 +340,82 @@ def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
     return marks
 
 
+def normalize_shop_statuses(value: object) -> str:
+    """ProdPlan.gs planShopStatus_ for each comma-separated status; unknown ones are kept for validation."""
+    result: list[str] = []
+    for part in str(value or "").split(","):
+        status = re.sub(r"[.\s]+$", "", re.sub(r"\s+", " ", part.upper())).strip()
+        status = _SHOP_STATUS_TYPOS.get(status, status)
+        if status and status not in result:
+            result.append(status)
+    return ", ".join(result)
+
+
+def plan_mark_value(field_name: str, value: object, text: object = "") -> str:
+    """Validated, normalized value of a plan mark; "" clears the override. Raises on a bad value."""
+    raw = str(value or "").strip()
+    if field_name == "comment":
+        return str(text or "").strip()
+    if raw in ("", PLAN_STAGE_AUTO):
+        return ""
+    if field_name.startswith(PLAN_DAY_FIELD_PREFIX):
+        if _iso_date(field_name[len(PLAN_DAY_FIELD_PREFIX):]) is None:
+            raise ProductionValidationError("Неизвестный день плана.")
+        if len(raw) > PLAN_DAY_NOTE_MAX:
+            raise ProductionValidationError(f"Отметка дня — до {PLAN_DAY_NOTE_MAX} знаков.")
+        return raw
+    if field_name not in PLAN_MARK_FIELDS:
+        raise ProductionValidationError("Неизвестная колонка плана.")
+    if field_name == "status":
+        statuses = normalize_shop_statuses(raw)
+        unknown = [status for status in statuses.split(", ") if status not in SHOP_STATUSES]
+        if unknown:
+            raise ProductionValidationError(f"Неизвестный статус: {', '.join(unknown)}.")
+        return statuses
+    if field_name == "ready":
+        if not re.fullmatch(r"\d{1,3}", raw) or int(raw) > 100:
+            raise ProductionValidationError("Готовность — число от 0 до 100.")
+        return str(int(raw))
+    if field_name in PLAN_MARK_FLAG_FIELDS:
+        if raw not in PLAN_MARK_FLAGS:
+            raise ProductionValidationError("Отметка — да или нет.")
+        return raw
+    if field_name == "customer_supplied":
+        if raw.upper() not in PLAN_MARK_SUPPLIED:
+            raise ProductionValidationError("Давальческое — НЕТ, ДА или Ч/Т.")
+        return raw.upper()
+    # kit_arrival: a date or one of the sheet words.
+    if raw in PLAN_MARK_ARRIVAL:
+        return raw
+    parsed = _iso_date(raw) or _date(raw)
+    if parsed is None:
+        raise ProductionValidationError("Дата прихода — дата, «Склад», «Ждем» или «???».")
+    return parsed.isoformat()
+
+
+def _iso_date(value: object) -> date | None:
+    try:
+        return date.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+
+
+def summarize_plan_marks(events: Iterable[PlanEvent]) -> dict[str, dict[str, str]]:
+    """Current manual value per project and sheet column; the latest mark wins, an empty one clears."""
+    marks: dict[str, dict[str, str]] = {}
+    for event in events:
+        if event.kind != PLAN_KINDS["mark"] or not event.field:
+            continue
+        project = normalize_project_number(event.project)
+        current = marks.setdefault(project, {})
+        value = event.text if event.field == "comment" else event.value
+        if value and value != PLAN_STAGE_AUTO:
+            current[event.field] = value
+        else:
+            current.pop(event.field, None)
+    return marks
+
+
 def validate_plan_note(payload: Mapping[str, object], known_projects: Iterable[str]) -> None:
     known = {normalize_project_number(project) for project in known_projects}
     project = normalize_project_number(payload.get("project"))
@@ -343,3 +442,5 @@ def validate_plan_note(payload: Mapping[str, object], known_projects: Iterable[s
         raise ProductionValidationError("Неизвестная отметка проверки.")
     if kind == "tcReview" and payload.get("value") == "с погрешностями" and not str(payload.get("text") or "").strip():
         raise ProductionValidationError("Напиши, какие погрешности.")
+    if kind == "mark":
+        plan_mark_value(str(payload.get("field") or ""), payload.get("value"), payload.get("text"))
