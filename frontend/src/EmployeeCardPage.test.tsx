@@ -79,7 +79,10 @@ it("shows the own card: header, the «Обзор» tab and the cards in the conc
   expect(await screen.findByRole("heading", { level: 1, name: "Иванов Пётр Сергеевич" })).toBeInTheDocument();
   expect(seen[0]).toBe("/api/employee-card/me");
   expect(screen.getByText("ИП")).toBeInTheDocument();
-  expect(screen.getByText("Мастер · Монтаж")).toBeInTheDocument();
+  // Нет должности — серая подсказка, а не роль доступа вместо неё; роль — маленькой серой строкой.
+  expect(screen.getByText("должность не указана")).toBeInTheDocument();
+  expect(screen.getByText("должность не указана").closest("p")).toHaveTextContent("должность не указана · Монтаж");
+  expect(screen.getByText("доступ: Мастер")).toBeInTheDocument();
   expect(screen.getByText("Карточка активна")).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Обзор" })).toBeInTheDocument();
   expect(screen.getAllByRole("tab")).toHaveLength(1);
@@ -92,6 +95,8 @@ it("shows the own card: header, the «Обзор» tab and the cards in the conc
 
   const main = screen.getByRole("region", { name: "Основные данные" });
   expect(within(main).getByText("ЦАР · Москва")).toBeInTheDocument();
+  expect(within(main).getByText("Площадка")).toBeInTheDocument();
+  expect(within(main).getByText("Роль доступа")).toBeInTheDocument();
   expect(within(main).queryByText("Табельный номер")).toBeNull();
 
   expect(within(screen.getByRole("region", { name: "Подчинённость" })).getByText("Сидоров Олег")).toBeInTheDocument();
@@ -228,11 +233,24 @@ it("renders the personnel fields only when the card brings them", async () => {
   });
   render(<EmployeeCardPage principal={principal()} />);
   expect(await screen.findByText("Мастер участка · Монтаж")).toBeInTheDocument();
+  // Должность указана — шапка показывает её, роль доступа остаётся отдельной серой строкой.
+  expect(screen.queryByText("должность не указана")).toBeNull();
+  expect(screen.getByText("доступ: Мастер")).toBeInTheDocument();
   expect(screen.getByText("Категория:")).toBeInTheDocument();
   expect(screen.getAllByText("01.03.2024")).toHaveLength(2);
   const main = screen.getByRole("region", { name: "Основные данные" });
   expect(within(main).getByText("0147")).toBeInTheDocument();
   expect(within(main).getByText("Кузнецов А. П.")).toBeInTheDocument();
+});
+
+it("never shows the access role in place of a missing position, even with a blank department", async () => {
+  serve({ ...EMPTY, personnel: { tab_number: null, position: "  ", category: null, since: null, manager_name: null } });
+  render(<EmployeeCardPage principal={principal()} />);
+  await screen.findByRole("heading", { level: 1, name: "Петров Иван" });
+  const sub = screen.getByText("должность не указана");
+  expect(sub).toHaveClass("ec-nodata");
+  expect(sub.closest("p")).toHaveTextContent(/^должность не указана$/);
+  expect(screen.getByText("доступ: Сотрудник")).toBeInTheDocument();
 });
 
 it("shows the server's refusal instead of an empty card", async () => {

@@ -1427,10 +1427,16 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .staff-dep-heads .staff-dep-rename button { flex: none; }
 /* A табельный номер («FRX-0017») never breaks at its hyphen. */
 .staff-page td.tab-no { white-space: nowrap; }
-/* The employee form closes without holes: E-mail at creation takes two columns (half a row on 27", the whole row in
-   two columns); the «Вход разрешён» box sits on the inputs' line. */
+/* The employee form has two titled blocks, «Кадры» (personnel facts) and «Доступ в ERP» (what the person may open),
+   each on the shared .form-grid. ФИО, E-mail and the PIN at creation take two columns (half a row on 27", the whole
+   row in two columns), so both blocks close without holes. */
 @media (min-width: 721px) { .staff-form > .pair { grid-column: span 2; } }
-.staff-form > .staff-form-check { align-self: end; min-height: 38px; }
+.staff-form > .staff-form-check { align-self: center; min-height: 38px; }
+.staff-form-block > h3 { margin: 0; padding: 4px 20px 10px; color: var(--foreground); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.staff-form-block + .staff-form-block { margin: 0 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.staff-form-block + .staff-form-block > h3 { padding: 0 0 10px; }
+.staff-form-block + .staff-form-block > .form-grid { padding-left: 0; padding-right: 0; }
+#staff-edit-form > .form-actions { padding: 0 20px 18px; }
 .operations-queue { margin-left: auto; color: var(--muted-foreground); font-size: 13px; }
 
 /* ===== T7: «Оформить заявку» — таблица позиций (RequestGrid). Свой блок, чтобы не мешать соседним правкам. ===== */
@@ -1699,6 +1705,7 @@ select.zg-supplied:hover, select.zg-supplied:focus { outline: 1px solid color-mi
 .ec-id { flex: 1; min-width: 0; }
 .ec-id h1 { margin: 0 0 2px; }
 .ec-sub { margin: 0; font-size: 14px; }
+.ec-access { margin: 1px 0 0; color: var(--muted-foreground); font-size: 12px; }
 .ec-meta { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 2px 18px; color: var(--muted-foreground); font-size: 13px; }
 .ec-meta strong { color: var(--foreground); font-weight: 600; }
 .ec-badge { flex: none; border-radius: 999px; padding: 4px 12px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }

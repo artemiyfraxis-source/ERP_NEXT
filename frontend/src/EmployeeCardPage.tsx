@@ -71,7 +71,8 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
 
   const { header, personnel } = card;
   const roleLabels = header.roles.map((role) => role.label).join(", ");
-  const position = personnel?.position?.trim() || roleLabels;
+  // The position is a personnel fact; the access role is a different thing and never stands in for it.
+  const position = personnel?.position?.trim() ?? "";
   const site = header.site ? `${header.site} · ${header.site_label ?? ""}`.replace(/ · $/, "") : "все площадки";
 
   return <section className="page ec-page">
@@ -80,7 +81,11 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
       <span className="ec-avatar" aria-hidden="true">{initials(header.name)}</span>
       <div className="ec-id">
         <h1>{header.name}</h1>
-        <p className="ec-sub">{[position, header.department].filter(Boolean).join(" · ") || NO_DATA}</p>
+        <p className="ec-sub">
+          {position || <span className="ec-nodata">должность не указана</span>}
+          {header.department ? ` · ${header.department}` : ""}
+        </p>
+        {roleLabels && <p className="ec-access">доступ: {roleLabels}</p>}
         <p className="ec-meta">
           {personnel?.category && <span>Категория: <strong>{personnel.category}</strong></span>}
           {personnel?.since && <span>В должности с <strong>{formatDate(personnel.since)}</strong></span>}
@@ -103,8 +108,8 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
           {personnel && <Fact label="Табельный номер" value={personnel.tab_number} />}
           {personnel && <Fact label="Должность" value={personnel.position} />}
           <Fact label="Отдел" value={header.department} />
-          <Fact label="Роль" value={roleLabels} />
-          <Fact label="Место работы" value={site} />
+          <Fact label="Роль доступа" value={roleLabels} />
+          <Fact label="Площадка" value={site} />
           {personnel && <Fact label="Категория" value={personnel.category} />}
           {personnel && <Fact label="В должности с" value={personnel.since ? formatDate(personnel.since) : null} />}
           {personnel && <Fact label="Руководитель" value={personnel.manager_name} />}

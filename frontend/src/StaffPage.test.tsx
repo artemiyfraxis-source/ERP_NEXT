@@ -21,7 +21,7 @@ function json(body: unknown, status = 200) {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("lists employees with role labels and creates a new one with a password", async () => {
+it("lists employees with access labels and creates a new one with a password", async () => {
   let created: Record<string, unknown> | null = null;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -41,8 +41,8 @@ it("lists employees with role labels and creates a new one with a password", asy
   fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "new@example.test" } });
   fireEvent.change(screen.getByLabelText("ФИО"), { target: { value: "Новиков" } });
   fireEvent.change(screen.getByLabelText("Отдел"), { target: { value: "Снабжение" } });
-  fireEvent.change(screen.getByLabelText("Место работы"), { target: { value: "ЖУК" } });
-  fireEvent.change(screen.getByLabelText("Роль"), { target: { value: "master" } });
+  fireEvent.change(screen.getByLabelText("Площадка"), { target: { value: "ЖУК" } });
+  fireEvent.change(screen.getByLabelText("Роль доступа"), { target: { value: "master" } });
   fireEvent.change(screen.getByLabelText("Пароль"), { target: { value: "first-password" } });
   fireEvent.click(screen.getByRole("button", { name: "Завести сотрудника" }));
 
@@ -218,6 +218,78 @@ it("edits personnel fields and picks the manager from a searchable list without 
     personnel_number: "FRX-0017", job_title: "Специалист по снабжению", qualification: "1 категория",
     job_since: "2024-03-01", manager_id: "u1",
   }]));
+});
+
+it("splits the form into «Кадры» and «Доступ в ERP», each with its own fields in a fixed order", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/staff") return json(TEAM);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const fieldsOf = (block: HTMLElement) => Array.from(block.querySelectorAll("[aria-label]")).map((field) => field.getAttribute("aria-label"));
+
+  render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  const form = document.getElementById("staff-edit-form") as HTMLElement;
+  expect(within(form).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["Кадры", "Доступ в ERP"]);
+  expect(fieldsOf(screen.getByRole("region", { name: "Кадры" }))).toEqual([
+    "ФИО", "Должность", "Категория / квалификация", "Отдел", "Руководитель", "Табельный номер", "В должности с",
+  ]);
+  expect(fieldsOf(screen.getByRole("region", { name: "Доступ в ERP" }))).toEqual([
+    "Роль доступа", "Площадка", "Новый пароль", "Новый PIN", "Вход разрешён",
+  ]);
+  // The old mixed label is gone: the access role is never called just «Роль».
+  expect(screen.queryByLabelText("Роль")).toBeNull();
+  expect(screen.queryByLabelText("Место работы")).toBeNull();
+});
+
+it("puts the e-mail and login of a new employee into the access block, before the role", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/staff") return json(DIRECTORY);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Сотрудник" }));
+  const access = screen.getByRole("region", { name: "Доступ в ERP" });
+  expect(Array.from(access.querySelectorAll("[aria-label]")).map((field) => field.getAttribute("aria-label"))).toEqual([
+    "E-mail", "Логин", "Роль доступа", "Площадка", "Пароль", "PIN",
+  ]);
+  expect(within(screen.getByRole("region", { name: "Кадры" })).queryByLabelText("E-mail")).toBeNull();
+});
+
+it("explains «Роль доступа» and «Площадка» in tooltips", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/staff") return json(DIRECTORY);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  expect(screen.getByLabelText("Роль доступа").closest("label")).toHaveAttribute(
+    "title", "что сотрудник может открывать и править в ERP; должность — в блоке «Кадры»",
+  );
+  expect(screen.getByLabelText("Площадка").closest("label")).toHaveAttribute(
+    "title", "ЦАР / ЖУК — сотрудник цеха с площадкой считается монтажником",
+  );
+});
+
+it("keeps the position and the access role in separate table columns", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/staff") return json(TEAM);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  render(<StaffPage />);
+  const table = await screen.findByRole("table", { name: "Сотрудники" });
+  const headers = within(table).getAllByRole("columnheader").map((header) => header.textContent);
+  expect(headers).toEqual(["ФИО", "Таб. №", "Должность", "Логин / e-mail", "Отдел", "Площадка", "Доступ", "Вход", ""]);
+  const cell = (name: string, column: string) => {
+    const row = within(table).getByText(name).closest("tr") as HTMLElement;
+    return within(row).getAllByRole("cell")[headers.indexOf(column)];
+  };
+  // The position column carries the position and the qualification, never the access role.
+  expect(cell("Мастеров", "Должность")).toHaveTextContent("Мастер участка5 разряд");
+  expect(cell("Мастеров", "Доступ")).toHaveTextContent("Мастер");
+  expect(cell("Закупкин", "Должность")).toHaveTextContent("—");
+  expect(cell("Закупкин", "Должность")).not.toHaveTextContent("Специалист по снабжению");
+  expect(cell("Закупкин", "Доступ")).toHaveTextContent("Специалист по снабжению");
 });
 
 it("shows the current manager and refuses a name typed but not picked from the list", async () => {
