@@ -27,3 +27,10 @@ it("folds per-line maps and trims decimal zeros", () => {
   expect(auditDetails({ "15e010b2-8450-4147-adc7-afc26e99b98b": 25 })).toBe("строк: 1");
   expect(auditDetails({ quantity: "39.000000", fields: ["carrier", "shipping_point"] })).toBe("кол-во: 39 · поля: перевозчик, адрес отгрузки");
 });
+
+it("names the automatic fill after «Взять в работу» and its fields in Russian", () => {
+  expect(auditEventName("procurement.autofilled")).toBe("Заполнено автоматически");
+  expect(auditDetails({ legacy_id: "SM-20261004-01", fields: ["supplier", "site_name", "manufacturer", "country"] })).toBe(
+    "поля: поставщик, наименование (сайт), изготовитель, страна",
+  );
+});

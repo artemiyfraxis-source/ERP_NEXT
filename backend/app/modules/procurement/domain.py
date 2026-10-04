@@ -142,6 +142,18 @@ def supplier_from_link(link: object, suppliers: dict[str, str]) -> str:
     return suppliers.get(key, "") if key else ""
 
 
+# «Взять в работу» → `inWorkSideEffects_` (Guards.gs:458): the empty ПОСТАВЩИК, НАИМЕНОВАНИЕ (САЙТ), ИЗГОТОВИТЕЛЬ and
+# СТРАНА fill themselves. The supplier is a map lookup and happens in the take itself; the other three need the
+# page behind the link (a network call) and are queued on this outbox topic for the background tick.
+AUTOFILL_TOPIC = "procurement.autofill_requested"
+AUTOFILL_SITE_NAME_LIMIT = 512  # the column's width; a longer page title is cut, never refused
+_WEB_LINK = re.compile(r"^https?://", re.I)
+
+
+def is_web_link(link: object) -> bool:
+    return bool(_WEB_LINK.match(str(link or "").strip()))
+
+
 @dataclass(frozen=True)
 class ProcurementFacts:
     supplier: str | None | _Unset = UNSET
@@ -311,6 +323,43 @@ class ProcurementLine:
             buyer=actor,
             version=self.version + 1,
         )
+
+    @property
+    def autofill_wanted(self) -> bool:
+        """Something the page behind the link or the «изготовитель → страна» map could still fill."""
+        has_site = is_web_link(self.link)
+        manufacturer = _text(self.trace.manufacturer)
+        return (has_site and (not _text(self.site_name) or not manufacturer)) or bool(
+            manufacturer and not _text(self.trace.country)
+        )
+
+    def fill_empty(
+        self, *, supplier: str = "", site_name: str = "", manufacturer: str = "", country: str = ""
+    ) -> tuple[ProcurementLine, tuple[str, ...]]:
+        """`inWorkSideEffects_`: write each given value into its field ONLY when that field is empty — a value the
+        buyer typed always wins. Returns the line and the names of the fields written; the version is the
+        caller's business (the take bumps it itself, the background fill leaves it so an open form stays valid)."""
+        changes: dict[str, str] = {}
+        if _text(supplier) and not _text(self.supplier):
+            changes["supplier"] = _text(supplier)
+        if _text(site_name) and not _text(self.site_name):
+            changes["site_name"] = _text(site_name)[:AUTOFILL_SITE_NAME_LIMIT]
+        trace = self.trace
+        if _text(manufacturer) and not _text(trace.manufacturer):
+            changes["manufacturer"] = _text(manufacturer)
+            trace = replace(trace, manufacturer=changes["manufacturer"])
+        if _text(country) and not _text(trace.country):
+            changes["country"] = _text(country)
+            trace = replace(trace, country=changes["country"])
+        if not changes:
+            return self, ()
+        line = replace(
+            self,
+            supplier=changes.get("supplier", self.supplier),
+            site_name=changes.get("site_name", self.site_name),
+            trace=trace,
+        )
+        return line, tuple(changes)
 
     def update_facts(self, facts: ProcurementFacts, actor: Actor) -> ProcurementLine:
         _validate_actor(actor)

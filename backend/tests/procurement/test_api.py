@@ -17,7 +17,7 @@ from app.modules.procurement.infrastructure import (
 from app.modules.requests.api import moscow_now
 from app.shared.events import OutboxMessage
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import AuditEventRow, create_schema
+from app.shared.persistence import AuditEventRow, OutboxMessageRow, create_schema
 from tests.factories import Actor
 
 
@@ -818,3 +818,44 @@ def test_kp_parse_matches_offer_rows_to_order_lines(procurement_api, rates):
     )
     assert broken.status_code == 422
     assert broken.json()["detail"] == "Поддерживаются файлы КП .xlsx и .csv"
+
+
+class _Directory:
+    def supplier_map(self):
+        return {"chipdip.ru": "ЧипДип"}
+
+    def learn(self, link, supplier, actor, now):
+        return False
+
+    def country_for_manufacturer(self, manufacturer):
+        return ""
+
+
+def test_take_fills_the_supplier_from_the_link_domain_and_queues_the_page_fields(procurement_api):
+    client, _, sessions = procurement_api
+    factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    linked = consume_procurement_requested(
+        OutboxMessage(
+            id=UUID(int=2), topic="procurement.requested", idempotency_key="request:2:procurement:v2",
+            created_at=datetime(2026, 9, 15, 11, 0),
+            payload={**message(2).payload, "link": "https://www.chipdip.ru/product/1"},
+        ),
+        factory(),
+    )
+    app.state.procurement_supplier_directory = _Directory()
+    try:
+        response = client.post("/api/procurement/take", json={"line_ids": [str(linked.id)]})
+    finally:
+        del app.state.procurement_supplier_directory
+
+    assert response.status_code == 200, response.text
+    assert response.json()["lines"][0]["supplier"] == "ЧипДип"
+    with sessions() as session:
+        queued = session.scalars(
+            select(OutboxMessageRow).where(OutboxMessageRow.topic == "procurement.autofill_requested")
+        ).all()
+        autofilled = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "procurement.autofilled")
+        ).all()
+    assert [row.payload["line_id"] for row in queued] == [str(linked.id)]
+    assert [row.details["fields"] for row in autofilled] == [["supplier"]]
