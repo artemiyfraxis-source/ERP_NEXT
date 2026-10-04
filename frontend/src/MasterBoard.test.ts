@@ -70,3 +70,28 @@ describe("неделя монтажников: длинная операция �
     expect(defaultPieces(task, task.operations[1])).toBe(2500);
   });
 });
+
+describe("сетевой график: свои этапы монтажника, до которых операции есть дело", () => {
+  const plan = (id: string, position: number, from: string, to: string, inputs: Array<{ operation_id: string; position: number; per_unit: string; transfer_batch: null }>) => ({
+    ...operation, id, position, planned_start: `2026-09-30T${from}:00`, planned_finish: `2026-09-30T${to}:00`, inputs,
+    shares: [{ operator_id: installer, quantity: null, planned_start: `2026-09-30T${from}:00`, planned_finish: `2026-09-30T${to}:00`, started_at: null, finished_at: null }],
+  });
+  const network = {
+    ...task,
+    operations: [
+      plan("op-1", 1, "10:00", "11:00", []),
+      plan("op-2", 2, "11:00", "15:00", []),
+      { ...plan("op-3", 3, "09:00", "10:00", [{ operation_id: "op-1", position: 1, per_unit: "1", transfer_batch: null }]), operator_ids: [], shares: [] },
+    ],
+  } as unknown as ProductionTask;
+
+  it("ждёт только свои входы: соседняя ветка с меньшим номером не задерживает", () => {
+    const now = new Date("2026-09-30T09:00:00");
+    expect(clockOf(earliestStart(installer, network, network.operations[2], now))).toBe("11:00");
+  });
+
+  it("ответ без входов операций — как цепочка: ждёт все меньшие номера", () => {
+    const chain = { ...network, operations: network.operations.map((item) => ({ ...item, inputs: undefined })) } as unknown as ProductionTask;
+    expect(clockOf(earliestStart(installer, chain, chain.operations[2], new Date("2026-09-30T09:00:00")))).toBe("15:00");
+  });
+});

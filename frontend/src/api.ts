@@ -582,6 +582,24 @@ export interface ProductionOperation {
   wip?: { ok: string; closed: string };
   first?: boolean;
   mates?: string[];
+  // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
+  // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
+  stage_key?: string | null;
+  inputs?: ProductionOperationInput[];
+  final?: boolean;
+  required_quantity?: string;
+}
+
+export interface ProductionOperationInput {
+  operation_id: string;
+  /** Номер этапа-входа. */
+  position: number | null;
+  /** Штук полуфабриката входа на одно изделие этой операции. */
+  per_unit: string;
+  /** Передаточная партия ребра; null — партия задания. */
+  transfer_batch: string | null;
+  /** Название этапа-входа, если сервер его прислал; иначе его берут из операций задания. */
+  stage?: string;
 }
 
 export interface ProductionShare {
