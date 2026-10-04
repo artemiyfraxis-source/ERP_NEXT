@@ -245,11 +245,11 @@ it("shows the operation field chips and the sketch on the ETK screen (renderEtk_
   render(<TechcardsPage principal={engineer} view="projects" />);
   const chips = await screen.findByLabelText("Параметры операции");
   expect(chips).toHaveTextContent("АппликаторAP-22");
-  expect(chips).toHaveTextContent("H обжима0,85 мм");
+  expect(chips).toHaveTextContent("Высота обжима0,85 мм");
   expect(chips).toHaveTextContent("Отрыв40 Н");
   expect(chips).toHaveTextContent("Время3,5 с на шт. · подгот. 3 мин");
   expect(screen.getByText("Эскиз")).toBeInTheDocument();
-  expect(screen.getByText("H обжима по жиле: 0,85 мм")).toBeInTheDocument();
+  expect(screen.getByText("Высота обжима по жиле: 0,85 мм")).toBeInTheDocument();
 });
 
 it("lays an ETK operation out in production order with the soldering mode and pictured defects", async () => {
