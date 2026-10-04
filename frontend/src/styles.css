@@ -1265,3 +1265,52 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .staff-dep-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .staff-dep-rename input { width: 240px; }
 .operations-queue { margin-left: auto; color: var(--muted-foreground); font-size: 13px; }
+
+/* ===== T7: «Оформить заявку» — таблица позиций (RequestGrid). Свой блок, чтобы не мешать соседним правкам. ===== */
+.rg-form { padding: 0 20px 14px; display: grid; gap: 10px; min-width: 0; }
+.request-form { min-width: 0; }
+.rg { min-width: 0; }
+.rg-common { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px 12px; background: var(--card); }
+.rg-common-title { margin-bottom: 8px; font-size: 13px; font-weight: 700; }
+.rg-common-title span { color: var(--muted-foreground); font-weight: 400; }
+.rg-common-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px 12px; align-items: end; }
+.rg-common-grid .rg-point { grid-column: span 2; }
+.rg-common-grid input, .rg-common-grid select { padding: 6px 9px; }
+.rg-hint { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
+.rg-bulk { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; padding: 0 0 8px; }
+.rg-bulk label { min-width: 150px; }
+.rg-bulk input, .rg-bulk select { padding: 6px 9px; }
+.rg-scroll { max-height: calc(100vh - 500px); min-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.rg-table { width: 100%; min-width: 1500px; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 13px; }
+.rg-table th { position: sticky; top: 0; z-index: 2; padding: 7px 6px; background: var(--accent); border-bottom: 1px solid var(--border); font-size: 11px; white-space: nowrap; }
+.rg-table td { padding: 0; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); white-space: nowrap; }
+.rg-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.rg-table tbody tr:hover { background: color-mix(in srgb, var(--primary) 7%, transparent); }
+.rg-table input, .rg-table select { height: 30px; padding: 0 6px; border: 0; border-radius: 0; background: transparent; font-size: 13px; text-overflow: ellipsis; }
+.rg-table input:focus, .rg-table select:focus { background: var(--card); box-shadow: inset 0 0 0 2px var(--primary); }
+.rg-table .rg-bad { background: #fde8e8; box-shadow: inset 0 0 0 1px #b91c1c; }
+.rg-table .rg-bad:focus { box-shadow: inset 0 0 0 2px #b91c1c; }
+.rg-row-bad .rg-no { color: #b91c1c; font-weight: 700; }
+.rg-no { width: 58px; padding: 0 6px !important; color: var(--muted-foreground); text-align: right; font-variant-numeric: tabular-nums; }
+.rg-own { display: block; color: var(--primary); font-size: 10px; line-height: 1.1; text-align: right; cursor: help; }
+.rg-own-bad { color: #b91c1c; }
+.rg-col-name { width: 24%; } .rg-col-item_type { width: 132px; } .rg-col-design_article { width: 120px; }
+.rg-col-quantity { width: 74px; } .rg-col-unit { width: 64px; } .rg-col-category { width: 104px; }
+.rg-col-quality_document { width: 92px; } .rg-col-planned_date { width: 126px; } .rg-col-link { width: 140px; }
+.rg-col-price, .rg-col-price_with_vat { width: 86px; } .rg-col-comment { width: 16%; }
+.rg-table td.rg-col-quantity input, .rg-table td.rg-col-price input, .rg-table td.rg-col-price_with_vat input { text-align: right; }
+.rg-act { width: 112px; padding: 0 6px !important; text-align: right; }
+.rg-table tbody .rg-act .rg-link { opacity: 0; }
+.rg-table tbody tr:hover .rg-act .rg-link, .rg-table tbody tr:focus-within .rg-act .rg-link { opacity: 1; }
+.rg-link { border: 0; background: none; padding: 2px 4px; color: var(--primary); font-size: 12px; font-weight: 600; }
+.rg-link:hover { text-decoration: underline; }
+.rg-bar { position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: 0 -4px 12px rgba(0, 26, 24, .06); font-size: 13px; }
+.rg-errors { color: #b91c1c; font-weight: 600; }
+.rg-errors .rg-link { margin-left: 8px; color: #b91c1c; }
+.rg-spacer { flex: 1 1 auto; }
+@media (max-width: 1700px) { .rg-common-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (pointer: coarse) {
+  .rg-table input, .rg-table select { height: 40px; }
+  .rg-table tbody .rg-act .rg-link { opacity: 1; padding: 10px 6px; }
+}
+/* ===== /T7 ===== */
