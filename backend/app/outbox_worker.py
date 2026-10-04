@@ -42,6 +42,7 @@ from app.shared.clock import moscow_now
 from app.shared.stop_file import watch_stop_file
 from app.workflows.supplier_directory import ReferencesSupplierDirectory
 from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
+from app.workflows.arbiter import PoisonTriggerMessage, close_followed_up, dispatch_next_trigger, feed_triggers
 from app.workflows.kitset_names import kitset_names_tick
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from app.workflows.owner_alerts import alert_on_dead_letters, daily_overdue_digest, quarantine_escalations
@@ -53,6 +54,9 @@ _last_error_alert = 0.0
 # Here it gets its own thread for the same reason: 15 page fetches must not hold the outbox dispatch.
 TAIL_INTERVAL_SECONDS = 60.0
 _last_tail = float("-inf")
+# The arbiter's auto-close reads production tasks and shipments; a task waits for a launch or a shipment for hours.
+ARBITER_CLOSE_INTERVAL_SECONDS = 30.0
+_last_arbiter_close = float("-inf")
 _tail_thread: threading.Thread | None = None
 
 
@@ -166,6 +170,17 @@ def dispatch_available(
         if notifications is not None:
             dispatched += 1
             progressed = True
+        if dispatched >= limit:
+            break
+        try:
+            trigger = dispatch_next_trigger(moscow_now(), sessions)
+        except PoisonTriggerMessage as error:
+            logging.warning("Quarantined invalid arbiter trigger %s", error.message_id)
+            dispatched += 1
+            continue
+        if trigger is not None:
+            dispatched += 1
+            progressed = True
         if not progressed:
             break
     return dispatched
@@ -194,6 +209,25 @@ def run_timers(sessions: sessionmaker[Session]) -> int:
     except (IntegrityError, StaleDataError):
         logging.warning("Procurement line changed during the initiator notifications; retrying next tick")
     done += run_owner_jobs(sessions)
+    done += run_arbiter(sessions)
+    return done
+
+
+def run_arbiter(sessions: sessionmaker[Session]) -> int:
+    """ARCH-TRACK-3 arbiter: new module trigger events → its outbox topic (dispatched in `dispatch_available`) every
+    loop; open project tasks whose follow-up already happened → closed, at most every ARBITER_CLOSE_INTERVAL_SECONDS
+    (it reads production tasks and shipments). A failure is logged, never raised."""
+    global _last_arbiter_close
+    done = 0
+    jobs = [("trigger feed", feed_triggers)]
+    if time.monotonic() - _last_arbiter_close >= ARBITER_CLOSE_INTERVAL_SECONDS:
+        _last_arbiter_close = time.monotonic()
+        jobs.append(("task auto-close", close_followed_up))
+    for name, job in jobs:
+        try:
+            done += int(job(moscow_now(), sessions))
+        except Exception:  # noqa: BLE001 — one broken job must not stop the worker
+            logging.exception("Arbiter job %s failed; retrying next tick", name)
     return done
 
 

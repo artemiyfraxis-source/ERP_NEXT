@@ -31,7 +31,7 @@ from .domain import (
     operation_duration_seconds,
     skill_of,
 )
-from .scheduling import work_seconds_between
+from .scheduling import upstream_ids, work_seconds_between
 
 # План округляется до минуты: работа, начатая в пределах минуты после конца другой, идёт за ней.
 SEQUENCE_TOLERANCE = timedelta(seconds=60)
@@ -199,14 +199,17 @@ def place(
 ) -> tuple[datetime, datetime]:
     """Окно доли монтажника с выбранного момента: первое время, где она не залезает на уже идущую работу
     (начатую раньше этого момента, начатую по факту, или прежние этапы этой же сборки), и не раньше его прежних
-    этапов этой сборки. Работа, что стоит позже, не мешает — её потом сдвигает reflow. Хвост — на следующие
-    рабочие дни, отсутствия (отпуск, больничный) перепрыгиваются."""
+    этапов этой сборки. Прежние этапы — те, чей полуфабрикат доходит до этой операции по схеме (в цепочке — все
+    меньшие номера); параллельная ветка той же сборки — просто другая работа монтажника. Работа, что стоит позже,
+    не мешает — её потом сдвигает reflow. Хвост — на следующие рабочие дни, отсутствия (отпуск, больничный)
+    перепрыгиваются."""
     seconds = share_seconds(operation, quantity, task.quantity, (operator_id,), skills)
     others = [
         node for node in nodes_of(tasks, progress).values()
         if operator_id in node.operator_ids and node.operation.id != operation.id
     ]
-    earlier = [node for node in others if node.task.id == task.id and node.operation.position < operation.position]
+    upstream = upstream_ids(task.operations, operation.id)
+    earlier = [node for node in others if node.task.id == task.id and node.operation.id in upstream]
     start = _whole_minute(max([requested_start, *(node.finish for node in earlier)]), calendar)
     for _ in range(500):
         finish = add_work_seconds(start, seconds, calendar.holidays, calendar.shift)
@@ -241,9 +244,11 @@ def reflow(
     progress: Progress,
 ) -> dict[NodeKey, Move]:
     """Сдвиг плана после изменения окон sources (в tasks они уже новые; значение — окно до изменения, None — доля
-    поставлена впервые). Работа, стоявшая после изменённой (у того же монтажника или следующий этап той же сборки),
-    сдвигается, если теперь мешает; при pull (факт «раньше») подтягивается, если стояла вплотную.
-    Новая доля двигает только работу своего монтажника: следующий этап той же сборки мог нарочно идти внахлёст."""
+    поставлена впервые). Работа, стоявшая после изменённой (у того же монтажника или операция той же сборки, что берёт
+    её полуфабрикат по схеме входов), сдвигается, если теперь мешает; при pull (факт «раньше») подтягивается, если
+    стояла вплотную. Сдвиг идёт по графу дальше: сборка встаёт после самой поздней из своих входных веток, за ней —
+    её потребители до финальной операции. Новая доля двигает только работу своего монтажника: следующий этап той же
+    сборки мог нарочно идти внахлёст."""
     nodes = nodes_of(tasks, progress)
     old = {key: (node.start, node.finish) for key, node in nodes.items()}
     placed: set[NodeKey] = set()
@@ -264,11 +269,11 @@ def reflow(
         for operator_id in node.operator_ids:
             by_operator.setdefault(operator_id, []).append(key)
         by_operation.setdefault(node.operation.id, []).append(key)
-    previous: dict[UUID, UUID] = {}
+    # Входы операции по схеме задания (в цепочке — предыдущий номер): сборка ждёт каждую свою входную ветку.
+    inputs: dict[UUID, tuple[UUID, ...]] = {}
     for node in nodes.values():
-        route = sorted(node.task.operations, key=lambda item: item.position)
-        for earlier, later in zip(route, route[1:]):
-            previous[later.id] = earlier.id
+        for operation in node.task.operations:
+            inputs[operation.id] = tuple(item.input_operation_id for item in operation.inputs)
 
     moves: dict[NodeKey, Move] = {}
     for key in order:
@@ -280,9 +285,9 @@ def reflow(
             other for operator_id in node.operator_ids for other in by_operator[operator_id]
             if other != key and index[other] < index[key] and old[other][1] <= start + SEQUENCE_TOLERANCE
         }
-        if node.operation.id in previous:
+        for source in inputs.get(node.operation.id, ()):
             before |= {
-                other for other in by_operation.get(previous[node.operation.id], ())
+                other for other in by_operation.get(source, ())
                 if other not in placed and index[other] < index[key] and old[other][1] <= start + SEQUENCE_TOLERANCE
             }
         changed = [other for other in before if new[other] != old[other]]

@@ -12,6 +12,7 @@ import {
 import { canAct } from "./navigation";
 import { Gantt, deadlineEnd, parseMoment, type GanttBar, type GanttRow } from "./Gantt";
 import { sharesOf } from "./MasterBoard";
+import { feedsText } from "./productionGraph";
 import { PlanLoadSheet, markText, type SheetMark } from "./PlanLoadSheet";
 
 const emptyPlan: ProductionPlanResult = { blockers: [], stages: [], review_values: [], rows: [] };
@@ -75,7 +76,7 @@ export function operatorLoadRows(
             start: share.planned_start, finish: share.planned_finish,
             tone: done ? "done" : late ? "late" : "default",
             text: `${task.number} · ${itemId(task)}`,
-            title: `${task.number} · ${itemId(task)} × ${task.quantity} · этап ${operation.position} ${operation.stage}${share.quantity != null ? ` · ${share.quantity} шт` : ""}${task.deadline ? ` · дедлайн ${shortDate(task.deadline)}` : ""}${done ? " · выполнена" : ""}`,
+            title: `${task.number} · ${itemId(task)} × ${task.quantity} · этап ${operation.position} ${operation.stage}${feedsText(task, operation) ? ` (${feedsText(task, operation)})` : ""}${share.quantity != null ? ` · ${share.quantity} шт` : ""}${task.deadline ? ` · дедлайн ${shortDate(task.deadline)}` : ""}${done ? " · выполнена" : ""}`,
           });
           if (start && finish && finish > span.from && start < span.to) {
             count += 1;

@@ -39,11 +39,14 @@ import {
   type Endpoint,
   type GenData,
   type GenState,
+  type OpSpec,
   type Side,
   type Tab,
   type Tmpl,
   type WrapKind,
 } from "./tcGenLogic";
+import { RouteEditor } from "./RouteEditor";
+import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia">;
 
@@ -161,6 +164,29 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const ops = useMemo(() => gen.getActiveOps(), [gen]);
   const config = useMemo(() => gen.buildConfig(), [gen]);
   useEffect(() => { onConfig?.(config); }, [config]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Схема полуфабрикатов (ARCH-TRACK-1). В сборку идут операции с выбранным шаблоном (validate), номер = место в этом списке.
+  // Время блоков — из последней сборки ЭТК этой карты, если её операции те же; правки схемы лежат в routeEdit вместе с
+  // набором операций, под который сделаны (сменились операции — правки не подходят и не уходят на сервер).
+  const routeSpecs = useMemo(() => ops.filter((spec) => gen.opRow(spec).templateId), [gen, ops]);
+  const docMinutes = useMemo(() => documentMinutes(card.document, routeSpecs.map((spec) => spec.type)), [card.document, routeSpecs]);
+  const routeOps = useMemo<RouteOp[]>(() => routeSpecs.map((spec, index) => {
+    const title = D.templates.find((tmpl) => tmpl.id === gen.opRow(spec).templateId)?.title || "";
+    return {
+      position: index + 1, key: spec.opKey, type: spec.type, code: title.includes("|") ? title.split("|")[0].trim() : "",
+      label: spec.label || spec.cat || `Операция ${index + 1}`, minutes: docMinutes ? docMinutes.minutes[index] : null,
+      number: ops.indexOf(spec) + 1,
+    };
+  }), [routeSpecs, gen, D.templates, docMinutes, ops]);
+  const routeSig = routeOps.map((op) => op.key).join("|");
+  const finalName = String((config as Record<string, unknown>).assemblyName || "");
+  const [routeEdit, setRouteEdit] = useState<{ route: Route | null; sig: string } | undefined>();
+  const [routeError, setRouteError] = useState("");
+  useEffect(() => { setRouteEdit(undefined); setRouteError(""); }, [card.id, card.version]);
+  const savedRoute = useMemo(() => parseRoute((card.document?.build_config as { route?: unknown } | undefined)?.route), [card.document]);
+  const savedFits = !!savedRoute && !!docMinutes && !routeProblem(savedRoute, routeOps, finalName);
+  const routeOverride = routeEdit ? (routeEdit.sig === routeSig ? routeEdit.route : null) : (savedFits ? savedRoute : null);
+  const routeStale = routeOps.length > 0 && (routeEdit ? !!routeEdit.route && routeEdit.sig !== routeSig : !!savedRoute && !savedFits);
 
   // Нормы терминала по сечению проводов разъёма (TcGenerator.gs:762-788) — через справочник ERP.
   const crimpEndpoints = S.tab === "coax" ? [] : S.endpoints.filter((ep) => ep.method === "crimp" && ep.termId);
@@ -286,6 +312,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   async function generate() {
     const { cfg, error, warnings } = gen.validate();
     if (error) { setStatus({ text: error, error: true }); return; }
+    // Ручная схема уходит как build_config.route; без неё сервер выводит схему сам.
+    const problem = routeOverride ? routeProblem(routeOverride, routeOps, finalName) : null;
+    if (routeOverride && problem) { setRouteError(`Схема полуфабрикатов: ${problem}`); return; }
+    setRouteError("");
     if (warnings.length && !window.confirm("⚠ Предупреждения:\n\n" + warnings.join("\n") + "\n\nВсё равно создать техкарты?")) {
       setStatus({ text: "Генерация отменена — проверьте предупреждения.", error: true });
       return;
@@ -295,8 +325,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       return;
     }
     setStatus({ text: card.status === "Выдана" ? "Пересобираю техкарты…" : "Создаю техкарты…", error: false });
-    await onBuild(cfg);
-    setStatus({ text: "", error: false });
+    try {
+      await onBuild(routeOverride ? { ...cfg, route: routePayload(routeOverride) } : cfg);
+      setStatus({ text: "", error: false });
+    } catch (reason) {
+      const text = reason instanceof Error ? reason.message : "ЭТК не собрана";
+      if (text.startsWith("Схема полуфабрикатов")) { setRouteError(text); setStatus({ text: "", error: false }); }
+      else setStatus({ text, error: true });
+    }
   }
 
   async function deleteGenerated() {
@@ -417,6 +453,28 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         </div>
         <button className="secondary small" disabled={busy} onClick={() => void saveCoaxToDb(side)}>Добавить в БД.КОАКС</button>
       </div>}
+    </div>;
+  }
+
+  /** Операция генератора: шаблон из _TC_LIBRARY и времена. Та же карточка стоит в общем списке и в открытом блоке схемы. */
+  function opItem(spec: OpSpec, number: number) {
+    const row = gen.opRow(spec);
+    const setTime = (key: "tPrep" | "tOp" | "tMachine", value: string) => setS((current) => ({ ...current, times: { ...current.times, [spec.opKey]: { ...row.times, [key]: value } } }));
+    return <div className="op-item" key={spec.opKey}>
+      <div className="op-badge">{number}</div>
+      <div>
+        <div className="op-title">{spec.label}</div>
+        <label className="field-label">Шаблон (_TC_LIBRARY)<select aria-label={`Шаблон: ${spec.label}`} className={row.templateId ? (row.matched ? "f-ok" : "f-warn") : "f-empty"} value={row.templateId}
+          onChange={(event) => update((current) => ({ ...current, selectedTemplates: { ...current.selectedTemplates, [spec.opKey]: event.target.value }, manualTemplates: current.manualTemplates.includes(spec.opKey) ? current.manualTemplates : [...current.manualTemplates, spec.opKey] }))}>
+          <option value="">— не выбран —</option>
+          {D.templates.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+        </select></label>
+        <small className={row.matched ? "op-match found" : "op-match not-found"}>{row.info}</small>
+        <div className="op-times">
+          {([["tPrep", "Вр.подг, сек"], ["tOp", "Вр.оп, сек"], ["tMachine", "Вр.маш, сек"]] as const).map(([key, label]) =>
+            <label key={key} className="field-label">{label}<input type="number" min={0} placeholder="0" className={row.matched ? "f-ok" : row.times[key] ? "f-warn" : "f-empty"} value={row.times[key]} onChange={(event) => setTime(key, event.target.value)} /></label>)}
+        </div>
+      </div>
     </div>;
   }
 
@@ -635,27 +693,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     <h3>Операции</h3>
     <div className="gcard ops-card">
       {!ops.length && <div className="op-empty">{S.tab === "coax" ? "Выберите разъём — появятся операции" : "Добавьте кабель — появятся операции"}</div>}
-      {ops.map((spec, i) => {
-        const row = gen.opRow(spec);
-        const setTime = (key: "tPrep" | "tOp" | "tMachine", value: string) => setS((current) => ({ ...current, times: { ...current.times, [spec.opKey]: { ...row.times, [key]: value } } }));
-        return <div className="op-item" key={spec.opKey}>
-          <div className="op-badge">{i + 1}</div>
-          <div>
-            <div className="op-title">{spec.label}</div>
-            <label className="field-label">Шаблон (_TC_LIBRARY)<select aria-label={`Шаблон: ${spec.label}`} className={row.templateId ? (row.matched ? "f-ok" : "f-warn") : "f-empty"} value={row.templateId}
-              onChange={(event) => update((current) => ({ ...current, selectedTemplates: { ...current.selectedTemplates, [spec.opKey]: event.target.value }, manualTemplates: current.manualTemplates.includes(spec.opKey) ? current.manualTemplates : [...current.manualTemplates, spec.opKey] }))}>
-              <option value="">— не выбран —</option>
-              {D.templates.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
-            </select></label>
-            <small className={row.matched ? "op-match found" : "op-match not-found"}>{row.info}</small>
-            <div className="op-times">
-              {([["tPrep", "Вр.подг, сек"], ["tOp", "Вр.оп, сек"], ["tMachine", "Вр.маш, сек"]] as const).map(([key, label]) =>
-                <label key={key} className="field-label">{label}<input type="number" min={0} placeholder="0" className={row.matched ? "f-ok" : row.times[key] ? "f-warn" : "f-empty"} value={row.times[key]} onChange={(event) => setTime(key, event.target.value)} /></label>)}
-            </div>
-          </div>
-        </div>;
-      })}
+      {ops.map((spec, i) => opItem(spec, i + 1))}
     </div>
+
+    <RouteEditor ops={routeOps} finalName={finalName} quantity={docMinutes?.quantity ?? 1} value={routeOverride}
+      onChange={(route) => { setRouteError(""); setRouteEdit({ route, sig: routeSig }); }} error={routeError}
+      notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
+      skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
+      renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }} />
 
     {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». Остальное — в «Ещё». */}
     <div className="gen-actions">

@@ -47,7 +47,7 @@ from .domain import (
     plan_operation,
     skill_of,
 )
-from .scheduling import ScheduleVariant, schedule_task, schedule_variants
+from .scheduling import ScheduleVariant, schedule_task, schedule_variants, upstream_ids, waited_input
 
 logger = logging.getLogger(__name__)
 
@@ -399,9 +399,11 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
             command.operator_ids,
             command.now.tzinfo,
         )
+        # Не раньше всего, что идёт в эту операцию по схеме входов (в цепочке — все прежние этапы).
+        upstream = upstream_ids(task.operations, operation.id)
         previous_finishes = [
             _same_timezone(item.planned_finish, command.now) for item in task.operations
-            if item.position < operation.position and item.planned_finish is not None
+            if item.id in upstream and item.planned_finish is not None
         ]
         earliest = max([command.now, *previous_finishes])
         plan = plan_operation(
@@ -606,9 +608,8 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
             everyone = {item.id: item.name for item in uow.operators.list()}
             gone = ", ".join(everyone.get(value, "?") for value in split.dropped)
             warnings.append(f"Снят(а) с операции: {gone} — все штуки у {names[command.operator_id]}")
-        earlier = [item for item in updated.operations if item.position < operation.position and item.planned_finish is not None]
-        if earlier:
-            previous = max(earlier, key=lambda item: item.position)
+        previous = waited_input(updated, operation.id)
+        if previous is not None:
             if start < local(previous.planned_finish, now):
                 warnings.append(
                     f"Этап {previous.position} идёт до {_moment(local(previous.planned_finish, now))} — "

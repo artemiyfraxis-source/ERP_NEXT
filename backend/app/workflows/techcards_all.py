@@ -57,7 +57,7 @@ from app.modules.techcards.application import (
     import_issued_techcard,
     issue_project_techcard,
 )
-from app.modules.techcards.etk_builder import ETK_VERSION
+from app.modules.techcards.etk_builder import ETK_REBUILD_VERSION
 from app.modules.techcards.kitsets import KitAssembly, Kitset, item_id, project_key
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus, TechcardValidationError
 from app.shared.clock import moscow_now
@@ -423,9 +423,10 @@ def generate(
 
 
 def refresh(state: Any, *, actor: Actor, now: datetime, apply: bool) -> Report:
-    """Issued generator ETKs built by an older builder (document schema_version < ETK_VERSION) are rebuilt from
-    their own saved build_config: a new revision «Автопересборка», hand-edited operations kept (manual keys).
-    ETKs moved from SUPPLYMAP (build_config.source) stay as they are. A rerun finds nothing to do."""
+    """Issued generator ETKs built by an older builder (document schema_version < ETK_REBUILD_VERSION) are rebuilt
+    from their own saved build_config: a new revision «Автопересборка», hand-edited operations kept (manual keys).
+    ETKs moved from SUPPLYMAP (build_config.source) stay as they are. A rerun finds nothing to do. Version 3 only
+    added `route`, derived on read for older documents, so it alone makes no new revision."""
     report = Report()
     techcards = state.techcards_uow_factory
     with techcards() as uow:
@@ -436,7 +437,7 @@ def refresh(state: Any, *, actor: Actor, now: datetime, apply: bool) -> Report:
         config = document.get("build_config")
         if card.status is not TechcardStatus.ISSUED or not isinstance(config, dict) or config.get("source") == "SUPPLYMAP":
             continue
-        if int(document.get("schema_version") or 0) >= ETK_VERSION:
+        if int(document.get("schema_version") or 0) >= ETK_REBUILD_VERSION:
             continue
         if not apply:
             report.done.append(label)

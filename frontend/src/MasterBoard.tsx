@@ -13,6 +13,7 @@ import {
   type ProductionTask,
 } from "./api";
 import { KitTile } from "./ProjectCard";
+import { feedsText, upstreamIds } from "./productionGraph";
 
 // Экран мастера (владелец, 29.09): после выдачи техкарты проект приходит мастеру, разбитый на операции маршрута,
 // и мастер раздаёт их монтажникам. Слева проекты → задания → операции, справа монтажники с загрузкой.
@@ -189,12 +190,14 @@ export function dayHours(operatorId: string, day: string, tasks: ProductionTask[
 }
 
 // Самое раннее начало доли монтажника: не раньше «сейчас» (с округлением вверх до 15 минут — по сетке, а не 09:47)
-// и не раньше конца его же прежних этапов этой сборки (сервер ставит так же, dispatch.place).
+// и не раньше конца его же этапов этой сборки, чей полуфабрикат доходит до операции по схеме (сервер ставит так же,
+// dispatch.place). Ответ без входов операций — цепочка: все меньшие номера.
 export function earliestStart(operatorId: string, task: ProductionTask, operation: ProductionOperation, now: Date) {
   const quarter = 15 * 60_000;
   let result = Math.ceil(now.getTime() / quarter) * quarter;
+  const upstream = upstreamIds(task, operation);
   for (const item of task.operations) {
-    if (item.position >= operation.position) continue;
+    if (upstream ? !upstream.has(item.id) : item.position >= operation.position) continue;
     for (const share of sharesOf(item, operatorId)) {
       if (!shareDone(item, share) && share.planned_finish) result = Math.max(result, new Date(share.planned_finish).getTime());
     }
@@ -461,7 +464,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                     <td>{op.position}</td>
                     <td>{canEdit && !done(op) && !item.handed_to
                       ? <button className="mb-op" aria-pressed={active} onClick={() => select(item, active ? null : op)}>{op.stage}{op.code ? <small> {op.code}</small> : null}</button>
-                      : <span>{op.stage}{op.code ? <small> {op.code}</small> : null}</span>}</td>
+                      : <span>{op.stage}{op.code ? <small> {op.code}</small> : null}</span>}
+                      {feedsText(item, op) && <div className="ap-man">{feedsText(item, op)}</div>}</td>
                     <td>{hours(op.norm_seconds)}</td>
                     <td>{done(op) ? <span className="mb-done">выполнена</span> : item.handed_to ? <span className="mb-handed-text">—</span> : <>
                       {people.map((person) => {

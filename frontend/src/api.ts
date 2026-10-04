@@ -582,6 +582,24 @@ export interface ProductionOperation {
   wip?: { ok: string; closed: string };
   first?: boolean;
   mates?: string[];
+  // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
+  // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
+  stage_key?: string | null;
+  inputs?: ProductionOperationInput[];
+  final?: boolean;
+  required_quantity?: string;
+}
+
+export interface ProductionOperationInput {
+  operation_id: string;
+  /** Номер этапа-входа. */
+  position: number | null;
+  /** Штук полуфабриката входа на одно изделие этой операции. */
+  per_unit: string;
+  /** Передаточная партия ребра; null — партия задания. */
+  transfer_batch: string | null;
+  /** Название этапа-входа, если сервер его прислал; иначе его берут из операций задания. */
+  stage?: string;
 }
 
 export interface ProductionShare {
@@ -1033,6 +1051,36 @@ export interface TechOperationResult {
   };
   columns?: string[];
   records: TechOperationRecord[];
+}
+
+/** ЭТК `document.route`: схема полуфабрикатов (блок = один полуфабрикат из 1..n операций ЭТК, стрелка = «берёт per_unit
+ *  штук с блока-источника»). `ops` — 1-based позиции в `document.operations`. */
+export interface EtkRouteBlock {
+  key: string;
+  name: string;
+  ops: number[];
+  final: boolean;
+  components: unknown[];
+  outputs: number;
+  /** Входных полуфабрикатов на одну штуку блока (Σ per_unit входящих стрелок). */
+  inputs: number;
+  minutes: number;
+  unit_minutes: number;
+  rolled_minutes: number;
+  rolled_ops: number;
+}
+
+export interface EtkRouteEdge {
+  from: string;
+  to: string;
+  per_unit: number;
+}
+
+export interface EtkRoute {
+  source: "derived" | "manual";
+  final: string;
+  blocks: EtkRouteBlock[];
+  edges: EtkRouteEdge[];
 }
 
 export interface ProjectTechcard {
@@ -2208,6 +2256,44 @@ export const operationsApi = {
   outbox: () => api<OutboxHealth>("/api/operations/outbox"),
 };
 
+/** Задача модулю по проекту: её ставит арбитр ERP по событию модуля (ARCH-TRACK-3). */
+export type ProjectTaskStatus = "open" | "done" | "cancelled";
+export type ProjectTaskItem = {
+  id: string;
+  /** Номер проекта в каноническом виде («708К.4»). */
+  project: string;
+  /** КБ («КБ1»); пусто — задача на весь проект. */
+  item_index: string;
+  /** Раздел, которому задача: ключ доступа (`production`, `shipping`, …) и его название («Производство»). */
+  module: string;
+  module_label: string;
+  /** Вид задачи: `plan_item`, `launch_task`, `ship_goods`. */
+  kind: string;
+  /** Текст по-русски: «Поставить в план: 708К.4 КБ1». */
+  title: string;
+  status: ProjectTaskStatus;
+  /** «Открыта» / «Закрыта» / «Отменена». */
+  status_label: string;
+  created_at: string;
+  closed_at: string | null;
+  /** Кто закрыл: сотрудник или «Арбитр ERP». */
+  closed_by: string;
+  /** Тип события журнала, из которого задача родилась. */
+  source_type: string;
+  /** Может ли текущий сотрудник закрыть её руками. */
+  can_close: boolean;
+};
+
+export const projectTasksApi = {
+  list: (filters: { project?: string; module?: string; status?: ProjectTaskStatus | "" } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) if (value?.trim()) params.set(key, value.trim());
+    return api<{ tasks: ProjectTaskItem[] }>(`/api/project-tasks${params.size ? `?${params}` : ""}`);
+  },
+  close: (id: string) =>
+    api<{ task: ProjectTaskItem }>(`/api/project-tasks/${encodeURIComponent(id)}/close`, { method: "POST" }),
+};
+
 /** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */
 export interface KitsetKbStage {
   index: string;
@@ -2381,6 +2467,23 @@ export interface KitsetDeleteResult {
 
 const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
 
+/** Запись трека проекта: что создано в одном из модулей. `at` — ISO-время; null — события ещё нет (такие идут в конце). */
+export type ProjectTrackEntry = {
+  at: string | null;
+  /** Раздел ERP по-русски: «Заявки», «Закупка», «Приёмка», «Комплектация», «Производство», «Отгрузка», «Задачи», …
+   * У «Задачи» kind — текст задачи, ref — кому она («Производство»), status — «Открыта»/«Закрыта». */
+  module: string;
+  /** Что за запись: «Запрос на комплектацию», «Задание запущено», … */
+  kind: string;
+  /** Человеческий номер: SM-…, ПЗ-…, ГРН; у карточки проекта — номер проекта. */
+  ref: string;
+  status: string;
+  /** КБ записи («КБ1»); пусто, если запись относится ко всему проекту. */
+  item_index: string;
+};
+
+export type ProjectTrack = { project: string; entries: ProjectTrackEntry[] };
+
 /** `tcLoadBomFromKit`: состав сборки для генератора и строки листа КБn расчёта (`tcCalcOps_`). */
 export type KitsetBom = {
   project: string; index: string; name: string; run: string; part_qty: string; calc_source: string;
@@ -2401,6 +2504,8 @@ export const kitsetsApi = {
   saveLines: (project: string, edits: KitsetLineEdit[]) =>
     api<{ res: { updated: number } }>(`${kitsetPath(project)}/lines`, { method: "PUT", body: JSON.stringify({ edits }) }),
   supply: (project: string) => api<{ lines: KitsetSupplyLine[] }>(`${kitsetPath(project)}/supply`),
+  /** Трек проекта: записи всех модулей по времени. */
+  track: (project: string) => api<ProjectTrack>(`${kitsetPath(project)}/track`),
   bom: (project: string, index: string) =>
     api<KitsetBom>(
       `${kitsetPath(project)}/bom/${encodeURIComponent(index)}`,

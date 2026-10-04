@@ -38,8 +38,8 @@ from .application import (
     hand_over_production,
     HandOverProductionCommand,
 )
-from .domain import OperatorSkill, ProductionOperation, ProductionTask, ProductionValidationError, WorkShift
-from .launchable import item_id, launched_quantity, operation_code, operation_codes, route_from_document, stage_name
+from .domain import OperatorSkill, ProductionTask, ProductionValidationError, WorkShift
+from .launchable import item_id, launch_operations, launched_quantity, operation_code, operation_codes, route_from_document, stage_name
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
@@ -56,6 +56,8 @@ from .execution import (
     correct_box,
     decide_defect,
     handoff_box,
+    material_operation,
+    operation_quantity,
     pause_work,
     resume_work,
     return_box,
@@ -234,8 +236,9 @@ def _number(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-def _op_state(processed: Decimal, quantity: int) -> str:
-    # prodOpState_: the operation status is not stored — it is computed from output against the task quantity.
+def _op_state(processed: Decimal, quantity: Decimal) -> str:
+    # prodOpState_: the operation status is not stored — it is computed from output against the task quantity
+    # (сетевой график: тираж × штук полуфабриката операции на одно изделие).
     if not processed:
         return "не начата"
     return "выполнена" if processed >= quantity else "в работе"
@@ -261,7 +264,7 @@ def _facts(uow, tasks) -> dict:
     return facts
 
 
-def _fact_result(fact: dict | None, quantity: int) -> dict:
+def _fact_result(fact: dict | None, quantity: Decimal) -> dict:
     fact = fact or {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)}
     processed = fact["good"] + fact["defect"]
     return {
@@ -274,6 +277,10 @@ def _fact_result(fact: dict | None, quantity: int) -> dict:
 def _result(task: ProductionTask, facts: dict | None = None) -> dict:
     starts = [operation.planned_start for operation in task.operations if operation.planned_start]
     finishes = [operation.planned_finish for operation in task.operations if operation.planned_finish]
+    positions = {operation.id: operation.position for operation in task.operations}
+    stages = {operation.id: operation.stage for operation in task.operations}
+    required = {operation.id: operation_quantity(task, operation) for operation in task.operations}
+    final_id = task.final_operation.id if task.operations else None
     return {
         "id": str(task.id), "number": task.number, "version": task.version,
         "created_at": task.created_at.isoformat(), "project": task.project,
@@ -295,6 +302,18 @@ def _result(task: ProductionTask, facts: dict | None = None) -> dict:
             "planned_start": operation.planned_start.isoformat() if operation.planned_start else None,
             "planned_finish": operation.planned_finish.isoformat() if operation.planned_finish else None,
             "assigned_by": operation.assigned_by,
+            # Сетевой график (ARCH-TRACK-2): блок схемы, этапы-входы (штук на одну, передаточная партия ребра;
+            # null — партия задания), финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько штук
+            # она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
+            "stage_key": operation.stage_key,
+            "required_quantity": _number(required[operation.id]),
+            "inputs": [{
+                "operation_id": str(item.input_operation_id), "position": positions.get(item.input_operation_id),
+                "stage": stage_name(stages.get(item.input_operation_id, "")),
+                "per_unit": _number(item.per_unit),
+                "transfer_batch": _number(item.transfer_batch) if item.transfer_batch is not None else None,
+            } for item in operation.inputs],
+            "final": operation.id == final_id,
             # Доли по людям: штуки (None — вся операция бригадой), своё окно, факт «взял»/«закончил».
             "shares": [{
                 "operator_id": str(share.operator_id), "quantity": share.quantity,
@@ -303,7 +322,7 @@ def _result(task: ProductionTask, facts: dict | None = None) -> dict:
                 "started_at": share.started_at.isoformat() if share.started_at else None,
                 "finished_at": share.finished_at.isoformat() if share.finished_at else None,
             } for share in operation.shares],
-            **(_fact_result(facts.get(operation.id), task.quantity) if facts is not None else {}),
+            **(_fact_result(facts.get(operation.id), required[operation.id]) if facts is not None else {}),
         } for operation in task.operations],
     }
 
@@ -459,16 +478,16 @@ def my_operations(
     operations = []
     for task in mine:
         result = _result(task, facts)
-        first = min(operation.position for operation in task.operations)
         for index, operation in enumerate(task.operations):
             if principal.actor.id in operation.operator_ids:
-                # prodMyOps_: напарники по операции и первый ли это этап (вход без коробок).
+                # prodMyOps_: напарники по операции и первый ли это этап (вход без коробок). Сетевой график:
+                # без коробок начинается любая операция без входов (начало ветки), в цепочке — только этап 1.
                 share = operation.share_of(principal.actor.id)
                 operations.append({**result, "operations": [{
                     **result["operations"][index],
                     # Своя доля монтажника: у раздробленной операции своё окно и свои штуки.
                     "my_share": next(item for item in result["operations"][index]["shares"] if item["operator_id"] == str(share.operator_id)) if share else None,
-                    "first": operation.position == first,
+                    "first": not operation.inputs,
                     "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != principal.actor.id],
                 }]})
     operations.sort(key=lambda item: (
@@ -495,14 +514,16 @@ def available_inputs(
             raise HTTPException(status_code=404, detail=str(error)) from error
         if principal.actor.id not in operation.operator_ids:
             raise HTTPException(status_code=403, detail="Операция не назначена сотруднику")
+        # Сетевой график: коробки всех этапов-входов операции (у сборки — каждой ветки), не только предыдущего номера.
+        sources = {item.input_operation_id for item in operation.inputs}
         rows = [box for box in uow.boxes.list(task_id=task_id) if (
             box.item == task.item
-            and box.operation_position == operation.position - 1
+            and box.operation_id in sources
             and box.status is BoxStatus.CONFIRMED
             and box.available > 0
         )]
         materials = []
-        if operation.position == 1 and task.fulfillment_request_id is not None:
+        if operation.id == material_operation(task).id and task.fulfillment_request_id is not None:
             materials = [source for source in uow.materials.list_sources(task.fulfillment_request_id) if source.available > 0]
     return {
         "boxes": [_box_result(box) for box in rows],
@@ -554,7 +575,7 @@ def finished_goods_ready(
             task = tasks.get(box.task_id)
             if task is None or box.status is not BoxStatus.CONFIRMED:
                 continue
-            if box.operation_position != max(operation.position for operation in task.operations):
+            if box.operation_id != task.final_operation.id:
                 continue
             if uow.qc.by_box(box.id) is None:
                 continue
@@ -899,11 +920,7 @@ def launch(
     if not route:
         raise HTTPException(status_code=422, detail=f"Техкарта «{item}» не выдана — запускать нечего")
     try:
-        operations = tuple(ProductionOperation.create(
-            position=step.position, code=step.code, stage=step.stage,
-            description=step.description, seconds_per_unit=step.seconds_per_unit,
-            setup_seconds=step.setup_seconds, quantity=payload.quantity,
-        ) for step in route)
+        operations = launch_operations(route, payload.quantity)
     except ProductionValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     # Решено агентом: ERP хранит в задании изделие индексом КБ (как план и приёмка ГП), а не «проект+индекс».

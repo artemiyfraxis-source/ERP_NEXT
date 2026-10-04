@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 import re
-from typing import Sequence
+from typing import Iterable, Sequence
 from uuid import UUID, uuid4
 
 from .domain import ProductionValidationError
@@ -109,6 +109,10 @@ def _quantity(value: Decimal, label: str, *, allow_zero: bool = False) -> Decima
     return quantity
 
 
+def _positions(value: int | Iterable[int]) -> tuple[int, ...]:
+    return (value,) if isinstance(value, int) else tuple(sorted(set(value)))
+
+
 @dataclass(frozen=True)
 class ProductionBox:
     id: UUID
@@ -179,15 +183,22 @@ class ProductionBox:
             closed_at=now, closed_by=str(actor).strip(),
         )
 
-    def input_error(self, *, item: str, previous_position: int) -> str:
-        """prodInputError_: why this box cannot be an input of the next stage ('' when it can)."""
+    def input_error(self, *, item: str, previous_position: int | Iterable[int]) -> str:
+        """prodInputError_: why this box cannot be an input of the operation ('' when it can).
+
+        previous_position — номер этапа-входа или номера всех входов операции (сетевой график, ARCH-TRACK-2)."""
         label = self.number or "без номера"
+        positions = _positions(previous_position)
         if self.status is not BoxStatus.CONFIRMED:
             return f"Коробка {label} — «{self.status.value}»: брать можно только подтверждённую мастером."
         if self.item.lower() != str(item).strip().lower():
             return f"Коробка {label} — от другого изделия ({self.item})."
-        if self.operation_position != previous_position:
-            return f"Коробка {label} — с этапа {self.operation_position}, а на вход нужен этап {previous_position}."
+        if self.operation_position not in positions:
+            need = (
+                f"нужен этап {positions[0]}" if len(positions) == 1
+                else f"нужны этапы {', '.join(str(position) for position in positions)}"
+            )
+            return f"Коробка {label} — с этапа {self.operation_position}, а на вход {need}."
         if self.available <= 0:
             return f"Коробка {label} пустая."
         return ""
@@ -201,13 +212,13 @@ class ProductionBox:
             version=self.version + 1,
         )
 
-    def reserve(self, quantity: Decimal, *, item: str, previous_position: int) -> ProductionBox:
+    def reserve(self, quantity: Decimal, *, item: str, previous_position: int | Iterable[int]) -> ProductionBox:
         amount = _quantity(quantity, "Количество из коробки")
         if self.status is not BoxStatus.CONFIRMED:
             raise ProductionValidationError("В работу можно брать только подтверждённую коробку")
         if self.item != item:
             raise ProductionValidationError("В коробке другое изделие")
-        if self.operation_position != previous_position:
+        if self.operation_position not in _positions(previous_position):
             raise ProductionValidationError("Коробка относится не к предыдущему этапу маршрута")
         if amount > self.available:
             raise ProductionValidationError("В коробке недостаточно доступного остатка")
@@ -361,6 +372,78 @@ def give_back_inputs(taken: Sequence[WorkInput], quantity: Decimal) -> tuple[Wor
             f"Вернуть {_count(quantity)} шт некуда: из входных коробок взято меньше",
         )
     return tuple(returned)
+
+
+@dataclass(frozen=True)
+class InputStage:
+    """Вход операции при исполнении (сетевой график, ARCH-TRACK-2): этап задания, чьи коробки операция берёт,
+    и сколько его штук идёт на одну её штуку (per_unit ребра).
+
+    Коробка относится к входу по номеру этапа: в задании номер этапа однозначен (это и есть операция-вход), а
+    коробка другого задания того же изделия идёт по номеру этапа, как в SUPPLYMAP `prodInputError_`."""
+    operation_id: UUID
+    position: int
+    name: str = ""
+    per_unit: Decimal = Decimal(1)
+
+    @property
+    def label(self) -> str:
+        return f"{self.position} «{self.name}»" if self.name else str(self.position)
+
+
+def stages_text(stages: Sequence[InputStage], *, named: bool = False) -> str:
+    """«этапа 2» / «этапов 1, 2» — для сообщений оператору."""
+    parts = [stage.label if named else str(stage.position) for stage in stages]
+    return f"этапа {parts[0]}" if len(parts) == 1 else f"этапов {', '.join(parts)}"
+
+
+def missing_stages(stages: Sequence[InputStage], boxes: Sequence[ProductionBox]) -> tuple[InputStage, ...]:
+    """Входы операции, из которых не взято ни одной коробки: сборка начинается только со всеми входами."""
+    have = {box.operation_position for box in boxes}
+    return tuple(stage for stage in stages if stage.position not in have)
+
+
+def take_inputs(stages: Sequence[InputStage], sources: Sequence[ProductionBox], quantity: Decimal) -> tuple[WorkInput, ...]:
+    """prodPick_ по каждому входу операции: на `quantity` штук выхода с этапа-входа берётся quantity × per_unit
+    его штук из его коробок по порядку ввода. Не хватает одного входа — сдача отклоняется целиком."""
+    taken: list[WorkInput] = []
+    for stage in stages:
+        own = [box for box in sources if box.operation_position == stage.position]
+        need = Decimal(quantity) * stage.per_unit
+        have = sum((box.available for box in own), Decimal("0"))
+        if have < need:
+            if len(stages) == 1 and stage.per_unit == 1:
+                raise ProductionValidationError(
+                    f"Во входных коробках {_count(have)} шт, а сдаёшь {_count(quantity)} (годные + брак).",
+                )
+            raise ProductionValidationError(
+                f"С этапа {stage.label} во входных коробках {_count(have)} шт, а на {_count(quantity)} шт "
+                f"нужно {_count(need)} ({_count(stage.per_unit)} на одну).",
+            )
+        taken.extend(pick_inputs(own, need))
+    return tuple(taken)
+
+
+def correction_moves(
+    stages: Sequence[InputStage],
+    taken: Sequence[WorkInput],
+    boxes: dict[UUID, ProductionBox],
+    delta: Decimal,
+) -> tuple[WorkInput, ...]:
+    """prodWorkFix_ по каждому входу: разница в штуках выхода × per_unit добирается из тех же коробок этого
+    входа (delta > 0) или возвращается в них, последние — первыми (delta < 0). `taken` — нетто по коробкам,
+    `boxes` — те из них, что есть в учёте. Один вход — все взятые коробки его, как до сетевого графика."""
+    moves: list[WorkInput] = []
+    for stage in stages:
+        own = [item for item in taken if len(stages) == 1 or (
+            item.box_id in boxes and boxes[item.box_id].operation_position == stage.position
+        )]
+        amount = abs(Decimal(delta)) * stage.per_unit
+        if delta > 0:
+            moves.extend(pick_inputs([boxes[item.box_id] for item in own if item.box_id in boxes], amount))
+        elif delta < 0:
+            moves.extend(give_back_inputs(own, amount))
+    return tuple(moves)
 
 
 @dataclass(frozen=True)

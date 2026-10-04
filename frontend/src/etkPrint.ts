@@ -5,6 +5,7 @@
 import type { ProjectTechcard, TechcardRevision } from "./api";
 import { ETK_CONNECTION_COLUMNS, etkConnectionRows, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { solderMode, toolingSections } from "./etkOperation";
+import { etkRouteLine, etkRouteOf } from "./etkRoute";
 import type { PrintBlock, PrintPage } from "./print";
 
 type Row = Record<string, unknown>;
@@ -102,11 +103,14 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const operations = rows(document.operations);
   const harness = etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
   const connections = etkConnectionRows(document.connections);
+  const routeLine = etkRouteLine(etkRouteOf(card.document));
   const cover: PrintPage = {
     title: "Технологическая карта сборки",
     subtitle: `${text(kit.name)} · ${text(kit.project)} ${text(kit.index)} · ревизия ${revision}`,
     blocks: [
       ...head(kit, revision, ""),
+      // Схема полуфабрикатов одной строкой под шапкой — только у ветвящегося маршрута.
+      ...(routeLine ? [{ text: routeLine }] as PrintBlock[] : []),
       ...(harness ? [{ heading: "Схема жгута" }, { figure: harness }] as PrintBlock[] : []),
       ...(connections.length ? [{ heading: "Таблица соединений" }, { table: { columns: ETK_CONNECTION_COLUMNS, rows: connections } }] as PrintBlock[] : []),
       { heading: "Маршрут" },

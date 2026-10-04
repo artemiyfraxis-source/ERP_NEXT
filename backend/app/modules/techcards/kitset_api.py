@@ -31,6 +31,7 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
 from app.shared.stored_files import file_response
 from app.workflows import project_kitset as flow
+from app.workflows import project_track as track_flow
 
 from .application import CreateProjectTechcardCommand, create_project_techcard
 from .kitsets import (
@@ -76,8 +77,16 @@ def requests_factory(request: Request):
     return _factory(request, "uow_factory")
 
 
+def operations_factory(request: Request):
+    return _factory(request, "operations_uow_factory")
+
+
 def procurement_factory(request: Request):
     return _factory(request, "procurement_uow_factory")
+
+
+def receiving_factory(request: Request):
+    return _factory(request, "receiving_uow_factory")
 
 
 def _name_queue(request: Request):
@@ -393,6 +402,24 @@ def supply(
         "grn": line.grn, "stage": line.stage, "received": line.received,
         "rows": [{"where": row.where, "status": row.status, "source_id": row.source_id} for row in line.rows],
     } for line in lines]}
+
+
+@router.get("/{project}/track")
+def track(
+    project: str,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    """«Трек проекта» (ARCH-TRACK-3): всё, что по проекту создано в модулях, по времени; без даты — в конце.
+    Только чтение через порты модулей; модуль без фабрики пропускается. Задачи арбитра — раздел «Задачи»."""
+    kitset = _kitset(request, project)
+    entries = track_flow.project_track(
+        kitset.project, techcards=techcards_factory(request), requests=requests_factory(request),
+        procurement=procurement_factory(request), receiving=receiving_factory(request),
+        fulfillment=fulfillment_factory(request), production=production_factory(request),
+        shipping=shipping_factory(request), tasks=operations_factory(request),
+    )
+    return {"project": kitset.project, "entries": [entry.payload() for entry in entries]}
 
 
 class IssuePayload(BaseModel):

@@ -25,7 +25,7 @@ from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
-from app.modules.techcards.etk_builder import ETK_VERSION
+from app.modules.techcards.etk_builder import ETK_VERSION, document_route
 from app.workflows.techcards_all import (
     refresh,
     generate,
@@ -255,3 +255,22 @@ def test_refresh_rebuilds_issued_etks_of_an_older_builder_and_keeps_supplymap_on
                if operation["type"] != "splice")
     assert _cards(state)[("708К.4", "КБ1")].revision == 1  # перенесённую из SUPPLYMAP не трогаем
     assert refresh(state, actor=ACTOR, now=NOW, apply=True).done == []
+
+
+def test_refresh_makes_no_revision_for_a_version_2_etk_its_route_is_derived_on_read(state):
+    """ЭТК версии 3 отличается только схемой полуфабрикатов (route): выданные версии 2 не пересобираются."""
+    generate(state, lambda payload: {"items": [
+        {"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]
+    ]}, None, actor=ACTOR, now=NOW, apply=True)
+    card = _cards(state)[("710К.1", "КБ1")]
+    assert card.document["route"]["final"] == f"b{len(CONFIG['ops'])}"
+    old_document = {key: value for key, value in card.document.items() if key != "route"} | {"schema_version": 2}
+    with state.techcards_uow_factory() as uow:
+        uow.techcards.save(replace(card, document=old_document))
+        uow.commit()
+
+    assert refresh(state, actor=ACTOR, now=NOW, apply=False).done == []
+    assert refresh(state, actor=ACTOR, now=NOW, apply=True).done == []
+    stored = _cards(state)[("710К.1", "КБ1")]
+    assert stored.revision == card.revision and "route" not in stored.document
+    assert document_route(stored.document) == card.document["route"]
