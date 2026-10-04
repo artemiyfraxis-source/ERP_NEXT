@@ -23,6 +23,10 @@ const EVENT_NAMES: Record<string, string> = {
 
   "procurement.created": "Позиция в листе закупки",
   "procurement.line_deleted": "Позиция закупки удалена",
+  "procurement.note_saved": "Комментарий закупщика",
+  "procurement.expected_arrival_set": "Ожидаемая дата изменена",
+  "procurement.actual_arrival": "Фактическая дата прихода",
+  "receiving.expected_arrival_copied": "Ожидаемая дата передана в приёмку",
   "procurement.taken_in_work": "Взято в работу",
   "procurement.facts_saved": "Данные поставки сохранены",
   "procurement.kp_saved": "КП сохранено",
@@ -179,6 +183,9 @@ const EVENT_NAMES: Record<string, string> = {
 };
 
 const DETAIL_LABELS: Record<string, string> = {
+  expected_arrival: "ожид. дата",
+  previous_expected_arrival: "была ожид. дата",
+  actual_arrival: "факт. дата",
   number: "№", project: "проект", item_index: "КБ", quantity: "кол-во", grn: "ГРН", from: "откуда", to: "куда",
   storage_location: "место", reason: "причина", revision: "ревизия", operations: "операций", warnings: "предупреждений",
   from_status: "было", to_status: "стало", legacy_id: "ID", package: "пакет", kind: "вид", inherited: "из проекта",
