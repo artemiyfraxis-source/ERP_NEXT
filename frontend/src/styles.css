@@ -833,6 +833,54 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tcgen .gen-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .tcgen .gen-actions .toggle-row { margin-right: auto; }
 
+/* Схема полуфабрикатов (ARCH-TRACK-1): блоки слева направо, стрелки с числом штук, открытый блок — его операции. */
+.tcgen .route-editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.tcgen .route-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.tcgen .route-head h3 { margin: 12px 0 4px; }
+.tcgen .route-toggle { margin-left: auto; }
+.tcgen .route-badge { border-radius: 999px; padding: 1px 8px; background: var(--accent); color: var(--muted-foreground); font-size: 11px; }
+.tcgen .route-badge.manual { background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
+.tcgen .route-summary { color: var(--muted-foreground); font-size: 12px; }
+.tcgen .route-summary strong { color: var(--foreground); }
+/* Генератор — колонка 920 px; схема берёт всю ширину панели (cqw — ширина .gen-pane) и листается внутри себя. */
+.tcgen .route-scroll { width: 100%; width: 100cqw; overflow-x: auto; padding: 2px 2px 8px; }
+.tcgen .route-canvas { position: relative; }
+.tcgen .route-canvas svg { position: absolute; inset: 0; pointer-events: none; }
+.tcgen .route-edge-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.5; }
+.tcgen .route-arrowhead { fill: var(--muted-foreground); }
+.tcgen .route-cell { position: absolute; }
+.tcgen .route-edge-label { position: absolute; transform: translate(-50%, -50%); }
+.tcgen .route-per { width: 46px; padding: 2px 4px; text-align: center; background: var(--card); font-variant-numeric: tabular-nums; }
+.tcgen .route-block { width: 100%; height: 100%; min-height: 76px; display: grid; align-content: start; gap: 2px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 12px; overflow: hidden; }
+.tcgen .route-block:hover { border-color: var(--primary); }
+.tcgen .route-block.is-final { border: 2px solid var(--primary); padding: 6px 9px; background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
+.tcgen .route-block.is-selected { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent); }
+.tcgen .route-block-tag { justify-self: start; border-radius: 999px; padding: 0 7px; background: color-mix(in srgb, var(--primary) 16%, transparent); font-size: 11px; font-weight: 700; }
+.tcgen .route-block-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 1.3; }
+.tcgen .route-block-meta, .tcgen .route-block-time { color: var(--muted-foreground); }
+.tcgen .route-chain { width: 100%; width: 100cqw; display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px 0; margin: 0; padding: 0; list-style: none; }
+.tcgen .route-chain li { display: flex; align-items: center; }
+.tcgen .route-chain .route-block { width: 184px; height: auto; }
+.tcgen .route-link { display: flex; align-items: center; gap: 3px; padding: 0 6px; color: var(--muted-foreground); }
+.tcgen .route-panel { gap: 10px; }
+.tcgen .route-panel-head { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.tcgen .route-panel-head .field-label { flex: 1; min-width: 220px; max-width: 420px; }
+.tcgen .route-ops { display: grid; gap: 2px; }
+.tcgen .route-op { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 4px 12px; align-items: start; }
+.tcgen .route-op .op-item { border-bottom: 0; }
+.tcgen .route-op-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+.tcgen .route-move { padding-top: 8px; }
+.tcgen .route-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px; align-items: end; border-top: 1px solid var(--border); padding-top: 8px; }
+.tcgen .route-act { display: flex; align-items: end; gap: 8px; }
+.tcgen .route-act .field-label { flex: 1; min-width: 0; }
+.tcgen .route-inputs { display: grid; gap: 2px; font-size: 12px; }
+.tcgen .route-input-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+@media (pointer: coarse) {
+  .tcgen .route-per { min-height: 40px; width: 52px; }
+  .tcgen .route-act .small, .tcgen .route-panel select, .tcgen .route-panel input { min-height: 40px; }
+  .tcgen .route-toggle, .tcgen .route-head .btn-link, .tcgen .route-panel-head .btn-link { min-height: 40px; }
+}
+
 /* Шаблоны-листы БД.ТК: каталог и сетка черновика */
 .nowrap { white-space: nowrap; }
 .template-sheets .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -1143,7 +1191,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
 .seg-tabs.sub { margin-bottom: 8px; }
-.gen-pane { display: grid; gap: 10px; }
+.gen-pane { display: grid; gap: 10px; container-type: inline-size; }
 .tcgen .gen-actions { align-items: flex-start; margin-top: 10px; }
 .tcgen .gen-actions > .primary { min-width: 160px; }
 .gen-more { margin-right: auto; display: grid; gap: 8px; color: var(--muted-foreground); }
