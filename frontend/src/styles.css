@@ -628,35 +628,47 @@ fieldset.form-grid { padding: 16px 18px 18px; }
   .plan-note-text { grid-column: auto; }
 }
 
-/* NAV-ACCESS «Доступы»: role × section matrix on the shared DataTable. The section column stays pinned while the
-   roles scroll; each cell is a pill coloured by the effective mode, an empty cell (role default) stays pale. */
-.access-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0; color: var(--muted-foreground); font-size: 12px; }
-.access-legend > span:not(.access-pill) { margin-right: 6px; }
-.access-matrix .grid.wide { width: 100%; }
-.access-matrix th { white-space: normal; min-width: 88px; max-width: 120px; line-height: 1.35; vertical-align: bottom; }
-.access-matrix th, .access-matrix td { padding: 7px 6px; text-align: center; }
-.access-matrix th:first-child, .access-matrix td:first-child { position: sticky; left: 0; z-index: 1; min-width: 220px; max-width: 300px; padding-left: 14px; text-align: left; background: var(--card); box-shadow: inset -1px 0 var(--border); }
-.access-matrix tbody tr:hover td { background: #fafbfc; }
-.access-pill { position: relative; display: inline-block; min-width: 84px; border: 1px solid transparent; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; line-height: 1.45; text-align: center; white-space: nowrap; }
-.access-legend .access-pill { min-width: 0; }
-.access-pill.access-edit { color: #00745f; background: color-mix(in srgb, var(--primary) 16%, white); }
-.access-pill.access-view { color: #1f4fa3; background: #e6eefc; }
-.access-pill.access-none { color: #9a3b3b; background: #fbeaea; }
-.access-pill.access-default { background: transparent; font-weight: 400; }
-.access-pill.access-default.access-edit { color: #3f8f80; }
-.access-pill.access-default.access-view { color: #5a78b0; }
-.access-pill.access-default.access-none { color: #b7bdca; }
+/* NAV-ACCESS «Доступы»: role × section matrix on the shared DataTable. Dense for the 16" laptop (owner, 04.10): rows
+   ~28 px, a compact chip per cell in the tone of the effective mode (tone-ok / tone-info / tone-danger), roles in
+   normal-case 12 px headers, the section column pinned if the roles still have to scroll. An empty cell (the role's
+   default) stays pale, a changed one gets an amber ring, a role that is always full shows «полный» with a padlock. */
+.access-page .page-head { margin-bottom: 6px; }
+.access-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px; margin: 6px 0 10px; }
+.access-bar .shipping-tabs { gap: 6px; margin: 0; }
+.access-bar .shipping-tabs button { padding: 5px 14px; font-size: 13px; }
+.access-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted-foreground); font-size: 12px; }
+.access-legend > span:not(.access-pill) { margin-right: 8px; }
+.access-help { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: 1px solid var(--border); border-radius: 50%; color: var(--muted-foreground); font-size: 11px; line-height: 1; cursor: help; }
+.access-help:hover, .access-help:focus-visible { border-color: var(--primary); color: var(--primary); outline: none; }
+.access-pill { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 22px; min-width: 0; border: 1px solid transparent; border-radius: 6px; padding: 0 7px; background: color-mix(in srgb, currentColor 11%, white); font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.access-pill.access-default { background: transparent; font-weight: 400; opacity: .8; }
+.access-pill.access-default.access-none { color: var(--muted-foreground); opacity: .55; }
+.access-pill.access-fixed { background: transparent; font-weight: 500; opacity: .85; cursor: default; }
+.access-lock { flex: none; }
 .access-cell { cursor: pointer; }
-.access-cell select { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; opacity: 0; cursor: pointer; }
-.access-cell:hover { border-color: var(--border); }
+.access-cell select { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.access-cell:hover { border-color: color-mix(in srgb, currentColor 40%, transparent); }
 .access-cell:focus-within { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
-.access-pill.access-changed { box-shadow: 0 0 0 2px #f2b84b; }
-.access-people .access-pill.access-default.access-none, .access-people .access-cell.access-default { color: var(--muted-foreground); }
-.access-people { max-width: 920px; }
-.access-people .grid.wide { width: 100%; }
-.access-people th:not(:first-child), .access-people td:not(:first-child) { width: 170px; text-align: center; }
-.access-savebar { position: sticky; bottom: 0; z-index: 5; align-items: center; padding: 10px 0; background: var(--background); }
-.access-dirty-note { margin-right: auto; color: #a86a00; font-size: 13px; }
+.access-pill.access-changed { box-shadow: 0 0 0 2px #f2b84b; opacity: 1; }
+.access-page .data-table { gap: 6px; }
+.access-page .data-table .table-wrap { max-height: calc(100dvh - 210px); }
+.access-page .data-table thead th { padding: 5px 3px; font-size: 12px; font-weight: 600; letter-spacing: 0; line-height: 1.2; text-transform: none; text-align: center; vertical-align: bottom; white-space: normal; min-width: 72px; max-width: 90px; }
+.access-page .data-table thead th:first-child { min-width: 190px; max-width: none; padding-left: 12px; text-align: left; }
+.access-page .data-table tbody td { height: 28px; padding: 2px 3px; text-align: center; }
+.access-page .data-table tbody td.key { min-width: 190px; padding-left: 12px; font-weight: 400; text-align: left; }
+.access-page .data-table .cell-wrap { max-width: 215px; line-height: 1.25; }
+.access-people { max-width: 760px; }
+.access-people .filters select { max-width: 460px; }
+.access-people .data-table thead th:not(:first-child) { min-width: 150px; max-width: 200px; }
+.access-people .access-cell.access-default { color: var(--muted-foreground); }
+.access-savebar { position: sticky; bottom: 0; z-index: 5; flex-wrap: nowrap; justify-content: flex-start; align-items: center; gap: 8px; margin: 8px 0 0; padding: 8px 0; border-top: 1px solid var(--border); background: var(--background); }
+.access-savebar button { padding: 5px 14px; font-size: 12.5px; }
+.access-dirty-note { color: #a86a00; font-size: 12.5px; }
+@media (pointer: coarse) {
+  .access-page .data-table tbody td { height: 40px; }
+  .access-pill { height: 34px; min-width: 76px; }
+  .access-pill.access-fixed, .access-legend .access-pill { height: 22px; min-width: 0; }
+}
 
 /* «Проекты» — карточки наборов (SUPPLYMAP openKitsetHub / openKitsetCard). */
 .kit-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; font-size: 13px; }
@@ -939,7 +951,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .plan-legend .gantt-bar { position: static; display: inline-block; height: 18px; padding: 0 6px; font-size: var(--zg-font-sm); line-height: 18px; }
 @media (max-width: 1024px) { .plan-table td:nth-child(6), .plan-table th:nth-child(6) { display: none; } }
 @media (max-width: 640px) { .plan-load .gantt-label { flex-basis: 150px; width: 150px; } }
-.access-matrix thead th:first-child { z-index: 3; }
 /* Row buttons stay row-sized so a button column does not double every row's height. */
 .data-table td button.small, .data-table td .secondary, .data-table td .primary { padding: 2px 10px; border-radius: 7px; font-size: 12px; line-height: 1.5; }
 @media (pointer: coarse) { .data-table td button { min-height: 32px; } }

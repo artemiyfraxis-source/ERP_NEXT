@@ -26,6 +26,8 @@ export interface DataColumn<T> {
   wrap?: boolean;
   /** Ширина колонки (px) — чтобы несколько таблиц одной страницы шли колонка в колонку. */
   width?: number;
+  /** Подсказка при наведении на заголовок (например, полное название при сокращённом). */
+  hint?: string;
 }
 
 export interface DataPreset<T> {
@@ -392,7 +394,7 @@ export function DataTable<T>({
               {visible.map((column) => {
                 const direction = sort?.key === column.key ? sort.direction : 0;
                 return (
-                  <th key={column.key} className={column.numeric ? "num" : undefined} style={column.width ? { width: column.width } : undefined} aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}>
+                  <th key={column.key} className={column.numeric ? "num" : undefined} style={column.width ? { width: column.width } : undefined} title={column.hint} aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}>
                     <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
                       {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
                     </button>
