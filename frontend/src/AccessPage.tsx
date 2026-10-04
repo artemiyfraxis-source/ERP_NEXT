@@ -10,6 +10,9 @@ import { FULL_ACCESS_ROLES } from "./navigation";
  *  a cell says otherwise (`defaults`). */
 
 const MODE_LABEL: Record<AccessSetting, string> = { none: "закрыт", view: "просмотр", edit: "полный" };
+/** The chip's colour is the app's tone of the mode (green / blue / red), the same classes as the statuses elsewhere. */
+const MODE_TONE: Record<AccessSetting, string> = { none: "tone-danger", view: "tone-info", edit: "tone-ok" };
+const FIXED_FULL_HINT = "Всегда полный доступ";
 const SETTINGS: AccessSetting[] = ["none", "view", "edit"];
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
@@ -29,8 +32,24 @@ const shown = (mode: AccessMode | undefined) => MODE_LABEL[mode ?? "none"];
 
 type Section = AccessOverview["sections"][number];
 
-/** A cell as a coloured pill: the effective mode picks the colour, an empty cell (the role's default) stays pale.
- *  The native select lies invisibly over the pill, so the list keeps its full wording while the cell stays short. */
+/** The small padlock of a cell that cannot be reduced (drawn, not an emoji: it takes the text colour and size). */
+function LockIcon() {
+  return <svg className="access-lock" viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" focusable="false">
+    <path d="M3.6 5.2V3.7a2.4 2.4 0 0 1 4.8 0v1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    <rect x="2" y="5.2" width="8" height="5.6" rx="1.3" fill="currentColor" />
+  </svg>;
+}
+
+/** The role's always-full cell: the mode word and a padlock, no list to open. */
+function FixedFullCell() {
+  return <span className="access-pill tone-ok access-fixed" title={FIXED_FULL_HINT}>
+    {MODE_LABEL.edit}<LockIcon />
+  </span>;
+}
+
+/** A cell as a compact chip: the tone of the effective mode picks the colour, an empty cell (the role's default)
+ *  stays pale. The native select lies invisibly over the chip, so the list keeps its full wording while the cell
+ *  stays short. */
 function AccessCell({ label, value, fallback, emptyLabel, emptyShown, changed, onChange }: {
   label: string;
   /** What an empty cell shows; by default its fallback mode, or a dash when that is «закрыт». */
@@ -43,7 +62,7 @@ function AccessCell({ label, value, fallback, emptyLabel, emptyShown, changed, o
 }) {
   const effective = value || fallback || "none";
   const text = value ? MODE_LABEL[value] : emptyShown ?? (fallback ? MODE_LABEL[fallback] : "—");
-  const classes = ["access-pill", "access-cell", `access-${effective}`, value ? "access-set" : "access-default", changed ? "access-changed" : ""];
+  const classes = ["access-pill", "access-cell", `access-${effective}`, MODE_TONE[effective], value ? "access-set" : "access-default", changed ? "access-changed" : ""];
   return <span className={classes.join(" ").trim()}>
     {text}
     <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
@@ -56,17 +75,22 @@ function AccessCell({ label, value, fallback, emptyLabel, emptyShown, changed, o
 /** An empty cell reads as its default: a dash when the section stays closed, the mode otherwise. */
 const emptyText = (fallback: AccessMode | undefined) => fallback ? `${MODE_LABEL[fallback]} (по умолч.)` : "—";
 
+/** One line of marks. The longer rule sits in the «?» tooltip: an empty cell closes the section, «просмотр» is
+ *  without editing, a person's exception is stronger than the role. */
 function Legend() {
-  return <p className="access-legend">
-    <span className="access-pill access-edit access-set">полный</span>
-    <span className="access-pill access-view access-set">просмотр</span>
-    <span className="access-pill access-none access-set">закрыт</span>
-    <span>выдано явно</span>
-    <span className="access-pill access-none access-default">—</span>
-    <span>пусто: закрыт (у администратора бледное «полный»)</span>
-    <span className="access-pill access-view access-set access-changed">просмотр</span>
+  return <div className="access-legend" role="group" aria-label="Обозначения">
+    <span className="access-pill tone-ok access-set">полный</span>
+    <span className="access-pill tone-info access-set">просмотр</span>
+    <span className="access-pill tone-danger access-set">закрыт</span>
+    <span className="access-pill tone-ok access-default">полный</span>
+    <span>по умолчанию у роли</span>
+    <span className="access-pill tone-info access-set access-changed">просмотр</span>
     <span>не сохранено</span>
-  </p>;
+    <span className="access-pill tone-ok access-fixed"><LockIcon /></span>
+    <span>всегда полный доступ</span>
+    <span className="access-help" tabIndex={0} role="note" aria-label="Подсказка"
+      title="Пустая ячейка — раздел закрыт, «просмотр» — без правки. Исключение по сотруднику сильнее роли.">?</span>
+  </div>;
 }
 
 function withCell(row: AccessRow, section: string, value: string): AccessRow {
@@ -136,14 +160,14 @@ export function AccessPage() {
   const matrixDirty = data !== null && JSON.stringify(matrix) !== JSON.stringify(data.matrix);
 
   const matrixColumns: DataColumn<Section>[] = data ? [
-    { key: "section", title: "Раздел", value: (section) => section.label, render: (section) => <strong>{section.label}</strong>, wrap: true },
+    { key: "section", title: "Раздел", value: (section) => section.label, wrap: true },
     ...data.roles.map((role): DataColumn<Section> => ({
       key: role.key,
       title: role.label,
+      hint: FULL_ACCESS_ROLES.has(role.key) ? `${role.label} — ${FIXED_FULL_HINT.toLowerCase()}` : role.label,
       value: (section) => shown(roleModes({ ...data, matrix }, role.key)[section.key]),
       render: (section) => {
-        if (FULL_ACCESS_ROLES.has(role.key))
-          return <span className="access-pill access-edit access-set" title="Полный доступ всегда — урезать нельзя">полный 🔒</span>;
+        if (FULL_ACCESS_ROLES.has(role.key)) return <FixedFullCell />;
         const fallback = data.defaults[role.key]?.[section.key];
         const value = matrix[role.key]?.[section.key] ?? "";
         return <AccessCell
@@ -159,21 +183,20 @@ export function AccessPage() {
   ] : [];
 
   const personColumns = (role: string): DataColumn<Section>[] => data ? [
-    { key: "section", title: "Раздел", value: (section) => section.label, render: (section) => <strong>{section.label}</strong>, wrap: true },
+    { key: "section", title: "Раздел", value: (section) => section.label, wrap: true },
     {
       key: "role", title: `У роли «${roleLabel(role)}»`,
       value: (section) => shown(roleModes(data, role)[section.key]),
       render: (section) => {
         const mode = roleModes(data, role)[section.key] ?? "none";
-        return <span className={`access-pill access-${mode} access-default`}>{MODE_LABEL[mode]}</span>;
+        return <span className={`access-pill access-${mode} ${MODE_TONE[mode]} access-default`}>{MODE_LABEL[mode]}</span>;
       },
     },
     {
       key: "personal", title: "Исключение",
       value: (section) => personal[section.key] ? MODE_LABEL[personal[section.key]!] : "",
       render: (section) => {
-        if (FULL_ACCESS_ROLES.has(role))
-          return <span className="access-pill access-edit access-set" title="Полный доступ всегда — урезать нельзя">полный 🔒</span>;
+        if (FULL_ACCESS_ROLES.has(role)) return <FixedFullCell />;
         const value = personal[section.key] ?? "";
         return <AccessCell
           label={`Исключение: ${section.label}`}
@@ -189,22 +212,23 @@ export function AccessPage() {
 
   return <section className="page access-page">
     <header className="page-head"><h1>Доступы</h1></header>
-    <p className="page-sub">Пустая ячейка — раздел закрыт, «просмотр» — без правки. Исключение по сотруднику сильнее роли. «полный 🔒» — роль всегда с полным доступом.</p>
-    <div className="shipping-tabs">
-      <button className={tab === "roles" ? "secondary active" : "secondary"} onClick={() => setTab("roles")}>Роли × разделы</button>
-      <button className={tab === "people" ? "secondary active" : "secondary"} onClick={() => setTab("people")}>Исключения по сотрудникам</button>
+    <div className="access-bar">
+      <div className="shipping-tabs">
+        <button className={tab === "roles" ? "secondary active" : "secondary"} onClick={() => setTab("roles")}>Роли × разделы</button>
+        <button className={tab === "people" ? "secondary active" : "secondary"} onClick={() => setTab("people")}>Исключения по сотрудникам</button>
+      </div>
+      {data && tab === "roles" && <Legend />}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {data && tab === "roles" && <>
-      <Legend />
       <div className="access-matrix">
         <DataTable label="Матрица доступов" rows={data.sections} rowKey={(section) => section.key} columns={matrixColumns} emptyText="Разделов нет" />
       </div>
       <div className={matrixDirty ? "form-actions access-savebar dirty" : "form-actions access-savebar"}>
+        <button className="primary small" disabled={busy || !matrixDirty} onClick={() => void saveRoles()}>Сохранить доступы ролей</button>
+        <button className="secondary small" disabled={busy || !matrixDirty} onClick={() => setMatrix(data.matrix)}>Отменить правки</button>
         {matrixDirty && <span className="access-dirty-note">Есть несохранённые правки</span>}
-        <button className="primary" disabled={busy || !matrixDirty} onClick={() => void saveRoles()}>Сохранить доступы ролей</button>{" "}
-        <button className="secondary" disabled={busy || !matrixDirty} onClick={() => setMatrix(data.matrix)}>Отменить правки</button>
       </div>
     </>}
     {data && tab === "people" && <article className="access-people">
@@ -221,8 +245,8 @@ export function AccessPage() {
       </div>
       {person ? <>
         <DataTable label={`Исключения: ${person.name}`} rows={data.sections} rowKey={(section) => section.key} columns={personColumns(person.role)} />
-        <div className="form-actions">
-          <button className="primary" disabled={busy} onClick={() => void savePerson()}>Сохранить исключения</button>
+        <div className="form-actions access-savebar">
+          <button className="primary small" disabled={busy} onClick={() => void savePerson()}>Сохранить исключения</button>
         </div>
       </> : <p className="page-sub">Исключения нужны, чтобы дать человеку раздел, закрытый его роли, или отнять открытый.</p>}
     </article>}

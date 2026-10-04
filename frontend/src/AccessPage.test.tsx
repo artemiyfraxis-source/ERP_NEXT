@@ -68,10 +68,88 @@ it("locks the full-access role columns so they cannot be reduced", async () => {
   });
 
   render(<AccessPage />);
-  // The note names the four always-full roles, and the admin (Технолог) column has no editable cell — only a lock.
-  expect(await screen.findByText(/роль всегда с полным доступом/)).toBeInTheDocument();
+  // The admin (Технолог) column has no editable cell — only «полный» with a drawn padlock (an svg, not an emoji)
+  // and the tooltip «Всегда полный доступ»; the legend names the mark in one line.
+  expect(await screen.findByText("всегда полный доступ")).toBeInTheDocument();
   expect(screen.queryByLabelText("Сотрудники · Технолог")).toBeNull();
-  expect(screen.getAllByText("полный 🔒").length).toBeGreaterThan(0);
+  const locked = screen.getAllByTitle("Всегда полный доступ");
+  expect(locked).toHaveLength(OVERVIEW.sections.length);
+  for (const cell of locked) {
+    expect(cell).toHaveTextContent(/^полный$/);
+    expect(cell.querySelector("svg.access-lock")).not.toBeNull();
+    expect(cell).toHaveClass("tone-ok");
+  }
+  expect(document.body.textContent).not.toContain("🔒");
+  // The column header carries the full role name and says why it is locked.
+  expect(screen.getByRole("columnheader", { name: "Технолог" })).toHaveAttribute("title", "Технолог — всегда полный доступ");
+  expect(screen.getByRole("columnheader", { name: "Кладовщик" })).toHaveAttribute("title", "Кладовщик");
+});
+
+it("keeps the screen short: no explanation paragraph, a one-line legend with a «?» tooltip, plain section names", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/access") return json(OVERVIEW);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  const { container } = render(<AccessPage />);
+  await screen.findByLabelText("Склад · Кладовщик");
+  expect(screen.queryByText(/Пустая ячейка — раздел закрыт/)).toBeNull();
+  expect(container.querySelector("p.page-sub")).toBeNull();
+  const legend = screen.getByRole("group", { name: "Обозначения" });
+  expect(within(legend).getByText("не сохранено")).toBeInTheDocument();
+  expect(within(legend).getByRole("note", { name: "Подсказка" }))
+    .toHaveAttribute("title", expect.stringContaining("Исключение по сотруднику сильнее роли"));
+  expect(container.querySelector(".access-matrix tbody strong")).toBeNull(); // section names are regular weight
+});
+
+it("shows the chip of each cell in the tone of its effective mode, pale when it is only the role's default", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/access") return json(OVERVIEW);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(<AccessPage />);
+  await screen.findByLabelText("Склад · Кладовщик");
+  const chip = (label: string) => screen.getByLabelText(label).parentElement as HTMLElement;
+  // Заявки: nothing set, the role default is «полный» → pale green word. Склад: set to «закрыт» explicitly → red chip.
+  expect(chip("Заявки · Кладовщик")).toHaveTextContent(/^полный/);
+  expect(chip("Заявки · Кладовщик")).toHaveClass("tone-ok", "access-default");
+  expect(chip("Склад · Кладовщик")).toHaveTextContent(/^закрыт/);
+  expect(chip("Склад · Кладовщик")).toHaveClass("tone-danger", "access-set");
+  // Сотрудники: nothing set and no default → a dash, not a word.
+  expect(chip("Сотрудники · Кладовщик")).toHaveTextContent(/^—/);
+  expect(chip("Сотрудники · Кладовщик")).toHaveClass("access-default");
+  fireEvent.change(screen.getByLabelText("Сотрудники · Кладовщик"), { target: { value: "view" } });
+  expect(chip("Сотрудники · Кладовщик")).toHaveTextContent(/^просмотр/);
+  expect(chip("Сотрудники · Кладовщик")).toHaveClass("tone-info", "access-set");
+});
+
+it("highlights unsaved cells, shows the note and takes the changes back", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/access") return json(OVERVIEW);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(<AccessPage />);
+  const warehouse = await screen.findByLabelText("Склад · Кладовщик");
+  const save = screen.getByRole("button", { name: "Сохранить доступы ролей" });
+  const cancel = screen.getByRole("button", { name: "Отменить правки" });
+  expect(screen.queryByText("Есть несохранённые правки")).toBeNull();
+  expect(warehouse.parentElement).not.toHaveClass("access-changed");
+  expect(save).toBeDisabled();
+  expect(cancel).toBeDisabled();
+
+  fireEvent.change(warehouse, { target: { value: "edit" } });
+  expect(warehouse.parentElement).toHaveClass("access-changed", "tone-ok");
+  expect(screen.getByLabelText("Заявки · Кладовщик").parentElement).not.toHaveClass("access-changed");
+  expect(screen.getByText("Есть несохранённые правки")).toBeInTheDocument();
+  expect(save).toBeEnabled();
+
+  fireEvent.click(cancel);
+  expect(warehouse.parentElement).not.toHaveClass("access-changed");
+  expect(warehouse.parentElement).toHaveTextContent(/^закрыт/);
+  expect(screen.queryByText("Есть несохранённые правки")).toBeNull();
+  expect(save).toBeDisabled();
 });
 
 it("edits one person's exceptions against what the role gives", async () => {
@@ -103,6 +181,21 @@ it("edits one person's exceptions against what the role gives", async () => {
 
   await waitFor(() => expect(saved).toEqual([{ access: { warehouse: "view" } }]));
   expect(await screen.findByText("Исключения сохранены: Кладовкин")).toBeInTheDocument();
+});
+
+it("a full-access person has no exceptions to edit, only the padlock", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/access") return json(OVERVIEW);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  const { container } = render(<AccessPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Исключения по сотрудникам" }));
+  expect(container.querySelector("p.page-sub")).not.toBeNull(); // the empty state says what to do next
+  fireEvent.change(screen.getByLabelText("Сотрудник"), { target: { value: "u1" } });
+  expect(screen.queryByLabelText("Исключение: Склад")).toBeNull();
+  expect(screen.getAllByTitle("Всегда полный доступ")).toHaveLength(OVERVIEW.sections.length);
+  expect(screen.getByRole("button", { name: "Сохранить исключения" })).toBeEnabled();
 });
 
 it("NAV-SECTIONS: shows «Оформить заявку», «Мои заявки» and «Выдача со списанием» as sections of their own", async () => {
