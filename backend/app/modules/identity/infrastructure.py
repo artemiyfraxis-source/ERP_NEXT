@@ -31,12 +31,12 @@ from app.shared.persistence import SqlAlchemyAuditRepository, SqlAlchemyOutboxRe
 from app.shared.clock import as_utc
 
 from .application import IdentitySession, PinRecord
-from .domain import ROLE_SEED, AccessMode, IdentityUser, normalize_login
+from .domain import FULL_ACCESS_LEVELS, LEVEL_SEED, ROLE_SEED, AccessMode, IdentityUser, normalize_login
 from .level_migration import level_for_role, shop_worker_rule, site_master_rule
 
 
-# A row inserted without a level takes it from its role (and site / department for the installer flag), until the
-# screens edit the level directly — the gates still run on the role, so the two must not drift apart.
+# A row inserted without a level (a fixture, an old caller that knows only the role) takes it from its role, and the
+# flags from role / site / department.
 def _default_level(context) -> str:
     return level_for_role(context.get_current_parameters().get("role"))
 
@@ -146,8 +146,8 @@ class IdentityLevelAccessRow(Base):
 
 
 class IdentityUserLevelAccessRow(Base):
-    """Personal exceptions on top of the person's level row (0086), `none` closes. `identity_user_access` keeps the
-    role-era exceptions the gates still read."""
+    """Personal exceptions on top of the person's level row (0086), `none` closes; ignored for superadmin/admin.
+    `identity_user_access` keeps the role-era exceptions (legacy, not read by the gates)."""
 
     __tablename__ = "identity_user_level_access"
 
@@ -268,10 +268,14 @@ def _write_personnel(row: IdentityUserRow, user: IdentityUser) -> None:
 
 
 def _follow_role(row: IdentityUserRow, user: IdentityUser) -> None:
-    """Until «Сотрудники» edits the level and the flags (access-levels plan, T6), changing the old role (site,
-    department) re-derives them, so they never lag behind the role the gates still use."""
-    if row.role != user.role:
+    """The level is what the gates read: written as the user carries it; a user without one gets it from the legacy role
+    when that changes. Until the flags are edited directly (access-levels plan, T3/T6), changing the old role (site,
+    department) re-derives them."""
+    if user.access_level:
+        row.access_level = user.access_level
+    elif row.role != user.role:
         row.access_level = level_for_role(user.role)
+    if row.role != user.role:
         row.site_master = site_master_rule(user.role)
     if (row.role, row.site, row.department) != (user.role, user.site, user.department):
         row.shop_worker = shop_worker_rule(user.role, user.site, user.department)
@@ -309,6 +313,17 @@ class SqlAlchemyIdentityRepository:
             return None
         return _user_domain(user_row), credential.password_hash
 
+    def level_access(self, level: str) -> dict[str, AccessMode]:
+        rows = self.session.scalars(select(IdentityLevelAccessRow).where(IdentityLevelAccessRow.level == level))
+        return {row.section: AccessMode(row.mode) for row in rows}
+
+    def user_level_access(self, user_id: UUID) -> dict[str, AccessMode]:
+        rows = self.session.scalars(
+            select(IdentityUserLevelAccessRow).where(IdentityUserLevelAccessRow.user_id == user_id)
+        )
+        return {row.section: AccessMode(row.mode) for row in rows}
+
+    # Legacy role tables: not read by the gates (the personal card reads them until task T3).
     def role_access(self, role: str) -> dict[str, AccessMode]:
         rows = self.session.scalars(
             select(IdentityRoleAccessRow).where(IdentityRoleAccessRow.role == role)
@@ -542,10 +557,10 @@ class SqlAlchemyIdentityRepository:
             row.password_hash = password_hash
 
     def active_admin_ids(self) -> list[UUID]:
-        # Locks the admin rows, so two admins cannot demote each other at the same time.
+        # Active superadmins and admins. Locks their rows, so two administrators cannot demote each other at once.
         return list(self.session.scalars(
             select(IdentityUserRow.id)
-            .where(IdentityUserRow.role == "admin", IdentityUserRow.active.is_(True))
+            .where(IdentityUserRow.access_level.in_(FULL_ACCESS_LEVELS), IdentityUserRow.active.is_(True))
             .with_for_update()
         ))
 
@@ -574,7 +589,36 @@ class SqlAlchemyIdentityRepository:
             for position, name in enumerate(departments)
         )
 
-    # ── «Доступы» (NAV-ACCESS) ──
+    # ── «Доступы» (NAV-ACCESS): the level matrix and the personal level exceptions ──
+
+    def all_level_access(self) -> dict[str, dict[str, AccessMode]]:
+        result: dict[str, dict[str, AccessMode]] = {}
+        for row in self.session.scalars(select(IdentityLevelAccessRow)):
+            result.setdefault(row.level, {})[row.section] = AccessMode(row.mode)
+        return result
+
+    def all_user_level_access(self) -> dict[UUID, dict[str, AccessMode]]:
+        result: dict[UUID, dict[str, AccessMode]] = {}
+        for row in self.session.scalars(select(IdentityUserLevelAccessRow)):
+            result.setdefault(row.user_id, {})[row.section] = AccessMode(row.mode)
+        return result
+
+    def replace_level_access(self, level: str, cells: dict[str, AccessMode]) -> None:
+        self.session.execute(delete(IdentityLevelAccessRow).where(IdentityLevelAccessRow.level == level))
+        self.session.add_all(
+            IdentityLevelAccessRow(level=level, section=section, mode=mode.value) for section, mode in cells.items()
+        )
+
+    def replace_user_level_access(self, user_id: UUID, overrides: dict[str, AccessMode]) -> None:
+        self.session.execute(
+            delete(IdentityUserLevelAccessRow).where(IdentityUserLevelAccessRow.user_id == user_id)
+        )
+        self.session.add_all(
+            IdentityUserLevelAccessRow(user_id=user_id, section=section, mode=mode.value)
+            for section, mode in overrides.items()
+        )
+
+    # Legacy role tables (kept one release; the «Доступы» screen no longer writes them).
 
     def all_role_access(self) -> dict[str, dict[str, AccessMode]]:
         result: dict[str, dict[str, AccessMode]] = {}
@@ -694,10 +738,24 @@ class SqlAlchemyIdentityUnitOfWork:
 
 
 def seed_role_matrix(session: Session) -> None:
-    """Every role's ROLE_SEED as explicit matrix cells, where nothing is stored yet — what migration 0056 did, for a
-    database built without migrations (tests, fixtures). Existing cells stay."""
+    """Legacy: every role's ROLE_SEED as explicit role-matrix cells, where nothing is stored yet — what migration 0056
+    did. The gates read the level matrix (seed_level_matrix); this stays for the personal card until task T3."""
     for role, row in ROLE_SEED.items():
         _seed_role_access(session, role, row)
+
+
+def seed_level_matrix(session: Session, rows: dict[str, dict[str, AccessMode]] | None = None) -> None:
+    """The level matrix of a database built without migrations (tests, fixtures): LEVEL_SEED (or `rows`) for every
+    level that has no stored cell yet — what migration 0086 writes for a level nobody holds. superadmin/admin need none:
+    they are full whatever is stored."""
+    session.flush()
+    stored = set(session.scalars(select(IdentityLevelAccessRow.level).distinct()))
+    for level, row in (LEVEL_SEED if rows is None else rows).items():
+        if level in stored or level in FULL_ACCESS_LEVELS:
+            continue
+        session.add_all(
+            IdentityLevelAccessRow(level=level, section=section, mode=mode.value) for section, mode in row.items()
+        )
 
 
 def _seed_role_access(session: Session, role: str, defaults: dict[str, AccessMode]) -> None:
@@ -715,7 +773,10 @@ def provision_user(
     role_access: dict[str, AccessMode] | None = None,
     user_access: dict[str, AccessMode] | None = None,
     pin_hash: str | None = None,
+    level_access: dict[str, AccessMode] | None = None,
 ) -> None:
+    """A user row with its login, e-mail and credential. `level_access` = the person's level exceptions (what the gates
+    read); `role_access` / `user_access` write the legacy role tables (the personal card reads them until task T3)."""
     login = normalize_login(user.login)
     email = normalize_login(user.email)
     # A user that carries its level writes it; otherwise the column defaults take it from the role.
@@ -745,3 +806,5 @@ def provision_user(
     _seed_role_access(session, user.role.strip(), role_access or {})
     for section, mode in (user_access or {}).items():
         session.add(IdentityUserAccessRow(user_id=user.id, section=section, mode=mode.value))
+    for section, mode in (level_access or {}).items():
+        session.add(IdentityUserLevelAccessRow(user_id=user.id, section=section, mode=mode.value))

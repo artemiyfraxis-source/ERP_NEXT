@@ -483,8 +483,12 @@ cd erp\backend
 $env:ERP_DATABASE_URL = 'postgresql+psycopg://USER:PASSWORD@HOST:5432/erp_next'
 .\.venv\Scripts\python.exe -m app.identity_admin create-user `
   --login admin --email admin@example.local --name "Администратор" `
-  --department "Администрация" --role admin
+  --department "Администрация" --level superadmin
 ```
+
+`--level` — уровень доступа (superadmin · admin · commercial · tech_lead · foreman · operator); уровни
+«Суперадминистратор» и «Администратор» потом выдаёт и снимает только суперадминистратор. Старый `--role`
+ещё принимается один выпуск: уровень берётся по роли.
 
 Остальных сотрудников администратор заводит и правит на экране «Сотрудники»
 (раздел «Данные»): ФИО, отдел, место работы, роль, вход вкл/выкл, PIN (6–8 цифр; колонка

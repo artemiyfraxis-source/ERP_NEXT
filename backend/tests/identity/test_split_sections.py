@@ -101,20 +101,16 @@ def test_templates_take_erptctpl_and_projects_take_techcards(as_principal):
         assert _status(method, path) == 403, path
 
 
-def test_staff_directory_takes_staffdir_and_access_takes_the_admin_role(as_principal):
-    as_principal({"staffdir": "edit"}, role="admin")
-    assert client.get("/api/auth/staff").status_code != 403
-    as_principal({}, role="admin")
-    assert client.get("/api/auth/staff").status_code == 403
-    assert client.get("/api/auth/access").status_code != 403
-    # A non-full role with the staffdir cell is still refused (the route also asks the role).
-    as_principal({"staffdir": "edit"}, role="receiver")
-    assert client.get("/api/auth/staff").status_code == 403
-    assert client.get("/api/auth/access").status_code == 403
-    # A full-access role (buyer) passes the role gate on «Сотрудники»; «Доступы» stays admin-only.
-    as_principal({"staffdir": "edit"}, role="buyer")
-    assert client.get("/api/auth/staff").status_code != 403
-    assert client.get("/api/auth/access").status_code == 403
+def test_staff_directory_and_access_are_superadmin_and_admin_only(as_principal):
+    # Access levels: «Сотрудники» and «Доступы» are the full levels' own; no matrix cell opens them below.
+    for level in ("superadmin", "admin"):
+        as_principal({}, role=level)
+        assert client.get("/api/auth/staff").status_code != 403
+        assert client.get("/api/auth/access").status_code != 403
+    for level in ("commercial", "tech_lead", "foreman", "operator"):
+        as_principal({"staffdir": "edit", "operations": "edit", "erpref": "edit"}, role=level)
+        assert client.get("/api/auth/staff").status_code == 403
+        assert client.get("/api/auth/access").status_code == 403
 
 
 # ── Migration ──────────────────────────────────────────────────────────────────────────────────────
@@ -226,7 +222,11 @@ def test_own_password_change_needs_the_current_one(identity_database):
 def test_profile_and_password_over_http(access_api):  # noqa: F811
     buyer = _client("buyer", "buyer-password")
     profile = buyer.get("/api/auth/profile").json()
-    assert profile["role_label"] == "Специалист по снабжению" and "department" in profile and "site_label" in profile
+    # The header shows the access level now; `role` stays the legacy role key for one release.
+    assert (profile["access_level"], profile["access_level_label"], profile["role"]) == (
+        "tech_lead", "Технический руководитель", "buyer",
+    )
+    assert profile["role_label"] == "Технический руководитель" and "department" in profile and "site_label" in profile
 
     wrong = buyer.post("/api/auth/password", json={"current": "nope-nope", "new": "another-password"})
     short = buyer.post("/api/auth/password", json={"current": "buyer-password", "new": "short"})

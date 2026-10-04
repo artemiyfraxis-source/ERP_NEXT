@@ -46,7 +46,7 @@ def window(task, position, operator_id):
 def as_operator(operator_id):
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=operator_id, name="Оператор", department="Производство"),
-        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
     )
 
 

@@ -1,11 +1,16 @@
-"""HTTP authentication dependencies backed by server-owned session state."""
+"""HTTP authentication dependencies backed by server-owned session state.
+
+Уровни доступа (owner 04.10.2026, docs/migration/access-levels-plan.md): a route checks the mode of its section(s) and
+nothing else — no role lists. superadmin/admin pass every gate; the administrator's tools are theirs alone. Which
+section and minimum each dependency takes is the contract `app.modules.identity.level_migration.GATES`
+(tests/identity/test_level_gates.py keeps the two equal)."""
 
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request
 
-from app.modules.identity.domain import FULL_ACCESS_ROLES
+from app.modules.identity.domain import FULL_ACCESS_LEVELS, LEVEL_SECTION_LABELS
 
 from .identity import Actor
 
@@ -14,12 +19,21 @@ from .identity import Actor
 class Principal:
     actor: Actor
     email: str
+    # The access level key (one of ACCESS_LEVELS). «Режим админа» (SUPPLYMAP portalSession_) raises the session to the
+    # level admin; `roles` already holds the effective level, `can_admin_mode` says whether the account may switch it.
     roles: frozenset[str]
     permissions: dict[str, Literal["view", "edit"]]
-    # «Режим админа» (SUPPLYMAP portalSession_): the role is lifted to admin for this session; `roles` already holds
-    # the effective role, `can_admin_mode` says whether the account may switch it at all.
     admin_mode: bool = False
     can_admin_mode: bool = False
+
+    @property
+    def level(self) -> str:
+        return min(self.roles, default="")
+
+    @property
+    def full_access(self) -> bool:
+        """superadmin / admin: every section on edit and the administrator's tools."""
+        return bool(self.roles & FULL_ACCESS_LEVELS)
 
 
 def authenticated_principal(request: Request) -> Principal:
@@ -29,28 +43,42 @@ def authenticated_principal(request: Request) -> Principal:
     return principal
 
 
+def section_allowed(principal: Principal, sections: tuple[str, ...], minimum: Literal["view", "edit"]) -> bool:
+    """One of the sections grants `minimum` (SUPPLYMAP portalIssueGuard_ without a section: the fulfillment list is
+    readable from «Запросы на комплектацию» or «Выдача со списанием»). A section outside the level matrix
+    («Сотрудники») is never granted below superadmin/admin."""
+    if principal.full_access:
+        return True
+    modes = [principal.permissions.get(key) for key in sections if key in LEVEL_SECTION_LABELS]
+    return "edit" in modes or (minimum == "view" and "view" in modes)
+
+
 def require_section(
     section: str | tuple[str, ...],
     minimum: Literal["view", "edit"],
     *,
-    roles: frozenset[str] | None = None,
     detail: str = "Недостаточно прав для раздела",
 ):
-    """A tuple of sections passes when ANY of them grants `minimum` (SUPPLYMAP portalIssueGuard_ without a section:
-    the fulfillment list is readable from «Запросы на комплектацию» or «Выдача со списанием»)."""
+    """A tuple of sections passes when ANY of them grants `minimum`."""
     sections = (section,) if isinstance(section, str) else section
 
     def dependency(
         principal: Annotated[Principal, Depends(authenticated_principal)],
     ) -> Principal:
-        modes = [principal.permissions.get(key) for key in sections]
-        allowed = "edit" in modes or (minimum == "view" and "view" in modes)
-        # A route's role list does not shut out a full-access role: an action bound to another role is open to them
-        # too, and their permissions are already edit everywhere (owner 2026-09-29). «Доступы» is gated separately.
-        if roles is not None and not principal.roles.intersection(roles) \
-                and not principal.roles.intersection(FULL_ACCESS_ROLES):
-            allowed = False
-        if not allowed:
+        if not section_allowed(principal, sections, minimum):
+            raise HTTPException(status_code=403, detail=detail)
+        return principal
+
+    return dependency
+
+
+def require_full_access(detail: str = "Только администратору."):
+    """The administrator's tools (SUPPLYMAP portalRealAdmin_): superadmin / admin only, never under the matrix."""
+
+    def dependency(
+        principal: Annotated[Principal, Depends(authenticated_principal)],
+    ) -> Principal:
+        if not principal.full_access:
             raise HTTPException(status_code=403, detail=detail)
         return principal
 
@@ -72,17 +100,18 @@ myrequests_principal = require_section(
     "view",
     detail="Раздел «Мои заявки» вам не открыт.",
 )
-# ID-3 (SUPPLYMAP PORTAL_SECTIONS_, Portal.gs:661-664): Техкарты are gated by the matrix alone, without a role list
-# («второй источник правды»). Templates (`erptctpl`) and the generator (`tcgen`) have keys of their own; the techcards
-# router admits any of the three and each route narrows it down.
+# ID-3 (SUPPLYMAP PORTAL_SECTIONS_, Portal.gs:661-664): templates (`erptctpl`) and the generator (`tcgen`) have keys of
+# their own; the techcards router admits any of the three and each route narrows it down.
 techcards_router_principal = require_section(("techcards", "erptctpl", "tcgen"), "view")
 techcards_view_principal = require_section("techcards", "view", detail="Раздел «Техкарты проектов» вам не открыт.")
 # «Проекты» — карточки наборов (SUPPLYMAP erptechmap): просмотр читает, запись (загрузка, правка, удаление,
 # отправка на комплектацию, КД) — только с правом правки раздела (portalSectionEditGuard_).
 projects_view_principal = require_section("projects", "view", detail="Раздел «Проекты» вам не открыт.")
 projects_edit_principal = require_section("projects", "edit", detail="Раздел «Проекты» открыт только на просмотр.")
-# Плитки проектов читает и экран мастера («Ресурсное планирование», владелец 29.09): проекты по операциям.
-kitset_tiles_principal = require_section(("projects", "production"), "view", detail="Раздел «Проекты» вам не открыт.")
+# Плитки проектов читает и экран мастера («Ресурсное планирование», владелец 29.09) и исполнитель в «Заданиях».
+kitset_tiles_principal = require_section(
+    ("projects", "production", "myops"), "view", detail="Раздел «Проекты» вам не открыт.",
+)
 techcards_edit_principal = require_section(
     "techcards", "edit", detail="Раздел «Техкарты проектов» открыт вам только на просмотр.",
 )
@@ -91,129 +120,54 @@ tctemplates_view_principal = require_section("erptctpl", "view", detail="Раз�
 tctemplates_edit_principal = require_section(
     "erptctpl", "edit", detail="Раздел «Шаблоны техкарт» открыт вам только на просмотр.",
 )
-# Loading the SUPPLYMAP operation library is the administrator's tool (sync script), on top of `erptctpl` edit.
-tctemplates_admin_principal = require_section(
-    "erptctpl", "edit", roles=frozenset({"admin"}), detail="Загрузка библиотеки шаблонов — только администратору.",
-)
+# Loading the SUPPLYMAP operation library is the administrator's tool (sync script).
+tctemplates_admin_principal = require_full_access("Загрузка библиотеки шаблонов — только администратору.")
 # ErpTechmap.gs: every generator handle is portalErpGuard_(token, 'tcgen') — the section being open is enough.
 tcgen_principal = require_section("tcgen", "view", detail="Раздел «Генератор техкарт» вам не открыт.")
 # «Режим просмотра» (ID-6, SUPPLYMAP portalApplyAccess_ 'view' + portalErpGuard_): a section granted as view is
-# readable, every write keeps the *_edit_principal gate. Role sets = the edit roles + the roles SUPPLYMAP opens the
-# section to for reading (Portal.gs portalButtons_), same shape as fulfillment/production/shipping view.
-procurement_view_principal = require_section(
-    "procurement",
-    "view",
-    roles=frozenset({"buyer", "receiver", "prodhead", "management", "admin"}),
-)
-procurement_edit_principal = require_section(
-    "procurement",
-    "edit",
-    roles=frozenset({"buyer", "admin"}),
-)
-receiving_view_principal = require_section(
-    "receiving",
-    "view",
-    roles=frozenset({"receiver", "prodhead", "management", "master", "staff", "admin"}),
-)
-receiving_edit_principal = require_section(
-    "receiving",
-    "edit",
-    roles=frozenset({"receiver", "admin"}),
-)
-warehouse_view_principal = require_section(
-    "warehouse",
-    "view",
-    roles=frozenset({"receiver", "buyer", "prodhead", "management", "master", "staff", "admin"}),
-)
-warehouse_edit_principal = require_section(
-    "warehouse",
-    "edit",
-    roles=frozenset({"receiver", "admin"}),
-)
+# readable, every write keeps the *_edit_principal gate.
+procurement_view_principal = require_section("procurement", "view")
+procurement_edit_principal = require_section("procurement", "edit")
+receiving_view_principal = require_section("receiving", "view")
+receiving_edit_principal = require_section("receiving", "edit")
+warehouse_view_principal = require_section("warehouse", "view")
+warehouse_edit_principal = require_section("warehouse", "edit")
 # Import of an edited stock table (SK-14): the administrator only (SUPPLYMAP portalStock05Bulk, adminOnly).
-warehouse_admin_principal = require_section(
-    "warehouse",
-    "edit",
-    roles=frozenset({"admin"}),
-)
-# «Журнал склада» (SK-16): SUPPLYMAP portalStock05Log — warehouse section + portalRealAdmin_ (admin role or admin
-# mode); ERP has no admin mode, so the admin role.
-warehouse_journal_principal = require_section(
-    "warehouse",
-    "view",
-    roles=frozenset({"admin"}),
-    detail="Журнал склада доступен только администратору.",
-)
+warehouse_admin_principal = require_full_access("Импорт таблицы остатков — только администратору.")
+# «Журнал склада» (SK-16): SUPPLYMAP portalStock05Log — portalRealAdmin_.
+warehouse_journal_principal = require_full_access("Журнал склада доступен только администратору.")
 # Picking reserves, handout writes off: two sections over one request (SUPPLYMAP Issue.gs portalIssueGuard_, owner
 # 02.09.2026). Reading the shared list takes either key; each write takes its own (NAV-SECTIONS).
-fulfillment_view_principal = require_section(
-    ("fulfillment", "handout"),
-    "view",
-    roles=frozenset({"engineer", "receiver", "prodhead", "master", "admin"}),
-)
-fulfillment_edit_principal = require_section(
-    "fulfillment",
-    "edit",
-    roles=frozenset({"engineer", "receiver", "admin"}),
-)
-# FF-5: SUPPLYMAP portalIssueDelete — section `issues` on edit + portalRealAdmin_; ERP has no admin mode, so the role.
-fulfillment_admin_principal = require_section(
-    "fulfillment",
-    "edit",
-    roles=frozenset({"admin"}),
-    detail="Удалять заявки может только администратор.",
-)
+fulfillment_view_principal = require_section(("fulfillment", "handout"), "view")
+fulfillment_edit_principal = require_section("fulfillment", "edit")
+# FF-5: SUPPLYMAP portalIssueDelete — portalRealAdmin_.
+fulfillment_admin_principal = require_full_access("Удалять заявки может только администратор.")
 fulfillment_handout_principal = require_section(
     "handout",
     "edit",
-    roles=frozenset({"receiver", "admin"}),
     detail="Раздел «Выдача со списанием» вам не открыт на правку.",
 )
-production_view_principal = require_section(
-    "production",
-    "view",
-    roles=frozenset({"staff", "master", "prodhead", "management", "qc", "admin"}),
-)
-production_overview_principal = require_section(
-    "production",
-    "view",
-    roles=frozenset({"master", "prodhead", "management", "qc", "admin"}),
-)
-production_edit_principal = require_section(
-    "production",
-    "edit",
-    roles=frozenset({"master", "admin"}),
-)
-production_quality_principal = require_section(
-    "production",
-    "edit",
-    roles=frozenset({"qc", "admin"}),
-)
-shipping_view_principal = require_section(
-    "shipping",
-    "view",
-    roles=frozenset({"pm", "receiver", "master", "prodhead", "management", "admin"}),
-)
-shipping_manager_principal = require_section(
-    "shipping",
-    "edit",
-    roles=frozenset({"pm", "admin"}),
-)
+# «Задания» (`myops`): the executor's own operations — reading them, and start / pause / submit (правка).
+production_view_principal = require_section("myops", "view", detail="Раздел «Задания» вам не открыт.")
+production_view_work_principal = require_section("myops", "edit", detail="Раздел «Задания» открыт вам только на просмотр.")
+# «Планирование и производственный план» (`production`); «ОТК» (`quality`) — the quality decisions.
+production_overview_principal = require_section("production", "view")
+production_edit_principal = require_section("production", "edit")
+production_quality_principal = require_section("quality", "edit", detail="Раздел «ОТК» вам не открыт на правку.")
+# «Отгрузка» (`shipping`, the manager's side) and «Отгрузка — склад» (`shipping_goods`, the storekeeper's side): the
+# list reads from either; packing, lines and УПД are edited from either (shipping/api.py shipping_editor_principal).
+shipping_view_principal = require_section(("shipping", "shipping_goods"), "view")
+shipping_manager_principal = require_section("shipping", "edit")
 shipping_warehouse_principal = require_section(
-    "shipping",
-    "edit",
-    roles=frozenset({"receiver", "admin"}),
+    "shipping_goods", "edit", detail="Раздел «Отгрузка — склад» вам не открыт на правку.",
 )
-# «Справочник» (SUPPLYMAP PortalRef.gs): portalErpGuard_(token, 'erpref') reads, portalSectionEditGuard_ writes —
-# the `erpref` section decides, not the role.
+# «Справочник» (SUPPLYMAP PortalRef.gs): portalErpGuard_(token, 'erpref') reads, portalSectionEditGuard_ writes.
 references_view_principal = require_section("erpref", "view", detail="Раздел «Справочник» вам не открыт.")
 references_edit_principal = require_section(
     "erpref", "edit", detail="Раздел «Справочник» открыт вам только на просмотр.",
 )
-# Whole-base snapshot loads (SUPPLYMAP mirror / snapshot scripts): an administrator's tool on top of `erpref` edit.
-references_import_principal = require_section(
-    "erpref", "edit", roles=frozenset({"admin"}), detail="Загрузка снимка баз — только администратору.",
-)
+# Whole-base snapshot loads (SUPPLYMAP mirror / snapshot scripts): an administrator's tool.
+references_import_principal = require_full_access("Загрузка снимка баз — только администратору.")
 # Maps «ссылка→поставщик» / «изготовитель→страна» (Portal.gs portalGet/SaveReferences): portalCanWork_ — the
 # purchase card with «взять в работу», i.e. `procurement` edit. Reading also opens from «Справочник».
 references_maps_view_principal = require_section(("erpref", "procurement"), "view")
@@ -221,25 +175,9 @@ references_maps_view_principal = require_section(("erpref", "procurement"), "vie
 references_maps_edit_principal = require_section(
     ("procurement", "erpref"), "edit", detail="Справочники правит только закупщик.",
 )
-operations_view_principal = require_section(
-    "operations",
-    "view",
-    roles=frozenset({"management", "admin"}),
-)
-# «Сотрудники» (Staff.gs portalStaffGet/Save: portalRealAdmin_): the `staffdir` section and the admin role.
-staffdir_principal = require_section(
-    "staffdir",
-    "edit",
-    roles=frozenset({"admin"}),
-    detail="Раздел «Сотрудники» — только администратору.",
-)
-
-
-def access_admin_principal(
-    principal: Annotated[Principal, Depends(authenticated_principal)],
-) -> Principal:
-    """«Доступы» (portalAccessGet/Save: portalRealAdmin_): always the administrator, never under the matrix — so the
-    matrix cannot close the settings to the people who set it."""
-    if "admin" not in principal.roles:
-        raise HTTPException(status_code=403, detail="Только администратор.")
-    return principal
+operations_view_principal = require_section("operations", "view")
+# «Сотрудники» (Staff.gs portalStaffGet/Save: portalRealAdmin_).
+staffdir_principal = require_full_access("Раздел «Сотрудники» — только администратору.")
+# «Доступы» (portalAccessGet/Save: portalRealAdmin_): never under the matrix, so it cannot close the settings to the
+# people who set it.
+access_admin_principal = require_full_access("Только администратор.")

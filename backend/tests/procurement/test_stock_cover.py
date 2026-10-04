@@ -357,6 +357,8 @@ def test_release_returns_reserve_and_reopens_the_line(env):
     assert nothing.status_code == 422 and "нет резерва" in nothing.json()["detail"]
     assert "procurement.stock_cover_released" in [event.event_type for event in events(sessions, line["id"])]
     assert "warehouse.procurement_reserve_released" in [event.event_type for event in events(sessions, lot.id)]
+    # «Журнал склада» is an administrator's tool (superadmin / admin).
+    app.dependency_overrides[authenticated_principal] = lambda: buyer_principal("Админ", roles=frozenset({"admin"}))
     journal = client.get("/api/stock/journal").json()
     texts = [row["event"] for row in journal["rows"]]
     assert "Снят резерв «Со склада»: 124 шт · SM-20261002-01 / 591К.3" in texts
@@ -381,13 +383,14 @@ def test_guards_buyer_roles_only_and_own_lines_only(env):
     line = line_in_work(client, sessions)
     lot = add_lot(sessions, stock("80"))
 
+    # Access levels: the matrix decides — without «Лист закупки» nothing opens, on view nothing is covered.
     app.dependency_overrides[authenticated_principal] = lambda: buyer_principal(
-        "Иванов", roles=frozenset({"employee"}), permissions={"procurement": "edit"},
+        "Иванов", roles=frozenset({"operator"}), permissions={"requests": "edit"},
     )
     assert client.get(f"/api/procurement/{line['id']}/stock-candidates").status_code == 403
     assert cover(client, line, lot, "1").status_code == 403
     app.dependency_overrides[authenticated_principal] = lambda: buyer_principal(
-        "Смотрящий", roles=frozenset({"management"}), permissions={"procurement": "view"},
+        "Смотрящий", roles=frozenset({"commercial"}), permissions={"procurement": "view"},
     )
     assert cover(client, line, lot, "1").status_code == 403
     app.dependency_overrides[authenticated_principal] = lambda: buyer_principal("Сидоров")

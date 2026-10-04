@@ -4,7 +4,7 @@ Migration 0086 runs a frozen copy of `transfer` (a migration must not import app
 `tests/identity/test_level_migration.py` keeps the two equal. `python -m app.identity_level_report` runs `transfer` and
 `verify` over a database read-only, so the owner sees «было / стало» before anything is applied.
 
-The OLD model, frozen here as of 04.10.2026 (commit 4ceb578), because the gates are about to change:
+The OLD model, frozen here as of 04.10.2026 (commit 4ceb578), the model the gates ran on before T2:
 - a person's sections = the role's matrix row overlaid with their personal exceptions (`none` closes); the full-access
   roles (admin, buyer, prodhead, management) have every section on edit and their exceptions are dormant (ignored);
 - a route (`require_section`) passes when one of its sections grants the minimum AND the role is on the route's role
@@ -14,7 +14,7 @@ The OLD model, frozen here as of 04.10.2026 (commit 4ceb578), because the gates 
 The NEW model: superadmin/admin pass everything; any other level has the level's matrix row overlaid with personal
 exceptions, and a route checks its sections alone (no role lists). The administrator's tools («Доступы», «Сотрудники»,
 a stranger's personal card, the library / snapshot / stock imports, the stock journal, deleting a fulfillment request)
-are superadmin/admin only. GATES says which new sections each route takes — the contract for switching the gates.
+are superadmin/admin only. GATES says which sections each route takes — the contract the gates follow since T2.
 
 Transfer:
 1. level = ROLE_TO_LEVEL[role] (an unknown role — operator); shop_worker = today's installer rule, site_master = role

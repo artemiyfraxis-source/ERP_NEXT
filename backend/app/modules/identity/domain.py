@@ -40,6 +40,10 @@ class AccessMode(str, Enum):
     EDIT = "edit"
 
 
+# ── Legacy: the role model (until 04.10.2026) ──────────────────────────────────────────────────────────────
+# Authorization no longer reads anything in this block (see «Уровни доступа» below). It stays one release for the
+# role column and role tables that are still stored, the department guard (role names are not departments), the staff
+# import and the personal card (workflows/employee_card.py, switched in task T3).
 # «Как задумано ролью»: the sections each role was meant to have. Since SUPPLYMAP 01.09.2026 (Portal.gs
 # portalApplyAccess_) a section is open only when EXPLICITLY granted — by the role's matrix row or a personal
 # exception; an empty cell = closed. ROLE_SEED is therefore not applied at run time: migration 0056 wrote it into
@@ -163,13 +167,8 @@ SECTION_LABELS: dict[str, str] = {
     "staffdir": "Сотрудники",
     "operations": "Системный журнал",
 }
-# Roles that always have full access to every section and cannot be reduced (owner, 2026-09-29: технолог = admin,
-# специалист по снабжению = buyer, директор производства = prodhead, генеральный директор = management — «полный
-# доступ всегда»). For them an empty cell, a matrix `none` and a personal exception are all ignored: `role_permissions`
-# returns edit everywhere and `_principal` skips the personal overlay, so nobody can accidentally take a section away.
-# `require_section` also lets them past a route's role list, so an action bound to another role is open to them too.
-# «Доступы» (the access-matrix editor, access_admin_principal) stays admin-only, so the guarantee cannot be edited away
-# from these roles (решено агентом — проверить).
+# Legacy: the roles that had full access in the role model (owner, 2026-09-29). Replaced by FULL_ACCESS_LEVELS
+# (superadmin, admin) for every gate; kept only for workflows/employee_card.py until task T3 switches it.
 FULL_ACCESS_ROLES = frozenset({"admin", "buyer", "prodhead", "management"})
 # What an EMPTY cell means (`role_permissions`): closed for every role, except the full-access roles above, which have
 # every section on edit no matter what the matrix or a personal exception says (ID-5, SUPPLYMAP portalAdminAccess_,
@@ -195,8 +194,8 @@ class IdentityUser:
     qualification: str = ""  # категория / квалификация
     job_since: date | None = None  # в должности с
     manager_id: UUID | None = None  # непосредственный руководитель
-    # Уровень доступа and the two flags (0086). Read from the database; until the screens edit them, a new or re-roled
-    # employee gets them from the role (infrastructure). "" — not read yet (a user built in memory).
+    # Уровень доступа (what the gates read) and the two flags (0086). "" — not set (a user built in memory, an old
+    # screen that sends only the legacy role): the level then follows the role (level_migration.level_for_role).
     access_level: str = ""
     shop_worker: bool = False  # «Монтажник (работает в цеху)»
     site_master: bool = False  # «Мастер площадки»
@@ -308,7 +307,8 @@ def secret_hash(value: str) -> str:
 
 # ── «Сотрудники» (ID-8, SUPPLYMAP Staff.gs portalStaffGet/portalStaffSave/staffDepts_) ─────────────
 
-# PORTAL_ROLE_LABELS_ (Portal.gs): the labels the screen shows for role keys.
+# Legacy: PORTAL_ROLE_LABELS_ (Portal.gs), the labels of the old role keys. The screens show LEVEL_LABELS now; these
+# stay for the legacy `role` field, the department guard below and the personal card until task T3.
 ROLE_LABELS: dict[str, str] = {
     "admin": "Технолог",
     "buyer": "Специалист по снабжению",
@@ -442,13 +442,15 @@ def check_manager_chain(
 
 
 # ── Уровни доступа вместо ролей-должностей (owner 04.10.2026, docs/migration/access-levels-plan.md) ──────────
-# Migration 0086 stores the level of every person (`identity_users.access_level`), the level matrix
-# (`identity_level_access`) and the personal exceptions on top of it (`identity_user_level_access`); the gates still run
-# on the old roles until they are switched over. Должность is the separate free-text `job_title`.
+# Authorization runs on these (T2): a person has a level (`identity_users.access_level`); the level's row of the
+# level matrix (`identity_level_access`) overlaid with their personal exceptions (`identity_user_level_access`, `none`
+# closes) is what they may open; superadmin/admin are always full. A route checks only the section modes
+# (shared/http_auth.py) — no role lists. The role tables (`identity_role_access`, `identity_user_access`) and the role
+# column are legacy, kept one release. Должность is the separate free-text `job_title`.
 
 # Highest first.
 ACCESS_LEVELS = ("superadmin", "admin", "commercial", "tech_lead", "foreman", "operator")
-ACCESS_LEVEL_LABELS: dict[str, str] = {
+LEVEL_LABELS: dict[str, str] = {
     "superadmin": "Суперадминистратор",  # ГД, учредители
     "admin": "Администратор",  # менеджер высшего звена, отвечающий за систему; дирекция
     "commercial": "Коммерческое руководство",  # маркетинг, продажи
@@ -534,3 +536,25 @@ LEVEL_SEED: dict[str, dict[str, AccessMode]] = {
         "erpref": AccessMode.VIEW,
     },
 }
+# Sections outside the level matrix: «Сотрудники» belongs to the full levels alone (the matrix cannot give it to
+# anyone). A full level's permissions carry it, so the screens keep showing the menu item to administrators.
+FULL_LEVEL_SECTIONS: tuple[str, ...] = (*LEVEL_SECTION_LABELS, "staffdir")
+
+
+def normalize_level(value: str) -> str:
+    level = str(value or "").strip()
+    if level not in LEVEL_LABELS:
+        raise IdentityValidationError(f"Неизвестный уровень доступа «{level}».")
+    return level
+
+
+def level_permissions(
+    level: str, level_row: dict[str, AccessMode], exceptions: dict[str, AccessMode],
+) -> dict[str, AccessMode]:
+    """What a person may open: superadmin/admin — every section on edit, whatever is stored (their exceptions are
+    ignored); any other level — the level's matrix row overlaid with the personal exceptions (`none` or an empty cell
+    closes), limited to the matrix sections."""
+    if level in FULL_ACCESS_LEVELS:
+        return {section: AccessMode.EDIT for section in FULL_LEVEL_SECTIONS}
+    effective = _overlay(level_row, exceptions)
+    return {section: mode for section, mode in effective.items() if section in LEVEL_SECTION_LABELS}

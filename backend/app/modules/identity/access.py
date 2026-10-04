@@ -1,11 +1,12 @@
-"""«Доступы» (NAV-ACCESS): role × section matrix and per-person exceptions, administrator only, audited.
+"""«Доступы» (NAV-ACCESS): level × section matrix and per-person exceptions, superadmin/admin only, audited.
 
 SUPPLYMAP Portal.gs portalAccessGet / portalAccessSave / portalAccessClean_ (ScriptProperties `portal_access`) and the
-per-person «Доступ» column of Staff.gs (staffAccessClean_, edited in sdAccessModal_). Differences, «решено агентом —
-проверить»: an empty cell = closed, as SUPPLYMAP has since 01.09.2026 (the administrator: edit everywhere, ID-5), and
-the matrix still offers an explicit `none` for a personal exception; unknown roles/sections are refused (422), not
-silently dropped; the
-«nobody can return rights» guard covers the whole admin set (matrix row + exceptions), not only `admin.staffdir`."""
+per-person «Доступ» column of Staff.gs (staffAccessClean_, edited in sdAccessModal_). Since the access levels (owner
+04.10.2026, docs/migration/access-levels-plan.md) the rows are the levels (`identity_level_access`) and the exceptions
+sit on top of the person's level (`identity_user_level_access`); the role tables are legacy and no longer written.
+Differences, «решено агентом — проверить»: an empty cell = closed; a personal exception may be an explicit `none`;
+unknown levels/sections are refused (422), not silently dropped; superadmin/admin are full whatever is stored, so their
+rows are neither shown nor saved (a cell sent for them is ignored) and their personal exceptions stay dormant."""
 
 from __future__ import annotations
 
@@ -19,13 +20,14 @@ from app.shared.identity import Actor
 
 from .application import UnitOfWork
 from .domain import (
-    ROLE_LABELS,
-    SECTION_LABELS,
+    FULL_ACCESS_LEVELS,
+    LEVEL_LABELS,
+    LEVEL_SECTION_LABELS,
     AccessMode,
     IdentityUser,
     IdentityValidationError,
 )
-from .staff import _audit, ensure_access_keeper
+from .staff import _audit
 
 
 ACCESS_AGGREGATE = uuid5(NAMESPACE_URL, "fraxis-erp:identity:access-matrix")
@@ -33,7 +35,7 @@ ACCESS_AGGREGATE = uuid5(NAMESPACE_URL, "fraxis-erp:identity:access-matrix")
 
 @dataclass(frozen=True)
 class AccessOverview:
-    matrix: dict[str, dict[str, AccessMode]]  # the explicit cells; an empty one is closed (admin: edit)
+    matrix: dict[str, dict[str, AccessMode]]  # the explicit cells of the matrix levels; an empty one is closed
     exceptions: dict[UUID, dict[str, AccessMode]]
     users: list[IdentityUser]
 
@@ -41,10 +43,10 @@ class AccessOverview:
 def _clean(row: dict[str, str], where: str) -> dict[str, AccessMode]:
     result: dict[str, AccessMode] = {}
     for section, mode in row.items():
-        if section not in SECTION_LABELS:
+        if section not in LEVEL_SECTION_LABELS:
             raise IdentityValidationError(f"{where}: неизвестный раздел «{section}».")
         if mode in ("", None):
-            continue  # an empty cell = closed for a role, «как у роли» for a person
+            continue  # an empty cell = closed for a level, «как у уровня» for a person
         try:
             result[section] = AccessMode(mode)
         except ValueError as error:
@@ -53,19 +55,15 @@ def _clean(row: dict[str, str], where: str) -> dict[str, AccessMode]:
 
 
 def clean_matrix(matrix: dict[str, dict[str, str]]) -> dict[str, dict[str, AccessMode]]:
-    """portalAccessClean_: known roles, sections and modes only."""
+    """portalAccessClean_: known levels, sections and modes only; the full levels' rows are dropped (always full)."""
     result: dict[str, dict[str, AccessMode]] = {}
-    for role, row in matrix.items():
-        if role not in ROLE_LABELS:
-            raise IdentityValidationError(f"Неизвестная роль «{role}».")
-        cleaned = _clean(row or {}, ROLE_LABELS[role])
-        if cleaned:
-            result[role] = cleaned
+    for level, row in matrix.items():
+        if level not in LEVEL_LABELS:
+            raise IdentityValidationError(f"Неизвестный уровень доступа «{level}».")
+        cleaned = _clean(row or {}, LEVEL_LABELS[level])
+        if cleaned and level not in FULL_ACCESS_LEVELS:
+            result[level] = cleaned
     return result
-
-
-def _shown(row: dict[str, AccessMode]) -> dict[str, str]:
-    return {section: mode.value for section, mode in sorted(row.items())}
 
 
 def _changes(before: dict[str, AccessMode], after: dict[str, AccessMode]) -> dict[str, list[str]]:
@@ -77,34 +75,35 @@ def _changes(before: dict[str, AccessMode], after: dict[str, AccessMode]) -> dic
 
 
 def access_overview(uow: UnitOfWork) -> AccessOverview:
-    """portalAccessGet: the stored matrix + every person's exceptions."""
+    """portalAccessGet: the stored matrix of the levels the matrix drives + every person's exceptions."""
     with uow:
         users = sorted(uow.identity.all_users(), key=lambda user: (not user.active, user.name.casefold(), user.login))
         return AccessOverview(
-            matrix=uow.identity.all_role_access(),
-            exceptions=uow.identity.all_user_access(),
+            matrix={
+                level: row for level, row in uow.identity.all_level_access().items() if level not in FULL_ACCESS_LEVELS
+            },
+            exceptions=uow.identity.all_user_level_access(),
             users=users,
         )
 
 
-def save_role_matrix(
+def save_level_matrix(
     matrix: dict[str, dict[str, str]], actor: Actor, now: datetime, uow: UnitOfWork,
 ) -> dict[str, dict[str, AccessMode]]:
-    """portalAccessSave: the whole matrix at once; a role missing from it has nothing open (the administrator: edit
-    everywhere). One audit event per role whose row changed, with «было → стало» per section ("" = пусто)."""
+    """portalAccessSave: the whole matrix at once; a level missing from it has nothing open (superadmin/admin: always
+    full). One audit event per level whose row changed, with «было → стало» per section ("" = пусто)."""
     cleaned = clean_matrix(matrix)
     now = as_utc(now)
     with uow:
-        ensure_access_keeper(uow, admin_matrix=cleaned.get("admin", {}))
-        stored = uow.identity.all_role_access()
-        for role in sorted(set(stored) | set(cleaned)):
-            before, after = stored.get(role, {}), cleaned.get(role, {})
+        stored = uow.identity.all_level_access()
+        for level in sorted((set(stored) | set(cleaned)) - FULL_ACCESS_LEVELS):
+            before, after = stored.get(level, {}), cleaned.get(level, {})
             changes = _changes(before, after)
             if not changes:
                 continue
-            uow.identity.replace_role_access(role, after)
-            _audit(uow, ACCESS_AGGREGATE, "identity.role_access_saved", actor, now, {
-                "role": role, "changes": json.dumps(changes, ensure_ascii=False),
+            uow.identity.replace_level_access(level, after)
+            _audit(uow, ACCESS_AGGREGATE, "identity.level_access_saved", actor, now, {
+                "level": level, "changes": json.dumps(changes, ensure_ascii=False),
             })
         uow.commit()
         return cleaned
@@ -113,21 +112,20 @@ def save_role_matrix(
 def save_user_access(
     user_id: UUID, access: dict[str, str], actor: Actor, now: datetime, uow: UnitOfWork,
 ) -> dict[str, AccessMode]:
-    """sdAccessModal_ + portalStaffSave `access`: one person's exceptions, stronger than the role (`none` closes)."""
+    """sdAccessModal_ + portalStaffSave `access`: one person's exceptions, stronger than the level (`none` closes).
+    A superadmin/admin keeps everything whatever is stored here."""
     now = as_utc(now)
     with uow:
         user = uow.identity.user_for_update(user_id)
         if user is None:
             raise KeyError("Сотрудник не найден.")
         cleaned = _clean(access, user.name)
-        ensure_access_keeper(uow, exceptions=(user_id, cleaned))
-        before = uow.identity.user_access(user_id)
+        before = uow.identity.user_level_access(user_id)
         changes = _changes(before, cleaned)
         if changes:
-            uow.identity.replace_user_access(user_id, cleaned)
+            uow.identity.replace_user_level_access(user_id, cleaned)
             _audit(uow, user_id, "identity.user_access_saved", actor, now, {
                 "login": user.login, "changes": json.dumps(changes, ensure_ascii=False),
             })
             uow.commit()
         return cleaned
-

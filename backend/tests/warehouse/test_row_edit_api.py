@@ -125,13 +125,13 @@ def test_reserve_cannot_go_under_what_kitting_holds(warehouse_api):  # noqa: F81
     assert (raised.json()["lot"]["reserved"], raised.json()["lot"]["available"]) == ("5", "5")
 
 
-def test_row_edit_is_for_the_storekeeper_and_admin_only(warehouse_api):  # noqa: F811
+def test_row_edit_needs_warehouse_edit(warehouse_api):  # noqa: F811
     client, lot = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Сметчик", department="КБ"),
         email="estimator@example.test",
-        roles=frozenset({"estimator"}),
-        permissions={"warehouse": "edit"},
+        roles=frozenset({"commercial"}),
+        permissions={"warehouse": "view"},
     )
 
     response = client.put(f"/api/stock/batches/{lot.id}/row", json={"version": lot.version, "name": "X"})

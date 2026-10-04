@@ -18,8 +18,6 @@ from app.main import app
 from app.modules.identity.application import set_pin_reveal
 from app.modules.identity.domain import (
     ADMIN_MODE_EMAIL,
-    ROLE_DEFAULTS,
-    ROLE_SEED,
     IdentityUser,
     IdentityValidationError,
     hash_password,
@@ -32,7 +30,7 @@ from app.modules.identity.infrastructure import (
     IdentityUserRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
-    seed_role_matrix,
+    seed_level_matrix,
 )
 from app.modules.requests.api import moscow_now
 from app.shared.persistence import AuditEventRow, create_schema
@@ -89,15 +87,15 @@ def pin_api():
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     with sessions() as session:
         provision_user(session, _user(ADMIN_ID, "admin", "admin"), hash_password("admin-password"),
-                       role_access=ROLE_DEFAULTS["admin"], pin_hash=hash_pin("99887766"))
+                       pin_hash=hash_pin("99887766"))
         provision_user(session, _user(BUYER_ID, "buyer", "buyer"), hash_password("buyer-password"),
-                       role_access=ROLE_SEED["buyer"], pin_hash=hash_pin("123456"))
+                       pin_hash=hash_pin("123456"))
         provision_user(session, _user(NEWBIE_ID, "newbie", "staff"), hash_password("newbie-password"))
         provision_user(session, _user(VICTOR_ID, "victor", "pm", email=ADMIN_MODE_EMAIL),
                        hash_password("victor-password"), pin_hash=hash_pin("24681357"))
         provision_user(session, _user(GONE_ID, "gone", "staff", active=False), hash_password("gone-password"),
                        pin_hash=hash_pin("111111"))
-        seed_role_matrix(session)
+        seed_level_matrix(session)
         session.commit()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
     app.state.cookie_secure = False
@@ -140,7 +138,9 @@ def test_pin_login_by_picked_employee_opens_a_session(pin_api):
     client = _signed_in(BUYER_ID, "123456")
     me = client.get("/api/auth/me").json()
     assert me["user"]["id"] == str(BUYER_ID)
-    assert me["roles"] == ["buyer"] and me["role_label"] == "Специалист по снабжению"
+    # The session carries the access level (buyer → Технический руководитель).
+    assert me["roles"] == ["tech_lead"] and me["access_level"] == "tech_lead"
+    assert me["role_label"] == "Технический руководитель"
     assert me["can_admin_mode"] is False and me["admin_mode"] is False
     [event] = _events(sessions, "identity.login_succeeded")
     assert event.details["method"] == "pin"
@@ -295,28 +295,31 @@ def test_admin_mode_is_only_for_the_god_mode_account(pin_api):
     assert response.json()["detail"] == "Режим админа недоступен для этого аккаунта."
 
 
-def test_admin_mode_lifts_the_role_to_admin_and_back(pin_api):
+def test_admin_mode_lifts_the_session_to_the_level_admin_and_back(pin_api):
     sessions, _ = pin_api
     victor = _signed_in(VICTOR_ID, "24681357")
     me = victor.get("/api/auth/me").json()
-    assert me["roles"] == ["pm"] and me["can_admin_mode"] is True and me["admin_mode"] is False
+    assert me["roles"] == ["commercial"] and me["can_admin_mode"] is True and me["admin_mode"] is False
     assert victor.get("/api/auth/staff").status_code == 403
 
     on = victor.post("/api/auth/admin-mode", json={"on": True}).json()
     assert on["roles"] == ["admin"] and on["admin_mode"] is True
-    assert on["role_label"] == "Технолог · режим"
+    assert on["role_label"] == "Администратор · режим"
     assert on["permissions"]["staffdir"] == "edit"
     assert victor.get("/api/auth/me").json()["admin_mode"] is True
     assert victor.get("/api/auth/staff").status_code == 200  # portalRealAdmin_: the admin mode counts
+    assert victor.get("/api/auth/access").status_code == 200
 
     off = victor.post("/api/auth/admin-mode", json={"on": False}).json()
-    assert off["roles"] == ["pm"] and off["admin_mode"] is False and off["role_label"] == "Менеджер по проектам"
+    assert off["roles"] == ["commercial"] and off["admin_mode"] is False
+    assert off["role_label"] == "Коммерческое руководство"
     assert victor.get("/api/auth/staff").status_code == 403
     events = [e.details["event"] for e in _events(sessions, "identity.admin_mode_on")
               + _events(sessions, "identity.admin_mode_off")]
     assert events == ["Вход в режим админа", "Выход из режима админа"]
     with sessions() as session:
-        assert session.get(IdentityUserRow, VICTOR_ID).role == "pm"  # the stored role never changes
+        stored = session.get(IdentityUserRow, VICTOR_ID)
+        assert (stored.role, stored.access_level) == ("pm", "commercial")  # the stored level never changes
 
 
 def test_admin_mode_belongs_to_the_session_and_expires_after_six_hours(pin_api):

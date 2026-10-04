@@ -577,13 +577,14 @@ def test_anothers_card_is_refused_without_the_staffdir_section(erp, api):
     assert me.get(f"/api/employee-card/{FITTER}").status_code == 403
 
 
-def test_anothers_card_opens_with_view_on_staffdir_and_for_full_access_roles(erp, api):
+def test_anothers_card_opens_for_superadmin_and_admin_only(erp, api):
+    # Access levels: «Сотрудники» is outside the level matrix — a personal `staffdir` grant no longer opens it.
     launch(erp, PROJECT, [FITTER])
 
-    for login in ("viewer", "admin"):
-        response = api(login).get(f"/api/employee-card/{FITTER}")
-        assert response.status_code == 200, (login, response.text)
-        assert response.json() == card(erp, FITTER)
+    response = api("admin").get(f"/api/employee-card/{FITTER}")
+    assert response.status_code == 200, response.text
+    assert response.json() == card(erp, FITTER)
+    assert api("viewer").get(f"/api/employee-card/{FITTER}").status_code == 403
 
 
 def test_unknown_person_is_404_for_those_who_may_look(erp, api):

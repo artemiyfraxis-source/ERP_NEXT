@@ -5,7 +5,6 @@ copy in migration 0086 computes the same, and the report CLI reads without writi
 from __future__ import annotations
 
 import importlib.util
-import inspect as pyinspect
 import json
 import random
 import sqlite3
@@ -21,7 +20,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import identity_level_report
-from app.modules.identity import domain
 from app.modules.identity.domain import (
     ADMIN_MODE_EMAIL,
     LEVEL_SECTION_LABELS,
@@ -32,14 +30,10 @@ from app.modules.identity.domain import (
 )
 from app.modules.identity.infrastructure import IdentityUserRow, SqlAlchemyIdentityRepository, provision_user
 from app.modules.identity.level_migration import (
-    GATES,
-    NOTIFICATION_AUDIENCES,
     OLD_FULL_ACCESS_ROLES,
-    OLD_ROLE_LABELS,
     OLD_SECTIONS,
     ROLE_TO_LEVEL,
     Person,
-    Rule,
     Snapshot,
     old_permissions,
     person_permissions_after,
@@ -264,55 +258,9 @@ def test_the_migration_computes_the_same_as_the_module():
                 assert person_permissions_after(result, person.id) == result.usable[person.id]
 
 
-# ── The catalogue follows the code (until the gates switch: then T2 replaces these two tests) ─────────
-
-
-def test_gate_catalogue_matches_the_route_dependencies():
-    from app.shared import http_auth
-    from app.modules.shipping import api as shipping_api
-    from app.workflows import employee_card_api
-
-    sources = {gate.key: getattr(http_auth, f"{gate.key}_principal", None) for gate in GATES}
-    sources.update({
-        "production_view_work": http_auth.production_view_principal,
-        "shipping_editor": shipping_api.shipping_editor_principal,
-        "staffdir_view": employee_card_api.staffdir_view_principal,
-        "references_suppliers": None,  # inside references/api.py `_map_rights`
-        "access_admin": None,  # access_admin_principal: the role admin, checked below
-    })
-    for gate in GATES:
-        dependency = sources[gate.key]
-        if dependency is None:
-            continue
-        free = pyinspect.getclosurevars(dependency).nonlocals
-        assert gate.before == Rule(tuple(free["sections"]), free["minimum"], free["roles"]), gate.key
-    built = {
-        name for name, value in vars(http_auth).items()
-        if name.endswith("_principal") and callable(value) and "sections" in pyinspect.getclosurevars(value).nonlocals
-    }
-    assert built <= {f"{gate.key}_principal" for gate in GATES}
-    assert "\"admin\" not in principal.roles" in pyinspect.getsource(http_auth.access_admin_principal)
-    assert "principal.permissions.get(\"procurement\") == \"edit\"" in pyinspect.getsource(
-        __import__("app.modules.references.api", fromlist=["_"])
-    )
-
-
-def test_frozen_old_model_matches_the_code():
-    from app.shared import notifications
-    from app.workflows import owner_alerts
-
-    assert OLD_FULL_ACCESS_ROLES == domain.FULL_ACCESS_ROLES
-    assert OLD_SECTIONS == tuple(domain.SECTION_LABELS)
-    assert OLD_ROLE_LABELS == domain.ROLE_LABELS
-    assert set(ROLE_TO_LEVEL) == domain.ROLES
-    keys = {key for key, _label, _rule in NOTIFICATION_AUDIENCES}
-    assert keys == {
-        notifications.TECHNOLOGIST_ROLE, notifications.SUPPLY_ROLE, notifications.PROJECT_MANAGER_ROLE,
-        notifications.STOREKEEPER_ROLE,
-    }
-    assert set(owner_alerts.OWNER_ROLES) | set(owner_alerts.DISPOSAL_ROLES) <= keys
-    new_sections = {"myops", "quality", "shipping_goods"}
-    assert set(LEVEL_SECTION_LABELS) == (set(domain.SECTION_LABELS) - {"staffdir"}) | new_sections
+# ── The gates ───────────────────────────────────────────────────────────────────────────────────────
+# T2 switched the routes to the contract (GATES.after): tests/identity/test_level_gates.py checks every route
+# dependency against it. GATES.before stays the frozen old model this transfer and the report are measured with.
 
 
 # ── Migration 0086 on SQLite ───────────────────────────────────────────────────────────────────────
@@ -480,7 +428,7 @@ def test_report_exits_2_when_no_administrator_would_remain(tmp_path, capsys):
     assert "станет (суперадминистратор, администратор): НИКОГО" in capsys.readouterr().out
 
 
-# ── New employees follow their role until the screens edit the level ───────────────────────────────
+# ── An employee written without a level follows the legacy role; one written with a level keeps it ──
 
 
 @pytest.fixture()
@@ -491,7 +439,7 @@ def sessions():
     engine.dispose()
 
 
-def test_a_new_or_re_roled_employee_gets_the_level_of_the_role(sessions):
+def test_a_new_or_re_roled_employee_without_a_level_gets_the_level_of_the_role(sessions):
     master = IdentityUser(_id(1), "m", "m@x.test", "Мастер", "Производство", "master", "ЦАР", True)
     with sessions() as session:
         provision_user(session, master, hash_password("password-123"))
@@ -505,11 +453,14 @@ def test_a_new_or_re_roled_employee_gets_the_level_of_the_role(sessions):
         assert (stored.access_level, stored.site_master, stored.shop_worker) == ("foreman", True, False)
         fitter = repository.user_for_update(_id(2))
         assert (fitter.access_level, fitter.site_master, fitter.shop_worker) == ("operator", False, True)
-        repository.update_user(replace(stored, role="staff"))
+        repository.update_user(replace(stored, role="staff", access_level=""))  # an old caller: the role only
+        repository.update_user(replace(fitter, role="master"))  # carries its level: the level stays
         session.commit()
     with sessions() as session:
         row = session.scalar(select(IdentityUserRow).where(IdentityUserRow.id == _id(1)))
         assert (row.access_level, row.site_master, row.shop_worker) == ("operator", False, True)
+        row = session.scalar(select(IdentityUserRow).where(IdentityUserRow.id == _id(2)))
+        assert (row.access_level, row.role, row.site_master) == ("operator", "master", True)
 
 
 def test_usable_follows_the_role_lists():

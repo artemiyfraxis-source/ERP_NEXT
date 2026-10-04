@@ -332,7 +332,7 @@ def test_api_offers_boxes_of_every_input_and_marks_sources_inputs_and_the_final(
         uow.commit()
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=operator_id, name="Оператор", department="Производство"),
-        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
     )
 
     assembly_inputs = client.get(f"/api/production/tasks/{task.id}/operations/{by_position[3].id}/inputs")

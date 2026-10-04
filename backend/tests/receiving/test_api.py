@@ -67,13 +67,14 @@ def receiving_api():
     engine.dispose()
 
 
-def test_receiving_requires_receiver_role(receiving_api):
+def test_receiving_requires_the_receiving_section(receiving_api):
+    # Access levels: the matrix decides — «Приёмка» closed, refused whatever else is open.
     client, _ = receiving_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Закупщик", department="Закупки"),
         email="estimator@example.test",
-        roles=frozenset({"estimator"}),
-        permissions={"receiving": "edit"},
+        roles=frozenset({"commercial"}),
+        permissions={"procurement": "edit", "warehouse": "edit"},
     )
 
     assert client.get("/api/receiving").status_code == 403
@@ -283,13 +284,13 @@ def test_putaway_sheet_shows_accepted_unplaced_lines_only(receiving_api):
     assert after_placement.status_code == 422, after_placement.text
 
 
-def test_putaway_sheet_requires_receiver_role(receiving_api):
+def test_putaway_sheet_requires_the_receiving_section(receiving_api):
     client, _ = receiving_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Сметчик", department="КБ"),
         email="estimator@example.test",
-        roles=frozenset({"estimator"}),
-        permissions={"receiving": "edit"},
+        roles=frozenset({"commercial"}),
+        permissions={"warehouse": "edit"},
     )
 
     assert client.get("/api/receiving/putaway-sheet").status_code == 403
