@@ -38,8 +38,8 @@ from .application import (
     hand_over_production,
     HandOverProductionCommand,
 )
-from .domain import OperatorSkill, ProductionOperation, ProductionTask, ProductionValidationError, WorkShift
-from .launchable import item_id, launched_quantity, operation_code, operation_codes, route_from_document, stage_name
+from .domain import OperatorSkill, ProductionTask, ProductionValidationError, WorkShift
+from .launchable import item_id, launch_operations, launched_quantity, operation_code, operation_codes, route_from_document, stage_name
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
@@ -899,11 +899,7 @@ def launch(
     if not route:
         raise HTTPException(status_code=422, detail=f"Техкарта «{item}» не выдана — запускать нечего")
     try:
-        operations = tuple(ProductionOperation.create(
-            position=step.position, code=step.code, stage=step.stage,
-            description=step.description, seconds_per_unit=step.seconds_per_unit,
-            setup_seconds=step.setup_seconds, quantity=payload.quantity,
-        ) for step in route)
+        operations = launch_operations(route, payload.quantity)
     except ProductionValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     # Решено агентом: ERP хранит в задании изделие индексом КБ (как план и приёмка ГП), а не «проект+индекс».

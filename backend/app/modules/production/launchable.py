@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping, Sequence
 
-from .domain import ProductionStatus, ProductionTask
+from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, link_inputs
 from .plan import kit_stage_key
 
 
@@ -128,3 +128,47 @@ def operation_codes(routes: Sequence[tuple[RouteStep, ...]], skill_codes: Iterab
         if code and code not in seen:
             seen[code] = name
     return [{"code": code, "name": seen[code]} for code in sorted(seen)]
+
+
+def _step_block(step: RouteStep) -> str:
+    # Блок шага схемы полуфабрикатов (ARCH-TRACK-1, A2). Маршрут без этих полей — старая цепочка по номерам.
+    return str(getattr(step, "block", "") or "").strip()
+
+
+def route_inputs(route: Sequence[RouteStep]) -> dict[int, tuple[tuple[int, Decimal], ...]]:
+    """Входы шагов маршрута по номерам: {номер шага: ((номер шага-входа, штук на одну), …)}.
+
+    Внутри блока схемы шаги идут цепочкой по номерам; первый шаг блока берёт последний шаг каждого блока-
+    предшественника (per_unit ребра схемы). Шаг без блока — маршрут без схемы: предыдущий номер, 1 на 1."""
+    ordered = sorted(route, key=lambda step: step.position)
+    if any(not _step_block(step) for step in ordered):
+        return {step.position: ((earlier.position, Decimal(1)),) for earlier, step in zip(ordered, ordered[1:])}
+    members: dict[str, list[int]] = {}
+    for step in ordered:
+        members.setdefault(_step_block(step), []).append(step.position)
+    result: dict[int, tuple[tuple[int, Decimal], ...]] = {}
+    for step in ordered:
+        own = members[_step_block(step)]
+        index = own.index(step.position)
+        if index:
+            result[step.position] = ((own[index - 1], Decimal(1)),)
+            continue
+        edges: list[tuple[int, Decimal]] = []
+        for item in getattr(step, "inputs", ()) or ():
+            block = str(getattr(item, "block", "") or "").strip()
+            if block not in members:
+                raise ProductionValidationError(f"Схема полуфабрикатов: блок «{block}» не найден в маршруте")
+            edges.append((members[block][-1], Decimal(getattr(item, "per_unit", 1) or 1)))
+        if edges:
+            result[step.position] = tuple(edges)
+    return result
+
+
+def launch_operations(route: Sequence[RouteStep], quantity: int) -> tuple[ProductionOperation, ...]:
+    """Операции нового задания по маршруту выданной техкарты: блок схемы и явные входы (сетевой график)."""
+    operations = tuple(ProductionOperation.create(
+        position=step.position, code=step.code, stage=step.stage, description=step.description,
+        seconds_per_unit=step.seconds_per_unit, setup_seconds=step.setup_seconds, quantity=quantity,
+        stage_key=_step_block(step) or None,
+    ) for step in route)
+    return link_inputs(operations, route_inputs(route))

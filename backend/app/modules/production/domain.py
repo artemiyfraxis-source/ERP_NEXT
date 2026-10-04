@@ -102,6 +102,28 @@ class OperationShare:
 
 
 @dataclass(frozen=True)
+class OperationInput:
+    """Вход операции в сетевом графике задания (ARCH-TRACK-2): полуфабрикат другой операции того же задания.
+
+    per_unit — сколько его штук идёт на одну штуку этой операции (Василий, 04.10: вручную на схеме, по умолчанию 1).
+    transfer_batch — передаточная партия ребра; None — партия задания, как сейчас (решение 4)."""
+    input_operation_id: UUID
+    per_unit: Decimal = Decimal(1)
+    transfer_batch: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        per_unit = Decimal(self.per_unit)
+        if not per_unit.is_finite() or per_unit <= 0:
+            raise ProductionValidationError("Количество входа на одну штуку должно быть больше нуля")
+        object.__setattr__(self, "per_unit", per_unit)
+        if self.transfer_batch is not None:
+            batch = Decimal(self.transfer_batch)
+            if not batch.is_finite() or batch <= 0:
+                raise ProductionValidationError("Передаточная партия должна быть больше нуля")
+            object.__setattr__(self, "transfer_batch", batch)
+
+
+@dataclass(frozen=True)
 class ProductionOperation:
     id: UUID
     position: int
@@ -118,6 +140,10 @@ class ProductionOperation:
     # Доли по людям — источник правды; operator_ids и плановое окно операции выводятся из них (окно — от первой
     # доли до последней). Без долей (старые вызовы) доли строятся из operator_ids: бригада с одним окном.
     shares: tuple[OperationShare, ...] = ()
+    # Сетевой график (ARCH-TRACK-2): блок схемы полуфабрикатов ЭТК (None — не известен) и входы операции.
+    # position остаётся порядком показа и топологическим порядком; связи этапов — только в inputs.
+    stage_key: str | None = None
+    inputs: tuple[OperationInput, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.shares:
@@ -165,6 +191,7 @@ class ProductionOperation:
         seconds_per_unit: Decimal,
         setup_seconds: Decimal,
         quantity: int,
+        stage_key: str | None = None,
     ) -> ProductionOperation:
         if position <= 0:
             raise ProductionValidationError("Номер этапа должен быть больше нуля")
@@ -183,6 +210,7 @@ class ProductionOperation:
             seconds_per_unit=unit,
             setup_seconds=setup,
             norm_seconds=ceil(setup + unit * quantity),
+            stage_key=str(stage_key or "").strip() or None,
         )
 
     def assign(
@@ -209,6 +237,70 @@ class ProductionOperation:
         ), assigned_by)
 
 
+def chain_inputs(operations: tuple[ProductionOperation, ...]) -> tuple[ProductionOperation, ...]:
+    """Сегодняшняя цепочка: каждая операция, кроме первой по номеру, берёт операцию предыдущего номера (1 на 1)."""
+    ordered = sorted(operations, key=lambda operation: operation.position)
+    previous = {current.id: earlier.id for earlier, current in zip(ordered, ordered[1:])}
+    return tuple(
+        replace(operation, inputs=(OperationInput(previous[operation.id]),) if operation.id in previous else ())
+        for operation in operations
+    )
+
+
+def link_inputs(
+    operations: tuple[ProductionOperation, ...],
+    edges: dict[int, tuple[tuple[int, Decimal], ...]],
+) -> tuple[ProductionOperation, ...]:
+    """Входы по номерам этапов: {номер операции: ((номер операции-входа, штук на одну), …)}. Входы операции
+    хранятся по возрастанию номера входа. Номер, которого нет в задании, — ошибка маршрута."""
+    by_position = {operation.position: operation for operation in operations}
+    if not set(edges) <= set(by_position) or any(
+        source not in by_position for sources in edges.values() for source, _ in sources
+    ):
+        raise ProductionValidationError("Вход операции ссылается на этап, которого нет в маршруте")
+    return tuple(
+        replace(operation, inputs=tuple(
+            OperationInput(by_position[source].id, Decimal(per_unit))
+            for source, per_unit in sorted(edges.get(operation.position, ()), key=lambda edge: edge[0])
+        ))
+        for operation in operations
+    )
+
+
+def final_operation(operations: tuple[ProductionOperation, ...]) -> ProductionOperation:
+    """Финальная операция задания — та, чей полуфабрикат не берёт никто (из неё выходит изделие). В проверенном
+    графе она одна; если кандидатов несколько, берётся последняя по номеру (как max(position) до графа)."""
+    if not operations:
+        raise ProductionValidationError("В задании нет операций")
+    consumed = {item.input_operation_id for operation in operations for item in operation.inputs}
+    return max(
+        (operation for operation in operations if operation.id not in consumed),
+        key=lambda operation: operation.position,
+    )
+
+
+def _check_network(operations: tuple[ProductionOperation, ...]) -> None:
+    """Граф входов задания: входы — операции этого же задания, без самоссылок и повторов, без циклов, финал один."""
+    ids = {operation.id for operation in operations}
+    for operation in operations:
+        sources = [item.input_operation_id for item in operation.inputs]
+        if operation.id in sources or not set(sources) <= ids:
+            raise ProductionValidationError(f"Этап {operation.position}: вход должен быть другим этапом этого задания")
+        if len(set(sources)) != len(sources):
+            raise ProductionValidationError(f"Этап {operation.position}: один вход указан дважды")
+    remaining = {operation.id: {item.input_operation_id for item in operation.inputs} for operation in operations}
+    while remaining:
+        pending = set(remaining)
+        ready = [operation_id for operation_id, sources in remaining.items() if not sources & pending]
+        if not ready:
+            raise ProductionValidationError("Схема этапов задания замкнута в цикл")
+        for operation_id in ready:
+            del remaining[operation_id]
+    consumed = {item.input_operation_id for operation in operations for item in operation.inputs}
+    if len(ids - consumed) != 1:
+        raise ProductionValidationError("У схемы этапов задания должна быть ровно одна финальная операция")
+
+
 @dataclass(frozen=True)
 class ProductionTask:
     id: UUID
@@ -228,6 +320,12 @@ class ProductionTask:
     operations: tuple[ProductionOperation, ...]
     # Площадка, которой задание отдано целиком (владелец, 30.09: ЖУК работает не нормированно — «отдать все в жук»).
     handed_to: str = ""
+
+    def __post_init__(self) -> None:
+        # Задание без единого входа (маршрут без схемы, старые вызовы) идёт сегодняшней цепочкой по номерам:
+        # у любого задания граф входов явный, неявного «предыдущего этапа» больше нет.
+        if len(self.operations) > 1 and not any(operation.inputs for operation in self.operations):
+            object.__setattr__(self, "operations", chain_inputs(self.operations))
 
     @classmethod
     def create(
@@ -255,7 +353,7 @@ class ProductionTask:
         required = (number, source_idempotency_key, source_fingerprint, project, item, launched_by)
         if any(not str(value or "").strip() for value in required):
             raise ProductionValidationError("Номер, проект, изделие и инициатор обязательны")
-        return cls(
+        task = cls(
             id=uuid4(),
             number=str(number).strip(),
             source_idempotency_key=str(source_idempotency_key).strip(),
@@ -272,6 +370,13 @@ class ProductionTask:
             launched_by=str(launched_by).strip(),
             operations=tuple(sorted(operations, key=lambda operation: operation.position)),
         )
+        _check_network(task.operations)
+        return task
+
+    @property
+    def final_operation(self) -> ProductionOperation:
+        """Операция, из которой выходит изделие: её полуфабрикат не берёт ни одна другая операция."""
+        return final_operation(self.operations)
 
     def operation(self, operation_id: UUID) -> ProductionOperation:
         operation = next((item for item in self.operations if item.id == operation_id), None)

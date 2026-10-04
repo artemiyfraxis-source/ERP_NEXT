@@ -8,7 +8,7 @@ from decimal import Decimal
 import json
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, and_, delete, func, or_, select, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
 from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker
 
 from app.modules.identity.infrastructure import IdentityUserRow
@@ -18,7 +18,7 @@ from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinis
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .application import Absence, Operator
-from .domain import DEFAULT_SHIFT, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, WorkShift
+from .domain import DEFAULT_SHIFT, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, WorkShift
 from .plan import PlanEvent, PlanProjectSnapshot
 from .genealogy import (
     BoxConsumptionSnapshot,
@@ -96,6 +96,21 @@ class ProductionOperationRow(Base):
     planned_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     planned_finish: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     assigned_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Блок схемы полуфабрикатов ЭТК (ARCH-TRACK-2); NULL — не известен (задания до схемы).
+    stage_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class ProductionOperationInputRow(Base):
+    """Ребро сетевого графика задания: операция берёт полуфабрикат операции input_operation_id."""
+    __tablename__ = "production_operation_inputs"
+    __table_args__ = (UniqueConstraint("operation_id", "input_operation_id", name="ux_production_operation_inputs_edge"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="CASCADE"), nullable=False)
+    input_operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="CASCADE"), nullable=False, index=True)
+    per_unit: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal(1), server_default="1")
+    # Передаточная партия ребра; NULL — партия задания (решение 4).
+    transfer_batch: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
 
 
 class ProductionOperationOperatorRow(Base):
@@ -413,6 +428,19 @@ class SqlAlchemyProductionRepository:
                 share.operator_id, share.quantity, share.planned_start, share.planned_finish,
                 share.started_at, share.finished_at,
             ))
+        # Входы — тоже колонками (add() переписывает рёбра), по возрастанию номера операции-входа.
+        edge, consumer, source = ProductionOperationInputRow, ProductionOperationRow, aliased(ProductionOperationRow)
+        inputs: dict[UUID, list[OperationInput]] = {}
+        for item in self.session.execute(
+            select(edge.operation_id, edge.input_operation_id, edge.per_unit, edge.transfer_batch)
+            .join(consumer, consumer.id == edge.operation_id)
+            .join(source, source.id == edge.input_operation_id)
+            .where(consumer.task_id == row.id)
+            .order_by(edge.operation_id, source.position)
+        ):
+            inputs.setdefault(item.operation_id, []).append(
+                OperationInput(item.input_operation_id, item.per_unit, item.transfer_batch)
+            )
         return ProductionTask(
             id=row.id, number=row.number, source_idempotency_key=row.source_idempotency_key,
             source_fingerprint=row.source_fingerprint, version=row.version, created_at=row.created_at,
@@ -426,6 +454,8 @@ class SqlAlchemyProductionRepository:
                 norm_seconds=operation.norm_seconds,
                 assigned_by=operation.assigned_by,
                 shares=tuple(by_operation.get(operation.id, ())),
+                stage_key=operation.stage_key,
+                inputs=tuple(inputs.get(operation.id, ())),
             ) for operation in operation_rows),
         )
 
@@ -506,6 +536,22 @@ class SqlAlchemyProductionRepository:
         row.handed_to = task.handed_to
         self.session.flush()
         existing = {item.id: item for item in self.session.scalars(select(ProductionOperationRow).where(ProductionOperationRow.task_id == task.id))}
+        # Рёбра графа переписываются целиком, и только когда граф изменился (назначения его не трогают).
+        edge = ProductionOperationInputRow
+        owners = edge.operation_id.in_([*existing, *(operation.id for operation in task.operations)])
+        stored_edges = {
+            (item.operation_id, item.input_operation_id): (item.per_unit, item.transfer_batch)
+            for item in self.session.execute(
+                select(edge.operation_id, edge.input_operation_id, edge.per_unit, edge.transfer_batch).where(owners)
+            )
+        }
+        wanted_edges = {
+            (operation.id, item.input_operation_id): (item.per_unit, item.transfer_batch)
+            for operation in task.operations for item in operation.inputs
+        }
+        rewrite_edges = stored_edges != wanted_edges
+        if rewrite_edges:
+            self.session.execute(delete(edge).where(owners))
         for operation in task.operations:
             stored = existing.pop(operation.id, None)
             if stored is None:
@@ -521,6 +567,12 @@ class SqlAlchemyProductionRepository:
             stored.planned_start = operation.planned_start
             stored.planned_finish = operation.planned_finish
             stored.assigned_by = operation.assigned_by
+            stored.stage_key = operation.stage_key
+            for item in operation.inputs if rewrite_edges else ():
+                self.session.add(ProductionOperationInputRow(
+                    id=uuid4(), operation_id=operation.id, input_operation_id=item.input_operation_id,
+                    per_unit=item.per_unit, transfer_batch=item.transfer_batch,
+                ))
             self.session.execute(delete(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operation_id == operation.id))
             for position, share in enumerate(operation.shares):
                 self.session.add(ProductionOperationOperatorRow(
@@ -552,6 +604,7 @@ class SqlAlchemyProductionRepository:
     def delete(self, task_id: UUID) -> None:
         """Задание без следа работы (см. `worked`) уходит с долями, операциями и своими серийными номерами."""
         operations = select(ProductionOperationRow.id).where(ProductionOperationRow.task_id == task_id)
+        self.session.execute(delete(ProductionOperationInputRow).where(ProductionOperationInputRow.operation_id.in_(operations)))
         self.session.execute(delete(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operation_id.in_(operations)))
         self.session.execute(delete(ProductionSerialRow).where(ProductionSerialRow.task_id == task_id))
         self.session.execute(delete(ProductionOperationRow).where(ProductionOperationRow.task_id == task_id))
