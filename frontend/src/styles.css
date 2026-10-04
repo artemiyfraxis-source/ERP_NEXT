@@ -11,6 +11,16 @@
   --accent: #f0f1f5;
   --muted-foreground: #5f6b85;
   --border: #e2e4ea;
+  /* Лист в ячейках (Лист закупки → «В работе»): сетка, правимая ячейка, изменённая, выбранная строка. */
+  --sheet-row: 30px;
+  --sheet-line: #e7ebee;
+  --sheet-head: #f3f6f6;
+  --sheet-edit: #fbfcfc;
+  --sheet-hover: #b9c6c3;
+  --sheet-dirty: #e3f5f1;
+  --sheet-selected: #eef8f6;
+  --sheet-invalid: #b91c1c;
+  --sheet-invalid-bg: #fdf1f0;
 }
 
 * { box-sizing: border-box; }
@@ -1488,22 +1498,12 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 }
 /* ===== /T7 ===== */
 
-/* ── Лист закупки: «В работе» одной таблицей (ProcurementInWorkTable) ── */
-.inwork { display: grid; gap: 6px; }
-.inwork-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* ── Лист закупки: таблица партий «Со склада» (ProcurementStockPicker) ── */
 .inwork-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
 .inwork-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .inwork-table th { position: sticky; top: 0; background: var(--accent); text-align: left; padding: 4px 6px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid var(--border); }
-.inwork-table td { padding: 2px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-.inwork-table tbody tr:nth-child(odd):not(.inwork-detail) { background: color-mix(in srgb, var(--accent) 35%, transparent); }
-.inwork-table tr.edited { box-shadow: inset 3px 0 0 var(--primary); }
-.inwork-table input, .inwork-table select { width: 100%; height: 26px; padding: 0 6px; font-size: 13px; box-sizing: border-box; }
-.inwork-table input[aria-invalid="true"], .inwork-table select[aria-invalid="true"] { border-color: #c0392b; }
-.inwork-table input.soft-warn { border-color: #b7791f; }
-.inwork-cell { display: flex; align-items: center; gap: 4px; }
-.inwork-name { white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
-.inwork-menu { position: relative; width: 40px; }
-.inwork-detail td { background: var(--card); padding: 8px 12px; }
+.inwork-table td { padding: 1px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.inwork-table input, .inwork-table select { width: 100%; height: 24px; padding: 0 6px; font-size: 13px; box-sizing: border-box; }
 .stock-picker { display: grid; gap: 6px; }
 .stock-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .stock-search input { height: 26px; min-width: 260px; }
@@ -1513,14 +1513,127 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .stock-lots td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stock-note { color: var(--primary); }
 .inwork-table td small, .inwork-table td strong { display: inline; margin: 0; }
-.inwork-name { max-width: 340px; }
-.inwork-table td { padding: 1px 4px; }
-.inwork-table input, .inwork-table select { height: 24px; }
-.inwork-context { white-space: nowrap; color: var(--muted-foreground); }
+
+/* ── Лист закупки: «В работе» — лист, а не форма (ProcurementInWorkTable) ──
+   Ячейки без рамок на тонкой сетке; правимая ячейка — чуть светлее фона, рамка только при наведении и фокусе;
+   строки ровно --sheet-row; обязательные колонки — точкой в заголовке. На 16" (≈1190 px таблицы) колонки
+   влезают без прокрутки вбок. Ширина задана каждой <col> и в сумме ≈ ширине таблицы: колонку без ширины Chrome
+   при table-layout: fixed сжимает почти до нуля. */
+.buy-scroll { margin: 0 16px 16px; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.work-list > * { min-width: 0; }
+.buy-grid { width: 100%; min-width: 1000px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.buy-grid col.c-sel { width: 34px; }
+.buy-grid col.c-pos { width: 25%; }
+.buy-grid col.c-supplier { width: 124px; }
+.buy-grid col.c-site { width: 10.5%; }
+.buy-grid col.c-qty { width: 72px; }
+.buy-grid col.c-unit { width: 56px; }
+.buy-grid col.c-article { width: 96px; }
+.buy-grid col.c-name { width: 11%; }
+.buy-grid col.c-link { width: 108px; }
+.buy-grid col.c-note { width: 9%; }
+.buy-grid col.c-menu { width: 40px; }
+/* Планшет и узкий ноутбук с боковым меню (~1050 px таблицы). */
+@media (max-width: 1500px) {
+  .buy-grid col.c-pos { width: 23%; }
+  .buy-grid col.c-supplier { width: 110px; }
+  .buy-grid col.c-site { width: 10%; }
+  .buy-grid col.c-article { width: 84px; }
+  .buy-grid col.c-name { width: 10%; }
+  .buy-grid col.c-link { width: 96px; }
+}
+@media (min-width: 1900px) {
+  .buy-grid col.c-pos { width: 24%; }
+  .buy-grid col.c-supplier { width: 170px; }
+  .buy-grid col.c-site { width: 14%; }
+  .buy-grid col.c-qty { width: 80px; }
+  .buy-grid col.c-unit { width: 62px; }
+  .buy-grid col.c-article { width: 130px; }
+  .buy-grid col.c-name { width: 16%; }
+  .buy-grid col.c-link { width: 150px; }
+  .buy-grid col.c-note { width: 16%; }
+}
+.buy-grid th { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 8px; background: var(--sheet-head); color: #3d4a5c; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--border); border-right: 1px solid var(--sheet-line); }
+.buy-grid th.required::after { content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 5px; border-radius: 50%; background: var(--primary); vertical-align: middle; }
+.buy-grid td { height: var(--sheet-row); padding: 0; border-bottom: 1px solid var(--sheet-line); border-right: 1px solid var(--sheet-line); background: var(--card); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.buy-grid tr > :last-child { border-right: 0; }
+.buy-grid tbody tr:last-child > td { border-bottom: 0; }
+.buy-grid input[type="checkbox"] { display: block; width: 15px; height: 15px; margin: 0 auto; padding: 0; accent-color: var(--primary); cursor: pointer; }
+.buy-grid .sel { position: sticky; left: 0; z-index: 1; text-align: center; }
+.buy-grid .pos { position: sticky; left: 34px; z-index: 1; box-shadow: inset -1px 0 var(--border); }
+.buy-grid th.sel, .buy-grid th.pos { z-index: 3; }
+.buy-grid td.pos { padding: 0 8px; }
+.pos-main, .pos-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pos-main { font-size: 12.5px; line-height: 15px; }
+.pos-main strong { display: inline; font-weight: 700; }
+.pos-sub { color: var(--muted-foreground); font-size: 11px; line-height: 13px; }
+.pos-sub .chip { display: inline-block; margin-right: 5px; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 600; line-height: 13px; }
+.pos-sub .chip.tone-ok { background: #e3f5e8; }
+.pos-sub .chip.tone-danger { background: #fde8e8; }
+.pos-sub .filling { margin-right: 5px; font-style: italic; }
+.buy-grid td.edit { background: var(--sheet-edit); }
+.buy-grid td.edit:hover, .buy-grid td.note:hover { box-shadow: inset 0 0 0 1px var(--sheet-hover); }
+.buy-grid td.edit:focus-within, .buy-grid td.note:focus-within { box-shadow: inset 0 0 0 2px var(--primary); background: var(--card); }
+.buy-grid td.dirty { background: var(--sheet-dirty); }
+.buy-grid td.invalid { box-shadow: inset 0 0 0 1.5px var(--sheet-invalid); background: var(--sheet-invalid-bg); }
+.buy-grid tbody tr:hover > td:not(.edit):not(.dirty) { background: #f6fafa; }
+.buy-grid tr.selected > td, .buy-grid tr.selected:hover > td { background: var(--sheet-selected); }
+.buy-grid tr.edited > td.sel { box-shadow: inset 3px 0 0 var(--primary); }
+.cell-input, .cell-select { display: block; width: 100%; height: calc(var(--sheet-row) - 1px); margin: 0; padding: 0 8px; border: 0; border-radius: 0; background: transparent; color: var(--foreground); font-size: 13px; text-overflow: ellipsis; }
+.cell-input:focus, .cell-select:focus { border: 0; box-shadow: none; outline: none; }
+.buy-grid td.num .cell-input, .buy-grid td.num .cell-ro { text-align: right; font-variant-numeric: tabular-nums; }
+.cell-select { appearance: none; padding-right: 20px; cursor: pointer; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'%3E%3Cpath d='M1 1l3.5 3.5L8 1' fill='none' stroke='%235f6b85' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 7px center; }
+.cell-ro { display: block; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-cell { position: relative; display: block; height: calc(var(--sheet-row) - 1px); }
+.link-cell .cell-text { position: absolute; inset: 0; width: 100%; padding: 0 8px; border: 0; background: transparent; color: inherit; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.link-cell .cell-text:focus-visible { outline: none; }
+.link-cell .cell-text.soft-warn { color: #a16207; }
+.link-host { position: relative; z-index: 1; display: inline-block; max-width: calc(100% - 16px); margin: 0 8px; color: var(--primary); line-height: calc(var(--sheet-row) - 1px); text-decoration: none; vertical-align: top; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-host:hover { text-decoration: underline; }
+.buy-grid td.note .cell-edit { height: calc(var(--sheet-row) - 1px); padding: 0 8px; border: 0; border-radius: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.buy-grid td.note .cell-edit:hover, .buy-grid td.note .cell-edit:focus-visible { background: transparent; }
+.buy-grid td.note .cell-edit-input { min-width: 0; border-radius: 0; }
+.buy-grid td.note .cell-edit-empty { visibility: hidden; }
+.buy-grid td.menu { text-align: center; }
+.procurement-stage td .row-menu > button { padding: 0 8px; height: 24px; border: 0; background: transparent; color: var(--muted-foreground); font-size: 15px; line-height: 1; }
+.procurement-stage td .row-menu > button:hover { background: var(--accent); color: var(--foreground); }
+.buy-grid tr.buy-detail > td { height: auto; padding: 10px 14px; overflow: visible; white-space: normal; background: var(--background); }
+.buy-grid.order-lines { min-width: 0; table-layout: auto; }
+.buy-grid.order-lines td { padding: 0 8px; }
+@media (pointer: coarse) {
+  :root { --sheet-row: 40px; }
+  .buy-grid input[type="checkbox"] { width: 20px; height: 20px; }
+  .procurement-stage td .row-menu > button { height: 36px; min-width: 40px; }
+}
 
 /* ── Лист закупки: стадии «Мои позиции» (ProcurementStages) ── */
 .panel-heading h2 .stage-count { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
 .heading-actions { display: flex; align-items: center; gap: 12px; }
+/* Блок «Мои позиции»: одна строка заголовка — название с числом, «?» с подсказкой, действия справа; пустой блок —
+   одна серая строка; массовые действия — полосой над таблицей, она липнет к верху при прокрутке. */
+.work-list > .section-title { margin: 4px 0 -4px 2px; }
+.stage-head { align-items: center; justify-content: flex-start; gap: 10px; padding: 12px 16px 10px; }
+.stage-head h2 { white-space: nowrap; }
+.stage-head .stage-help { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 50%; color: var(--muted-foreground); font-size: 11px; font-weight: 600; cursor: help; }
+.stage-head .stage-help:hover, .stage-head .stage-help:focus-visible { border-color: var(--primary); color: var(--primary); outline: none; }
+.stage-head .heading-actions { margin-left: auto; gap: 8px; }
+.stage-head .dirty-note { color: #8a5a00; font-size: 12px; }
+.stage-empty { margin: 0; padding: 0 16px 14px; color: var(--muted-foreground); font-size: 13px; }
+.bulk-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 16px 10px; padding: 7px 12px; border-radius: 8px; background: var(--accent); font-size: 12.5px; }
+.bulk-status.failed { color: #852a24; background: #fbe7e4; }
+.bulk-status .bulk-failures { flex-basis: 100%; order: 2; margin: 0; padding-left: 18px; }
+.bulk-status .link-button { margin-left: auto; padding: 0; }
+.procurement-stage .bulk-bar { position: sticky; top: -30px; z-index: 9; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.stage-bulk { margin: 0 16px 8px; }
+/* Таблицы остальных блоков — тем же листом: заголовок обычным регистром 12 px, тонкая сетка без зебры. */
+.procurement-stage .data-table .filters { position: static; }
+.procurement-stage .data-table .filters .search { padding-top: 6px; padding-bottom: 6px; }
+.procurement-stage .data-table .table-wrap { border-radius: 8px; }
+.procurement-stage .data-table thead th { padding-top: 6px; padding-bottom: 6px; font-size: 12px; letter-spacing: 0; text-transform: none; border-right: 1px solid var(--sheet-line); }
+.procurement-stage .data-table tbody td { height: var(--sheet-row); padding-top: 3px; padding-bottom: 3px; border-bottom-color: var(--sheet-line); border-right: 1px solid var(--sheet-line); }
+.procurement-stage .data-table tr > :last-child { border-right: 0; }
+.procurement-stage .data-table tbody tr:nth-child(even):not(.group-row):not(.detail) td, .procurement-stage .data-table tbody tr:nth-child(even) td.key { background: var(--card); }
+.procurement-stage .data-table tbody tr:not(.group-row):not(.detail):hover td { background: #eaf6f4; }
 .row-menu { display: inline-block; }
 .row-menu-popup { z-index: 60; display: grid; min-width: 250px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 4px; }
 .row-menu-popup button { text-align: left; background: none; border: 0; padding: 6px 8px; font-size: 13px; cursor: pointer; }

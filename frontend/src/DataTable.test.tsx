@@ -81,6 +81,21 @@ it("runs a bulk action on the selected rows and clears the selection", async () 
   expect(screen.queryByText("Выбрано: 2")).toBeNull();
 });
 
+it("selects a range of rows with Shift+click and clears it the same way", () => {
+  const run = vi.fn();
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} bulkActions={[{ label: "Взять в работу", run }]} />);
+  const checked = () => ["1", "2", "3"].map((id) => (screen.getByLabelText(`Выбрать ${id}`) as HTMLInputElement).checked);
+
+  fireEvent.click(screen.getByLabelText("Выбрать 1"));
+  fireEvent.click(screen.getByLabelText("Выбрать 3"), { shiftKey: true });
+  expect(checked()).toEqual([true, true, true]);
+  expect(screen.getByRole("toolbar")).toHaveTextContent("Выбрано: 3");
+
+  fireEvent.click(screen.getByLabelText("Выбрать 2"));
+  fireEvent.click(screen.getByLabelText("Выбрать 1"), { shiftKey: true });
+  expect(checked()).toEqual([false, false, true]);
+});
+
 it("groups rows, opens a row detail and remembers hidden columns", () => {
   const { unmount } = render(
     <DataTable
