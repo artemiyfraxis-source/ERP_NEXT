@@ -78,6 +78,11 @@ from .application import (
     FactsBatchRow,
     buyer_in_work_lines,
     save_procurement_facts_batch,
+    CoverFromStockCommand,
+    ReleaseStockCoverCommand,
+    cover_from_stock,
+    release_stock_cover,
+    stock_candidates,
 )
 from .domain import (
     ACTUAL_UNITS,
@@ -92,8 +97,11 @@ from .domain import (
     ProcurementLine,
     ProcurementValidationError,
     ReplacementDecision,
+    StockCover,
+    same_unit,
     normalize_invoice_url,
 )
+from app.modules.warehouse.domain import StockLot
 from .exchange_rates import CbrExchangeRates
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
@@ -259,6 +267,15 @@ class PaidInput(VersionInput):
 
 class SplitInput(VersionInput):
     copies: int = Field(ge=1, le=SPLIT_MAX_COPIES)
+
+
+class StockCoverInput(VersionInput):
+    lot_id: UUID
+    quantity: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+
+
+class StockCoverReleaseInput(VersionInput):
+    cover_id: UUID | None = None
 
 
 class BackorderConfirmInput(VersionInput):
@@ -453,6 +470,9 @@ def _line_result(line: ProcurementLine) -> dict:
             line.trace.quality_document_date.isoformat() if line.trace.quality_document_date else None
         ),
         "standard": line.trace.standard,
+        # «Со склада»: reserved on our lots for this line, and what is still to buy.
+        "stock_covered": _decimal_result(line.stock_covered),
+        "to_buy": _decimal_result(line.to_buy),
     }
 
 
@@ -1214,3 +1234,138 @@ def split(
 
     result = _transition(operation)
     return {**result, "copies": [_line_result(copy) for copy in copies]}
+
+
+# --- «Со склада» (owner 2026-10-04) ------------------------------------------------------------------
+
+def _cover_result(cover: StockCover) -> dict:
+    return {
+        "id": str(cover.id),
+        "line_id": str(cover.line_id),
+        "label": cover.label,
+        "lot_id": str(cover.lot_id),
+        "warehouse": cover.warehouse,
+        "grn": cover.grn,
+        "package": cover.package,
+        "storage_location": cover.storage_location,
+        "unit": cover.unit,
+        "quantity": _decimal_result(cover.quantity),
+        "consumed": _decimal_result(cover.consumed),
+        "consumed_by": cover.consumed_by,
+        "active": cover.active,
+        "created_at": cover.created_at.isoformat(),
+        "created_by": cover.created_by,
+        "released_at": cover.released_at.isoformat() if cover.released_at else None,
+    }
+
+
+def _reserve_note(covers: list[StockCover]) -> str:
+    """«резерв: SM-20261002-01 / 591К.3 — 80 шт» — who holds the lot's РЕЗЕРВ through «Со склада»."""
+    if not covers:
+        return ""
+    return "резерв: " + "; ".join(
+        f"{cover.label} — {_decimal_result(cover.quantity)} {cover.unit}".rstrip() for cover in covers
+    )
+
+
+def _candidate_result(lot: StockLot, line: ProcurementLine, holders: list[StockCover]) -> dict:
+    return {
+        "id": str(lot.id),
+        "version": lot.version,
+        "warehouse": lot.warehouse,
+        "grn": lot.grn,
+        "package": lot.package,
+        "article": lot.article,
+        "series": lot.series,
+        "name": lot.name,
+        "item_type": lot.item_type,
+        "purpose": lot.purpose,
+        "unit": lot.unit,
+        "storage_location": lot.storage_location,
+        "balance": _decimal_result(lot.balance),
+        "reserved": _decimal_result(lot.reserved),
+        "available": _decimal_result(max(lot.available, Decimal("0"))),
+        "unit_matches": same_unit(line.calculated_unit, lot.unit),
+        "holders": [_cover_result(cover) for cover in holders],
+        "reserve_note": _reserve_note(holders),
+    }
+
+
+@router.get("/{line_id}/stock-candidates")
+def stock_cover_candidates(
+    line_id: UUID,
+    _principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    q: Annotated[str, Query(max_length=255)] = "",
+) -> dict:
+    """«Со склада» — the lots that can cover the line (warehouse search by the typed text, otherwise by АРТИКУЛ,
+    then by НАИМЕНОВАНИЕ), with what is available and who already holds their reserve."""
+    try:
+        found = stock_candidates(line_id, uow_factory(), query=q)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {
+        "line": _line_result(found.line),
+        "query": found.query,
+        "lots": [_candidate_result(lot, found.line, found.holders.get(lot.id, [])) for lot in found.lots],
+        "covers": [_cover_result(cover) for cover in found.covers],
+    }
+
+
+@router.post("/{line_id}/stock-cover")
+def cover_line_from_stock(
+    line_id: UUID,
+    payload: StockCoverInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """«Со склада»: reserve `quantity` of lot `lot_id` for the line; all of it covered → «Готово», no money."""
+    covers: list[StockCover] = []
+
+    def operation() -> ProcurementLine:
+        line, cover = cover_from_stock(
+            CoverFromStockCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                lot_id=payload.lot_id,
+                quantity=payload.quantity,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+        covers[:] = [cover]
+        return line
+
+    result = _transition(operation)
+    return {**result, "cover": _cover_result(covers[0])}
+
+
+@router.post("/{line_id}/stock-cover/release")
+def release_line_stock_cover(
+    line_id: UUID,
+    payload: StockCoverReleaseInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """«Снять "Со склада"»: every active cover of the line (or only `cover_id`) goes back to its lot."""
+    released: list[StockCover] = []
+
+    def operation() -> ProcurementLine:
+        line, covers = release_stock_cover(
+            ReleaseStockCoverCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                actor=principal.actor,
+                now=now,
+                cover_id=payload.cover_id,
+            ),
+            uow_factory(),
+        )
+        released[:] = covers
+        return line
+
+    result = _transition(operation)
+    return {**result, "released": [_cover_result(cover) for cover in released]}

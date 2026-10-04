@@ -128,7 +128,19 @@ def event_text(event_type: str, details: Mapping[str, object]) -> str:
         return f"Справочник типов сохранён: {_text(details, 'count')}"
     if event_type == "warehouse.rack_layout_saved":
         return f"Склад 0.5: {_text(details, 'message')}"
+    if event_type in _RESERVE_EVENTS:
+        unit = _text(details, "unit")
+        quantity = _number(details.get("quantity")) + (f" {unit}" if unit else "")
+        return f"{_RESERVE_EVENTS[event_type]}: {quantity} · {_text(details, 'holder') or '—'}"
     return event_type
+
+
+# «Со склада» of procurement lines (owner 2026-10-04): the lot's РЕЗЕРВ moves without a write-off row.
+_RESERVE_EVENTS = {
+    "warehouse.reserved_for_procurement": "Резерв «Со склада»",
+    "warehouse.procurement_reserve_released": "Снят резерв «Со склада»",
+    "warehouse.procurement_reserve_taken_by_kit": "Резерв «Со склада» передан в комплектацию",
+}
 
 
 def _event_row(event: JournalEvent) -> JournalRow:

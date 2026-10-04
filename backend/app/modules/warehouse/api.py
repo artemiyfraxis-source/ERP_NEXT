@@ -261,8 +261,47 @@ def _kitting_reserve(request: Request, lot_id: UUID) -> Decimal:
         return uow.fulfillment.reserved_on_lot(lot_id)
 
 
+def _procurement_reserve(request: Request, lot_id: UUID) -> Decimal:
+    """Reserve «Со склада» of procurement lines on the lot, read through the procurement unit of work the same
+    way as `_kitting_reserve` (a cover or release after this read bumps the lot version → 409)."""
+    factory = getattr(request.app.state, "procurement_uow_factory", None)
+    if not callable(factory):
+        return Decimal("0")
+    with factory() as uow:
+        covers = getattr(uow, "stock_covers", None)
+        return covers.reserved_on_lot(lot_id) if covers is not None else Decimal("0")
+
+
+def _reserve_holders(request: Request, lots: list[StockLot]) -> dict[UUID, list[dict]]:
+    """Who holds each lot's РЕЗЕРВ through «Со склада»: «SM-20261002-01 / 591К.3 — 80 шт» (owner 2026-10-04)."""
+    factory = getattr(request.app.state, "procurement_uow_factory", None)
+    if not callable(factory) or not lots:
+        return {}
+    holders: dict[UUID, list[dict]] = {}
+    with factory() as uow:
+        covers = getattr(uow, "stock_covers", None)
+        if covers is None:
+            return {}
+        for cover in covers.active_on_lots([lot.id for lot in lots]):
+            holders.setdefault(cover.lot_id, []).append({
+                "kind": "procurement",
+                "label": cover.label,
+                "procurement_line_id": str(cover.line_id),
+                "quantity": _number(cover.quantity),
+                "unit": cover.unit,
+            })
+    return holders
+
+
+def _reserve_note(holders: list[dict]) -> str:
+    if not holders:
+        return ""
+    return "резерв: " + "; ".join(f"{item['label']} — {item['quantity']} {item['unit']}".rstrip() for item in holders)
+
+
 @router.get("")
 def lots(
+    request: Request,
     _principal: Annotated[Principal, Depends(warehouse_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
@@ -283,8 +322,16 @@ def lots(
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     page = lots[:limit]
+    holders = _reserve_holders(request, [lot for lot in page if lot.reserved > 0])
     return {
-        "lots": [_result(lot) for lot in page],
+        "lots": [
+            {
+                **_result(lot),
+                "reserve_holders": holders.get(lot.id, []),
+                "reserve_note": _reserve_note(holders.get(lot.id, [])),
+            }
+            for lot in page
+        ],
         "total": total,
         "truncated": max(0, total - len(page)),
         "next_cursor": str(page[-1].id) if len(lots) > limit else None,
@@ -603,6 +650,9 @@ def edit_row(
                 actor=principal.actor,
                 now=now,
                 kitting_reserve=_kitting_reserve(request, lot_id) if "reserved" in changes else Decimal("0"),
+                procurement_reserve=(
+                    _procurement_reserve(request, lot_id) if "reserved" in changes else Decimal("0")
+                ),
             ),
             uow_factory(),
         )

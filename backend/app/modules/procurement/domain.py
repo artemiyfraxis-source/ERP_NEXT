@@ -106,6 +106,8 @@ BY_SUPPLIER_STAGES = STATUS_ORDER[:5]
 BY_SUPPLIER_CLOSED = frozenset(
     {ProcurementStatus.IN_TRANSIT, ProcurementStatus.DONE, ProcurementStatus.CANCELLED}
 )
+# «Со склада» is set and taken off while the line is with its buyer, before the supplier request is formed.
+STOCK_COVER_STAGES = frozenset({ProcurementStatus.IN_WORK, ProcurementStatus.READY})
 
 def supplier_key(value: object) -> str:
     """`supplierKey_` (Schema.gs:220): a URL/host → its host without «www.» (lower case); any other
@@ -255,6 +257,13 @@ class ProcurementLine:
     # Инициатор as a user: status notifications go to this id; None = the name matched nobody (not notified).
     initiator_id: UUID | None = None
     trace: ProcurementTraceability = ProcurementTraceability()
+    # «Со склада» (owner 2026-10-04): how much of КОЛ-ВО (Расчет) our own lots hold in reserve for this line.
+    stock_covered: Decimal = Decimal("0")
+
+    @property
+    def to_buy(self) -> Decimal:
+        """What is still to buy after the stock cover: КОЛ-ВО (Расчет) − «Со склада», never below zero."""
+        return max(self.calculated_quantity - self.stock_covered, Decimal("0"))
 
     @property
     def replacement_open(self) -> bool:
@@ -631,6 +640,8 @@ class ProcurementLine:
         # An unclaimed «Новый» line has no owner yet: whoever parks or cancels it takes it.
         if self.buyer is not None:
             self._require_owner(actor)
+        if self.status is ProcurementStatus.DONE and self.paid_at is None and self.stock_covered > 0:
+            raise ProcurementValidationError("Строка закрыта «Со склада» — сначала снимите «Со склада»")
         if self.status in _PAID_STATUSES:
             raise ProcurementValidationError(
                 "Строка оплачена и передана в приёмку — согласование и отмена уже невозможны"
@@ -647,6 +658,69 @@ class ProcurementLine:
             supplier=self.supplier, actual_quantity=self.actual_quantity, actual_unit=self.actual_unit
         )
         return ProcurementStatus.READY if _facts_ready(facts, self.delivery_point) else ProcurementStatus.IN_WORK
+
+    def cover_from_stock(self, quantity: Decimal, lot_unit: str, actor: Actor) -> tuple[ProcurementLine, Decimal]:
+        """«Со склада»: the buyer covers part or all of КОЛ-ВО (Расчет) from a lot instead of buying it.
+
+        Only before the supplier request (`В работе` / `Готов к запросу`) and by the line's buyer. The whole
+        quantity covered → «Готово» (SUPPLYMAP `purchaseQtyZeroDone_`, Guards.gs:36-62: nothing left to buy is
+        «Готово»), with no money: the line never reaches the supplier request, invoice or payment. A part →
+        the stage stays and КОЛ-ВО (факт) drops by the covered amount, never below what is still to buy.
+        Returns the line and how much КОЛ-ВО (факт) was cut, so a release can give it back."""
+        self._require_owner(actor)
+        if self.status not in STOCK_COVER_STAGES:
+            raise ProcurementValidationError(
+                "«Со склада» ставится строке в работе у закупщика — до запроса поставщику"
+            )
+        amount = _stock_quantity(quantity)
+        if not same_unit(self.calculated_unit, lot_unit):
+            raise ProcurementValidationError(
+                f"Единицы не совпадают: в строке «{self.calculated_unit}», у партии «{lot_unit}»"
+            )
+        if amount > self.to_buy:
+            raise ProcurementValidationError(
+                f"Со склада больше, чем осталось закупить: осталось {_shown_quantity(self.to_buy)}"
+                f" {self.calculated_unit}"
+            )
+        covered = self.stock_covered + amount
+        if covered >= self.calculated_quantity:
+            closed = replace(self, stock_covered=covered, status=ProcurementStatus.DONE, version=self.version + 1)
+            return closed, Decimal("0")
+        remaining = self.calculated_quantity - covered
+        trimmed = Decimal("0")
+        if self.actual_quantity is not None and self.actual_quantity > remaining:
+            trimmed = min(amount, self.actual_quantity - remaining)
+        actual = self.actual_quantity - trimmed if self.actual_quantity is not None else None
+        status = self.status
+        facts = ProcurementFacts(supplier=self.supplier, actual_quantity=actual, actual_unit=self.actual_unit)
+        if status is ProcurementStatus.IN_WORK and _facts_ready(facts, self.delivery_point):
+            status = ProcurementStatus.READY
+        updated = replace(
+            self, stock_covered=covered, actual_quantity=actual, status=status, version=self.version + 1,
+        )
+        return updated, trimmed
+
+    def release_stock_cover(self, quantity: Decimal, trimmed: Decimal, actor: Actor) -> ProcurementLine:
+        """«Снять "Со склада"»: the reserve goes back to the lot and the line has that much to buy again.
+
+        КОЛ-ВО (факт) gets back what the cover cut from it. A line closed by the cover («Готово», unpaid)
+        reopens on the stage its own data has reached, like the exit from «Согласование». Once the
+        supplier request is out the cover stays: the order was formed for the remainder only."""
+        self._require_owner(actor)
+        amount = _stock_quantity(quantity)
+        closed_by_cover = self.status is ProcurementStatus.DONE and self.paid_at is None
+        if self.status not in STOCK_COVER_STAGES and not closed_by_cover:
+            raise ProcurementValidationError(
+                "Заказ поставщику уже сформирован — «Со склада» на этой строке не снимается"
+            )
+        if amount > self.stock_covered:
+            raise ProcurementValidationError("Снимаем больше, чем закрыто со склада")
+        actual = self.actual_quantity
+        if actual is not None and trimmed > 0:
+            actual = actual + min(trimmed, amount)
+        reopened = replace(self, stock_covered=self.stock_covered - amount, actual_quantity=actual)
+        status = reopened._stage_from_data() if closed_by_cover else self.status
+        return replace(reopened, status=status, version=self.version + 1)
 
     def reconcile_rate(self, rate: ExchangeRate, actor: Actor) -> ProcurementLine:
         """Replace a manually typed rate with the CBR one for the same day and replay the amounts."""
@@ -669,6 +743,30 @@ class ProcurementLine:
 
 def _text(value: str | None) -> str:
     return str(value or "").strip()
+
+
+def _stock_quantity(value: Decimal) -> Decimal:
+    try:
+        amount = Decimal(value)
+    except (DecimalException, TypeError, ValueError) as error:
+        raise ProcurementValidationError("Количество со склада — число") from error
+    if not amount.is_finite() or amount <= 0:
+        raise ProcurementValidationError("Количество со склада должно быть больше нуля")
+    return amount
+
+
+def _unit_key(value: str | None) -> str:
+    return _text(value).casefold().rstrip(".")
+
+
+def same_unit(line_unit: str | None, lot_unit: str | None) -> bool:
+    """A lot of another ЕД.ИЗМ («м» against «шт») cannot cover the line; an empty unit is not a conflict."""
+    left, right = _unit_key(line_unit), _unit_key(lot_unit)
+    return not left or not right or left == right
+
+
+def _shown_quantity(value: Decimal) -> str:
+    return format(value.normalize(), "f")
 
 
 def _validate_actor(actor: Actor) -> None:
@@ -868,6 +966,7 @@ def create_backorder_line(original: ProcurementLine, message: OutboxMessage, leg
         calculated_sum=calculated_sum,
         actual_quantity=quantity,
         expected_arrival=None,
+        stock_covered=Decimal("0"),
         money=rescale_to_quantity(original.money, original.actual_quantity or quantity, quantity),
     )
 
@@ -1174,3 +1273,79 @@ def split_line(
             )
         )
     return result
+
+
+# --- «Со склада» (owner 2026-10-04) ------------------------------------------------------------------
+
+_PROJECT_HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
+_PROJECT_WITHOUT_VERSION = re.compile(r"([1-9]\d*(?:К[А-Я]?|МФ)(?:\.[А-Я]{1,3})?)\.?")
+
+
+def project_key(value: str | None) -> str:
+    """A project number to compare by: upper case, no spaces, Latin look-alikes folded, «728К» = «728К.1»."""
+    normalized = re.sub(r"\s+", "", _text(value).upper()).translate(_PROJECT_HOMOGLYPHS)
+    match = _PROJECT_WITHOUT_VERSION.fullmatch(normalized)
+    return f"{match.group(1)}.1" if match else normalized.rstrip(".")
+
+
+@dataclass(frozen=True)
+class StockCover:
+    """A reserve one procurement line holds on one warehouse lot instead of buying that quantity.
+
+    The lot's РЕЗЕРВ carries `quantity` (the same counter kitting reserves through, so ДОСТУПНО = БАЛАНС − РЕЗЕРВ
+    stays one number). A kit request of the same project takes it over (`consume`): the reserve moves to the kit
+    line without leaving the lot, `consumed`/`consumed_by` keep the trace. `trimmed` is how much КОЛ-ВО (факт)
+    of the line the cover cut, given back on release."""
+
+    id: UUID
+    line_id: UUID
+    legacy_id: str
+    project_reference: str | None
+    lot_id: UUID
+    warehouse: str
+    grn: str
+    package: str
+    storage_location: str
+    unit: str
+    quantity: Decimal
+    created_at: datetime
+    created_by: str
+    created_by_id: UUID | None = None
+    trimmed: Decimal = Decimal("0")
+    consumed: Decimal = Decimal("0")
+    consumed_by: str = ""
+    released_at: datetime | None = None
+    version: int = 1
+
+    @property
+    def active(self) -> bool:
+        return self.quantity > 0
+
+    @property
+    def label(self) -> str:
+        """«SM-20261002-01 / 591К.3» — who holds the reserve, as the lot shows it."""
+        return f"{self.legacy_id} / {self.project_reference}" if self.project_reference else self.legacy_id
+
+    def serves_project(self, project: str | None) -> bool:
+        key = project_key(project)
+        return bool(key) and key == project_key(self.project_reference)
+
+    def release(self, now: datetime) -> StockCover:
+        if not self.active:
+            raise ProcurementValidationError("Резерв «Со склада» уже снят")
+        return replace(self, quantity=Decimal("0"), released_at=now, version=self.version + 1)
+
+    def consume(self, quantity: Decimal, request_number: str) -> StockCover:
+        amount = _stock_quantity(quantity)
+        if amount > self.quantity:
+            raise ProcurementValidationError("Комплектация берёт больше, чем держит «Со склада»")
+        numbers = [item for item in self.consumed_by.split(", ") if item]
+        if request_number and request_number not in numbers:
+            numbers.append(request_number)
+        return replace(
+            self,
+            quantity=self.quantity - amount,
+            consumed=self.consumed + amount,
+            consumed_by=", ".join(numbers),
+            version=self.version + 1,
+        )

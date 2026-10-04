@@ -10,6 +10,7 @@ import json
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
+from app.modules.procurement.domain import StockCover
 from app.modules.warehouse.domain import (
     ISSUE_WRITEOFF_AUTHOR,
     StockLot,
@@ -26,6 +27,7 @@ from .domain import (
     FulfillmentRequest,
     FulfillmentValidationError,
     LotSnapshot,
+    project_of,
 )
 
 
@@ -57,6 +59,13 @@ class WarehouseRepository(Protocol):
 
 class AppendOnlyRepository(Protocol):
     def add(self, item) -> None: ...
+
+
+class StockCoverRepository(Protocol):
+    """Procurement «Со склада» reserves; optional on the unit of work (`stock_covers`), see `_project_covers`."""
+
+    def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[StockCover]: ...
+    def add(self, cover: StockCover) -> None: ...
 
 
 class UnitOfWork(Protocol):
@@ -178,6 +187,74 @@ def _versioned(
     return request
 
 
+def _project_covers(uow: UnitOfWork, lot: StockLot, purpose: str) -> list[StockCover]:
+    """«Со склада» reserves procurement lines of the kit's own project hold on the lot (owner 2026-10-04): the kit
+    takes them over first. A cover always sits in the lot's РЕЗЕРВ, so a lot without one has none to look up. A unit
+    of work without the procurement covers port (test fakes) takes none."""
+    covers = getattr(uow, "stock_covers", None)
+    project = project_of(purpose)
+    if covers is None or not project or lot.reserved <= 0:
+        return []
+    return [cover for cover in covers.active_on_lots([lot.id]) if cover.serves_project(project)]
+
+
+def _take_over_covers(
+    covers: Sequence[StockCover],
+    amount: Decimal,
+    request: FulfillmentRequest,
+    lot: StockLot,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+) -> Decimal:
+    """Move up to `amount` of those reserves to the kit line. The lot's РЕЗЕРВ does not change for that part — it
+    only changes holder (procurement cover → kit line); the cover keeps how much and which request took it."""
+    left = amount
+    for cover in covers:
+        if left <= 0:
+            break
+        take = min(cover.quantity, left)
+        uow.stock_covers.add(cover.consume(take, request.number))
+        details = {
+            "quantity": format(take.normalize(), "f"),
+            "unit": cover.unit,
+            "holder": cover.label,
+            "procurement_line_id": str(cover.line_id),
+            "cover_id": str(cover.id),
+            "request": request.number,
+        }
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=lot.id, event_type="warehouse.procurement_reserve_taken_by_kit",
+            actor=actor, occurred_at=now, details=details,
+        ))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=cover.line_id, event_type="procurement.stock_cover_taken_by_kit",
+            actor=actor, occurred_at=now, details={**details, "legacy_id": cover.legacy_id},
+        ))
+        left -= take
+    return amount - left
+
+
+def _reserve_for_kit(
+    request: FulfillmentRequest,
+    lot: StockLot,
+    wanted: Decimal,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+) -> tuple[Decimal, StockLot]:
+    """How much of `wanted` the kit gets from the lot: the project's «Со склада» reserve first, then ДОСТУПНО.
+    → (given, the lot to save)."""
+    covers = _project_covers(uow, lot, request.purpose)
+    held = sum((cover.quantity for cover in covers), Decimal("0"))
+    give = min(wanted, max(lot.available, Decimal("0")) + held)
+    if give <= 0:
+        return Decimal("0"), lot
+    taken = _take_over_covers(covers, give, request, lot, actor, now, uow)
+    rest = give - taken
+    return give, (lot.reserve(rest) if rest > 0 else lot)
+
+
 def _audit(
     request: FulfillmentRequest,
     event_type: str,
@@ -234,10 +311,11 @@ def create_fulfillment(
             if lot_id is None:
                 continue
             lot = uow.warehouse.get(lot_id)
-            give = min(line.requirement, lot.available) if lot is not None else Decimal("0")
             if lot is None:
                 shortfall.append(f"{line.name}: партия не найдена на складе ({_display_number(line.requirement)})")
                 continue
+            # The project's «Со склада» reserve on this lot counts as the kit's own (taken over first).
+            give, reserved_lot = _reserve_for_kit(request, lot, line.requirement, command.actor, command.now, uow)
             if give < line.requirement:
                 package = f"·пак.{lot.package}" if lot.package else ""
                 shortfall.append(f"{line.name} ({lot.grn}{package}): −{_display_number(line.requirement - give)}")
@@ -251,7 +329,7 @@ def create_fulfillment(
                 storage_location=lot.storage_location,
             )
             request = request.bind_line(line.id, snapshot, give, lot.unit, touch=False)
-            uow.warehouse.add(lot.reserve(give))
+            uow.warehouse.add(reserved_lot)
             reserved += 1
         written = bool(command.lot_ids or command.short_note)
         request = replace(request, version=1, shortfall_note="; ".join(shortfall) if written else None)
@@ -273,7 +351,8 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
         if lot is None:
             raise KeyError(f"Warehouse lot not found: {command.lot_id}")
         # issueAttachLot_ does not compare units: any lot with a balance can be bound, its ЕД.ИЗМ goes to the line.
-        quantity = min(line.requirement, lot.available)
+        # The project's «Со склада» reserve on the lot is the kit's own: taken over before ДОСТУПНО is touched.
+        quantity, reserved_lot = _reserve_for_kit(request, lot, line.requirement, command.actor, command.now, uow)
         if quantity <= 0:
             raise FulfillmentValidationError("У выбранной партии нет доступного остатка")
         snapshot = LotSnapshot(
@@ -284,7 +363,7 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
             storage_location=lot.storage_location,
         )
         updated = request.bind_line(line.id, snapshot, quantity, lot.unit).stamped(command.now)
-        uow.warehouse.add(lot.reserve(quantity))
+        uow.warehouse.add(reserved_lot)
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity)}, uow)
         uow.commit()

@@ -79,3 +79,25 @@ def test_invoice_files_migration_creates_and_drops_the_storage(tmp_path):
     command.downgrade(config, "0066_identity_pin_admin_mode")
     with sqlite3.connect(database_path) as connection:
         assert not connection.execute("SELECT name FROM sqlite_master WHERE name = 'procurement_files'").fetchall()
+
+
+def test_stock_cover_migration_adds_covers_and_zero_covered_then_downgrade_removes_them(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "covers.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+    command.upgrade(config, "0078_wipe_projects_once")
+    assert "stock_covered" not in _columns(database_path)
+
+    command.upgrade(config, "0079_procurement_stock_covers")
+    assert "stock_covered" in _columns(database_path)
+    with sqlite3.connect(database_path) as connection:
+        covers = {row[1] for row in connection.execute("PRAGMA table_info(procurement_stock_covers)")}
+    assert covers >= {"line_id", "lot_id", "quantity", "trimmed", "consumed", "consumed_by", "project_reference"}
+
+    command.downgrade(config, "0078_wipe_projects_once")
+    assert "stock_covered" not in _columns(database_path)
+    with sqlite3.connect(database_path) as connection:
+        assert not connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'procurement_stock_covers'"
+        ).fetchall()
