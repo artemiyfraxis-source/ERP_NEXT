@@ -404,5 +404,15 @@ describe("ProjectsPage", () => {
     expect(kitBatch("", "10", "5")).toBe(0);
     expect(deleteSummary({ project: "708К.4", deleted: 3, erp: { "Проекты": 1 }, cards: { cards: 2, revisions: 1 }, gp: { deleted: 2, kept: 1 } }))
       .toBe("Снесено строк: спецификация 3, проекты 1, техкарты 2, склад ГП 2. На складе ГП осталось с движением: 1");
+    const tails = {
+      fulfillment: { deleted: 12, kept: 1 }, production: { deleted: 1, kept: 0 }, requests: { deleted: 3, kept: 0 },
+      freed: 0, kept: [{ section: "fulfillment", label: "ЗК-0005 · 719К.2 · КБ3", reason: "по нему уже выдано со склада" }],
+      message: "Удалено: 12 запросов на комплектацию, 1 производственное задание, 3 заявки на закупку. Осталось: "
+        + "1 запрос на комплектацию — по нему уже выдано со склада (ЗК-0005 · 719К.2 · КБ3).",
+    };
+    expect(deleteSummary({ project: "719К.2", deleted: 3, erp: {}, cards: { cards: 0, revisions: 0 }, gp: { deleted: 0, kept: 0 }, tails, tails_error: "" }))
+      .toBe("Снесено строк: спецификация 3. " + tails.message);
+    expect(deleteSummary({ project: "719К.2", deleted: 3, erp: {}, cards: { cards: 0, revisions: 0 }, gp: { deleted: 0, kept: 0 }, tails: null, tails_error: "Задания не удалены: сбой" }))
+      .toBe("Снесено строк: спецификация 3. Задания не удалены: сбой");
   });
 });

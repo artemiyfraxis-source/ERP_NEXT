@@ -2338,6 +2338,16 @@ export interface KitsetDeleteResult {
   erp: Record<string, number>;
   cards: { cards: number; revisions: number };
   gp: { deleted: number; kept: number };
+  /** Хвосты без движения: запросы на комплектацию, задания, заявки на закупку; `message` — итог по-русски. */
+  tails?: {
+    fulfillment: { deleted: number; kept: number };
+    production: { deleted: number; kept: number };
+    requests: { deleted: number; kept: number };
+    freed: number;
+    kept: { section: string; label: string; reason: string }[];
+    message: string;
+  } | null;
+  tails_error?: string;
 }
 
 const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
