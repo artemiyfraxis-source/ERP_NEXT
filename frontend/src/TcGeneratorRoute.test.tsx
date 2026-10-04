@@ -145,11 +145,11 @@ it("opens a block with the same operation editor the list has, so its template a
   mount();
   await screen.findByText("Схема полуфабрикатов");
   fireEvent.click(screen.getByRole("button", { name: "Показать схему" }));
-  expect(screen.getAllByLabelText("Шаблон: Резка — МГТФ 0,12")).toHaveLength(1);
+  expect(screen.getAllByLabelText("Карточка: Резка — МГТФ 0,12")).toHaveLength(1);
   fireEvent.click(within(screen.getByRole("list", { name: "Блоки схемы" })).getByRole("button", { name: /Резка — МГТФ 0,12/ }));
   const panel = screen.getByRole("region", { name: "Блок «Резка — МГТФ 0,12»" });
-  expect(screen.getAllByLabelText("Шаблон: Резка — МГТФ 0,12")).toHaveLength(2);
-  fireEvent.change(within(panel).getByLabelText("Шаблон: Резка — МГТФ 0,12"), { target: { value: "prsA" } });
+  expect(screen.getAllByLabelText("Карточка: Резка — МГТФ 0,12")).toHaveLength(2);
+  fireEvent.change(within(panel).getByLabelText("Карточка: Резка — МГТФ 0,12"), { target: { value: "prsA" } });
   // одно состояние формы: тот же шаблон стоит и в общем списке операций
-  await waitFor(() => expect((screen.getAllByLabelText("Шаблон: Резка — МГТФ 0,12") as HTMLSelectElement[]).map((select) => select.value)).toEqual(["prsA", "prsA"]));
+  await waitFor(() => expect((screen.getAllByLabelText("Карточка: Резка — МГТФ 0,12") as HTMLSelectElement[]).map((select) => select.value)).toEqual(["prsA", "prsA"]));
 });

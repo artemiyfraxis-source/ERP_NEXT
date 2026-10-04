@@ -49,9 +49,10 @@ import { RouteEditor } from "./RouteEditor";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 import { ManualAssembly, ManualOpSummary } from "./ManualAssembly";
 import {
-  MANUAL_MODE, chainRoute, emptyManual, manualConfig, manualFromConfig, manualProblem, routeOps as manualRouteOps, setRoute,
+  MANUAL_MODE, cardCategory, cardLabel, chainRoute, emptyManual, manualConfig, manualFromConfig, manualProblem, routeOps as manualRouteOps, setRoute,
   type LibraryCard, type ManualState,
 } from "./manualLogic";
+import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia"> & { library: LibraryCard[] };
@@ -61,6 +62,15 @@ const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex
 const WRAP_KINDS: Array<[WrapKind, string]> = [
   ["tape", "Лента — последней операцией"], ["braid", "Оплётка — до термоусадки"], ["under", "Лента под оплётку — перед ней"],
 ];
+const MEASURE_MODES = [
+  ["inner", "Между разъёмами", "+L+"], ["outer", "От краёв разъёмов", "−L−"], ["cut", "Длина реза по КД", "без припуска"],
+] as const;
+const OP_TIMES = [["tPrep", "Подготовка", "Подготовка, сек"], ["tOp", "На штуку", "Операция, сек/шт"], ["tMachine", "Машинное", "Машинное, сек/шт"]] as const;
+
+function plural(n: number, one: string, few: string, many: string) {
+  const d = n % 10, dd = n % 100;
+  return d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many;
+}
 
 /** Сводка соединений формы: по проводу и паре разъёмов — «провод · А1 → В1» и пары контактов по порядку. */
 function linkGroups(list: Connection[]) {
@@ -144,6 +154,20 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const [coaxAdd, setCoaxAdd] = useState<Record<string, Record<string, string>>>({});
 
   useEffect(() => { void loadRefs().then(setRefs); }, []);
+
+  // Карточки операций для выбора: русское название (с стороной), код — вторым планом; по категориям, «Прочее» — в конце.
+  const cards = useMemo(() => {
+    const byId = new Map<string, CardOption>();
+    const groups = new Map<string, CardOption[]>();
+    for (const card of refs?.library || []) {
+      const option = { id: card.id, label: cardLabel(card), code: card.code || "" };
+      byId.set(card.id, option);
+      const category = cardCategory(card);
+      groups.set(category, [...(groups.get(category) || []), option]);
+    }
+    const sorted = [...groups.entries()].sort(([a], [b]) => (a === "Прочее" ? 1 : b === "Прочее" ? -1 : a.localeCompare(b, "ru")));
+    return { byId, groups: sorted };
+  }, [refs]);
 
   const components = useMemo<Comp[]>(() => (kit?.components || []).map((item) => ({
     id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", qty: item.qty,
@@ -398,63 +422,82 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     update((current) => ({ ...current, twist: { ...current.twist, z0: value, pitch: res ? String(res.p).replace(".", ",") : current.twist.pitch } }));
   }
 
+  /** Разъём стороны: шапка «А1 · артикул · обжим», поля плотной сеткой, нормы терминала, подбор по сечению, параметры
+      чипами, распиновка — свёрнута. */
   function endpointCard(ep: Endpoint) {
     const ord = gen.endpointOrdinal_(ep);
+    const name = sideRu_(ep.side) + ord;
     const crimp = ep.method === "crimp";
     const routedList = gen.routedWireIdxs_(ep);
     const routed = new Set(routedList);
+    const conn = gen.getCompById(ep.connId);
     const term = gen.getCompById(ep.termId);
     const ter = term ? gen.findTerRecord_(term.art) : null;
     const set = (patch: Partial<Endpoint>) => update((current) => updateEndpoint(D, current, ep.id, patch));
     const single = gen.endpointsOnSide_(ep.side).length < 2;
     const showRouting = complex && active.length > 0 && !(single && !S.endpoints.some((e) => e.side !== ep.side));
-    const chips = active.map((w, pos) => <label className="ep-chip" key={w.idx}>
-      <input type="checkbox" checked={routed.has(w.idx)} onChange={() => update((current) => toggleRoute(current, makeGen(D, current), ep.id, w.idx))} />
-      {` Кабель ${pos + 1} (${compLabel(w.compId)})`}
-    </label>);
+    const chips = active.map((w, pos) => <Chip key={w.idx} checked={routed.has(w.idx)} onChange={() => update((current) => toggleRoute(current, makeGen(D, current), ep.id, w.idx))}>
+      {`Кабель ${pos + 1} · ${compLabel(w.compId)}`}</Chip>);
     const terValues = { lPlus: ter?.lPlus || "", lMinus: ter?.lMinus || "", step: ter?.step || "", applicator: ter?.applicator || "", ...(terEdits[ep.id] || {}) };
     const terDirty = !!terEdits[ep.id] && Object.entries(terEdits[ep.id]).some(([key, value]) => value !== ((ter as unknown as Record<string, string>)?.[key] || ""));
+    const setTer = (key: string, value: string) => setTerEdits((current) => ({ ...current, [ep.id]: { ...(current[ep.id] || {}), [key]: value } }));
     const norm = terNorms[ep.id];
+    // «Применить» подставляет аппликатор подбора в поле БД.ТЕР, когда подбор однозначен и отличается от записанного.
+    const picks = norm ? norm.by_section.filter((item) => item.found && item.applicator) : [];
+    const pickApplicator = picks.length && picks.every((item) => item.applicator === picks[0].applicator) ? picks[0].applicator : "";
+    const allRouted = active.every((w) => routed.has(w.idx));
+    const pinned = active.some((w) => routed.has(w.idx) && ep.pins?.[w.idx]);
     return <div className="ep-card" key={ep.id}>
-      <div className="ep-head"><span className="ep-badge">{sideRu_(ep.side) + ord}</span>
-        <button className="btn-remove" title="Удалить разъём" onClick={() => update((current) => ({ ...current, endpoints: current.endpoints.filter((e) => e.id !== ep.id) }))}>×</button></div>
-      <label className="field-label">Разъём / Корпус{selectComps(bomConns, ep.connId, (id) => set({ connId: id }), `Разъём ${sideRu_(ep.side)}${ord}`)}</label>
-      {complex && <label className="field-label">Наименование по чертежу<input value={ep.label} placeholder="напр. GIMBAL, NODE, PWR…" onChange={(event) => set({ label: event.target.value })} /></label>}
-      <div className="ep-method">
-        <label><input type="radio" name={`m_${ep.id}`} checked={crimp} onChange={() => set({ method: "crimp" })} /> Обжим</label>
-        <label><input type="radio" name={`m_${ep.id}`} checked={!crimp} onChange={() => set({ method: "solder" })} /> Пайка</label>
-        {ep.methodAuto && <span className="ep-auto">авто</span>}
+      <div className="ep-head">
+        <b className="ep-badge">{name}</b>
+        <span className="ep-title">{conn ? conn.art || conn.name : "разъём не выбран"}</span>
+        <span className="ep-kind">{crimp ? "обжим" : "пайка"}{ep.methodAuto ? " · авто" : ""}</span>
+        <button type="button" className="btn-remove" title="Удалить разъём" aria-label={`Удалить разъём ${name}`}
+          onClick={() => update((current) => ({ ...current, endpoints: current.endpoints.filter((e) => e.id !== ep.id) }))}>×</button>
       </div>
-      {crimp ? <>
-        <label className="field-label">Терминал{selectComps(bomTerms, ep.termId, (id) => set({ termId: id }), `Терминал ${sideRu_(ep.side)}${ord}`)}</label>
-        {term && <small className={ter ? "ok-text" : "danger-text"}>{routedList.length} шт{ter ? "" : " · нет в БД.ТЕР"}</small>}
-        {term && <div className="ter-row">
-          {([["lPlus", "L+, мм"], ["lMinus", "L−, мм"], ["step", "Шаг"], ["applicator", "Аппликатор"]] as const).map(([key, label]) =>
-            <label key={key} className="field-label">{label}<input className={terEdits[ep.id]?.[key] !== undefined ? "f-warn" : terValues[key] ? "f-ok" : "f-empty"} value={terValues[key]} placeholder="—"
-              onChange={(event) => setTerEdits((current) => ({ ...current, [ep.id]: { ...(current[ep.id] || {}), [key]: event.target.value } }))} /></label>)}
-          {terDirty && <button className="secondary small" onClick={() => void saveTer(ep)}>Записать в БД</button>}
-        </div>}
-        {norm && <small className="muted">Подбор по сечению: {norm.by_section.map((item) => `${item.section || "сечение?"} → ${item.found ? `${item.applicator || "аппл. —"}, h=${item.crimp_height || "—"}${item.pull_force ? `, F=${item.pull_force}` : ""}${item.range_only ? " (по вилке)" : ""}` : "нет нормы"}`).join("; ")}</small>}
-        <label className="ep-otp"><input type="checkbox" checked={ep.otp} onChange={(event) => set({ otp: event.target.checked })} /> OTP — обжим без зачистки (провод даётся зачищенным)</label>
+      <div className="ep-grid">
+        <Field label="Разъём / корпус" className="lead">{selectComps(bomConns, ep.connId, (id) => set({ connId: id }), `Разъём ${name}`)}</Field>
+        <div className="gfield"><span className="gfield-label">Монтаж</span>
+          <Seg label={`Монтаж ${name}`} value={crimp ? "crimp" : "solder"} options={[["crimp", "Обжим"], ["solder", "Пайка"]]} onChange={(method) => set({ method })} /></div>
+        {crimp && <Field label="Терминал"
+          hint={term ? <span className={ter ? undefined : "tone-danger"}>{routedList.length} шт{ter ? "" : " · нет в БД.ТЕР"}</span> : undefined}>
+          {selectComps(bomTerms, ep.termId, (id) => set({ termId: id }), `Терминал ${name}`)}</Field>}
+        {complex && <Field label="Наименование по чертежу" className="lead"><input value={ep.label} placeholder="напр. GIMBAL, NODE, PWR…" onChange={(event) => set({ label: event.target.value })} /></Field>}
+      </div>
+      {crimp && term && <div className="ep-ter" aria-label={`Нормы терминала ${name}`}>
+        {([["lPlus", "L+", "мм"], ["lMinus", "L−", "мм"], ["step", "Шаг", "мм"]] as const).map(([key, label, unit]) =>
+          <Field key={key} label={label}><UnitInput unit={unit} value={terValues[key]} placeholder="—" onChange={(event) => setTer(key, event.target.value)} /></Field>)}
+        <Field label="Аппликатор" className="wide"><input value={terValues.applicator} placeholder="—" onChange={(event) => setTer("applicator", event.target.value)} /></Field>
+        {terDirty && <button type="button" className="secondary small" onClick={() => void saveTer(ep)}>Записать в БД</button>}
+      </div>}
+      {crimp && norm && norm.by_section.length > 0 && <div className="ep-norm">
+        <span>Подбор по сечению: {norm.by_section.map((item) => `${item.section || "сечение?"} → ${item.found ? `${item.applicator || "аппл. —"}, h=${item.crimp_height || "—"}${item.pull_force ? `, F=${item.pull_force}` : ""}${item.range_only ? " (по вилке)" : ""}` : "нет нормы"}`).join("; ")}</span>
+        {pickApplicator && pickApplicator !== terValues.applicator && <button type="button" className="btn-link" title={`Аппликатор ${pickApplicator} — в поле «Аппликатор»`} onClick={() => setTer("applicator", pickApplicator)}>Применить</button>}
+      </div>}
+      {crimp ? <div className="chip-row ep-opts">
+        <Chip checked={ep.otp} onChange={(on) => set({ otp: on })}>Без зачистки (OTP)<small>провод зачищен заранее</small></Chip>
         {complex ? <>
-          <label className="ep-otp"><input type="checkbox" checked={ep.double} onChange={(event) => set({ double: event.target.checked })} /> Групповой обжим — по
-            <input type="number" min={2} max={6} value={gen.epPer_(ep)} style={{ width: 42 }} onChange={(event) => set({ perTerm: Math.max(2, parseInt(event.target.value, 10) || 2) })} /> провода в 1 терминал (норма терминалов = группы)</label>
-          <label className="ep-otp"><input type="checkbox" checked={!!ep.fold} onChange={(event) => set({ fold: event.target.checked })} /> Складывание жилы — увеличение сечения под контакт (зачистка {FOLD_STRIP_MM_} мм, сложить вдвое)</label>
-        </> : <label className="ep-otp"><input type="checkbox" checked={ep.double} onChange={(event) => set({ double: event.target.checked })} /> Двойной обжим — 2 провода в 1 терминал (норма терминалов = пары)</label>}
-      </> : <>
-        <div className={ep.sdrTmpl ? "ep-sdr" : "ep-sdr ep-sdr-warn"}>{ep.sdrTmpl ? <>Паяльный разъём → шаблон <strong>{ep.sdrTmpl}</strong></> : "Тип не распознан — пайка без авто-шаблона (выберите вручную на стадии операций)"}</div>
-        <div className="ter-row">
-          <label className="field-label">Зачистка под пайку, мм<input value={ep.solderStrip} placeholder="напр. 5" onChange={(event) => set({ solderStrip: event.target.value })} /></label>
-          {!ep.tutOff && <label className="field-label">Длина ТУТ, мм<input value={ep.tutLen} placeholder="напр. 20" onChange={(event) => set({ tutLen: event.target.value })} /></label>}
+          <Chip checked={ep.double} onChange={(on) => set({ double: on })}>Групповой обжим<small>норма терминалов — по группам</small></Chip>
+          {ep.double && <label className="ep-per">по<input type="number" min={2} max={6} aria-label={`Проводов в терминал ${name}`} value={gen.epPer_(ep)}
+            onChange={(event) => set({ perTerm: Math.max(2, parseInt(event.target.value, 10) || 2) })} />провода в терминал</label>}
+          <Chip checked={!!ep.fold} onChange={(on) => set({ fold: on })}>Складывание жилы<small>зачистка {FOLD_STRIP_MM_} мм, сложить вдвое</small></Chip>
+        </> : <Chip checked={ep.double} onChange={(on) => set({ double: on })}>Двойной обжим<small>2 провода в терминал</small></Chip>}
+      </div> : <>
+        <div className={ep.sdrTmpl ? "ep-sdr" : "ep-sdr tone-warn"}>{ep.sdrTmpl
+          ? <>Паяльный разъём · карточка <span className="code">{ep.sdrTmpl}</span></>
+          : "Тип не распознан — карточку пайки выберите в операциях"}</div>
+        <div className="ep-ter">
+          <Field label="Зачистка под пайку" className="mid"><UnitInput unit="мм" value={ep.solderStrip} placeholder="5" onChange={(event) => set({ solderStrip: event.target.value })} /></Field>
+          {!ep.tutOff && <Field label="Длина ТУТ" className="mid"><UnitInput unit="мм" value={ep.tutLen} placeholder="20" onChange={(event) => set({ tutLen: event.target.value })} /></Field>}
+          <Chip checked={!ep.tutOff} onChange={(on) => set({ tutOff: !on })}>ТУТ на каждый провод</Chip>
         </div>
-        <label className="ep-otp"><input type="checkbox" checked={!ep.tutOff} onChange={(event) => set({ tutOff: !event.target.checked })} /> ТУТ на каждый провод</label>
       </>}
       {showRouting && (single
-        ? <details className="ep-pinout" open={!active.every((w) => routed.has(w.idx))}><summary>Провода в этот разъём — {active.every((w) => routed.has(w.idx)) ? "все" : "не все: остальные — свободные концы"}</summary><div className="ep-route">{chips}</div></details>
-        : <div className="field-label">Провода в этот разъём<div className="ep-route">{chips}</div></div>)}
-      {active.length > 0 && <details className="ep-pinout" open={active.some((w) => routed.has(w.idx) && ep.pins?.[w.idx])}>
-        <summary>Распиновка — контакты разъёма{active.some((w) => routed.has(w.idx) && ep.pins?.[w.idx]) ? " ✓" : ""}</summary>
-        {active.filter((w) => routed.has(w.idx)).map((w) => <div className="ep-pin" key={w.idx}>
+        ? <details className="ep-more" open={!allRouted}><summary>Провода в этот разъём — {allRouted ? "все" : "не все: остальные — свободные концы"}</summary><div className="chip-row">{chips}</div></details>
+        : <div className="gfield"><span className="gfield-label">Провода в этот разъём</span><div className="chip-row">{chips}</div></div>)}
+      {active.length > 0 && <details className="ep-more" open={pinned}>
+        <summary>Распиновка — контакты разъёма{pinned ? " ✓" : ""}</summary>
+        <div className="ep-pins">{active.filter((w) => routed.has(w.idx)).map((w) => <label className="ep-pin" key={w.idx}>
           <span>{compLabel(w.compId)}{w.qty > 1 ? ` ×${w.qty}` : ""}</span>
           <input value={ep.pins?.[w.idx] || ""} placeholder={w.qty > 1 ? `1, 3 или 1-${w.qty}` : "конт."} onChange={(event) => {
             const value = event.target.value.trim();
@@ -462,7 +505,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             if (value) pins[w.idx] = value; else delete pins[w.idx];
             set({ pins });
           }} />
-        </div>)}
+        </label>)}</div>
         {ep.side === "B" && S.endpoints.some((e) => e.side === "A") && <small className="muted">Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне. Перекрёст: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1, 3→2…</small>}
       </details>}
     </div>;
@@ -476,48 +519,49 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const add = coaxAdd[side] || {};
     const addValue = (key: string, fallback = "") => add[key] ?? fallback;
     const setAdd = (key: string, value: string) => setCoaxAdd((current) => ({ ...current, [side]: { ...(current[side] || {}), [key]: value } }));
-    return <div className="gcard">
-      <div className="field-label">Разъём (из BOM)<strong>{s ? s.art : side === "A" ? "— в BOM нет разъёма —" : "—"}</strong></div>
-      <label className="field-label">Тип пина<select aria-label={`Тип пина ${side}`} value={S.coax[pinKey]} onChange={(event) => update((current) => syncCoverRow_({ ...current, coax: { ...current.coax, [pinKey]: event.target.value } }, side))}>
-        <option value="пайка">пайка</option><option value="внутри корпуса">пайка внутри корпуса</option>
-      </select></label>
-      {S.coax[pinKey] === "внутри корпуса" && <label className="field-label">Крышка (угловой разъём)<select value={S.coax[coverKey]} onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, [coverKey]: event.target.value } }))}>
-        <option value="">без крышки</option><option value="обжим">крышка обжим</option><option value="винт">крышка винт</option>
-      </select></label>}
-      <small className={info.missing ? "danger-text" : "muted"}>{info.text}</small>
+    const pin = S.coax[pinKey] === "внутри корпуса" ? "внутри корпуса" : "пайка";
+    return <div className="ep-card">
+      <div className="ep-head"><span className="ep-title">{s ? s.art : side === "A" ? "в составе нет разъёма" : "—"}</span><span className="ep-kind">из состава</span></div>
+      <div className="ep-grid coax">
+        <div className="gfield"><span className="gfield-label">Тип пина</span>
+          <Seg label={`Тип пина ${sideRu_(side)}`} value={pin} options={[["пайка", "Пайка"], ["внутри корпуса", "Пайка внутри корпуса"]]}
+            onChange={(value) => update((current) => syncCoverRow_({ ...current, coax: { ...current.coax, [pinKey]: value } }, side))} /></div>
+        {S.coax[pinKey] === "внутри корпуса" && <div className="gfield"><span className="gfield-label">Крышка (угловой разъём)</span>
+          <Seg label={`Крышка ${sideRu_(side)}`} value={S.coax[coverKey]} options={[["", "Без крышки"], ["обжим", "Обжим"], ["винт", "Винт"]]}
+            onChange={(value) => update((current) => ({ ...current, coax: { ...current.coax, [coverKey]: value } }))} /></div>}
+      </div>
+      <div className={info.missing ? "coax-info tone-danger" : "coax-info"}>{info.text}</div>
       {info.missing && <div className="coax-add">
-        <small>Нет в БД.КОАКС — введите размеры и добавьте:</small>
-        <label className="field-label">Тип/Серия<input value={addValue("type")} placeholder="напр. SMA-male R/A" onChange={(event) => setAdd("type", event.target.value)} /></label>
-        <label className="field-label">Провод<input value={addValue("wire", gen.coaxBomCable_())} onChange={(event) => setAdd("wire", event.target.value)} /></label>
-        {/* D1–D3 — у кабеля (СПР.КАБ), у разъёма только длины разделки. */}
-        <div className="coax-dims">{(["l1", "l2", "l3", "lPlus", "lMinus"] as const).map((key) =>
-          <input key={key} aria-label={`${key} ${side}`} placeholder={{ l1: "L1", l2: "L2", l3: "L3", lPlus: "L+", lMinus: "L-" }[key]}
-            value={addValue(key)} onChange={(event) => setAdd(key, event.target.value)} />)}
+        <span className="gfield-label">Нет в БД.КОАКС — введите размеры и добавьте</span>
+        <div className="opt-grid">
+          <Field label="Тип / серия" className="span2"><input value={addValue("type")} placeholder="напр. SMA-male R/A" onChange={(event) => setAdd("type", event.target.value)} /></Field>
+          <Field label="Провод" className="span2"><input value={addValue("wire", gen.coaxBomCable_())} onChange={(event) => setAdd("wire", event.target.value)} /></Field>
+          {/* D1–D3 — у кабеля (СПР.КАБ), у разъёма только длины разделки. */}
+          {(["l1", "l2", "l3", "lPlus", "lMinus"] as const).map((key) => <Field key={key} label={{ l1: "L1", l2: "L2", l3: "L3", lPlus: "L+", lMinus: "L−" }[key]}>
+            <UnitInput unit="мм" aria-label={`${key} ${side}`} placeholder="—" value={addValue(key)} onChange={(event) => setAdd(key, event.target.value)} /></Field>)}
         </div>
         <button className="secondary small" disabled={busy} onClick={() => void saveCoaxToDb(side)}>Добавить в БД.КОАКС</button>
       </div>}
     </div>;
   }
 
-  /** Операция генератора: шаблон из _TC_LIBRARY и времена. Та же карточка стоит в общем списке и в открытом блоке схемы. */
+  /** Операция генератора строкой таблицы: название (код карточки — серым), карточка, времена. Та же строка стоит в
+      общем списке и в открытом блоке схемы. */
   function opItem(spec: OpSpec, number: number) {
     const row = gen.opRow(spec);
+    const code = cards.byId.get(row.templateId)?.code || "";
     const setTime = (key: "tPrep" | "tOp" | "tMachine", value: string) => setS((current) => ({ ...current, times: { ...current.times, [spec.opKey]: { ...row.times, [key]: value } } }));
-    return <div className="op-item" key={spec.opKey}>
-      <div className="op-badge">{number}</div>
-      <div>
-        <div className="op-title">{spec.label}</div>
-        <label className="field-label">Шаблон (_TC_LIBRARY)<select aria-label={`Шаблон: ${spec.label}`} className={row.templateId ? (row.matched ? "f-ok" : "f-warn") : "f-empty"} value={row.templateId}
-          onChange={(event) => update((current) => ({ ...current, selectedTemplates: { ...current.selectedTemplates, [spec.opKey]: event.target.value }, manualTemplates: current.manualTemplates.includes(spec.opKey) ? current.manualTemplates : [...current.manualTemplates, spec.opKey] }))}>
-          <option value="">— не выбран —</option>
-          {D.templates.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
-        </select></label>
-        <small className={row.matched ? "op-match found" : "op-match not-found"}>{row.info}</small>
-        <div className="op-times">
-          {([["tPrep", "Вр.подг, сек"], ["tOp", "Вр.оп, сек"], ["tMachine", "Вр.маш, сек"]] as const).map(([key, label]) =>
-            <label key={key} className="field-label">{label}<input type="number" min={0} placeholder="0" className={row.matched ? "f-ok" : row.times[key] ? "f-warn" : "f-empty"} value={row.times[key]} onChange={(event) => setTime(key, event.target.value)} /></label>)}
-        </div>
+    return <div className={row.templateId ? "op-row" : "op-row is-off"} key={spec.opKey}>
+      <span className="op-num">{number}</span>
+      <div className="op-name"><span className="op-title">{spec.label}</span>{code && <small className="op-code">{code}</small>}</div>
+      <div className="op-card">
+        <CardSelect label={`Карточка: ${spec.label}`} value={row.templateId} groups={cards.groups} byId={cards.byId} warn={!row.templateId}
+          onChange={(id) => update((current) => ({ ...current, selectedTemplates: { ...current.selectedTemplates, [spec.opKey]: id }, manualTemplates: current.manualTemplates.includes(spec.opKey) ? current.manualTemplates : [...current.manualTemplates, spec.opKey] }))} />
+        {row.matched ? <CheckMark title={`Нормы из БД.ОП: ${row.matched.opName}${row.matched.opNumber ? ` · ${row.matched.opNumber}` : ""}`} />
+          : <small className="op-nodb">{row.templateId ? "нет в БД.ОП — время вручную" : "без карточки не войдёт в ТК"}</small>}
       </div>
+      {OP_TIMES.map(([key, , aria]) => <UnitInput key={key} unit="сек" type="number" min={0} placeholder="0" aria-label={`${aria}: ${spec.label}`}
+        value={row.times[key]} onChange={(event) => setTime(key, event.target.value)} />)}
     </div>;
   }
 
@@ -529,242 +573,297 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const capTubes = gen.capTubes();
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.getCompById(row.compId) }));
   const marks = gen.markComps_();
+  const typical = S.tab !== "coax" && !manualTab;
+  const epsA = gen.endpointsOnSide_("A"), epsB = gen.endpointsOnSide_("B");
+  const sidesFull = !epsA.length || !epsB.length;
+  const anyCores = S.wires.some((w) => gen.wireCores_(w) > 1 || !!w.cores);
+  const wireCols = `wire-row${S.advancedLength ? " adv" : ""}${anyCores ? " cores" : ""}`;
+  const warning = typical ? gen.complexWarning() : "";
+  const opsCount = manualTab ? manual.ops.length : ops.length;
+  const summary = `${opsCount} ${plural(opsCount, "операция", "операции", "операций")} · партия ${partQty} шт`;
 
-  return <div className="tcgen">
-    <div className="gen-tabs" role="tablist">{TABS.map(([tab, label]) =>
-      <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "gen-tab-btn gactive" : "gen-tab-btn"}
-        onClick={() => { setRouteError(""); update((current) => switchGenTab(current, tab)); }}>{label}</button>)}</div>
+  const sheet = <section className={manualTab ? "gsec full" : "gsec"} aria-label="Данные из листа">
+    <div className="gsec-head"><h3>Данные из листа</h3>
+      <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span></div>
+    <div className="gtable-wrap"><table className="gtable"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th className="num">Кол-во</th></tr></thead><tbody>
+      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}</td><td className="muted">{c.art}</td><td className="num">{String(c.qty)}</td></tr>)}
+      {!components.length && <tr><td colSpan={4} className="gtable-empty">СПЯ не найдена</td></tr>}
+    </tbody></table></div>
+  </section>;
 
-    <h3>Данные из листа</h3>
-    <div className="gcard">
-      <div className="info-kv">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="info-pair" key={key}><span>{key}: </span><strong>{value}</strong></span>)}</div>
-      <table className="spy"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th>Кол-во</th></tr></thead><tbody>
-        {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}</td><td className="muted">{c.art}</td><td>{String(c.qty)}</td></tr>)}
-        {!components.length && <tr><td colSpan={4} className="empty">СПЯ не найдена</td></tr>}
-      </tbody></table>
+  const sideSection = (side: Side) => {
+    const list = side === "A" ? epsA : epsB;
+    const addButton = complex && <button type="button" className="btn-link" aria-label={`Добавить разъём на сторону ${sideRu_(side)}`} onClick={() => update((current) => addEndpoint(current, side))}>+ Разъём</button>;
+    if (!list.length) return <section key={side} className="gsec full ep-side is-empty" aria-label={`Сторона ${sideRu_(side)}`}>
+      <div className="gsec-head"><h3>Сторона {sideRu_(side)}</h3><span className="gsec-meta">{side === "B" && !complex ? "разъёма нет — свободные концы" : "разъёма нет"}</span>{addButton}</div>
+    </section>;
+    return <section key={side} className={sidesFull ? "gsec full ep-side" : "gsec ep-side"} aria-label={`Сторона ${sideRu_(side)}`}>
+      <div className="gsec-head"><h3>Сторона {sideRu_(side)}</h3><span className="gsec-meta">{list.length} {plural(list.length, "разъём", "разъёма", "разъёмов")}</span>{addButton}</div>
+      {list.map(endpointCard)}
+    </section>;
+  };
+
+  const twistToggle = <Toggle key="twist" checked={S.twist.enabled} title="Свивка" hint="парами или все провода вместе" onChange={(on) => update((current) => {
+    const auto = makeGen(D, current).autoDetectTwistPairs();
+    const pairs = on && !current.twist.pairs.length ? (auto.length ? auto.map(([a, b]) => ({ a: String(a), b: String(b) })) : [{ a: "", b: "" }]) : current.twist.pairs;
+    return { ...current, twist: { ...current.twist, enabled: on, pairs } };
+  })}>
+    <Seg label="Как свивать" value={S.twist.mode} options={[["pairs", "Парами"], ["all", "Все вместе"]]}
+      onChange={(mode) => update((current) => ({ ...current, twist: { ...current.twist, mode } }))} />
+    {S.twist.mode === "pairs" ? <div className="twist-pairs">
+      <span className="gfield-label">Пары для свивки</span>
+      {S.twist.pairs.map((pair, i) => <div className="twist-pair-row" key={i}>
+        {(["a", "b"] as const).map((key) => <select key={key} aria-label={`Пара ${i + 1} ${key}`} value={pair[key]} onChange={(event) => update((current) => ({ ...current, twist: { ...current.twist, pairs: current.twist.pairs.map((p, j) => (j === i ? { ...p, [key]: event.target.value } : p)) } }))}>
+          <option value="">—</option>{active.map((w, pos) => <option key={w.idx} value={pos}>{compLabel(w.compId)}</option>)}</select>)}
+        <button type="button" className="btn-remove" title="Убрать пару" aria-label={`Убрать пару ${i + 1}`} onClick={() => update((current) => ({ ...current, twist: { ...current.twist, pairs: current.twist.pairs.filter((_, j) => j !== i) } }))}>×</button>
+      </div>)}
+      <div className="row-actions">
+        <button type="button" className="btn-add" onClick={() => update((current) => ({ ...current, twist: { ...current.twist, pairs: [...current.twist.pairs, { a: "", b: "" }] } }))}>+ Добавить пару</button>
+        <button type="button" className="btn-add" title="Определить пары по запасу длины из спецификации" onClick={() => update((current) => {
+          const auto = makeGen(D, current).autoDetectTwistPairs();
+          return { ...current, twist: { ...current.twist, pairs: auto.length ? auto.map(([a, b]) => ({ a: String(a), b: String(b) })) : [{ a: "", b: "" }] } };
+        })}>Авто</button>
+      </div>
+    </div> : <div className="chip-row">{active.map((w, pos) => <Chip key={w.idx} checked={gen.twistWireIndices_().includes(pos)} onChange={() => update((current) => {
+      const now = makeGen(D, current).twistWireIndices_();
+      return { ...current, twist: { ...current.twist, wires: now.includes(pos) ? now.filter((i) => i !== pos) : [...now, pos] } };
+    })}>{compLabel(w.compId)}</Chip>)}</div>}
+    <div className="opt-grid">
+      <Field label="Шаг свивки"><UnitInput unit="мм" aria-label="Шаг свивки" value={S.twist.pitch} placeholder="—" onChange={(event) => twistPitchInput(event.target.value)} /></Field>
+      <Field label="Z₀"><UnitInput unit="Ом" aria-label="Z0" value={S.twist.z0} placeholder="по шагу" onChange={(event) => twistZ0Input(event.target.value)} /></Field>
+      <Field label="Ø провода"><UnitInput unit="мм" aria-label="Ø провода" className={gen.twistDiaValue().trim() ? undefined : "is-warn"} value={gen.twistDiaValue()} placeholder="из СПР.КАБ"
+        onChange={(event) => update((current) => ({ ...current, twist: { ...current.twist, dia: event.target.value, diaManual: !!event.target.value.trim() } }))} /></Field>
     </div>
+    {note.text && <small className={note.explicit ? "opt-note" : "opt-note tone-danger"}>{note.text}{note.warn && <><br /><span className="tone-danger">⚠ {note.warn}</span></>}</small>}
+  </Toggle>;
 
-    {S.tab !== "coax" && !manualTab && <div className={complex ? "tab-inter" : "tab-inter gen-basic"}>
-      {gen.complexWarning() && <div className="warning-inline">{gen.complexWarning()}</div>}
-      <div className="section-hdr"><h3>Кабели</h3>
-        {complex && <button type="button" className="btn-link" onClick={() => update((current) => toggleLengthMode(current, makeGen(D, current).sharedLength()))}>{S.advancedLength ? "← общая длина" : "раздельная длина ▸"}</button>}
-        <label className="btn-link">из чертежа<input aria-label="Экспорт TECHMAP-GRAPHER" type="file" hidden accept=".json,.zip,.techmap-project.zip" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void grapherFile(file); }} /></label>
+  // Обработка — по смыслу: концы провода, жгут целиком, автомат при резке. Пустая группа не показывается.
+  const ends = [
+    <Toggle key="free" checked={S.freeStrip.enabled} title="Зачистка свободных концов" hint="без стороны В, без лужения"
+      onChange={(on) => update((current) => ({ ...current, freeStrip: { ...current.freeStrip, enabled: on } }))}>
+      <Field label="Длина зачистки" className="short"><UnitInput unit="мм" value={S.freeStrip.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, freeStrip: { ...current.freeStrip, len: event.target.value } }))} /></Field>
+    </Toggle>,
+    !hasB && <Toggle key="tin" checked={S.tin.enabled} title="Лужение свободных концов" onChange={(on) => update((current) => ({ ...current, tin: { ...current.tin, enabled: on } }))}>
+      <div className="gfield"><span className="gfield-label">Какие концы лудить<small>по умолчанию все</small></span>
+        <div className="chip-row">{active.map((w, pos) => <Chip key={w.idx} checked={gen.tinWireIndices_().includes(pos)} onChange={() => update((current) => {
+          const now = makeGen(D, current).tinWireIndices_();
+          return { ...current, tin: { ...current.tin, wires: now.includes(pos) ? now.filter((i) => i !== pos) : [...now, pos] } };
+        })}>{compLabel(w.compId)}</Chip>)}</div></div>
+      <Field label="Зачистка под лужение" className="short"><UnitInput unit="мм" value={S.tin.stripLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, tin: { ...current.tin, stripLen: event.target.value } }))} /></Field>
+    </Toggle>,
+    complex && <Toggle key="cap" checked={S.cap.enabled} title="Заделка свободных концов" hint="жилы, не заведённые в разъём своей стороны"
+      onChange={(on) => update((current) => ({ ...current, cap: { ...current.cap, enabled: on } }))}>
+      <div className="opt-grid">
+        <Field label="Трубка из состава" className="span2">{selectComps(capTubes, S.cap.tut, (id) => update((current) => ({ ...current, cap: { ...current.cap, tut: id } })), "Трубка заделки")}</Field>
+        <Field label="Отрезок на конец"><UnitInput unit="мм" value={S.cap.len} placeholder="из нормы" onChange={(event) => update((current) => ({ ...current, cap: { ...current.cap, len: event.target.value } }))} /></Field>
       </div>
-      {grapher && (() => {
-        const h = grapher.data.harnesses[grapher.pick];
-        const our = gen.getLengthAdjustment_();
-        const sg = (x: string | number) => (Number(x) >= 0 ? "+" : "") + x;
-        return <div className="gcard grapher-box">
-          <div className="grapher-head"><strong>Чертёж {grapher.data.project.designation || grapher.data.project.name}</strong>
-            {grapher.data.harnesses.length > 1 ? <select value={grapher.pick} onChange={(event) => setGrapher({ ...grapher, pick: Number(event.target.value) })}>
-              {grapher.data.harnesses.map((x, i) => <option key={i} value={i}>{x.designation} × {x.quantity}</option>)}</select>
-              : <span>жгут {h.designation} × {h.quantity}</span>}
-            <button className="primary small" onClick={grapherApply}>Подставить в «Кабели»</button>
-            <button className="btn-link" onClick={() => setGrapher(null)}>скрыть</button></div>
-          <table><thead><tr><th>Материал в чертеже</th><th>Позиция набора</th><th>Шт</th><th>По чертежу, мм</th><th>Поправки</th><th>Рез в чертеже</th><th>Концы</th></tr></thead><tbody>
-            {h.groups.map((g, i) => <tr key={i}><td>{g.material || "—"}{g.cores > 1 ? ` · ${g.cores} жил${g.jacket_mm != null ? ", разделка " + g.jacket_mm : ""}` : ""}</td>
-              <td>{g.component_id && gen.getCompById(g.component_id) ? compLabel(g.component_id) : <span className="danger-text">не найдено — выбери</span>}</td>
-              <td>{g.quantity}</td><td>{g.length_mm == null ? <span className="danger-text">нет</span> : g.length_mm}</td>
-              <td>{Number(g.correction_from_mm) || Number(g.correction_to_mm) ? `${sg(g.correction_from_mm)} / ${sg(g.correction_to_mm)}` : "—"}{g.mixed_corrections ? " (разные)" : ""}</td>
-              <td>{g.cut_mm == null ? "—" : g.cut_mm}</td><td className="muted">{g.ends.join("; ")}{g.quantity > g.ends.length ? " …" : ""}</td></tr>)}
-          </tbody></table>
-          <small className="muted">Припуск у нас: {our.parts.length ? `${our.parts.join(", ")} = ${our.total} мм` : "концы ещё не выбраны"} — длина реза считается по нему. Разъёмы: {h.connectors.map((c) => `${c.designation} ${c.part_number}${c.terminals.length ? ` (терм. ${c.terminals.join(", ")})` : ""}`).join("; ") || "нет"}{h.pairs ? `. Свитых пар в чертеже: ${h.pairs} — включи свивку ниже.` : "."}</small>
-          {h.warnings.map((warning) => <div className="warning-inline" key={warning}>{warning}</div>)}
-        </div>;
-      })()}
-      <div className="gcard">
-        <div className="radio-row">
-          {([["inner", "Между разъёмами (+L+)"], ["outer", "От краёв разъёмов (−L−)"], ["cut", "Длина реза по КД (без припуска)"]] as const).map(([value, label]) =>
-            <label key={value}><input type="radio" name={`measureMode-${card.id}`} checked={S.measureMode === value} onChange={() => update({ measureMode: value })} /> {label}</label>)}
-        </div>
-        {!S.advancedLength && <label className="field-label len">Длина по чертежу, мм<input aria-label="Длина по чертежу" type="number" min={1} placeholder="—" value={S.sharedLengthText}
-          onChange={(event) => update({ sharedLengthText: event.target.value, drawingLength: parseDecimal_(event.target.value) || 0 })} /></label>}
-        {!S.advancedLength && cut.tone !== "none" && <div className={cut.tone === "warn" ? "cut-info warn" : "cut-info"}><small>{cut.formula}</small><div>Длина реза: <strong>{cut.value}</strong></div></div>}
-        {!S.wires.length && <div className="empty">Нет кабелей</div>}
-        {S.wires.map((w, n) => {
-          const cores = gen.wireCores_(w);
-          return <div className={`wire-entry${S.advancedLength ? " adv" : ""}${cores > 1 || !!w.cores ? " cores" : ""}`} key={w.idx}>
-            <label className="field-label">Кабель {n + 1}{selectComps(wireOptions, w.compId, (id) => update((current) => updateWire(current, w.idx, { compId: id })), `Кабель ${n + 1}`, "— выберите —")}</label>
-            {S.advancedLength && <label className="field-label">Длина по чертежу, мм<input type="number" min={1} value={w.length || ""} onChange={(event) => update((current) => updateWire(current, w.idx, { length: parseDecimal_(event.target.value) || 0 }))} /></label>}
-            <label className="field-label">Кол-во<input aria-label={`Кол-во кабеля ${n + 1}`} type="number" min={1} value={w.qty || 1} onChange={(event) => update((current) => updateWire(current, w.idx, { qty: parseDecimal_(event.target.value) || 1 }))} /></label>
-            {(cores > 1 || !!w.cores) && <>
-              <label className="field-label">Жил<input type="number" min={1} value={cores} onChange={(event) => update((current) => updateWire(current, w.idx, { cores: parseDecimal_(event.target.value) || 1 }))} /></label>
-              <label className="field-label">Разделка, мм<input type="number" min={1} value={w.jacket || JACKET_STRIP_MM_} onChange={(event) => update((current) => updateWire(current, w.idx, { jacket: event.target.value.trim() }))} /></label>
-            </>}
-            <button className="btn-remove" title="Удалить" onClick={() => update((current) => ({ ...current, wires: current.wires.filter((x) => x.idx !== w.idx) }))}>×</button>
-          </div>;
-        })}
-        <button className="btn-add" onClick={() => update((current) => ({ ...current, wires: [...current.wires, { idx: current.nextWireIdx, compId: "", length: 0, qty: 1 }], nextWireIdx: current.nextWireIdx + 1 }))}>+ Добавить кабель</button>
+    </Toggle>,
+    complex && <Toggle key="seal" checked={S.seal.enabled} title="Герметизация" hint="клей-герметик на пайку и хвостовики разъёмов"
+      onChange={(on) => update((current) => ({ ...current, seal: { ...current.seal, enabled: on } }))}>
+      <div className="opt-grid">
+        <Field label="Герметик из состава" className="span2">{selectComps(gen.sealComps(), S.seal.mat, (id) => update((current) => ({ ...current, seal: { ...current.seal, mat: id } })), "Герметик")}</Field>
+        <Field label="Мест на изделие"><input value={S.seal.places} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, seal: { ...current.seal, places: event.target.value } }))} /></Field>
       </div>
-
-      <div className="ep-sides">{(["A", "B"] as Side[]).map((side) => <div key={side}>
-        <h3>Сторона {sideRu_(side)} — разъёмы</h3>
-        {gen.endpointsOnSide_(side).length ? gen.endpointsOnSide_(side).map(endpointCard) : <div className="empty small">Разъёмов нет — добавьте кнопкой ниже</div>}
-        {complex && <button className="btn-add" onClick={() => update((current) => addEndpoint(current, side))}>+ Разъём (сторона {sideRu_(side)})</button>}
-      </div>)}</div>
-      {(links.list.length > 0 || links.warnings.length > 0) && <div className="gcard ep-links" aria-label="Соединения по распиновке">
-        <span className="field-label">Соединения по распиновке</span>
-        {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>
-          <span key={i}>{i ? ", " : ""}{a === b ? `${a}→${b}` : <b>{a}→{b}</b>}</span>)}</div>)}
-        {links.warnings.map((warning) => <div className="warning-inline" key={warning}>{warning}</div>)}
-      </div>}
-
-      {active.some(gen.isJacketedCable_) && <label className="toggle-row"><input type="checkbox" checked={S.rotor} onChange={(event) => update({ rotor: event.target.checked })} /> Роторный станок — многожильный кабель разделывается при резке (оболочка и жилы)</label>}
-      {crimpSides.length > 0 && <label className="toggle-row"><input type="checkbox" checked={gen.crimpCutEnabled_()} onChange={(event) => update({ crimpCut: event.target.checked, crimpCutManual: true })} />
-        {gen.crimpCutTin_() ? "Обжим и лужение на автомате при резке (CUT_WIRE+1crimp+tin) — сторона" : "Обжим на автомате при резке (CUT_WIRE+1crimp) — сторона"}
-        <select aria-label="Сторона обжима при резке" value={gen.crimpCutSideSelected_()} onChange={(event) => update({ crimpCutSide: event.target.value })}>{crimpSides.map((s) => <option key={s} value={s}>{sideRu_(s)}</option>)}</select>
-        <small className="muted">проводов в партии: {gen.batchWires_()}{S.crimpCutManual ? "" : ` — по умолчанию вкл при > ${gen.crimpCutMinWires_()}`}</small></label>}
-      {!crimpSides.length && crimpTinTerm && <small className="muted">Резка с обжимом и лужением (CUT_WIRE+1crimp+tin) недоступна: у {crimpTinTerm} в БД.ТЕР нет аппликатора автомата (A…).</small>}
-
-      <label className="toggle-row"><input type="checkbox" checked={S.twist.enabled} onChange={(event) => update((current) => {
-        const on = event.target.checked;
-        const auto = makeGen(D, current).autoDetectTwistPairs();
-        const pairs = on && !current.twist.pairs.length ? (auto.length ? auto.map(([a, b]) => ({ a: String(a), b: String(b) })) : [{ a: "", b: "" }]) : current.twist.pairs;
-        return { ...current, twist: { ...current.twist, enabled: on, pairs } };
-      })} /> Свивка (TWIST)</label>
-      {S.twist.enabled && <div className="gcard">
-        <div className="radio-row">
-          <label><input type="radio" checked={S.twist.mode === "pairs"} onChange={() => update((current) => ({ ...current, twist: { ...current.twist, mode: "pairs" } }))} /> Парами</label>
-          <label><input type="radio" checked={S.twist.mode === "all"} onChange={() => update((current) => ({ ...current, twist: { ...current.twist, mode: "all" } }))} /> Все вместе</label>
-        </div>
-        {S.twist.mode === "pairs" ? <div>
-          <span className="field-label">Пары для свивки</span>
-          {S.twist.pairs.map((pair, i) => <div className="twist-pair-row" key={i}>
-            {(["a", "b"] as const).map((key) => <select key={key} aria-label={`Пара ${i + 1} ${key}`} value={pair[key]} onChange={(event) => update((current) => ({ ...current, twist: { ...current.twist, pairs: current.twist.pairs.map((p, j) => (j === i ? { ...p, [key]: event.target.value } : p)) } }))}>
-              <option value="">—</option>{active.map((w, pos) => <option key={w.idx} value={pos}>{compLabel(w.compId)}</option>)}</select>)}
-            <button className="btn-remove" onClick={() => update((current) => ({ ...current, twist: { ...current.twist, pairs: current.twist.pairs.filter((_, j) => j !== i) } }))}>×</button>
-          </div>)}
-          <button className="btn-add" onClick={() => update((current) => ({ ...current, twist: { ...current.twist, pairs: [...current.twist.pairs, { a: "", b: "" }] } }))}>+ Добавить пару</button>
-          <button className="btn-add" title="Определить пары по запасу длины из спецификации" onClick={() => update((current) => {
-            const auto = makeGen(D, current).autoDetectTwistPairs();
-            return { ...current, twist: { ...current.twist, pairs: auto.length ? auto.map(([a, b]) => ({ a: String(a), b: String(b) })) : [{ a: "", b: "" }] } };
-          })}>Авто</button>
-        </div> : <div className="chip-row">{active.map((w, pos) => <label key={w.idx}><input type="checkbox" checked={gen.twistWireIndices_().includes(pos)} onChange={() => update((current) => {
-          const now = makeGen(D, current).twistWireIndices_();
-          return { ...current, twist: { ...current.twist, wires: now.includes(pos) ? now.filter((i) => i !== pos) : [...now, pos] } };
-        })} /> {compLabel(w.compId)}</label>)}</div>}
-        <div className="ter-row">
-          <label className="field-label">Шаг свивки, мм<input aria-label="Шаг свивки" value={S.twist.pitch} placeholder="—" onChange={(event) => twistPitchInput(event.target.value)} /></label>
-          <label className="field-label">Z₀, Ω<input aria-label="Z0" value={S.twist.z0} placeholder="по шагу / задать" onChange={(event) => twistZ0Input(event.target.value)} /></label>
-          <label className="field-label">Ø провода, мм<input aria-label="Ø провода" className={gen.twistDiaValue().trim() ? "f-ok" : "f-empty"} value={gen.twistDiaValue()} placeholder="авто из СПР.КАБ" onChange={(event) => update((current) => ({ ...current, twist: { ...current.twist, dia: event.target.value, diaManual: !!event.target.value.trim() } }))} /></label>
-        </div>
-        {note.text && <small className={note.explicit ? "muted" : "danger-text"}>{note.text}{note.warn && <><br /><span className="danger-text">⚠ {note.warn}</span></>}</small>}
-      </div>}
-
-      {complex && <>
-        <label className="toggle-row"><input type="checkbox" checked={S.spl.enabled} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, enabled: event.target.checked } }))} /> Сростки (Spl) — соединение проводов в стволе</label>
-        {S.spl.enabled && <div className="gcard"><div className="ter-row">
-          <label className="field-label">Сростков на изделие<input type="number" min={1} value={S.spl.count} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, count: event.target.value } }))} /></label>
-          <label className="field-label">Проводов в сростке (разные — через запятую)<input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></label>
-          <label className="field-label">Изоляция сростка — длина трубки, мм<input value={S.spl.tut} placeholder="напр. 40" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, tut: event.target.value } }))} /></label>
-          <label className="field-label">Трубка сростка из состава{selectComps(capTubes, S.spl.tutMat, (id) => update((current) => ({ ...current, spl: { ...current.spl, tutMat: id } })), "Трубка сростка")}</label>
-          <label className="field-label">Зачистка под сросток, мм<input value={S.spl.strip} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, strip: event.target.value } }))} /></label>
-        </div>
-          <label className="ep-otp"><input type="checkbox" checked={S.spl.fold} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, fold: event.target.checked } }))} /> Складывание жилы перед установкой в гильзу (663К.1 КБ4: ГС 2,5, «Схема увеличения сечения»)</label>
-        </div>}
-      </>}
-
-      <label className="toggle-row"><input type="checkbox" checked={S.hs.enabled} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, enabled: event.target.checked, manual: true } }))} /> Термоусадка на жгут — концы оплётки (ТТК/ТУТ из состава)</label>
-      {S.hs.enabled && <div className="gcard">{hsComps.map(({ row, comp }, i) => <div className="ter-row" key={row.compId}>
-        <label className="field-label">{comp ? comp.art || comp.name : row.compId} — длина отрезка, мм<input value={row.len} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, rows: current.hs.rows.map((r, j) => (j === i ? { ...r, len: event.target.value } : r)) } }))} /></label>
-        <label className="field-label">Отрезков на изделие<input value={row.cnt} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, rows: current.hs.rows.map((r, j) => (j === i ? { ...r, cnt: event.target.value } : r)) } }))} /></label>
-      </div>)}</div>}
-      <label className="toggle-row"><input type="checkbox" checked={S.mark} onChange={(event) => update({ mark: event.target.checked })} /> Маркировка жгута (бирки из состава)</label>
-      {S.mark && <div className="gcard"><small>{marks.map((m) => `${m.art || m.name} × ${m.qty}`).join("; ")}</small></div>}
-      <label className="toggle-row"><input type="checkbox" checked={S.freeStrip.enabled} onChange={(event) => update((current) => ({ ...current, freeStrip: { ...current.freeStrip, enabled: event.target.checked } }))} /> Зачистка свободных концов (без стороны В, без лужения)</label>
-      {S.freeStrip.enabled && <div className="gcard"><label className="field-label">Длина зачистки, мм<input value={S.freeStrip.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, freeStrip: { ...current.freeStrip, len: event.target.value } }))} /></label></div>}
-      {complex && <>
-        <label className="toggle-row"><input type="checkbox" checked={S.cap.enabled} onChange={(event) => update((current) => ({ ...current, cap: { ...current.cap, enabled: event.target.checked } }))} /> Заделка свободных концов — жилы, не заведённые в разъём своей стороны (INS_END_CAP)</label>
-        {S.cap.enabled && <div className="gcard"><div className="ter-row">
-          <label className="field-label">Трубка из состава{selectComps(capTubes, S.cap.tut, (id) => update((current) => ({ ...current, cap: { ...current.cap, tut: id } })), "Трубка заделки")}</label>
-          <label className="field-label">Отрезок на конец, мм<input value={S.cap.len} placeholder="из нормы" onChange={(event) => update((current) => ({ ...current, cap: { ...current.cap, len: event.target.value } }))} /></label>
-        </div></div>}
-      </>}
-
-      <label className="toggle-row"><input type="checkbox" checked={S.wrap.enabled} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, enabled: event.target.checked } }))} /> Лента / оплётка на жгут (INS_WRAP)</label>
-      {S.wrap.enabled && <div className="gcard">{S.wrap.slots.map((slot, i) => (i === 0 || complex) && <div className="ter-row" key={WRAP_SLOTS_[i] || "1"}>
-        <label className="field-label">{["Материал из состава", "Второй материал (необязательно)", "Третий материал (необязательно)", "Четвёртый материал (необязательно)"][i]}
+    </Toggle>,
+  ].filter(Boolean);
+  const harness = [
+    twistToggle,
+    complex && <Toggle key="spl" checked={S.spl.enabled} title="Сростки" hint="соединение проводов в стволе"
+      onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, enabled: on } }))}>
+      <div className="opt-grid">
+        <Field label="Сростков на изделие"><input type="number" min={1} value={S.spl.count} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, count: event.target.value } }))} /></Field>
+        <Field label="Проводов в сростке" hint="разные — через запятую"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
+        <Field label="Трубка сростка, длина"><UnitInput unit="мм" value={S.spl.tut} placeholder="40" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, tut: event.target.value } }))} /></Field>
+        <Field label="Трубка сростка из состава" className="span2">{selectComps(capTubes, S.spl.tutMat, (id) => update((current) => ({ ...current, spl: { ...current.spl, tutMat: id } })), "Трубка сростка")}</Field>
+        <Field label="Зачистка под сросток"><UnitInput unit="мм" value={S.spl.strip} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, strip: event.target.value } }))} /></Field>
+      </div>
+      <div className="chip-row"><Chip checked={S.spl.fold} onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, fold: on } }))}>Складывание жилы перед гильзой<small>663К.1 КБ4: ГС 2,5, «Схема увеличения сечения»</small></Chip></div>
+    </Toggle>,
+    <Toggle key="hs" checked={S.hs.enabled} title="Термоусадка на жгут" hint="концы оплётки — ТТК/ТУТ из состава"
+      onChange={(on) => update((current) => ({ ...current, hs: { ...current.hs, enabled: on, manual: true } }))}>
+      {hsComps.map(({ row, comp }, i) => <div className="opt-grid" key={row.compId}>
+        <Field label={`${comp ? comp.art || comp.name : row.compId} — отрезок`} className="span2"><UnitInput unit="мм" value={row.len} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, rows: current.hs.rows.map((r, j) => (j === i ? { ...r, len: event.target.value } : r)) } }))} /></Field>
+        <Field label="Отрезков на изделие"><input value={row.cnt} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, rows: current.hs.rows.map((r, j) => (j === i ? { ...r, cnt: event.target.value } : r)) } }))} /></Field>
+      </div>)}
+    </Toggle>,
+    <Toggle key="wrap" checked={S.wrap.enabled} title="Лента / оплётка на жгут"
+      onChange={(on) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, enabled: on } }))}>
+      {S.wrap.slots.map((slot, i) => (i === 0 || complex) && <div className="opt-grid" key={WRAP_SLOTS_[i] || "1"}>
+        <Field label={["Материал из состава", "Второй материал", "Третий материал", "Четвёртый материал"][i]} hint={i ? "необязательно" : undefined} className="span2">
           {selectComps(wrapOpts, slot.mat, (id) => update((current) => {
             const c = makeGen(D, current).getCompById(id);
             const g = makeGen(D, current);
             const slots = current.wrap.slots.map((s, j) => (j === i ? { mat: id, kind: c ? g.guessWrapKind_(c) : s.kind, len: g.prefillWrapLen_(c) } : s));
             return syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots } });
-          }), `Материал ${i + 1}`)}</label>
-        <label className="field-label">Вид<select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
-          {WRAP_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="field-label">Длина на изделие, мм<input value={slot.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></label>
-      </div>)}</div>}
+          }), `Материал ${i + 1}`)}</Field>
+        <Field label="Вид" className="span2"><select value={slot.kind} onChange={(event) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, kind: event.target.value as WrapKind } : s)) } }))}>
+          {WRAP_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+        <Field label="Длина на изделие"><UnitInput unit="мм" value={slot.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></Field>
+      </div>)}
+    </Toggle>,
+    <Toggle key="mark" checked={S.mark} title="Маркировка жгута" hint="бирки из состава" onChange={(on) => update({ mark: on })}>
+      <span className="opt-note">{marks.map((m) => `${m.art || m.name} × ${m.qty}`).join("; ") || "в составе нет бирок"}</span>
+    </Toggle>,
+  ].filter(Boolean);
+  const machine = [
+    active.some(gen.isJacketedCable_) && <Toggle key="rotor" checked={S.rotor} title="Роторный станок" hint="многожильный кабель разделывается при резке — оболочка и жилы"
+      onChange={(on) => update({ rotor: on })} />,
+    crimpSides.length > 0 && <Toggle key="crimp" checked={gen.crimpCutEnabled_()} title={gen.crimpCutTin_() ? "Обжим и лужение на автомате при резке" : "Обжим на автомате при резке"}
+      hint={`проводов в партии: ${gen.batchWires_()}${S.crimpCutManual ? "" : ` — по умолчанию включено при > ${gen.crimpCutMinWires_()}`}`}
+      onChange={(on) => update({ crimpCut: on, crimpCutManual: true })}>
+      {crimpSides.length > 1
+        ? <div className="gfield"><span className="gfield-label">Сторона обжима</span>
+          <Seg label="Сторона обжима при резке" value={gen.crimpCutSideSelected_()} options={crimpSides.map((side) => [side, `Сторона ${sideRu_(side)}`] as const)}
+            onChange={(side) => update({ crimpCutSide: side })} /></div>
+        : <span className="opt-note">Обжим на стороне {sideRu_(crimpSides[0])}</span>}
+    </Toggle>,
+    !crimpSides.length && crimpTinTerm && <p key="crimp-off" className="opt-note">Резка с обжимом и лужением недоступна: у {crimpTinTerm} в БД.ТЕР нет аппликатора автомата (A…).</p>,
+  ].filter(Boolean);
 
-      {complex && <>
-        <label className="toggle-row"><input type="checkbox" checked={S.seal.enabled} onChange={(event) => update((current) => ({ ...current, seal: { ...current.seal, enabled: event.target.checked } }))} /> Герметизация (SEAL) — клей-герметик на пайку и хвостовики разъёмов</label>
-        {S.seal.enabled && <div className="gcard"><div className="ter-row">
-          <label className="field-label">Герметик из состава{selectComps(gen.sealComps(), S.seal.mat, (id) => update((current) => ({ ...current, seal: { ...current.seal, mat: id } })), "Герметик")}</label>
-          <label className="field-label">Мест на изделие<input value={S.seal.places} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, seal: { ...current.seal, places: event.target.value } }))} /></label>
-        </div></div>}
-      </>}
-
-      {!hasB && <>
-        <label className="toggle-row"><input type="checkbox" checked={S.tin.enabled} onChange={(event) => update((current) => ({ ...current, tin: { ...current.tin, enabled: event.target.checked } }))} /> Лужение (TIN) — лужение свободных концов</label>
-        {S.tin.enabled && <div className="gcard">
-          <span className="field-label">Какие концы лудить (по умолчанию все)</span>
-          <div className="chip-row">{active.map((w, pos) => <label key={w.idx}><input type="checkbox" checked={gen.tinWireIndices_().includes(pos)} onChange={() => update((current) => {
-            const now = makeGen(D, current).tinWireIndices_();
-            return { ...current, tin: { ...current.tin, wires: now.includes(pos) ? now.filter((i) => i !== pos) : [...now, pos] } };
-          })} /> {compLabel(w.compId)}</label>)}</div>
-          <label className="field-label">Длина зачистки под лужение, мм<input value={S.tin.stripLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, tin: { ...current.tin, stripLen: event.target.value } }))} /></label>
-        </div>}
-      </>}
-    </div>}
-
-    {S.tab === "coax" && <div className="tab-coax">
-      <h3>Коакс-кабель</h3>
-      <div className="gcard">
-        <label className="field-label len">Длина кабеля по чертежу, мм<input aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value } }))} /></label>
-        <label className="toggle-row"><input type="checkbox" checked={S.coax.tutEnabled} onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: event.target.checked } }))} /> ТУТ на концах</label>
-        <label className="field-label len">Длина ТУТ, мм<input type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></label>
+  const typicalSections = <>
+    <section className="gsec gen-cables" aria-label="Кабели">
+      <div className="gsec-head"><h3>Кабели</h3>
+        {complex && <button type="button" className="btn-link" onClick={() => update((current) => toggleLengthMode(current, makeGen(D, current).sharedLength()))}>{S.advancedLength ? "← общая длина" : "раздельная длина ▸"}</button>}
+        <label className="btn-link">из чертежа<input aria-label="Экспорт TECHMAP-GRAPHER" type="file" hidden accept=".json,.zip,.techmap-project.zip" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void grapherFile(file); }} /></label>
       </div>
-      <h3>Сторона А — разъём (из BOM)</h3>
-      {coaxSideBlock("A")}
-      {S.coax.sideB && <><h3>Сторона B — разъём (из BOM)</h3>{coaxSideBlock("B")}</>}
-      {!S.coax.sideB && <label className="toggle-row"><input type="checkbox" checked={S.coax.stripB} onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, stripB: event.target.checked } }))} /> Зачистка стороны B (голый конец кабеля)</label>}
-      <h3>Экран</h3>
-      <div className="gcard"><label className="field-label">Тип экрана (на сборку)<select aria-label="Тип экрана" value={S.coax.shield} onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, shield: event.target.value } }))}>
-        <option value="обжим">обжим (опрессовка втулки)</option><option value="пайка">пайка экрана</option>
-      </select></label></div>
-    </div>}
-
-    {manualTab ? <>
-      <ManualAssembly state={manual} onChange={setManual} library={refs.library} opRecs={D.ops} components={components} partQty={partQty} />
-      <RouteEditor key="manual" ops={manualOps} finalName={finalName} quantity={partQty} value={manual.route} derive={chainRoute} defaultOpen
-        timeSource="по нормам операций" error={routeError} notice={manual.notice}
-        onChange={(route) => { setRouteError(""); setManual((current) => setRoute(current, route)); }}
-        renderOp={(position) => {
-          const op = manual.ops[position - 1];
-          return op ? <ManualOpSummary op={op} position={position} partQty={partQty} /> : null;
-        }} />
-    </> : <>
-      <h3>Операции</h3>
-      <div className="gcard ops-card">
-        {!ops.length && <div className="op-empty">{S.tab === "coax" ? "Выберите разъём — появятся операции" : "Добавьте кабель — появятся операции"}</div>}
-        {ops.map((spec, i) => opItem(spec, i + 1))}
+      <Seg label="Как задана длина" value={S.measureMode} options={MEASURE_MODES} onChange={(measureMode) => update({ measureMode })} />
+      {!S.advancedLength && <div className="cut-row">
+        <Field label="Длина по чертежу" className="short"><UnitInput unit="мм" aria-label="Длина по чертежу" type="number" min={1} placeholder="—" value={S.sharedLengthText}
+          onChange={(event) => update({ sharedLengthText: event.target.value, drawingLength: parseDecimal_(event.target.value) || 0 })} /></Field>
+        {cut.tone !== "none" && <div className={cut.tone === "warn" ? "cut-result warn" : "cut-result"}>
+          <span>Длина реза <b>{cut.value}</b></span><small>{cut.formula}</small></div>}
+      </div>}
+      <div className="wire-list">
+        {S.wires.length > 0 && <div className={`${wireCols} head`} aria-hidden="true"><span>Кабель</span>{S.advancedLength && <span>Длина по чертежу</span>}<span>Кол-во</span>{anyCores && <><span>Жил</span><span>Разделка</span></>}<span /></div>}
+        {!S.wires.length && <div className="gempty">Нет кабелей — добавьте кабель из состава</div>}
+        {S.wires.map((w, n) => {
+          const cores = gen.wireCores_(w);
+          const hasCores = cores > 1 || !!w.cores;
+          return <div className={wireCols} key={w.idx}>
+            {selectComps(wireOptions, w.compId, (id) => update((current) => updateWire(current, w.idx, { compId: id })), `Кабель ${n + 1}`, "— выберите —")}
+            {S.advancedLength && <UnitInput unit="мм" aria-label={`Длина кабеля ${n + 1}`} type="number" min={1} value={w.length || ""} onChange={(event) => update((current) => updateWire(current, w.idx, { length: parseDecimal_(event.target.value) || 0 }))} />}
+            <input aria-label={`Кол-во кабеля ${n + 1}`} type="number" min={1} value={w.qty || 1} onChange={(event) => update((current) => updateWire(current, w.idx, { qty: parseDecimal_(event.target.value) || 1 }))} />
+            {anyCores && (hasCores ? <>
+              <input aria-label={`Жил в кабеле ${n + 1}`} type="number" min={1} value={cores} onChange={(event) => update((current) => updateWire(current, w.idx, { cores: parseDecimal_(event.target.value) || 1 }))} />
+              <UnitInput unit="мм" aria-label={`Разделка кабеля ${n + 1}`} type="number" min={1} value={w.jacket || JACKET_STRIP_MM_} onChange={(event) => update((current) => updateWire(current, w.idx, { jacket: event.target.value.trim() }))} />
+            </> : <><span /><span /></>)}
+            <button type="button" className="btn-remove" title="Удалить кабель" aria-label={`Удалить кабель ${n + 1}`} onClick={() => update((current) => ({ ...current, wires: current.wires.filter((x) => x.idx !== w.idx) }))}>×</button>
+          </div>;
+        })}
       </div>
+      <button type="button" className="btn-add" onClick={() => update((current) => ({ ...current, wires: [...current.wires, { idx: current.nextWireIdx, compId: "", length: 0, qty: 1 }], nextWireIdx: current.nextWireIdx + 1 }))}>+ Добавить кабель</button>
+    </section>
+    {grapher && (() => {
+      const h = grapher.data.harnesses[grapher.pick];
+      const our = gen.getLengthAdjustment_();
+      const sg = (x: string | number) => (Number(x) >= 0 ? "+" : "") + x;
+      return <section className="gsec full grapher-box" aria-label="Чертёж">
+        <div className="gsec-head"><h3>Чертёж {grapher.data.project.designation || grapher.data.project.name}</h3>
+          {grapher.data.harnesses.length > 1 ? <select aria-label="Жгут чертежа" value={grapher.pick} onChange={(event) => setGrapher({ ...grapher, pick: Number(event.target.value) })}>
+            {grapher.data.harnesses.map((x, i) => <option key={i} value={i}>{x.designation} × {x.quantity}</option>)}</select>
+            : <span className="gsec-meta">жгут {h.designation} × {h.quantity}</span>}
+          <button className="primary small" onClick={grapherApply}>Подставить в «Кабели»</button>
+          <button className="btn-link" onClick={() => setGrapher(null)}>скрыть</button></div>
+        <div className="gtable-wrap"><table className="gtable"><thead><tr><th>Материал в чертеже</th><th>Позиция набора</th><th className="num">Шт</th><th className="num">По чертежу, мм</th><th>Поправки</th><th className="num">Рез в чертеже</th><th>Концы</th></tr></thead><tbody>
+          {h.groups.map((g, i) => <tr key={i}><td>{g.material || "—"}{g.cores > 1 ? ` · ${g.cores} жил${g.jacket_mm != null ? ", разделка " + g.jacket_mm : ""}` : ""}</td>
+            <td>{g.component_id && gen.getCompById(g.component_id) ? compLabel(g.component_id) : <span className="tone-danger">не найдено — выбери</span>}</td>
+            <td className="num">{g.quantity}</td><td className="num">{g.length_mm == null ? <span className="tone-danger">нет</span> : g.length_mm}</td>
+            <td>{Number(g.correction_from_mm) || Number(g.correction_to_mm) ? `${sg(g.correction_from_mm)} / ${sg(g.correction_to_mm)}` : "—"}{g.mixed_corrections ? " (разные)" : ""}</td>
+            <td className="num">{g.cut_mm == null ? "—" : g.cut_mm}</td><td className="muted">{g.ends.join("; ")}{g.quantity > g.ends.length ? " …" : ""}</td></tr>)}
+        </tbody></table></div>
+        <small className="muted">Припуск у нас: {our.parts.length ? `${our.parts.join(", ")} = ${our.total} мм` : "концы ещё не выбраны"} — длина реза считается по нему. Разъёмы: {h.connectors.map((c) => `${c.designation} ${c.part_number}${c.terminals.length ? ` (терм. ${c.terminals.join(", ")})` : ""}`).join("; ") || "нет"}{h.pairs ? `. Свитых пар в чертеже: ${h.pairs} — включи свивку ниже.` : "."}</small>
+        {h.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}
+      </section>;
+    })()}
+    {sideSection("A")}
+    {sideSection("B")}
+    {(links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
+      <div className="gsec-head"><h3>Соединения по распиновке</h3></div>
+      {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>
+        <span key={i}>{i ? ", " : ""}{a === b ? `${a}→${b}` : <b>{a}→{b}</b>}</span>)}</div>)}
+      {links.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}
+    </section>}
+    <section className="gsec full gen-proc" aria-label="Обработка">
+      <div className="gsec-head"><h3>Обработка</h3></div>
+      <div className="proc-groups">
+        {([["Концы", ends], ["Жгут", harness], ["Автомат при резке", machine]] as const).filter(([, items]) => items.length > 0).map(([title, items]) =>
+          <div className="proc-group" key={title}><h4>{title}</h4>{items}</div>)}
+      </div>
+    </section>
+  </>;
 
-      <RouteEditor key="typical" ops={routeOps} finalName={finalName} quantity={docMinutes?.quantity ?? 1} value={routeOverride}
-        onChange={(route) => { setRouteError(""); setRouteEdit({ route, sig: routeSig }); }} error={routeError}
-        notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
-        skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
-        renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }} />
-    </>}
+  const coaxSections = <>
+    <section className="gsec" aria-label="Коакс-кабель">
+      <div className="gsec-head"><h3>Коакс-кабель</h3></div>
+      <div className="opt-grid">
+        <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value } }))} /></Field>
+        <div className="gfield span2"><span className="gfield-label">Экран (на сборку)</span>
+          <Seg label="Тип экрана" value={S.coax.shield} options={[["обжим", "Обжим втулки"], ["пайка", "Пайка экрана"]]}
+            onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} /></div>
+      </div>
+      <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
+        <Field label="Длина ТУТ" className="short"><UnitInput unit="мм" type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></Field>
+      </Toggle>
+    </section>
+    <section className="gsec ep-side" aria-label="Сторона А"><div className="gsec-head"><h3>Сторона А</h3></div>{coaxSideBlock("A")}</section>
+    <section className="gsec ep-side" aria-label="Сторона В"><div className="gsec-head"><h3>Сторона В</h3>{!S.coax.sideB && <span className="gsec-meta">разъёма нет — голый конец</span>}</div>
+      {S.coax.sideB ? coaxSideBlock("B")
+        : <Toggle checked={S.coax.stripB} title="Зачистка стороны В" hint="голый конец кабеля" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, stripB: on } }))} />}
+    </section>
+  </>;
 
-    {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». Остальное — в «Ещё». */}
-    <div className="gen-actions">
-      <details className="gen-more"><summary>Ещё</summary>
-        <label className="toggle-row"><input type="checkbox" checked={S.materialsSheet} onChange={(event) => update({ materialsSheet: event.target.checked })} /> Свод материалов отдельным листом в ЭТК</label>
-        {card.document && card.status !== "Выдана" && <button className="secondary small" disabled={busy} onClick={() => void deleteGenerated()}>Удалить черновик ЭТК</button>}
-        {more}
-      </details>
-      <button className="primary" disabled={busy} onClick={() => void generate()}>{busy ? "Собираю…" : card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>
+  return <div className="tcgen">
+    <div className="seg-tabs gen-modes" role="tablist" aria-label="Вид сборки">{TABS.map(([tab, label]) =>
+      <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "on" : ""}
+        onClick={() => { setRouteError(""); update((current) => switchGenTab(current, tab)); }}>{label}</button>)}</div>
+
+    <div className="gen-layout">
+      <div className="gen-main"><div className="gen-grid">
+        {sheet}
+        {typical && typicalSections}
+        {S.tab === "coax" && coaxSections}
+        {manualTab && <ManualAssembly state={manual} onChange={setManual} library={refs.library} opRecs={D.ops} components={components} partQty={partQty} />}
+      </div></div>
+
+      {/* Итог (владелец 04.10): операции, схема и одна кнопка — справа и всегда на виду; на планшете — внизу. */}
+      <aside className="gen-side" aria-label="Итог">
+        <div className="gen-side-body">
+          <div className="gen-side-head"><h3>Итог</h3><span className="gsec-meta">{summary}</span></div>
+          {warning && <div className="warning-inline">{warning}</div>}
+          {manualTab
+            ? <RouteEditor key="manual" ops={manualOps} finalName={finalName} quantity={partQty} value={manual.route} derive={chainRoute} defaultOpen
+              timeSource="по нормам операций" error={routeError} notice={manual.notice}
+              onChange={(route) => { setRouteError(""); setManual((current) => setRoute(current, route)); }}
+              renderOp={(position) => {
+                const op = manual.ops[position - 1];
+                return op ? <ManualOpSummary op={op} position={position} partQty={partQty} /> : null;
+              }} />
+            : <>
+              <div className="op-list" role="group" aria-label="Операции">
+                {ops.length > 0 && <div className="op-row head" aria-hidden="true"><span>№</span><span>Операция</span><span>Карточка</span>{OP_TIMES.map(([key, label]) => <span key={key}>{label}</span>)}</div>}
+                {!ops.length && <div className="gempty">{S.tab === "coax" ? "Выберите разъём — появятся операции" : "Добавьте кабель — появятся операции"}</div>}
+                {ops.map((spec, i) => opItem(spec, i + 1))}
+              </div>
+              <RouteEditor key="typical" ops={routeOps} finalName={finalName} quantity={docMinutes?.quantity ?? 1} value={routeOverride}
+                onChange={(route) => { setRouteError(""); setRouteEdit({ route, sig: routeSig }); }} error={routeError}
+                notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
+                skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
+                renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }} />
+            </>}
+          {/* Служебное (владелец 29.09) — свод материалов, удаление черновика, JSON — свёрнуто в «Ещё». */}
+          <details className="gen-more"><summary>Ещё</summary>
+            <Toggle checked={S.materialsSheet} title="Свод материалов отдельным листом в ЭТК" onChange={(on) => update({ materialsSheet: on })} />
+            {card.document && card.status !== "Выдана" && <button className="secondary small" disabled={busy} onClick={() => void deleteGenerated()}>Удалить черновик ЭТК</button>}
+            {more}
+          </details>
+        </div>
+        {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». */}
+        <div className="gen-foot">
+          {status.text ? <div className={status.error ? "error-banner" : "gen-status"} role={status.error ? "alert" : undefined}>{status.text}</div>
+            : <span className="gen-foot-sum">{summary}</span>}
+          <button className="primary" disabled={busy} onClick={() => void generate()}>{busy ? "Собираю…" : card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>
+        </div>
+      </aside>
     </div>
-    {status.text && <div className={status.error ? "error-banner" : "muted"} role={status.error ? "alert" : undefined}>{status.text}</div>}
   </div>;
 }

@@ -18,6 +18,7 @@ import {
   type ManualState,
 } from "./manualLogic";
 import type { Comp, OpRec } from "./tcGenLogic";
+import { Field, UnitInput } from "./GenControls";
 
 type Change = (next: (current: ManualState) => ManualState) => void;
 
@@ -39,7 +40,7 @@ function LibraryPicker({ library, opRecs, added, onAdd, onClose }: {
     { key: "category", title: "Категория", value: cardCategory, width: 150 },
     { key: "norm", title: "Норма БД.ОП", value: (card) => normText(card, opRecs), width: 190 },
   ];
-  return <div className="gcard manual-picker" role="region" aria-label="Библиотека операций">
+  return <div className="manual-picker" role="region" aria-label="Библиотека операций">
     <div className="section-hdr"><strong>Операция из библиотеки</strong>
       {added && <span className="ok-text" role="status">{added}</span>}
       <button type="button" className="btn-link manual-close" onClick={onClose}>Закрыть</button></div>
@@ -77,16 +78,17 @@ export function ManualOpCard({ op, position, count, partQty, components, onChang
   const title = opTitle(op, position);
   const minutes = opMinutes(op, partQty);
   const picked = new Map(op.components.map((item) => [item.id, item]));
-  const field = (key: "qty" | "prepMin" | "opSec", label: string, placeholder: string) =>
-    <label className="field-label">{label}<input inputMode="decimal" aria-label={`${label}: ${title}`} value={op[key]} placeholder={placeholder}
-      onChange={(event) => set({ [key]: event.target.value })} /></label>;
+  // Подпись короткая, единица — в поле; полное имя поля — в aria-label («Подготовка, мин: Резка»).
+  const field = (key: "qty" | "prepMin" | "opSec", label: string, unit: string, name: string, placeholder: string) =>
+    <Field label={label}><UnitInput unit={unit} inputMode="decimal" aria-label={`${name}: ${title}`} value={op[key]} placeholder={placeholder}
+      onChange={(event) => set({ [key]: event.target.value })} /></Field>;
   return <div className="manual-op" aria-label={`Операция ${position}: ${title}`}>
     <div className="manual-op-head">
       <span className="op-badge">{position}</span>
       <div className="manual-op-name">
         <input aria-label={`Название операции ${position}`} value={op.label} placeholder={op.kind === "custom" ? "Название своей операции" : ""}
           className={op.kind === "custom" && !op.label.trim() ? "f-empty" : undefined} onChange={(event) => set({ label: event.target.value })} />
-        <small>{op.kind === "library" ? <>{op.code && <code>{op.code}</code>} из библиотеки</> : "своя операция"}</small>
+        <small>{op.kind === "library" ? <>{op.code && <span className="op-code">{op.code}</span>} из библиотеки</> : "своя операция"}</small>
       </div>
       <div className="manual-op-tools">
         <button type="button" className="secondary small" aria-label={`Выше: ${title}`} title="Выше" disabled={position === 1} onClick={() => onChange((current) => moveOp(current, op.seq, -1))}>↑</button>
@@ -95,18 +97,18 @@ export function ManualOpCard({ op, position, count, partQty, components, onChang
       </div>
     </div>
     <div className="manual-grid">
-      {field("qty", "На изделие", "1")}
-      {field("prepMin", "Подготовка, мин", "0")}
-      {field("opSec", "Операция, сек/шт", "0")}
+      {field("qty", "На изделие", "шт", "На изделие", "1")}
+      {field("prepMin", "Подготовка", "мин", "Подготовка, мин", "0")}
+      {field("opSec", "Операция", "с/шт", "Операция, сек/шт", "0")}
       <div className="manual-norm" aria-label={`Норма на партию: ${title}`}><small>На партию {partQty} шт.</small>{normLabel(minutes)}</div>
-      <label className="field-label wide">Параметры<input aria-label={`Параметры: ${title}`} value={op.params} placeholder="напр. L = 300 мм, зачистка 5 мм" onChange={(event) => set({ params: event.target.value })} /></label>
-      <label className="field-label result">Результат — полуфабрикат<input aria-label={`Результат: ${title}`} value={op.result} placeholder={`Полуфабрикат после «${title}»`} onChange={(event) => set({ result: event.target.value })} /></label>
-      <label className="field-label wide">Примечание<input aria-label={`Примечание: ${title}`} value={op.note} onChange={(event) => set({ note: event.target.value })} /></label>
+      <Field label="Параметры" className="wide"><input aria-label={`Параметры: ${title}`} value={op.params} placeholder="напр. L = 300 мм, зачистка 5 мм" onChange={(event) => set({ params: event.target.value })} /></Field>
+      <Field label="Результат — полуфабрикат" className="result"><input aria-label={`Результат: ${title}`} value={op.result} placeholder={`Полуфабрикат после «${title}»`} onChange={(event) => set({ result: event.target.value })} /></Field>
+      <Field label="Примечание" className="wide"><input aria-label={`Примечание: ${title}`} value={op.note} onChange={(event) => set({ note: event.target.value })} /></Field>
     </div>
     {op.kind === "custom" && <div className="manual-text">
-      <label className="field-label">Ход операции — шаг на строку<textarea aria-label={`Ход операции: ${title}`} rows={4} value={op.steps} onChange={(event) => set({ steps: event.target.value })} /></label>
-      <label className="field-label">Контроль — «что проверить | допуск» на строку<textarea aria-label={`Контроль: ${title}`} rows={4} value={op.controls} placeholder="Пайка без наплывов | IPC-A-620, разд. 4" onChange={(event) => set({ controls: event.target.value })} /></label>
-      <label className="field-label">Оснастка — строкой; «Оборудование: …», «Расходники: …»<textarea aria-label={`Оснастка: ${title}`} rows={4} value={op.tooling} placeholder={"Пинцет\nОборудование: паяльная станция\nРасходники: припой ПОС-61"} onChange={(event) => set({ tooling: event.target.value })} /></label>
+      <label className="gfield"><span className="gfield-label">Ход операции<small>шаг на строку</small></span><textarea aria-label={`Ход операции: ${title}`} rows={4} value={op.steps} onChange={(event) => set({ steps: event.target.value })} /></label>
+      <label className="gfield"><span className="gfield-label">Контроль<small>«что проверить | допуск» на строку</small></span><textarea aria-label={`Контроль: ${title}`} rows={4} value={op.controls} placeholder="Пайка без наплывов | IPC-A-620, разд. 4" onChange={(event) => set({ controls: event.target.value })} /></label>
+      <label className="gfield"><span className="gfield-label">Оснастка<small>строкой; «Оборудование: …», «Расходники: …»</small></span><textarea aria-label={`Оснастка: ${title}`} rows={4} value={op.tooling} placeholder={"Пинцет\nОборудование: паяльная станция\nРасходники: припой ПОС-61"} onChange={(event) => set({ tooling: event.target.value })} /></label>
     </div>}
     {components.length > 0 && <details className="manual-comps" open={op.components.length > 0}>
       <summary>Комплектующие из КБ{op.components.length ? ` · ${op.components.length}` : ""}</summary>
@@ -133,10 +135,10 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const [picking, setPicking] = useState(false);
   const [added, setAdded] = useState("");
   const total = state.ops.reduce((sum, op) => sum + opMinutes(op, partQty), 0);
-  return <div className="manual-assembly">
-    <div className="section-hdr manual-hdr">
+  return <section className="gsec full manual-assembly" aria-label="Операции — ручная сборка">
+    <div className="gsec-head manual-hdr">
       <h3>Операции — ручная сборка</h3>
-      {state.ops.length > 0 && <span className="muted">{state.ops.length} оп. · {formatMinutes(total)} мин на партию {partQty} шт.</span>}
+      {state.ops.length > 0 && <span className="gsec-meta">{state.ops.length} оп. · {formatMinutes(total)} мин на партию {partQty} шт.</span>}
       <span className="manual-add">
         <button type="button" className="secondary small" aria-expanded={picking} onClick={() => { setPicking(!picking); setAdded(""); }}>+ Операция из библиотеки</button>
         <button type="button" className="secondary small" onClick={() => onChange((current) => addCustomOp(current))}>+ Своя операция</button>
@@ -146,9 +148,9 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
       onChange((current) => cards.reduce((next, card) => addLibraryOp(next, card, opRecs), current));
       setAdded(cards.length === 1 ? `Добавлена операция ${state.ops.length + 1}: «${cardLabel(cards[0])}»` : `Добавлено операций: ${cards.length}`);
     }} />}
-    <div className="gcard manual-ops">
-      {!state.ops.length && <div className="op-empty">Операций нет — добавьте карточку из библиотеки или свою операцию.</div>}
+    <div className="manual-ops">
+      {!state.ops.length && <div className="gempty">Операций нет — добавьте карточку из библиотеки или свою операцию.</div>}
       {state.ops.map((op, index) => <ManualOpCard key={op.seq} op={op} position={index + 1} count={state.ops.length} partQty={partQty} components={components} onChange={onChange} />)}
     </div>
-  </div>;
+  </section>;
 }
