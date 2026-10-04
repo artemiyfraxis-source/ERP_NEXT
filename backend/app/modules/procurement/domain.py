@@ -741,6 +741,43 @@ class ProcurementLine:
             raise ProcurementValidationError("Закупщик может изменять только свои строки")
 
 
+# Удаление проекта (owner 04.10, «заявки не удалились при сносе проекта»): a line still on the buyer's own desk
+# goes with its request; «Отменено» too while nothing was ordered or invoiced (решено агентом — проверить).
+REMOVABLE_STAGES = frozenset({
+    ProcurementStatus.NEW, ProcurementStatus.IN_WORK, ProcurementStatus.READY,
+    ProcurementStatus.APPROVAL, ProcurementStatus.CANCELLED,
+})
+_RECEIPT_BLOCKERS = {ProcurementStatus.IN_TRANSIT: "в пути", ProcurementStatus.QUARANTINE: "на карантине в приёмке"}
+
+
+def removal_blocker(line: ProcurementLine) -> str | None:
+    """Why a line of a deleted project must stay, in Russian; None — nothing moved on it and it may go.
+
+    Movement is anything past the buyer's own work: a payment, an acceptance or a delivery in receiving, an
+    invoice or its money (КП), a supplier order sent, and a «Со склада» reserve still held on a lot (the purge
+    never touches warehouse lots)."""
+    if line.paid_at is not None:
+        return "оплачена"
+    if line.status is ProcurementStatus.DONE:
+        return "закрыта «Со склада»" if line.stock_covered > 0 else "принята"
+    if line.status in _RECEIPT_BLOCKERS:
+        return _RECEIPT_BLOCKERS[line.status]
+    if line.invoice_url or line.invoice_number or line.invoice_date is not None:
+        return "внесён счёт"
+    money = line.money
+    if any(value is not None for value in (
+        money.price, money.price_with_vat, money.sum, money.source_price, money.source_price_with_vat, money.source_sum,
+    )):
+        return "внесены суммы КП"
+    if line.order_number or line.supplier_request_reference:
+        return f"запрос поставщику отправлен ({line.order_number or line.supplier_request_reference})"
+    if line.stock_covered > 0:
+        return "держит резерв «Со склада» — снимите его в «Закупке»"
+    if line.status not in REMOVABLE_STAGES:
+        return "дальше работы закупщика"
+    return None
+
+
 def _text(value: str | None) -> str:
     return str(value or "").strip()
 

@@ -19,6 +19,7 @@ from app.modules.procurement.domain import (
     next_retransfer_revision,
     next_system_id,
     number_to_revision,
+    removal_blocker,
     revision_to_number,
 )
 from app.modules.procurement.money import EMPTY_MONEY, ExchangeRate, MoneyInput
@@ -773,3 +774,29 @@ def test_retry_of_formed_request_is_not_blocked_by_later_replacement():
     requested = awaiting_invoice(buyer).set_replacement(True, None, buyer)
 
     assert requested.send_supplier_request("PO-001", date(2026, 9, 22), "REQ-2026-1", buyer) == requested
+
+
+@pytest.mark.parametrize(("changes", "blocker"), [
+    ({}, None),
+    ({"status": ProcurementStatus.IN_WORK}, None),
+    ({"status": ProcurementStatus.READY, "supplier": "ООО Ромашка"}, None),
+    ({"status": ProcurementStatus.APPROVAL}, None),
+    ({"status": ProcurementStatus.CANCELLED}, None),
+    ({"status": ProcurementStatus.AWAITING_INVOICE, "order_number": "PO-001"}, "запрос поставщику отправлен (PO-001)"),
+    ({"status": ProcurementStatus.APPROVAL, "supplier_request_reference": "REQ-1"}, "запрос поставщику отправлен (REQ-1)"),
+    ({"status": ProcurementStatus.TO_PAY, "invoice_url": "https://example.test/i.pdf"}, "внесён счёт"),
+    ({"status": ProcurementStatus.CANCELLED, "invoice_number": "17"}, "внесён счёт"),
+    ({"status": ProcurementStatus.APPROVAL, "money": dataclasses.replace(EMPTY_MONEY, sum=Decimal("5"))}, "внесены суммы КП"),
+    ({"status": ProcurementStatus.IN_TRANSIT, "paid_at": datetime(2026, 9, 20)}, "оплачена"),
+    ({"status": ProcurementStatus.APPROVAL, "paid_at": datetime(2026, 9, 20)}, "оплачена"),
+    ({"status": ProcurementStatus.QUARANTINE}, "на карантине в приёмке"),
+    ({"status": ProcurementStatus.DONE}, "принята"),
+    ({"status": ProcurementStatus.DONE, "stock_covered": Decimal("2")}, "закрыта «Со склада»"),
+    ({"status": ProcurementStatus.IN_WORK, "stock_covered": Decimal("1")}, "держит резерв «Со склада» — снимите его в «Закупке»"),
+    ({"status": ProcurementStatus.AWAITING_INVOICE}, "дальше работы закупщика"),
+])
+def test_removal_blocker_lets_only_the_buyers_own_work_go(changes, blocker):
+    """Deleting a project takes a line only while nothing was ordered, invoiced, paid, received or reserved."""
+    line = dataclasses.replace(create_line_from_requested(requested_message()), **changes)
+
+    assert removal_blocker(line) == blocker

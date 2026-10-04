@@ -455,7 +455,7 @@ def delete(
         project, principal.actor, now,
         techcards_factory(request), production_factory(request), shipping_factory(request),
         fulfillment_uow=fulfillment_factory(request), requests_uow=requests_factory(request),
-        procurement_stages=getattr(request.app.state, "procurement_stage_lookup", None),
+        procurement_uow=procurement_factory(request),
     ))}
 
 

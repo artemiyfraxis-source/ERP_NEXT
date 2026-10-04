@@ -35,6 +35,7 @@ from .domain import (
     SupplierRequestGroup,
     ReplacementDecision,
     StockCover,
+    removal_blocker,
     create_backorder_line,
     create_line_from_requested,
     group_supplier_requests,
@@ -98,6 +99,9 @@ class ProcurementRepository(Protocol):
     def excluding_statuses(self, statuses: Sequence[str]) -> Sequence[ProcurementLine]: ...
     def with_statuses(self, statuses: Sequence[str]) -> Sequence[ProcurementLine]: ...
     def add(self, line: ProcurementLine) -> None: ...
+    def delete(self, line_id: UUID, expected_version: int) -> bool:
+        """Removes the line (with its released «Со склада» history); False — it changed since it was read."""
+        ...
     def add_order(self, order: SupplierOrder) -> None: ...
     def get_order(self, order_number: str) -> SupplierOrder | None: ...
     def add_order_document(self, document: SupplierOrderDocument, content: bytes) -> None: ...
@@ -2102,3 +2106,66 @@ def save_procurement_facts_batch(
         except ProcurementValidationError as error:
             failed.append((label, str(error)))
     return FactsBatchResult(lines=saved, skipped=skipped, failed=failed)
+
+
+# ── Удаление проекта: строки закупки без движения (owner 04.10) ─────────
+
+
+@dataclass(frozen=True)
+class RemoveRequestLinesCommand:
+    """The lines of these requests go if nothing moved on any of them; ``apply=False`` only reports."""
+
+    request_ids: tuple[UUID, ...]
+    actor: Actor
+    now: datetime
+    project: str = ""
+    apply: bool = True
+
+
+@dataclass(frozen=True)
+class RequestLines:
+    """One request's procurement lines: removed (or to remove) together, or all kept for `blocker`."""
+
+    lines: tuple[str, ...]
+    blocker: str | None = None
+
+
+def line_removal_label(line: ProcurementLine) -> str:
+    return f"{line.legacy_id} · {line.calculated_name} («{line.status.value}»)"
+
+
+def remove_untouched_request_lines(command: RemoveRequestLinesCommand, uow: UnitOfWork) -> dict[UUID, RequestLines]:
+    """A deleted project's purchase requests take their procurement lines along when nothing moved on them
+    (`removal_blocker`): all lines of a request go in one transaction or none, so a split or re-transferred
+    request never loses half of its lines. Requests without lines are absent from the result. A line changed
+    between the read and the delete fails the whole call (`ConcurrentProcurementUpdate`): nothing is removed."""
+    result: dict[UUID, RequestLines] = {}
+    with uow:
+        by_request: dict[UUID, list[ProcurementLine]] = {}
+        for line in uow.procurement.by_source_request_ids(list(dict.fromkeys(command.request_ids))):
+            by_request.setdefault(line.source_request_id, []).append(line)
+        removed = 0
+        for request_id, lines in by_request.items():
+            labels = tuple(line_removal_label(line) for line in lines)
+            blocked = next(((line, why) for line in lines if (why := removal_blocker(line)) is not None), None)
+            if blocked is not None:
+                line, why = blocked
+                result[request_id] = RequestLines(labels, f"{line.legacy_id} «{line.status.value}»: {why}")
+                continue
+            result[request_id] = RequestLines(labels)
+            if not command.apply:
+                continue
+            for line in lines:
+                if not uow.procurement.delete(line.id, line.version):
+                    raise ConcurrentProcurementUpdate(f"Строку {line.legacy_id} изменили во время удаления")
+                uow.audit.add(AuditEvent(
+                    id=uuid4(), aggregate_id=line.id, event_type="procurement.line_deleted", actor=command.actor,
+                    occurred_at=command.now, details={
+                        "project": command.project, "legacy_id": line.legacy_id, "revision": line.revision,
+                        "status": line.status.value, "name": line.calculated_name, "reason": "project_deleted",
+                    },
+                ))
+                removed += 1
+        if removed:
+            uow.commit()
+    return result
