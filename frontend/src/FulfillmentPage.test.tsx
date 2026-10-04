@@ -480,6 +480,9 @@ it("creates a request from a calculation link: preview by warehouse, picks and �
         { name: "МГТФ 0,35", qty: "12.5", unit: "м", found: true, short: "2.5", picks: [
           { lot_id: "l1", warehouse: "ЦАР", grn: "OLD.25.0000009", package: "", article: "", name: "МГТФ 0,35", unit: "м", storage_location: "1A1", qty: "10" },
         ] },
+        { name: "Разъём Molex", qty: "5", unit: "шт", found: true, short: "0", picks: [
+          { lot_id: "l2", warehouse: "ЦАР", grn: "FRX.26.0000005", package: "", article: "", name: "Разъём Molex", unit: "шт", storage_location: "1F4", qty: "5", reserved: "3" },
+        ] },
         { name: "DB-9M", qty: "4", unit: "шт", found: false, short: "4", picks: [] },
       ] });
       return json({ request });
@@ -497,10 +500,11 @@ it("creates a request from a calculation link: preview by warehouse, picks and �
   fireEvent.change(screen.getByLabelText("Склад расчёта"), { target: { value: "ЖУК" } });
   fireEvent.click(screen.getByRole("button", { name: "Подобрать" }));
 
-  expect(await screen.findByText("Позиций: 2 · полностью: 0 · с недобором: 1 · нет на складе: 1")).toBeInTheDocument();
+  expect(await screen.findByText("Позиций: 3 · полностью: 1 · с недобором: 1 · нет на складе: 1")).toBeInTheDocument();
   expect(posts[0]).toEqual({ path: "/api/issues/calc-preview", body: { url: "https://docs.google.com/spreadsheets/d/X/edit", warehouse: "ЖУК" } });
   expect(screen.getByLabelText("Назначение по расчёту")).toHaveValue("591К.3");
   expect(screen.getByText("OLD.25.0000009: 10")).toBeInTheDocument();
+  expect(screen.getByText("FRX.26.0000005: 5 (резерв под заявку 3)")).toBeInTheDocument();
   expect(screen.getByText("недобор 2.5")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Дедлайн по расчёту"), { target: { value: "2026-10-05" } });
   fireEvent.click(screen.getByRole("button", { name: "Оформить заявку" }));
@@ -509,7 +513,10 @@ it("creates a request from a calculation link: preview by warehouse, picks and �
   expect(posts[1]).toEqual({ path: "/api/issues", body: {
     purpose: "591К.3",
     deadline: "2026-10-05",
-    lines: [{ article: "", name: "МГТФ 0,35", unit: "м", requirement: "10", lot_id: "l1" }],
+    lines: [
+      { article: "", name: "МГТФ 0,35", unit: "м", requirement: "10", lot_id: "l1" },
+      { article: "", name: "Разъём Molex", unit: "шт", requirement: "5", lot_id: "l2" },
+    ],
     short_note: ["DB-9M: нет на складе (−4)"],
   } });
 });
