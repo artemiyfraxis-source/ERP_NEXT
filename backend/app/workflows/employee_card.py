@@ -6,8 +6,8 @@
 результат: `count: 0`.
 
 Разделы: шапка (ФИО, отдел, роль, площадка), кадровые поля (табельный номер, должность, категория, «в должности с»,
-руководитель), подчинённые мастера, проекты (исполнитель по операциям + инициатор заявок,
-срок из снимка плана), компетенции, отсутствия и ближайший отпуск, часы за текущий месяц, свои открытые заявки,
+руководитель), подчинённые мастера площадки (флаги «Мастер площадки» и «Монтажник»), проекты (исполнитель по
+операциям + инициатор заявок, срок из снимка плана), компетенции, отсутствия и ближайший отпуск, часы за текущий месяц, свои открытые заявки,
 открытые задачи арбитра в разделах, которые человек правит.
 """
 
@@ -110,9 +110,9 @@ def _personnel(user: IdentityUser, manager: IdentityUser | None) -> dict[str, An
 
 
 def _is_fitter(operator) -> bool:
-    """Монтажник — активный «Сотрудник» цеха (площадка или отдел «Монтаж»), как `Operator.installer`, но без
+    """Монтажник — активный сотрудник с флагом «Монтажник (работает в цеху)», как `Operator.installer`, но без
     исключения площадок без нормирования: люди ЖУК не расписываются по часам, а мастеру ЖУК всё равно подчиняются."""
-    return operator.active and operator.role == "staff" and (bool(operator.site) or "монтаж" in operator.department.lower())
+    return operator.active and operator.shop_worker
 
 
 @dataclass
@@ -130,12 +130,13 @@ class _Shop:
 def _read_shop(uow, user: IdentityUser, now: datetime) -> _Shop:
     shop = _Shop()
     today = _local(now).date()
-    if user.role == "master":
-        # Мастер площадки видит своих монтажников; без площадки — всех (как авторасчёт и назначение в Production).
+    if user.site_master:
+        # Флаг «Мастер площадки»: мастер видит монтажников своей площадки; без площадки — всех (как авторасчёт и
+        # назначение в Production). Мастер, который сам работает в цеху, себе не подчинён.
         shop.subordinates = [
             {"id": str(item.id), "name": item.name, "site": _text(item.site), "department": _text(item.department)}
             for item in uow.operators.list()
-            if _is_fitter(item) and (not user.site or item.site == user.site)
+            if _is_fitter(item) and item.id != user.id and (not user.site or item.site == user.site)
         ]
     for snapshot in uow.plan_projects.list():
         key = normalize_project_number(snapshot.project)

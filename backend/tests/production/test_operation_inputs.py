@@ -211,7 +211,7 @@ def _uow_factory():
     with sessions() as session:
         session.add(IdentityUserRow(
             id=operator_id, login="operator", email="operator@example.test", name="Оператор",
-            department="Производство", role="staff", site="ЦАР", active=True,
+            department="Производство", role="staff", site="ЦАР", active=True, shop_worker=True,
         ))
         session.commit()
     return engine, sessions, (lambda: SqlAlchemyProductionUnitOfWork(sessions)), operator_id
