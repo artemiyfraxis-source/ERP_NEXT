@@ -167,7 +167,7 @@ def route_from_document(document: Mapping[str, Any] | None) -> tuple[RouteStep, 
     operation fills what the config lacks (a card code resolved from the operation library, a title).
 
     Each step also carries its block of the semi-finished scheme (block, block_name, final, inputs) — from
-    document.route when the card has one, otherwise a linear chain derived from the step order. The block
+    a hand-drawn document.route when the card has one, otherwise a linear chain derived from the step order. The block
     data is extra: the steps, their order and positions are the same with or without a scheme."""
     if not isinstance(document, Mapping):
         return ()
@@ -180,7 +180,12 @@ def route_from_document(document: Mapping[str, Any] | None) -> tuple[RouteStep, 
         + [(built[index] if index < len(built) else {}).get(name) for name in _OP_KEY_FIELDS]
         for index in range(count)
     ]
-    blocks = _route_blocks(document.get("route"), count, op_keys) or _derived_blocks(count)
+    route = document.get("route")
+    # The shop follows the block network only once the technologist has drawn it (source «manual»); the scheme the
+    # generator derives by itself is a hint on the ETK, and production keeps today's chain for it.
+    if isinstance(route, Mapping) and route.get("source") == "derived":
+        route = None
+    blocks = _route_blocks(route, count, op_keys) or _derived_blocks(count)
     steps: list[RouteStep] = []
     for index in range(count):
         op = config_ops[index] if index < len(config_ops) else {}

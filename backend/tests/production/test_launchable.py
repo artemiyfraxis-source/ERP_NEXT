@@ -107,3 +107,15 @@ def test_route_that_does_not_fit_the_steps_falls_back_to_the_linear_chain():
 def test_route_from_a_document_without_operations_is_empty():
     assert route_from_document(None) == ()
     assert route_from_document({"route": {"blocks": [{"key": "x", "ops": []}], "edges": []}}) == ()
+
+
+def test_a_derived_scheme_keeps_the_shop_chain():
+    """The generator's own scheme (source «derived») is a hint on the ETK: production still runs the chain."""
+    route = {"source": "derived", "final": "b3", "blocks": [
+        {"key": "b1", "ops": [1], "final": False}, {"key": "b2", "ops": [2], "final": False},
+        {"key": "b3", "ops": [3], "final": True},
+    ], "edges": [{"from": "b1", "to": "b3", "per_unit": 1}, {"from": "b2", "to": "b3", "per_unit": 1}]}
+    ops = [{"stage": "Резка А"}, {"stage": "Резка Б"}, {"stage": "Сборка"}]
+    steps = route_from_document({"build_config": {"ops": ops}, "route": route})
+    assert [step.block for step in steps] == ["b1", "b2", "b3"]
+    assert [[item.block for item in step.inputs] for step in steps] == [[], ["b1"], ["b2"]]
