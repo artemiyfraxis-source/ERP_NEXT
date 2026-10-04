@@ -81,7 +81,7 @@ def test_operation_is_split_between_installers_by_pieces(production_api):
     with app.state.production_uow_factory() as uow:
         uow.session.add(IdentityUserRow(
             id=SECOND, login="second", email="second@example.test", name="Второй", department="Монтаж",
-            role="staff", site="ЦАР", active=True,
+            role="staff", site="ЦАР", active=True, shop_worker=True,
         ))
         uow.commit()
     task = launch_from_card(client, "split-v1", "591K.3", "КБ1", 10, [("OP", "Обжим", 315, 0)]).json()["task"]
@@ -219,7 +219,7 @@ def test_next_stage_of_the_same_assembly_follows_the_fact(production_api):
     with app.state.production_uow_factory() as uow:
         uow.session.add(IdentityUserRow(
             id=SECOND, login="second", email="second@example.test", name="Второй", department="Монтаж",
-            role="staff", site="ЦАР", active=True,
+            role="staff", site="ЦАР", active=True, shop_worker=True,
         ))
         uow.commit()
     task = launch_from_card(client, "chain-v1", "591K.3", "КБ1", 10, [("", "Резка", 315, 0), ("", "Монтаж", 315, 0)]).json()["task"]
@@ -252,7 +252,7 @@ def add_second():
     with app.state.production_uow_factory() as uow:
         uow.session.add(IdentityUserRow(
             id=SECOND, login="second", email="second@example.test", name="Второй", department="Монтаж",
-            role="staff", site="ЦАР", active=True,
+            role="staff", site="ЦАР", active=True, shop_worker=True,
         ))
         uow.commit()
 

@@ -48,7 +48,7 @@ def execution_setup():
     with sessions() as session:
         session.add(IdentityUserRow(
             id=operator_id, login="operator", email="operator@example.test", name="Оператор",
-            department="Производство", role="staff", site="ЦАР", active=True,
+            department="Производство", role="staff", site="ЦАР", active=True, shop_worker=True,
         ))
         session.commit()
     factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)

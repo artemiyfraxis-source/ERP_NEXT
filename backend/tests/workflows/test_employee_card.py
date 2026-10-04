@@ -14,7 +14,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.identity.domain import ROLE_SEED, AccessMode, IdentityUser, hash_password
-from app.modules.identity.infrastructure import SqlAlchemyIdentityUnitOfWork, provision_user, seed_role_matrix
+from app.modules.identity.infrastructure import (
+    IdentityUserRow,
+    SqlAlchemyIdentityUnitOfWork,
+    provision_user,
+    seed_role_matrix,
+)
 from app.modules.operations.domain import ProjectTask
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from app.modules.production.application import Absence, LaunchProductionCommand, launch_production
@@ -242,6 +247,43 @@ def test_master_without_a_site_sees_every_fitter_but_not_the_dismissed_or_himsel
 def test_other_roles_have_no_subordinates(erp):
     assert card(erp, FITTER)["subordinates"] == []
     assert card(erp, ADMIN)["subordinates"] == []
+
+
+def _flag(erp, user_id, **flags):
+    with erp.sessions() as session:
+        row = session.get(IdentityUserRow, user_id)
+        for name, value in flags.items():
+            setattr(row, name, value)
+        session.commit()
+
+
+def test_a_fitter_without_the_shop_flag_is_not_a_subordinate(erp):
+    _flag(erp, FITTER_2, shop_worker=False)
+
+    assert [item["name"] for item in card(erp, MASTER)["subordinates"]] == ["Монтажник Анна"]
+
+
+def test_anyone_with_the_shop_flag_is_a_subordinate_whatever_the_level(erp):
+    engineer = UUID("60000000-0000-0000-0000-000000000009")
+    with erp.sessions() as session:
+        provision_user(session, replace(
+            _user(engineer, "engineer", "Инженер в цеху", "engineer", "Техотдел", "ЦАР"),
+            access_level="tech_lead", shop_worker=True,
+        ), hash_password(PASSWORD))
+        session.commit()
+
+    names = [item["name"] for item in card(erp, MASTER)["subordinates"]]
+
+    assert names == ["Инженер в цеху", "Монтажник Анна", "Монтажник Борис"]
+
+
+def test_subordinates_follow_the_site_master_flag_not_the_role(erp):
+    _flag(erp, MASTER, site_master=False)
+    _flag(erp, FITTER, site_master=True)
+
+    assert card(erp, MASTER)["subordinates"] == []
+    # A site master who works in the shop himself is not his own subordinate.
+    assert [item["name"] for item in card(erp, FITTER)["subordinates"]] == ["Монтажник Борис"]
 
 
 # ── Проекты ──────────────────────────────────────────────────────────────

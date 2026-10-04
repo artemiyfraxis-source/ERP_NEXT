@@ -36,7 +36,7 @@ class ProductionRepo:
 
 
 class Operators:
-    def __init__(self): self.items = {OPERATOR: Operator(OPERATOR, "Оператор", "ЦАР", True)}
+    def __init__(self): self.items = {OPERATOR: Operator(OPERATOR, "Оператор", "ЦАР", True, shop_worker=True)}
     def get(self, operator_id): return self.items.get(operator_id)
     def list(self): return list(self.items.values())
 
@@ -111,6 +111,32 @@ def test_launch_is_idempotent_and_route_snapshot_is_not_rebuilt():
                 operations=route(), actor=actor, now=datetime(2026, 9, 22, 8, 0),
             ), uow,
         )
+
+
+@pytest.mark.parametrize(("operator", "installer"), [
+    (Operator(OPERATOR, "Монтажник", "ЦАР", True, shop_worker=True), True),
+    # Флаг решает, а не площадка или отдел: монтажник без площадки и не из «Монтажа» — всё равно монтажник.
+    (Operator(OPERATOR, "Монтажник", "", True, "Офис", shop_worker=True), True),
+    (Operator(OPERATOR, "Мастер", "ЦАР", True, "Монтаж", site_master=True), False),
+    (Operator(OPERATOR, "Сотрудник без флага", "ЦАР", True, "Монтаж"), False),
+    (Operator(OPERATOR, "Уволенный", "ЦАР", False, shop_worker=True), False),
+    (Operator(OPERATOR, "Монтажник ЖУК", "ЖУК", True, shop_worker=True), False),
+])
+def test_installer_is_an_active_shop_worker_off_the_unplanned_sites(operator, installer):
+    assert operator.installer is installer
+
+
+def test_assignment_refuses_a_person_without_the_shop_flag():
+    uow = Uow(); actor = Actor(name="Мастер", department="Производство")
+    uow.operators.items[OPERATOR] = Operator(OPERATOR, "Оператор", "ЦАР", True, "Монтаж")
+    created = launch(uow, actor, datetime(2026, 9, 22, 16, 0))
+
+    with pytest.raises(ProductionValidationError, match="Оператор не монтажник"):
+        assign_production(AssignProductionCommand(
+            task_id=created.id, expected_version=created.version,
+            operation_id=created.operations[0].id, operator_ids=(OPERATOR,),
+            requested_start=None, actor=actor, now=datetime(2026, 9, 22, 16, 0),
+        ), uow)
 
 
 def test_assignment_uses_calendar_and_cancel_keeps_history():

@@ -32,7 +32,7 @@ from app.shared.clock import as_utc
 
 from .application import IdentitySession, PinRecord
 from .domain import ROLE_SEED, AccessMode, IdentityUser, normalize_login
-from .level_migration import level_for_role, shop_worker_rule, site_master_rule
+from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
 
 
 # A row inserted without a level takes it from its role (and site / department for the installer flag), until the
@@ -267,14 +267,17 @@ def _write_personnel(row: IdentityUserRow, user: IdentityUser) -> None:
     row.manager_id = user.manager_id
 
 
-def _follow_role(row: IdentityUserRow, user: IdentityUser) -> None:
-    """Until «Сотрудники» edits the level and the flags (access-levels plan, T6), changing the old role (site,
-    department) re-derives them, so they never lag behind the role the gates still use."""
+def _follow_role(row: IdentityUserRow, user: IdentityUser, flags_as_given: bool) -> None:
+    """Until «Сотрудники» edits the level (access-levels plan, T6), changing the old role re-derives it, so it never
+    lags behind the role the gates still use. The two flags: `flags_as_given` — the caller decided them itself
+    («Сотрудники», T3) and they are written as carried; otherwise they follow the role, site and department unless set
+    against the rule by hand (`followed_flags`)."""
     if row.role != user.role:
         row.access_level = level_for_role(user.role)
-        row.site_master = site_master_rule(user.role)
-    if (row.role, row.site, row.department) != (user.role, user.site, user.department):
-        row.shop_worker = shop_worker_rule(user.role, user.site, user.department)
+    if flags_as_given:
+        row.shop_worker, row.site_master = user.shop_worker, user.site_master
+    else:
+        row.shop_worker, row.site_master = followed_flags(row, user.role, user.site, user.department)
 
 
 def _session_domain(row: IdentitySessionRow) -> IdentitySession:
@@ -513,11 +516,11 @@ class SqlAlchemyIdentityRepository:
         )
         self.session.execute(delete(IdentityUserRow).where(IdentityUserRow.id == user_id))
 
-    def update_user(self, user: IdentityUser) -> None:
+    def update_user(self, user: IdentityUser, *, flags_as_given: bool = False) -> None:
         row = self.session.get(IdentityUserRow, user.id)
         if row is None:
             raise KeyError(f"Identity user not found: {user.id}")
-        _follow_role(row, user)
+        _follow_role(row, user, flags_as_given)
         row.name = user.name
         row.department = user.department
         row.role = user.role

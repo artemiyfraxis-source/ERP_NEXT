@@ -294,6 +294,20 @@ def site_master_rule(role: str | None) -> bool:
     return str(role or "").strip() == "master"
 
 
+def followed_flags(stored, role: str | None, site: str | None, department: str | None) -> tuple[bool, bool]:
+    """(shop_worker, site_master) after a change of the role, site or department that did not set the flags itself
+    (the old «Сотрудники» screen, the staff import, a department rename). `stored` — the row or the user before the
+    change (role, site, department, shop_worker, site_master). A flag that agrees with the rule for the old values
+    follows the rule to the new ones; a flag set against the rule (by hand) stays."""
+    shop_worker = bool(stored.shop_worker)
+    if shop_worker == shop_worker_rule(stored.role, stored.site, stored.department):
+        shop_worker = shop_worker_rule(role, site, department)
+    site_master = bool(stored.site_master)
+    if site_master == site_master_rule(stored.role):
+        site_master = site_master_rule(role)
+    return shop_worker, site_master
+
+
 def prefilled_job_title(job_title: str | None, role: str | None) -> str:
     current = str(job_title or "")
     return current if current.strip() else OLD_ROLE_LABELS.get(str(role or "").strip(), "")

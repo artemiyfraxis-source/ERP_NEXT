@@ -42,6 +42,7 @@ from .domain import (
 )
 from .staff import (
     PERSONNEL_FIELDS,
+    WORK_FLAGS,
     EmployeeChange,
     NewEmployee,
     StaffConflict,
@@ -316,6 +317,9 @@ class EmployeeCreateInput(BaseModel):
     qualification: str = Field(default="", max_length=255)
     job_since: date | None = None
     manager_id: UUID | None = None
+    # «Монтажник (работает в цеху)», «Мастер площадки»; left out / null → from the role (site, department).
+    shop_worker: bool | None = None
+    site_master: bool | None = None
 
 
 class EmployeeUpdateInput(BaseModel):
@@ -332,6 +336,9 @@ class EmployeeUpdateInput(BaseModel):
     qualification: str = Field(default="", max_length=255)
     job_since: date | None = None
     manager_id: UUID | None = None
+    # Флаги: left out / null → as stored (one agreeing with the role rule follows a new role); true / false → set.
+    shop_worker: bool | None = None
+    site_master: bool | None = None
 
 
 class DepartmentsInput(BaseModel):
@@ -375,6 +382,8 @@ def _employee(user: IdentityUser, pin_set: bool = False) -> dict:
         "active": user.active,
         "pin_set": pin_set,
         **_personnel(user),
+        "shop_worker": user.shop_worker,
+        "site_master": user.site_master,
     }
 
 
@@ -436,10 +445,12 @@ def update_employee_route(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
-    # A personnel field the request did not carry is left out, so EmployeeChange keeps the stored value.
+    # A personnel field the request did not carry, and a flag it did not set (absent or null), are left out, so
+    # EmployeeChange keeps the stored value.
     fields = {
         key: value for key, value in payload.model_dump().items()
-        if key not in PERSONNEL_FIELDS or key in payload.model_fields_set
+        if (key not in PERSONNEL_FIELDS or key in payload.model_fields_set)
+        and not (key in WORK_FLAGS and value is None)
     }
     try:
         user = update_employee(user_id, EmployeeChange(**fields), principal.actor, now, uow_factory())
