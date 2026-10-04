@@ -242,6 +242,18 @@ it("shows the current manager and refuses a name typed but not picked from the l
   expect(updates).toEqual([]);
 });
 
+it("opened from the card, the form already names the manager", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/staff") return json(TEAM);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(<StaffPage openUserId="u3" />);
+
+  expect(await screen.findByRole("heading", { name: "Правка: Мастеров" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Руководитель" })).toHaveValue("Закупкин · Снабжение");
+});
+
 it("assigns and removes a department head", async () => {
   const calls: unknown[] = [];
   let heads: Record<string, string> = { "ИТ": "u1" };

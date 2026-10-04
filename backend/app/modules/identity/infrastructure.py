@@ -50,7 +50,7 @@ class IdentityUserRow(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # portal_seen_<email> (Portal.gs portalMarkSeen_): the first successful sign-in; closes «узнать PIN».
     seen_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
-    # «Личная карточка» (0084): кадровые поля.
+    # «Личная карточка» (0085): кадровые поля.
     personnel_number: Mapped[str | None] = mapped_column(String(32))
     job_title: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     qualification: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
@@ -136,7 +136,7 @@ class IdentityDepartmentRow(Base):
 
     position: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # Руководитель отдела (0084), optional.
+    # Руководитель отдела (0085), optional.
     head_user_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("identity_users.id", ondelete="SET NULL", name="fk_identity_departments_head_user_id"),

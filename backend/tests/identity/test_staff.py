@@ -624,7 +624,7 @@ def test_personnel_fields_migration_keeps_users_with_empty_fields_and_downgrades
     database_path = tmp_path / "personnel.db"
     config = Config(Path(__file__).parents[2] / "alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
-    command.upgrade(config, "0082_project_tasks")
+    command.upgrade(config, "0084_kit_piece_scrap_zero")
     with sqlite3.connect(database_path) as connection:
         for index in (1, 2):
             connection.execute(
@@ -633,7 +633,7 @@ def test_personnel_fields_migration_keeps_users_with_empty_fields_and_downgrades
             )
         connection.execute("INSERT INTO identity_departments (position, name) VALUES (0, 'Цех')")
 
-    command.upgrade(config, "0084_identity_personnel_fields")
+    command.upgrade(config, "0085_identity_personnel_fields")
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
             "SELECT personnel_number, job_title, qualification, job_since, manager_id FROM identity_users ORDER BY login"
@@ -644,7 +644,7 @@ def test_personnel_fields_migration_keeps_users_with_empty_fields_and_downgrades
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(f"UPDATE identity_users SET personnel_number = 'FRX-1' WHERE id = '{2:032x}'")
 
-    command.downgrade(config, "0082_project_tasks")
+    command.downgrade(config, "0084_kit_piece_scrap_zero")
     with sqlite3.connect(database_path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(identity_users)")}
         assert connection.execute("SELECT count(*) FROM identity_users").fetchone() == (2,)

@@ -1407,6 +1407,12 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .staff-dep-heads .table-wrap { max-height: 320px; overflow-y: auto; }
 .staff-dep-heads th, .staff-dep-heads td { padding: 6px 12px; }
 .staff-dep-heads tr.selected td { background: var(--accent); }
+.staff-dep-heads .staff-dep-rename { flex-wrap: nowrap; }
+.staff-dep-heads .staff-dep-rename select { flex: 1 1 150px; width: auto; min-width: 0; }
+.staff-dep-heads .staff-dep-rename input { flex: 1 1 200px; width: auto; min-width: 0; }
+.staff-dep-heads .staff-dep-rename button { flex: none; }
+/* A табельный номер («FRX-0017») never breaks at its hyphen. */
+.staff-page td.tab-no { white-space: nowrap; }
 /* The employee form closes without holes: E-mail at creation takes two columns (half a row on 27", the whole row in
    two columns); the «Вход разрешён» box sits on the inputs' line. */
 @media (min-width: 721px) { .staff-form > .pair { grid-column: span 2; } }

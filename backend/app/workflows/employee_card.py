@@ -5,7 +5,8 @@
 числа и часы `None`, никаких выдуманных нулей). Раздел без записей у модуля, который подключён, — настоящий пустой
 результат: `count: 0`.
 
-Разделы: шапка (ФИО, отдел, роль, площадка), подчинённые мастера, проекты (исполнитель по операциям + инициатор заявок,
+Разделы: шапка (ФИО, отдел, роль, площадка), кадровые поля (табельный номер, должность, категория, «в должности с»,
+руководитель), подчинённые мастера, проекты (исполнитель по операциям + инициатор заявок,
 срок из снимка плана), компетенции, отсутствия и ближайший отпуск, часы за текущий месяц, свои открытые заявки,
 открытые задачи арбитра в разделах, которые человек правит.
 """
@@ -90,6 +91,18 @@ def _header(user: IdentityUser) -> dict[str, Any]:
         "site": site,
         "site_label": WORK_SITES.get(site) if site else None,
         "active": user.active,
+    }
+
+
+def _personnel(user: IdentityUser, manager: IdentityUser | None) -> dict[str, Any]:
+    """Кадровые поля из «Сотрудников» (миграция 0085): табельный номер, должность, категория, «в должности с»,
+    руководитель. Не заполнено — `None`."""
+    return {
+        "tab_number": _text(user.personnel_number),
+        "position": _text(user.job_title),
+        "category": _text(user.qualification),
+        "since": _iso(user.job_since),
+        "manager_name": manager.name if manager is not None else None,
     }
 
 
@@ -245,14 +258,18 @@ def employee_card(
     """Карточка сотрудника из фабрик unit of work модулей; нет фабрики — раздел пустой. `None` — такого сотрудника нет.
 
     `identity` обязателен: без человека карточки нет. Ничего не пишет."""
-    def person(uow) -> tuple[IdentityUser, frozenset[str]] | None:
-        user = next((item for item in uow.identity.all_users() if item.id == user_id), None)
-        return None if user is None else (user, _edit_sections(uow, user))
+    def person(uow) -> tuple[IdentityUser, IdentityUser | None, frozenset[str]] | None:
+        users = uow.identity.all_users()
+        user = next((item for item in users if item.id == user_id), None)
+        if user is None:
+            return None
+        manager = next((item for item in users if item.id == user.manager_id), None) if user.manager_id else None
+        return user, manager, _edit_sections(uow, user)
 
     found = _read(identity, person)
     if found is None:
         return None
-    user, sections = found
+    user, manager, sections = found
     shop = _read(production, lambda uow: _read_shop(uow, user, now))
     own = _read(requests, lambda uow: _read_requests(uow, user.id))
     tasks = _read(operations, lambda uow: _read_tasks(uow, sections))
@@ -263,6 +280,7 @@ def employee_card(
     return {
         "as_of": _local(now).date().isoformat(),
         "header": _header(user),
+        "personnel": _personnel(user, manager),
         "subordinates": shop.subordinates if shop is not None else [],
         "projects": _projects(shop, own, open_projects),
         "skills": shop.skills if shop is not None else [],

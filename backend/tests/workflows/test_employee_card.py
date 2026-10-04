@@ -192,6 +192,27 @@ def test_header_without_site_and_department_is_null_not_blank(erp):
     assert header["roles"] == [{"key": "estimator", "label": "Сметчик"}]
 
 
+def test_personnel_fields_come_from_the_staff_directory(erp):
+    with erp.identity() as uow:
+        fitter = uow.identity.user_for_update(FITTER)
+        uow.identity.update_user(replace(
+            fitter, personnel_number="FRX-0017", job_title="Монтажник РЭА", qualification="4 разряд",
+            job_since=date(2024, 3, 1), manager_id=MASTER,
+        ))
+        uow.commit()
+
+    assert card(erp, FITTER)["personnel"] == {
+        "tab_number": "FRX-0017", "position": "Монтажник РЭА", "category": "4 разряд", "since": "2024-03-01",
+        "manager_name": "Мастер Пётр",
+    }
+
+
+def test_blank_personnel_fields_are_null_not_blank(erp):
+    assert card(erp, MASTER)["personnel"] == {
+        "tab_number": None, "position": None, "category": None, "since": None, "manager_name": None,
+    }
+
+
 def test_unknown_person_has_no_card(erp):
     assert card(erp, UNKNOWN) is None
 

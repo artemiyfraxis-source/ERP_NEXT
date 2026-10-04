@@ -199,7 +199,7 @@ export function StaffPage({ openCard, openUserId }: {
         <tbody>
           {shown.map((user) => <tr key={user.id} className={user.active ? "clickable" : "clickable muted"} onClick={() => startEdit(user)}>
             <td className="text"><strong>{user.name}</strong></td>
-            <td>{user.personnel_number || "—"}</td>
+            <td className="tab-no">{user.personnel_number || "—"}</td>
             <td className="text">{user.job_title || "—"}{user.qualification && <small>{user.qualification}</small>}</td>
             <td className="text">{user.login}{user.email !== user.login && <><br /><small>{user.email}</small></>}</td>
             <td>{user.department || "—"}</td>
@@ -235,10 +235,10 @@ export function StaffPage({ openCard, openUserId }: {
           </table></div>
           <div className="staff-dep-rename">
             <select aria-label="Отдел для руководителя" value={headDepartment} onChange={(event) => pickHeadDepartment(event.target.value)}>
-              <option value="">Руководитель отдела…</option>
+              <option value="">Отдел…</option>
               {data.departments.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
-            <SuggestInput aria-label="Руководитель отдела" placeholder="ФИО, пусто — без руководителя" options={[...headIdByLabel.keys()]} value={headText} onChange={setHeadText} />
+            <SuggestInput aria-label="Руководитель отдела" placeholder="ФИО руководителя" options={[...headIdByLabel.keys()]} value={headText} onChange={setHeadText} />
             <button className="secondary" disabled={busy || !headDepartment || (!headText.trim() && !heads[headDepartment])} onClick={() => void saveHead()}>{headButton}</button>
           </div>
         </div>

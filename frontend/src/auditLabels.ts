@@ -176,6 +176,7 @@ const EVENT_NAMES: Record<string, string> = {
   "identity.user_deleted": "Сотрудник удалён",
   "identity.departments_saved": "Отделы сохранены",
   "identity.department_renamed": "Отдел переименован",
+  "identity.department_head_set": "Руководитель отдела назначен",
   "identity.role_access_saved": "Доступы ролей сохранены",
   "identity.user_access_saved": "Исключения доступа сохранены",
   "identity.admin_mode_on": "Режим администратора включён",
