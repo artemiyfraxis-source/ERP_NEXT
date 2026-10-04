@@ -305,11 +305,11 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .reference-fields small { color: var(--muted-foreground); font-size: 9px; text-transform: uppercase; }
 .reference-tiles { margin-bottom: 14px; }
 /* «База данных»: tab groups read as one sheet bar; every tab below is a DataTable. */
-.db-tabs { display: flex; flex-wrap: wrap; gap: 14px 22px; margin: 16px 0 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-.db-tab-group { display: grid; gap: 6px; }
-.db-tab-group-title { color: var(--muted-foreground); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
-.db-tab-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.db-tab { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 11px; color: var(--foreground); background: var(--card); font-size: 13px; font-weight: 500; }
+.db-tabs { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 12px 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.db-tab-group { display: grid; gap: 4px; align-content: start; }
+.db-tab-group-title { color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.db-tab-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.db-tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; color: var(--foreground); background: var(--card); font-size: 13px; font-weight: 500; }
 .db-tab:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
 .db-tab.active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
 .db-tab-count { border-radius: 999px; padding: 0 7px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; font-weight: 400; }
@@ -320,6 +320,20 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
 .db-form label { display: grid; gap: 3px; min-width: 180px; }
 .techcards-page.embedded > .page-sub:first-child { margin-top: 0; }
+/* «Кабели и провода»: the row opens its editor under itself — D1·D2·D3 first, then the БД.ПРОВ cells. */
+.cable-editor { display: grid; gap: 12px; }
+.cable-dia { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; }
+.cable-dia label { display: grid; gap: 3px; width: 130px; }
+.cable-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 12px; }
+.cable-form label { display: grid; gap: 3px; min-width: 0; }
+.cable-form label.wide { grid-column: span 2; }
+.cable-dia small, .cable-form small, .cable-kind small { color: var(--muted-foreground); font-size: 11px; }
+.cable-actions { align-items: end; margin-top: 0; }
+.cable-kind { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+.cable-kind .muted { font-size: 12px; }
+.cable-clip { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cable-card { padding: 4px 0; }
+.cable-card small { font-size: 11px; text-transform: none; }
 
 .reference-tiles .tile { min-height: 0; }
 .notifications-page .data-table .cell-wrap { max-width: min(920px, 60vw); }

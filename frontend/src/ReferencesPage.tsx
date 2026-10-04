@@ -5,10 +5,16 @@ import { EquipmentCards } from "./EquipmentCards";
 import { WireLookup } from "./WireLookup";
 import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
+import { CableTable } from "./CableTables";
+import { operationCardCount } from "./TechcardsPage";
 import {
+  failureText,
   referencesApi,
+  techcardsApi,
+  type BasesResult,
+  type CableKind,
+  type CablesResult,
   type Principal,
-  type ReferenceBase,
   type ReferenceMaps,
   type ReferencePair,
   type TechOperationRecord,
@@ -21,38 +27,48 @@ import {
    references read like one database. Project techcards (ЭТК) stay with the projects. */
 
 type MapTab = "suppliers" | "countries";
-export type DbTab = "templates" | "connectors" | TechOperationTab | MapTab;
+type CableTab = "cab_coax" | "cab_wire" | "cab_other";
+export type DbTab = "templates" | "connectors" | TechOperationTab | MapTab | CableTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
+// Owner 04.10.2026 («сортировка тут вообще не корректная»): groups by what the shop picks from — operations and
+// equipment, what goes on a wire end, the wires and cables themselves, materials, the purchase maps.
 const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
   // Owner 29.09.2026: «операции… лучше на карточки», «с оборудованием то же самое». БД.ОП lives inside «Операции»
-  // (one card per code, template sheet + the БД.ОП row); БД.ОБ is its own card tab. Only the one-time import line is gone.
+  // (one card per code, template sheet + the БД.ОП row); БД.ОБ is its own card tab.
   { title: "Техкарты", tabs: [
-    { id: "templates", label: "Операции", base: "tk_templates" },
+    { id: "templates", label: "Операции" },
     { id: "ob", label: "Оборудование", base: "ob" },
+  ] },
+  { title: "Разъёмы и контакты", tabs: [
     { id: "connectors", label: "Разъёмы" },
-  ] },
-  { title: "Разделка и обжим", tabs: [
+    { id: "coax", label: "Коаксиальные разъёмы", base: "coax" },
     { id: "ter", label: "Терминалы", base: "ter" },
-    { id: "coax", label: "Коаксиал: разъёмы", base: "coax" },
   ] },
-  // СПР.КАБ: the AWG table is the whole «ГОСТ → AWG» map plus Ø по маркам — SUPPLYMAP derives the map from it
-  // (TcGenData.gs gostAwgMap_), so there is no separate map tab (owner 29.09.2026: «нет диаметров по сечению»).
-  // БД.ПРОВ / БД.МАТ are working bases in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
-  { title: "Провода и материалы", tabs: [
-    { id: "prov", label: "Провода и кабели", base: "prov" },
+  // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки». БД.ПРОВ and the coax D1·D2·D3 table
+  // (СПР.КАБ) are joined by the server (references/cables.py). The AWG table (СПР.КАБ · AWG) is the монтажные wires'
+  // own reference — Ø of insulation per mark and «ГОСТ → AWG», as SUPPLYMAP gostAwgMap_ derives it — so it sits right
+  // after them as a chip of its own: its rows are AWG sizes, not wires, and it keeps its own count and Excel.
+  { title: "Кабели и провода", tabs: [
+    { id: "cab_coax", label: "Коаксиальные кабели" },
+    { id: "cab_wire", label: "Монтажные провода" },
+    { id: "kab_awg", label: "AWG ↔ сечение ↔ Ø" },
+    { id: "cab_other", label: "Прочие кабели" },
+  ] },
+  // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
+  { title: "Материалы", tabs: [
     { id: "mat", label: "Материалы", base: "mat" },
-  ] },
-  { title: "СПР.КАБ", tabs: [
-    { id: "kab_awg", label: "AWG: сечение ↔ Ø по типу кабеля" },
-    { id: "kab_coax", label: "Коаксиальные кабели: D1 · D2 · D3" },
   ] },
   { title: "Соответствия", tabs: [
     { id: "suppliers", label: "Домен → поставщик" },
     { id: "countries", label: "Изготовитель → страна" },
   ] },
 ];
+const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_other: "other" };
+// Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
+// D1 · D2 · D3» → коаксиальные кабели.
+const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax" };
 const MAP_TABS: Record<MapTab, { keyLabel: string; valueLabel: string }> = {
   suppliers: { keyLabel: "Домен или ссылка", valueLabel: "Поставщик" },
   countries: { keyLabel: "Изготовитель", valueLabel: "Страна" },
@@ -82,6 +98,10 @@ function isMapTab(tab: DbTab): tab is MapTab {
   return tab in MAP_TABS;
 }
 
+function isCableTab(tab: DbTab): tab is CableTab {
+  return tab in CABLE_TABS;
+}
+
 function savedTab(): string {
   try { return window.localStorage.getItem(TAB_STORAGE) ?? ""; } catch { return ""; }
 }
@@ -95,7 +115,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     .filter((group) => group.tabs.length > 0), [canTemplates, canRefs]);
   const allowed = groups.flatMap((group) => group.tabs.map((tab) => tab.id));
   const [tab, setTab] = useState<DbTab>(() => {
-    const wanted = initialTab ?? savedTab();
+    const raw = initialTab ?? savedTab();
+    const wanted = TAB_ALIASES[raw] ?? raw;
     return (allowed.find((id) => id === wanted) ?? allowed[0] ?? "ter") as DbTab;
   });
   const [maps, setMaps] = useState<ReferenceMaps>(EMPTY_MAPS);
@@ -103,12 +124,17 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [tech, setTech] = useState<TechOperationResult>({ metadata: null, records: [] });
   const [cableDia, setCableDia] = useState<CableDia>({});
   const [obOps, setObOps] = useState<TechOperationRecord[]>([]);
-  const [bases, setBases] = useState<ReferenceBase[]>([]);
+  const [bases, setBases] = useState<BasesResult>({ bases: [] });
+  const [cables, setCables] = useState<CablesResult | null>(null);
+  const [awgRecords, setAwgRecords] = useState<TechOperationRecord[] | null>(null);
+  const [opCount, setOpCount] = useState<number | null>(null);
+  const [connectorCount, setConnectorCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
-  const techTab = !isMapTab(tab) && tab !== "templates" && tab !== "connectors" ? tab : null;
+  const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" ? tab : null;
+  const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
   const canEdit = principal.permissions.erpref === "edit" && !viewOnly;
@@ -140,24 +166,59 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     }
   }
 
-  useEffect(() => {
-    if (!canRefs) return;
-    referencesApi.maps().then(applyMaps).catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось загрузить справочники"));
+  function loadBases() {
     // Counts on the tabs are a summary; a failed call leaves the tabs without numbers.
-    referencesApi.bases().then((result) => setBases(result.bases)).catch(() => setBases([]));
-  }, [canRefs]);
+    referencesApi.bases().then(setBases).catch(() => setBases({ bases: [] }));
+  }
+
+  async function loadCables() {
+    try {
+      setCables(await referencesApi.cables());
+    } catch (reason) {
+      setCables({ columns: [], counts: { coax: 0, wire: 0, other: 0 }, rows: [] });
+      setError(failureText(reason, "Не удалось загрузить кабели и провода"));
+    }
+  }
+
+  async function cablesSaved(message: string) {
+    if (message) { setError(""); setNotice(message); }
+    await loadCables();
+    loadBases();
+  }
+
+  useEffect(() => {
+    if (canRefs) {
+      referencesApi.maps().then(applyMaps).catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось загрузить справочники"));
+      loadBases();
+    }
+    if (canTemplates) {
+      // «Операции»: one card per operation code — templates plus БД.ОП codes without one (as the tab builds them).
+      Promise.all([
+        techcardsApi.templates(),
+        canRefs ? referencesApi.techOperations("op", "", 5000) : Promise.resolve({ records: [] as TechOperationRecord[] }),
+      ]).then(([library, ops]) => setOpCount(operationCardCount(library.items, ops.records))).catch(() => setOpCount(null));
+      techcardsApi.connectorFamilies().then((result) => setConnectorCount(result.items.length)).catch(() => setConnectorCount(null));
+    }
+  }, [canRefs, canTemplates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try { window.localStorage.setItem(TAB_STORAGE, tab); } catch { /* per-viewer convenience only */ }
     setEditing(null);
     setNotice("");
     if (techTab) void loadTech(techTab);
+    if (cableKind && cables === null) void loadCables();
+    if (cableKind === "wire" && awgRecords === null) {
+      referencesApi.techOperations("kab_awg", "", 5000).then((result) => setAwgRecords(result.records)).catch(() => setAwgRecords([]));
+    }
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function count(def: TabDef): number | null {
     if (isMapTab(def.id)) return canRefs ? maps[def.id].length : null;
+    if (def.id === "templates") return opCount;
+    if (def.id === "connectors") return connectorCount;
+    if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
     if (def.id === tab && techTab) return tech.records.length;
-    return bases.find((base) => base.id === def.base)?.count ?? null;
+    return bases.tabs?.[def.id as TechOperationTab] ?? bases.bases.find((base) => base.id === def.base)?.count ?? null;
   }
 
   async function saveMaps() {
@@ -200,7 +261,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const coaxTab = techTab === "coax";
   const cableOf = (record: TechOperationRecord) => cableDia[cableKey(record.fields["Провод"] ?? record.fields.coaxWire ?? "")];
   // Edit form: the sheet's columns only (the server moves the schema values derived from them); on БД.КОАКС without
-  // the cable's Ø — they are edited in СПР.КАБ.
+  // the cable's Ø — they are edited in «Коаксиальные кабели».
   const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns
     .filter((key) => key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
     .map((key) => [key, record.fields[key]]));
@@ -211,9 +272,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         key: field, title: `${field} кабеля`, numeric: true,
         value: (record) => cableOf(record)?.[field] ?? "",
         render: (record) => cableOf(record)
-          ? <span title={`Из СПР.КАБ · коаксиал по кабелю «${record.fields["Провод"] ?? ""}»`}>{cableOf(record)?.[field] || "—"}</span>
+          ? <span title={`Из «Коаксиальные кабели» по кабелю «${record.fields["Провод"] ?? ""}»`}>{cableOf(record)?.[field] || "—"}</span>
           : (record.fields["Провод"] ?? record.fields.coaxWire ?? "").trim()
-            ? <span className="muted" title="Кабеля нет в СПР.КАБ · коаксиал — добавьте его туда">нет в СПР.КАБ</span>
+            ? <span className="muted" title={`У кабеля «${record.fields["Провод"] ?? record.fields.coaxWire ?? ""}» нет D1–D3 — задайте их во вкладке «Коаксиальные кабели»`}>нет у кабеля</span>
             : <span className="muted" title="У разъёма не указан кабель («Провод»)">—</span>,
       };
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
@@ -291,11 +352,22 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         rowKey={(record) => record.id}
         storageKey={`db:${techTab}`}
         exportName={current?.label}
-        emptyText={viewOnly ? "Таблица СПР.КАБ не загружена из зеркала." : "Записей нет."}
+        emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
       />}
-      <p className="page-sub">{coaxTab ? "D1–D3 — диаметры кабеля из СПР.КАБ · коаксиал по колонке «Провод»; у разъёма хранятся только длины разделки (L1–L3, L+, L−). Правятся диаметры в СПР.КАБ." : viewOnly ? "СПР.КАБ — только просмотр, как в портале SUPPLYMAP; генератор берёт из этой таблицы и «ГОСТ → AWG»." : "Правки строк живут до следующего импорта снимка."}</p>
+      {coaxTab && <p className="page-sub">D1–D3 — диаметры кабеля из колонки «Провод»; у разъёма только длины разделки. Диаметры правятся во вкладке «Коаксиальные кабели».</p>}
     </>}
+
+    {cableKind && (cables === null
+      ? <div className="empty">Загрузка…</div>
+      : <CableTable
+        kind={cableKind}
+        data={cables}
+        awgRecords={awgRecords ?? []}
+        canEdit={principal.permissions.erpref === "edit"}
+        onSaved={cablesSaved}
+        onError={(message) => { setNotice(""); setError(message); }}
+      />)}
   </section>;
 }
 

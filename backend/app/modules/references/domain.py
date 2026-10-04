@@ -18,6 +18,14 @@ class ReferenceKind(str, Enum):
     SUPPLIER = "supplier"
     COUNTRY = "country"
     GOST_AWG = "gost_awg"
+    # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / other). Kept beside the maps, not on
+    # the record, so a mirror reload neither drops the move nor freezes the row's other cells.
+    CABLE_KIND = "cable_kind"
+
+
+# The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
+MAP_KINDS = (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY, ReferenceKind.GOST_AWG)
+CABLE_KIND_VALUES = ("coax", "wire", "other")
 
 
 class TechOperationTab(str, Enum):
@@ -108,6 +116,19 @@ def normalized_section_key(value: str) -> str:
     return format(section.normalize(), "f")
 
 
+def cable_key(value: object) -> str:
+    """The ETK generator's cable key (tcGenLogic `coaxCableDiaLookup_` / `coaxDiaFromRecords`): lower case without
+    whitespace and hyphens — «RG-316», «RG 316» and «rg316» are one cable."""
+    return re.sub(r"[\s-]", "", str(value or "").lower())
+
+
+def normalized_cable_key(value: str) -> str:
+    key = cable_key(value)
+    if not key:
+        raise ReferenceValidationError("Марка кабеля обязательна")
+    return key
+
+
 def _awg_value(value: str) -> str:
     raw = str(value or "").strip()
     if not raw.isdigit() or not 1 <= int(raw) <= 40:
@@ -119,6 +140,7 @@ _KEY_NORMALIZERS = {
     ReferenceKind.SUPPLIER: normalized_supplier_key,
     ReferenceKind.COUNTRY: normalized_manufacturer_key,
     ReferenceKind.GOST_AWG: normalized_section_key,
+    ReferenceKind.CABLE_KIND: normalized_cable_key,
 }
 
 
@@ -139,6 +161,8 @@ class ReferenceEntry:
             raise ReferenceValidationError("Значение справочника обязательно")
         if kind == ReferenceKind.GOST_AWG:
             clean_value = _awg_value(clean_value)
+        if kind == ReferenceKind.CABLE_KIND and clean_value not in CABLE_KIND_VALUES:
+            raise ReferenceValidationError("Вкладка кабеля: коаксиальные, монтажные или прочие")
         normalized = _KEY_NORMALIZERS[kind](clean_key)
         return cls(uuid4(), kind, clean_key, normalized, clean_value, position)
 
