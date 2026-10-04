@@ -7,12 +7,17 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
+from .domain.route import RouteError, RouteOp, derive_route, parse_route, route_json, route_totals
 from .operation_cards import OperationCardTemplate
 
 
 # 2: result/semi-finished rows with quantities (SUPPLYMAP etkResult_/etkSemis_), combined cards carry the defects of
 #    every transition they perform.
-ETK_VERSION = 2
+# 3: `route` — the block scheme of semi-finished products (domain/route.py); nothing else changed. An older document
+#    gets its route derived on read (`document_route`), so a version-2 ETK is not stale: `refresh` rebuilds only
+#    documents below ETK_REBUILD_VERSION and the route alone makes no new revision.
+ETK_VERSION = 3
+ETK_REBUILD_VERSION = 2
 NO_COMPONENTS = {
     "SDR_tin", "INS_TUT", "PRS_SLEEVE_coax", "TWIST", "HEAT_TYT_short",
     "HEAT_TYT_long", "HEAT_TTK_short", "HEAT_TTK_long", "PRS_MHF",
@@ -701,6 +706,100 @@ def _topology(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _advances_chain(op: Mapping[str, Any]) -> bool:
+    """Whether the operation's result becomes the semi-finished product the next operation takes. TUT pieces and the
+    side work on them (cut / put on wires / end caps / folding / stripping) do not move the product name on."""
+    operation_type = op.get("type")
+    return operation_type not in {"cutTut", "endCap", "foldCore", "stripCable"} and not (
+        operation_type == "insTut" and not op.get("harness")
+    )
+
+
+def _list(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _chain_results(config: Mapping[str, Any]) -> list[str]:
+    """The product name every generator operation hands on, replaying build_etk's previous_result chain."""
+    previous = ""
+    names: list[str] = []
+    for op in _list(config.get("ops")):
+        if not isinstance(op, Mapping):
+            continue
+        result = _result_name(op, config, previous)
+        names.append(result)
+        if _advances_chain(op):
+            previous = result
+    return names
+
+
+def _operation_minutes(operation: Mapping[str, Any], quantity: Decimal) -> Decimal:
+    """The ETK time norm of the operation, minutes per batch; an operation without time rows (moved from SUPPLYMAP)
+    counts its seconds per unit × batch + setup."""
+    rows = [row for row in _list(operation.get("time")) if isinstance(row, Mapping)]
+    if rows:
+        return sum((_decimal(row.get("norm")) for row in rows), Decimal(0))
+    times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
+    return (_decimal(times.get("operation_seconds")) * quantity + _decimal(times.get("setup_seconds"))) / 60
+
+
+def _route_ops(document: Mapping[str, Any], *, strict: bool) -> tuple[list[RouteOp], str, Decimal]:
+    """The operations as the block scheme sees them (position = 1-based place in `operations`), the final product's
+    name and the batch. Not strict (a stored document on read): a config the names cannot be replayed from gives
+    the names of the result rows instead of failing the read."""
+    operations = [item for item in _list(document.get("operations")) if isinstance(item, Mapping)]
+    config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
+    kit = document.get("kit") if isinstance(document.get("kit"), Mapping) else {}
+    config_ops = [item for item in _list(config.get("ops")) if isinstance(item, Mapping)]
+    aligned = len(config_ops) == len(operations)
+    try:
+        results = _chain_results(config) if aligned else []
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        if strict:
+            raise
+        results = []
+    quantity = _decimal(config.get("partQty")) or _decimal(kit.get("part_quantity"))
+    quantity = quantity if quantity > 0 else Decimal(1)
+    ops: list[RouteOp] = []
+    for position, operation in enumerate(operations, start=1):
+        source = config_ops[position - 1] if aligned else operation
+        rows = "; ".join(dict.fromkeys(
+            str(row["name"]) for row in _list(operation.get("result")) if isinstance(row, Mapping) and row.get("name")
+        ))
+        name = (results[position - 1] if results else "") or rows or str(operation.get("title") or operation.get("code") or "")
+        ops.append(RouteOp(
+            position=position, type=str(source.get("type") or operation.get("type") or ""),
+            code=str(operation.get("code") or ""), name=name or f"Операция {position}",
+            minutes=_operation_minutes(operation, quantity),
+        ))
+    return ops, str(config.get("assemblyName") or kit.get("name") or ""), quantity
+
+
+def _route(document: Mapping[str, Any], *, strict: bool) -> dict[str, Any] | None:
+    """`document.route` of an assembled document. strict (the build): a hand-edited `build_config.route` must be
+    valid — an error stops the build. Otherwise (the read path) the first scheme that fits wins, then the derived one."""
+    ops, final_name, quantity = _route_ops(document, strict=strict)
+    if not ops:
+        return None
+    config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
+    candidates = [(config.get("route"), True)] if strict else [
+        (document.get("route"), isinstance(document.get("route"), Mapping) and document["route"].get("source") != "derived"),
+        (config.get("route"), True),
+    ]
+    route = None
+    for raw, manual in candidates:
+        if not raw:
+            continue
+        try:
+            route = parse_route(raw, ops, final_name, manual=manual)
+            break
+        except RouteError:
+            if strict:
+                raise
+    route = route or derive_route(ops, final_name)
+    return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
+
+
 def build_etk(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str,
@@ -781,12 +880,12 @@ def build_etk(
             "times": {"operation_seconds": str(op.get("tOp") or ""), "setup_seconds": str(op.get("tPrep") or ""), "machine_seconds": str(op.get("tMachine") or "")},
             "fields": fields,
         })
-        if op.get("type") not in {"cutTut", "endCap", "foldCore", "stripCable"} and not (op.get("type") == "insTut" and not op.get("harness")):
+        if _advances_chain(op):
             previous_result = result
             previous_norm = _output_norm(op, config)
 
     connections = _connections(config)
-    return {
+    document = {
         "schema_version": ETK_VERSION,
         "kit": {
             "project": str(config.get("projectNo") or ""), "item": str(config.get("itemId") or ""),
@@ -803,3 +902,24 @@ def build_etk(
             **({"technology_snapshot": deepcopy(dict(technology_source))} if technology_source else {}),
         },
     }
+    document["route"] = _route(document, strict=True)
+    return document
+
+
+def document_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The block scheme of any stored ETK, for the read path: its own `route`, else the generator's hand-edited
+    `build_config.route`, else derived from the operations (documents before version 3, SUPPLYMAP imports). A stored
+    scheme that no longer fits the operations gives way to the next one; totals always come from the operations as
+    they are now. None — the document has no operations."""
+    return _route(document, strict=False) if isinstance(document, Mapping) else None
+
+
+def attach_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """A copy of the document with `route` from `document_route` — how the API returns a card."""
+    if document is None:
+        return None
+    result = dict(document)
+    route = document_route(document)
+    if route is not None:
+        result["route"] = route
+    return result
