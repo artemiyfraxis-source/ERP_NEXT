@@ -102,3 +102,7 @@ The cloud never pushes `main`.
   snapshots; any importer that touches live Google data must be dry-run first.
 - Never edit an Alembic migration that is already on `main` — add a new one after the head.
   `.claude/hooks/guard-migrations.mjs` (PreToolUse) enforces it where `.claude/settings.json` applies.
+- `.claude/hooks/guard-danger.mjs` (PreToolUse, Bash|PowerShell) is the gate that holds in bypass mode:
+  denies making the repo public; asks before force-push, `reset --hard`, `clean -f`, `checkout -- .` /
+  `restore .`, `import_stock` without `--dry-run` and `alembic downgrade`. Ported from SUPPLYMAP's
+  guard-hard-donts; it blocks via stdout JSON and always exits 0.

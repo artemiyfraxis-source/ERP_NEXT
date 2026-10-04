@@ -30,6 +30,16 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/guard-danger.mjs",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
@@ -72,7 +82,7 @@
     "write-a-skill@claude-code-skills": true,
     "caveman@claude-code-skills": true,
     "grill-me@claude-code-skills": true,
-    "handoff-engineering@claude-code-skills": true,
+    "handoff@claude-code-skills": true,
     "reflect-skill@claude-code-skills": true
   }
 }
