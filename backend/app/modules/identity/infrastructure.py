@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Uuid,
@@ -33,6 +35,10 @@ from .domain import ROLE_SEED, AccessMode, IdentityUser, normalize_login
 
 class IdentityUserRow(Base):
     __tablename__ = "identity_users"
+    __table_args__ = (
+        # Табельный номер is unique when set; NULL (not filled) may repeat.
+        Index("ux_identity_users_personnel_number", "personnel_number", unique=True),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     login: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
@@ -44,6 +50,16 @@ class IdentityUserRow(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # portal_seen_<email> (Portal.gs portalMarkSeen_): the first successful sign-in; closes «узнать PIN».
     seen_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+    # «Личная карточка» (0084): кадровые поля.
+    personnel_number: Mapped[str | None] = mapped_column(String(32))
+    job_title: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    qualification: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    job_since: Mapped[date | None] = mapped_column(Date)
+    manager_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="SET NULL", name="fk_identity_users_manager_id"),
+        index=True,
+    )
 
 
 class IdentityCredentialRow(Base):
@@ -120,6 +136,11 @@ class IdentityDepartmentRow(Base):
 
     position: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Руководитель отдела (0084), optional.
+    head_user_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="SET NULL", name="fk_identity_departments_head_user_id"),
+    )
 
 
 class IdentitySettingRow(Base):
@@ -174,7 +195,20 @@ def _user_domain(row: IdentityUserRow) -> IdentityUser:
         role=row.role,
         site=row.site,
         active=row.active,
+        personnel_number=row.personnel_number or "",
+        job_title=row.job_title or "",
+        qualification=row.qualification or "",
+        job_since=row.job_since,
+        manager_id=row.manager_id,
     )
+
+
+def _write_personnel(row: IdentityUserRow, user: IdentityUser) -> None:
+    row.personnel_number = user.personnel_number or None  # NULL, not "", so the unique index lets blanks repeat
+    row.job_title = user.job_title
+    row.qualification = user.qualification
+    row.job_since = user.job_since
+    row.manager_id = user.manager_id
 
 
 def _session_domain(row: IdentitySessionRow) -> IdentitySession:
@@ -404,6 +438,13 @@ class SqlAlchemyIdentityRepository:
             for column in table.columns:
                 if _cascades_from_user(column):
                     self.session.execute(table.delete().where(column == user_id))
+        # ON DELETE SET NULL, done by hand for the same reason: subordinates and departments lose this person as head.
+        self.session.execute(
+            update(IdentityUserRow).where(IdentityUserRow.manager_id == user_id).values(manager_id=None)
+        )
+        self.session.execute(
+            update(IdentityDepartmentRow).where(IdentityDepartmentRow.head_user_id == user_id).values(head_user_id=None)
+        )
         self.session.execute(delete(IdentityUserRow).where(IdentityUserRow.id == user_id))
 
     def update_user(self, user: IdentityUser) -> None:
@@ -415,6 +456,12 @@ class SqlAlchemyIdentityRepository:
         row.role = user.role
         row.site = user.site
         row.active = user.active
+        _write_personnel(row, user)
+
+    def personnel_number_owner(self, number: str) -> UUID | None:
+        return self.session.scalar(
+            select(IdentityUserRow.id).where(IdentityUserRow.personnel_number == number).limit(1)
+        )
 
     def password_hash(self, user_id: UUID) -> str | None:
         row = self.session.get(IdentityCredentialRow, user_id, with_for_update=True)
@@ -440,10 +487,23 @@ class SqlAlchemyIdentityRepository:
             select(IdentityDepartmentRow.name).order_by(IdentityDepartmentRow.position)
         ))
 
-    def replace_departments(self, departments: list[str]) -> None:
+    def department_heads(self) -> dict[str, UUID]:
+        """Saved department name → its head, for the departments that have one."""
+        return {
+            row.name: row.head_user_id
+            for row in self.session.scalars(
+                select(IdentityDepartmentRow).where(IdentityDepartmentRow.head_user_id.is_not(None))
+            )
+        }
+
+    def replace_departments(self, departments: list[str], heads: dict[str, UUID] | None = None) -> None:
+        """The list in dropdown order. `heads` (name → head, matched case-insensitively) replaces the heads; without
+        it every department keeps the head it had under the same name."""
+        kept = self.department_heads() if heads is None else heads
+        by_name = {name.casefold(): head for name, head in kept.items()}
         self.session.execute(delete(IdentityDepartmentRow))
         self.session.add_all(
-            IdentityDepartmentRow(position=position, name=name)
+            IdentityDepartmentRow(position=position, name=name, head_user_id=by_name.get(name.casefold()))
             for position, name in enumerate(departments)
         )
 
@@ -591,18 +651,18 @@ def provision_user(
 ) -> None:
     login = normalize_login(user.login)
     email = normalize_login(user.email)
-    session.add(
-        IdentityUserRow(
-            id=user.id,
-            login=login,
-            email=email,
-            name=user.name.strip(),
-            department=user.department.strip(),
-            role=user.role.strip(),
-            site=user.site,
-            active=user.active,
-        )
+    row = IdentityUserRow(
+        id=user.id,
+        login=login,
+        email=email,
+        name=user.name.strip(),
+        department=user.department.strip(),
+        role=user.role.strip(),
+        site=user.site,
+        active=user.active,
     )
+    _write_personnel(row, user)
+    session.add(row)
     # The dependent rows below reference the user by FK only in the schema (no ORM relationship), so the unit
     # of work cannot order them: PostgreSQL checks the FK per statement and refuses them before the user.
     session.flush()

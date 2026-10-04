@@ -1334,6 +1334,15 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .staff-dep-list { display: grid; gap: 8px; width: min(100%, 420px); }
 .staff-dep-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .staff-dep-rename input { width: 240px; }
+/* «Личная карточка»: руководители отделов — compact table + one picker row. */
+.staff-dep-heads { display: grid; gap: 8px; width: min(100%, 560px); }
+.staff-dep-heads .table-wrap { max-height: 320px; overflow-y: auto; }
+.staff-dep-heads th, .staff-dep-heads td { padding: 6px 12px; }
+.staff-dep-heads tr.selected td { background: var(--accent); }
+/* The employee form closes without holes: E-mail at creation takes two columns (half a row on 27", the whole row in
+   two columns); the «Вход разрешён» box sits on the inputs' line. */
+@media (min-width: 721px) { .staff-form > .pair { grid-column: span 2; } }
+.staff-form > .staff-form-check { align-self: end; min-height: 38px; }
 .operations-queue { margin-left: auto; color: var(--muted-foreground); font-size: 13px; }
 
 /* ===== T7: «Оформить заявку» — таблица позиций (RequestGrid). Свой блок, чтобы не мешать соседним правкам. ===== */

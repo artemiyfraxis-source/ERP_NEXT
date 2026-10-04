@@ -1,14 +1,16 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { StaffPage } from "./StaffPage";
 import type { StaffDirectory } from "./api";
 
+const BLANK = { personnel_number: "", job_title: "", qualification: "", job_since: null, manager_id: null };
 const DIRECTORY: StaffDirectory = {
   users: [
-    { id: "u1", login: "admin", email: "admin@example.test", name: "Админов", department: "ИТ", role: "admin", site: "", active: true, pin_set: true },
-    { id: "u2", login: "buyer@example.test", email: "buyer@example.test", name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, pin_set: false },
+    { id: "u1", login: "admin", email: "admin@example.test", name: "Админов", department: "ИТ", role: "admin", site: "", active: true, pin_set: true, ...BLANK },
+    { id: "u2", login: "buyer@example.test", email: "buyer@example.test", name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, pin_set: false, ...BLANK },
   ],
   departments: ["ИТ", "Снабжение"],
+  department_heads: {},
   roles: [{ key: "admin", label: "Технолог" }, { key: "buyer", label: "Специалист по снабжению" }, { key: "master", label: "Мастер" }],
   sites: [{ code: "ЦАР", city: "Москва" }, { code: "ЖУК", city: "Раменское" }],
 };
@@ -46,7 +48,7 @@ it("lists employees with role labels and creates a new one with a password", asy
 
   await waitFor(() => expect(created).toEqual({
     login: "", email: "new@example.test", name: "Новиков", department: "Снабжение", role: "master", site: "ЖУК",
-    password: "first-password", pin: "",
+    password: "first-password", pin: "", ...BLANK,
   }));
   expect(await screen.findByText(
     "Сотрудник Новиков заведён, вход — new@example.test, PIN — 654321 (запишите, больше не покажем)",
@@ -71,7 +73,7 @@ it("edits an employee, keeps the password when the field is empty and shows the 
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 
   await waitFor(() => expect(updates).toEqual([
-    { name: "Админов", department: "ИТ", role: "admin", site: "", active: false, password: null, pin: null },
+    { name: "Админов", department: "ИТ", role: "admin", site: "", active: false, password: null, pin: null, ...BLANK },
   ]));
   expect(await screen.findByRole("alert")).toHaveTextContent("Нужен хотя бы один администратор");
 });
@@ -123,7 +125,7 @@ it("sets a new PIN from the employee form (portalStaffSave pin)", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 
   await waitFor(() => expect(updates).toEqual([
-    { name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, password: null, pin: "7654321" },
+    { name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, password: null, pin: "7654321", ...BLANK },
   ]));
   expect(await screen.findByText("Сохранено: Закупкин, PIN назначен")).toBeInTheDocument();
 });
@@ -151,4 +153,106 @@ it("deletes an employee after confirmation and hides switched-off ones until ask
   expect(screen.queryByText("Закупкин")).not.toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("Показать отключённых (1)"));
   expect(screen.getByText("Закупкин")).toBeInTheDocument();
+});
+
+// «Личная карточка»: Мастеров reports to Закупкин, Отключенов is switched off.
+const TEAM: StaffDirectory = {
+  ...DIRECTORY,
+  users: [
+    ...DIRECTORY.users,
+    { id: "u3", login: "master", email: "master@example.test", name: "Мастеров", department: "Цех", role: "master", site: "ЖУК", active: true, ...BLANK, personnel_number: "FRX-0003", job_title: "Мастер участка", qualification: "5 разряд", manager_id: "u2" },
+    { id: "u4", login: "off", email: "off@example.test", name: "Отключенов", department: "Цех", role: "staff", site: "", active: false, ...BLANK },
+  ],
+  departments: ["ИТ", "Снабжение", "Цех"],
+  department_heads: { "ИТ": "u1" },
+};
+
+it("edits personnel fields and picks the manager from a searchable list without self, subordinates or switched-off people", async () => {
+  const updates: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/auth/staff/u2" && init?.method === "PUT") {
+      updates.push(JSON.parse(String(init.body)));
+      return json({ user: { ...TEAM.users[1], pin_set: false } });
+    }
+    if (path === "/api/auth/staff") return json(TEAM);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<StaffPage />);
+  const staffTable = await screen.findByRole("table", { name: "Сотрудники" });
+  expect(within(staffTable).getByText("FRX-0003")).toBeInTheDocument();
+  expect(within(staffTable).getByText("Мастер участка")).toBeInTheDocument();
+  expect(within(staffTable).getByText("5 разряд")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Править Закупкин" }));
+  fireEvent.change(screen.getByLabelText("Табельный номер"), { target: { value: "FRX-0017" } });
+  fireEvent.change(screen.getByLabelText("Должность"), { target: { value: "Специалист по снабжению" } });
+  fireEvent.change(screen.getByLabelText("Категория / квалификация"), { target: { value: "1 категория" } });
+  fireEvent.change(screen.getByLabelText("В должности с"), { target: { value: "2024-03-01" } });
+  const manager = screen.getByRole("combobox", { name: "Руководитель" });
+  fireEvent.focus(manager);
+  const suggestions = screen.getByRole("listbox", { name: "Варианты: Руководитель" });
+  expect(within(suggestions).getAllByRole("option").map((option) => option.textContent)).toEqual(["Админов · ИТ"]);
+  fireEvent.mouseDown(screen.getByRole("option", { name: "Админов · ИТ" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
+
+  await waitFor(() => expect(updates).toEqual([{
+    name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, password: null, pin: null,
+    personnel_number: "FRX-0017", job_title: "Специалист по снабжению", qualification: "1 категория",
+    job_since: "2024-03-01", manager_id: "u1",
+  }]));
+});
+
+it("shows the current manager and refuses a name typed but not picked from the list", async () => {
+  const updates: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "PUT") updates.push(path);
+    if (path === "/api/auth/staff") return json(TEAM);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Править Мастеров" }));
+  const manager = screen.getByRole("combobox", { name: "Руководитель" });
+  expect(manager).toHaveValue("Закупкин · Снабжение");
+  expect(screen.getByLabelText("Табельный номер")).toHaveValue("FRX-0003");
+
+  fireEvent.change(manager, { target: { value: "Кто-то" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Руководитель «Кто-то» не найден — выберите из списка");
+  expect(updates).toEqual([]);
+});
+
+it("assigns and removes a department head", async () => {
+  const calls: unknown[] = [];
+  let heads: Record<string, string> = { "ИТ": "u1" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/auth/departments/head" && init?.method === "PUT") {
+      const body = JSON.parse(String(init.body));
+      calls.push(body);
+      heads = body.head_id ? { ...heads, [body.department]: body.head_id } : { "ИТ": "u1" };
+      return json({ departments: TEAM.departments, department_heads: heads });
+    }
+    if (path === "/api/auth/staff") return json(TEAM);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<StaffPage />);
+  const headsTable = await screen.findByRole("table", { name: "Руководители отделов" });
+  expect(within(headsTable).getByText("Админов")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Отдел для руководителя"), { target: { value: "Снабжение" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Руководитель отдела" }), { target: { value: "Закупкин · Снабжение" } });
+  fireEvent.click(screen.getByRole("button", { name: "Назначить руководителя" }));
+  expect(await screen.findByText("Руководитель отдела «Снабжение» — Закупкин")).toBeInTheDocument();
+  expect(within(headsTable).getByText("Закупкин")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByRole("combobox", { name: "Руководитель отдела" }), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Снять руководителя" }));
+  expect(await screen.findByText("У отдела «Снабжение» больше нет руководителя")).toBeInTheDocument();
+  expect(calls).toEqual([{ department: "Снабжение", head_id: "u2" }, { department: "Снабжение", head_id: null }]);
 });

@@ -1,14 +1,48 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { staffApi, type Employee, type EmployeeCreate, type StaffDirectory } from "./api";
+import { SuggestInput } from "./SuggestInput";
 
 /** ID-8 «Сотрудники» (SUPPLYMAP Staff.gs portalStaffGet/portalStaffSave): the administrator creates and
  *  edits employees and keeps the department list. The PIN (6–8 digits) and the optional password are set here and
- *  never shown again; the list says whether a PIN is assigned (`pinSet`). */
+ *  never shown again; the list says whether a PIN is assigned (`pinSet`). Кадровые поля «Личной карточки»
+ *  (табельный номер, должность, квалификация, «в должности с», руководитель) and the department heads live here too. */
 
-type Draft = EmployeeCreate & { active: boolean };
+/** `managerText` is what the manager field shows; `manager_id` is set only when it names someone from the list. */
+type Draft = EmployeeCreate & { active: boolean; managerText: string };
 
-const EMPTY_DRAFT: Draft = { login: "", email: "", name: "", department: "", role: "staff", site: "", password: "", pin: "", active: true };
+const EMPTY_DRAFT: Draft = {
+  login: "", email: "", name: "", department: "", role: "staff", site: "", password: "", pin: "",
+  personnel_number: "", job_title: "", qualification: "", job_since: null, manager_id: null, active: true, managerText: "",
+};
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
+
+/** «ФИО · отдел» for every employee; equal labels get the login, so a label always names one person. */
+function personLabels(users: Employee[]): Map<string, string> {
+  const base = users.map((user) => [user.id, user.department ? `${user.name} · ${user.department}` : user.name] as const);
+  const count = new Map<string, number>();
+  base.forEach(([, label]) => count.set(label, (count.get(label) ?? 0) + 1));
+  return new Map(base.map(([id, label]) => {
+    const login = users.find((user) => user.id === id)?.login ?? "";
+    return [id, (count.get(label) ?? 0) > 1 ? `${label} · ${login}` : label];
+  }));
+}
+
+/** Who can be chosen as the manager of `selfId`: switched-on people other than the employee and their own
+ *  subordinates (direct or not), plus the manager already set. The server checks the same rule. */
+function managerCandidates(users: Employee[], selfId: string | null, currentId: string | null): Employee[] {
+  const managerOf = new Map(users.map((user) => [user.id, user.manager_id]));
+  const reportsToSelf = (userId: string) => {
+    const seen = new Set<string>();
+    let current = managerOf.get(userId) ?? null;
+    while (current && !seen.has(current)) {
+      if (current === selfId) return true;
+      seen.add(current);
+      current = managerOf.get(current) ?? null;
+    }
+    return false;
+  };
+  return users.filter((user) => user.id === currentId || (user.active && user.id !== selfId && !(selfId && reportsToSelf(user.id))));
+}
 
 export function StaffPage() {
   const [data, setData] = useState<StaffDirectory | null>(null);
@@ -16,10 +50,15 @@ export function StaffPage() {
   const [departments, setDepartments] = useState("");
   const [renameSource, setRenameSource] = useState("");
   const [renameTarget, setRenameTarget] = useState("");
+  const [headDepartment, setHeadDepartment] = useState("");
+  const [headText, setHeadText] = useState("");
   const [busy, setBusy] = useState(false);
   const [showOff, setShowOff] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  const labels = useMemo(() => personLabels(data?.users ?? []), [data]);
+  const heads = data?.department_heads ?? {};
 
   async function load() {
     const loaded = await staffApi.directory();
@@ -49,16 +88,23 @@ export function StaffPage() {
   const saveEmployee = () => run(async () => {
     if (!editing) return "";
     const { id, draft } = editing;
+    if (draft.managerText.trim() && !draft.manager_id) throw new Error(`Руководитель «${draft.managerText.trim()}» не найден — выберите из списка`);
+    const personnel = {
+      personnel_number: draft.personnel_number, job_title: draft.job_title, qualification: draft.qualification,
+      job_since: draft.job_since || null, manager_id: draft.manager_id,
+    };
     if (id === null) {
-      const { active: _active, ...payload } = draft;
-      const { user, pin } = await staffApi.create(payload);
+      const { user, pin } = await staffApi.create({
+        login: draft.login, email: draft.email, name: draft.name, department: draft.department, role: draft.role,
+        site: draft.site, password: draft.password, pin: draft.pin, ...personnel,
+      });
       setEditing(null);
       await load();
       return `Сотрудник ${user.name} заведён, вход — ${user.login}, PIN — ${pin} (запишите, больше не покажем)`;
     }
     const { user } = await staffApi.update(id, {
       name: draft.name, department: draft.department, role: draft.role, site: draft.site, active: draft.active,
-      password: draft.password || null, pin: draft.pin.trim() || null,
+      password: draft.password || null, pin: draft.pin.trim() || null, ...personnel,
     });
     setEditing(null);
     await load();
@@ -93,14 +139,37 @@ export function StaffPage() {
     return `Отдел переименован, сотрудников перенесено: ${result.users}`;
   });
 
+  const headCandidates = (data?.users ?? []).filter((user) => user.active || user.id === heads[headDepartment]);
+  const headIdByLabel = new Map(headCandidates.map((user) => [labels.get(user.id) ?? user.name, user.id]));
+
+  function pickHeadDepartment(name: string) {
+    setHeadDepartment(name);
+    const head = heads[name];
+    setHeadText(head ? labels.get(head) ?? "" : "");
+  }
+
+  const saveHead = () => run(async () => {
+    const text = headText.trim();
+    const headId = text ? headIdByLabel.get(text) ?? null : null;
+    if (text && !headId) throw new Error(`Сотрудник «${text}» не найден — выберите из списка`);
+    const department = headDepartment;
+    const result = await staffApi.setDepartmentHead(department, headId);
+    setData((current) => current && { ...current, departments: result.departments, department_heads: result.department_heads });
+    const name = data?.users.find((user) => user.id === headId)?.name;
+    return name ? `Руководитель отдела «${department}» — ${name}` : `У отдела «${department}» больше нет руководителя`;
+  });
+
   function startEdit(user: Employee) {
     const { pin_set: _pinSet, ...fields } = user;
-    setEditing({ id: user.id, draft: { ...fields, password: "", pin: "" } });
+    const managerText = user.manager_id ? labels.get(user.manager_id) ?? "" : "";
+    setEditing({ id: user.id, draft: { ...fields, password: "", pin: "", managerText } });
   }
 
   const roleLabel = (key: string) => data?.roles.find((role) => role.key === key)?.label ?? key;
+  const nameOf = (id: string | undefined) => data?.users.find((user) => user.id === id)?.name ?? "";
   const offCount = data?.users.filter((user) => !user.active).length ?? 0;
   const shown = data?.users.filter((user) => showOff || user.active) ?? [];
+  const headButton = headText.trim() || !heads[headDepartment] ? "Назначить руководителя" : "Снять руководителя";
 
   return <section className="page staff-page">
     <header className="page-head"><h1>Сотрудники</h1><span className="page-count">{shown.length}</span>
@@ -110,10 +179,12 @@ export function StaffPage() {
     {notice && <div className="success-banner">{notice}</div>}
     {data && <>
       <div className="table-wrap"><table aria-label="Сотрудники">
-        <thead><tr><th>ФИО</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>Вход</th><th /></tr></thead>
+        <thead><tr><th>ФИО</th><th>Таб. №</th><th>Должность</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>Вход</th><th /></tr></thead>
         <tbody>
           {shown.map((user) => <tr key={user.id} className={user.active ? "clickable" : "clickable muted"} onClick={() => startEdit(user)}>
             <td className="text"><strong>{user.name}</strong></td>
+            <td>{user.personnel_number || "—"}</td>
+            <td className="text">{user.job_title || "—"}{user.qualification && <small>{user.qualification}</small>}</td>
             <td className="text">{user.login}{user.email !== user.login && <><br /><small>{user.email}</small></>}</td>
             <td>{user.department || "—"}</td>
             <td>{user.site || "все"}</td>
@@ -126,7 +197,7 @@ export function StaffPage() {
           </tr>)}
         </tbody>
       </table></div>
-      {editing && <EmployeeForm data={data} editing={editing} busy={busy} onChange={(draft) => setEditing({ ...editing, draft })} onSave={() => void saveEmployee()} onCancel={() => setEditing(null)} />}
+      {editing && <EmployeeForm data={data} labels={labels} editing={editing} busy={busy} onChange={(draft) => setEditing({ ...editing, draft })} onSave={() => void saveEmployee()} onCancel={() => setEditing(null)} />}
       <article className="panel staff-departments">
         <h2>Отделы</h2>
         <div className="staff-dep-body">
@@ -134,6 +205,25 @@ export function StaffPage() {
           <textarea aria-label="Список отделов" rows={Math.min(Math.max(data.departments.length + 1, 4), 14)} value={departments} onChange={(event) => setDepartments(event.target.value)} />
           <small className="muted">По одному на строку. Отдел, который у кого-то проставлен, из списка не уйдёт — переименуйте его.</small>
           <div><button className="primary" disabled={busy} onClick={() => void saveDepartments()}>Сохранить отделы</button></div>
+        </div>
+        <div className="staff-dep-heads">
+          <div className="table-wrap"><table aria-label="Руководители отделов">
+            <thead><tr><th>Отдел</th><th>Руководитель</th></tr></thead>
+            <tbody>
+              {data.departments.map((name) => <tr key={name} className={name === headDepartment ? "clickable selected" : "clickable"} onClick={() => pickHeadDepartment(name)}>
+                <td>{name}</td><td>{nameOf(heads[name]) || "—"}</td>
+              </tr>)}
+              {data.departments.length === 0 && <tr><td colSpan={2} className="muted">Отделов пока нет — впишите их слева</td></tr>}
+            </tbody>
+          </table></div>
+          <div className="staff-dep-rename">
+            <select aria-label="Отдел для руководителя" value={headDepartment} onChange={(event) => pickHeadDepartment(event.target.value)}>
+              <option value="">Руководитель отдела…</option>
+              {data.departments.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <SuggestInput aria-label="Руководитель отдела" placeholder="ФИО, пусто — без руководителя" options={[...headIdByLabel.keys()]} value={headText} onChange={setHeadText} />
+            <button className="secondary" disabled={busy || !headDepartment || (!headText.trim() && !heads[headDepartment])} onClick={() => void saveHead()}>{headButton}</button>
+          </div>
         </div>
         <div className="staff-dep-rename">
           <select aria-label="Переименовать отдел" value={renameSource} onChange={(event) => setRenameSource(event.target.value)}>
@@ -149,8 +239,9 @@ export function StaffPage() {
   </section>;
 }
 
-function EmployeeForm({ data, editing, busy, onChange, onSave, onCancel }: {
+function EmployeeForm({ data, labels, editing, busy, onChange, onSave, onCancel }: {
   data: StaffDirectory;
+  labels: Map<string, string>;
   editing: { id: string | null; draft: Draft };
   busy: boolean;
   onChange: (draft: Draft) => void;
@@ -159,33 +250,41 @@ function EmployeeForm({ data, editing, busy, onChange, onSave, onCancel }: {
 }) {
   const { id, draft } = editing;
   const creating = id === null;
-  const set = (field: keyof Draft, value: string | boolean) => onChange({ ...draft, [field]: value });
+  const set = (field: keyof Draft, value: string | boolean | null) => onChange({ ...draft, [field]: value });
   // The department of this person stays selectable even when it is not in the list (a role-like old value).
   const departments = draft.department && !data.departments.includes(draft.department)
     ? [draft.department, ...data.departments]
     : data.departments;
+  const managers = managerCandidates(data.users, id, draft.manager_id);
+  const managerIdByLabel = new Map(managers.map((user) => [labels.get(user.id) ?? user.name, user.id]));
+  const setManager = (text: string) => onChange({ ...draft, managerText: text, manager_id: managerIdByLabel.get(text.trim()) ?? null });
   return <div className="panel">
     <h2>{creating ? "Новый сотрудник" : `Правка: ${draft.name}`}</h2>
-    <div className="form-grid">
-      {creating && <>
-        <label>E-mail<input aria-label="E-mail" type="email" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
-        <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
-      </>}
+    <div className="form-grid staff-form">
       <label>ФИО<input aria-label="ФИО" value={draft.name} onChange={(event) => set("name", event.target.value)} /></label>
+      <label>Табельный номер<input aria-label="Табельный номер" placeholder="например, FRX-0017" maxLength={32} value={draft.personnel_number} onChange={(event) => set("personnel_number", event.target.value)} /></label>
+      <label>Должность<input aria-label="Должность" value={draft.job_title} onChange={(event) => set("job_title", event.target.value)} /></label>
+      <label>Категория / квалификация<input aria-label="Категория / квалификация" value={draft.qualification} onChange={(event) => set("qualification", event.target.value)} /></label>
       <label>Отдел<select aria-label="Отдел" value={draft.department} onChange={(event) => set("department", event.target.value)}>
         <option value="">—</option>
         {departments.map((name) => <option key={name} value={name}>{name}</option>)}
       </select></label>
+      <label>Руководитель<SuggestInput aria-label="Руководитель" placeholder="ФИО, пусто — не назначен" options={[...managerIdByLabel.keys()]} value={draft.managerText} onChange={setManager} /></label>
+      <label>В должности с<input aria-label="В должности с" type="date" value={draft.job_since ?? ""} onChange={(event) => set("job_since", event.target.value || null)} /></label>
       <label>Место работы<select aria-label="Место работы" value={draft.site} onChange={(event) => set("site", event.target.value)}>
         <option value="">все площадки</option>
         {data.sites.map((site) => <option key={site.code} value={site.code}>{site.code} · {site.city}</option>)}
       </select></label>
+      {creating && <>
+        <label className="pair">E-mail<input aria-label="E-mail" type="email" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
+        <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
+      </>}
       <label>Роль<select aria-label="Роль" value={draft.role} onChange={(event) => set("role", event.target.value)}>
         {data.roles.map((role) => <option key={role.key} value={role.key}>{role.label}</option>)}
       </select></label>
-      <label>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — сгенерируем и покажем" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
-      <label>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "необязательно, 8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
-      {!creating && <label className="check-inline"><input aria-label="Вход разрешён" type="checkbox" checked={draft.active} onChange={(event) => set("active", event.target.checked)} /> Вход разрешён</label>}
+      <label className={creating ? "half" : undefined}>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — сгенерируем и покажем" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
+      <label className={creating ? "half" : undefined}>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "необязательно, 8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
+      {!creating && <label className="check-inline staff-form-check"><input aria-label="Вход разрешён" type="checkbox" checked={draft.active} onChange={(event) => set("active", event.target.checked)} /> Вход разрешён</label>}
     </div>
     <div className="form-actions">
       <button className="primary" disabled={busy} onClick={onSave}>{creating ? "Завести сотрудника" : "Сохранить сотрудника"}</button>{" "}
