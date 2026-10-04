@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     Uuid,
     and_,
+    delete as sql_delete,
     false,
     func,
     or_,
@@ -642,6 +643,23 @@ class SqlAlchemyProcurementRepository:
         for column in ProcurementLineRow.__table__.columns:
             if column.name not in _SWEEP_OWNED:
                 setattr(stored, column.name, getattr(incoming, column.name))
+
+    def delete(self, line_id: UUID, expected_version: int) -> bool:
+        # Core DELETE guarded by the version: a concurrent edit wins and nothing is touched. Released «Со склада»
+        # covers are this line's own history: the FK cascades them on PostgreSQL, the second DELETE does it on SQLite.
+        result = self.session.execute(
+            sql_delete(ProcurementLineRow)
+            .where(ProcurementLineRow.id == line_id, ProcurementLineRow.version == expected_version)
+            .execution_options(synchronize_session=False)
+        )
+        if not result.rowcount:
+            return False
+        self.session.execute(
+            sql_delete(ProcurementStockCoverRow)
+            .where(ProcurementStockCoverRow.line_id == line_id)
+            .execution_options(synchronize_session=False)
+        )
+        return True
 
     def status_notifications_due(self, statuses: Sequence[str], limit: int) -> list[StatusNotificationDue]:
         rows = self.session.execute(

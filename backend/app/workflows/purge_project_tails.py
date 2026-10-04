@@ -23,6 +23,7 @@ SECTION_TITLES = {
     "fulfillment": "Запросы на комплектацию",
     "production": "Производственные задания",
     "requests": "Заявки на закупку",
+    "procurement": "Строки закупки этих заявок",
 }
 
 
@@ -59,7 +60,7 @@ def run(projects: list[str], state: Any, actor: Actor, now: datetime, *, apply: 
             fulfillment_uow=getattr(state, "fulfillment_uow_factory", None),
             production_uow=getattr(state, "production_uow_factory", None),
             requests_uow=getattr(state, "uow_factory", None),
-            procurement_stages=getattr(state, "procurement_stage_lookup", None),
+            procurement_uow=getattr(state, "procurement_uow_factory", None),
             apply=apply,
         )
         out.append(format_tails(tails))
@@ -71,7 +72,8 @@ def run(projects: list[str], state: Any, actor: Actor, now: datetime, *, apply: 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Удалить хвосты уже удалённых проектов: задания без работы, запросы на комплектацию без выдачи, "
-                    "заявки, не взятые в закупку. Без --yes только показывает.",
+                    "заявки на закупку со строками закупки без заказа поставщику, счёта и оплаты. "
+                    "Без --yes только показывает.",
     )
     parser.add_argument("projects", nargs="+", help="№ проекта (можно несколько)")
     parser.add_argument("--yes", action="store_true", help="удалить по-настоящему (без флага — проверка без записи)")

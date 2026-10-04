@@ -17,11 +17,19 @@ from app.modules.fulfillment.application import BindLotCommand, CreateFulfillmen
 from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentStatus
 from app.modules.fulfillment.infrastructure import SqlAlchemyFulfillmentUnitOfWork
 from app.modules.identity.infrastructure import IdentityUserRow
+from app.modules.procurement.application import (
+    ConcurrentProcurementUpdate,
+    TakeProcurementInWorkCommand,
+    dispatch_next_procurement_requested,
+    take_procurement_in_work,
+)
+from app.modules.procurement.domain import ProcurementStatus
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
+from app.modules.procurement.money import FactMoney
 from app.modules.production.application import LaunchProductionCommand, launch_production
 from app.modules.production.domain import OperationShare, ProductionOperation
 from app.modules.production.infrastructure import ProductionBoxRow, SqlAlchemyProductionUnitOfWork
-from app.modules.requests.application import CreateRequestsCommand, create_requests
+from app.modules.requests.application import CreateRequestsCommand, HandoffRequestsCommand, create_requests, handoff_requests
 from app.modules.requests.domain import RequestDraft, RequestStatus
 from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
@@ -30,6 +38,7 @@ from app.modules.warehouse.domain import StockLot
 from app.shared.clock import moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
+from app.workflows import project_kitset
 from app.workflows import purge_project_tails as cli
 from app.workflows.project_kitset import purge_project_tails
 from tests.factories import Actor
@@ -37,21 +46,12 @@ from tests.techcards.calc_sheets import FakeSheets
 
 NOW = datetime(2026, 10, 4, 10, 0)
 ACTOR = Actor(name="Технолог", department="Производство")
+BUYER = Actor(name="Закупщик", department="Закупки")
 OPERATOR = UUID("10000000-0000-0000-0000-0000000000a1")
 STATE = (
     "production_uow_factory", "techcards_uow_factory", "fulfillment_uow_factory",
-    "shipping_uow_factory", "uow_factory", "procurement_uow_factory", "procurement_stage_lookup",
+    "shipping_uow_factory", "uow_factory", "procurement_uow_factory",
 )
-
-
-class FakeStages:
-    """Procurement took these requests although Requests still says «Новый» (a lagging status)."""
-
-    def __init__(self):
-        self.taken: dict[UUID, str] = {}
-
-    def stages_for(self, request_ids):
-        return {request_id: self.taken[request_id] for request_id in request_ids if request_id in self.taken}
 
 
 @pytest.fixture()
@@ -67,7 +67,6 @@ def erp():
         shipping_uow_factory=lambda: SqlAlchemyShippingUnitOfWork(sessions),
         uow_factory=lambda: SqlAlchemyUnitOfWork(sessions),
         procurement_uow_factory=lambda: SqlAlchemyProcurementUnitOfWork(sessions),
-        procurement_stage_lookup=FakeStages(),
     )
     with sessions() as session:
         session.add(IdentityUserRow(
@@ -152,6 +151,28 @@ def _request(state, *, reference=None, base=None, status=None):
     return request
 
 
+def _handed(state, request, *, taken=True, retransfer=False, **changes):
+    """«В закупку»: the request's line appears in procurement, the buyer takes it «В работе», then `changes`
+    (invoice, payment, order, …) are written onto it as later stages would. Returns the stored line."""
+    handoff_requests(HandoffRequestsCommand(request_ids=(request.id,), actor=BUYER, now=NOW, retransfer=retransfer),
+                     state.uow_factory())
+    line = dispatch_next_procurement_requested(NOW, state.procurement_uow_factory())
+    if taken:
+        [line] = take_procurement_in_work(TakeProcurementInWorkCommand(line_ids=(line.id,), actor=BUYER, now=NOW),
+                                          state.procurement_uow_factory())
+    if changes:
+        line = replace(line, version=line.version + 1, **changes)
+        with state.procurement_uow_factory() as uow:
+            uow.procurement.add(line)
+            uow.commit()
+    return line
+
+
+def _lines(state):
+    with state.procurement_uow_factory() as uow:
+        return {line.id: line for line in uow.procurement.list()}
+
+
 def _seed(state, project="708К.4"):
     """Every kind of tail of `project`, one with movement each, and the same of a neighbour «…1» project."""
     seeded = SimpleNamespace(
@@ -170,8 +191,9 @@ def _seed(state, project="708К.4"):
     seeded.req_designation = _request(state, base=project)
     seeded.req_reference = _request(state, reference=project)
     seeded.req_in_work = _request(state, reference=project, status=RequestStatus.IN_WORK)
-    seeded.req_lagging = _request(state, base=project)
-    state.procurement_stage_lookup.taken[seeded.req_lagging.id] = "Жду счет"
+    seeded.req_ordered = _request(state, base=project)
+    seeded.line_ordered = _handed(state, seeded.req_ordered, status=ProcurementStatus.AWAITING_INVOICE,
+                                  order_number="PO-0007", supplier_request_reference="PO-0007")
     seeded.req_neighbour = _request(state, reference=f"{project}1")
     seeded.req_neighbour_import = _request(state, base=f"{project}1")
     return seeded
@@ -181,7 +203,7 @@ def _purge(state, project="708К.4", apply=True):
     return purge_project_tails(
         project, ACTOR, NOW, fulfillment_uow=state.fulfillment_uow_factory,
         production_uow=state.production_uow_factory, requests_uow=state.uow_factory,
-        procurement_stages=state.procurement_stage_lookup, apply=apply,
+        procurement_uow=state.procurement_uow_factory, apply=apply,
     )
 
 
@@ -205,18 +227,20 @@ def test_purge_deletes_untouched_tails_releases_reserve_and_keeps_moved(erp):
     kits, tasks, requests, lot = _left(erp)
     assert kits == {seeded.kit_issued.id, seeded.kit_picked.id, seeded.kit_neighbour.id, seeded.kit_of_worked.id}
     assert tasks == {seeded.task_started.id, seeded.task_boxed.id, seeded.task_handed.id, seeded.task_neighbour.id}
-    assert requests == {seeded.req_in_work.id, seeded.req_lagging.id, seeded.req_neighbour.id, seeded.req_neighbour_import.id}
+    assert requests == {seeded.req_in_work.id, seeded.req_ordered.id, seeded.req_neighbour.id, seeded.req_neighbour_import.id}
+    assert set(_lines(erp)) == {seeded.line_ordered.id}
     assert lot.reserved == Decimal("0")  # the free kit's reserve went back to the lot
     payload = tails.payload()
-    assert {section: payload[section] for section in ("fulfillment", "production", "requests")} == {
+    assert {section: payload[section] for section in ("fulfillment", "production", "requests", "procurement")} == {
         "fulfillment": {"deleted": 2, "kept": 3}, "production": {"deleted": 1, "kept": 3},
-        "requests": {"deleted": 2, "kept": 2},
+        "requests": {"deleted": 2, "kept": 2}, "procurement": {"deleted": 0, "kept": 0},
     }
     assert payload["freed"] == 1
     reasons = {(entry["section"], entry["reason"]) for entry in payload["kept"]}
     assert ("fulfillment", "по нему уже выдано со склада") in reasons
     assert ("production", "отдано в ЖУК, там работу в ERP не отмечают") in reasons
-    assert ("requests", "уже в закупке («Жду счет»)") in reasons
+    assert ("requests", f"в закупке {seeded.line_ordered.legacy_id} «Жду счет»: запрос поставщику отправлен (PO-0007)") in reasons
+    assert ("requests", "передана в закупку, строки закупки ещё нет — удалите позже") in reasons
     assert ("fulfillment", "к нему привязано задание с отмеченной работой") in reasons
     assert tails.message.startswith(
         "Удалено: 2 запроса на комплектацию, 1 производственное задание, 2 заявки на закупку; резерв снят по 1 строке. "
@@ -230,6 +254,7 @@ def test_purge_deletes_untouched_tails_releases_reserve_and_keeps_moved(erp):
     assert events.count("production.task_deleted") == 1
     assert events.count("fulfillment.deleted") == 2
     assert events.count("request.deleted") == 2
+    assert events.count("procurement.line_deleted") == 0
 
     again = _purge(erp)
     assert again.deleted == [] and again.message.startswith("Удалять нечего")
@@ -276,6 +301,106 @@ def test_owner_case_project_with_dash_number(erp):
     assert len(requests) == 3
 
 
+# ── Заявки в закупке: строки без движения уходят вместе с заявкой (owner 04.10) ──
+
+
+def _label(line, status):
+    return f"{line.legacy_id} · {line.calculated_name} («{status}»)"
+
+
+def test_untouched_procurement_lines_go_with_their_request(erp):
+    """Owner 04.10: П2510-1.2 deleted, its SM-…-01/-02 stayed «В работе» in procurement although nothing was bought."""
+    taken = _request(erp, reference="П2510-1.2")
+    fresh = _request(erp, base="П2510-1.2")
+    resent = _request(erp, base="П2510-1.2")
+    other = _request(erp, reference="П2510-1.21")
+    line_taken = _handed(erp, taken, supplier="ООО Ромашка")
+    line_ready = _handed(erp, fresh, status=ProcurementStatus.READY, supplier="ООО Ромашка", actual_quantity=Decimal("5"), actual_unit="м")
+    line_first = _handed(erp, resent)
+    line_second = _handed(erp, resent, taken=False, retransfer=True, status=ProcurementStatus.APPROVAL)
+    line_other = _handed(erp, other)
+
+    tails = _purge(erp, "П2510-1.2")
+
+    assert set(_lines(erp)) == {line_other.id}
+    assert _left(erp)[2] == {other.id}
+    assert tails.kept == []
+    assert tails.message == "Удалено: 3 заявки на закупку, 4 строки закупки."
+    assert {entry.label for entry in tails.deleted if entry.section == "procurement"} == {
+        _label(line_taken, "В работе"), _label(line_ready, "Готов к запросу"),
+        _label(line_first, "В работе"), _label(line_second, "Согласование"),
+    }
+    with erp.sessions() as session:
+        deleted = [row for row in session.scalars(select(AuditEventRow)) if row.event_type == "procurement.line_deleted"]
+    assert {row.aggregate_id for row in deleted} == {line_taken.id, line_ready.id, line_first.id, line_second.id}
+    assert {row.details["project"] for row in deleted} == {"П2510-1.2"}
+    assert {row.details["reason"] for row in deleted} == {"project_deleted"}
+
+
+def test_lines_with_order_invoice_money_payment_or_reserve_keep_the_request_whole(erp):
+    project = "П2510-1.2"
+    paid, invoiced, quoted, reserved, mixed, plain = (_request(erp, reference=project) for _ in range(6))
+    line_paid = _handed(erp, paid, status=ProcurementStatus.IN_TRANSIT, paid_at=NOW, order_number="PO-0001",
+                        invoice_url="https://example.test/invoice-1.pdf")
+    line_invoiced = _handed(erp, invoiced, status=ProcurementStatus.TO_PAY, order_number="PO-0002",
+                            invoice_url="https://example.test/invoice-2.pdf")
+    line_quoted = _handed(erp, quoted, status=ProcurementStatus.APPROVAL,
+                          money=FactMoney(currency="RUB", price=Decimal("10"), sum=Decimal("50")))
+    line_reserved = _handed(erp, reserved, status=ProcurementStatus.READY, stock_covered=Decimal("2"))
+    line_mixed_free = _handed(erp, mixed)
+    line_mixed_paid = _handed(erp, mixed, retransfer=True, status=ProcurementStatus.QUARANTINE, paid_at=NOW)
+    line_plain = _handed(erp, plain)
+
+    tails = _purge(erp, project)
+
+    assert set(_lines(erp)) == {
+        line_paid.id, line_invoiced.id, line_quoted.id, line_reserved.id, line_mixed_free.id, line_mixed_paid.id,
+    }
+    assert line_plain.id not in _lines(erp)
+    assert _left(erp)[2] == {paid.id, invoiced.id, quoted.id, reserved.id, mixed.id}
+    assert {(entry.label, entry.reason) for entry in tails.kept} == {
+        (f"{paid.legacy_id} · {paid.name}", f"в закупке {line_paid.legacy_id} «В пути»: оплачена"),
+        (f"{invoiced.legacy_id} · {invoiced.name}", f"в закупке {line_invoiced.legacy_id} «В оплату»: внесён счёт"),
+        (f"{quoted.legacy_id} · {quoted.name}", f"в закупке {line_quoted.legacy_id} «Согласование»: внесены суммы КП"),
+        (f"{reserved.legacy_id} · {reserved.name}",
+         f"в закупке {line_reserved.legacy_id} «Готов к запросу»: держит резерв «Со склада» — снимите его в «Закупке»"),
+        (f"{mixed.legacy_id} · {mixed.name}", f"в закупке {line_mixed_paid.legacy_id} «Карантин»: оплачена"),
+    }
+    assert [entry.label for entry in tails.deleted] == [_label(line_plain, "В работе"), f"{plain.legacy_id} · {plain.name}"]
+
+
+def test_lines_changed_during_the_purge_keep_their_request(erp, monkeypatch):
+    request = _request(erp, reference="П2510-1.2")
+    line = _handed(erp, request)
+    real = project_kitset.remove_untouched_request_lines
+
+    def racing(command, uow):
+        if command.apply:
+            raise ConcurrentProcurementUpdate(f"Строку {line.legacy_id} изменили во время удаления")
+        return real(command, uow)
+
+    monkeypatch.setattr(project_kitset, "remove_untouched_request_lines", racing)
+
+    tails = _purge(erp, "П2510-1.2")
+
+    assert tails.deleted == []
+    assert [(entry.label, entry.reason) for entry in tails.kept] == [
+        (f"{request.legacy_id} · {request.name}", "строки закупки изменили во время удаления — повторите"),
+    ]
+    assert line.id in _lines(erp) and request.id in _left(erp)[2]
+
+
+def test_a_line_that_moved_after_the_read_is_not_deleted(erp):
+    request = _request(erp, reference="П2510-1.2")
+    line = _handed(erp, request)
+
+    with erp.procurement_uow_factory() as uow:
+        assert uow.procurement.delete(line.id, line.version - 1) is False
+        uow.commit()
+
+    assert line.id in _lines(erp)
+
+
 # ── Удаление проекта с экрана: каскад ───────────────────────────────────
 
 
@@ -306,19 +431,24 @@ def test_deleting_the_project_card_takes_its_untouched_tails(client, erp):
     created = client.post("/api/techcards/kitsets/load", json={"url": "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit"})
     assert created.status_code == 200, created.text
     seeded = _seed(erp)
+    in_work = _request(erp, reference="708К.4")
+    line = _handed(erp, in_work)
 
     deleted = client.delete("/api/techcards/kitsets/708К.4")
 
     assert deleted.status_code == 200, deleted.text
     res = deleted.json()["res"]
     assert res["tails_error"] == ""
-    assert (res["tails"]["fulfillment"], res["tails"]["production"], res["tails"]["requests"]) == (
-        {"deleted": 2, "kept": 3}, {"deleted": 1, "kept": 3}, {"deleted": 2, "kept": 2},
+    tails = res["tails"]
+    assert (tails["fulfillment"], tails["production"], tails["requests"], tails["procurement"]) == (
+        {"deleted": 2, "kept": 3}, {"deleted": 1, "kept": 3}, {"deleted": 3, "kept": 2}, {"deleted": 1, "kept": 0},
     )
-    assert "Осталось:" in res["tails"]["message"]
+    assert "3 заявки на закупку, 1 строка закупки" in tails["message"] and "Осталось:" in tails["message"]
     kits, tasks, requests, _lot = _left(erp)
     assert seeded.kit_free.id not in kits and seeded.task_free.id not in tasks and seeded.req_designation.id not in requests
     assert seeded.kit_neighbour.id in kits and seeded.task_neighbour.id in tasks and seeded.req_neighbour.id in requests
+    assert in_work.id not in requests and set(_lines(erp)) == {seeded.line_ordered.id}
+    assert line.id not in _lines(erp)
 
 
 # ── Команда purge_project_tails для уже удалённых проектов ──────────────
@@ -342,6 +472,34 @@ def test_cli_dry_run_by_default_then_yes_deletes(erp):
     kits, tasks, requests, _lot = _left(erp)
     assert seeded.kit_free.id not in kits and seeded.task_free.id not in tasks and seeded.req_designation.id not in requests
     assert seeded.task_neighbour.id in tasks
+
+
+def test_cli_dry_run_lists_requests_with_their_procurement_lines_then_yes_deletes(erp):
+    request = _request(erp, reference="П2510-1.2")
+    line = _handed(erp, request)
+    paid_request = _request(erp, reference="П2510-1.2")
+    paid = _handed(erp, paid_request, status=ProcurementStatus.IN_TRANSIT, paid_at=NOW, order_number="PO-0003")
+    before = (_left(erp), set(_lines(erp)))
+
+    text, code = cli.run(["П2510-1.2"], erp, ACTOR, NOW, apply=False)
+
+    assert code == 0
+    assert (_left(erp), set(_lines(erp))) == before
+    assert text == "\n".join([
+        "Проект П2510-1.2: Будет удалено: 1 заявка на закупку, 1 строка закупки. Осталось: 1 заявка на закупку — "
+        f"в закупке {paid.legacy_id} «В пути»: оплачена ({paid_request.legacy_id} · {paid_request.name}).",
+        "  Заявки на закупку:",
+        f"    удалить: {request.legacy_id} · {request.name}",
+        f"    осталось: {paid_request.legacy_id} · {paid_request.name} — в закупке {paid.legacy_id} «В пути»: оплачена",
+        "  Строки закупки этих заявок:",
+        f"    удалить: {line.legacy_id} · {line.calculated_name} («В работе»)",
+        "Проверка без записи. Удалить — та же команда с --yes.",
+    ])
+
+    text, code = cli.run(["П2510-1.2"], erp, ACTOR, NOW, apply=True)
+
+    assert code == 0 and f"    удалено: {line.legacy_id} · {line.calculated_name} («В работе»)" in text
+    assert set(_lines(erp)) == {paid.id} and _left(erp)[2] == {paid_request.id}
 
 
 def test_cli_refuses_a_project_that_still_has_a_card(client, erp):
