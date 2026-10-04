@@ -4,7 +4,7 @@ import { identityApi, type OwnProfile } from "./api";
 /** The employee's own profile in the sidebar footer (SUPPLYMAP portalState_: role, department, site) and the change of
  *  their own password (current + new). Passwords are still issued by the administrator; there is no «узнать пароль
  *  при первом входе» (SUPPLYMAP PIN onboarding is not ported on purpose). */
-export function ProfilePanel() {
+export function ProfilePanel({ openCard }: { openCard?: () => void } = {}) {
   const [open, setOpen] = useState(false);
   const [profile, setProfile] = useState<OwnProfile | null>(null);
   const [current, setCurrent] = useState("");
@@ -52,6 +52,7 @@ export function ProfilePanel() {
   }
 
   return <div className="profile-panel">
+    {openCard && <button className="link-button" onClick={openCard}>Моя карточка</button>}
     <button className="link-button" aria-expanded={open} onClick={() => void toggle()}>Профиль</button>
     {open && <div className="profile-card">
       {profile && <dl>

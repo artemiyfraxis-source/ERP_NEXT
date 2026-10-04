@@ -2351,10 +2351,20 @@ export type EmployeeCardTask = {
   title: string;
   created_at: string;
 };
+/** Кадровые данные: приходят, когда справочник сотрудников их хранит; пока поля нет в ответе — раздел их не показывает. */
+export type EmployeeCardPersonnel = {
+  tab_number: string | null;
+  position: string | null;
+  category: string | null;
+  /** ISO-дата «в должности с». */
+  since: string | null;
+  manager_name: string | null;
+};
 export type EmployeeCard = {
   /** Дата, на которую собрана карточка (Москва). */
   as_of: string;
   header: EmployeeCardHeader;
+  personnel?: EmployeeCardPersonnel | null;
   /** Для мастера — монтажники его площадки, иначе пусто. */
   subordinates: EmployeeCardSubordinate[];
   projects: EmployeeCardProject[];

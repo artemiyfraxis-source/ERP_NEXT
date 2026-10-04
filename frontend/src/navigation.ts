@@ -5,7 +5,7 @@ import type { AccessMode, Principal } from "./api";
    cards, and the sidebar groups the same sections in the same order — one list feeds all three. */
 
 export type Section =
-  | "cabinet"
+  | "cabinet" | "card"
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement"
   | "receiving" | "stock" | "issues" | "handout" | "shipping"
@@ -48,6 +48,10 @@ const FULFILLMENT_ROLES = ["engineer", "receiver", "prodhead", "master", "admin"
 // Array order = card order inside a block = sidebar order.
 export const NAV: NavItem[] = [
   { id: "cabinet", label: "Личный кабинет" },
+  // «Личная карточка» (owner concept 04.10): own card from the sidebar profile, someone else's from «Сотрудники»
+  // (?section=card&user=<id>). No access key — own card is open to everyone, the backend gates other people's. Not a
+  // menu item or a tile (`within`), and no menu highlight (the home screen is its parent).
+  { id: "card", label: "Личная карточка", block: "mgmt", within: "cabinet" },
   // Производство
   // «Проекты» (SUPPLYMAP erptechmap): карточки наборов — состав, спецификация, снабжение, генератор, готовые ТК.
   { id: "projects", label: "Проекты", sub: "проекты · состав · спецификация · генератор", permission: "projects", block: "prod" },

@@ -33,16 +33,18 @@ import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
 import { ProjectsPage } from "./ProjectsPage";
 import { StaffPage } from "./StaffPage";
+import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
 
-type Place = { section: Section; block: BlockId | null };
+/** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
+type Place = { section: Section; block: BlockId | null; user?: string | null };
 
 function placeFromUrl(): Place {
   const params = new URLSearchParams(window.location.search);
   const value = params.get("section");
   if (value === "warehouse") return { section: "stock", block: null };
-  if (isSection(value)) return { section: value, block: null };
+  if (isSection(value)) return { section: value, block: null, user: params.get("user") || null };
   const block = params.get("block");
   return { section: "cabinet", block: isBlock(block) ? block : null };
 }
@@ -85,8 +87,10 @@ export function App() {
     url.searchParams.delete("section");
     url.searchParams.delete("block");
     url.searchParams.delete("project");
+    url.searchParams.delete("user");
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
+    if (next.user) url.searchParams.set("user", next.user);
     window.history.pushState({}, "", url);
     setPlace(next);
     setNavOpen(false);
@@ -100,6 +104,9 @@ export function App() {
     url.searchParams.set("project", project);
     window.history.replaceState({}, "", url);
   }
+  // «Личная карточка»: own (no id) or someone else's (staffdir view); the edit form of «Сотрудники» opens on the card's «Редактировать».
+  const openCard = (user?: string) => go({ section: "card", block: null, user: user ?? null });
+  const openStaffEdit = (user: string) => go({ section: "staff", block: null, user });
   // A block with a single visible section opens that section directly: a screen with one card is a
   // wasted click (SUPPLYMAP openHomeBlock).
   function openBlock(id: BlockId) {
@@ -186,7 +193,7 @@ export function App() {
               {switching ? "…" : principal.admin_mode ? "Выйти из админа" : "Режим админа"}
             </button>
           )}
-          <ProfilePanel />
+          <ProfilePanel openCard={() => openCard()} />
           <button
             className="link-button"
             onClick={() => void signOut()}
@@ -219,7 +226,17 @@ export function App() {
         {activeSection === "references" && <ReferencesPage principal={principal} />}
         {activeSection === "notifications" && <NotificationsPage />}
         {activeSection === "operations" && <OperationsPage />}
-        {activeSection === "staff" && <StaffPage />}
+        {activeSection === "staff" && <StaffPage openCard={openCard} openUserId={place.user} />}
+        {activeSection === "card" && <EmployeeCardPage
+          key={place.user ?? "own"}
+          principal={principal}
+          userId={place.user}
+          openProject={visibleNav.some(({ id }) => id === "projects") ? openProjectCard : undefined}
+          openMyRequests={visibleNav.some(({ id }) => id === "myrequests") ? () => navigate("myrequests") : undefined}
+          openStaffEdit={openStaffEdit}
+          openCard={openCard}
+          openStaff={() => navigate("staff")}
+        />}
         {activeSection === "access" && <AccessPage />}
       </main>
     </div>
