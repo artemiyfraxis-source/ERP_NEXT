@@ -67,3 +67,26 @@ def test_country_for_manufacturer_ignores_case_and_spaces():
     assert directory.country_for_manufacturer("  amphenol ") == "США"
     assert directory.country_for_manufacturer("Molex") == ""
     assert directory.country_for_manufacturer("") == ""
+
+
+def test_empty_map_falls_back_to_the_config_seed():
+    """supplierMap_: nothing saved yet → Config SUPPLIER_BY_LINK (a fresh server has no saved map)."""
+    from app.modules.references.domain import SUPPLIER_BY_LINK, normalized_supplier_key
+    from app.workflows.supplier_directory import ReferencesSupplierDirectory
+
+    class _Repo:
+        def list(self):
+            return []
+
+    class _Uow:
+        references = _Repo()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    mapping = ReferencesSupplierDirectory(lambda: _Uow()).supplier_map()
+    assert mapping[normalized_supplier_key("elitan.ru")] == 'ООО "Элитан Трейд"'
+    assert len(mapping) == len({normalized_supplier_key(key) for key, _ in SUPPLIER_BY_LINK})
