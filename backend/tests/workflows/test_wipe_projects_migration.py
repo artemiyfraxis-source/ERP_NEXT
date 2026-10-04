@@ -12,7 +12,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 import app.database  # noqa: F401 — таблицы всех модулей в metadata
@@ -67,6 +67,8 @@ def database(tmp_path, monkeypatch):
     with engine.begin() as connection:
         connection.execute(text(
             "ALTER TABLE production_plan_events ADD COLUMN field VARCHAR(32) NOT NULL DEFAULT ''"))
+        connection.execute(text("ALTER TABLE production_operations ADD COLUMN stage_key VARCHAR(128)"))
+        Base.metadata.tables["production_operation_inputs"].create(connection)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)
     app.state.techcards_uow_factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)
@@ -117,12 +119,21 @@ def database(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_no_kept_table_points_into_a_wiped_one():
+def test_no_kept_table_points_into_a_wiped_one(tmp_path, monkeypatch):
+    # Разовый снос видит схему на своей ревизии: таблицы поздних миграций (входы операций 0081) его не касаются.
+    monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
+    path = tmp_path / "schema.db"
+    command.upgrade(_config(path), WIPE)
+    engine = create_engine(f"sqlite+pysqlite:///{path.as_posix()}")
+    existing = set(inspect(engine).get_table_names())
+    engine.dispose()
     wiped = set(wipe.TABLES)
     tables = {table.name for table in Base.metadata.sorted_tables}
     assert wiped <= tables
     assert not {name for name in wiped if name.startswith(("warehouse_", "fulfillment_"))}
     for table in Base.metadata.sorted_tables:
+        if table.name not in existing:
+            continue
         if table.name not in wiped:
             assert not {fk.column.table.name for fk in table.foreign_keys} & wiped, table.name
     # Дети раньше родителей: RESTRICT на PostgreSQL проверяется сразу.
