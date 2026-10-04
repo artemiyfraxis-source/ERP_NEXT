@@ -20,6 +20,7 @@ import {
   type RowAction,
 } from "./ProcurementStages";
 import { formatDate } from "./format";
+import type { LineEditing } from "./ProcurementCellEdit";
 
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
@@ -54,7 +55,7 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
 
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
-export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {}) {
+export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly?: boolean; buyerName?: string } = {}) {
   const [tab, setTab] = useState<ProcurementTab>("queues");
   return (
     <>
@@ -64,7 +65,7 @@ export function ProcurementPage({ readOnly = false }: { readOnly?: boolean } = {
         <button type="button" className={`secondary small${tab === "suppliers" ? " active" : ""}`} aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>По поставщикам</button>
       </nav>
       {tab === "queues" && <ProcurementQueues readOnly={readOnly} />}
-      {tab === "sheet" && <section className="page"><ProcurementSheetView /></section>}
+      {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
       {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}
     </>
   );
@@ -308,7 +309,13 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     ...replaceInvoice(line), split(line),
   ];
   const otherActions = (line: ProcurementLine) => [split(line)];
-  const stageProps = { disabled: interactionLocked, busyId };
+  // Комментарий и ожидаемая дата правятся в ячейке: свежая строка встаёт на место без перезагрузки очереди,
+  // а 409 перечитывает очередь (другая правка успела раньше).
+  const editing: LineEditing = {
+    onSaved: (saved) => setMine((current) => current.map((item) => (item.id === saved.id ? saved : item))),
+    onConflict: () => reload(true),
+  };
+  const stageProps = { disabled: interactionLocked, busyId, editing };
 
   return (
     <section className="page">

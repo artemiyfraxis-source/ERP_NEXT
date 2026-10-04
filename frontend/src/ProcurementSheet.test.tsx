@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import type { ProcurementLine } from "./api";
@@ -95,4 +95,256 @@ it("loads the whole sheet with server filters and pages by cursor", async () => 
   fireEvent.click(screen.getByRole("button", { name: "Найти" }));
   await waitFor(() => expect(screen.queryByText("Позиция 1")).not.toBeInTheDocument());
   expect(requested.some((path) => path.includes("status="))).toBe(true);
+});
+
+// ── Колонки листа: порядок блоков SUPPLYMAP, выбор колонок, формат ─────────────────────────────────
+
+const ALL_COLUMNS = [
+  // регистрация
+  "ID", "Статус", "Ревизия", "Дата запроса", "Инициатор", "Отдел", "Закупщик",
+  // классификация
+  "Назначение", "Проект", "Тип задачи", "Приоритет",
+  // что закупаем
+  "Категория", "Тип", "Артикул КД", "Наименование", "Наименование (сайт)",
+  // поставщик
+  "Поставщик", "Изготовитель", "Страна", "Ссылка",
+  // количество: расчёт и факт рядом
+  "Кол-во (расчёт)", "Ед. (расчёт)", "Кол-во (факт)", "Ед. (факт)",
+  // заказ, замена, документ качества
+  "№ заказа", "Дата заказа", "Заказ",
+  "Замена", "Реш. замены", "№ разрешения", "Дата разрешения",
+  "Тип док.", "№ док. качества", "Дата док. качества",
+  // цены: расчёт, затем факт; валюта
+  "Цена (расчёт)", "НДС (расчёт)", "Цена с НДС (расчёт)", "Сумма (расчёт)",
+  "Цена (факт)", "НДС (факт)", "Цена с НДС (факт)", "Сумма (факт)",
+  "Валюта",
+  // счёт и оплата
+  "Наименование (счёт)", "№ счёта", "Дата счёта", "Счёт", "Оплата", "Дата оплаты",
+  // сроки и комментарий
+  "Точка отгрузки", "План. дата", "Ожид. дата", "Факт. дата", "Комментарий",
+];
+
+// Ключевые колонки: с «Комментарием» они умещаются в 16" без прокрутки вбок; закупщик отбирается в шапке, единица — в «Колонках».
+const DEFAULT_COLUMNS = [
+  "ID", "Статус", "Наименование", "Поставщик", "Кол-во (факт)", "№ заказа", "Сумма (факт)", "Ожид. дата", "Комментарий",
+];
+
+const headers = () => screen.getAllByRole("columnheader").map((cell) => cell.textContent?.replace(/\s*[▲▼]$/, ""));
+const plain = (text: string | null) => (text ?? "").replace(/\s/g, " ");
+
+function sheetMock(lines: ProcurementLine[], onPatch?: (path: string, body: Record<string, unknown>) => Response | Promise<Response>) {
+  const requested: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    requested.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/procurement/meta") return json({ units: [], statuses: ["Новый", "В пути"] });
+    if (path.startsWith("/api/procurement/lines")) return json({ lines, next_cursor: null, buyers: ["Петров"] });
+    if (init?.method === "PATCH" && onPatch) return onPatch(path, JSON.parse(String(init.body)));
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  return requested;
+}
+
+function refused(status: number, detail: string) {
+  return new Response(JSON.stringify({ detail }), { status, headers: { "Content-Type": "application/json" } });
+}
+
+it("shows the key columns of the whole sheet and keeps the rest in «Колонки» in SUPPLYMAP block order", async () => {
+  sheetMock([line(1, { buyer: "Петров" })]);
+  window.localStorage.clear();
+  render(<ProcurementSheetView />);
+  await screen.findByText("Позиция 1");
+  expect(headers()).toEqual(DEFAULT_COLUMNS);
+
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  const chooser = screen.getByRole("group", { name: "Показывать колонки" });
+  const boxes = within(chooser).getAllByRole("checkbox");
+  // В выборе — все колонки листа закупки, в порядке блоков SUPPLYMAP.
+  expect(boxes.map((box) => box.closest("label")?.textContent)).toEqual(ALL_COLUMNS);
+  for (const box of boxes) if (!(box as HTMLInputElement).checked) fireEvent.click(box);
+  expect(headers()).toEqual(ALL_COLUMNS);
+
+  // Выключенная колонка уходит из таблицы, остальные не двигаются.
+  fireEvent.click(within(chooser).getByRole("checkbox", { name: "Ревизия" }));
+  expect(headers()).toEqual(ALL_COLUMNS.filter((title) => title !== "Ревизия"));
+});
+
+it("remembers the chosen columns of the sheet apart from the old layout", async () => {
+  sheetMock([line(1, { buyer: "Петров" })]);
+  window.localStorage.clear();
+  window.localStorage.setItem("erp-table:procurement-sheet", JSON.stringify({ hidden: ["task_type"] }));
+  const { unmount } = render(<ProcurementSheetView />);
+  await screen.findByText("Позиция 1");
+  // Старый сохранённый набор колонок не раскрывает все пятьдесят с лишним колонок нового листа.
+  expect(headers()).toEqual(DEFAULT_COLUMNS);
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Цена (факт)" }));
+  unmount();
+
+  render(<ProcurementSheetView />);
+  await screen.findByText("Позиция 1");
+  expect(headers()).toContain("Цена (факт)");
+});
+
+it("shows dates as 04.10.2026 and money right-aligned with ₽ or the currency code", async () => {
+  sheetMock([line(1, {
+    status: "Карантин", buyer: "Петров", request_date: "2026-09-16", expected_arrival: "2026-10-04", actual_arrival: "2026-10-03",
+    actual_quantity: "2.5", actual_unit: "кг", currency: "RUB", actual_price: "1250.5", actual_price_with_vat: "1500.6", actual_vat_rate: "20", actual_sum: "3751.5",
+    calculated_price: "100", calculated_price_with_vat: "122", calculated_sum: "244", paid_at: "2026-10-01T12:00:00+03:00", note: "Позвонить",
+  }), line(2, { buyer: "Петров", currency: "USD", actual_sum: "99.9" })]);
+  window.localStorage.clear();
+  render(<ProcurementSheetView />);
+  await screen.findByText("Позиция 1");
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  const chooser = screen.getByRole("group", { name: "Показывать колонки" });
+  for (const title of ["Дата запроса", "Факт. дата", "Цена (факт)", "НДС (факт)", "Цена с НДС (факт)", "НДС (расчёт)", "Сумма (расчёт)", "Оплата", "Дата оплаты", "Валюта"]) {
+    fireEvent.click(within(chooser).getByRole("checkbox", { name: title }));
+  }
+  const cellOf = (row: string, title: string) => {
+    const index = headers().indexOf(title);
+    return within(screen.getByText(row).closest("tr") as HTMLElement).getAllByRole("cell")[index];
+  };
+  expect(cellOf("Позиция 1", "Дата запроса")).toHaveTextContent("16.09.2026");
+  expect(cellOf("Позиция 1", "Ожид. дата")).toHaveTextContent("04.10.2026");
+  expect(cellOf("Позиция 1", "Факт. дата")).toHaveTextContent("03.10.2026");
+  expect(cellOf("Позиция 1", "Дата оплаты")).toHaveTextContent("01.10.2026");
+  expect(cellOf("Позиция 1", "Оплата")).toHaveTextContent("Оплачено");
+  expect(plain(cellOf("Позиция 1", "Цена (факт)").textContent)).toBe("1 250,50 ₽");
+  expect(plain(cellOf("Позиция 1", "Сумма (факт)").textContent)).toBe("3 751,50 ₽");
+  expect(plain(cellOf("Позиция 1", "Сумма (расчёт)").textContent)).toBe("244,00 ₽");
+  expect(cellOf("Позиция 1", "НДС (факт)")).toHaveTextContent("20 %");
+  expect(cellOf("Позиция 1", "НДС (расчёт)")).toHaveTextContent("22 %");
+  expect(plain(cellOf("Позиция 1", "Кол-во (факт)").textContent)).toBe("2,5 кг");
+  expect(cellOf("Позиция 1", "Валюта")).toHaveTextContent("₽");
+  expect(plain(cellOf("Позиция 2", "Сумма (факт)").textContent)).toBe("99,90 USD");
+  for (const title of ["Цена (факт)", "Сумма (факт)", "Кол-во (факт)"]) expect(cellOf("Позиция 1", title)).toHaveClass("num");
+});
+
+// ── Правка «Комментария» и «Ожид. даты» в ячейке листа ──────────────────────────────────────────────
+
+const own = (id: number, fields: Partial<ProcurementLine> = {}) => line(id, { status: "В пути", buyer: "Петров", expected_arrival: "2026-10-12", note: "Позвонить", version: 3, ...fields });
+
+it("edits the note and the expected date of the buyer's own line right in the cell and shows the saved line", async () => {
+  const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const mine = own(1);
+  sheetMock([mine, own(2, { buyer: "Сидоров", note: "Чужой" }), line(3, { buyer: "Петров" })], (path, body) => {
+    sent.push({ path, body });
+    return json({ line: path.endsWith("/note") ? { ...mine, note: body.note, version: 4 } : { ...mine, note: "Позвонить завтра", expected_arrival: body.expected_arrival, version: 5 } });
+  });
+  window.localStorage.clear();
+  render(<ProcurementSheetView buyerName="Петров" />);
+  await screen.findByText("Позиция 1");
+
+  // Чужая строка и строка «Новый» — просто текст, без правки.
+  expect(screen.queryByRole("button", { name: "Комментарий SM-2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Ожид. дата SM-2" })).not.toBeInTheDocument();
+  expect(screen.getByText("Чужой")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Комментарий SM-3" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Ожид. дата SM-1" })).toHaveTextContent("12.10.2026");
+
+  fireEvent.click(screen.getByRole("button", { name: "Комментарий SM-1" }));
+  const note = screen.getByRole("textbox", { name: "Комментарий SM-1" });
+  expect(note).toHaveValue("Позвонить");
+  fireEvent.change(note, { target: { value: "Позвонить завтра" } });
+  fireEvent.keyDown(note, { key: "Enter" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Комментарий SM-1" })).toHaveTextContent("Позвонить завтра"));
+  expect(sent).toEqual([{ path: `/api/procurement/${mine.id}/note`, body: { version: 3, note: "Позвонить завтра" } }]);
+
+  // Дата уходит с версией, которую вернуло сохранение комментария, — не со старой.
+  fireEvent.click(screen.getByRole("button", { name: "Ожид. дата SM-1" }));
+  const date = screen.getByLabelText("Ожид. дата SM-1");
+  fireEvent.change(date, { target: { value: "2026-10-20" } });
+  fireEvent.blur(date);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Ожид. дата SM-1" })).toHaveTextContent("20.10.2026"));
+  expect(sent[1]).toEqual({ path: `/api/procurement/${mine.id}/expected-arrival`, body: { version: 4, expected_arrival: "2026-10-20" } });
+});
+
+it("saves on leaving the field, cancels on Esc and sends nothing when the text did not change", async () => {
+  const sent: string[] = [];
+  const mine = own(1);
+  sheetMock([mine], (path, body) => {
+    sent.push(`${path} ${JSON.stringify(body)}`);
+    return json({ line: { ...mine, note: body.note, version: 4 } });
+  });
+  window.localStorage.clear();
+  render(<ProcurementSheetView buyerName="Петров" />);
+  await screen.findByText("Позиция 1");
+
+  fireEvent.click(screen.getByRole("button", { name: "Комментарий SM-1" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Комментарий SM-1" }), { target: { value: "не сохранять" } });
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Комментарий SM-1" }), { key: "Escape" });
+  expect(screen.getByRole("button", { name: "Комментарий SM-1" })).toHaveTextContent("Позвонить");
+
+  fireEvent.click(screen.getByRole("button", { name: "Комментарий SM-1" }));
+  fireEvent.blur(screen.getByRole("textbox", { name: "Комментарий SM-1" }));
+  expect(sent).toEqual([]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Комментарий SM-1" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Комментарий SM-1" }), { target: { value: "  " } });
+  fireEvent.blur(screen.getByRole("textbox", { name: "Комментарий SM-1" }));
+  await waitFor(() => expect(sent).toEqual([`/api/procurement/${mine.id}/note {"version":3,"note":""}`]));
+});
+
+it("says the line was changed on 409, rereads just that line and drops the stale draft", async () => {
+  const mine = own(1);
+  const fresh = { ...mine, note: "Уже поправили в приёмке", version: 9 };
+  const requested: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    requested.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/procurement/meta") return json({ units: [], statuses: [] });
+    // Перечитывание одной строки — поиск по её System ID; вернёт свежую версию.
+    if (path === "/api/procurement/lines?q=SM-1") return json({ lines: [fresh], next_cursor: null, buyers: ["Петров"] });
+    if (path === "/api/procurement/lines") return json({ lines: [mine], next_cursor: null, buyers: ["Петров"] });
+    if (init?.method === "PATCH" && JSON.parse(String(init.body)).version === 3) return refused(409, "Конкурентное изменение: обновите данные и повторите команду");
+    if (init?.method === "PATCH") return json({ line: { ...fresh, note: "ок", version: 10 } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  window.localStorage.clear();
+  render(<ProcurementSheetView buyerName="Петров" />);
+  await screen.findByText("Позиция 1");
+
+  fireEvent.click(screen.getByRole("button", { name: "Комментарий SM-1" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Комментарий SM-1" }), { target: { value: "мой черновик" } });
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Комментарий SM-1" }), { key: "Enter" });
+
+  expect(await screen.findByText("Строку изменили — обновите")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Комментарий SM-1" })).toHaveTextContent("Уже поправили в приёмке"));
+  expect(requested).toContain("GET /api/procurement/lines?q=SM-1");
+  expect(screen.queryByText("мой черновик")).not.toBeInTheDocument();
+
+  // Следующая правка уходит уже с версией свежей строки, а старое сообщение снято.
+  fireEvent.click(screen.getByRole("button", { name: "Комментарий SM-1" }));
+  expect(screen.queryByText("Строку изменили — обновите")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "Комментарий SM-1" }), { target: { value: "ок" } });
+  fireEvent.blur(screen.getByRole("textbox", { name: "Комментарий SM-1" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Комментарий SM-1" })).toHaveTextContent("ок"));
+  const patches = vi.mocked(globalThis.fetch).mock.calls.filter(([, init]) => init?.method === "PATCH").map(([, init]) => JSON.parse(String(init?.body)));
+  expect(patches).toEqual([{ version: 3, note: "мой черновик" }, { version: 9, note: "ок" }]);
+});
+
+it("shows the server text on 422 and keeps the field open with what was typed", async () => {
+  const mine = own(1, { status: "Жду счет", expected_arrival: "2026-10-12" });
+  sheetMock([mine], () => refused(422, "Ожидаемая дата поступления не может быть раньше заказа"));
+  window.localStorage.clear();
+  render(<ProcurementSheetView buyerName="Петров" />);
+  await screen.findByText("Позиция 1");
+
+  fireEvent.click(screen.getByRole("button", { name: "Ожид. дата SM-1" }));
+  const date = screen.getByLabelText("Ожид. дата SM-1");
+  fireEvent.change(date, { target: { value: "2020-01-01" } });
+  fireEvent.keyDown(date, { key: "Enter" });
+  expect(await screen.findByText("Ожидаемая дата поступления не может быть раньше заказа")).toBeInTheDocument();
+  expect(screen.getByLabelText("Ожид. дата SM-1")).toHaveValue("2020-01-01");
+});
+
+it("offers no in-cell edit without a buyer name", async () => {
+  sheetMock([own(1)]);
+  window.localStorage.clear();
+  render(<ProcurementSheetView />);
+  await screen.findByText("Позиция 1");
+  expect(screen.getByText("Позвонить")).toBeInTheDocument();
+  expect(screen.getByText("12.10.2026")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Комментарий SM-1" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Ожид. дата SM-1" })).not.toBeInTheDocument();
 });
