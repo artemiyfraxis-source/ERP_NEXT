@@ -17,3 +17,4 @@
 - [Windows Python CRLF](windows-python-crlf.md) — Python text-mode writes CRLF into the LF-only repo; use newline=""
 - [Techcards per project](techcards-bulk.md) — projects wiped 30.09 (migration 0078); owner creates them, one project from Google only on request
 - [Parallel sessions](parallel-sessions.md) — several sessions share the checkout; ListAgents before removing a worktree or committing to a foreign branch
+- [Parallel sessions and worktrees](parallel-sessions-worktrees.md) — never remove a worktree or commit on a branch another session owns
