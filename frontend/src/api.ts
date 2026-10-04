@@ -2248,6 +2248,16 @@ export const operationsApi = {
     method: "POST",
     body: JSON.stringify({ ids }),
   }),
+  /** Удалить одно своё уведомление; в ответе — сколько непрочитанных осталось (для колокольчика). */
+  deleteNotification: (id: string) =>
+    api<{ unread: number }>(`/api/notifications/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** «Удалить все» / «Удалить прочитанные» (scope) или выбранные строки (ids); чужие не затрагиваются. */
+  deleteNotifications: (selector: { scope: "all" | "read" } | { ids: string[] }) => {
+    const params = new URLSearchParams();
+    if ("scope" in selector) params.set("scope", selector.scope);
+    else selector.ids.forEach((id) => params.append("id", id));
+    return api<{ deleted: number; unread: number }>(`/api/notifications?${params}`, { method: "DELETE" });
+  },
   audit: (eventType = "") => {
     const params = new URLSearchParams();
     if (eventType.trim()) params.set("event_type", eventType.trim());
