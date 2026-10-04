@@ -1,7 +1,7 @@
 """Native Identity HTTP contract using secure same-origin cookies."""
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -21,7 +21,6 @@ from .application import (
     PinReveal,
     UnitOfWork,
     change_own_password,
-    own_profile,
     login,
     login_staff,
     login_with_pin,
@@ -42,14 +41,17 @@ from .domain import (
     secret_hash,
 )
 from .staff import (
+    PERSONNEL_FIELDS,
     EmployeeChange,
     NewEmployee,
     StaffConflict,
     create_employee,
+    personnel_profile,
     pin_assigned,
     remove_employee,
     rename_department,
     save_departments,
+    set_department_head,
     staff_directory,
     update_employee,
 )
@@ -229,15 +231,19 @@ def profile_route(
     principal: Annotated[Principal, Depends(authenticated_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
-    """Шапка / профиль: ФИО, e-mail, роль, отдел, место работы (portalState_)."""
+    """Шапка / профиль: ФИО, e-mail, роль, отдел, место работы (portalState_) + кадровые поля «Личной карточки»."""
     try:
-        user = own_profile(principal.actor.id, uow_factory())
+        profile = personnel_profile(principal.actor.id, uow_factory())
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Сотрудник не найден.") from error
+    user = profile.user
     return {
         "name": user.name, "login": user.login, "email": user.email, "department": user.department,
         "role": user.role, "role_label": ROLE_LABELS.get(user.role, user.role),
         "site": user.site or "", "site_label": WORK_SITES.get(user.site or "", "все площадки"),
+        **_personnel(user),
+        "manager": _person_ref(profile.manager),
+        "department_head": _person_ref(profile.department_head),
     }
 
 
@@ -304,6 +310,12 @@ class EmployeeCreateInput(BaseModel):
     site: str = Field(default="", max_length=8)
     password: str = Field(default="", max_length=128)  # empty → PIN only
     pin: str = Field(default="", max_length=16)  # 6–8 digits; empty → none yet
+    # Кадровые поля «Личной карточки», all optional.
+    personnel_number: str = Field(default="", max_length=64)
+    job_title: str = Field(default="", max_length=255)
+    qualification: str = Field(default="", max_length=255)
+    job_since: date | None = None
+    manager_id: UUID | None = None
 
 
 class EmployeeUpdateInput(BaseModel):
@@ -314,6 +326,12 @@ class EmployeeUpdateInput(BaseModel):
     active: bool
     password: str | None = Field(default=None, max_length=128)  # empty → the password stays
     pin: str | None = Field(default=None, max_length=16)  # empty → the PIN stays
+    # Кадровые поля: a field left out of the request stays as stored; "" / null clears it.
+    personnel_number: str = Field(default="", max_length=64)
+    job_title: str = Field(default="", max_length=255)
+    qualification: str = Field(default="", max_length=255)
+    job_since: date | None = None
+    manager_id: UUID | None = None
 
 
 class DepartmentsInput(BaseModel):
@@ -323,6 +341,25 @@ class DepartmentsInput(BaseModel):
 class DepartmentRenameInput(BaseModel):
     source: str = Field(min_length=1, max_length=255)
     target: str = Field(min_length=1, max_length=255)
+
+
+class DepartmentHeadInput(BaseModel):
+    department: str = Field(min_length=1, max_length=255)
+    head_id: UUID | None = None  # null → the department has no head
+
+
+def _personnel(user: IdentityUser) -> dict:
+    return {
+        "personnel_number": user.personnel_number,
+        "job_title": user.job_title,
+        "qualification": user.qualification,
+        "job_since": user.job_since.isoformat() if user.job_since is not None else None,
+        "manager_id": str(user.manager_id) if user.manager_id is not None else None,
+    }
+
+
+def _person_ref(user: IdentityUser | None) -> dict | None:
+    return None if user is None else {"id": str(user.id), "name": user.name}
 
 
 def _employee(user: IdentityUser, pin_set: bool = False) -> dict:
@@ -337,7 +374,12 @@ def _employee(user: IdentityUser, pin_set: bool = False) -> dict:
         "site": user.site or "",
         "active": user.active,
         "pin_set": pin_set,
+        **_personnel(user),
     }
+
+
+def _heads(heads: dict[str, UUID]) -> dict[str, str]:
+    return {department: str(head) for department, head in heads.items()}
 
 
 def _staff_errors(error: Exception) -> HTTPException:
@@ -346,6 +388,8 @@ def _staff_errors(error: Exception) -> HTTPException:
     if isinstance(error, StaffConflict):
         return HTTPException(status_code=409, detail=str(error))
     if isinstance(error, IntegrityError):
+        if "personnel_number" in str(error.orig):
+            return HTTPException(status_code=409, detail="Этот табельный номер уже занят.")
         return HTTPException(status_code=409, detail="Сотрудник с таким логином или e-mail уже есть.")
     return HTTPException(status_code=422, detail=str(error))
 
@@ -363,6 +407,7 @@ def staff_route(
     return {
         "users": [_employee(user, user.id in directory.pin_set) for user in directory.users],
         "departments": directory.departments,
+        "department_heads": _heads(directory.department_heads),
         "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()],
         "sites": [{"code": code, "city": city} for code, city in WORK_SITES.items()],
     }
@@ -391,8 +436,13 @@ def update_employee_route(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
+    # A personnel field the request did not carry is left out, so EmployeeChange keeps the stored value.
+    fields = {
+        key: value for key, value in payload.model_dump().items()
+        if key not in PERSONNEL_FIELDS or key in payload.model_fields_set
+    }
     try:
-        user = update_employee(user_id, EmployeeChange(**payload.model_dump()), principal.actor, now, uow_factory())
+        user = update_employee(user_id, EmployeeChange(**fields), principal.actor, now, uow_factory())
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     return {"user": _employee(user, pin_assigned(user.id, uow_factory()))}
@@ -438,6 +488,21 @@ def rename_department_route(
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     return {"departments": departments, "users": moved}
+
+
+@router.put("/departments/head")
+def set_department_head_route(
+    payload: DepartmentHeadInput,
+    principal: Annotated[Principal, Depends(staffdir_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """Руководитель отдела («Личная карточка»): one employee or none."""
+    try:
+        result = set_department_head(payload.department, payload.head_id, principal.actor, now, uow_factory())
+    except _STAFF_ERRORS as error:
+        raise _staff_errors(error) from error
+    return {"departments": result.departments, "department_heads": _heads(result.heads)}
 
 
 # ── «Доступы» (NAV-ACCESS): role × section matrix + per-person exceptions, administrator only, audited ──────
