@@ -15,6 +15,8 @@ export interface Principal {
   /** «Режим админа» (portalToggleAdmin): the account may switch it / it is on for this session. */
   can_admin_mode?: boolean;
   admin_mode?: boolean;
+  /** Уровень доступа сессии (ключ): superadmin · admin · commercial · tech_lead · foreman · operator. */
+  access_level?: string;
 }
 
 /** The login list (portalStaffLite_): active employees, no e-mails. */
@@ -1441,11 +1443,24 @@ export interface Employee extends PersonnelFields {
   email: string;
   name: string;
   department: string;
-  role: string;
+  /** Уровень доступа (ключ) и его подпись; `role` — прежняя роль, один выпуск. */
+  access_level: string;
+  access_level_label?: string;
+  role?: string;
   site: string;
   active: boolean;
+  /** «Монтажник (работает в цеху)» и «Мастер площадки»: флаги человека, не уровня. */
+  shop_worker: boolean;
+  site_master: boolean;
   /** portalStaffGet `pinSet`: a PIN is assigned (the PIN itself never comes back). */
   pin_set?: boolean;
+}
+
+/** Уровень доступа; `full` — суперадминистратор и администратор: всегда полный доступ, матрица их не меняет. */
+export interface AccessLevel {
+  key: string;
+  label: string;
+  full: boolean;
 }
 
 export interface StaffDirectory {
@@ -1453,7 +1468,7 @@ export interface StaffDirectory {
   departments: string[];
   /** Отдел → id руководителя (только отделы с руководителем). */
   department_heads: Record<string, string>;
-  roles: Array<{ key: string; label: string }>;
+  levels: AccessLevel[];
   sites: Array<{ code: string; city: string }>;
 }
 
@@ -1462,22 +1477,27 @@ export interface EmployeeCreate extends PersonnelFields {
   email: string;
   name: string;
   department: string;
-  role: string;
+  access_level: string;
   site: string;
   password: string;
   /** 6–8 digits; empty — no PIN yet. */
   pin: string;
+  shop_worker: boolean;
+  site_master: boolean;
 }
 
-/** A personnel field left out stays as stored; «» / null clears it. */
+/** A personnel field left out stays as stored; «» / null clears it. A flag left out stays as stored too (it still
+ *  follows the old role rule); true / false sets it. */
 export interface EmployeeUpdate extends Partial<PersonnelFields> {
   name: string;
   department: string;
-  role: string;
+  access_level: string;
   site: string;
   active: boolean;
   password?: string | null;
   pin?: string | null;
+  shop_worker?: boolean;
+  site_master?: boolean;
 }
 
 export const staffApi = {
@@ -1504,7 +1524,8 @@ export const staffApi = {
     }),
 };
 
-/** NAV-ACCESS «Доступы»: a stored cell; absent / "" = «как задумано ролью» (ROLE_DEFAULTS). */
+/** NAV-ACCESS «Доступы»: a stored cell. In the level matrix an absent / "" cell is closed; in a person's
+ *  exceptions it is «как у уровня» and `none` closes the section. */
 export type AccessSetting = "none" | "view" | "edit";
 export type AccessRow = Partial<Record<string, AccessSetting>>;
 
@@ -1512,25 +1533,30 @@ export interface AccessUser {
   id: string;
   login: string;
   name: string;
-  role: string;
+  /** Уровень доступа человека (ключ); `role` — прежняя роль. */
+  access_level: string;
+  role?: string;
   active: boolean;
+  /** Личные исключения поверх уровня. */
   access: AccessRow;
 }
 
 export interface AccessOverview {
   sections: Array<{ key: string; label: string }>;
-  roles: Array<{ key: string; label: string }>;
-  /** What each role has with nothing set — the baseline an empty cell falls back to. */
+  levels: AccessLevel[];
+  /** What a level has with nothing stored: superadmin / admin — everything on edit, any other level — closed. */
   defaults: Record<string, Partial<Record<string, AccessMode>>>;
-  /** Only the administrator's changes on top of the defaults. */
+  /** Рекомендованные строки уровней (план доступов). */
+  seed?: Record<string, AccessRow>;
+  /** Stored rows of the levels the matrix drives (not superadmin / admin). */
   matrix: Record<string, AccessRow>;
   users: AccessUser[];
 }
 
 export const accessApi = {
   overview: () => api<AccessOverview>("/api/auth/access"),
-  saveRoles: (matrix: Record<string, AccessRow>) =>
-    api<{ matrix: Record<string, AccessRow> }>("/api/auth/access/roles", { method: "PUT", body: JSON.stringify({ matrix }) }),
+  saveLevels: (matrix: Record<string, AccessRow>) =>
+    api<{ matrix: Record<string, AccessRow> }>("/api/auth/access/levels", { method: "PUT", body: JSON.stringify({ matrix }) }),
   saveUser: (id: string, access: AccessRow) =>
     api<{ user_id: string; access: AccessRow }>(`/api/auth/access/users/${encodeURIComponent(id)}`, {
       method: "PUT",

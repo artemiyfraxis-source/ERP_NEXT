@@ -4,16 +4,27 @@ import { StaffPage } from "./StaffPage";
 import type { StaffDirectory } from "./api";
 
 const BLANK = { personnel_number: "", job_title: "", qualification: "", job_since: null, manager_id: null };
+const NO_FLAGS = { shop_worker: false, site_master: false };
+const LEVELS = [
+  { key: "superadmin", label: "Суперадминистратор", full: true },
+  { key: "admin", label: "Администратор", full: true },
+  { key: "commercial", label: "Коммерческое руководство", full: false },
+  { key: "tech_lead", label: "Технический руководитель", full: false },
+  { key: "foreman", label: "Бригадир", full: false },
+  { key: "operator", label: "Оператор", full: false },
+];
 const DIRECTORY: StaffDirectory = {
   users: [
-    { id: "u1", login: "admin", email: "admin@example.test", name: "Админов", department: "ИТ", role: "admin", site: "", active: true, pin_set: true, ...BLANK },
-    { id: "u2", login: "buyer@example.test", email: "buyer@example.test", name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, pin_set: false, ...BLANK },
+    { id: "u1", login: "admin", email: "admin@example.test", name: "Админов", department: "ИТ", access_level: "admin", site: "", active: true, pin_set: true, ...NO_FLAGS, ...BLANK },
+    { id: "u2", login: "buyer@example.test", email: "buyer@example.test", name: "Закупкин", department: "Снабжение", access_level: "tech_lead", site: "ЦАР", active: true, pin_set: false, ...NO_FLAGS, ...BLANK },
   ],
   departments: ["ИТ", "Снабжение"],
   department_heads: {},
-  roles: [{ key: "admin", label: "Технолог" }, { key: "buyer", label: "Специалист по снабжению" }, { key: "master", label: "Мастер" }],
+  levels: LEVELS,
   sites: [{ code: "ЦАР", city: "Москва" }, { code: "ЖУК", city: "Раменское" }],
 };
+const ME_ADMIN = { user: { id: "u1", email: "admin@example.test", name: "Админов", department: "ИТ" }, roles: ["admin"], permissions: {}, access_level: "admin" };
+const ME_SUPERADMIN = { ...ME_ADMIN, roles: ["superadmin"], access_level: "superadmin" };
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -21,35 +32,47 @@ function json(body: unknown, status = 200) {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("lists employees with access labels and creates a new one with a password", async () => {
-  let created: Record<string, unknown> | null = null;
+/** Mocks the directory and the session; `handler` answers anything else (PUT / POST / DELETE), a throw is a failure. */
+function serve(directory: StaffDirectory, handler: (path: string, init?: RequestInit) => Response | undefined = () => undefined, me = ME_ADMIN) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
+    const answer = handler(path, init);
+    if (answer) return answer;
+    if (path === "/api/auth/me") return json(me);
+    if (path === "/api/auth/staff") return json(directory);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("lists employees with the access level label and creates a new one with a level, the two flags and a password", async () => {
+  let created: Record<string, unknown> | null = null;
+  serve(DIRECTORY, (path, init) => {
     if (path === "/api/auth/staff" && init?.method === "POST") {
       created = JSON.parse(String(init.body));
       return json({ user: { ...DIRECTORY.users[1], id: "u3", login: "new@example.test", name: "Новиков" }, pin: "654321" }, 201);
     }
-    if (path === "/api/auth/staff") return json(DIRECTORY);
-    throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<StaffPage />);
-  expect(await screen.findByText("Специалист по снабжению")).toBeInTheDocument();
-  expect(screen.getByText("Технолог")).toBeInTheDocument();
+  expect(await screen.findByText("Технический руководитель")).toBeInTheDocument();
+  expect(screen.getByText("Администратор")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "+ Сотрудник" }));
   fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "new@example.test" } });
   fireEvent.change(screen.getByLabelText("ФИО"), { target: { value: "Новиков" } });
   fireEvent.change(screen.getByLabelText("Отдел"), { target: { value: "Снабжение" } });
   fireEvent.change(screen.getByLabelText("Площадка"), { target: { value: "ЖУК" } });
-  fireEvent.change(screen.getByLabelText("Роль доступа"), { target: { value: "master" } });
+  expect(screen.getByLabelText("Уровень доступа")).toHaveValue("operator"); // the lowest level until someone picks another
+  fireEvent.change(screen.getByLabelText("Уровень доступа"), { target: { value: "foreman" } });
+  fireEvent.click(screen.getByLabelText("Монтажник (работает в цеху)"));
   fireEvent.change(screen.getByLabelText("Пароль"), { target: { value: "first-password" } });
   fireEvent.click(screen.getByRole("button", { name: "Завести сотрудника" }));
 
   await waitFor(() => expect(created).toEqual({
-    login: "", email: "new@example.test", name: "Новиков", department: "Снабжение", role: "master", site: "ЖУК",
-    password: "first-password", pin: "", ...BLANK,
+    login: "", email: "new@example.test", name: "Новиков", department: "Снабжение", access_level: "foreman", site: "ЖУК",
+    password: "first-password", pin: "", shop_worker: true, site_master: false, ...BLANK,
   }));
+  expect(created).not.toHaveProperty("role");
   expect(await screen.findByText(
     "Сотрудник Новиков заведён, вход — new@example.test, PIN — 654321 (запишите, больше не покажем)",
   )).toBeInTheDocument();
@@ -57,25 +80,23 @@ it("lists employees with access labels and creates a new one with a password", a
 
 it("edits an employee, keeps the password when the field is empty and shows the last-admin refusal", async () => {
   const updates: unknown[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
+  serve(DIRECTORY, (path, init) => {
     if (path === "/api/auth/staff/u1" && init?.method === "PUT") {
       updates.push(JSON.parse(String(init.body)));
-      return json({ detail: "Нужен хотя бы один администратор — иначе некому будет править справочник." }, 409);
+      return json({ detail: "Нужен хотя бы один активный суперадминистратор или администратор — иначе некому будет вернуть права." }, 409);
     }
-    if (path === "/api/auth/staff") return json(DIRECTORY);
-    throw new Error(`Unexpected request: ${path}`);
-  });
+  }, ME_SUPERADMIN);
 
   render(<StaffPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Править Админов" }));
   fireEvent.click(screen.getByLabelText("Вход разрешён"));
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 
+  // The flags were not touched, so they are not sent and the server keeps them (KEEP).
   await waitFor(() => expect(updates).toEqual([
-    { name: "Админов", department: "ИТ", role: "admin", site: "", active: false, password: null, pin: null, ...BLANK },
+    { name: "Админов", department: "ИТ", access_level: "admin", site: "", active: false, password: null, pin: null, ...BLANK },
   ]));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Нужен хотя бы один администратор");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Нужен хотя бы один активный суперадминистратор или администратор");
 });
 
 it("saves the department list and renames a department", async () => {
@@ -109,14 +130,11 @@ it("saves the department list and renames a department", async () => {
 
 it("sets a new PIN from the employee form (portalStaffSave pin)", async () => {
   const updates: unknown[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
+  serve(DIRECTORY, (path, init) => {
     if (path === "/api/auth/staff/u2" && init?.method === "PUT") {
       updates.push(JSON.parse(String(init.body)));
       return json({ user: { ...DIRECTORY.users[1], pin_set: true } });
     }
-    if (path === "/api/auth/staff") return json(DIRECTORY);
-    throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<StaffPage />);
@@ -125,7 +143,7 @@ it("sets a new PIN from the employee form (portalStaffSave pin)", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 
   await waitFor(() => expect(updates).toEqual([
-    { name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, password: null, pin: "7654321", ...BLANK },
+    { name: "Закупкин", department: "Снабжение", access_level: "tech_lead", site: "ЦАР", active: true, password: null, pin: "7654321", ...BLANK },
   ]));
   expect(await screen.findByText("Сохранено: Закупкин, PIN назначен")).toBeInTheDocument();
 });
@@ -176,8 +194,8 @@ const TEAM: StaffDirectory = {
   ...DIRECTORY,
   users: [
     ...DIRECTORY.users,
-    { id: "u3", login: "master", email: "master@example.test", name: "Мастеров", department: "Цех", role: "master", site: "ЖУК", active: true, ...BLANK, personnel_number: "FRX-0003", job_title: "Мастер участка", qualification: "5 разряд", manager_id: "u2" },
-    { id: "u4", login: "off", email: "off@example.test", name: "Отключенов", department: "Цех", role: "staff", site: "", active: false, ...BLANK },
+    { id: "u3", login: "master", email: "master@example.test", name: "Мастеров", department: "Цех", access_level: "foreman", site: "ЖУК", active: true, shop_worker: false, site_master: true, ...BLANK, personnel_number: "FRX-0003", job_title: "Мастер участка", qualification: "5 разряд", manager_id: "u2" },
+    { id: "u4", login: "off", email: "off@example.test", name: "Отключенов", department: "Цех", access_level: "operator", site: "", active: false, shop_worker: true, site_master: false, ...BLANK },
   ],
   departments: ["ИТ", "Снабжение", "Цех"],
   department_heads: { "ИТ": "u1" },
@@ -185,14 +203,11 @@ const TEAM: StaffDirectory = {
 
 it("edits personnel fields and picks the manager from a searchable list without self, subordinates or switched-off people", async () => {
   const updates: unknown[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
+  serve(TEAM, (path, init) => {
     if (path === "/api/auth/staff/u2" && init?.method === "PUT") {
       updates.push(JSON.parse(String(init.body)));
       return json({ user: { ...TEAM.users[1], pin_set: false } });
     }
-    if (path === "/api/auth/staff") return json(TEAM);
-    throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<StaffPage />);
@@ -214,17 +229,14 @@ it("edits personnel fields and picks the manager from a searchable list without 
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 
   await waitFor(() => expect(updates).toEqual([{
-    name: "Закупкин", department: "Снабжение", role: "buyer", site: "ЦАР", active: true, password: null, pin: null,
+    name: "Закупкин", department: "Снабжение", access_level: "tech_lead", site: "ЦАР", active: true, password: null, pin: null,
     personnel_number: "FRX-0017", job_title: "Специалист по снабжению", qualification: "1 категория",
     job_since: "2024-03-01", manager_id: "u1",
   }]));
 });
 
 it("splits the form into «Кадры» and «Доступ в ERP», each with its own fields in a fixed order", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input) === "/api/auth/staff") return json(TEAM);
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
+  serve(TEAM);
   const fieldsOf = (block: HTMLElement) => Array.from(block.querySelectorAll("[aria-label]")).map((field) => field.getAttribute("aria-label"));
 
   render(<StaffPage />);
@@ -235,47 +247,125 @@ it("splits the form into «Кадры» and «Доступ в ERP», each with i
     "ФИО", "Должность", "Категория / квалификация", "Отдел", "Руководитель", "Табельный номер", "В должности с",
   ]);
   expect(fieldsOf(screen.getByRole("region", { name: "Доступ в ERP" }))).toEqual([
-    "Роль доступа", "Площадка", "Новый пароль", "Новый PIN", "Вход разрешён",
+    "Уровень доступа", "Площадка", "Новый пароль", "Новый PIN", "Монтажник (работает в цеху)", "Мастер площадки", "Вход разрешён",
   ]);
-  // The old mixed label is gone: the access role is never called just «Роль».
+  // The old mixed labels are gone: the access level is never called just «Роль» or «Роль доступа».
   expect(screen.queryByLabelText("Роль")).toBeNull();
+  expect(screen.queryByLabelText("Роль доступа")).toBeNull();
   expect(screen.queryByLabelText("Место работы")).toBeNull();
 });
 
-it("puts the e-mail and login of a new employee into the access block, before the role", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input) === "/api/auth/staff") return json(DIRECTORY);
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
+it("puts the e-mail and login of a new employee into the access block, before the level", async () => {
+  serve(DIRECTORY);
   render(<StaffPage />);
   fireEvent.click(await screen.findByRole("button", { name: "+ Сотрудник" }));
   const access = screen.getByRole("region", { name: "Доступ в ERP" });
   expect(Array.from(access.querySelectorAll("[aria-label]")).map((field) => field.getAttribute("aria-label"))).toEqual([
-    "E-mail", "Логин", "Роль доступа", "Площадка", "Пароль", "PIN",
+    "E-mail", "Логин", "Уровень доступа", "Площадка", "Пароль", "PIN", "Монтажник (работает в цеху)", "Мастер площадки",
   ]);
   expect(within(screen.getByRole("region", { name: "Кадры" })).queryByLabelText("E-mail")).toBeNull();
 });
 
-it("explains «Роль доступа» and «Площадка» in tooltips", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input) === "/api/auth/staff") return json(DIRECTORY);
-    throw new Error(`Unexpected request: ${String(input)}`);
-  });
+it("explains the level, the site and the two flags in tooltips", async () => {
+  serve(DIRECTORY);
   render(<StaffPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
-  expect(screen.getByLabelText("Роль доступа").closest("label")).toHaveAttribute(
+  expect(screen.getByLabelText("Уровень доступа").closest("label")).toHaveAttribute(
     "title", "что сотрудник может открывать и править в ERP; должность — в блоке «Кадры»",
   );
   expect(screen.getByLabelText("Площадка").closest("label")).toHaveAttribute(
-    "title", "ЦАР / ЖУК — сотрудник цеха с площадкой считается монтажником",
+    "title", "ЦАР / ЖУК — площадка, на которой работает сотрудник; пусто — все площадки",
+  );
+  expect(screen.getByLabelText("Монтажник (работает в цеху)").closest("label")).toHaveAttribute(
+    "title", "Исполнитель операций в цеху: ему назначают задания производства",
+  );
+  expect(screen.getByLabelText("Мастер площадки").closest("label")).toHaveAttribute(
+    "title", "Руководит монтажниками площадки: они видны в его личной карточке",
   );
 });
 
-it("keeps the position and the access role in separate table columns", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    if (String(input) === "/api/auth/staff") return json(TEAM);
-    throw new Error(`Unexpected request: ${String(input)}`);
+it("offers the six levels with the owner's names; «Суперадминистратор» and «Администратор» are shut for an administrator", async () => {
+  serve(DIRECTORY);
+  render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  const select = screen.getByLabelText("Уровень доступа");
+  expect(select).toHaveValue("tech_lead");
+  expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual([
+    "Суперадминистратор", "Администратор", "Коммерческое руководство", "Технический руководитель", "Бригадир", "Оператор",
+  ]);
+  await waitFor(() => expect(within(select).getByRole("option", { name: "Администратор" })).toBeDisabled());
+  expect(within(select).getByRole("option", { name: "Суперадминистратор" })).toBeDisabled();
+  expect(within(select).getByRole("option", { name: "Суперадминистратор" })).toHaveAttribute(
+    "title", "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор",
+  );
+  for (const name of ["Коммерческое руководство", "Технический руководитель", "Бригадир", "Оператор"]) {
+    expect(within(select).getByRole("option", { name })).toBeEnabled();
+  }
+});
+
+it("a superadministrator can give any level, an administrator cannot move a holder of a full level", async () => {
+  serve(DIRECTORY, () => undefined, ME_SUPERADMIN);
+  const view = render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  await waitFor(() => expect(within(screen.getByLabelText("Уровень доступа")).getByRole("option", { name: "Администратор" })).toBeEnabled());
+  expect(within(screen.getByLabelText("Уровень доступа")).getByRole("option", { name: "Суперадминистратор" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  fireEvent.click(screen.getByRole("button", { name: "Править Админов" }));
+  expect(screen.getByLabelText("Уровень доступа")).toBeEnabled();
+  view.unmount();
+  vi.restoreAllMocks();
+
+  serve(DIRECTORY); // the session is an administrator
+  render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Править Админов" }));
+  const select = screen.getByLabelText("Уровень доступа");
+  expect(select).toHaveValue("admin");
+  expect(select).toBeDisabled();
+  expect(select.closest("label")).toHaveAttribute("title", expect.stringContaining("только суперадминистратор"));
+});
+
+it("sends a flag only when its switch was touched (the rest is KEEP) and shows the server's refusal in the banner", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  serve(TEAM, (path, init) => {
+    if (path === "/api/auth/staff/u3" && init?.method === "PUT") {
+      updates.push(JSON.parse(String(init.body)));
+      return updates.length === 1
+        ? json({ detail: "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор." }, 403)
+        : json({ user: { ...TEAM.users[2], shop_worker: true, site_master: false } });
+    }
   });
+
+  render(<StaffPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Править Мастеров" }));
+  expect(screen.getByLabelText("Монтажник (работает в цеху)")).not.toBeChecked();
+  expect(screen.getByLabelText("Мастер площадки")).toBeChecked();
+  expect(screen.getByLabelText("Мастер площадки")).toHaveAttribute("role", "switch");
+
+  // Nothing touched: no flag in the request.
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("выдаёт и снимает только суперадминистратор");
+  expect(updates[0]).not.toHaveProperty("shop_worker");
+  expect(updates[0]).not.toHaveProperty("site_master");
+  expect(updates[0]).toMatchObject({ access_level: "foreman" });
+
+  // Both switches turned: both flags are sent, as booleans.
+  fireEvent.click(screen.getByLabelText("Монтажник (работает в цеху)"));
+  fireEvent.click(screen.getByLabelText("Мастер площадки"));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
+  await waitFor(() => expect(updates).toHaveLength(2));
+  expect(updates[1]).toMatchObject({ shop_worker: true, site_master: false });
+
+  // A switch turned and turned back is untouched again.
+  fireEvent.click(await screen.findByRole("button", { name: "Править Мастеров" }));
+  fireEvent.click(screen.getByLabelText("Монтажник (работает в цеху)"));
+  fireEvent.click(screen.getByLabelText("Монтажник (работает в цеху)"));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
+  await waitFor(() => expect(updates).toHaveLength(3));
+  expect(updates[2]).not.toHaveProperty("shop_worker");
+});
+
+it("keeps the position and the access level in separate table columns", async () => {
+  serve(TEAM);
   render(<StaffPage />);
   const table = await screen.findByRole("table", { name: "Сотрудники" });
   const headers = within(table).getAllByRole("columnheader").map((header) => header.textContent);
@@ -284,12 +374,13 @@ it("keeps the position and the access role in separate table columns", async () 
     const row = within(table).getByText(name).closest("tr") as HTMLElement;
     return within(row).getAllByRole("cell")[headers.indexOf(column)];
   };
-  // The position column carries the position and the qualification, never the access role.
+  // The position column carries the position and the qualification, never the access level.
   expect(cell("Мастеров", "Должность")).toHaveTextContent("Мастер участка5 разряд");
-  expect(cell("Мастеров", "Доступ")).toHaveTextContent("Мастер");
+  expect(cell("Мастеров", "Доступ")).toHaveTextContent("Бригадир");
   expect(cell("Закупкин", "Должность")).toHaveTextContent("—");
-  expect(cell("Закупкин", "Должность")).not.toHaveTextContent("Специалист по снабжению");
-  expect(cell("Закупкин", "Доступ")).toHaveTextContent("Специалист по снабжению");
+  expect(cell("Закупкин", "Должность")).not.toHaveTextContent("Технический руководитель");
+  expect(cell("Закупкин", "Доступ")).toHaveTextContent("Технический руководитель");
+  expect(cell("Админов", "Доступ")).toHaveTextContent("Администратор");
 });
 
 it("shows the current manager and refuses a name typed but not picked from the list", async () => {
