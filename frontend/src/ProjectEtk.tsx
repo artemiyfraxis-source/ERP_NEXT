@@ -7,12 +7,14 @@ import {
   type OperationRecordEdit,
   type OperationSketch,
   type Principal,
+  type EtkRoute,
   type ProjectTechcard,
   type TechcardRevision,
   failureText,
 } from "./api";
 import { ETK_CONNECTION_COLUMNS, etkChips, etkConnectionRows, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
+import { etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, formatMinutes } from "./etkRoute";
 import { defectArt, defectGroupCode } from "./etkDefectArt";
 import { parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { openPrintDocument } from "./print";
@@ -130,10 +132,6 @@ function Rows({ title, rows }: { title: string; rows?: EtkRow[] }) {
 function minutes(value: string | undefined): number {
   const number = Number(String(value ?? "").replace(",", "."));
   return Number.isFinite(number) ? number : 0;
-}
-
-function formatMinutes(value: number): string {
-  return String(Math.round(value * 100) / 100).replace(".", ",");
 }
 
 /** «2 ч 50 мин» для времени от часа. */
@@ -389,6 +387,33 @@ export function editDraft(name: string, card: { safety?: string; defects?: strin
 }
 
 
+/** Полоса «Маршрут» над ЭТК, только у ветвящейся схемы полуфабрикатов (линейная ЭТК её не показывает): блоки по порядку
+ *  «источники → потребители» чипами «№ имя · N оп. · X мин/шт», под именем — что блок берёт на вход (с ×N, когда на штуку
+ *  нужно не одна), у финального блока метка «итог». Чип открывает первую операцию блока; блок открытой операции подсвечен. */
+function RouteStrip({ route, current, onPick }: { route: EtkRoute; current: number; onPick: (position: number) => void }) {
+  const chips = etkRouteChips(route);
+  const active = route.blocks.find((block) => block.ops.includes(current))?.key;
+  return <section className="etk-route" aria-label="Маршрут полуфабрикатов">
+    <div className="etk-route-head"><strong>Маршрут</strong><small>{etkRouteSummary(chips)}</small></div>
+    <ol className="etk-route-chips">{chips.map((chip) => {
+      const meta = [chip.ops ? `${chip.ops} оп.` : "", chip.perUnit].filter(Boolean);
+      return <li key={chip.key}>
+        <button type="button" className={`etk-route-chip${chip.key === active ? " on" : ""}${chip.final ? " final" : ""}`}
+          disabled={chip.first == null} aria-current={chip.key === active ? "step" : undefined}
+          onClick={() => chip.first != null && onPick(chip.first)}>
+          <span className="etk-route-n">{chip.number}</span>
+          <span className="etk-route-text">
+            <span><b>{chip.name}</b>{meta.map((part) => <small key={part} className="etk-route-meta"> · <span>{part}</span></small>)}</span>
+            {chip.feeds.length > 0 && <small className="etk-route-feed" aria-label="Берёт на вход">← {chip.feeds.map((feed, position) =>
+              <span key={`${feed.number}:${position}`}>{position > 0 && " · "}{etkRouteFeedText(feed)}</span>)}</small>}
+          </span>
+          {chip.final && <em className="etk-route-final">итог</em>}
+        </button>
+      </li>;
+    })}</ol>
+  </section>;
+}
+
 /** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_). */
 function EtkView({ card, canEdit, onSaved, sketches, onSketches }: {
   card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void;
@@ -397,10 +422,19 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches }: {
   const list = operations(card.document);
   const [selected, setSelected] = useState(0);
   const [editing, setEditing] = useState(false);
+  const main = useRef<HTMLDivElement>(null);
   if (!list.length) return null;
   const index = Math.min(selected, list.length - 1);
   const operation = list[index];
   const next = list[index + 1];
+  const route = etkRouteOf(card.document);
+
+  /** Чип блока: открыть его первую операцию (1-based позиция в ЭТК) и подвести к ней экран. */
+  function pick(position: number) {
+    setSelected(Math.min(Math.max(position, 1), list.length) - 1);
+    setEditing(false);
+    requestAnimationFrame(() => main.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" }));
+  }
 
   async function save(draft: OperationRecordEdit) {
     const updated = await techcardsApi.editOperation(card.id, card.version, etkOperationKey(operation), {
@@ -411,14 +445,14 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches }: {
     onSaved(updated);
   }
 
-  return <div className="etk-wrap">
+  const view = <div className="etk-wrap">
     <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
       <button key={`${etkOperationKey(item)}:${position}`} className={position === index ? "on" : ""} onClick={() => { setSelected(position); setEditing(false); }}>
         <span className="etk-no">{String(item.position || position + 1).padStart(2, "0")}</span>
         <span>{etkTitle(item)}{item.edited ? " ✏️" : ""}{navSub(item) && <small>{navSub(item)}</small>}</span>
       </button>)}
     </nav>
-    <div className="etk-main">
+    <div className="etk-main" ref={main}>
       {editing && operation.card ? <TcCardEditForm
         code={operation.code || ""}
         nameEditable={false}
@@ -439,6 +473,10 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches }: {
       </>}
     </div>
   </div>;
+  // Линейная схема (и ЭТК без схемы): тот же элемент, что и раньше, без обёртки.
+  return route && etkRouteBranches(route)
+    ? <><RouteStrip route={route} current={index + 1} onPick={pick} />{view}</>
+    : view;
 }
 
 function stamp(value: string | null | undefined) {

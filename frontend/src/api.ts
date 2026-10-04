@@ -1035,6 +1035,36 @@ export interface TechOperationResult {
   records: TechOperationRecord[];
 }
 
+/** ЭТК `document.route`: схема полуфабрикатов (блок = один полуфабрикат из 1..n операций ЭТК, стрелка = «берёт per_unit
+ *  штук с блока-источника»). `ops` — 1-based позиции в `document.operations`. */
+export interface EtkRouteBlock {
+  key: string;
+  name: string;
+  ops: number[];
+  final: boolean;
+  components: unknown[];
+  outputs: number;
+  /** Входных полуфабрикатов на одну штуку блока (Σ per_unit входящих стрелок). */
+  inputs: number;
+  minutes: number;
+  unit_minutes: number;
+  rolled_minutes: number;
+  rolled_ops: number;
+}
+
+export interface EtkRouteEdge {
+  from: string;
+  to: string;
+  per_unit: number;
+}
+
+export interface EtkRoute {
+  source: "derived" | "manual";
+  final: string;
+  blocks: EtkRouteBlock[];
+  edges: EtkRouteEdge[];
+}
+
 export interface ProjectTechcard {
   id: string;
   version: number;
