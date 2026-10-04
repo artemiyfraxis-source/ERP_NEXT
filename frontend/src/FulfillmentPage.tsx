@@ -800,7 +800,7 @@ function CalcRequestForm({ onClose, onCreated }: { onClose: () => void; onCreate
       <div className="table-wrap"><table className="grid wide"><thead><tr><th>Позиция расчёта</th><th className="num">Нужно</th><th>Подобрано (FIFO)</th><th>Статус</th></tr></thead><tbody>
         {lines.map((line, index) => <tr key={`${line.name}:${index}`}>
           <td>{line.name}</td><td className="num">{line.qty} {line.unit}</td>
-          <td>{line.picks.map((item) => `${item.grn}${item.package ? `·п${item.package}` : ""}: ${item.qty}`).join(", ") || "—"}</td>
+          <td>{line.picks.map((item) => `${item.grn}${item.package ? `·п${item.package}` : ""}: ${item.qty}${item.reserved ? ` (резерв под заявку ${item.reserved})` : ""}`).join(", ") || "—"}</td>
           <td>{!line.found ? "нет на складе" : Number(line.short) > 0 ? `недобор ${line.short}` : "✓"}</td>
         </tr>)}
       </tbody></table></div>

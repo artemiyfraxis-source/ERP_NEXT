@@ -25,6 +25,8 @@ from app.modules.fulfillment.application import (
     bind_lot,
     create_fulfillment,
     delete_fulfillment,
+    free_for_project,
+    project_reserve_by_lot,
 )
 from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError
 from app.modules.procurement.domain import ProcurementLine
@@ -670,7 +672,8 @@ def issue_from_kitset(
                         item for item in uow.warehouse.list(limit=50, query=lot.grn)
                         if item.grn == lot.grn and (item.package or "") == lot.package
                     ), None)
-                if stock is not None and stock.available > 0:
+                # the project's own «Со склада» reserve counts as free for its kit (bind_lot takes it first)
+                if stock is not None and free_for_project(stock, project_reserve_by_lot(uow, [stock], kitset.project)) > 0:
                     lots[(lot.grn, lot.package)] = stock
     result = IssueFromKitsetResult()
     for task in issue_tasks(kitset, set(lots)):

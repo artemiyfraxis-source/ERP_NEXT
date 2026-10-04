@@ -8,12 +8,17 @@ to its quantity. The request itself is created by the ordinary fulfillment path 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from uuid import UUID
 
-from app.modules.fulfillment.application import UnitOfWork as FulfillmentUnitOfWork
+from app.modules.fulfillment.application import (
+    UnitOfWork as FulfillmentUnitOfWork,
+    free_for_project,
+    project_reserve_by_lot,
+)
 from app.modules.requests.application import CalcSpreadsheetReader, extract_from_calc
 from app.modules.warehouse.domain import WAREHOUSES, StockLot
 
@@ -68,19 +73,27 @@ def _text(value: Decimal) -> str:
     return format(value.normalize(), "f") if value else "0"
 
 
-def fifo_pick(rows: Sequence[StockLot], need: Decimal) -> tuple[list[tuple[StockLot, Decimal]], Decimal]:
-    """Issue.gs fifoPick_: from the first delivery to the last until the nominal quantity is reached."""
+def fifo_pick(
+    rows: Sequence[StockLot], need: Decimal, held: Mapping[UUID, Decimal] | None = None,
+) -> tuple[list[tuple[StockLot, Decimal, Decimal]], Decimal]:
+    """Issue.gs fifoPick_: from the first delivery to the last until the nominal quantity is reached.
+
+    `held` is the project's own «Со склада» reserve per lot: such lots go first (the kit takes the reserve before
+    ДОСТУПНО, as `_reserve_for_kit` does) and offer ДОСТУПНО + reserve. → [(lot, qty, of it from the reserve)]."""
+    held = held or {}
     rest = need
-    picks: list[tuple[StockLot, Decimal]] = []
+    picks: list[tuple[StockLot, Decimal, Decimal]] = []
     if need <= 0:
         return picks, Decimal("0")
-    for lot in rows:
+    for lot in sorted(rows, key=lambda row: held.get(row.id, Decimal("0")) <= 0):  # stable: FIFO inside each group
         if rest <= Decimal("0.0001"):
             break
-        if lot.available <= 0:
+        own = held.get(lot.id, Decimal("0"))
+        free = max(lot.available, Decimal("0")) + own
+        if free <= 0:
             continue
-        take = min(lot.available, rest)
-        picks.append((lot, _round2(take)))
+        take = min(free, rest)
+        picks.append((lot, _round2(take), _round2(min(take, own))))
         rest = _round2(rest - take)
     return picks, max(rest, Decimal("0"))
 
@@ -92,13 +105,15 @@ class CalcPosition:
     unit: str
 
 
-def calc_match(items: Iterable[CalcPosition], stock: Sequence[StockLot]) -> list[dict[str, Any]]:
+def calc_match(
+    items: Iterable[CalcPosition], stock: Sequence[StockLot], held: Mapping[UUID, Decimal] | None = None,
+) -> list[dict[str, Any]]:
     """Issue.gs issueCalcMatch_ → [{name, qty, unit, picks, short, found}] (found=false — nothing on the warehouse)."""
     ordered = sorted(stock, key=fifo_key)
     result = []
     for item in items:
         rows = [lot for lot in ordered if is_same_item(item.name, stock_name(lot))]
-        picks, short = fifo_pick(rows, item.quantity)
+        picks, short = fifo_pick(rows, item.quantity, held)
         result.append({
             "name": item.name,
             "qty": _text(item.quantity),
@@ -115,7 +130,8 @@ def calc_match(items: Iterable[CalcPosition], stock: Sequence[StockLot]) -> list
                 "unit": lot.unit,
                 "storage_location": lot.storage_location,
                 "qty": _text(qty),
-            } for lot, qty in picks],
+                **({"reserved": _text(own)} if own > 0 else {}),  # the part from «Со склада» of this project
+            } for lot, qty, own in picks],
         })
     return result
 
@@ -133,12 +149,11 @@ def issue_calc_preview(
     if not calc.items:
         raise IssueCalcError("В расчёте не найдено позиций.")
     with fulfillment_uow() as uow:
-        stock = [
-            lot for lot in uow.warehouse.list(limit=5000, warehouse=warehouse, include_zero=False)
-            if lot.available > 0
-        ]
+        lots = uow.warehouse.list(limit=5000, warehouse=warehouse, include_zero=False)
+        held = project_reserve_by_lot(uow, lots, calc.project)
+        stock = [lot for lot in lots if free_for_project(lot, held) > 0]
     positions = [CalcPosition(item.name, calc_number(item.quantity), item.unit) for item in calc.items]
-    return {"project": calc.project, "lines": calc_match(positions, stock)}
+    return {"project": calc.project, "lines": calc_match(positions, stock, held)}
 
 
 def calc_reader(state: Any) -> CalcSpreadsheetReader:
