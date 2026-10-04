@@ -26,6 +26,7 @@ from .modules.requests import api as requests_api
 from .modules.techcards import api as techcards_api
 from .modules.techcards import kitset_api as kitsets_api
 from .shared.http_auth import techcards_router_principal
+from .workflows import employee_card_api
 
 app = FastAPI(
     title="Fraxis ERP Next",
@@ -63,6 +64,7 @@ app.include_router(kitsets_api.router)
 app.include_router(shipping_api.router)
 app.include_router(references_api.router)
 app.include_router(operations_api.router)
+app.include_router(employee_card_api.router)
 
 if database_url := os.getenv("ERP_DATABASE_URL"):
     configure_database(app, database_url)
