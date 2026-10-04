@@ -49,3 +49,30 @@ def test_upgrade_creates_the_task_table_and_downgrade_drops_it(tmp_path):
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "project_tasks" not in tables
+
+
+def test_upgrade_marks_earlier_trigger_events_handled(tmp_path):
+    """События до миграции арбитр не превращает в задачи: они уже в его очереди, разобранными."""
+    database_path = tmp_path / "history.db"
+    config = _config(database_path)
+    command.upgrade(config, BEFORE)
+    issued, other = uuid4(), uuid4()
+    with sqlite3.connect(database_path) as connection:
+        for event_id, event_type in ((issued, "techcards.project_issued"), (other, "techcards.project_created")):
+            connection.execute(
+                "INSERT INTO audit_events (id, aggregate_id, event_type, actor_id, actor_name, actor_department,"
+                " occurred_at, details) VALUES (?, ?, ?, ?, 'Технолог', '', '2026-10-01 10:00:00', '{}')",
+                (event_id.hex, uuid4().hex, event_type, uuid4().hex),
+            )
+    command.upgrade(config, AFTER)
+
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT id, topic, published_at IS NOT NULL FROM outbox_messages WHERE topic = 'arbiter.trigger'"
+        ).fetchall()
+    assert [(row[1], row[2]) for row in rows] == [("arbiter.trigger", 1)]
+    assert rows[0][0].replace("-", "") == issued.hex
+
+    command.downgrade(config, BEFORE)
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM outbox_messages WHERE topic = 'arbiter.trigger'").fetchone() == (0,)
