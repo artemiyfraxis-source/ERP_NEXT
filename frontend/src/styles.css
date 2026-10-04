@@ -1065,17 +1065,31 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .stock-toolbar .inline-select select { width: auto; }
 .stock-toolbar > select { width: auto; }
 .stock-toolbar .toolbar-end { gap: 6px; }
-.stock-page .column-chooser { margin-bottom: 8px; padding: 4px 12px 8px; }
-.stock-page .column-chooser legend { padding: 0 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+/* «Колонки»: a list under the button (it must not push the table down on a 16" screen): tick = show, ↑/↓ = one step left/right. */
+.column-menu { position: relative; }
+.column-popover { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: grid; gap: 4px; width: 270px; padding: 8px 10px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .14); }
+.column-popover-head { color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.column-popover ul { display: grid; margin: 0; padding: 0; list-style: none; }
+.column-popover li { display: grid; grid-template-columns: 1fr 28px 28px; align-items: center; gap: 4px; min-height: 30px; }
+.column-popover li:hover { background: var(--accent); }
+.column-popover .check-inline { color: var(--foreground); font-size: 13px; padding: 0 4px; }
+.stock-toolbar .column-popover button.column-step { width: 28px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--card); font-size: 14px; line-height: 1; }
+.stock-toolbar .column-popover button.column-step:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.stock-toolbar .column-popover button.column-step:disabled { cursor: default; opacity: .3; }
+.stock-toolbar .column-popover button.column-reset { height: auto; padding: 6px 0 2px; font-size: 13px; }
+@media (pointer: coarse) {
+  .column-popover li { grid-template-columns: 1fr 40px 40px; min-height: 40px; }
+  .stock-toolbar .column-popover button.column-step { width: 40px; height: 36px; }
+}
 .more-menu { position: relative; }
 .more-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: grid; min-width: 200px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .14); }
 .more-menu-list button { height: 34px; border: 0; border-radius: 6px; padding: 0 12px; color: var(--foreground); background: none; font-size: 13px; text-align: left; white-space: nowrap; }
 .more-menu-list button:hover:not(:disabled), .more-menu-list button:focus-visible { background: var(--accent); }
 .stock-table th .th-sort { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
-.stock-table .stock-grn { color: var(--muted-foreground); font-size: 12.5px; }
+.stock-table .stock-grn { font-variant-numeric: tabular-nums; font-weight: 500; }
 /* The table fits the box: fixed layout, fixed narrow columns, a few columns in percent so a 27" screen shares its
    extra width instead of leaving one huge name column; the name takes the rest. Below ~1040 px of box it scrolls
-   inside its own frame with the name column frozen. */
+   inside its own frame with the first column (ГРН, or Тип) frozen. */
 .stock-page > .table-wrap { max-height: max(360px, calc(100dvh - 172px)); overflow: auto; }
 .stock-table { table-layout: fixed; width: 100%; min-width: 1040px; }
 .stock-page .stock-table > thead > tr > th, .stock-page .stock-table > tbody > tr > td { padding: 6px 10px; white-space: nowrap; }
@@ -1086,17 +1100,17 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .stock-table td.stock-name .table-link:hover { color: var(--primary); }
 .stock-table .num { min-width: 0; }
 .stock-col-article { width: 15%; }
-.stock-col-grn { width: 128px; }
+.stock-col-grn { width: 150px; }
 .stock-col-balance { width: 98px; }
 .stock-col-lots { width: 76px; }
 .stock-col-available { width: 96px; }
 .stock-col-place { width: 12%; }
-.stock-col-warehouse { width: 64px; }
+.stock-col-warehouse { width: 92px; }
 .stock-col-purpose { width: 104px; }
 .stock-col-series { width: 12%; }
 .stock-col-type { width: 126px; }
-.stock-table td.stock-name, .stock-table th.stock-name { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 var(--border); }
-.stock-table > thead > tr > th.stock-name { z-index: 3; }
+.stock-table td.stock-pin, .stock-table th.stock-pin { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 var(--border); }
+.stock-table > thead > tr > th.stock-pin { z-index: 3; }
 .stock-table > tbody > tr.stock-group-row > td { background: #e9f0ef; color: #38504d; text-transform: none; letter-spacing: 0; font-size: 12.5px; }
 /* The group header stays in view when the table is scrolled sideways: its label is pinned, the band spans the row. */
 .stock-group-label { position: sticky; left: 10px; }
