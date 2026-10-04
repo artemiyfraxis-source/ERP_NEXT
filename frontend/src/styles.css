@@ -469,12 +469,108 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tr-steps tr.ctl td { background: #f6f9ee; }
 .pre-line { white-space: pre-line; }
 .tr-foot { color: var(--muted-foreground); font-size: 12px; }
-.tr-erow { display: grid; gap: 6px; align-items: start; margin-bottom: 6px; }
-.tr-tool-e { grid-template-columns: 130px minmax(0, 2fr) 90px minmax(0, 1fr) 70px 60px auto; }
-.tr-step-e { grid-template-columns: 24px 110px minmax(0, 3fr) minmax(0, 1fr) auto; }
-.tr-step-e.ctl { background: #f6f9ee; }
-.tr-rowbtn { display: flex; gap: 2px; }
-.tr-rowbtn button { padding: 2px 6px; }
+/* Форма правки операции (TcCardEditForm): карточка ЭТК с теми же разделами; поля-ячейки 32 px без рамки, пока строку не
+   навели (читается как таблица, правится на месте); оснастка — таблица по разделам; шаги — список с переключателем
+   «Шаг | Контроль», контроль красной кромкой, как в просмотре; дефекты с рисунком; липкая полоса «Отмена / Сохранить». */
+:root { --ctl-line: #d93025; --ctl-bg: #fdf4f4; --ctl-text: #b91c1c; }
+.tc-edit { gap: 16px; padding-bottom: 0; }
+.tc-edit .etk-op-head { align-items: center; }
+.tc-edit .etk-op-head > div { gap: 0; }
+.tc-edit .etk-op-head small { font-size: 12px; }
+.tc-title { padding: 3px 8px; margin-left: -9px; border-color: transparent; font-size: 18px; font-weight: 600; }
+.tc-title:hover { border-color: var(--border); }
+.tc-cell, .tc-auto { display: block; width: 100%; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--foreground); font-size: 13px; line-height: 1.45; }
+.tc-auto { resize: none; overflow: hidden; }
+.tc-cell:hover, .tc-auto:hover, .tc-tools tr:hover .tc-cell, .tc-tools tr:hover .tc-auto, .tc-step:hover .tc-auto, .tc-def:hover .tc-auto { border-color: var(--border); background: var(--card); }
+.tc-cell:focus, .tc-auto:focus { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); background: var(--card); }
+.tc-auto::placeholder { color: var(--muted-foreground); }
+.tc-edit .row-menu > button { min-height: 30px; padding: 3px 9px; border-color: transparent; background: transparent; color: var(--muted-foreground); font-size: 15px; line-height: 1; }
+.tc-edit .row-menu > button:hover, .tc-edit .row-menu > button[aria-expanded="true"] { border-color: var(--border); background: var(--card); color: var(--foreground); }
+.tc-add { display: flex; gap: 8px; margin-top: 8px; }
+.tc-safety summary { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.tc-preview { flex: 1; min-width: 0; overflow: hidden; color: #8a5a00; font-weight: 400; opacity: .85; text-overflow: ellipsis; white-space: nowrap; }
+.tc-safety .tc-auto { margin-top: 6px; border-color: #f3d27a; background: var(--card); }
+.tc-ro-tag { margin-left: 2px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+details.tc-ro > summary { list-style: none; }
+details.tc-ro > summary::-webkit-details-marker { display: none; }
+details.tc-ro > summary h4 { margin: 0; }
+details.tc-ro > summary h4::after { content: "▸"; color: var(--muted-foreground); font-weight: 400; }
+details.tc-ro[open] > summary h4::after { content: "▾"; }
+details.tc-ro[open] > summary { margin-bottom: 8px; }
+/* 2 Оснастка: одна таблица, разделы — строками-заголовками со своей «＋ Позиция». */
+.tc-tools { table-layout: fixed; border: 1px solid var(--border); border-radius: 10px; border-collapse: separate; border-spacing: 0; overflow: hidden; }
+.tc-tools th, .tc-tools td { padding: 2px 4px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: normal; }
+.tc-tools thead th { padding: 7px 12px; background: var(--background); }
+.tc-tools tbody:last-child tr:last-child td { border-bottom: 0; }
+.tc-tools .tc-c-n { width: 40px; }
+.tc-tools .tc-c-inv { width: 128px; }
+.tc-tools .tc-c-param { width: 22%; }
+.tc-tools .tc-c-norm { width: 84px; }
+.tc-tools .tc-c-unit { width: 72px; }
+.tc-tools .tc-c-act { width: 48px; }
+.tc-tools th.num, .tc-tools .tc-cell.num { text-align: right; }
+.tc-tools thead th:first-child { padding-right: 6px; }
+.tc-tools .tc-n { padding: 8px 6px 0 0; color: var(--primary); font-size: 12px; font-weight: 700; text-align: right; }
+.tc-tools .tc-sec-row th { padding: 5px 12px; background: color-mix(in srgb, var(--primary) 6%, var(--card)); color: #00554f; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.tc-sec-row div { display: flex; align-items: center; gap: 8px; }
+.tc-sec-row small { padding: 0 7px; border-radius: 999px; background: var(--card); color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: 0; }
+.tc-sec-row .link-button { margin-left: auto; padding: 2px 4px; font-size: 12.5px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.tc-tools .tc-act { padding-top: 3px; text-align: center; }
+.tc-tool-name { font-weight: 500; }
+/* 3 Ход операции. */
+.tc-steps-head, .tc-step { display: grid; grid-template-columns: 28px 156px minmax(0, 1fr) minmax(150px, 22%) 40px; gap: 8px; align-items: start; }
+.tc-steps-head { padding: 0 8px 6px 11px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.tc-steps-head > span:first-child { text-align: right; }
+.tc-steps-head > span:nth-child(3), .tc-steps-head > span:nth-child(4), .tc-def-cols > span:nth-child(2), .tc-def-cols > span:nth-child(3) { padding-left: 9px; }
+.tc-steps ol { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; }
+.tc-step { padding: 3px 8px; border-left: 3px solid transparent; border-radius: 0 8px 8px 0; }
+.tc-step:hover { background: var(--background); }
+.tc-step.ctl { border-left-color: var(--ctl-line); background: var(--ctl-bg); }
+.tc-step .tc-n { padding-top: 6px; color: var(--primary); font-size: 13px; font-weight: 700; text-align: right; }
+.tc-step.ctl .tc-n { color: var(--ctl-text); }
+.tc-kind { display: inline-flex; justify-self: start; gap: 2px; margin-top: 2px; padding: 2px; border-radius: 8px; background: var(--accent); }
+.tc-kind button { min-height: 26px; padding: 3px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.tc-kind button:hover { color: var(--foreground); }
+.tc-kind button[aria-pressed="true"] { background: var(--card); color: var(--primary); box-shadow: 0 1px 2px rgba(0, 26, 24, .14); }
+.tc-step.ctl .tc-kind button[aria-pressed="true"] { color: var(--ctl-text); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.tc-tol { color: var(--muted-foreground); }
+.tc-step.ctl .tc-tol { color: var(--foreground); font-weight: 600; }
+/* 4 Типовые дефекты. */
+.tc-def-cols, .tc-def { display: grid; grid-template-columns: 150px minmax(200px, 28%) minmax(0, 1fr) 40px; gap: 8px; align-items: start; }
+.tc-def-cols { padding: 0 0 6px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.tc-def-group { display: grid; margin-top: 6px; }
+.tc-def-head { display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 8px; align-items: center; padding: 2px 0; }
+.tc-def-title { color: #00554f; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.tc-def-title:focus { text-transform: none; }
+.tc-def { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.tc-def-pic { padding-top: 2px; line-height: 0; }
+.tc-def-pic > svg { width: 150px; height: auto; }
+.tc-def-pic > svg[data-scene="generic"] { width: 40px; }
+.tc-def-name { font-weight: 600; }
+.tc-add-link { justify-self: start; padding: 6px 0 0; font-size: 12.5px; font-weight: 600; }
+.tc-def-raw { min-height: 120px; border-color: var(--border); }
+@media (min-width: 1900px) {
+  .tc-def-cols, .tc-def { grid-template-columns: 210px minmax(220px, 26%) minmax(0, 1fr) 40px; }
+  .tc-def-pic > svg { width: 210px; }
+}
+/* Липкая полоса действий внизу карточки. */
+.tc-bar { position: sticky; z-index: 5; display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 0 -18px; padding: 10px 18px; border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; background: var(--card); box-shadow: 0 -6px 16px rgba(0, 26, 24, .06); }
+.tc-note { margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
+.tc-bar .tc-error { margin: 0; padding: 6px 10px; }
+.tc-bar .primary, .tc-bar .secondary { min-width: 110px; padding: 8px 16px; }
+/* Липкая позиция считается от края прокрутки .workspace за вычетом её отступа — полоса опускается на этот отступ. */
+.tc-bar { bottom: -30px; }
+@media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) { .tc-bar { bottom: -20px; } }
+@media (pointer: coarse) {
+  .tc-cell, .tc-auto { min-height: 40px; border-color: var(--border); background: var(--card); }
+  .tc-kind button { min-height: 36px; }
+  .tc-edit .row-menu > button { min-width: 40px; min-height: 40px; }
+}
+@media (max-width: 720px) {
+  .tc-bar { bottom: 0; }
+  .tc-steps-head, .tc-def-cols { display: none; }
+  .tc-step, .tc-def { grid-template-columns: 1fr; }
+}
 
 /* NAV-1: home = block tiles, block page = section tiles (SUPPLYMAP .tiles/.tile). */
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
@@ -637,7 +733,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
   .operation-assign { grid-column: auto; }
   .operations-metrics, .operations-failures > div { grid-template-columns: 1fr; }
   .etk-flow { grid-template-columns: 1fr; }
-  .etk-wrap, .tr-head, .tr-tool-e, .tr-step-e { grid-template-columns: 1fr; }
+  .etk-wrap, .tr-head { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
   .plan-note-text { grid-column: auto; }
 }
