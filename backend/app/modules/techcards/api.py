@@ -60,6 +60,7 @@ from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
 from .grapher_import import GrapherComponent, GrapherImportError, read_export
 from .connector_housings import attach_housings, connector_catalog, housing_of
+from .etk_builder import attach_route
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
 from .template_sheet_service import (
@@ -234,7 +235,7 @@ def _card_result(card: ProjectTechcard, identify: Callable[[str], str] | None = 
         "deadline": card.deadline.isoformat() if card.deadline else None,
         "status": card.status.value,
         "revision": card.revision,
-        "document": attach_housings(attach_parts(card.document, identify)),
+        "document": attach_route(attach_housings(attach_parts(card.document, identify))),
         "manual_operation_keys": list(card.manual_operation_keys),
         "created_at": card.created_at.isoformat(),
         "updated_at": card.updated_at.isoformat(),

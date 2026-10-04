@@ -143,6 +143,25 @@ def test_project_techcard_api_persists_revisions(project_techcards_api):
     assert listed.json()["items"][0]["project"] == "P-100"
 
 
+def test_project_techcard_api_returns_the_block_scheme_of_an_etk_saved_without_one(project_techcards_api):
+    card = project_techcards_api.post("/api/techcards/projects", json={
+        "project": "P-100", "item_index": "01", "product_name": "Жгут", "source_calculation": "",
+    }).json()
+    built = project_techcards_api.put(
+        f"/api/techcards/projects/{card['id']}/etk", json={"version": card["version"], "document": _document()},
+    ).json()
+    shown = project_techcards_api.get(f"/api/techcards/projects/{card['id']}").json()
+
+    for document in (built["document"], shown["document"]):
+        route = document["route"]
+        assert [(block["key"], block["ops"], block["final"]) for block in route["blocks"]] == [
+            ("b1", [1], False), ("b2", [2], True),
+        ]
+        assert route["edges"] == [{"from": "b1", "to": "b2", "per_unit": 1}]
+    listed = project_techcards_api.get("/api/techcards/projects").json()["items"]
+    assert listed[0]["document"]["route"]["final"] == "b2"
+
+
 def test_project_techcard_api_rejects_duplicate(project_techcards_api):
     payload = {
         "project": "P-100",
