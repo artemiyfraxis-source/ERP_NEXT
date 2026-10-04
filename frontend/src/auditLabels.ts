@@ -16,11 +16,13 @@ export const AUDIT_MODULES: Array<[prefix: string, label: string]> = [
 
 const EVENT_NAMES: Record<string, string> = {
   "request.created": "Заявка создана",
+  "request.deleted": "Заявка удалена",
   "request.sent_to_procurement": "Заявка передана в закупку",
   "request.resent_to_procurement": "Заявка повторно передана в закупку",
   "requests.reorder_requested": "Запрошена дозакупка",
 
   "procurement.created": "Позиция в листе закупки",
+  "procurement.line_deleted": "Позиция закупки удалена",
   "procurement.taken_in_work": "Взято в работу",
   "procurement.facts_saved": "Данные поставки сохранены",
   "procurement.kp_saved": "КП сохранено",
@@ -85,6 +87,7 @@ const EVENT_NAMES: Record<string, string> = {
   "fulfillment.cancelled": "Заявка отменена",
   "fulfillment.deleted": "Заявка удалена",
 
+  "production.task_deleted": "Задание удалено",
   "production.launched": "Задание запущено",
   "production.auto_scheduled": "Автоплан",
   "production.replanned": "План пересчитан",
