@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayCell, formatDate } from "./format";
+import { displayCell, formatDate, formatDay } from "./format";
 
 describe("formatDate", () => {
   it("shows an ISO day the Russian way", () => {
@@ -19,5 +19,16 @@ describe("formatDate", () => {
     expect(displayCell("2026-10-22")).toBe("22.10.2026");
     expect(displayCell(42)).toBe(42);
     expect(displayCell(null)).toBe(null);
+  });
+});
+
+describe("formatDay", () => {
+  it("shows the day of an ISO day or moment without the time", () => {
+    expect(formatDay("2026-10-01")).toBe("01.10.2026");
+    expect(formatDay("2026-10-01T14:30:00+03:00")).toBe("01.10.2026");
+  });
+  it("leaves other text alone", () => {
+    expect(formatDay("до востребования")).toBe("до востребования");
+    expect(formatDay(null)).toBe("");
   });
 });

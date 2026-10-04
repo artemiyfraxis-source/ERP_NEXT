@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPage } from "./ProductionPage";
 import { forgetOpenProject } from "./MasterBoard";
@@ -209,6 +209,62 @@ it("saves shop holidays through the production calendar", async () => {
   }));
 });
 
+it("lays the shop calendar out in two blocks and lists what is saved with a way to remove it", async () => {
+  let payload: { holidays: string[]; absences: Array<{ operator_id: string; from_date: string; to_date: string; kind: string }>; shift: { weekdays: number[] } } | undefined;
+  const absence = { id: "78000000-0000-0000-0000-000000000001", operator_id: "10000000-0000-0000-0000-000000000002", from_date: "2026-10-05", to_date: "2026-10-09", kind: "Отпуск" };
+  masterFetch((path, init) => {
+    if (path === "/api/production/calendar" && init?.method === "PUT") {
+      payload = JSON.parse(String(init.body));
+      return new Response(null, { status: 204 });
+    }
+    return path === "/api/production/calendar" ? json({ holidays: ["2026-11-04", "2026-10-12"], absences: [absence], shift: null }) : null;
+  });
+  render(<ProductionPage principal={principal} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Календарь цеха" }));
+
+  const shiftBlock = await screen.findByRole("region", { name: "Смена" });
+  const offDays = screen.getByRole("region", { name: "Нерабочие дни и отсутствия" });
+  expect(within(shiftBlock).getByRole("heading", { name: "Смена" })).toBeInTheDocument();
+  expect(within(offDays).getByRole("heading", { name: "Нерабочие дни и отсутствия" })).toBeInTheDocument();
+  expect(screen.queryByText(/Чистое время — без обеда/)).not.toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Сохранить календарь" })).toHaveLength(1);
+
+  // Сохранённое видно по-русски и по порядку дат, у каждого — своё «убрать».
+  await waitFor(() => expect(within(offDays).getByRole("button", { name: "Удалить нерабочий день 12.10.2026" })).toBeInTheDocument());
+  const chips = Array.from(offDays.querySelectorAll(".holiday-chip")).map((chip) => chip.textContent);
+  expect(chips).toEqual(["12.10.2026×", "04.11.2026×"]);
+  const row = within(offDays).getByRole("row", { name: /Оператор.*Отпуск/ });
+  expect(within(row).getByText("05.10.2026")).toBeInTheDocument();
+  expect(within(row).getByText("09.10.2026")).toBeInTheDocument();
+
+  // «Добавить» активна, только когда поля заполнены.
+  const addHoliday = within(offDays).getByRole("button", { name: "Добавить праздник" });
+  const addAbsence = within(offDays).getByRole("button", { name: "Добавить отсутствие" });
+  expect(addHoliday).toBeDisabled();
+  expect(addAbsence).toBeDisabled();
+  fireEvent.change(within(offDays).getByLabelText("С"), { target: { value: "2026-10-20" } });
+  expect(addAbsence).toBeEnabled();
+  fireEvent.click(addAbsence);
+  expect(within(offDays).getAllByRole("row")).toHaveLength(3);
+
+  // Рабочие дни — переключатели: суббота включается, понедельник выключается.
+  const saturday = within(shiftBlock).getByRole("button", { name: "Сб" });
+  expect(saturday).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(saturday);
+  fireEvent.click(within(shiftBlock).getByRole("button", { name: "Пн" }));
+  expect(saturday).toHaveAttribute("aria-pressed", "true");
+  expect(within(shiftBlock).getByRole("button", { name: "Пн" })).toHaveAttribute("aria-pressed", "false");
+
+  fireEvent.click(within(offDays).getByRole("button", { name: "Удалить нерабочий день 12.10.2026" }));
+  fireEvent.click(within(offDays).getByRole("button", { name: /Удалить отсутствие: Оператор, 05.10.2026/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить календарь" }));
+
+  await waitFor(() => expect(payload).toBeDefined());
+  expect(payload?.holidays).toEqual(["2026-11-04"]);
+  expect(payload?.absences).toEqual([{ operator_id: absence.operator_id, from_date: "2026-10-20", to_date: "2026-10-20", kind: "Отпуск" }]);
+  expect(payload?.shift.weekdays).toEqual([1, 2, 3, 4, 5]);
+});
+
 it("starts the first operation from an issued GRN and package", async () => {
   let payload: unknown;
   const operatorPrincipal: Principal = {
@@ -241,37 +297,6 @@ it("starts the first operation from an issued GRN and package", async () => {
     inputs: [],
     materials: [{ fulfillment_line_id: "72000000-0000-0000-0000-000000000001", quantity: "3" }],
   }));
-});
-
-it("records the master's append-only decision for a QC rejection", async () => {
-  let payload: unknown;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const path = String(input);
-    if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
-    if (path === "/api/production/operators") return json({ operators: [] });
-    if (path === "/api/production/boxes") return json({ boxes: [] });
-    if (path === "/api/production/defects") return json({ defects: [] });
-    if (path === "/api/production/instruments") return json({ instruments: [] });
-    if (path === "/api/production/qc/rejections") return json({ rejections: [{
-      id: "73000000-0000-0000-0000-000000000001",
-      box_id: "74000000-0000-0000-0000-000000000001",
-      box_number: "000002-4", item: "591K.3.КБ1",
-      inspected_at: "2026-09-22T09:00:00+03:00", rejected: 1,
-      defect_number: "Б-000001-7", defect_character: "Обрыв",
-      defect_description: "Нет контакта", status: "Ожидает решения", decision: null,
-    }] });
-    if (path.endsWith("/qc/rejections/73000000-0000-0000-0000-000000000001/decide") && init?.method === "POST") {
-      payload = JSON.parse(String(init.body));
-      return json({ decision: {} });
-    }
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  render(<ProductionPage principal={principal} />);
-  fireEvent.change(await screen.findByLabelText("Акт ОТК для Б-000001-7"), { target: { value: "Акт НС-12" } });
-  fireEvent.click(screen.getByRole("button", { name: "Принять решение" }));
-
-  await waitFor(() => expect(payload).toEqual({ disposition: "Доработка", act_reference: "Акт НС-12" }));
 });
 
 it("corrects one output of a returned box and shows that it waits for the master again", async () => {
@@ -395,13 +420,6 @@ it("groups the operator queue by plan day and hides start for a completed operat
   expect(screen.getByText("Выполнено · 1")).toBeInTheDocument();
   expect(screen.getByText(/^Сегодня · /).closest("details")).not.toBeNull();
   expect(screen.getByText(/^Завтра · /).closest("details")).toBeNull();
-});
-
-it("tells the QC inspector when no box waits for inspection", async () => {
-  const qcPrincipal: Principal = { ...principal, roles: ["qc"], permissions: { production: "edit" } };
-  masterFetch(() => null);
-  render(<ProductionPage principal={qcPrincipal} />);
-  expect(await screen.findByText(/Коробок на проверку нет/)).toBeInTheDocument();
 });
 
 it("lets the master hand out operations of issued projects to installers and launch a ready card", async () => {
@@ -610,19 +628,34 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
   expect(screen.getByText(/сдать 20 шт/)).toBeInTheDocument();
 });
 
-it("sends to QC only the box of the final operation of the scheme", async () => {
-  const qcPrincipal: Principal = { ...principal, roles: ["qc"], permissions: { production: "edit" } };
-  const box = (number: string, position: number, operationId: string) => ({
-    id: `74000000-0000-0000-0000-00000000010${position}`, number, version: 1, task_id: branched.id, operation_id: operationId, item: branched.item,
-    operation_position: position, operator_id: "10000000-0000-0000-0000-000000000002", quantity: "5", consumed: "0", reserved: "0", rejected: "0",
-    available: "5", status: "Подтверждена", created_at: "2026-09-22T09:00:00+03:00", closed_at: null, closed_by: null,
-    confirmed_at: "2026-09-22T10:00:00+03:00", confirmed_by: "Мастер", return_reason: "",
+// Owner 04.10.2026: «почему эти два блока вообще тут» — очередь ОТК, брак и средства измерения живут в разделе «ОТК».
+it("keeps only planning and the master's box confirmation on the resource planning screen", async () => {
+  const adminPrincipal: Principal = { ...principal, roles: ["admin"], permissions: { production: "edit" } };
+  const box = (id: string, number: string, status: string) => ({
+    id, number, version: 1, task_id: task.id, operation_id: task.operations[0].id, item: task.item,
+    operation_position: 1, operator_id: "10000000-0000-0000-0000-000000000002", quantity: "5", consumed: "0", reserved: "0", rejected: "0",
+    available: "5", status, created_at: "2026-09-22T09:00:00+03:00", closed_at: null, closed_by: null,
+    confirmed_at: null, confirmed_by: null, return_reason: "",
   });
-  masterFetch((path) => path === "/api/production/boxes"
-    ? json({ boxes: [box("000001-8", 1, cutA), box("000002-6", 2, cutB), box("000003-4", 3, assembly)] })
-    : null, [branched]);
-  render(<ProductionPage principal={qcPrincipal} />);
-  expect(await screen.findByLabelText("Годные ОТК 000003-4")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Годные ОТК 000001-8")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Годные ОТК 000002-6")).not.toBeInTheDocument();
+  const requested: string[] = [];
+  masterFetch((path) => {
+    requested.push(path);
+    return path === "/api/production/boxes"
+      ? json({ boxes: [box("74000000-0000-0000-0000-000000000011", "000011-2", "Закрыта оператором"), box("74000000-0000-0000-0000-000000000012", "000012-0", "Подтверждена")] })
+      : null;
+  }, [task]);
+  render(<ProductionPage principal={adminPrincipal} />);
+
+  expect(await screen.findByRole("heading", { name: "Коробки на подтверждение" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Календарь цеха" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "+ Запустить задание" })).toBeInTheDocument();
+  for (const title of ["Очередь ОТК", "Средства измерения", "Брак ОТК", "Брак цеха"]) {
+    expect(screen.queryByRole("heading", { name: title })).not.toBeInTheDocument();
+  }
+  expect(screen.queryByRole("button", { name: "+ Добавить СИ" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Годные ОТК 000012-0")).not.toBeInTheDocument();
+  // Данные ОТК экран планирования больше не тянет.
+  expect(requested).not.toContain("/api/production/defects");
+  expect(requested).not.toContain("/api/production/instruments");
+  expect(requested).not.toContain("/api/production/qc/rejections");
 });
