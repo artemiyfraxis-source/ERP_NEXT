@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataBulkAction, type DataColumn } from "./DataTable";
 import type { ProcurementLine } from "./api";
-import { formatDate } from "./format";
+import { formatDate, formatDay } from "./format";
+import { ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { RowMenu, type MenuItem } from "./ProcurementRowMenu";
+import { formatAmount } from "./ProcurementSheetColumns";
 
 /* «Мои позиции» листа закупки: у каждой стадии после «В работе» своя плотная таблица, как в SUPPLYMAP —
    «Готов к запросу» (Запрос поставщику), «Жду счет» по заказам (portalKpOrders), «В оплату» со списком
    «отметить оплаченные» (portalPurchaseToPay), «Согласование» вместе с дозавозом, «В пути».
-   Таблицы только показывают; что делать со строкой, решает страница (`actionsOf`, колбэки): редкие
-   действия лежат в меню «⋯» строки, формы открываются под таблицей. */
+   Таблицы показывают; что делать со строкой, решает страница (`actionsOf`, колбэки): редкие
+   действия лежат в меню «⋯» строки, формы открываются под таблицей. Две колонки правятся прямо в
+   ячейке (`editing`): «Комментарий» на каждой стадии после «В работе» и «Ожид. дата» от «Жду счет»
+   до «Карантин»; «Факт. дата» (день приёмки) только показывается. */
 
 /** Действие строки: выполняется сразу (`run`) или открывает форму под таблицей (`panel`). */
 export type RowAction = { label: string; title?: string; disabled?: boolean; run?: () => void; panel?: () => ReactNode };
@@ -78,14 +82,29 @@ const invoiceColumn: DataColumn<ProcurementLine> = {
     ? <span className="doc-links"><a href={line.invoice_url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{line.invoice_number ? `№ ${line.invoice_number}` : "счёт"}</a></span>
     : "—",
 };
-const sumColumn: DataColumn<ProcurementLine> = { key: "sum", title: "Сумма, ₽", value: (line) => line.actual_sum, numeric: true };
+const sumColumn: DataColumn<ProcurementLine> = { key: "sum", title: "Сумма, ₽", value: (line) => line.actual_sum, numeric: true, render: (line) => formatAmount(line.actual_sum) };
 
 type StageProps = {
   lines: ProcurementLine[];
   disabled: boolean;
   busyId: string;
   actionsOf: (line: ProcurementLine) => RowAction[];
+  /** Правка комментария и ожидаемой даты в ячейке; без неё колонки только показывают. */
+  editing?: LineEditing;
 };
+
+/** «Комментарий» строки. */
+function noteColumn(editing: LineEditing | undefined, disabled: boolean): DataColumn<ProcurementLine> {
+  return { key: "note", title: "Комментарий", value: (line) => line.note ?? "", wrap: true, render: (line) => <NoteCell line={line} editing={editing} disabled={disabled} /> };
+}
+
+/** «Ожид. дата» строки: в стадиях, где её можно менять, — правится в ячейке. */
+function expectedColumn(editing: LineEditing | undefined, disabled: boolean): DataColumn<ProcurementLine> {
+  return { key: "expected", title: "Ожид. дата", value: (line) => line.expected_arrival, render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> };
+}
+
+/** «Факт. дата»: день последнего входного контроля, ставит приёмка. */
+const actualArrivalColumn: DataColumn<ProcurementLine> = { key: "actual_arrival", title: "Факт. дата", value: (line) => line.actual_arrival ?? "", render: (line) => formatDay(line.actual_arrival) };
 
 function menuColumn(menu: (line: ProcurementLine) => ReactNode): DataColumn<ProcurementLine> {
   return { key: "actions", title: "", value: () => "", render: menu, width: 48 };
@@ -104,10 +123,10 @@ const readyColumns: DataColumn<ProcurementLine>[] = [
   { key: "planned", title: "Срок", value: (line) => line.planned_date },
 ];
 
-export function ReadyStage({ lines, disabled, busyId, actionsOf, building, onBuild }: StageProps & { building: boolean; onBuild: () => void }) {
+export function ReadyStage({ lines, disabled, busyId, actionsOf, editing, building, onBuild }: StageProps & { building: boolean; onBuild: () => void }) {
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
   return (
-    <section className="panel table-panel">
+    <section className="panel table-panel procurement-stage">
       <StageHeading title="Готов к запросу" count={lines.length} hint="Запросы группируются по поставщику и типу задачи, № заказа PO-NNN">
         <button type="button" className="primary small" disabled={disabled} onClick={onBuild}>
           {building ? "Формируем…" : "Сформировать запросы поставщикам"}
@@ -116,7 +135,7 @@ export function ReadyStage({ lines, disabled, busyId, actionsOf, building, onBui
       <DataTable
         label="Готов к запросу"
         rows={lines}
-        columns={[...readyColumns, menuColumn(panel.menu)]}
+        columns={[...readyColumns, noteColumn(editing, disabled), menuColumn(panel.menu)]}
         rowKey={(line) => line.id}
         storageKey="procurement-ready"
         emptyText="Нет строк, готовых к запросу"
@@ -161,7 +180,7 @@ export function groupByOrder(lines: ProcurementLine[]): OrderGroup[] {
 
 const missingForInvoice = (line: ProcurementLine) => line.pay_missing.filter((name) => name !== "ОЖИД. ДАТА");
 
-export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, onOpenKp, onPrint }: StageProps & {
+export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, editing, onOpenKp, onPrint }: StageProps & {
   onOpenKp: (reference: string) => void;
   onPrint: (url: string) => void;
 }) {
@@ -191,7 +210,7 @@ export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, onOpe
     },
   ];
   return (
-    <section className="panel table-panel">
+    <section className="panel table-panel procurement-stage">
       <StageHeading title="Жду счет" count={groups.length} hint="«Внести КП» — все строки заказа одной формой, можно из файла КП" />
       <DataTable
         label="Жду счет"
@@ -204,7 +223,7 @@ export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, onOpe
           <table className="inwork-table order-lines">
             <thead>
               <tr>
-                <th>ID</th><th>Наименование</th><th>Кол-во (факт)</th><th>Цена, ₽</th><th>Сумма, ₽</th><th>№ счёта</th><th>Не хватает для счёта</th><th aria-label="Действия" />
+                <th>ID</th><th>Наименование</th><th>Кол-во (факт)</th><th>Цена, ₽</th><th>Сумма, ₽</th><th>№ счёта</th><th>Ожид. дата</th><th>Не хватает для счёта</th><th>Комментарий</th><th aria-label="Действия" />
               </tr>
             </thead>
             <tbody>
@@ -215,10 +234,12 @@ export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, onOpe
                     <td><strong>{line.legacy_id}</strong></td>
                     <td>{line.calculated_name}</td>
                     <td>{qtyOf(line)}</td>
-                    <td className="num">{line.actual_price ?? ""}</td>
-                    <td className="num">{line.actual_sum ?? ""}</td>
+                    <td className="num">{formatAmount(line.actual_price)}</td>
+                    <td className="num">{formatAmount(line.actual_sum)}</td>
                     <td>{line.invoice_number ?? ""}</td>
-                    <td>{missing.length ? <span className="tone-warn">{missing.join(", ")}</span> : <span className="tone-ok">всё есть</span>}</td>
+                    <td className="edit-cell"><ExpectedDateCell line={line} editing={editing} disabled={disabled} /></td>
+                    <td className="missing-cell">{missing.length ? <span className="tone-warn">{missing.join(", ")}</span> : <span className="tone-ok">всё есть</span>}</td>
+                    <td className="edit-cell note-cell"><NoteCell line={line} editing={editing} disabled={disabled} /></td>
                     <td className="inwork-menu">{panel.menu(line)}</td>
                   </tr>
                 );
@@ -253,20 +274,19 @@ const toPayColumns: DataColumn<ProcurementLine>[] = [
   { key: "qty", title: "Кол-во (факт)", value: qtyOf },
   sumColumn,
   invoiceColumn,
-  { key: "expected", title: "Ожидается", value: (line) => line.expected_arrival },
   { key: "ready", title: "Готовность", value: (line) => (payable(line) ? "можно оплачивать" : "не готово"), render: payReadiness },
 ];
 
-export function ToPayStage({ lines, disabled, busyId, actionsOf, onMarkPaid }: StageProps & { onMarkPaid: (lines: ProcurementLine[]) => Promise<void> }) {
+export function ToPayStage({ lines, disabled, busyId, actionsOf, editing, onMarkPaid }: StageProps & { onMarkPaid: (lines: ProcurementLine[]) => Promise<void> }) {
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
   const bulk: DataBulkAction<ProcurementLine>[] = [{ label: "Оплачено → В пути", run: onMarkPaid, disabled: () => disabled }];
   return (
-    <section className="panel table-panel">
+    <section className="panel table-panel procurement-stage">
       <StageHeading title="В оплату" count={lines.length} hint="Отметьте оплаченные счета — строки уйдут «В пути» в приёмку" />
       <DataTable
         label="В оплату"
         rows={lines}
-        columns={[...toPayColumns, menuColumn(panel.menu)]}
+        columns={[...toPayColumns.slice(0, -1), expectedColumn(editing, disabled), toPayColumns[toPayColumns.length - 1], noteColumn(editing, disabled), menuColumn(panel.menu)]}
         rowKey={(line) => line.id}
         storageKey="procurement-to-pay"
         bulkActions={bulk}
@@ -296,7 +316,7 @@ const backorderNoteColumn: DataColumn<ProcurementLine> = {
   value: (line) => (line.is_backorder ? `Дозавоз по ${backorderBase(line)}: недовоз уже оплачен по счёту ${line.invoice_number ? `№ ${line.invoice_number}` : line.invoice_url ?? ""}` : ""),
 };
 
-export function ApprovalStage({ lines, disabled, busyId, actionsOf, onResume, onConfirmBackorder }: StageProps & {
+export function ApprovalStage({ lines, disabled, busyId, actionsOf, editing, onResume, onConfirmBackorder }: StageProps & {
   onResume: (line: ProcurementLine) => void;
   onConfirmBackorder: (line: ProcurementLine, date: string) => void;
 }) {
@@ -311,6 +331,7 @@ export function ApprovalStage({ lines, disabled, busyId, actionsOf, onResume, on
     { key: "kind", title: "Вид", value: (line) => (line.is_backorder ? "Дозавоз" : "Ждёт одобрения"), filter: true },
     ...(lines.some((line) => line.is_backorder) ? [backorderNoteColumn] : []),
     ...(lines.some((line) => line.actual_sum) ? [sumColumn] : []),
+    noteColumn(editing, disabled),
     {
       key: "decision", title: "Решение", value: () => "",
       render: (line) => line.is_backorder
@@ -319,7 +340,7 @@ export function ApprovalStage({ lines, disabled, busyId, actionsOf, onResume, on
     },
   ];
   return (
-    <section className="panel table-panel">
+    <section className="panel table-panel procurement-stage">
       <StageHeading title="Согласование" count={lines.length} hint="Ждут одобрения, заказ не формируется · дозавоз — недовоз уже оплачен" />
       <DataTable
         label="Согласование"
@@ -342,7 +363,6 @@ const receiptColumns: DataColumn<ProcurementLine>[] = [
   supplierColumn,
   { key: "order", title: "№ заказа", value: (line) => line.order_number ?? "" },
   { key: "qty", title: "Кол-во (факт)", value: qtyOf },
-  { key: "expected", title: "Ожидается", value: (line) => line.expected_arrival },
   invoiceColumn,
   sumColumn,
   {
@@ -356,7 +376,7 @@ const receiptColumns: DataColumn<ProcurementLine>[] = [
   },
 ];
 
-export function ReceiptStage({ title, hint, storageKey, lines, disabled, busyId, actionsOf }: StageProps & {
+export function ReceiptStage({ title, hint, storageKey, lines, disabled, busyId, actionsOf, editing }: StageProps & {
   title: string;
   hint: string;
   storageKey: string;
@@ -364,9 +384,12 @@ export function ReceiptStage({ title, hint, storageKey, lines, disabled, busyId,
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
   // «В счёте» и «Курс ЦБ» — только когда есть счёт в валюте; рублёвые строки их не заполняют (колонки вне списка, не `hidden`).
   const foreign = lines.some((line) => line.source_currency);
-  const columns = receiptColumns.filter((column) => foreign || (column.key !== "source" && column.key !== "rate"));
+  const shownColumns = receiptColumns.filter((column) => foreign || (column.key !== "source" && column.key !== "rate"));
+  // Сроки — рядом с количеством: ожидали → приняли; «Комментарий» последним перед меню.
+  const at = shownColumns.findIndex((column) => column.key === "qty") + 1;
+  const columns = [...shownColumns.slice(0, at), expectedColumn(editing, disabled), actualArrivalColumn, ...shownColumns.slice(at), noteColumn(editing, disabled)];
   return (
-    <section className="panel table-panel">
+    <section className="panel table-panel procurement-stage">
       <StageHeading title={title} count={lines.length} hint={hint} />
       <DataTable
         label={title}
@@ -382,15 +405,20 @@ export function ReceiptStage({ title, hint, storageKey, lines, disabled, busyId,
 
 // ── Прочие статусы: строка не пропадает с экрана, даже если стадия новая ───────────────────────────
 
-export function OtherStage({ lines, disabled, busyId, actionsOf }: StageProps) {
+export function OtherStage({ lines, disabled, busyId, actionsOf, editing }: StageProps) {
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
   return (
-    <section className="panel table-panel">
+    <section className="panel table-panel procurement-stage">
       <StageHeading title="Прочие позиции" count={lines.length} />
       <DataTable
         label="Прочие позиции"
         rows={lines}
-        columns={[idColumn, nameColumn, supplierColumn, { key: "status", title: "Статус", value: (line) => line.status, filter: true }, menuColumn(panel.menu)]}
+        columns={[
+          idColumn, nameColumn, supplierColumn,
+          { key: "status", title: "Статус", value: (line) => line.status, filter: true },
+          { key: "expected", title: "Ожид. дата", value: (line) => line.expected_arrival, render: (line) => formatDay(line.expected_arrival) },
+          actualArrivalColumn, noteColumn(editing, disabled), menuColumn(panel.menu),
+        ]}
         rowKey={(line) => line.id}
         storageKey="procurement-other"
       />

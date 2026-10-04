@@ -1535,6 +1535,26 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
   .row-menu-popup button { min-height: 40px; }
 }
 
+/* ── Правка «Комментария» и «Ожид. даты» в ячейке (ProcurementCellEdit) ── */
+.cell-edit { display: block; width: 100%; margin: 0; padding: 1px 5px; border: 1px solid transparent; border-bottom: 1px dashed #c3cbd4; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 13px; line-height: 1.35; text-align: left; white-space: inherit; cursor: text; }
+.cell-edit:hover, .cell-edit:focus-visible { border-color: var(--primary); border-bottom-style: dashed; background: var(--card); outline: none; }
+.cell-edit-empty { color: var(--muted-foreground); }
+.cell-edit-input { width: 100%; min-width: 160px; padding: 3px 6px; border-radius: 6px; font-size: 13px; line-height: 1.35; }
+input.cell-edit-input[type="date"] { width: 130px; min-width: 0; }
+textarea.cell-edit-input { min-height: 62px; resize: vertical; }
+.data-table td small.cell-edit-error, .cell-edit-error { display: block; margin-top: 2px; color: #852a24; font-size: 11.5px; white-space: normal; }
+.order-lines td.note-cell { min-width: 180px; max-width: 220px; white-space: normal; }
+.order-lines td.missing-cell { min-width: 150px; max-width: 220px; white-space: normal; }
+.procurement-sheet td.num { font-variant-numeric: tabular-nums; }
+/* Весь лист и стадии: ключевые колонки вместе с «Комментарием» должны влезать в 16" без прокрутки вбок —
+   отступы у́же, длинный текст (наименование, комментарий) переносится раньше; на 27" — как в других таблицах. */
+.procurement-sheet .data-table th, .procurement-sheet .data-table td,
+.procurement-stage .data-table th, .procurement-stage .data-table td { padding-left: 6px; padding-right: 6px; }
+.procurement-sheet .data-table .cell-wrap { max-width: 210px; }
+.procurement-stage .data-table .cell-wrap { max-width: 180px; }
+@media (min-width: 1900px) { .procurement-sheet .data-table .cell-wrap, .procurement-stage .data-table .cell-wrap { max-width: 340px; } }
+@media (pointer: coarse) { .data-table td .cell-edit, .cell-edit-input { min-height: 40px; } }
+
 /* ── Производственный план: лист «ЗАГРУЗ» (PlanLoadSheet.tsx) ─────────────────────────────────────────── */
 :root {
   --zg-c0: #4f7cba; --zg-c1: #2e9e8f; --zg-c2: #c2782f; --zg-c3: #8a63b8; --zg-c4: #5d9c3f; --zg-c5: #c4566b;
