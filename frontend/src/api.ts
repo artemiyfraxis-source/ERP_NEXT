@@ -2381,6 +2381,22 @@ export interface KitsetDeleteResult {
 
 const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
 
+/** Запись трека проекта: что создано в одном из модулей. `at` — ISO-время; null — события ещё нет (такие идут в конце). */
+export type ProjectTrackEntry = {
+  at: string | null;
+  /** Раздел ERP по-русски: «Заявки», «Закупка», «Приёмка», «Комплектация», «Производство», «Отгрузка», … */
+  module: string;
+  /** Что за запись: «Запрос на комплектацию», «Задание запущено», … */
+  kind: string;
+  /** Человеческий номер: SM-…, ПЗ-…, ГРН; у карточки проекта — номер проекта. */
+  ref: string;
+  status: string;
+  /** КБ записи («КБ1»); пусто, если запись относится ко всему проекту. */
+  item_index: string;
+};
+
+export type ProjectTrack = { project: string; entries: ProjectTrackEntry[] };
+
 /** `tcLoadBomFromKit`: состав сборки для генератора и строки листа КБn расчёта (`tcCalcOps_`). */
 export type KitsetBom = {
   project: string; index: string; name: string; run: string; part_qty: string; calc_source: string;
@@ -2401,6 +2417,8 @@ export const kitsetsApi = {
   saveLines: (project: string, edits: KitsetLineEdit[]) =>
     api<{ res: { updated: number } }>(`${kitsetPath(project)}/lines`, { method: "PUT", body: JSON.stringify({ edits }) }),
   supply: (project: string) => api<{ lines: KitsetSupplyLine[] }>(`${kitsetPath(project)}/supply`),
+  /** Трек проекта: записи всех модулей по времени. */
+  track: (project: string) => api<ProjectTrack>(`${kitsetPath(project)}/track`),
   bom: (project: string, index: string) =>
     api<KitsetBom>(
       `${kitsetPath(project)}/bom/${encodeURIComponent(index)}`,
