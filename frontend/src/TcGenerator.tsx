@@ -47,11 +47,17 @@ import {
 } from "./tcGenLogic";
 import { RouteEditor } from "./RouteEditor";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
+import { ManualAssembly, ManualOpSummary } from "./ManualAssembly";
+import {
+  MANUAL_MODE, chainRoute, emptyManual, manualConfig, manualFromConfig, manualProblem, routeOps as manualRouteOps, setRoute,
+  type LibraryCard, type ManualState,
+} from "./manualLogic";
 
-type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia">;
+/** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
+type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia"> & { library: LibraryCard[] };
 
-const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null };
-const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"]];
+const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, library: [] };
+const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
   ["tape", "Лента — последней операцией"], ["braid", "Оплётка — до термоусадки"], ["under", "Лента под оплётку — перед ней"],
 ];
@@ -100,6 +106,10 @@ async function readRefs(): Promise<Refs> {
   ]);
   return {
     templates: (templates?.items || []).map((item): Tmpl => ({ id: item.id, title: item.title, category: item.category })),
+    library: (templates?.items || []).map((item): LibraryCard => ({
+      id: item.id, code: item.code || "", side: item.side || "", title: item.title, name: item.name || "", category: item.category,
+      norms: item.norms, first_step: item.first_step,
+    })),
     ops: (op?.records || []).map((record) => opFromFields(record.fields)),
     terRecords: (ter?.records || []).map((record) => terFromFields(record.id, record.fields)).filter((record) => record.article),
     coaxRecords: (coax?.records || []).map((record) => coaxFromFields(record.fields)),
@@ -147,10 +157,17 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   }), [refs, components, assemblyInfo, kit]);
   const gen = useMemo(() => makeGen(D, S), [D, S]);
 
+  // «Ручная сборка»: свой список операций живёт отдельно от формы кабелей — переключение вкладок его не теряет.
+  // Режим запоминается за КБ: карта, собранная вручную, открывается на этой вкладке со своим списком и схемой.
+  const [manual, setManual] = useState<ManualState>(emptyManual);
+  const savedManual = (card.document?.build_config as { mode?: unknown } | undefined)?.mode === MANUAL_MODE;
+
   // init(): каждый монтаж засевает форму из состава набора и строк расчёта (autoFillAllWires, applyCalcTin_).
   useEffect(() => {
     if (!refs || !kit) return;
-    setS(initState(D));
+    const restored = manualFromConfig(card.document?.build_config);
+    setManual(restored ?? emptyManual());
+    setS(restored ? switchGenTab(initState(D), "manual") : initState(D));
     setStatus({ text: "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, card.id, kit]);
@@ -163,7 +180,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   const ops = useMemo(() => gen.getActiveOps(), [gen]);
   const config = useMemo(() => gen.buildConfig(), [gen]);
-  useEffect(() => { onConfig?.(config); }, [config]); // eslint-disable-line react-hooks/exhaustive-deps
+  const manualTab = S.tab === "manual";
+  const partQty = Number((config as Record<string, unknown>).partQty) || 1;
+  const manualOps = useMemo(() => manualRouteOps(manual.ops, partQty), [manual.ops, partQty]);
+  const manualCfg = useMemo(() => ({ ...manualConfig(manual, config), materialsSheet: S.materialsSheet }), [manual, config, S.materialsSheet]);
+  useEffect(() => { onConfig?.(manualTab ? manualCfg : config); }, [config, manualCfg, manualTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Схема полуфабрикатов (ARCH-TRACK-1). В сборку идут операции с выбранным шаблоном (validate), номер = место в этом списке.
   // Время блоков — из последней сборки ЭТК этой карты, если её операции те же; правки схемы лежат в routeEdit вместе с
@@ -183,13 +204,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const [routeEdit, setRouteEdit] = useState<{ route: Route | null; sig: string } | undefined>();
   const [routeError, setRouteError] = useState("");
   useEffect(() => { setRouteEdit(undefined); setRouteError(""); }, [card.id, card.version]);
-  const savedRoute = useMemo(() => parseRoute((card.document?.build_config as { route?: unknown } | undefined)?.route), [card.document]);
+  // Схема ручной сборки — для её списка операций, типовым вкладкам она не подходит.
+  const savedRoute = useMemo(() => (savedManual ? null : parseRoute((card.document?.build_config as { route?: unknown } | undefined)?.route)), [card.document, savedManual]);
   const savedFits = !!savedRoute && !!docMinutes && !routeProblem(savedRoute, routeOps, finalName);
   const routeOverride = routeEdit ? (routeEdit.sig === routeSig ? routeEdit.route : null) : (savedFits ? savedRoute : null);
   const routeStale = routeOps.length > 0 && (routeEdit ? !!routeEdit.route && routeEdit.sig !== routeSig : !!savedRoute && !savedFits);
 
   // Нормы терминала по сечению проводов разъёма (TcGenerator.gs:762-788) — через справочник ERP.
-  const crimpEndpoints = S.tab === "coax" ? [] : S.endpoints.filter((ep) => ep.method === "crimp" && ep.termId);
+  const crimpEndpoints = S.tab === "coax" || manualTab ? [] : S.endpoints.filter((ep) => ep.method === "crimp" && ep.termId);
   const normKey = JSON.stringify(crimpEndpoints.map((ep) => {
     const term = gen.getCompById(ep.termId);
     const routed = new Set(gen.routedWireIdxs_(ep));
@@ -309,24 +331,45 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     }
   }
 
-  async function generate() {
+  /** Ручная сборка: свой список операций и схема — всегда ручной (`build_config.route`), производство идёт по ней. */
+  function manualPayload(): Record<string, unknown> | null {
+    const problem = manualProblem(manual);
+    if (problem) { setStatus({ text: problem, error: true }); return null; }
+    const wrong = manual.route ? routeProblem(manual.route, manualOps, finalName) : null;
+    if (wrong) { setRouteError(`Схема полуфабрикатов: ${wrong}`); return null; }
+    setRouteError("");
+    return manualCfg;
+  }
+
+  function typicalPayload(): Record<string, unknown> | null {
     const { cfg, error, warnings } = gen.validate();
-    if (error) { setStatus({ text: error, error: true }); return; }
+    if (error) { setStatus({ text: error, error: true }); return null; }
     // Ручная схема уходит как build_config.route; без неё сервер выводит схему сам.
     const problem = routeOverride ? routeProblem(routeOverride, routeOps, finalName) : null;
-    if (routeOverride && problem) { setRouteError(`Схема полуфабрикатов: ${problem}`); return; }
+    if (routeOverride && problem) { setRouteError(`Схема полуфабрикатов: ${problem}`); return null; }
     setRouteError("");
     if (warnings.length && !window.confirm("⚠ Предупреждения:\n\n" + warnings.join("\n") + "\n\nВсё равно создать техкарты?")) {
       setStatus({ text: "Генерация отменена — проверьте предупреждения.", error: true });
-      return;
+      return null;
     }
+    const tab = TABS.find(([key]) => key === S.tab)?.[1] || "";
+    if (savedManual && !window.confirm(`Техкарта ${card.item_index} собрана ручной сборкой.\n\nСобрать по вкладке «${tab}»? Ручной список операций в ЭТК не сохранится.`)) {
+      setStatus({ text: "Сборка отменена — техкарта осталась ручной сборкой.", error: true });
+      return null;
+    }
+    return routeOverride ? { ...cfg, route: routePayload(routeOverride) } : cfg;
+  }
+
+  async function generate() {
+    const payload = manualTab ? manualPayload() : typicalPayload();
+    if (!payload) return;
     if (card.status === "Выдана" && !window.confirm(`Техкарта ${card.item_index} уже выдана.\n\nПересобрать? ЭТК пересоберётся новой ревизией.`)) {
       setStatus({ text: "Пересборка отменена.", error: true });
       return;
     }
     setStatus({ text: card.status === "Выдана" ? "Пересобираю техкарты…" : "Создаю техкарты…", error: false });
     try {
-      await onBuild(routeOverride ? { ...cfg, route: routePayload(routeOverride) } : cfg);
+      await onBuild(payload);
       setStatus({ text: "", error: false });
     } catch (reason) {
       const text = reason instanceof Error ? reason.message : "ЭТК не собрана";
@@ -490,7 +533,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   return <div className="tcgen">
     <div className="gen-tabs" role="tablist">{TABS.map(([tab, label]) =>
       <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "gen-tab-btn gactive" : "gen-tab-btn"}
-        onClick={() => update((current) => switchGenTab(current, tab))}>{label}</button>)}</div>
+        onClick={() => { setRouteError(""); update((current) => switchGenTab(current, tab)); }}>{label}</button>)}</div>
 
     <h3>Данные из листа</h3>
     <div className="gcard">
@@ -501,7 +544,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </tbody></table>
     </div>
 
-    {S.tab !== "coax" && <div className={complex ? "tab-inter" : "tab-inter gen-basic"}>
+    {S.tab !== "coax" && !manualTab && <div className={complex ? "tab-inter" : "tab-inter gen-basic"}>
       {gen.complexWarning() && <div className="warning-inline">{gen.complexWarning()}</div>}
       <div className="section-hdr"><h3>Кабели</h3>
         {complex && <button type="button" className="btn-link" onClick={() => update((current) => toggleLengthMode(current, makeGen(D, current).sharedLength()))}>{S.advancedLength ? "← общая длина" : "раздельная длина ▸"}</button>}
@@ -690,17 +733,28 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </select></label></div>
     </div>}
 
-    <h3>Операции</h3>
-    <div className="gcard ops-card">
-      {!ops.length && <div className="op-empty">{S.tab === "coax" ? "Выберите разъём — появятся операции" : "Добавьте кабель — появятся операции"}</div>}
-      {ops.map((spec, i) => opItem(spec, i + 1))}
-    </div>
+    {manualTab ? <>
+      <ManualAssembly state={manual} onChange={setManual} library={refs.library} opRecs={D.ops} components={components} partQty={partQty} />
+      <RouteEditor key="manual" ops={manualOps} finalName={finalName} quantity={partQty} value={manual.route} derive={chainRoute} defaultOpen
+        timeSource="по нормам операций" error={routeError} notice={manual.notice}
+        onChange={(route) => { setRouteError(""); setManual((current) => setRoute(current, route)); }}
+        renderOp={(position) => {
+          const op = manual.ops[position - 1];
+          return op ? <ManualOpSummary op={op} position={position} partQty={partQty} /> : null;
+        }} />
+    </> : <>
+      <h3>Операции</h3>
+      <div className="gcard ops-card">
+        {!ops.length && <div className="op-empty">{S.tab === "coax" ? "Выберите разъём — появятся операции" : "Добавьте кабель — появятся операции"}</div>}
+        {ops.map((spec, i) => opItem(spec, i + 1))}
+      </div>
 
-    <RouteEditor ops={routeOps} finalName={finalName} quantity={docMinutes?.quantity ?? 1} value={routeOverride}
-      onChange={(route) => { setRouteError(""); setRouteEdit({ route, sig: routeSig }); }} error={routeError}
-      notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
-      skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
-      renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }} />
+      <RouteEditor key="typical" ops={routeOps} finalName={finalName} quantity={docMinutes?.quantity ?? 1} value={routeOverride}
+        onChange={(route) => { setRouteError(""); setRouteEdit({ route, sig: routeSig }); }} error={routeError}
+        notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
+        skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
+        renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }} />
+    </>}
 
     {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». Остальное — в «Ещё». */}
     <div className="gen-actions">

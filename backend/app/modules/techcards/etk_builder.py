@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
-from .domain.route import RouteError, RouteOp, derive_route, parse_route, route_json, route_totals
+from .domain.route import (
+    Block, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_totals,
+)
 from .operation_cards import OperationCardTemplate
+from .project_cards import CUSTOM_OP
 
 
 # 2: result/semi-finished rows with quantities (SUPPLYMAP etkResult_/etkSemis_), combined cards carry the defects of
@@ -818,12 +822,264 @@ def _route(document: Mapping[str, Any], *, strict: bool) -> dict[str, Any] | Non
     return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
 
 
+# ── Ручная сборка (владелец 04.10): кастомные и нетиповые провода, под которые типовые генераторы не подходят.
+# Технолог сам набирает операции — карточки из библиотеки (libraryOp) и свои (customOp: название, норма, ход операции,
+# контроль с допуском, оснастка). Схема полуфабрикатов здесь всегда ручная: `build_config.route`, без неё — цепочка
+# по списку; производство идёт по ней. Режимы типовых генераторов этот путь не трогает (их ЭТК прежние байт в байт).
+MANUAL_MODE = "manual"
+LIBRARY_OP = "libraryOp"
+TOOL_SECTIONS = ("Инструмент", "Оборудование", "Расходники")
+
+
+def _manual_error(message: str) -> ValueError:
+    return ValueError(f"Ручная сборка: {message}")
+
+
+def _manual_text(value: object) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _manual_amount(value: object, default: Decimal) -> Decimal | None:
+    """A number the technologist typed: empty → default, else a finite decimal (comma allowed); None — not a number."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    if isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value).strip().replace(" ", "").replace(",", "."))
+    except InvalidOperation:
+        return None
+    return number if number.is_finite() else None
+
+
+@dataclass(frozen=True)
+class _ManualOp:
+    position: int
+    source: Mapping[str, Any]
+    kind: str
+    label: str
+    code: str
+    card: OperationCardTemplate | None
+    quantity: Decimal           # pieces of work per one item
+    operation_seconds: Decimal  # per piece
+    setup_seconds: Decimal      # per batch
+    product: str                # what it hands on, unless it closes a block (then the block's name)
+
+
+def _manual_ops(
+    config: Mapping[str, Any], cards_by_id: Mapping[str, OperationCardTemplate], warnings: list[str],
+) -> list[_ManualOp]:
+    raw = config.get("ops")
+    if not isinstance(raw, list) or not raw:
+        raise _manual_error("добавьте хотя бы одну операцию — из библиотеки или свою")
+    result: list[_ManualOp] = []
+    for position, op in enumerate(raw, start=1):
+        if not isinstance(op, Mapping):
+            raise _manual_error(f"операция {position} — непонятная запись")
+        kind = _manual_text(op.get("type"))
+        card = None
+        if kind == LIBRARY_OP:
+            template = _manual_text(op.get("templateId"))
+            if not template:
+                raise _manual_error(f"операция {position}: не выбрана карточка из библиотеки")
+            card = cards_by_id.get(template)
+            label = _manual_text(op.get("label")) or (card.name if card else "") or f"Операция {position}"
+            code = card.code if card else _manual_text(op.get("opNum"))
+            if card is None:
+                warnings.append(f"Операция {position} ({label}): нет карточки {code or template} в библиотеке")
+        elif kind == CUSTOM_OP:
+            label, code = _manual_text(op.get("label")), ""
+            if not label:
+                raise _manual_error(f"операция {position}: укажите название своей операции")
+        else:
+            raise _manual_error(
+                f"операция {position}: непонятный вид операции — выберите карточку из библиотеки или «Своя операция»"
+            )
+        named = f"операция {position} «{label}»"
+        quantity = _manual_amount(op.get("qty"), Decimal(1))
+        if quantity is None or quantity <= 0:
+            raise _manual_error(f"{named}: количество на изделие должно быть числом больше нуля")
+        setup = _manual_amount(op.get("tPrep"), Decimal(0))
+        if setup is None or setup < 0:
+            raise _manual_error(f"{named}: время подготовки должно быть числом не меньше нуля")
+        seconds = _manual_amount(op.get("tOp"), Decimal(0))
+        if seconds is None or seconds < 0:
+            raise _manual_error(f"{named}: время на штуку должно быть числом не меньше нуля")
+        product = _manual_text(op.get("result")) or f"Полуфабрикат после «{label}»"
+        result.append(_ManualOp(position, op, kind, label, code, card, quantity, seconds, setup, product))
+    return result
+
+
+def _manual_list(op: _ManualOp, key: str, what: str) -> list[Any]:
+    value = op.source.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise _manual_error(f"операция {op.position} «{op.label}»: {what} должны быть списком")
+    return value
+
+
+def _manual_steps(op: _ManualOp) -> list[dict[str, str]]:
+    """Steps of an own operation, numbered; a «Контроль» step keeps its допуск (shown highlighted in the ETK)."""
+    steps: list[dict[str, str]] = []
+    for item in _manual_list(op, "steps", "шаги хода операции"):
+        if isinstance(item, Mapping):
+            text, kind, tolerance = (_manual_text(item.get(key)) for key in ("text", "kind", "tolerance"))
+        elif isinstance(item, str):
+            text, kind, tolerance = item.strip(), "", ""
+        else:
+            raise _manual_error(f"операция {op.position} «{op.label}»: непонятный шаг «{item}»")
+        if text:
+            control = "контрол" in kind.casefold()
+            steps.append({
+                "number": str(len(steps) + 1), "kind": "Контроль" if control else "Операция",
+                "text": text, "tolerance": "" if tolerance in {"-", "—"} else tolerance,
+            })
+    return steps
+
+
+def _manual_tooling(op: _ManualOp) -> list[dict[str, str]]:
+    """Tooling of an own operation by section (Инструмент · Оборудование · Расходники), numbered within a section."""
+    tooling: list[dict[str, str]] = []
+    counts: dict[str, int] = {}
+    for item in _manual_list(op, "tooling", "строки оснастки"):
+        if isinstance(item, Mapping):
+            section, name = _manual_text(item.get("section")), _manual_text(item.get("name"))
+        elif isinstance(item, str):
+            section, name = "", item.strip()
+        else:
+            raise _manual_error(f"операция {op.position} «{op.label}»: непонятная строка оснастки «{item}»")
+        if not name:
+            continue
+        section = next((known for known in TOOL_SECTIONS if known.casefold() == section.casefold()), TOOL_SECTIONS[0])
+        counts[section] = counts.get(section, 0) + 1
+        tooling.append({
+            "section": section, "number": str(counts[section]), "name": name, "inventory_number": "",
+            "program": "", "parameters": "", "norm": "", "unit": "",
+        })
+    return tooling
+
+
+def _manual_components(op: _ManualOp, quantity: Decimal) -> list[dict[str, str]]:
+    """Kit lines the technologist put on the operation, per item → per batch (ETK «Вход»)."""
+    rows: list[dict[str, str]] = []
+    for item in _manual_list(op, "components", "комплектующие"):
+        if not isinstance(item, Mapping):
+            raise _manual_error(f"операция {op.position} «{op.label}»: комплектующие — строки состава КБ")
+        art, name = _manual_text(item.get("art")), _manual_text(item.get("name"))
+        if not art and not name:
+            continue
+        per_item = _manual_amount(item.get("qty"), Decimal(1))
+        if per_item is None or per_item <= 0:
+            raise _manual_error(
+                f"операция {op.position} «{op.label}»: количество «{art or name}» должно быть числом больше нуля"
+            )
+        rows.append({"art": art or name, "name": name, "norm": _format(per_item * quantity),
+                     "unit": _manual_text(item.get("unit")) or "Шт."})
+    return rows
+
+
+def _build_manual(
+    config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
+    operation_library_commit: str, technology_source: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    cards_by_id = {card.source_id: card for card in cards}
+    cards_by_code: dict[str, OperationCardTemplate] = {}
+    for item in cards:
+        cards_by_code.setdefault(item.code, item)
+    warnings: list[str] = []
+    items = _manual_ops(config, cards_by_id, warnings)
+    quantity = _part_quantity(config)
+    final_name = str(config.get("assemblyName") or "")
+    route_ops = [RouteOp(position=item.position, type=item.kind, code=item.code, name=item.product) for item in items]
+    raw_route = config.get("route")
+    route = parse_route(raw_route, route_ops, final_name, manual=True) if raw_route else chain_route(route_ops, final_name)
+
+    # The ETK key of an operation (code::connector::side) carries its `seq` — the number the generator gave it when it
+    # was added and keeps through reorders — so a hand-edited ETK operation stays with its own operation on rebuild.
+    # A numeric connector is not shown in the ETK title. No usable seq — the position.
+    seqs = [str(item.source.get("seq") or "").strip() for item in items]
+    if not all(re.fullmatch(r"[1-9]\d{0,5}", seq) for seq in seqs) or len(set(seqs)) != len(seqs):
+        seqs = [str(item.position) for item in items]
+    owner: dict[int, Block] = {position: block for block in route.blocks for position in block.ops}
+    by_key = {block.key: block for block in route.blocks}
+    product = {item.position: owner[item.position].name if item.position == max(owner[item.position].ops) else item.product
+               for item in items}
+    built: list[dict[str, Any]] = []
+    for item in items:
+        block = owner[item.position]
+        order = sorted(block.ops)
+        place = order.index(item.position)
+        if place:
+            semis = [_row(product[order[place - 1]], _format(quantity))]
+        else:
+            semis = [_row(by_key[edge.source].name, _format(edge.per_unit * quantity))
+                     for edge in route.edges if edge.target == block.key]
+        result = product[item.position]
+        norm = (item.operation_seconds * item.quantity * quantity + item.setup_seconds) / 60
+        if not norm:
+            warnings.append(f"Операция {item.position} ({item.label}): не задана норма времени")
+        if item.card is not None:
+            replacements = _placeholder_map(item.source, config, "; ".join(row["name"] for row in semis), result, {}, {})
+            card = _resolve_card(item.card, replacements, {}, cards_by_code)
+            card["name"] = item.label
+        elif item.kind == CUSTOM_OP:
+            card = {"name": item.label, "safety": "", "defects": "",
+                    "steps": _manual_steps(item), "tooling": _manual_tooling(item)}
+            if not card["steps"]:
+                warnings.append(f"Операция {item.position} ({item.label}): не заполнен ход операции")
+        else:
+            card = None
+        fields: dict[str, Any] = {}
+        if item.quantity != 1:
+            fields["perItem"] = _format(item.quantity)
+        for key in ("params", "note"):
+            if _manual_text(item.source.get(key)):
+                fields[key] = _manual_text(item.source.get(key))
+        built.append({
+            "position": item.position, "code": item.code, "type": item.kind,
+            "side": _manual_text(item.source.get("side")), "connector": seqs[item.position - 1], "connector_article": "",
+            "template_id": _manual_text(item.source.get("templateId")),
+            "title": item.card.title if item.card else item.label, "card": card,
+            "components": _manual_components(item, quantity), "semis": semis, "result": [_row(result, _format(quantity))],
+            "result_label": "Изделие" if block.final and item.position == order[-1] else "Полуфабрикат",
+            "time": [{"name": result, "norm": _format(norm, 2)}],
+            "times": {"operation_seconds": str(item.source.get("tOp") or ""), "setup_seconds": str(item.source.get("tPrep") or ""),
+                      "machine_seconds": str(item.source.get("tMachine") or "")},
+            "fields": fields,
+        })
+
+    document = {
+        "schema_version": ETK_VERSION,
+        "kit": {
+            "project": str(config.get("projectNo") or ""), "item": str(config.get("itemId") or ""),
+            "index": str(config.get("assemblyIndex") or ""), "name": final_name,
+            "part_quantity": _format(quantity), "mode": MANUAL_MODE,
+        },
+        "operations": built,
+        "topology": _topology(config),
+        "warnings": warnings,
+        "build_config": deepcopy(dict(config)),
+        "source": {
+            "operation_library_commit": operation_library_commit,
+            **({"technology_snapshot": deepcopy(dict(technology_source))} if technology_source else {}),
+        },
+    }
+    # Totals from the ETK time rows, as the read path (`document_route`) counts them.
+    minutes = {operation["position"]: _operation_minutes(operation, quantity) for operation in built}
+    document["route"] = route_json(route, route_totals(route, minutes, quantity))
+    return document
+
+
 def build_etk(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str,
     technology_source: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return an immutable document snapshot suitable for ProjectTechcard.rebuild."""
+    if config.get("mode") == MANUAL_MODE:
+        return _build_manual(config, cards, operation_library_commit=operation_library_commit,
+                             technology_source=technology_source)
     raw_operations = config.get("ops")
     if not isinstance(raw_operations, list):
         raise ValueError("Нет операций для сборки")

@@ -468,6 +468,10 @@ export function etkChips(operation: Row): Array<[string, string]> {
   if (f.pullForce) out.push(["Отрыв", `${str(f.pullForce)} Н`]);
   if (f.lengthKd) out.push(["Длина по КД", str(f.lengthKd)]);
   if (f.cutTolerance) out.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
+  // Ручная сборка: сколько раз операция на одно изделие, параметры и примечание технолога.
+  if (f.perItem) out.push(["На изделие", `${str(f.perItem)} шт.`]);
+  if (f.params) out.push(["Параметры", str(f.params)]);
+  if (f.note) out.push(["Примечание", str(f.note)]);
   const strip = obj(f.strip);
   // У резки концы — по операции (лужёный конец зачищен всегда); у прочих — как в поле зачистки.
   const ends = /^cutWire/.test(str(operation.type)) ? etkCutEnds(operation) : null;
