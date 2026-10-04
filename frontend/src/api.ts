@@ -2347,6 +2347,8 @@ export interface KitsetStockLot {
   unit: string;
   storage_location: string;
   available: string;
+  /** The part of `available` that is the project's own «Со склада» reserve (absent when none). */
+  reserved?: string;
 }
 
 export interface KitsetLineEdit {
@@ -2403,7 +2405,8 @@ export const kitsetsApi = {
     api<KitsetBom>(
       `${kitsetPath(project)}/bom/${encodeURIComponent(index)}`,
     ),
-  lots: (query: string) => api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}`),
+  lots: (query: string, project: string) =>
+    api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}&project=${encodeURIComponent(project)}`),
   issue: (project: string, deadline: string) =>
     api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; message: string }>(
       `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },

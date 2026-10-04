@@ -55,7 +55,7 @@ describe("ProjectsPage", () => {
       if (url === "/api/techcards/kitsets/708К.4" && method === "GET") return json(card);
       if (url === "/api/techcards/kitsets/708К.4/lines") return json({ res: { updated: 1 } });
       if (url === "/api/techcards/kitsets/708К.4/issue") return json({ created: [{ no: "В-26-0001", index: "КБ1", shortfall: ["x"] }], skipped: [], message: "Заявок создано: 1, из них ждут поставки: 1." });
-      if (url.startsWith("/api/techcards/kitsets/lots")) return json({ lots: [{ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", article: "43025-0400", name: "Корпус Molex", unit: "шт", storage_location: "1F4", available: "15" }] });
+      if (url.startsWith("/api/techcards/kitsets/lots")) return json({ lots: [{ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", article: "43025-0400", name: "Корпус Molex", unit: "шт", storage_location: "1F4", available: "15", reserved: "5" }] });
       return json({});
     }));
   });
@@ -357,7 +357,10 @@ describe("ProjectsPage", () => {
     expect(JSON.parse(String(saved?.[1]?.body)).edits).toEqual([{ index: "КБ1", art: "UL1007 22AWG", per: "2", scrap: "5", name: "", link: "", lot: null }]);
 
     fireEvent.click(screen.getAllByRole("button", { name: "выбрать со склада" })[1]);
-    fireEvent.click(await screen.findByRole("button", { name: "Выбрать" }));
+    expect(await screen.findByText("из них резерв проекта 5 шт")).toBeTruthy();
+    const lotsCall = vi.mocked(fetch).mock.calls.find(([url]) => decodeURIComponent(String(url)).startsWith("/api/techcards/kitsets/lots"));
+    expect(decodeURIComponent(String(lotsCall?.[0]))).toContain("&project=708К.4");  // its own «Со склада» reserve counts as free
+    fireEvent.click(screen.getByRole("button", { name: "Выбрать" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "FRX.26.0000001" })).toBeTruthy());
     const lotCall = vi.mocked(fetch).mock.calls.filter(([url]) => decodeURIComponent(String(url)).endsWith("/lines")).at(-1);
     expect(JSON.parse(String(lotCall?.[1]?.body)).edits[0].lot).toEqual({ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "" });
