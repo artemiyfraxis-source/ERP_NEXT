@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPlanPage } from "./ProductionPlanPage";
-import { groupSheetRows, markText, projectColor, sheetDays } from "./PlanLoadSheet";
+import { MIN_VISIBLE_DAYS, autoHiddenColumns, groupSheetRows, markText, projectColor, sheetDays, sheetMonths, todayScrollLeft } from "./PlanLoadSheet";
 import type { Principal, ProductionPlanResult } from "./api";
 
 const principal: Principal = {
@@ -42,7 +42,7 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.removeItem("erp-zg-columns"); });
 
 /** Журнал проекта — по клику на организацию (№ проекта открывает карточку). */
 async function openProject(project: string) {
@@ -60,20 +60,29 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
 
   expect(await screen.findByRole("heading", { name: "Производственный план" })).toBeInTheDocument();
   await screen.findByRole("button", { name: "708К.4" });
-  const heads = Array.from(document.querySelectorAll(".zg-table thead th")).map((item) => item.textContent);
-  expect(heads.slice(0, 16)).toEqual([
-    "Комментарий", "Статус", "Готов %", "В плане", "№", "Заказчик", "Давал", "Пров.",
-    "Компл.", "ЗКП", "Приход", "ТК", "Тест С/Б", "Набр.", "Ост. дн", "Дедлайн",
+  const heads = Array.from(document.querySelectorAll(".zg-table thead th.zg-col-head")).map((item) => item.textContent);
+  expect(heads).toEqual([
+    "Комментарий", "Статус", "Готов", "План", "№", "Заказчик", "Дав.", "Пров.",
+    "Компл", "ЗКП", "Приход", "ТК", "С/Б", "Набр.", "Дн.", "Дедлайн",
   ]);
-  // Календарь: сегодня −7 … +60 дней, день недели и дд.мм.
-  expect(heads[16]).toBe("вт15.09");
-  expect(heads.length).toBe(16 + 68);
+  // Календарь: сегодня −7 … +60 дней; над днями — строка месяцев, в шапке дня — число и день недели.
+  const days = Array.from(document.querySelectorAll(".zg-table thead th.zg-day-head")).map((item) => item.textContent);
+  expect(days[0]).toBe("15вт");
+  expect(days.length).toBe(68);
+  expect(Array.from(document.querySelectorAll(".zg-month-head")).map((item) => [item.textContent, item.getAttribute("colspan")])).toEqual([
+    ["сентябрь 2026", "16"], ["октябрь", "31"], ["ноябрь", "21"],
+  ]);
+  expect(screen.getByText("1", { selector: ".page-count" })).toBeInTheDocument();
   const row = sheetRow("708К.4");
-  expect(Array.from(row.querySelectorAll(".zg-chip")).map((item) => item.textContent)).toEqual(["СТОП", "В РАБОТЕ"]);
+  // Статус — один чип и «+N», полный список в подсказке.
+  expect(Array.from(row.querySelectorAll(".zg-chip")).map((item) => item.textContent)).toEqual(["СТОП"]);
+  expect(row.querySelector(".zg-more")?.textContent).toBe("+1");
   expect(row.querySelector(".zg-col-ready")?.textContent).toBe("40%");
+  expect(row.querySelector<HTMLElement>(".zg-ready i")?.style.getPropertyValue("--zg-ready")).toBe("40%");
   expect(row.querySelector(".zg-col-kit_arrival")?.textContent).toBe("28.09");
   expect(row.querySelector(".zg-col-days_left")?.className).toContain("ok");
-  expect(row.querySelector(".zg-col-deadline")?.textContent).toBe("30.09.26");
+  expect(row.querySelector(".zg-col-deadline")?.textContent).toBe("30.09");
+  expect(row.querySelector(".zg-col-deadline")?.getAttribute("title")).toBe("Дедлайн 30.09.2026 · дней до дедлайна: 8");
   expect(row.querySelector(".zg-col-test_sb")?.className).toContain("zg-manual");
   expect(screen.getByText("На паузе · 1")).toBeInTheDocument();
   await openProject("708К.4");
@@ -88,9 +97,12 @@ it("keeps the sheet header to short one-line labels and gives the full sheet nam
   render(<ProductionPlanPage principal={principal} />);
   await screen.findByRole("button", { name: "708К.4" });
 
-  const heads = Array.from(document.querySelectorAll<HTMLElement>(".zg-table thead th")).slice(0, 16);
+  const heads = Array.from(document.querySelectorAll<HTMLElement>(".zg-table thead th.zg-col-head"));
   // Подпись — одна короткая строка, без переносов; полное название колонки листа — в подсказке.
   expect(heads.every((head) => head.textContent!.length <= 11 && !head.textContent!.includes("\n"))).toBe(true);
+  // Все показанные колонки закреплены; последняя отделена от календаря границей с тенью.
+  expect(heads.every((head) => head.classList.contains("zg-freeze"))).toBe(true);
+  expect(heads.filter((head) => head.classList.contains("zg-edge")).map((head) => head.textContent)).toEqual(["Дедлайн"]);
   expect(heads.map((head) => head.getAttribute("title")?.split(" — ")[0])).toEqual([
     "Комментарий", "Статус", "% Готов", "В плане", "№ Проекта", "Наименование организации", "Есть давал", "Пров компл",
     "Компл есть", "ЗКП", "Дата прихода компл.", "Тех кар", "Тест С/Б", "Компл набр", "Ост дн", "Дедлайн",
@@ -111,12 +123,65 @@ it("keeps the sheet header to short one-line labels and gives the full sheet nam
   expect(row.querySelectorAll("td.zg-today")).toHaveLength(1);
 });
 
-it("shows a compact empty state without the tall «.empty» box", async () => {
+it("shows an empty plan as the calendar grid with one hint row, no sideways scroll and no «0» counter", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ ...plan, rows: [] }));
   render(<ProductionPlanPage principal={principal} />);
   const text = await screen.findByText("Проектов в плане нет — заведите проект в «Проектах».");
 
   expect(text.closest("td")?.className).toBe("zg-empty");
+  expect(text.closest("td")?.getAttribute("colspan")).toBe(String(16 + 68));
+  // Шапка календаря на месте: месяцы, 68 дней, сегодня подсвечено.
+  expect(document.querySelectorAll(".zg-table thead th.zg-day-head")).toHaveLength(68);
+  expect(document.querySelectorAll(".zg-table thead th.zg-month-head")).toHaveLength(3);
+  expect(document.querySelector(".zg-table thead th.zg-today")?.textContent).toBe("22вт");
+  expect(document.querySelector(".zg-wrap")?.className).toContain("zg-wrap-empty");
+  expect(document.querySelector(".page-count")).toBeNull();
+});
+
+it("draws yes/no columns as narrow ✓ / — toggles with the full sheet name in the tooltip", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
+  render(<ProductionPlanPage principal={principal} />);
+  await screen.findByRole("button", { name: "708К.4" });
+  const row = sheetRow("708К.4");
+
+  const flags = Array.from(row.querySelectorAll<HTMLButtonElement>("button.zg-flag"));
+  expect(flags.map((flag) => [flag.getAttribute("aria-label")?.split(" · ")[0], flag.textContent, flag.getAttribute("aria-checked")])).toEqual([
+    ["В плане", "✓", "true"], ["Пров компл", "—", "false"], ["Компл есть", "—", "false"], ["ЗКП", "✓", "true"],
+    ["Тех кар", "✓", "true"], ["Тест С/Б", "✓", "true"], ["Компл набр", "—", "false"],
+  ]);
+  expect(flags.every((flag) => flag.getAttribute("role") === "checkbox")).toBe(true);
+  // Короткая подпись в шапке, полное название и смысл — в подсказке.
+  const head = (label: string) => Array.from(document.querySelectorAll(".zg-col-head")).find((item) => item.textContent === label)!;
+  expect(head("С/Б").getAttribute("title")).toBe("Тест С/Б");
+  expect(head("Компл").getAttribute("title")).toBe("Компл есть — все комплектующие на складе");
+  expect(head("План").getAttribute("title")).toBe("В плане — на проект назначены операции");
+  // «Давал»: «Ч/Т» коротко в ячейке, полные слова — в списке поверх неё.
+  expect(row.querySelector(".zg-col-customer_supplied .zg-supplied")?.textContent).toBe("Ч/Т");
+  expect(screen.getByLabelText("Есть давал · 708К.4")).toHaveValue("авто");
+});
+
+it("lets the viewer choose the sheet columns, keeps the sheet order and returns to the screen-width default", async () => {
+  window.localStorage.removeItem("erp-zg-columns");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
+  render(<ProductionPlanPage principal={principal} />);
+  await screen.findByRole("button", { name: "708К.4" });
+  const labels = () => Array.from(document.querySelectorAll(".zg-col-head")).map((item) => item.textContent);
+
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  const chooser = screen.getByRole("group", { name: "Показывать колонки" });
+  expect(chooser.querySelector<HTMLInputElement>("input[disabled]")?.parentElement?.textContent).toBe("№ Проекта");
+  fireEvent.click(screen.getByLabelText("Ост дн"));
+  fireEvent.click(screen.getByLabelText("ЗКП"));
+  expect(labels()).toEqual(["Комментарий", "Статус", "Готов", "План", "№", "Заказчик", "Дав.", "Пров.", "Компл", "Приход", "ТК", "С/Б", "Набр.", "Дедлайн"]);
+  expect(screen.getByRole("button", { name: "Колонки · 14 из 16" })).toBeInTheDocument();
+  expect(JSON.parse(window.localStorage.getItem("erp-zg-columns")!)).toEqual(["days_left", "zkp"]);
+  // «Дн.» скрыта — светофор дедлайна переезжает в «Дедлайн».
+  expect(sheetRow("708К.4").querySelector(".zg-col-deadline")?.className).toContain("zg-days ok");
+  expect(sheetRow("708К.4").querySelectorAll("td.zg-freeze")).toHaveLength(14);
+
+  fireEvent.click(screen.getByRole("button", { name: "По ширине экрана" }));
+  expect(labels()).toHaveLength(16);
+  expect(window.localStorage.getItem("erp-zg-columns")).toBeNull();
 });
 
 it("sets the stage of a project without KBs through a journal mark with an empty KB", async () => {
@@ -220,7 +285,7 @@ it("groups the sheet: on hold on top, active by deadline, finished at the bottom
     "На паузе · 1", "В работе · 3", "ОТК, отгрузка, готово · 1",
   ]);
   // A shop holiday (24.09) is grey like a weekend.
-  await waitFor(() => expect(document.querySelector(".zg-table thead th:nth-child(26)")?.className).toContain("zg-off"));
+  await waitFor(() => expect(document.querySelectorAll(".zg-table thead th.zg-day-head")[9]?.className).toContain("zg-off"));
   fireEvent.click(screen.getByLabelText("Закрытые проекты · 1"));
   expect(projects()).toContain("705К.1");
   fireEvent.change(screen.getByLabelText("Поиск проекта"), { target: { value: "эпс" } });
@@ -295,6 +360,20 @@ it("keeps sheet helpers stable", () => {
     ["02.10", "пт", false], ["03.10", "сб", true], ["04.10", "вс", true], ["05.10", "пн", false],
   ]);
   expect(sheetDays("2026-09-30", "2026-10-01")[1].monthStart).toBe(true);
+  expect(sheetMonths(sheetDays("2026-12-30", "2027-01-02")).map((month) => [month.label, month.span])).toEqual([["декабрь 2026", 2], ["январь 2027", 2]]);
+  // Сегодня — третьим днём слева: два дня до него остаются видны; в начале листа сдвига нет.
+  const days = sheetDays("2026-09-27", "2026-12-03");
+  expect(todayScrollLeft(days, "2026-10-04", 24)).toBe(5 * 24);
+  expect(todayScrollLeft(days, "2026-09-28", 24)).toBe(0);
+  expect(todayScrollLeft(days, "2027-01-01", 24)).toBe(0);
+  expect(todayScrollLeft(days, "2026-10-04", 0)).toBe(0);
+  // Узкий экран прячет реже нужные колонки, пока календарь не покажет MIN_VISIBLE_DAYS дней; широкий — ничего.
+  expect(MIN_VISIBLE_DAYS).toBeGreaterThanOrEqual(14);
+  expect(autoHiddenColumns(2218, 24)).toEqual([]);
+  expect(autoHiddenColumns(1458, 24)).toEqual([]);
+  expect(autoHiddenColumns(1192, 24)).toEqual(["days_left", "zkp", "in_plan", "customer_supplied"]);
+  expect(autoHiddenColumns(600, 24)).toEqual(["days_left", "zkp", "in_plan", "customer_supplied", "test_sb", "kit_checked"]);
+  expect(autoHiddenColumns(0, 24)).toEqual([]);
   expect(groupSheetRows([row({ project: "1", terminal: true, group: undefined }), row({ project: "2", group: undefined })]).closed.map((item) => item.project)).toEqual(["1"]);
   expect(markText({ field: "status", value: "ХОЛД", text: "" })).toBe("Статус: ХОЛД");
   expect(markText({ field: "kit_arrival", value: "2026-10-09", text: "" })).toBe("Дата прихода компл.: 09.10.2026");

@@ -200,7 +200,8 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   return <section className="page production-plan-page">
     <header className="page-head">
       <h1>Производственный план</h1>
-      <span className="page-count">{activeCount}</span>
+      {/* Как в «Проектах»: счётчик только когда есть что считать — пустой план не показывает «0». */}
+      {activeCount > 0 && <span className="page-count" title="Проектов в плане, без закрытых">{activeCount}</span>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
 
