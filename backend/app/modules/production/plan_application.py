@@ -30,6 +30,8 @@ class PlanProjectRepository(Protocol):
 class PlanEventRepository(Protocol):
     def list(self, project: str | None = None, limit: int = 10_000) -> Sequence[PlanEvent]: ...
     def add(self, event: PlanEvent) -> PlanEvent: ...
+    def of_project(self, project: str) -> Sequence[PlanEvent]: ...
+    def delete_project(self, project: str) -> int: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -66,6 +68,17 @@ class AddPlanEventCommand:
     item_index: str = ""
     value: str = ""
     field: str = ""
+
+
+@dataclass(frozen=True)
+class DeleteProjectPlanEventsCommand:
+    """Whole journal of one project (deleted project: a project created again under the same number starts clean).
+    ``apply=False`` — dry run: reads, writes nothing."""
+
+    project: str
+    actor: Actor
+    now: datetime
+    apply: bool = True
 
 
 def replace_plan_projects(
@@ -145,3 +158,24 @@ def add_plan_event(command: AddPlanEventCommand, uow: PlanUnitOfWork) -> PlanEve
         ))
         uow.commit()
     return event
+
+
+def delete_project_plan_events(command: DeleteProjectPlanEventsCommand, uow: PlanUnitOfWork) -> tuple[PlanEvent, ...]:
+    """The project's journal rows go (blockers, deadlines, comments, «Проверка ТК», «Отметка плана»); other projects'
+    rows stay — the project is matched exactly after `normalize_project_number`, so «719К.2» never touches
+    «719К.21». One audit event with the number of removed rows. Returns the rows (removed, or to be removed on a
+    dry run) oldest first."""
+    canon = normalize_project_number(command.project)
+    if not canon:
+        raise ProductionValidationError("Номер проекта обязателен")
+    with uow:
+        events = tuple(uow.plan_events.of_project(canon))
+        if command.apply and events:
+            uow.plan_events.delete_project(canon)
+            uow.audit.add(AuditEvent(
+                id=uuid4(), aggregate_id=command.actor.id, event_type="production.plan_events_deleted",
+                actor=command.actor, occurred_at=command.now,
+                details={"project": canon, "events": len(events), "reason": "project_deleted"},
+            ))
+            uow.commit()
+    return events

@@ -116,6 +116,7 @@ const EVENT_NAMES: Record<string, string> = {
   "production.calendar_replaced": "Календарь цеха сохранён",
   "production.skills_replaced": "Компетенции сохранены",
   "production.plan_event_added": "Запись в журнале проекта",
+  "production.plan_events_deleted": "Журнал проекта удалён",
   "production.plan_projects_replaced": "Проекты плана обновлены",
   "production.cancelled": "Задание отменено",
   "production.restored": "Задание восстановлено",
@@ -198,6 +199,7 @@ const DETAIL_LABELS: Record<string, string> = {
   shift_finish: "до", effective_seconds: "секунд в смене", transfer_batch: "передаточная партия", max_crew: "людей",
   first_ready: "первая готовность", finish: "окончание", idle_seconds: "простой, с", fields: "поля", pl: "PL", dn: "DN",
   moves: "перемещений", materials: "материалов", inputs: "входов", projects: "проектов", replan: "перепланировать",
+  events: "записей",
 };
 
 /* Имена полей, которые события пишут списком («fields», «inherited»). */
