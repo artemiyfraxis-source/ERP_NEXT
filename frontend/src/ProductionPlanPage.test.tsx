@@ -62,8 +62,8 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   await screen.findByRole("button", { name: "708К.4" });
   const heads = Array.from(document.querySelectorAll(".zg-table thead th")).map((item) => item.textContent);
   expect(heads.slice(0, 16)).toEqual([
-    "Комментарий", "Статус", "% Готов", "В плане", "№ Проекта", "Наименование организации", "Есть давал", "Пров компл",
-    "Компл есть", "ЗКП", "Дата прихода компл.", "Тех кар", "Тест С/Б", "Компл набр", "Ост дн", "Дедлайн",
+    "Комментарий", "Статус", "Готов %", "В плане", "№", "Заказчик", "Давал", "Пров.",
+    "Компл.", "ЗКП", "Приход", "ТК", "Тест С/Б", "Набр.", "Ост. дн", "Дедлайн",
   ]);
   // Календарь: сегодня −7 … +60 дней, день недели и дд.мм.
   expect(heads[16]).toBe("вт15.09");
@@ -81,6 +81,42 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   expect(screen.getByText("Всего 5: склад 2, в пути 1, в закупке 1, в заявках 1.")).toBeInTheDocument();
   expect(screen.getByText("1 заданий · назначено 2 из 3 этапов.")).toBeInTheDocument();
   expect(screen.getByText("ТК выдана · не набрано")).toBeInTheDocument();
+});
+
+it("keeps the sheet header to short one-line labels and gives the full sheet names in tooltips", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input) === "/api/production/calendar" ? json({ holidays: [], absences: [], shift: {} }) : json(plan));
+  render(<ProductionPlanPage principal={principal} />);
+  await screen.findByRole("button", { name: "708К.4" });
+
+  const heads = Array.from(document.querySelectorAll<HTMLElement>(".zg-table thead th")).slice(0, 16);
+  // Подпись — одна короткая строка, без переносов; полное название колонки листа — в подсказке.
+  expect(heads.every((head) => head.textContent!.length <= 11 && !head.textContent!.includes("\n"))).toBe(true);
+  expect(heads.map((head) => head.getAttribute("title")?.split(" — ")[0])).toEqual([
+    "Комментарий", "Статус", "% Готов", "В плане", "№ Проекта", "Наименование организации", "Есть давал", "Пров компл",
+    "Компл есть", "ЗКП", "Дата прихода компл.", "Тех кар", "Тест С/Б", "Компл набр", "Ост дн", "Дедлайн",
+  ]);
+  expect(heads[3].getAttribute("title")).toBe("В плане — на проект назначены операции");
+  expect(heads[7].getAttribute("title")).toBe("Пров компл — комплектация проверена");
+  // Ширина таблицы задана колонками, а не содержимым: длинный комментарий её не раздувает.
+  expect(document.querySelector<HTMLElement>(".zg-table")!.style.width).toMatch(/^calc\(\d+px \+ 68 \* var\(--zg-day\)\)$/);
+
+  const row = sheetRow("708К.4");
+  expect(row.querySelector(".zg-col-comment")?.getAttribute("title")).toBe("ждём разъёмы");
+  expect(row.querySelector(".zg-link")?.getAttribute("title")).toBe("Заказчик — журнал проекта");
+  expect(row.querySelector(".zg-col-status")?.getAttribute("title")).toBe("СТОП, В РАБОТЕ — СТОП: Ждём разъёмы");
+  expect(row.querySelector(".zg-col-kit_checked")?.getAttribute("title")).toBe("Пров компл — комплектация проверена");
+  // Сегодня подсвечено и в шапке, и в строках.
+  const today = document.querySelector(".zg-table thead th.zg-today");
+  expect(today?.getAttribute("title")).toBe("вт 22.09.2026 · сегодня");
+  expect(row.querySelectorAll("td.zg-today")).toHaveLength(1);
+});
+
+it("shows a compact empty state without the tall «.empty» box", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ ...plan, rows: [] }));
+  render(<ProductionPlanPage principal={principal} />);
+  const text = await screen.findByText("Проектов в плане нет — заведите проект в «Проектах».");
+
+  expect(text.closest("td")?.className).toBe("zg-empty");
 });
 
 it("sets the stage of a project without KBs through a journal mark with an empty KB", async () => {
