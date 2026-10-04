@@ -23,6 +23,16 @@ describe("etkChips (renderEtk_ chips)", () => {
       ["Время", "— · подгот. —"],
     ]);
   });
+
+  it("shows the manual-assembly quantity per item, parameters and note in the header", () => {
+    expect(etkChips({
+      fields: { perItem: "2", params: "L = 300 мм", note: "провод из бухты" },
+      times: { operation_seconds: "6", setup_seconds: "120" },
+    })).toEqual([
+      ["На изделие", "2 шт."], ["Параметры", "L = 300 мм"], ["Примечание", "провод из бухты"],
+      ["Время", "6 с на шт. · подгот. 2 мин"],
+    ]);
+  });
 });
 
 describe("etkDraw* sketches", () => {

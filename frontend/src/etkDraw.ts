@@ -395,6 +395,10 @@ export function etkChips(operation: Row): Array<[string, string]> {
   if (f.pullForce) out.push(["Отрыв", `${str(f.pullForce)} Н`]);
   if (f.lengthKd) out.push(["Длина по КД", str(f.lengthKd)]);
   if (f.cutTolerance) out.push(["Допуск реза", str(f.cutTolerance)]);
+  // Ручная сборка: сколько раз операция на одно изделие, параметры и примечание технолога.
+  if (f.perItem) out.push(["На изделие", `${str(f.perItem)} шт.`]);
+  if (f.params) out.push(["Параметры", str(f.params)]);
+  if (f.note) out.push(["Примечание", str(f.note)]);
   const strip = obj(f.strip);
   if (strip.a || strip.b) {
     out.push(["Зачистка", [strip.a ? `A ${mm(strip.lenA) || "?"}` : "", strip.b ? `B ${mm(strip.lenB) || "?"}` : ""].filter(Boolean).join(" · ")]);

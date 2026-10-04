@@ -42,7 +42,8 @@ export type GenData = {
 };
 
 export type Side = "A" | "B";
-export type Tab = "inter" | "complex" | "coax";
+/** manual — «Ручная сборка» (manualAssembly.ts): свой список операций, формы кабелей и разъёмов не участвуют. */
+export type Tab = "inter" | "complex" | "coax" | "manual";
 export type Endpoint = {
   id: string; side: Side; connId: string; method: "crimp" | "solder"; methodAuto: boolean;
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;

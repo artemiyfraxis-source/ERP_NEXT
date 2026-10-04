@@ -929,6 +929,53 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tcgen .route-act .field-label { flex: 1; min-width: 0; }
 .tcgen .route-inputs { display: grid; gap: 2px; font-size: 12px; }
 .tcgen .route-input-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* Ручная сборка (владелец 04.10): свой список операций — карточка на операцию, поля сеткой по 4, текст своей операции
+   в три колонки, выбор карточки — таблица библиотеки с категориями. */
+.tcgen .manual-assembly { display: grid; gap: 8px; }
+.tcgen .manual-hdr { flex-wrap: wrap; row-gap: 4px; }
+.tcgen .manual-hdr h3 { margin: 12px 0 4px; }
+.tcgen .manual-add { margin-left: auto; display: flex; gap: 6px; }
+.tcgen .manual-ops { gap: 0; padding-top: 2px; padding-bottom: 2px; }
+.tcgen .manual-op { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.tcgen .manual-op:last-child { border-bottom: 0; }
+.tcgen .manual-op-head { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.tcgen .manual-op-name { display: grid; gap: 2px; max-width: 560px; }
+.tcgen .manual-op-name input { font-weight: 600; font-size: 14px; }
+.tcgen .manual-op-name small { color: var(--muted-foreground); font-size: 11px; }
+.tcgen .manual-op-name code { margin-right: 6px; font-size: 11px; }
+.tcgen .manual-op-tools { display: flex; gap: 4px; align-items: center; }
+.tcgen .manual-op-tools .small { min-width: 30px; padding: 3px 8px; }
+/* Две строки на операцию: на изделие · подготовка · сек/шт · норма · параметры, затем результат · примечание. */
+.tcgen .manual-grid { display: grid; grid-template-columns: 84px 108px 116px 112px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-left: 36px; align-items: end; }
+.tcgen .manual-grid .wide { grid-column: span 2; }
+.tcgen .manual-grid .result { grid-column: span 4; }
+.tcgen .manual-norm { display: grid; gap: 2px; padding-bottom: 5px; }
+.tcgen .manual-norm small { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.tcgen .section-hdr .manual-close { margin-left: auto; }
+.tcgen .manual-norm b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.tcgen .manual-text { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-left: 36px; }
+.tcgen .manual-text textarea { width: 100%; padding: 5px 8px; border-radius: 6px; font: inherit; font-size: 13px; resize: vertical; }
+.tcgen .manual-comps { margin-left: 36px; font-size: 12px; }
+.tcgen .manual-comps summary { color: var(--muted-foreground); font-weight: 600; cursor: pointer; }
+.tcgen .manual-comp-list { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
+.tcgen .manual-comp { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.tcgen .manual-comp.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, var(--card)); }
+.tcgen .manual-comp label { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; cursor: pointer; }
+.tcgen .manual-comp input[inputmode] { width: 60px; padding: 2px 6px; }
+.tcgen .manual-comp small { color: var(--muted-foreground); }
+.tcgen .manual-picker .table-wrap { max-height: 360px; }
+.tcgen .manual-card-name small { margin-left: 6px; color: var(--muted-foreground); font-size: 11px; }
+.tcgen .manual-card-detail { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; font-size: 12px; }
+.tcgen .manual-op-row { flex-wrap: wrap; }
+@media (max-width: 900px) {
+  .tcgen .manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tcgen .manual-grid .wide, .tcgen .manual-grid .result { grid-column: 1 / -1; }
+  .tcgen .manual-text { grid-template-columns: minmax(0, 1fr); }
+}
+@media (pointer: coarse) {
+  .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
+  .tcgen .manual-grid input, .tcgen .manual-op-name input { min-height: 40px; }
+}
 @media (pointer: coarse) {
   .tcgen .route-per { min-height: 40px; width: 52px; }
   .tcgen .route-act .small, .tcgen .route-panel select, .tcgen .route-panel input { min-height: 40px; }
