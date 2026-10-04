@@ -21,6 +21,7 @@ import { FulfillmentPage } from "./FulfillmentPage";
 import { ProcurementPage } from "./ProcurementPage";
 import { ProductionPage } from "./ProductionPage";
 import { ProductionPlanPage } from "./ProductionPlanPage";
+import { QualityPage } from "./QualityPage";
 import { RequestsPage } from "./RequestsPage";
 import { ReceivingPage } from "./ReceivingPage";
 import { WarehousePage } from "./WarehousePage";
@@ -214,6 +215,7 @@ export function App() {
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "projects") ? openProjectCard : undefined} />}
         {activeSection === "production" && <ProductionPage principal={principal} />}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
+        {activeSection === "quality" && <QualityPage principal={principal} />}
         {activeSection === "references" && <ReferencesPage principal={principal} />}
         {activeSection === "notifications" && <NotificationsPage />}
         {activeSection === "operations" && <OperationsPage />}

@@ -6,7 +6,7 @@ import type { AccessMode, Principal } from "./api";
 
 export type Section =
   | "cabinet"
-  | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops"
+  | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement"
   | "receiving" | "stock" | "issues" | "handout" | "shipping"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
@@ -63,6 +63,10 @@ export const NAV: NavItem[] = [
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "refs", within: "references" },
   { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", roles: ["master", "prodhead", "management", "qc", "admin"], block: "prod" },
   { id: "myops", label: "Задания", sub: "мои операции", permission: "production", roles: ["staff", "master", "admin"], block: "prod" },
+  // «ОТК» (owner, 04.10.2026): очередь на проверку, брак цеха и ОТК, средства измерения — не часть планирования. Открывается
+  // тем, кто и раньше видел эти блоки: правка раздела производства у мастера (решает по браку), ОТК (проверяет, ведёт реестр)
+  // и администратора; роли с полным доступом проходят список (hasRole).
+  { id: "quality", label: "ОТК", sub: "очередь на проверку · брак · средства измерения", permission: "production", minimum: "edit", roles: ["master", "qc", "admin"], block: "prod" },
   // Снабжение. «Оформить заявку» and «Мои заявки» are sections of their own, not actions inside «Заявки»
   // (SUPPLYMAP Portal.gs PORTAL_SECTIONS_, owner 27.08.2026): a rank-and-file user needs the form and own rows.
   // NAV-SECTIONS: each has its own access key, so «Заявки» can be closed without taking them away.

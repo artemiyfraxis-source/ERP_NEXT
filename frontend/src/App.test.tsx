@@ -161,6 +161,40 @@ it("opens native resource planning at the production route", async () => {
   expect(await screen.findByText("Проектов с выданной техкартой пока нет.")).toBeInTheDocument();
 });
 
+it("opens the ОТК section at the quality route for a QC inspector", async () => {
+  window.history.replaceState({}, "", "/login?section=quality");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({ ...principal, roles: ["qc"], permissions: { production: "edit" } });
+    if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
+    if (path === "/api/production/boxes") return json({ boxes: [] });
+    if (path === "/api/production/instruments") return json({ instruments: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "ОТК", level: 1 })).toBeInTheDocument();
+  expect(await screen.findByText(/Коробок на проверку нет/)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Средства измерения" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "ОТК" })).toBeInTheDocument();
+});
+
+it("does not open the ОТК section to a fitter, who lands on the cabinet", async () => {
+  window.history.replaceState({}, "", "/login?section=quality");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({ ...principal, roles: ["staff"], permissions: { production: "view" } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "ОТК", level: 1 })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "ОТК" })).not.toBeInTheDocument();
+});
+
 it("opens the native production plan at the prodplan route", async () => {
   window.history.replaceState({}, "", "/login?section=prodplan");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

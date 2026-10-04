@@ -215,7 +215,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .execution-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
 .execution-actions label, .start-work label, .production-box label { display: grid; gap: 4px; font-size: 12px; }
 .execution-actions input, .start-work input { width: 125px; }
-/* Коробки на подтверждение и брак мастера: в один ряд, чтобы доска назначения не уезжала за экран. */
+/* ОТК: брак ОТК и брак цеха — в один ряд. */
 .review-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; align-items: start; margin: 16px 0; }
 .review-row:empty { display: none; }
 .review-row > .box-review { margin: 0; }
@@ -229,6 +229,12 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .execution-hint { grid-column: 1 / -1; }
 .danger-text { color: var(--danger); }
 .traceability-search, .instrument-registry { margin: 16px 0; padding: 18px; }
+/* Реестр СИ: форма открывается над таблицей, панель уже даёт отступ — своих не добавляем. */
+.panel.instrument-registry > .data-table { padding: 0; }
+/* Пустая очередь и пустой брак — одной строкой, а не высокой плашкой посреди страницы. */
+.box-review > .empty { padding: 2px 0 4px !important; text-align: left; font-size: 13px; }
+.instrument-registry .form-grid { padding: 0 0 4px; }
+.instrument-registry .instrument-form .form-actions { margin: 6px 0 16px; }
 .traceability-search .search-row { display: flex; gap: 8px; margin: 12px 0; }
 .traceability-search .search-row input { flex: 1; min-width: 220px; }
 .genealogy-result { display: grid; gap: 12px; }
@@ -238,11 +244,8 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .operation-assign { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(210px, .5fr) auto; gap: 10px; align-items: end; padding: 10px; border-radius: 8px; background: #f7f9f9; }
 .operation-assign select[multiple] { min-height: 82px; }
 .production-calendar { margin-top: 18px; padding: 18px; }
-.shift-editor, .schedule-controls, .skill-row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
-.shift-editor { margin-bottom: 16px; }
-.shift-editor > div:first-child { flex: 1 1 100%; display: grid; }
-.weekday-picker { display: flex; gap: 8px; flex-wrap: wrap; align-self: center; }
-.weekday-picker label, .schedule-controls > label:last-of-type, .skill-row > label:first-of-type { display: flex; flex-direction: row; align-items: center; gap: 5px; }
+.schedule-controls, .skill-row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.schedule-controls > label:last-of-type, .skill-row > label:first-of-type { display: flex; flex-direction: row; align-items: center; gap: 5px; }
 .skills-editor, .skills-grid, .schedule-panel, .schedule-variants, .schedule-route { display: grid; gap: 12px; }
 .skill-row, .schedule-variant { padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .skill-row > div:first-child { min-width: 180px; display: grid; margin-right: auto; }
@@ -253,11 +256,29 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .schedule-variant > div:first-child, .schedule-route span { display: grid; }
 .calendar-add { display: flex; gap: 10px; align-items: end; margin-bottom: 12px; }
 .calendar-add label { min-width: 180px; }
-.absence-add { display: grid; grid-template-columns: 1fr 160px 150px 150px auto; }
 .calendar-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 16px; }
 .calendar-chip { border: 0; border-radius: 999px; padding: 5px 10px; color: var(--foreground); background: var(--accent); font-size: 12px; }
-.calendar-absences { display: grid; gap: 6px; }
-.calendar-absences > div { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border); padding: 8px 0; font-size: 12px; }
+/* Календарь цеха: два блока — «Смена» и «Нерабочие дни и отсутствия», поля на общей сетке .form-grid, один «Сохранить». */
+.production-calendar .calendar-block + .calendar-block { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.production-calendar .calendar-block h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.production-calendar .form-grid { padding: 0; }
+.production-calendar .field-group { display: grid; gap: 6px; align-content: start; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.production-calendar .weekday-toggles { justify-self: start; margin: 0; }
+@media (min-width: 1600px) { .production-calendar .form-grid > .weekdays { grid-column: span 3; } }
+.production-calendar .calendar-add { margin-bottom: 10px; }
+.production-calendar .calendar-block .form-actions { margin: 10px 0 14px; }
+.production-calendar > .form-actions { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.production-calendar .cal-add { border-color: var(--primary); color: var(--primary); }
+.production-calendar .cal-add:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 8%, white); }
+.production-calendar .cal-add:disabled { cursor: not-allowed; }
+.holiday-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 16px; }
+.holiday-chip { display: inline-flex; align-items: center; gap: 2px; border-radius: 999px; padding: 2px 3px 2px 11px; background: var(--accent); font-size: 12.5px; }
+.holiday-chip button { border: 0; border-radius: 999px; padding: 2px 7px; color: #a33830; background: transparent; font-size: 15px; line-height: 1; }
+.holiday-chip button:hover { background: #fde8e8; }
+.cal-empty { color: var(--muted-foreground); font-size: 12.5px; }
+.calendar-absences .row-end { text-align: right; }
+.calendar-absences .link-button { padding: 0; }
+@media (pointer: coarse) { .weekday-toggles button, .holiday-chip button { min-height: 40px; min-width: 40px; } }
 .shipping-tabs { display: flex; gap: 8px; margin: 18px 0; }
 .shipping-tabs .active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
 .shipping-add { justify-content: flex-end; margin: -54px 0 18px; }
@@ -588,7 +609,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
   .fulfillment-actions { align-items: stretch; flex-direction: column; }
   .fulfillment-actions label { width: 100%; }
   .return-line { grid-template-columns: 1fr; }
-  .production-launch-grid, .route-draft, .production-operation, .operation-assign, .absence-add, .shipping-form, .shipping-request, .shipment-docs, .reference-columns, .reference-map-head, .reference-row, .box-grid { grid-template-columns: 1fr; }
+  .production-launch-grid, .route-draft, .production-operation, .operation-assign, .shipping-form, .shipping-request, .shipment-docs, .reference-columns, .reference-map-head, .reference-row, .box-grid { grid-template-columns: 1fr; }
   .genealogy-edges > div { grid-template-columns: 1fr; }
   .shipping-lines { grid-column: auto; grid-template-columns: 1fr; }
   .shipping-add { margin: 0 0 14px; }
