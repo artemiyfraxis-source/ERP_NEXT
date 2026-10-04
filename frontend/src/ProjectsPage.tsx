@@ -109,7 +109,7 @@ function GenTab({ card, principal, index, pick, done }: {
     <div className="seg-tabs sub" role="tablist" aria-label="Сборка">{card.assemblies.map((item) =>
       <button key={item.index} role="tab" aria-selected={item.index === index} className={item.index === index ? "on" : ""} onClick={() => pick(item.index)}>{item.index}</button>)}</div>
     {!index && <div className="empty">Выбери сборку — генератор откроется здесь.</div>}
-    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : "нет"}</p>}
+    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
     {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
@@ -557,7 +557,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
         <td>{kdCell(assembly)}</td>
         <td>{assembly.techcard && assembly.techcard.stages > 0
           ? <button className="link-button" onClick={() => (assembly.techcard!.issued ? openTc : openGen)(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} эт.</button>
-          : <span className="muted">нет</span>}</td>
+          : <span className="muted">{assembly.techcard ? "не собрана" : "нет"}</span>}</td>
         <td>{stageCell(assembly)}</td>
         <td>{reviewCell(assembly)}</td>
       </tr>)}</tbody>

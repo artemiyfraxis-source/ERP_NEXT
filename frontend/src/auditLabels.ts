@@ -134,7 +134,7 @@ const EVENT_NAMES: Record<string, string> = {
   "shipping.closed": "Отправка закрыта",
   "shipping.cancelled": "Отправка отменена",
 
-  "techcards.project_created": "ТК проекта создана",
+  "techcards.project_created": "Открыт генератор ТК",
   "techcards.project_auto_built": "ТК собрана генератором",
   "techcards.project_rebuilt": "ТК пересобрана",
   "techcards.project_imported": "ТК перенесена",
