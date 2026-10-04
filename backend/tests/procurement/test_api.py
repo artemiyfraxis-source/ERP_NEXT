@@ -153,6 +153,20 @@ def test_buyer_can_take_and_complete_own_line_idempotently(procurement_api):
         assert session.scalar(select(func.count()).select_from(AuditEventRow)) == 3
 
 
+def test_link_accepts_free_text_from_old_data(procurement_api):
+    client, line, _ = procurement_api
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id)]}).json()["lines"][0]
+
+    saved = client.patch(
+        f"/api/procurement/{line.id}/facts",
+        json={"version": taken["version"], "supplier": "ООО Поставка", "actual_quantity": "2",
+              "actual_unit": "шт", "link": "Склад"},
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["line"]["link"] == "Склад"
+
+
 def test_other_buyer_cannot_edit_claimed_line(procurement_api):
     client, line, _ = procurement_api
     client.post("/api/procurement/take", json={"line_ids": [str(line.id)]})

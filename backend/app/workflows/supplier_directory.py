@@ -56,7 +56,7 @@ class ReferencesSupplierDirectory:
     def learn(self, link: str | None, supplier: str | None, actor: Actor, now: datetime) -> bool:
         """`learnSupplier_`: remember «домен → поставщик»; no link — nothing to learn; an existing key is
         never overwritten (the map is shared, a one-off purchase must not retrain it for everyone). The key is
-        `supplierKey_`: the link's domain, or the literal text itself (e.g. «Склад»)."""
+        `supplierKey_`: the link's domain. Free text that is not a link (old data, «Склад») is never learned (owner 2026-10-04)."""
         value = str(supplier or "").strip()
         if not value or not str(link or "").strip():
             return False
@@ -64,6 +64,8 @@ class ReferencesSupplierDirectory:
             key = normalized_supplier_key(str(link))
         except ReferenceValidationError:
             return False
+        if " " in key or "." not in key:
+            return False  # not a link/domain (old free text such as «Склад»): nothing to learn
         with self.references_uow_factory() as uow:
             entries = list(uow.references.list())
             suppliers = [entry for entry in entries if entry.kind == ReferenceKind.SUPPLIER]
