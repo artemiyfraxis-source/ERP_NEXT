@@ -418,7 +418,7 @@ def test_no_sessions_this_month_is_no_figure_not_zero_hours(erp):
 
 
 def test_requests_are_the_persons_open_ones_newest_first_ten_of_all(erp):
-    mine = file_requests(erp, FITTER, LIST_LIMIT + 2)
+    mine = file_requests(erp, FITTER, LIST_LIMIT + 2, project="")
     set_status(erp, mine[0], RequestStatus.CLOSED)
     set_status(erp, mine[1], RequestStatus.CANCELLED)
     set_status(erp, mine[2], RequestStatus.IN_WORK)
@@ -432,6 +432,18 @@ def test_requests_are_the_persons_open_ones_newest_first_ten_of_all(erp):
     assert all(item["name"].startswith("Разъём") and item["number"] for item in requests["items"])
     assert set(requests["items"][0]) == {"id", "number", "name", "status"}
     assert {item["id"] for item in requests["items"]} <= {str(item.id) for item in mine}
+
+
+def test_project_requests_are_not_personal(erp):
+    """Заявки, заведённые под номером проекта (из расчёта), — не личные: дают проект, но не «Мои заявки»."""
+    file_requests(erp, FITTER, 3)  # под номером проекта
+    personal = file_requests(erp, FITTER, 1, project="", purpose="RND", key="own")
+
+    result = card(erp, FITTER)
+
+    assert result["requests"]["count"] == 1
+    assert [item["id"] for item in result["requests"]["items"]] == [str(personal[0].id)]
+    assert result["projects"] == [{"project": PROJECT, "roles": ["Инициатор заявок"], "deadline": None}]
 
 
 def test_a_person_without_requests_has_a_real_zero(erp):
@@ -483,6 +495,7 @@ def test_missing_modules_leave_their_sections_empty_without_fake_zeros(erp):
 def test_each_module_is_optional_on_its_own(erp):
     launch(erp, PROJECT, [FITTER])
     file_requests(erp, FITTER, 2)
+    file_requests(erp, FITTER, 2, project="", key="own")
 
     no_production = card(erp, FITTER, production=True)
     assert no_production["projects"] == [{"project": PROJECT, "roles": ["Инициатор заявок"], "deadline": None}]

@@ -191,11 +191,14 @@ class _Own:
 def _read_requests(uow, user_id: UUID) -> _Own:
     own = _Own()
     # Новые сверху; закрытые и отменённые в «открытых» не считаются, отменённые и проект не дают.
+    # Заявки проекта (заведены из расчёта под номером проекта) — не личные (владелец 04.10): они дают проект в
+    # «Проекты», но в «Мои заявки на покупку» карточки не попадают.
     for request in uow.requests.by_initiator(user_id, _LIMIT, 0):
         if request.status is RequestStatus.CANCELLED:
             continue
         if project := _request_project(request):
             own.projects.add(project)
+            continue
         if request.status in _NOT_ACTIVE_REQUEST:
             continue
         own.open_count += 1
