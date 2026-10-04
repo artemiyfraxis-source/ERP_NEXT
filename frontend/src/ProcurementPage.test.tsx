@@ -84,26 +84,26 @@ it("takes a line and saves facts with its optimistic version", async () => {
       taken = true;
       return json({ lines: [{ ...line, buyer: "Закупщик" }] });
     }
-    if (path.endsWith("/facts") && init?.method === "PATCH") {
+    if (path === "/api/procurement/facts" && init?.method === "POST") {
       savedBody = JSON.parse(String(init.body));
-      return json({ line: { ...line, supplier: "Поставщик", version: 4 } });
+      return json({ lines: [], saved: 1, ready: 1, skipped: [], failed: [] });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ProcurementPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Взять" }));
-  fireEvent.change(await screen.findByLabelText(/Поставщик/), {
+  fireEvent.change(await screen.findByLabelText("Поставщик REQ-1"), {
     target: { value: "Поставщик" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
 
-  await waitFor(() => expect(savedBody).toEqual(expect.objectContaining({
+  await waitFor(() => expect(savedBody).toEqual({ rows: [expect.objectContaining({
     version: 3,
     supplier: "Поставщик",
     actual_quantity: "2",
     actual_unit: "шт",
-  })));
+  })] }));
 });
 
 it("blocks duplicate page loads and reports refresh failures", async () => {
@@ -275,9 +275,11 @@ it("parks a line on approval, resumes it and cancels only after confirmation", a
   const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
 
   render(<ProcurementPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "На согласование" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Действия REQ-1" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "На согласование" }));
   fireEvent.click(await screen.findByRole("button", { name: "Одобрено — продолжить" }));
-  fireEvent.click(await screen.findByRole("button", { name: "На согласование" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Действия REQ-1" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "На согласование" }));
   await waitFor(() => expect(calls).toHaveLength(3));
   fireEvent.click(await screen.findByRole("button", { name: "Отменить строку" }));
   expect(confirm).toHaveBeenCalledTimes(1);
@@ -608,7 +610,7 @@ it("offers the actual unit as a list", async () => {
   });
 
   render(<ProcurementPage />);
-  const unit = (await screen.findByLabelText(/Единица/)) as HTMLSelectElement;
+  const unit = (await screen.findByLabelText("Ед. REQ-1")) as HTMLSelectElement;
   expect(unit.tagName).toBe("SELECT");
   await waitFor(() => expect(Array.from(unit.options).map((option) => option.value)).toEqual(["", "шт", "кг", "компл"]));
 });
