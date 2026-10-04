@@ -155,6 +155,10 @@ export interface ProcurementLine {
   calculated_name: string;
   calculated_quantity: string;
   calculated_unit: string;
+  /** ЦЕНА / ЦЕНА С НДС / СУММА (Расчет): цены расчёта, с которыми пришла заявка. */
+  calculated_price?: string | null;
+  calculated_price_with_vat?: string | null;
+  calculated_sum?: string | null;
   buyer: string | null;
   supplier: string | null;
   site_name: string | null;
@@ -166,7 +170,12 @@ export interface ProcurementLine {
   order_date: string | null;
   /** «ЗАКАЗ»: ссылка на документ запроса поставщику. */
   order_url?: string | null;
+  /** ОЖИД. ДАТА: закупщик меняет её от «Жду счет» до «Карантин» (setExpectedArrival). */
   expected_arrival: string | null;
+  /** ФАКТ. ДАТА: последняя дата входного контроля среди поставок строки (ставит приёмка). */
+  actual_arrival?: string | null;
+  /** КОММЕНТАРИЙ: свободная заметка закупщика, от «В работе»; не на «Новый»/«Отменено» (setNote). */
+  note?: string | null;
   invoice_url: string | null;
   paid_at: string | null;
   currency: string | null;
@@ -1635,6 +1644,16 @@ export const procurementApi = {
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/traceability`, {
       method: "PATCH",
       body: JSON.stringify({ version, ...trace }),
+    }),
+  setNote: (lineId: string, version: number, note: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/note`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, note }),
+    }),
+  setExpectedArrival: (lineId: string, version: number, expectedArrival: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/expected-arrival`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, expected_arrival: expectedArrival }),
     }),
   replacementPermissionSheet: (lineId: string) =>
     api<{ sheet: PrintSheet }>(`/api/procurement/${lineId}/replacement-permission`),

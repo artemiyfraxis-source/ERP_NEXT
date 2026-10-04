@@ -64,6 +64,8 @@ MANUAL_NONCONFORMITIES = QUALITY_FAULTS
 # Config.gs:221-233 — «Ожидание» без решения держится не дольше QUAR_WORKDAYS рабочих дней от даты
 # акта ВК; дальше тик сам переводит строку в «Карантин» и зовёт ответственного по характеру несоответствия.
 QUARANTINE_WORKDAYS = 2
+# Open deliveries: ОЖИД. ДАТА still means something until the line is accepted, returned or archived.
+EXPECTED_ARRIVAL_FOLLOWS = frozenset({ReceivingStatus.IN_TRANSIT, ReceivingStatus.WAITING, ReceivingStatus.QUARANTINE})
 TECHNOLOGIST_NONCONFORMITIES = {MECHANICAL_DAMAGE}
 NOTIFY_TECHNOLOGIST = "Технолог"
 NOTIFY_SUPPLY = "Снабжение"
@@ -547,6 +549,13 @@ class ReceivingLine:
                 f"{QUARANTINE_WORKDAYS} рабочих дней"
             )
         return replace(self, status=ReceivingStatus.QUARANTINE, version=self.version + 1)
+
+    def follow_expected_arrival(self, expected_arrival: date | None) -> ReceivingLine:
+        """ОЖИД. ДАТА is the buyer's (OwnerTick.gs syncExpectedDateToWaitlist_): a delivery still waited for
+        follows it; an accepted, returned or archived one keeps the date it had."""
+        if self.status not in EXPECTED_ARRIVAL_FOLLOWS or self.expected_arrival == expected_arrival:
+            return self
+        return replace(self, expected_arrival=expected_arrival, version=self.version + 1)
 
     def place(self, location: str) -> ReceivingLine:
         if self.warehouse_event_emitted:

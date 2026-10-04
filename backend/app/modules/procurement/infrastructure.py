@@ -138,6 +138,9 @@ class ProcurementLineRow(Base):
     notified_status: Mapped[str | None] = mapped_column(String(32))
     # «Со склада»: the part of КОЛ-ВО (Расчет) our lots reserve for the line (procurement_stock_covers).
     stock_covered: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0")
+    # КОММЕНТАРИЙ (the buyer's note) and ФАКТ. ДАТА (latest inspection of the line's deliveries, set by the tick).
+    note: Mapped[str | None] = mapped_column(Text)
+    actual_arrival: Mapped[Any | None] = mapped_column(Date)
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -219,6 +222,8 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         quality_document_date=line.trace.quality_document_date,
         standard=line.trace.standard,
         stock_covered=line.stock_covered,
+        note=line.note,
+        actual_arrival=line.actual_arrival,
     )
 
 
@@ -305,6 +310,8 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
             standard=row.standard,
         ),
         stock_covered=row.stock_covered if row.stock_covered is not None else Decimal("0"),
+        note=row.note,
+        actual_arrival=row.actual_arrival,
     )
 
 

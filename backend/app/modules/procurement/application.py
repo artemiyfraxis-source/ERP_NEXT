@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Protocol, Sequence
+from typing import Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 import logging
@@ -348,6 +348,24 @@ class SetTraceabilityCommand:
 
 
 @dataclass(frozen=True)
+class SetNoteCommand:
+    line_id: UUID
+    expected_version: int
+    note: str | None
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class SetExpectedArrivalCommand:
+    line_id: UUID
+    expected_version: int
+    expected_arrival: date
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
 class RecordInvoiceCommand:
     line_id: UUID
     expected_version: int
@@ -582,49 +600,84 @@ def dispatch_next_procurement_requested(
 
 
 class ReceiptStatusLookup(Protocol):
-    """Receiving's statuses of the deliveries of each procurement line (read-only port, see
+    """Receiving's view of the deliveries of each procurement line (read-only port, see
     `app.workflows.receipt_stage`). Procurement never reads Receiving's tables itself."""
 
     def statuses_for(self, procurement_line_ids: Sequence[UUID]) -> dict[UUID, list[str]]: ...
 
+    def arrival_dates_for(self, procurement_line_ids: Sequence[UUID]) -> dict[UUID, date]:
+        """ФАКТ. ДАТА: the latest inspection date among each line's deliveries (lines without one are absent)."""
+        ...
 
-def sync_receipt_stages(now: datetime, uow: UnitOfWork, receipts: ReceiptStatusLookup) -> int:
+
+class ExpectedArrivalCopier(Protocol):
+    """Write port into Receiving: ОЖИД. ДАТА of a line's open deliveries (batches `-ПN` too) follows the line.
+    Best effort — a failure is left to the next tick, which copies again."""
+
+    def copy_expected_arrivals(self, dates: Mapping[UUID, date | None], actor: Actor, now: datetime) -> int: ...
+
+
+class ReceiptSync(ReceiptStatusLookup, ExpectedArrivalCopier, Protocol):
+    pass
+
+
+def sync_receipt_stages(now: datetime, uow: UnitOfWork, receipts: ReceiptSync) -> int:
     """OwnerTick.gs `syncPurchaseStatusFromWaitlist_`: the receiving status of a paid line's deliveries
     moves the line forward — «В пути» → «Карантин» → «Готово» (only when every batch is accepted).
     Forward only; «Согласование»/«Отменено» and unpaid lines are never touched. Reads the state on every
-    tick, so a missed tick or an old receipt catches up by itself."""
+    tick, so a missed tick or an old receipt catches up by itself.
+
+    The same pass keeps the two dates of SUPPLYMAP's owner tick: ФАКТ. ДАТА from the latest inspection
+    (`syncActualArrival_`) and ОЖИД. ДАТА copied into the open deliveries (`syncExpectedDateToWaitlist_`) —
+    the buyer's edit copies at once, the tick repairs a copy that missed (a delivery created later, a failure)."""
     with uow:
         lines = list(uow.procurement.with_statuses([status.value for status in RECEIPT_STAGES]))
         if not lines:
             return 0
-        statuses = receipts.statuses_for([line.id for line in lines])
+        ids = [line.id for line in lines]
+        statuses = receipts.statuses_for(ids)
+        arrivals = receipts.arrival_dates_for(ids)
         moved = 0
         for line in lines:
             stage = stage_from_receipts(statuses.get(line.id, ()))
-            if stage is None:
-                continue
-            updated = line.advance_by_receipt(stage)
+            updated = line.follow_receipts(stage, arrivals.get(line.id))
             if updated is line:
                 continue
             uow.procurement.add(updated)
-            uow.audit.add(
-                AuditEvent(
-                    id=uuid4(),
-                    aggregate_id=line.id,
-                    event_type="procurement.receipt_stage",
-                    actor=SYSTEM_ACTOR,
-                    occurred_at=now,
-                    details={
-                        "legacy_id": line.legacy_id,
-                        "from_status": line.status.value,
-                        "to_status": updated.status.value,
-                    },
+            if updated.status is not line.status:
+                uow.audit.add(
+                    AuditEvent(
+                        id=uuid4(),
+                        aggregate_id=line.id,
+                        event_type="procurement.receipt_stage",
+                        actor=SYSTEM_ACTOR,
+                        occurred_at=now,
+                        details={
+                            "legacy_id": line.legacy_id,
+                            "from_status": line.status.value,
+                            "to_status": updated.status.value,
+                        },
+                    )
                 )
-            )
+            if updated.actual_arrival != line.actual_arrival:
+                uow.audit.add(
+                    AuditEvent(
+                        id=uuid4(),
+                        aggregate_id=line.id,
+                        event_type="procurement.actual_arrival",
+                        actor=SYSTEM_ACTOR,
+                        occurred_at=now,
+                        details={
+                            "legacy_id": line.legacy_id,
+                            "actual_arrival": updated.actual_arrival.isoformat() if updated.actual_arrival else "",
+                        },
+                    )
+                )
             moved += 1
         if moved:
             uow.commit()
-        return moved
+    copied = receipts.copy_expected_arrivals({line.id: line.expected_arrival for line in lines}, SYSTEM_ACTOR, now)
+    return moved + copied
 
 
 def dispatch_next_backorder_requested(
@@ -1020,6 +1073,54 @@ def set_procurement_traceability(
         if result != current:
             uow.commit()
         return result
+
+
+def set_procurement_note(command: SetNoteCommand, uow: UnitOfWork) -> ProcurementLine:
+    """КОММЕНТАРИЙ of one line (the buyer's free note)."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.set_note(command.note, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.note_saved",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={"note": updated.note or ""},
+        )
+        if result != current:
+            uow.commit()
+        return result
+
+
+def set_procurement_expected_arrival(
+    command: SetExpectedArrivalCommand,
+    uow: UnitOfWork,
+    receiving: ExpectedArrivalCopier | None = None,
+) -> ProcurementLine:
+    """ОЖИД. ДАТА by hand (`gateAwaitInvoice_`). A line already in receiving copies the date into its open
+    deliveries at once (`syncExpectedDateToWaitlist_`); the receipt tick repeats the copy if this one missed."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.set_expected_arrival(command.expected_arrival, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.expected_arrival_set",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={
+                "expected_arrival": command.expected_arrival.isoformat(),
+                "previous_expected_arrival": current.expected_arrival.isoformat() if current.expected_arrival else "",
+            },
+        )
+        if result != current:
+            uow.commit()
+    if receiving is not None and result.status in RECEIPT_STAGES:
+        receiving.copy_expected_arrivals({result.id: result.expected_arrival}, command.actor, command.now)
+    return result
 
 
 def set_procurement_replacement(command: SetReplacementCommand, uow: UnitOfWork) -> ProcurementLine:

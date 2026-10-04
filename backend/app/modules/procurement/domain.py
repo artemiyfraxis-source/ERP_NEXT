@@ -108,6 +108,20 @@ BY_SUPPLIER_CLOSED = frozenset(
 )
 # «Со склада» is set and taken off while the line is with its buyer, before the supplier request is formed.
 STOCK_COVER_STAGES = frozenset({ProcurementStatus.IN_WORK, ProcurementStatus.READY})
+# КОММЕНТАРИЙ (Config.gs:330, free buyer note): `gateNotInWork_` (Guards.gs:575) only locks a «Новый» row; ERP also
+# keeps a cancelled line closed (решено агентом — проверить). «Согласование» is a parked line, still noted.
+NOTE_EDITABLE = frozenset(set(ProcurementStatus) - {ProcurementStatus.NEW, ProcurementStatus.CANCELLED})
+NOTE_MAX_LENGTH = 2000
+# ОЖИД. ДАТА: `gateAwaitInvoice_` (Guards.gs:523-560) opens it once the order is placed («Жду счет»); the ETA floats
+# until the goods are in, so the buyer moves it through «Карантин» (решено агентом — проверить: «Готово» is closed).
+EXPECTED_ARRIVAL_EDITABLE = frozenset(
+    {
+        ProcurementStatus.AWAITING_INVOICE,
+        ProcurementStatus.TO_PAY,
+        ProcurementStatus.IN_TRANSIT,
+        ProcurementStatus.QUARANTINE,
+    }
+)
 
 def supplier_key(value: object) -> str:
     """`supplierKey_` (Schema.gs:220): a URL/host → its host without «www.» (lower case); any other
@@ -259,6 +273,10 @@ class ProcurementLine:
     trace: ProcurementTraceability = ProcurementTraceability()
     # «Со склада» (owner 2026-10-04): how much of КОЛ-ВО (Расчет) our own lots hold in reserve for this line.
     stock_covered: Decimal = Decimal("0")
+    # КОММЕНТАРИЙ: the buyer's free note on the line (Config.gs:330).
+    note: str | None = None
+    # ФАКТ. ДАТА (OwnerTick.gs syncActualArrival_): the latest inspection date of the line's deliveries.
+    actual_arrival: date | None = None
 
     @property
     def to_buy(self) -> Decimal:
@@ -572,6 +590,51 @@ class ProcurementLine:
         if STATUS_ORDER.index(stage) <= STATUS_ORDER.index(self.status):
             return self
         return replace(self, status=stage, version=self.version + 1)
+
+    def follow_receipts(self, stage: ProcurementStatus | None, arrival: date | None) -> ProcurementLine:
+        """One owner-tick pass over a line in receiving: the stage (`syncPurchaseStatusFromWaitlist_`) and
+        ФАКТ. ДАТА (`syncActualArrival_`, OwnerTick.gs:949-971) — the latest inspection date among its deliveries.
+        A missing date never clears one already set; one version step covers both changes."""
+        if self.status not in RECEIPT_STAGES:
+            return self
+        moved = self.advance_by_receipt(stage) if stage is not None else self
+        if arrival is None or arrival == self.actual_arrival:
+            return moved
+        if moved is self:
+            return replace(self, actual_arrival=arrival, version=self.version + 1)
+        return replace(moved, actual_arrival=arrival)
+
+    def set_note(self, note: str | None, actor: Actor) -> ProcurementLine:
+        """КОММЕНТАРИЙ: the buyer's free note, from «В работе» on (`gateNotInWork_` locks a «Новый» row)."""
+        _validate_actor(actor)
+        text = _text(note) or None
+        if text is not None and len(text) > NOTE_MAX_LENGTH:
+            raise ProcurementValidationError(f"Комментарий длиннее {NOTE_MAX_LENGTH} символов")
+        if self.status is ProcurementStatus.NEW:
+            raise ProcurementValidationError(
+                f"Сначала поставьте статус «{ProcurementStatus.IN_WORK.value}» — возьмите строку в работу"
+            )
+        if self.status not in NOTE_EDITABLE:
+            raise ProcurementValidationError("Строка отменена — комментарий не меняется")
+        self._require_owner(actor)
+        if text == self.note:
+            return self
+        return replace(self, note=text, version=self.version + 1)
+
+    def set_expected_arrival(self, expected_arrival: date, actor: Actor) -> ProcurementLine:
+        """ОЖИД. ДАТА by hand: the supplier's ETA, from «Жду счет» (`gateAwaitInvoice_`) until the goods are in.
+        Receiving's open deliveries follow it (`syncExpectedDateToWaitlist_`, OwnerTick.gs:973-1000)."""
+        self._require_owner(actor)
+        if expected_arrival == self.expected_arrival:
+            return self
+        if self.status not in EXPECTED_ARRIVAL_EDITABLE:
+            raise ProcurementValidationError(
+                f"Ожидаемая дата меняется после оформления заказа — от «{ProcurementStatus.AWAITING_INVOICE.value}»"
+                f" до «{ProcurementStatus.QUARANTINE.value}»"
+            )
+        if expected_arrival < self.created_at.date():
+            raise ProcurementValidationError("Ожидаемая дата поступления не может быть раньше заказа")
+        return replace(self, expected_arrival=expected_arrival, version=self.version + 1)
 
     @property
     def is_backorder(self) -> bool:
@@ -1002,7 +1065,9 @@ def create_backorder_line(original: ProcurementLine, message: OutboxMessage, leg
         calculated_quantity=quantity,
         calculated_sum=calculated_sum,
         actual_quantity=quantity,
+        # applyBackorders_ (Receiving.gs:110) clears ОЖИД. ДАТА and ФАКТ. ДАТА on the -Д row; КОММЕНТАРИЙ goes along.
         expected_arrival=None,
+        actual_arrival=None,
         stock_covered=Decimal("0"),
         money=rescale_to_quantity(original.money, original.actual_quantity or quantity, quantity),
     )
