@@ -9,14 +9,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
 import re
 from typing import Any, Iterable
 from uuid import UUID
 
+from app.modules.requests.domain import unit_for_type
 
-# Брак по умолчанию — 5 %: столько же зашито в BOM ERP («БРАК, ДОЛЯ» = 0,05), набор не должен с ним расходиться.
+
+# Брак по умолчанию для метражных позиций (провод, кабель) — 5 %: столько же зашито в BOM ERP («БРАК, ДОЛЯ» = 0,05).
+# Штучным — 0 (технолог Василий, 04.10: «пока даём без брака, лучше пусть походят донабирать, чем возвраты делать»):
+# запас технолог ставит руками 0, 1, 2, 3…
 SCRAP_DEFAULT = Decimal("5")
+PIECE_SCRAP_DEFAULT = Decimal("0")
+# Счётные единицы: половинки штуки не бывает, партия округляется вверх до целого.
+PIECE_UNITS = frozenset({"шт"})
 _HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
 _PROJECT_RE = re.compile(
     r"^(?:[1-9]\d*(?:К[А-Я]?|МФ)(?:\.(?:[А-Я]{1,3}|[1-9]\d*))*\.?|П\d{4}-[1-9]\d*(?:\.[1-9]\d*)?)$"
@@ -44,10 +51,20 @@ def kit_number(value: object) -> Decimal:
     return number if number.is_finite() else Decimal("0")
 
 
-def batch_quantity(per: object, run: object, scrap_pct: object) -> Decimal:
-    """`tcKitBatchQty_`: расход на штуку × тираж × (1 + брак%), округление до сотых."""
+def batch_quantity(per: object, run: object, scrap_pct: object, unit: str) -> Decimal:
+    """`tcKitBatchQty_`: расход на штуку × тираж × (1 + брак%), округление до сотых; штучное (`PIECE_UNITS`) —
+    затем вверх до целого (Василий, 04.10: «округлять шт, половинки быть не может»). Метры остаются до сотых.
+    Тот же расчёт на экране — `kitBatch` в ProjectsPage.tsx."""
     quantity = kit_number(per) * kit_number(run) * (1 + kit_number(scrap_pct) / 100)
-    return quantity.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    quantity = quantity.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if unit in PIECE_UNITS:
+        return quantity.quantize(Decimal("1"), rounding=ROUND_CEILING)
+    return quantity
+
+
+def default_scrap(item_type: str) -> Decimal:
+    """«% брака» новой строки набора: штучным 0, метражным `SCRAP_DEFAULT`. Сохранённое значение не трогается."""
+    return PIECE_SCRAP_DEFAULT if unit_for_type(item_type) in PIECE_UNITS else SCRAP_DEFAULT
 
 
 def project_number_valid(value: object) -> bool:
@@ -83,11 +100,20 @@ class KitComponent:
     name: str = ""
     link: str = ""
     per_unit: Decimal = Decimal("1")
-    scrap_pct: Decimal = SCRAP_DEFAULT
+    scrap_pct: Decimal | None = None  # не задан → `default_scrap(type)`: штучным 0, метражным 5 %
     lot: KitLot | None = None
 
+    def __post_init__(self) -> None:
+        if self.scrap_pct is None:
+            object.__setattr__(self, "scrap_pct", default_scrap(self.type))
+
+    @property
+    def unit(self) -> str:
+        """шт / м по типу — как в импорте из расчёта (`unit_for_type`)."""
+        return unit_for_type(self.type)
+
     def batch(self, run: Decimal) -> Decimal:
-        return batch_quantity(self.per_unit, run, self.scrap_pct)
+        return batch_quantity(self.per_unit, run, self.scrap_pct, self.unit)
 
 
 @dataclass(frozen=True)
@@ -279,8 +305,7 @@ def manual_kitset(
                     link=str(component.get("link") or "").strip(),
                     per_unit=kit_number(component.get("per")) or Decimal("1"),
                     scrap_pct=(
-                        kit_number(component.get("scrap"))
-                        if component.get("scrap") not in (None, "") else SCRAP_DEFAULT
+                        kit_number(component.get("scrap")) if component.get("scrap") not in (None, "") else None
                     ),
                 )
                 for component in item.get("components") or []

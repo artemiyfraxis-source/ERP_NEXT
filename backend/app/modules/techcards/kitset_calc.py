@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 
 from .kitsets import (
-    SCRAP_DEFAULT,
     CalcKitset,
     KitAssembly,
     KitComponent,
@@ -125,7 +124,7 @@ def parse_calc_sheets(sheets: dict[str, list[list[str]]], title: str, source: st
                 name=_cell(spa, row, name_col).strip(),
                 link=_cell(spa, row, link_col).strip(),
                 per_unit=kit_number(_cell(spa, row, quantity_col)) or kit_number(1),
-                scrap_pct=SCRAP_DEFAULT,
+                # «% брака» не задан: по типу (`default_scrap`) — штучным 0, проводу/кабелю 5 %.
             ))
     return CalcKitset(
         project=project,

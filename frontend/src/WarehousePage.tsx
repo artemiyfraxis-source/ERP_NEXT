@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { SuggestInput } from "./SuggestInput";
 import {
   receivingApi,
@@ -76,6 +76,26 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [putawayBusy, setPutawayBusy] = useState(false);
   const requestVersion = useRef(0);
   const groupedLots = useMemo(() => warehouseGroups(lots, groupBy, sort), [lots, groupBy, sort]);
+  // «Колонки»: the name is always there; the rest the viewer can switch off (remembered in this browser).
+  const [hiddenColumns, setHiddenColumns] = useState<ColumnKey[]>(readHiddenColumns);
+  const [choosingColumns, setChoosingColumns] = useState(false);
+  // The column the rows are grouped by is the group header already, so it is not repeated in every row.
+  const groupColumn = !flat && (groupBy === "series" || groupBy === "type") ? groupBy : null;
+  const shownColumns = (flat ? FLAT_COLUMNS : GROUPED_COLUMNS).filter((key) => key === "name" || (key !== groupColumn && !hiddenColumns.includes(key)));
+  const chooserColumns = (flat ? FLAT_COLUMNS : GROUPED_COLUMNS).filter((key) => key !== "name" && key !== groupColumn);
+  useEffect(() => writeHiddenColumns(hiddenColumns), [hiddenColumns]);
+  // The opened lot cards stay inside the visible part of a table wider than the screen: pinned to the left edge and
+  // as wide as the scroll box, not the table (the same as DataTable's detail row).
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    const sync = () => wrap.style.setProperty("--detail-width", `${wrap.clientWidth}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(wrap);
+    return () => observer.disconnect();
+  }, [flat]);
 
   async function loadAllLots() {
     const loaded: WarehouseLot[] = [];
@@ -154,25 +174,27 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       <header className="page-head">
         <h1>Склад</h1>
         <span className="page-count">{total}</span>
+        {/* The daily actions stay in sight; the reference tools sit behind «Ещё» (every one still one click away). */}
+        <div className="page-actions">
+          <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
+          {!readOnly && <button className="secondary" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>Лист перемещения</button>}
+          {!readOnly && <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => { setMoveLot(null); setMoveOpen(true); }}>↔ Переместить</button>}
+          <MoreMenu items={[
+            ...(readOnly ? [] : [
+              { label: "Стеллажи", run: () => setPanel((value) => value === "racks" ? "" : "racks") },
+              { label: "Типы", run: () => setPanel((value) => value === "types" ? "" : "types") },
+              { label: "Выгрузить", disabled: Boolean(busy), run: () => {
+                setError("");
+                downloadStockTable().catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось выгрузить."));
+              } },
+              { label: "Загрузить правки", run: () => setPanel((value) => value === "import" ? "" : "import") },
+            ]),
+            ...(admin ? [{ label: "Журнал склада", run: () => setPanel((value) => value === "journal" ? "" : "journal") }] : []),
+          ]} />
+          {!readOnly && <button className="primary" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>}
+        </div>
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
-      <div className="action-row">
-        {!readOnly && <button className="primary compact" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>}
-        <button className="secondary compact" aria-pressed={flat} onClick={() => setFlat((value) => !value)}>{flat ? "Остатки по позициям" : "Таблица склада"}</button>
-        {!readOnly && <>
-        <button className="secondary compact" onClick={() => setPanel((value) => value === "racks" ? "" : "racks")}>Стеллажи</button>
-        <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => { setMoveLot(null); setMoveOpen(true); }}>↔ Переместить</button>
-        <button className="secondary compact" onClick={() => setPanel((value) => value === "types" ? "" : "types")}>Типы</button>
-        <button className="secondary compact" disabled={Boolean(busy)} onClick={() => {
-          setError("");
-          downloadStockTable().catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось выгрузить."));
-        }}>Выгрузить</button>
-        <button className="secondary compact" onClick={() => setPanel((value) => value === "import" ? "" : "import")}>Загрузить правки</button>
-        </>}
-        {admin && <button className="secondary compact" onClick={() => setPanel((value) => value === "journal" ? "" : "journal")}>Журнал склада</button>}
-        {!readOnly && <button className="secondary compact" disabled={putawayBusy} onClick={() => void openPutawaySheet()}>Лист перемещения</button>}
-        <button className="secondary compact" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
-      </div>
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">
@@ -184,7 +206,18 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         <select aria-label="Склад" value={warehouse} onChange={(event) => setWarehouse(event.target.value)}>
           <option value="">Все склады</option><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option>
         </select>
+        <div className="toolbar-end">
+          <button className="secondary" aria-pressed={flat} onClick={() => setFlat((value) => !value)}>{flat ? "Остатки по позициям" : "Таблица склада"}</button>
+          <button className="secondary" aria-expanded={choosingColumns} onClick={() => setChoosingColumns((value) => !value)}>Колонки</button>
+        </div>
       </div>
+      {choosingColumns && <fieldset className="column-chooser">
+        <legend>Показывать колонки</legend>
+        {chooserColumns.map((key) => <label key={key} className="check-inline">
+          <input type="checkbox" checked={!hiddenColumns.includes(key)} onChange={(event) => setHiddenColumns((current) => event.target.checked ? current.filter((item) => item !== key) : [...current, key])} />
+          {columnTitle(key, flat)}
+        </label>)}
+      </fieldset>}
       {panel === "types" && <ItemTypesPanel
         onClose={() => setPanel("")}
         onChanged={async (types, renamed) => {
@@ -238,21 +271,22 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         mutate={mutate}
         onClose={() => setMoveOpen(false)}
       />}
-      {flat ? <div className="table-wrap">
+      {flat ? <div className="table-wrap" ref={wrapRef}>
         <table className="grid wide compact stock-table" aria-label="Таблица склада">
-          <thead><tr><th>Тип</th><th>ГРН</th><th className="num">Остаток</th><th className="num">Доступно</th><th>Место</th><th>Склад</th><th>Назначение</th><th>Серия</th><th>Артикул</th><th className="stock-name">Наименование</th></tr></thead>
-          <tbody>{lots.map((lot) => <tr key={lot.id}>
-            <td>{lot.item_type || "—"}</td><td>{lot.grn}{lot.package ? ` · ${lot.package}` : ""}</td><td className="num"><strong>{lot.balance} {lot.unit}</strong></td><td className="num">{lot.available}</td><td>{lot.storage_location || "—"}</td><td>{lot.warehouse}</td><td>{lot.purpose || "—"}</td><td>{lot.series || "—"}</td><td className="text" title={lot.article || undefined}>{lot.article || "—"}</td><td className="text stock-name">{lot.name || "—"}</td>
-          </tr>)}</tbody>
+          <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`} />)}</colgroup>
+          <thead><tr>{shownColumns.map((key) => <th key={key} className={columnClass(key)}>{columnTitle(key, true)}</th>)}</tr></thead>
+          <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot))}</tr>)}</tbody>
         </table>
-      </div> : <div className="table-wrap">
+      </div> : <div className="table-wrap" ref={wrapRef}>
         <table className="grid wide compact stock-table">
-          <thead><tr>{SORT_COLUMNS.map(([key, label]) => <th key={key} className={key === "balance" || key === "lots" ? "num" : key === "name" ? "stock-name" : undefined} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : undefined}>
-            <button type="button" className="th-sort" onClick={() => setSort((current) => ({ key, desc: current.key === key ? !current.desc : false }))}>{label}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}</button>
+          <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`} />)}</colgroup>
+          <thead><tr>{shownColumns.map((key) => <th key={key} className={columnClass(key)} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : undefined}>
+            <button type="button" className="th-sort" onClick={() => setSort((current) => ({ key: key as SortKey, desc: current.key === key ? !current.desc : false }))}>{columnTitle(key, false)}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}</button>
           </th>)}</tr></thead>
           <tbody>{groupedLots.map((group) => <ArticleGroup
             key={group.key}
             group={group}
+            columns={shownColumns}
             expanded={expanded}
             toggle={(key) => setExpanded((current) => {
               const next = new Set(current);
@@ -297,11 +331,81 @@ function shelf(location: string) {
 }
 
 type SortKey = "type" | "grn" | "balance" | "lots" | "place" | "series" | "article" | "name" | "warehouse";
+type ColumnKey = SortKey | "available" | "purpose";
 
-const SORT_COLUMNS: Array<[SortKey, string]> = [
-  ["type", "Тип"], ["grn", "ГРН"], ["balance", "Остаток"], ["lots", "Партий"], ["place", "Места"], ["warehouse", "Склад"],
-  ["series", "Серия"], ["article", "Артикул"], ["name", "Наименование"],
-];
+// The name leads (it is the key of the row and the flexible column, truncated with a tooltip); the narrow
+// numeric columns follow, the reference columns (тип, серия) close the row. Widths live in styles.css (`stock-col-*`).
+const GROUPED_COLUMNS: ColumnKey[] = ["name", "article", "grn", "balance", "lots", "place", "warehouse", "type", "series"];
+const FLAT_COLUMNS: ColumnKey[] = ["name", "article", "grn", "balance", "available", "place", "warehouse", "purpose", "series", "type"];
+const COLUMN_TITLES: Record<ColumnKey, string> = {
+  name: "Наименование", article: "Артикул", grn: "ГРН", balance: "Остаток", lots: "Партий", available: "Доступно",
+  place: "Места", warehouse: "Склад", purpose: "Назначение", series: "Серия", type: "Тип",
+};
+
+/** «Таблица склада» lists lots one by one, so «Места» is one «Место» there. */
+function columnTitle(key: ColumnKey, flat: boolean) {
+  return flat && key === "place" ? "Место" : COLUMN_TITLES[key];
+}
+
+function columnClass(key: ColumnKey) {
+  return key === "name" ? "stock-name" : key === "balance" || key === "lots" || key === "available" ? "num" : undefined;
+}
+
+// «Назначение» (the project a lot is kept for) is the least needed column of the lot table: off until asked for.
+const COLUMNS_STORAGE_KEY = "erp-table:stock-columns";
+
+function readHiddenColumns(): ColumnKey[] {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(COLUMNS_STORAGE_KEY) ?? "null");
+    if (Array.isArray(saved)) return saved.filter((key): key is ColumnKey => typeof key === "string" && key in COLUMN_TITLES);
+  } catch { /* storage unavailable or damaged: the default */ }
+  return ["purpose"];
+}
+
+function writeHiddenColumns(hidden: ColumnKey[]) {
+  try {
+    window.localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(hidden));
+  } catch { /* the choice lives until reload */ }
+}
+
+/** «Ещё ▾»: the reference tools of the page behind one button; every item is a plain button of the menu. */
+function MoreMenu({ items }: { items: Array<{ label: string; disabled?: boolean; run: () => void }> }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    // A tap outside, or the focus leaving the menu, closes it (a blur handler would eat the click on Safari/iPad).
+    const leave = (event: Event) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("pointerdown", leave);
+    document.addEventListener("focusin", leave);
+    return () => {
+      document.removeEventListener("pointerdown", leave);
+      document.removeEventListener("focusin", leave);
+    };
+  }, [open]);
+  if (!items.length) return null;
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape" && open) {
+      event.stopPropagation();
+      setOpen(false);
+      root.current?.querySelector<HTMLButtonElement>(".more-menu-trigger")?.focus();
+    } else if (open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      const buttons = [...(root.current?.querySelectorAll<HTMLButtonElement>("[role='menuitem']:not(:disabled)") ?? [])];
+      const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      buttons[(at + step + buttons.length) % buttons.length]?.focus();
+    }
+  }
+
+  return <div className="more-menu" ref={root} onKeyDown={onKeyDown}>
+    <button type="button" className="secondary more-menu-trigger" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>Ещё ▾</button>
+    {open && <div className="more-menu-list" role="menu">
+      {items.map((item) => <button key={item.label} type="button" role="menuitem" disabled={item.disabled} onClick={() => { setOpen(false); item.run(); }}>{item.label}</button>)}
+    </div>}
+  </div>;
+}
 
 function sortValue(item: WarehouseArticle, key: SortKey): string | number {
   switch (key) {
@@ -368,8 +472,53 @@ function quantity(lots: WarehouseLot[], field: "balance" | "available") {
   return String(Math.round(lots.reduce((sum, lot) => sum + Number(lot[field]), 0) * 1_000_000) / 1_000_000);
 }
 
-function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly }: {
+/** A cell cut to its column with «…»; the full text is the tooltip. */
+function cutCell(key: ColumnKey, text: string, className = "") {
+  return <td key={key} className={`cut ${className}`.trim()} title={text || undefined}>{text}</td>;
+}
+
+/** One lot of «Таблица склада», cell by cell in the order of the visible columns. */
+function flatCell(key: ColumnKey, lot: WarehouseLot) {
+  switch (key) {
+    case "name": return <td key={key} className="stock-name" title={lot.name || undefined}>{lot.name || "—"}</td>;
+    case "article": return cutCell(key, lot.article || "—");
+    case "grn": return cutCell(key, `${lot.grn}${lot.package ? ` · ${lot.package}` : ""}`, "stock-grn");
+    case "balance": return <td key={key} className="num"><strong>{lot.balance} {lot.unit}</strong></td>;
+    case "available": return <td key={key} className="num">{lot.available}</td>;
+    case "place": return cutCell(key, lot.storage_location || "—");
+    case "warehouse": return <td key={key}>{lot.warehouse}</td>;
+    case "purpose": return cutCell(key, lot.purpose || "—");
+    case "series": return cutCell(key, lot.series || "—");
+    case "type": return cutCell(key, lot.item_type || "—");
+    default: return null;
+  }
+}
+
+/** One article (all its lots) of the grouped table, cell by cell in the order of the visible columns. */
+function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, toggle: () => void) {
+  switch (key) {
+    case "name": {
+      const name = distinct(item.lots, "name") || item.article || "Без наименования";
+      return <td key={key} className="stock-name"><button className="link-button table-link" title={name} aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(); }}>{name}</button></td>;
+    }
+    case "article": return cutCell(key, item.article || "—");
+    case "grn": return cutCell(key, distinct(item.lots, "grn"), "stock-grn");
+    case "balance": {
+      const unit = distinct(item.lots, "unit");
+      return <td key={key} className="num"><strong>{quantity(item.lots, "balance")}{unit ? ` ${unit}` : ""}</strong></td>;
+    }
+    case "lots": return <td key={key} className="num">{item.lots.length}</td>;
+    case "place": return <td key={key} className="cut" title={distinct(item.lots, "storage_location") || undefined}>{places(item.lots)}</td>;
+    case "warehouse": return <td key={key}>{distinct(item.lots, "warehouse")}</td>;
+    case "series": return cutCell(key, distinct(item.lots, "series"));
+    case "type": return cutCell(key, distinct(item.lots, "item_type"));
+    default: return null;
+  }
+}
+
+function ArticleGroup({ group, columns, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly }: {
   group: WarehouseGroup;
+  columns: ColumnKey[];
   expanded: Set<string>;
   toggle: (key: string) => void;
   busy: string;
@@ -380,23 +529,14 @@ function ArticleGroup({ group, expanded, toggle, busy, disabled, mutate, onMove,
   readOnly: boolean;
 }) {
   return <>
-    {group.label && <tr className="stock-group-row"><td colSpan={9}>{group.label} · {group.articles.length}</td></tr>}
+    {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {group.articles.length}</span></td></tr>}
     {group.articles.map((item) => {
       const open = expanded.has(item.key);
-      const unit = distinct(item.lots, "unit");
       return <Fragment key={item.key}>
         <tr className={open ? "stock-article-row open" : "stock-article-row"} title="Партии карточками" onClick={() => toggle(item.key)}>
-          <td>{distinct(item.lots, "item_type")}</td>
-          <td className="stock-grn">{distinct(item.lots, "grn")}</td>
-          <td className="num"><strong>{quantity(item.lots, "balance")}{unit ? ` ${unit}` : ""}</strong></td>
-          <td className="num">{item.lots.length}</td>
-          <td>{places(item.lots)}</td>
-          <td>{distinct(item.lots, "warehouse")}</td>
-          <td>{distinct(item.lots, "series")}</td>
-          <td className="text" title={item.article || undefined}>{item.article || "—"}</td>
-          <td className="text stock-name"><button className="link-button table-link" aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(item.key); }}>{distinct(item.lots, "name") || item.article || "Без наименования"}</button></td>
+          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key)))}
         </tr>
-        {open && <tr className="stock-cards-row"><td colSpan={9}><div className="lot-cards">
+        {open && <tr className="stock-cards-row"><td colSpan={columns.length}><div className="lot-cards">
           {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} />)}
         </div></td></tr>}
       </Fragment>;

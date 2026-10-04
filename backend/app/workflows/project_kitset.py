@@ -29,6 +29,13 @@ from app.modules.fulfillment.application import (
     project_reserve_by_lot,
 )
 from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError
+from app.modules.procurement.application import (
+    ConcurrentProcurementUpdate,
+    RemoveRequestLinesCommand,
+    RequestLines,
+    UnitOfWork as ProcurementUnitOfWork,
+    remove_untouched_request_lines,
+)
 from app.modules.procurement.domain import ProcurementLine
 from app.modules.production.domain import ProductionTask
 from app.modules.production.plan import (
@@ -720,12 +727,13 @@ def delete_kitset(
     shipping_uow: Callable[[], ShippingUnitOfWork] | None,
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None = None,
     requests_uow: Callable[[], RequestsUnitOfWork] | None = None,
-    procurement_stages: Any = None,
+    procurement_uow: Callable[[], ProcurementUnitOfWork] | None = None,
 ) -> dict[str, Any]:
     """The card goes everywhere at once: composition and spec, the registry row, issued techcards with their
     revisions, finished-goods rows without movement, and the project's tails that never moved
-    (`purge_project_tails`: tasks without work, kit requests without issue, purchase requests not yet in
-    procurement). Anything with movement stays and is named in ``tails.kept``. КД stays too, as in
+    (`purge_project_tails`: tasks without work, kit requests without issue, purchase requests with their
+    procurement lines while nothing was ordered, invoiced or paid). Anything with movement stays and is named in
+    ``tails.kept``. КД stays too, as in
     `tcKitsetDelete`: its register rows (with the files) outlive the card and show up again when the project is
     loaded from the calculation anew."""
     project = str(project or "").strip()
@@ -768,7 +776,7 @@ def delete_kitset(
         try:
             tails = purge_project_tails(
                 kitset.project, actor, now, fulfillment_uow=fulfillment_uow, production_uow=production_uow,
-                requests_uow=requests_uow, procurement_stages=procurement_stages,
+                requests_uow=requests_uow, procurement_uow=procurement_uow,
             ).payload()
         except Exception as error:  # noqa: BLE001 — карточка уже снесена, ответ должен дойти
             _log.exception("Хвосты проекта %s не удалены", kitset.project)
@@ -786,12 +794,16 @@ def delete_kitset(
 TAIL_FULFILLMENT = "fulfillment"
 TAIL_PRODUCTION = "production"
 TAIL_REQUESTS = "requests"
-TAIL_SECTIONS = (TAIL_FULFILLMENT, TAIL_PRODUCTION, TAIL_REQUESTS)
+TAIL_PROCUREMENT = "procurement"
+TAIL_SECTIONS = (TAIL_FULFILLMENT, TAIL_PRODUCTION, TAIL_REQUESTS, TAIL_PROCUREMENT)
 _TAIL_NOUNS = {
     TAIL_FULFILLMENT: ("запрос на комплектацию", "запроса на комплектацию", "запросов на комплектацию"),
     TAIL_PRODUCTION: ("производственное задание", "производственных задания", "производственных заданий"),
     TAIL_REQUESTS: ("заявка на закупку", "заявки на закупку", "заявок на закупку"),
+    TAIL_PROCUREMENT: ("строка закупки", "строки закупки", "строк закупки"),
 }
+# Заявка, по которой уже везут или привезли, остаётся при любых строках закупки.
+_REQUEST_DELIVERED = frozenset({RequestStatus.IN_TRANSIT, RequestStatus.CLOSED})
 # Собранный, но не выданный комплект физически лежит в коробке: удалить его молча — потерять след на полке.
 _PICKED = frozenset({FulfillmentStatus.COMPLETE, FulfillmentStatus.READY})
 
@@ -882,14 +894,16 @@ def purge_project_tails(
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None = None,
     production_uow: Callable[[], Any] | None = None,
     requests_uow: Callable[[], RequestsUnitOfWork] | None = None,
-    procurement_stages: Any = None,
+    procurement_uow: Callable[[], ProcurementUnitOfWork] | None = None,
     apply: bool = True,
 ) -> ProjectTails:
     """Tails of a deleted project that never moved go; anything with movement stays and is named with a reason.
 
     Production tasks without recorded work (no box, session, output, defect, «взял/закончил») and not handed to a
     site whole; kit requests with nothing issued and not picked — their reserve goes back to the lot; purchase
-    requests still «Новый» with no procurement line. The project is matched exactly after normalisation
+    requests together with all their procurement lines while nothing moved there (`removal_blocker`: no supplier
+    order, invoice, КП money, payment, receipt or «Со склада» reserve — owner 04.10), or still «Новый» with no
+    line at all. The project is matched exactly after normalisation
     (`normalize_project_number` / `project_from_purpose`), so «719К.2» never touches «719К.21». The same code path
     serves the cascade of `delete_kitset` and the `purge_project_tails` command (``apply=False`` — dry run)."""
     canon = normalize_project_number(project)
@@ -953,30 +967,89 @@ def purge_project_tails(
             tails.kept.append(TailEntry(TAIL_FULFILLMENT, label, reason))
 
     if requests_uow is not None:
-        with requests_uow() as uow:
-            requests = sorted((request for request in uow.requests.recent(1_000_000)
-                               if request_matches_project(canon, request)), key=lambda request: request.legacy_id)
-            fresh = [request.id for request in requests if request.status is RequestStatus.NEW]
-            stages = procurement_stages.stages_for(fresh) if procurement_stages is not None and fresh else {}
-            for request in requests:
-                label = f"{request.legacy_id} · {request.name}"
-                if request.status is not RequestStatus.NEW:
-                    tails.kept.append(TailEntry(TAIL_REQUESTS, label, f"уже в закупке («{request.status.value}»)"))
-                    continue
-                if request.id in stages:
-                    tails.kept.append(TailEntry(TAIL_REQUESTS, label, f"уже в закупке («{stages[request.id]}»)"))
-                    continue
-                tails.deleted.append(TailEntry(TAIL_REQUESTS, label))
-                if apply:
-                    uow.requests.delete(request.id)
-                    uow.audit.add(AuditEvent(
-                        id=uuid4(), aggregate_id=request.id, event_type="request.deleted", actor=actor,
-                        occurred_at=now, details={"project": tails.project, "legacy_id": request.legacy_id,
-                                                  "designation": request.designation, "reason": "project_deleted"},
-                    ))
-            if apply and requests:
-                uow.commit()
+        _purge_requests(canon, tails, actor, now, requests_uow, procurement_uow, apply)
     return tails
+
+
+def _request_blocker(request: Request, lines: RequestLines | None, procurement_seen: bool) -> str | None:
+    """Why a purchase request of a deleted project stays; None — it goes (with `lines`, if any)."""
+    if request.status in _REQUEST_DELIVERED:
+        return f"уже в закупке («{request.status.value}»)"
+    if lines is not None:
+        return f"в закупке {lines.blocker}" if lines.blocker else None
+    if request.status is RequestStatus.NEW:
+        return None
+    if procurement_seen and request.status is RequestStatus.IN_WORK:
+        # Передана, но строка ещё не создана (событие в очереди): удалить заявку сейчас — строка придёт без неё.
+        return "передана в закупку, строки закупки ещё нет — удалите позже"
+    return f"уже в закупке («{request.status.value}»)"
+
+
+def _purge_requests(
+    canon: str, tails: ProjectTails, actor: Actor, now: datetime,
+    requests_uow: Callable[[], RequestsUnitOfWork],
+    procurement_uow: Callable[[], ProcurementUnitOfWork] | None,
+    apply: bool,
+) -> None:
+    """Purchase requests go with their procurement lines: the lines first (one procurement transaction, re-checked
+    there), then the requests whose version did not move meanwhile (a re-transfer keeps its request)."""
+    with requests_uow() as uow:
+        requests = sorted((request for request in uow.requests.recent(1_000_000)
+                           if request_matches_project(canon, request)), key=lambda request: request.legacy_id)
+    if not requests:
+        return
+
+    def lines_of(ids: list[UUID], write: bool) -> dict[UUID, RequestLines]:
+        return remove_untouched_request_lines(RemoveRequestLinesCommand(
+            request_ids=tuple(ids), actor=actor, now=now, project=tails.project, apply=write,
+        ), procurement_uow())
+
+    found = lines_of([request.id for request in requests], False) if procurement_uow is not None else {}
+    going: list[Request] = []
+    for request in requests:
+        reason = _request_blocker(request, found.get(request.id), procurement_uow is not None)
+        if reason is None:
+            going.append(request)
+        else:
+            tails.kept.append(TailEntry(TAIL_REQUESTS, f"{request.legacy_id} · {request.name}", reason))
+    if not going:
+        return
+    removed = found
+    raced = False
+    with_lines = [request.id for request in going if request.id in found]
+    if apply and with_lines:
+        try:
+            removed = lines_of(with_lines, True)
+        except ConcurrentProcurementUpdate:
+            raced = True
+    with requests_uow() as uow:
+        for request in going:
+            label = f"{request.legacy_id} · {request.name}"
+            if raced and request.id in found:
+                tails.kept.append(TailEntry(TAIL_REQUESTS, label, "строки закупки изменили во время удаления — повторите"))
+                continue
+            lines = removed.get(request.id) if request.id in found else None
+            if lines is not None and lines.blocker:
+                tails.kept.append(TailEntry(TAIL_REQUESTS, label, f"в закупке {lines.blocker}"))
+                continue
+            tails.deleted.extend(TailEntry(TAIL_PROCUREMENT, line) for line in (lines.lines if lines else ()))
+            if apply:
+                current = uow.requests.get(request.id)
+                if current is None:
+                    continue
+                if current.version != request.version:
+                    tails.kept.append(TailEntry(TAIL_REQUESTS, label, "заявку изменили во время удаления — повторите"))
+                    continue
+            tails.deleted.append(TailEntry(TAIL_REQUESTS, label))
+            if apply:
+                uow.requests.delete(request.id)
+                uow.audit.add(AuditEvent(
+                    id=uuid4(), aggregate_id=request.id, event_type="request.deleted", actor=actor,
+                    occurred_at=now, details={"project": tails.project, "legacy_id": request.legacy_id,
+                                              "designation": request.designation, "reason": "project_deleted"},
+                ))
+        if apply:
+            uow.commit()
 
 
 # ── КД (TcKd.gs) ────────────────────────────────────────────────────────

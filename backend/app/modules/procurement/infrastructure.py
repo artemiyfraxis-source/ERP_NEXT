@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     Uuid,
     and_,
+    delete as sql_delete,
     false,
     func,
     or_,
@@ -137,6 +138,9 @@ class ProcurementLineRow(Base):
     notified_status: Mapped[str | None] = mapped_column(String(32))
     # «Со склада»: the part of КОЛ-ВО (Расчет) our lots reserve for the line (procurement_stock_covers).
     stock_covered: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0")
+    # КОММЕНТАРИЙ (the buyer's note) and ФАКТ. ДАТА (latest inspection of the line's deliveries, set by the tick).
+    note: Mapped[str | None] = mapped_column(Text)
+    actual_arrival: Mapped[Any | None] = mapped_column(Date)
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -218,6 +222,8 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         quality_document_date=line.trace.quality_document_date,
         standard=line.trace.standard,
         stock_covered=line.stock_covered,
+        note=line.note,
+        actual_arrival=line.actual_arrival,
     )
 
 
@@ -304,6 +310,8 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
             standard=row.standard,
         ),
         stock_covered=row.stock_covered if row.stock_covered is not None else Decimal("0"),
+        note=row.note,
+        actual_arrival=row.actual_arrival,
     )
 
 
@@ -642,6 +650,23 @@ class SqlAlchemyProcurementRepository:
         for column in ProcurementLineRow.__table__.columns:
             if column.name not in _SWEEP_OWNED:
                 setattr(stored, column.name, getattr(incoming, column.name))
+
+    def delete(self, line_id: UUID, expected_version: int) -> bool:
+        # Core DELETE guarded by the version: a concurrent edit wins and nothing is touched. Released «Со склада»
+        # covers are this line's own history: the FK cascades them on PostgreSQL, the second DELETE does it on SQLite.
+        result = self.session.execute(
+            sql_delete(ProcurementLineRow)
+            .where(ProcurementLineRow.id == line_id, ProcurementLineRow.version == expected_version)
+            .execution_options(synchronize_session=False)
+        )
+        if not result.rowcount:
+            return False
+        self.session.execute(
+            sql_delete(ProcurementStockCoverRow)
+            .where(ProcurementStockCoverRow.line_id == line_id)
+            .execution_options(synchronize_session=False)
+        )
+        return True
 
     def status_notifications_due(self, statuses: Sequence[str], limit: int) -> list[StatusNotificationDue]:
         rows = self.session.execute(

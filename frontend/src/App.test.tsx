@@ -161,6 +161,40 @@ it("opens native resource planning at the production route", async () => {
   expect(await screen.findByText("Проектов с выданной техкартой пока нет.")).toBeInTheDocument();
 });
 
+it("opens the ОТК section at the quality route for a QC inspector", async () => {
+  window.history.replaceState({}, "", "/login?section=quality");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({ ...principal, roles: ["qc"], permissions: { production: "edit" } });
+    if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
+    if (path === "/api/production/boxes") return json({ boxes: [] });
+    if (path === "/api/production/instruments") return json({ instruments: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "ОТК", level: 1 })).toBeInTheDocument();
+  expect(await screen.findByText(/Коробок на проверку нет/)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Средства измерения" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "ОТК" })).toBeInTheDocument();
+});
+
+it("does not open the ОТК section to a fitter, who lands on the cabinet", async () => {
+  window.history.replaceState({}, "", "/login?section=quality");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json({ ...principal, roles: ["staff"], permissions: { production: "view" } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "ОТК", level: 1 })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "ОТК" })).not.toBeInTheDocument();
+});
+
 it("opens the native production plan at the prodplan route", async () => {
   window.history.replaceState({}, "", "/login?section=prodplan");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -236,6 +270,59 @@ it("opens the personal notification inbox for every authenticated user", async (
 
   expect(await screen.findByRole("heading", { name: "Уведомления", level: 1 })).toBeInTheDocument();
   expect(await screen.findByText("Новых событий пока нет.")).toBeInTheDocument();
+});
+
+const CARD = {
+  as_of: "2026-10-04",
+  header: { id: principal.user.id, name: "Сотрудник Первый", department: "КБ", roles: [{ key: "staff", label: "Сотрудник" }], site: null, site_label: null, active: true },
+  subordinates: [], projects: [], skills: [],
+  absences: { upcoming: [], next_vacation: null },
+  hours_this_month: { month: "2026-10", label: "октябрь 2026", hours: null, sessions: null },
+  requests: { count: null, items: [] },
+  tasks: { count: null, items: [] },
+};
+
+it("opens the own card from «Моя карточка» in the sidebar profile and keeps the menu free of it", async () => {
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path === "/api/auth/me") return json(principal);
+    if (path === "/api/employee-card/me") return json(CARD);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  expect(screen.queryAllByRole("button", { name: "Личная карточка" })).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Моя карточка" }));
+
+  expect(await screen.findByRole("heading", { name: "Сотрудник Первый", level: 1 })).toBeInTheDocument();
+  expect(window.location.search).toBe("?section=card");
+  expect(paths).toContain("/api/employee-card/me");
+});
+
+it("opens someone else's card from ?section=card&user= and edits through the staff form", async () => {
+  const other = "20000000-0000-0000-0000-000000000002";
+  window.history.replaceState({}, "", `/login?section=card&user=${other}`);
+  const admin = { ...principal, roles: ["admin"], permissions: { staffdir: "edit" } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(admin);
+    if (path === `/api/employee-card/${other}`) return json({ ...CARD, header: { ...CARD.header, id: other, name: "Сидоров Олег" } });
+    if (path === "/api/auth/staff") return json({
+      users: [{ id: other, login: "o@example.test", email: "o@example.test", name: "Сидоров Олег", department: "КБ", role: "staff", site: "", active: true, pin_set: false }],
+      departments: ["КБ"], roles: [{ key: "staff", label: "Сотрудник" }], sites: [],
+    });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<App />);
+  expect(await screen.findByRole("heading", { name: "Сидоров Олег", level: 1 })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Редактировать" }));
+
+  expect(await screen.findByRole("heading", { name: "Правка: Сидоров Олег" })).toBeInTheDocument();
+  expect(window.location.search).toBe(`?section=staff&user=${other}`);
 });
 
 it("opens the restricted operations journal for management", async () => {

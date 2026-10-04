@@ -152,3 +152,19 @@ it("deletes an employee after confirmation and hides switched-off ones until ask
   fireEvent.click(screen.getByLabelText("Показать отключённых (1)"));
   expect(screen.getByText("Закупкин")).toBeInTheDocument();
 });
+
+it("opens the personal card of a row and, when sent from a card, the edit form of that person at once", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/staff") return json(DIRECTORY);
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const openCard = vi.fn();
+  const view = render(<StaffPage openCard={openCard} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Карточка Закупкин" }));
+  expect(openCard).toHaveBeenCalledWith("u2");
+  expect(screen.queryByRole("heading", { name: "Правка: Закупкин" })).not.toBeInTheDocument();
+  view.unmount();
+
+  render(<StaffPage openUserId="u2" />);
+  expect(await screen.findByRole("heading", { name: "Правка: Закупкин" })).toBeInTheDocument();
+});

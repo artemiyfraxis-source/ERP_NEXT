@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -27,6 +27,8 @@ from .application import (
     MarkReadCommand,
     UnitOfWork,
     close_project_task,
+    delete_notification,
+    delete_notifications,
     mark_notifications_read,
 )
 from .domain import ProjectTask, ProjectTaskError, task_module_label
@@ -94,6 +96,37 @@ def mark_read(
         uow_factory(),
     )
     return {"unread": unread}
+
+
+@router.delete("/api/notifications/{notification_id}")
+def delete_one(
+    notification_id: UUID,
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(operations_uow_factory)],
+) -> dict:
+    """Remove one item of the caller's own inbox; someone else's id answers 404 like a missing one."""
+    try:
+        unread = delete_notification(principal.email, notification_id, uow_factory())
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Уведомление не найдено") from None
+    return {"unread": unread}
+
+
+@router.delete("/api/notifications")
+def delete_many(
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(operations_uow_factory)],
+    scope: Annotated[Literal["all", "read"] | None, Query()] = None,
+    ids: Annotated[list[UUID] | None, Query(alias="id", max_length=100)] = None,
+) -> dict:
+    """Clear the caller's own inbox: `?scope=all` («Удалить все»), `?scope=read` («Удалить прочитанные»)
+    or `?id=…&id=…` (the selected rows). Exactly one of the two forms; other users' items are never touched."""
+    if (scope is None) == (not ids):
+        raise HTTPException(status_code=422, detail="Укажите либо scope, либо список id")
+    deleted, unread = delete_notifications(
+        principal.email, ids=tuple(ids or ()), only_read=scope == "read", uow=uow_factory(),
+    )
+    return {"deleted": deleted, "unread": unread}
 
 
 @router.get("/api/operations/audit")

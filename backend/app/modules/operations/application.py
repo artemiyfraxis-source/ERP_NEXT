@@ -27,6 +27,8 @@ class NotificationRepository(Protocol):
     def list_for(self, email: str, limit: int) -> Sequence[Notification]: ...
     def unread_count(self, email: str) -> int: ...
     def mark_read(self, email: str, ids: tuple[UUID, ...], now: datetime) -> int: ...
+    def delete(self, email: str, notification_id: UUID) -> bool: ...
+    def delete_many(self, email: str, *, ids: tuple[UUID, ...] = (), only_read: bool = False) -> int: ...
 
 
 class RecipientDirectory(Protocol):
@@ -107,6 +109,28 @@ def mark_notifications_read(command: MarkReadCommand, uow: UnitOfWork) -> int:
         )
         uow.commit()
     return unread
+
+
+def delete_notification(recipient_email: str, notification_id: UUID, uow: UnitOfWork) -> int:
+    """Delete one item of the recipient's own inbox; the unread count after it. KeyError: not his or not there."""
+    with uow:
+        if not uow.notifications.delete(recipient_email, notification_id):
+            raise KeyError(f"Notification not found: {notification_id}")
+        uow.commit()
+        return uow.notifications.unread_count(recipient_email)
+
+
+def delete_notifications(
+    recipient_email: str, *, ids: tuple[UUID, ...] = (), only_read: bool = False, uow: UnitOfWork,
+) -> tuple[int, int]:
+    """Clear the recipient's own inbox: the chosen ids, only what he has read, or everything.
+
+    Returns (deleted, unread left). Ids that are not his are skipped, never touched.
+    """
+    with uow:
+        deleted = uow.notifications.delete_many(recipient_email, ids=ids, only_read=only_read)
+        uow.commit()
+        return deleted, uow.notifications.unread_count(recipient_email)
 
 
 def _split(value: object) -> tuple[str, ...]:

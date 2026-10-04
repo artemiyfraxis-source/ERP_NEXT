@@ -23,7 +23,7 @@ it("keeps SUPPLYMAP's four blocks in SUPPLYMAP's order, reference books last", (
 
 it("shows the administrator every block with SUPPLYMAP's cards in order, ERP-only sections in place", () => {
   expect(layout(as("admin", ALL_EDIT))).toEqual({
-    "Производство": ["Проекты", "Ресурсное планирование", "Задания"],
+    "Производство": ["Проекты", "Ресурсное планирование", "Задания", "ОТК"],
     "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Сотрудники", "Доступы", "Уведомления", "Системный журнал"],
@@ -72,12 +72,37 @@ it("gives the shop master planning, tasks and the production plan", () => {
   expect(layout(as("master", {
     ...OWN, receiving: "view", warehouse: "view", fulfillment: "view", handout: "view", production: "edit", shipping: "view", erpref: "view",
   }))).toEqual({
-    "Производство": ["Ресурсное планирование", "Задания"],
+    "Производство": ["Ресурсное планирование", "Задания", "ОТК"],
     "Снабжение": ["Оформить заявку", "Мои заявки"],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
     "Менеджмент": ["Производственный план", "Уведомления"],
     "Справочники": ["База данных"],
   });
+});
+
+// Owner 04.10.2026: очередь ОТК, брак и средства измерения — отдельный раздел, не часть «Ресурсного планирования».
+// Его видят те, кто и раньше видел эти блоки: правка раздела производства у мастера, ОТК, администратора и ролей с полным доступом.
+it("opens «ОТК» to the QC inspector, the master and the administrator on an edit grant, to nobody on a view grant", () => {
+  const quality = (principal: Principal) => (layout(principal)["Производство"] ?? []).includes("ОТК");
+  expect(quality(as("qc", { production: "edit", erpref: "view" }))).toBe(true);
+  expect(quality(as("master", { production: "edit" }))).toBe(true);
+  expect(quality(as("admin", { production: "edit" }))).toBe(true);
+  for (const role of ["buyer", "prodhead", "management"]) expect(quality(as(role, { production: "edit" }))).toBe(true);
+  for (const role of ["qc", "master", "admin", "prodhead"]) expect(quality(as(role, { production: "view" }))).toBe(false);
+});
+
+it("hides «ОТК» from a fitter and from roles with no part in quality control, even with an edit grant", () => {
+  const quality = (principal: Principal) => (layout(principal)["Производство"] ?? []).includes("ОТК");
+  expect(quality(as("staff", { production: "view" }))).toBe(false);
+  expect(quality(as("staff", { production: "edit" }))).toBe(false);
+  expect(quality(as("receiver", { production: "edit" }))).toBe(false);
+  expect(quality(as("pm", { production: "edit" }))).toBe(false);
+  // Без ключа производства раздела нет и у ОТК.
+  expect(quality(as("qc", {}))).toBe(false);
+});
+
+it("keeps «Ресурсное планирование» in the production block next to «ОТК»", () => {
+  expect(layout(as("qc", { production: "edit" }))["Производство"]).toEqual(["Ресурсное планирование", "ОТК"]);
 });
 
 it("hides «Оформить заявку» from a view-only grant on newrequest", () => {
@@ -129,7 +154,7 @@ it("opens «Доступы» to every administrator and «Сотрудники»
 it("opens every section to a full-access role, «Доступы» only to the administrator", () => {
   for (const role of ["buyer", "prodhead", "management"]) {
     expect(layout(as(role, ALL_EDIT))).toEqual({
-      "Производство": ["Проекты", "Ресурсное планирование", "Задания"],
+      "Производство": ["Проекты", "Ресурсное планирование", "Задания", "ОТК"],
       "Снабжение": ["Оформить заявку", "Мои заявки", "Заявки", "Лист закупки"],
       "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Отгрузка"],
       "Менеджмент": ["Производственный план", "Сотрудники", "Уведомления", "Системный журнал"],

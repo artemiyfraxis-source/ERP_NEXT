@@ -8,11 +8,8 @@ import {
   type ProductionAbsence,
   type ProductionBox,
   type ProductionMaterialSource,
-  type ProductionDefect,
-  type ProductionInstrument,
   type ProductionLaunchable,
   type ProductionAssignPlan,
-  type ProductionQcRejection,
   type ProductionOperation,
   type ProductionOperator,
   type ProductionOutput,
@@ -24,8 +21,9 @@ import {
 } from "./api";
 import { canAct, hasRole } from "./navigation";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
+import { formatDay } from "./format";
 import { MasterBoard } from "./MasterBoard";
-import { feedsText, isFinal, isFirst, isNetwork, previousStage, requiredNote, requiredOf } from "./productionGraph";
+import { feedsText, isFirst, isNetwork, previousStage, requiredNote, requiredOf } from "./productionGraph";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
@@ -33,9 +31,6 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [viewerSite, setViewerSite] = useState("");
   const [execution, setExecution] = useState<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>({ session: null, boxes: [] });
   const [boxes, setBoxes] = useState<ProductionBox[]>([]);
-  const [defects, setDefects] = useState<ProductionDefect[]>([]);
-  const [instruments, setInstruments] = useState<ProductionInstrument[]>([]);
-  const [qcRejections, setQcRejections] = useState<ProductionQcRejection[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -51,14 +46,13 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [selectedOperationId, setSelectedOperationId] = useState("");
   const [week, setWeek] = useState(0);
   const canEdit = canAct(principal, "production", ["master", "admin"]);
-  const canQuality = canAct(principal, "production", ["qc", "admin"]);
   const canOverview = hasRole(principal, ["master", "prodhead", "management", "qc", "admin"]);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
 
   async function reload() {
     setError("");
     try {
-      const [taskResult, operatorResult, executionResult, defectResult, instrumentResult, qcRejectionResult] = await Promise.all([
+      const [taskResult, operatorResult, executionResult] = await Promise.all([
         mine ? productionApi.mine() : productionApi.list(),
         mine
           ? Promise.resolve({ operators: [{ id: principal.user.id, name: principal.user.name, site: "" }] })
@@ -66,18 +60,12 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
         mine
           ? productionApi.execution()
           : canOverview ? productionApi.boxes() : Promise.resolve({ boxes: [] }),
-        !mine && canOverview ? productionApi.defects() : Promise.resolve({ defects: [] }),
-        !mine && canOverview ? productionApi.instruments() : Promise.resolve({ instruments: [] }),
-        !mine && canOverview ? productionApi.qcRejections() : Promise.resolve({ rejections: [] }),
       ]);
       setTasks(taskResult.tasks);
       setOperators(operatorResult.operators);
       setViewerSite((operatorResult as { viewer_site?: string }).viewer_site ?? "");
       if (mine) setExecution(executionResult as { session: ProductionWorkSession | null; boxes: ProductionBox[] });
       else setBoxes(executionResult.boxes);
-      setDefects(defectResult.defects);
-      setInstruments(instrumentResult.instruments);
-      setQcRejections(qcRejectionResult.rejections);
       if (!mine && canOverview) {
         // Праздники — для подсветки Ганта, компетенции — для метки допуска в карточке назначения (prodSkillTag_).
         const [calendarResult, skillResult] = await Promise.all([
@@ -132,13 +120,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showLaunch && canEdit && <LaunchForm tasks={tasks} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} />}
-    {!mine && canEdit && <div className="review-row">
-      <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />
-      <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />
-      <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />
-    </div>}
-    {!mine && canQuality && <QualityPanel boxes={boxes} tasks={tasks} instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
-    {!mine && canQuality && <InstrumentRegistry instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
+    {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
     {mine && <MyQueue tasks={tasks} session={execution.session} busy={busy} mutate={mutate} />}
     {!mine && selectedTask && <TaskDetail
       key={`${selectedTask.id}:${selectedTask.version}`}
@@ -209,28 +191,51 @@ function CalendarForm({ operators, close }: { operators: ProductionOperator[]; c
     setToDate("");
   }
 
+  const sortedHolidays = [...holidays].sort();
+  const sortedAbsences = absences.map((absence, index) => ({ absence, index }))
+    .sort((left, right) => left.absence.from_date.localeCompare(right.absence.from_date));
+  const operatorName = (id: string) => operators.find((operator) => operator.id === id)?.name ?? "Сотрудник не в списке";
+  const toggleDay = (day: number) => setShift({ ...shift, weekdays: shift.weekdays.includes(day) ? shift.weekdays.filter((value) => value !== day) : [...shift.weekdays, day].sort() });
+
   return <div className="panel production-calendar">
     <div className="manual-stock-head"><h2>Календарь цеха</h2><button className="link-button" onClick={close}>Закрыть</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
-    <div className="shift-editor">
-      <div><strong>Смена</strong><small>Чистое время — без обеда и мелких перерывов (туалет, перекуры); они размазываются по всей смене.</small></div>
-      <label>Начало<input aria-label="Начало смены" type="time" value={shift.start} onChange={(event) => setShift({ ...shift, start: event.target.value })} /></label>
-      <label>Конец<input aria-label="Конец смены" type="time" value={shift.finish} onChange={(event) => setShift({ ...shift, finish: event.target.value })} /></label>
-      <label>Чистое время, ч<input aria-label="Эффективные часы" type="number" min="0.25" max="24" step="0.25" value={shift.effective_hours} onChange={(event) => setShift({ ...shift, effective_hours: event.target.value })} /></label>
-      <label>Перерыв с<input aria-label="Перерыв с" type="time" value={shift.breaks[0]?.[0] ?? ""} onChange={(event) => setShift({ ...shift, breaks: event.target.value || shift.breaks[0]?.[1] ? [[event.target.value, shift.breaks[0]?.[1] ?? ""]] : [] })} /></label>
-      <label>Перерыв до<input aria-label="Перерыв до" type="time" value={shift.breaks[0]?.[1] ?? ""} onChange={(event) => setShift({ ...shift, breaks: shift.breaks[0]?.[0] || event.target.value ? [[shift.breaks[0]?.[0] ?? "", event.target.value]] : [] })} /></label>
-      <div className="weekday-picker">{["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map((label, day) => <label key={label}><input type="checkbox" checked={shift.weekdays.includes(day)} onChange={(event) => setShift({ ...shift, weekdays: event.target.checked ? [...shift.weekdays, day].sort() : shift.weekdays.filter((value) => value !== day) })} />{label}</label>)}</div>
-    </div>
-    <div className="calendar-add"><label>Нерабочий день<input aria-label="Нерабочий день" type="date" value={holiday} onChange={(event) => setHoliday(event.target.value)} /></label><button className="secondary small" disabled={!holiday} onClick={() => { setHolidays((current) => current.includes(holiday) ? current : [...current, holiday].sort()); setHoliday(""); }}>Добавить праздник</button></div>
-    <div className="calendar-chips">{holidays.map((day) => <button key={day} className="calendar-chip" onClick={() => setHolidays((current) => current.filter((value) => value !== day))}>{day} ×</button>)}</div>
-    <div className="calendar-add absence-add">
-      <label>Оператор<select value={operatorId} onChange={(event) => setOperatorId(event.target.value)}>{operators.map((operator) => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select></label>
-      <label>Вид<select value={kind} onChange={(event) => setKind(event.target.value)}>{["Отпуск", "Больничный", "Отгул", "Командировка", "Учёба"].map((value) => <option key={value}>{value}</option>)}</select></label>
-      <label>С<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
-      <label>По<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
-      <button className="secondary small" disabled={!operatorId || !fromDate || Boolean(toDate && toDate < fromDate)} onClick={addAbsence}>Добавить отсутствие</button>
-    </div>
-    <div className="calendar-absences">{absences.map((absence, index) => <div key={absence.id ?? `${absence.operator_id}:${absence.from_date}:${index}`}><span>{operators.find((operator) => operator.id === absence.operator_id)?.name ?? absence.operator_id} · {absence.kind} · {absence.from_date}—{absence.to_date}</span><button className="link-button danger-link" onClick={() => setAbsences((current) => current.filter((_, position) => position !== index))}>Удалить</button></div>)}</div>
+    <section className="calendar-block" aria-label="Смена">
+      <h3>Смена</h3>
+      <div className="form-grid">
+        <label>Начало<input aria-label="Начало смены" type="time" value={shift.start} onChange={(event) => setShift({ ...shift, start: event.target.value })} /></label>
+        <label>Конец<input aria-label="Конец смены" type="time" value={shift.finish} onChange={(event) => setShift({ ...shift, finish: event.target.value })} /></label>
+        <label>Перерыв с<input aria-label="Перерыв с" type="time" value={shift.breaks[0]?.[0] ?? ""} onChange={(event) => setShift({ ...shift, breaks: event.target.value || shift.breaks[0]?.[1] ? [[event.target.value, shift.breaks[0]?.[1] ?? ""]] : [] })} /></label>
+        <label>Перерыв до<input aria-label="Перерыв до" type="time" value={shift.breaks[0]?.[1] ?? ""} onChange={(event) => setShift({ ...shift, breaks: shift.breaks[0]?.[0] || event.target.value ? [[shift.breaks[0]?.[0] ?? "", event.target.value]] : [] })} /></label>
+        <label title="Без обеда и мелких перерывов: они размазываются по всей смене">Чистое время, ч<input aria-label="Эффективные часы" type="number" min="0.25" max="24" step="0.25" value={shift.effective_hours} onChange={(event) => setShift({ ...shift, effective_hours: event.target.value })} /></label>
+        <div className="field-group weekdays" role="group" aria-label="Рабочие дни"><span>Рабочие дни</span>
+          <div className="seg-tabs weekday-toggles">{["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map((label, day) => <button type="button" key={label} className={shift.weekdays.includes(day) ? "on" : undefined} aria-pressed={shift.weekdays.includes(day)} onClick={() => toggleDay(day)}>{label}</button>)}</div>
+        </div>
+      </div>
+    </section>
+    <section className="calendar-block" aria-label="Нерабочие дни и отсутствия">
+      <h3>Нерабочие дни и отсутствия</h3>
+      <div className="calendar-add"><label>Нерабочий день<input aria-label="Нерабочий день" type="date" value={holiday} onChange={(event) => setHoliday(event.target.value)} /></label><button className="secondary small cal-add" disabled={!holiday} onClick={() => { setHolidays((current) => current.includes(holiday) ? current : [...current, holiday].sort()); setHoliday(""); }}>Добавить праздник</button></div>
+      <div className="holiday-chips" aria-label="Нерабочие дни">
+        {sortedHolidays.map((day) => <span key={day} className="holiday-chip">{formatDay(day)}<button type="button" aria-label={`Удалить нерабочий день ${formatDay(day)}`} onClick={() => setHolidays((current) => current.filter((value) => value !== day))}>×</button></span>)}
+        {!sortedHolidays.length && !busy && <small className="cal-empty">Нерабочих дней нет — выберите день и добавьте.</small>}
+      </div>
+      <div className="form-grid">
+        <label>Оператор<select value={operatorId} onChange={(event) => setOperatorId(event.target.value)}>{operators.map((operator) => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select></label>
+        <label>Вид<select value={kind} onChange={(event) => setKind(event.target.value)}>{["Отпуск", "Больничный", "Отгул", "Командировка", "Учёба"].map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label>С<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
+        <label>По<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
+      </div>
+      <div className="form-actions"><button className="secondary small cal-add" disabled={!operatorId || !fromDate || Boolean(toDate && toDate < fromDate)} onClick={addAbsence}>Добавить отсутствие</button></div>
+      {sortedAbsences.length > 0
+        ? <div className="table-wrap calendar-absences"><table className="grid"><thead><tr><th>Оператор</th><th>Вид</th><th>С</th><th>По</th><th></th></tr></thead><tbody>
+          {sortedAbsences.map(({ absence, index }) => <tr key={absence.id ?? `${absence.operator_id}:${absence.from_date}:${index}`}>
+            <td>{operatorName(absence.operator_id)}</td><td>{absence.kind}</td><td>{formatDay(absence.from_date)}</td><td>{formatDay(absence.to_date)}</td>
+            <td className="row-end"><button type="button" className="link-button danger-link" aria-label={`Удалить отсутствие: ${operatorName(absence.operator_id)}, ${formatDay(absence.from_date)}`} onClick={() => setAbsences((current) => current.filter((_, position) => position !== index))}>Удалить</button></td>
+          </tr>)}
+        </tbody></table></div>
+        : !busy && <small className="cal-empty">Отсутствий нет — отпуска и больничные добавляются выше.</small>}
+    </section>
     <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void save()}>Сохранить календарь</button></div>
   </div>;
 }
@@ -858,107 +863,6 @@ function BoxReview({ boxes, operators, busy, mutate }: {
   </div>;
 }
 
-function DefectReview({ defects, operators, busy, mutate }: {
-  defects: ProductionDefect[];
-  operators: ProductionOperator[];
-  busy: boolean;
-  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-}) {
-  const [dispositions, setDispositions] = useState<Record<string, "Доработка" | "Списание" | "Использовать как есть">>({});
-  const [acts, setActs] = useState<Record<string, string>>({});
-  // A defect record replaced by a box correction stays on record but is decided through its replacement.
-  const pending = defects.filter((defect) => defect.status === "Ожидает решения" && !defect.replaced_by_output_id);
-  if (!pending.length) return null;
-  return <div className="panel box-review defect-review"><div className="manual-stock-head"><h2>Брак цеха</h2><span className="page-count">{pending.length}</span></div>
-    <div className="box-grid">{pending.map((defect) => {
-      const disposition = dispositions[defect.id] ?? "Доработка";
-      return <div className="production-box defect-box" key={`${defect.id}:${defect.version}`}>
-        <strong>{defect.number}</strong><span>{defect.quantity} шт · {defect.character}</span><span>{defect.description}</span><small>{operators.find((operator) => operator.id === defect.operator_id)?.name ?? defect.operator_id}</small>
-        <label>Решение<select value={disposition} onChange={(event) => setDispositions((current) => ({ ...current, [defect.id]: event.target.value as typeof disposition }))}><option>Доработка</option><option>Списание</option><option>Использовать как есть</option></select></label>
-        <label>Акт / основание<input aria-label={`Акт для ${defect.number}`} value={acts[defect.id] ?? ""} onChange={(event) => setActs((current) => ({ ...current, [defect.id]: event.target.value }))} /></label>
-        <button className="primary small" disabled={busy || !(acts[defect.id] ?? "").trim()} onClick={() => void mutate(defect.id, () => productionApi.decideDefect(defect.id, defect.version, disposition, acts[defect.id]))}>Принять решение</button>
-      </div>;
-    })}</div>
-  </div>;
-}
-
-function QcRejectionReview({ rejections, busy, mutate }: {
-  rejections: ProductionQcRejection[];
-  busy: boolean;
-  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-}) {
-  const [dispositions, setDispositions] = useState<Record<string, "Доработка" | "Списание" | "Использовать как есть">>({});
-  const [acts, setActs] = useState<Record<string, string>>({});
-  const pending = rejections.filter((item) => item.status === "Ожидает решения");
-  if (!pending.length) return null;
-  return <div className="panel box-review defect-review"><div className="manual-stock-head"><h2>Брак ОТК</h2><span className="page-count">{pending.length}</span></div>
-    <div className="box-grid">{pending.map((item) => {
-      const disposition = dispositions[item.id] ?? "Доработка";
-      return <div className="production-box defect-box" key={item.id}>
-        <strong>{item.defect_number}</strong><span>{item.rejected} шт · {item.defect_character}</span><span>{item.defect_description}</span><small>{item.box_number ?? item.box_id} · {item.item}</small>
-        <label>Решение<select value={disposition} onChange={(event) => setDispositions((current) => ({ ...current, [item.id]: event.target.value as typeof disposition }))}><option>Доработка</option><option>Списание</option><option>Использовать как есть</option></select></label>
-        <label>Акт / основание<input aria-label={`Акт ОТК для ${item.defect_number}`} value={acts[item.id] ?? ""} onChange={(event) => setActs((current) => ({ ...current, [item.id]: event.target.value }))} /></label>
-        <button className="primary small" disabled={busy || !(acts[item.id] ?? "").trim()} onClick={() => void mutate(`qc-decision:${item.id}`, () => productionApi.decideQcRejection(item.id, disposition, acts[item.id]))}>Принять решение</button>
-      </div>;
-    })}</div>
-  </div>;
-}
-
-function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
-  boxes: ProductionBox[];
-  tasks: ProductionTask[];
-  instruments: ProductionInstrument[];
-  busy: boolean;
-  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-}) {
-  const [drafts, setDrafts] = useState<Record<string, { accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] }>>({});
-  const ready = boxes.filter((box) => {
-    const task = tasks.find((item) => item.id === box.task_id);
-    const operation = task?.operations.find((item) => item.id === box.operation_id);
-    // В ОТК идёт коробка финальной операции схемы; операция не нашлась в задании — по старому: последний номер.
-    const final = task && operation ? isFinal(task, operation) : task ? box.operation_position === Math.max(...task.operations.map((item) => item.position)) : false;
-    return box.status === "Подтверждена" && !box.qc_inspected && final;
-  });
-  if (!ready.length) return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">0</span></div><div className="empty">Коробок на проверку нет — они появятся, когда мастер подтвердит коробку с последней операции.</div></div>;
-  const update = (boxId: string, patch: Partial<{ accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] }>) => setDrafts((current) => {
-    const previous = current[boxId] ?? { accepted: "", rejected: "0", character: "", description: "", instrumentIds: [] };
-    return { ...current, [boxId]: { ...previous, ...patch } };
-  });
-  return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">{ready.length}</span></div>
-    <div className="box-grid">{ready.map((box) => {
-      const draft = drafts[box.id] ?? { accepted: box.available, rejected: "0", character: "", description: "", instrumentIds: [] };
-      const totalMatches = Number(draft.accepted || 0) + Number(draft.rejected || 0) === Number(box.available);
-      return <div className="production-box" key={`${box.id}:${box.version}`}>
-        <strong>{box.number}</strong><span>{box.item} · {box.available} шт</span>
-        <label>Годные ОТК<input aria-label={`Годные ОТК ${box.number}`} type="number" min="0" step="1" value={draft.accepted} onChange={(event) => update(box.id, { accepted: event.target.value })} /></label>
-        <label>Брак ОТК<input aria-label={`Брак ОТК ${box.number}`} type="number" min="0" step="1" value={draft.rejected} onChange={(event) => update(box.id, { rejected: event.target.value })} /></label>
-        {Number(draft.rejected) > 0 && <><label>Характер<input value={draft.character} onChange={(event) => update(box.id, { character: event.target.value })} /></label><label>Описание<textarea value={draft.description} onChange={(event) => update(box.id, { description: event.target.value })} /></label></>}
-        <label>Средства измерения<select multiple aria-label={`Средства измерения ${box.number}`} value={draft.instrumentIds} onChange={(event) => update(box.id, { instrumentIds: Array.from(event.target.selectedOptions, (option) => option.value) })}>{instruments.filter((item) => item.status === "Действует").map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · поверка до {formatDay(item.verification_due)}</option>)}</select></label>
-        {!totalMatches && <small className="danger-text">Сумма должна быть {box.available}.</small>}
-        <button className="primary small" disabled={busy || !totalMatches || (Number(draft.rejected) > 0 && (!draft.character.trim() || !draft.description.trim()))} onClick={() => void mutate(`qc:${box.id}`, () => productionApi.inspectBox(box.id, {
-          version: box.version, accepted: Number(draft.accepted), rejected: Number(draft.rejected),
-          defect_character: draft.character, defect_description: draft.description,
-          instrument_ids: draft.instrumentIds,
-        }))}>Принять ОТК</button>
-      </div>;
-    })}</div>
-  </div>;
-}
-
-function InstrumentRegistry({ instruments, busy, mutate }: {
-  instruments: ProductionInstrument[];
-  busy: boolean;
-  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-}) {
-  const [show, setShow] = useState(false);
-  const [draft, setDraft] = useState({ inventory_number: "", name: "", instrument_type: "", verification_number: "", verified_at: "", verification_due: "" });
-  return <div className="panel instrument-registry">
-    <div className="manual-stock-head"><h2>Средства измерения</h2><button className="secondary small" onClick={() => setShow((value) => !value)}>+ Добавить СИ</button></div>
-    {show && <div className="production-launch-grid">{(["inventory_number", "name", "instrument_type", "verification_number"] as const).map((field) => <label key={field}>{({ inventory_number: "Инв. №", name: "Наименование", instrument_type: "Тип", verification_number: "№ поверки" })[field]}<input value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value })} /></label>)}<label>Поверено<input type="datetime-local" value={draft.verified_at} onChange={(event) => setDraft({ ...draft, verified_at: event.target.value })} /></label><label>Поверка до<input type="datetime-local" value={draft.verification_due} onChange={(event) => setDraft({ ...draft, verification_due: event.target.value })} /></label><button className="primary small" disabled={busy || Object.values(draft).some((value) => !value.trim())} onClick={() => void mutate("instrument:new", () => productionApi.registerInstrument(draft))}>Сохранить СИ</button></div>}
-    <div className="calendar-absences">{instruments.map((item) => <div key={item.id}><span><strong>{item.inventory_number}</strong> · {item.name} · {item.instrument_type}</span><small>{item.verification_number} · до {formatDay(item.verification_due)} · {item.status}</small></div>)}</div>
-  </div>;
-}
-
 // Поиск родословной отложен владельцем 29.09: сначала распределение задач из техкарт, прослеживаемость — потом.
 // Бэкенд и данные на месте; вернуть блок — поставить true.
 const SHOW_TRACEABILITY = false;
@@ -998,11 +902,6 @@ function duration(seconds: number) {
 function hours(seconds: number) {
   const value = (Number(seconds) || 0) / 3600;
   return `${(value < 10 ? value.toFixed(1) : String(Math.round(value))).replace(".", ",")} ч`;
-}
-
-function formatDay(value: string | null) {
-  const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return match ? `${match[3]}.${match[2]}.${match[1]}` : String(value ?? "");
 }
 
 function formatDate(value: string | null) {
