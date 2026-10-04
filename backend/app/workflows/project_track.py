@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any, Iterable
 
 from app.modules.fulfillment.domain import FulfillmentStatus
+from app.modules.operations.domain import task_module_label
 from app.modules.production.plan import kit_key_from_purpose, normalize_project_number, project_from_purpose
 from app.modules.techcards.kitsets import item_id, project_key
 from app.modules.techcards.project_cards import TechcardStatus
@@ -31,6 +32,8 @@ MODULE_RECEIVING = "Приёмка"
 MODULE_FULFILLMENT = "Комплектация"
 MODULE_PRODUCTION = "Производство"
 MODULE_SHIPPING = "Отгрузка"
+# Задачи, которые арбитр поставил модулям по проекту (C2, `app.workflows.arbiter`).
+MODULE_TASKS = "Задачи"
 
 # Читаем всё, как `kitset_facts` (limit=10_000): у модулей нет выборки «по проекту», а фильтр нужен после нормализации.
 _LIMIT = 100_000
@@ -246,6 +249,15 @@ def _shipment_entries(uow, canon: str) -> list[TrackEntry]:
     return entries
 
 
+def _task_entries(uow, canon: str) -> list[TrackEntry]:
+    """Задача модулю: вид — её текст, номер — кому она («Производство»), статус — «Открыта»/«Закрыта»."""
+    return [
+        TrackEntry(task.created_at, MODULE_TASKS, task.title, task_module_label(task.module), task.status_label,
+                   task.item_index)
+        for task in uow.project_tasks.list(project=canon, limit=_LIMIT)
+    ]
+
+
 def _order(entries: Iterable[TrackEntry]) -> list[TrackEntry]:
     """По времени; без даты — в конец. Сортировка устойчива: при равном времени остаётся порядок разделов."""
     return sorted(entries, key=lambda entry: (entry.at is None, 0.0 if entry.at is None else _stamp(entry.at)))
@@ -260,8 +272,10 @@ def project_track(
     fulfillment: Callable[[], Any] | None = None,
     production: Callable[[], Any] | None = None,
     shipping: Callable[[], Any] | None = None,
+    tasks: Callable[[], Any] | None = None,
 ) -> list[TrackEntry]:
-    """Трек проекта из фабрик unit of work модулей; нет фабрики — раздел пропущен. Ничего не пишет."""
+    """Трек проекта из фабрик unit of work модулей; нет фабрики — раздел пропущен. Ничего не пишет.
+    `tasks` — unit of work операций (задачи арбитра); при равном времени задача идёт после записи, что её родила."""
     canon = normalize_project_number(project)
     if not canon:
         return []
@@ -274,4 +288,5 @@ def project_track(
     entries += _read(fulfillment, lambda uow: _fulfillment_entries(uow, canon))
     entries += _read(production, lambda uow: _production_entries(uow, canon))
     entries += _read(shipping, lambda uow: _good_entries(uow, canon) + _shipment_entries(uow, canon))
+    entries += _read(tasks, lambda uow: _task_entries(uow, canon))
     return _order(entries)

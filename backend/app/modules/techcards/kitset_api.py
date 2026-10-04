@@ -77,6 +77,10 @@ def requests_factory(request: Request):
     return _factory(request, "uow_factory")
 
 
+def operations_factory(request: Request):
+    return _factory(request, "operations_uow_factory")
+
+
 def procurement_factory(request: Request):
     return _factory(request, "procurement_uow_factory")
 
@@ -407,13 +411,13 @@ def track(
     _principal: Annotated[Principal, Depends(projects_view_principal)],
 ) -> dict:
     """«Трек проекта» (ARCH-TRACK-3): всё, что по проекту создано в модулях, по времени; без даты — в конце.
-    Только чтение через порты модулей; модуль без фабрики пропускается."""
+    Только чтение через порты модулей; модуль без фабрики пропускается. Задачи арбитра — раздел «Задачи»."""
     kitset = _kitset(request, project)
     entries = track_flow.project_track(
         kitset.project, techcards=techcards_factory(request), requests=requests_factory(request),
         procurement=procurement_factory(request), receiving=receiving_factory(request),
         fulfillment=fulfillment_factory(request), production=production_factory(request),
-        shipping=shipping_factory(request),
+        shipping=shipping_factory(request), tasks=operations_factory(request),
     )
     return {"project": kitset.project, "entries": [entry.payload() for entry in entries]}
 

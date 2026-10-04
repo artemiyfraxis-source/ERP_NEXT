@@ -12,6 +12,6 @@
     { "id": "production", "owner": "supplymap", "strategy": "native-rewrite", "implementedStage": "production-traceability-stage-6-plan-manual-kit-marks-and-auto-scheduler-step-2", "routePrefixes": ["/api/production"], "sources": ["ProdTasks.gs", "ProdPlan.gs", "ProdSchedule.gs", "ProdWork.gs", "TcKitset.gs", "docs/briefs/production-traceability.md", "docs/briefs/vasily-merge.md", "TcBuild.gs", "TcRecord.gs", "TcRecordDb.gs"] },
     { "id": "shipping", "owner": "supplymap", "strategy": "native-rewrite", "routePrefixes": ["/api/shipping"], "sources": ["Shipment.gs", "docs/adr/0016-shipments-queue-from-project.md"] },
     { "id": "references", "owner": "supplymap", "strategy": "native-rewrite", "implementedStage": "technology-schema-v14-operation-and-terminal-norm-kernel", "routePrefixes": ["/api/references"], "sources": ["References.gs", "TcOpsDb.gs", "TcConfig.gs", "TcGenerator.gs", "TcBuild.gs", "PortalRef.gs"] },
-    { "id": "audit-jobs-notifications", "owner": "supplymap", "strategy": "native-rewrite", "routePrefixes": ["/api/notifications", "/api/operations"], "sources": ["Trace.gs", "OwnerTick.gs", "Triggers.gs", "Notify.gs", "Master.gs"] }
+    { "id": "audit-jobs-notifications", "owner": "supplymap", "strategy": "native-rewrite", "routePrefixes": ["/api/notifications", "/api/operations", "/api/project-tasks"], "sources": ["Trace.gs", "OwnerTick.gs", "Triggers.gs", "Notify.gs", "Master.gs"] }
   ]
 }
