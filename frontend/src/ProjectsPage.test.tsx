@@ -402,6 +402,30 @@ describe("ProjectsPage", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/techcards/kitsets/708%D0%9A.4/documents/d1", expect.objectContaining({ method: "DELETE" })));
   });
 
+  it("opens the track of the project only on the «Трек» tab", async () => {
+    const trackCalls: string[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/track") {
+        trackCalls.push(url);
+        return json({ project: "708К.4", entries: [
+          { at: "2026-10-04T14:30:00", module: "Техкарты", kind: "Техкарта выдана", ref: "708К.4КБ1", status: "Выдана", item_index: "КБ1" },
+          { at: null, module: "Отгрузка", kind: "Отправка уехала", ref: "ОТ-0001", status: "Запланирована", item_index: "" },
+        ] });
+      }
+      return base(input, init);
+    });
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    render(<ProjectsPage principal={editor} />);
+    const tab = await screen.findByRole("tab", { name: "Трек" });
+    expect(trackCalls).toHaveLength(0);
+    fireEvent.click(tab);
+    expect(await screen.findByText("04.10.2026 14:30")).toBeTruthy();
+    expect(screen.getByText("Отправка уехала")).toBeTruthy();
+    expect(trackCalls).toHaveLength(1);
+  });
+
   it("mirrors the server batch formula and delete summary", () => {
     expect(kitBatch("1,5", "10", "5")).toBe(15.75);
     expect(kitBatch("", "10", "5")).toBe(0);

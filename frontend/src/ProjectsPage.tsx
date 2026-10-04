@@ -19,6 +19,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { ProjectStatus } from "./ProjectStatus";
+import { ProjectTrack } from "./ProjectTrack";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
    номер, заказчик, сборки с тиражом и состав каждой. Внутри — состав, снабжение, спецификация, генератор и
@@ -334,7 +335,7 @@ function CreateFromCalc({ canRequest, close, done }: {
   </div>;
 }
 
-type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | `tc:${string}`;
+type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | "track" | `tc:${string}`;
 
 function KitsetCardView({ project, principal, canEdit, canRequest, back }: { project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: () => void }) {
   const [genIndex, setGenIndex] = useState("");
@@ -388,6 +389,7 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
     ["sostav", "Состав"], ["supply", "Снабжение"], ["spec", "Спецификация"], ["gen", "Генератор"],
     ...tcTabs.map((assembly) => [`tc:${assembly.index}` as Tab, `ТК ${assembly.index}`] as [Tab, string]),
     ["journal", `Журнал${card.journal?.length ? ` · ${card.journal.length}` : ""}`],
+    ["track", "Трек"],
   ];
   const blockerInfo = card.blocker_info;
 
@@ -419,6 +421,7 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
     {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex}
       done={(index) => { void load(); setTab(`tc:${index}`); setNote(`Техкарта ${index} готова — открыта вкладка «ТК ${index}».`); }} />}
     {tab === "journal" && <JournalTab card={card} canEdit={canEdit} changed={setCard} />}
+    {tab === "track" && <ProjectTrack project={card.project} />}
     {tab.startsWith("tc:") && (() => {
       const assembly = card.assemblies.find((item) => `tc:${item.index}` === tab);
       if (!assembly?.techcard) return <div className="empty">Сборка не найдена.</div>;
