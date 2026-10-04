@@ -37,6 +37,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
+from app.shared.notifications import LEGACY_ROLE_AUDIENCES
+
+from .audiences import AUDIENCE_LABELS, AUDIENCE_RULES, in_audience
 from .domain import (
     ACCESS_LEVELS,
     FULL_ACCESS_LEVELS,
@@ -207,14 +210,11 @@ WITNESSES: dict[str, tuple[Rule, Rule]] = {
     "operations": (Rule(("operations",), VIEW, _OPERATIONS), Rule(("operations",), EDIT, _OPERATIONS)),
 }
 
-# Notification audiences: the role keys modules address today (shared/notifications.py TECHNOLOGIST_ROLE, SUPPLY_ROLE,
-# PROJECT_MANAGER_ROLE, STOREKEEPER_ROLE; the owner, security and technologist alerts all go to "admin") and the plan's
-# audience by section (None — superadmin + admin).
-NOTIFICATION_AUDIENCES: tuple[tuple[str, str, tuple[str, str] | None], ...] = (
-    ("admin", "Технолог, владелец, безопасность", None),
-    ("buyer", "Снабжение", ("procurement", EDIT)),
-    ("pm", "Менеджер проекта", ("shipping", EDIT)),
-    ("receiver", "Кладовщик", ("shipping_goods", EDIT)),
+# Notification audiences: the role keys modules addressed before audiences (shared/notifications.py
+# LEGACY_ROLE_AUDIENCES; the owner, security and technologist alerts all went to "admin"), each with the audience it
+# resolves to now (identity/audiences.py: a section's editors; None — superadmin + admin).
+NOTIFICATION_AUDIENCES: tuple[tuple[str, str, tuple[str, str] | None], ...] = tuple(
+    (role, AUDIENCE_LABELS[audience], AUDIENCE_RULES[audience]) for role, audience in LEGACY_ROLE_AUDIENCES.items()
 )
 
 
@@ -502,13 +502,11 @@ def verify(snapshot: Snapshot, result: Transfer) -> Verification:
     """Every person × every gate, before and after, plus the notification audiences and the administrators."""
     people = sorted(snapshot.people, key=lambda person: (not person.active, person.name.casefold(), person.login))
     rows: list[PersonCheck] = []
-    after_permissions: dict[UUID, dict[str, str]] = {}
     for person in people:
         role = str(person.role or "").strip()
         assignment = result.people[person.id]
         before = old_permissions(role, snapshot.role_matrix.get(role, {}), snapshot.user_access.get(person.id, {}))
         after = person_permissions_after(result, person.id)
-        after_permissions[person.id] = after
         rows.append(PersonCheck(person, assignment, False, tuple(
             GateCheck(gate, passes_before(role, before, gate), passes_after(assignment.access_level, after, gate))
             for gate in GATES
@@ -532,9 +530,15 @@ def verify(snapshot: Snapshot, result: Transfer) -> Verification:
             section, mode = rule
             after = tuple(
                 person.id for person in active
-                if _RANK[after_permissions[person.id].get(section, NONE)] >= _RANK[mode]
+                if in_audience(
+                    rule, result.people[person.id].access_level,
+                    result.levels.get(result.people[person.id].access_level, {}), result.exceptions.get(person.id, {}),
+                )
             )
-            described = f"«{LEVEL_SECTION_LABELS[section]}» — {'правка' if mode == EDIT else 'просмотр'}"
+            described = (
+                f"«{LEVEL_SECTION_LABELS[section]}» — {'правка' if mode == EDIT else 'просмотр'}"
+                " (superadmin и admin — только при личном исключении на раздел)"
+            )
         audiences.append(Audience(key, label, described, before, after))
 
     can_log_in = [person for person in active if person.has_credential or person.has_pin]

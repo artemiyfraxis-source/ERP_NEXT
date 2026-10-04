@@ -12,7 +12,7 @@ from app.shared.http_auth import Principal
 from app.shared.identity import Actor
 from app.shared.events import AuditEvent
 from app.shared.clock import as_utc
-from app.shared.notifications import notification_requested, publish_notification
+from app.shared.notifications import TECHNOLOGIST_AUDIENCE, notification_requested, publish_notification
 
 from .domain import (
     ROLE_LABELS,
@@ -316,7 +316,7 @@ def _record_failure(
                 "Вход заблокирован до конца окна. Записи — в системном журнале."
             ),
             kind="security",
-            roles=("admin",),
+            audiences=(TECHNOLOGIST_AUDIENCE,),
         ))
     uow.commit()
 

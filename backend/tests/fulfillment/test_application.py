@@ -190,7 +190,7 @@ def test_human_lot_binding_and_whole_kit_issue_are_one_stock_transaction():
     (ready_note,) = uow.outbox.items
     assert ready_note.topic == "notification.requested"
     assert ready_note.payload["recipient_user_ids"] == str(actor.id) == str(ready.requester_id)
-    assert ready_note.payload["recipient_roles"] == ""
+    assert ready_note.payload["recipient_audiences"] == ""
     assert ready_note.payload["title"] == f"Заявка {ready.number} готова к получению"
     assert "место: Полка выдачи 2" in ready_note.payload["body"]
     issued = issue_fulfillment(

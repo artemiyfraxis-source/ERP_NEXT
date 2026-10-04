@@ -86,8 +86,8 @@ def _outbox(sessions, topic="notification.requested"):
         ))
 
 
-def _user(role, email):
-    return _row(IdentityUserRow, role=role, email=email, active=True)
+def _user(level, email):
+    return _row(IdentityUserRow, access_level=level, email=email, active=True)
 
 
 def test_digest_lists_overdue_requests_and_stuck_receiving(sessions):
@@ -123,14 +123,14 @@ def test_digest_lists_overdue_requests_and_stuck_receiving(sessions):
 
 
 def test_digest_goes_to_admins_once_a_day_and_not_when_clean(sessions):
-    _add(sessions, _user("admin", "owner@example.test"), _user("buyer", "buyer@example.test"))
+    _add(sessions, _user("admin", "owner@example.test"), _user("tech_lead", "buyer@example.test"))
     assert daily_overdue_digest(NOW, sessions) is False  # nothing burning → no message, day closed
     _add(sessions, _request("SM-1", TODAY - timedelta(days=1)))
     assert daily_overdue_digest(NOW + timedelta(hours=1), sessions) is False  # the day gate holds
     assert daily_overdue_digest(NOW + timedelta(days=1), sessions) is True
     assert daily_overdue_digest(NOW + timedelta(days=1, minutes=1), sessions) is False
     [message] = _outbox(sessions)
-    assert message.payload["recipient_roles"] == "admin"
+    assert message.payload["recipient_audiences"] == "technologist"
     assert message.payload["type"] == "digest"
     assert message.payload["title"] == "Дайджест — просрочки и Карантин"
     assert dispatch_next_notification(NOW, SqlAlchemyOperationsUnitOfWork(sessions)) == 1
@@ -148,7 +148,7 @@ def test_disposal_escalation_is_sent_once_per_quarantine_stay(sessions):
     [message] = _outbox(sessions)
     assert message.payload["type"] == "disposal"
     assert message.payload["reference"] == "SM-8"
-    assert set(message.payload["recipient_roles"].split(",")) == {"admin", "buyer"}
+    assert set(message.payload["recipient_audiences"].split(",")) == {"technologist", "supply"}
     assert message.payload["title"] == "Карантин ≥3 мес — нужно решение об утилизации — SM-8"
     assert "В Карантине 91 дн. (с 30.06.2026)." in message.payload["body"]
     assert "Характер несоответствия: Недостача" in message.payload["body"]
@@ -188,7 +188,7 @@ def test_failure_alert_seeds_first_then_alerts_new_signatures_once(sessions):
     assert alert_on_dead_letters(NOW + timedelta(minutes=1), sessions) == 1
     [alert] = _outbox(sessions)
     assert alert.payload["type"] == "error"
-    assert alert.payload["recipient_roles"] == "admin"
+    assert alert.payload["recipient_audiences"] == "technologist"
     assert alert.payload["title"] == "Ошибки фоновых задач (1)"
     assert "• [warehouse.received] (×2)\n  Нет такого склада" in alert.payload["body"]
     assert "old failure" not in alert.payload["body"]

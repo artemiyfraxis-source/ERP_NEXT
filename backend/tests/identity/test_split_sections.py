@@ -193,7 +193,7 @@ def test_thirty_failures_over_all_accounts_close_the_login_and_alert_admins(iden
         alerts = list(session.scalars(select(OutboxMessageRow)))
         failed = list(session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "identity.login_failed")))
     assert len(alerts) == 1
-    assert alerts[0].payload["recipient_roles"] == "admin" and alerts[0].payload["type"] == "security"
+    assert alerts[0].payload["recipient_audiences"] == "technologist" and alerts[0].payload["type"] == "security"
     assert "всего — 30" in alerts[0].payload["body"]
     assert len(failed) == 30 and failed[-1].details["total"] == "30"
 

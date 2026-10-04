@@ -11,8 +11,8 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
 from app.shared.notifications import (
-    SUPPLY_ROLE,
-    TECHNOLOGIST_ROLE,
+    SUPPLY_AUDIENCE,
+    TECHNOLOGIST_AUDIENCE,
     notification_requested,
     publish_notification,
 )
@@ -40,11 +40,11 @@ from .domain import (
 
 
 SYSTEM_ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
-_NOTIFY_ROLES = {NOTIFY_TECHNOLOGIST: TECHNOLOGIST_ROLE, NOTIFY_SUPPLY: SUPPLY_ROLE}
+_NOTIFY_AUDIENCES = {NOTIFY_TECHNOLOGIST: TECHNOLOGIST_AUDIENCE, NOTIFY_SUPPLY: SUPPLY_AUDIENCE}
 
 
-def _notify_roles(line: ReceivingLine) -> tuple[str, ...]:
-    return tuple(_NOTIFY_ROLES[target] for target in quarantine_notify_targets(line.nonconformities))
+def _notify_audiences(line: ReceivingLine) -> tuple[str, ...]:
+    return tuple(_NOTIFY_AUDIENCES[target] for target in quarantine_notify_targets(line.nonconformities))
 
 
 def _notify_nonconformity(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> None:
@@ -69,7 +69,7 @@ def _notify_nonconformity(line: ReceivingLine, uow: UnitOfWork, now: datetime) -
         ),
         kind="nonconformity",
         reference=line.legacy_id,
-        roles=_notify_roles(line),
+        audiences=_notify_audiences(line),
     ))
 
 
@@ -853,7 +853,7 @@ def quarantine_overdue_waiting(now: datetime, uow: UnitOfWork, *, limit: int = 2
                 ),
                 kind="quarantine",
                 reference=line.legacy_id,
-                roles=_notify_roles(line),
+                audiences=_notify_audiences(line),
             ))
             moved.append(quarantined)
         if moved:
