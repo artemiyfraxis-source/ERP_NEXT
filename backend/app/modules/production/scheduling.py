@@ -1,4 +1,9 @@
-"""Pure automatic task scheduling ported from SUPPLYMAP ProdSchedule.gs."""
+"""Pure automatic task scheduling ported from SUPPLYMAP ProdSchedule.gs.
+
+Сетевой график (ARCH-TRACK-2): операции задания идут по графу входов, а не по номерам. Операция планируется после
+всех своих входов: её ранний старт — самый поздний из допустимых стартов по каждому входу (с передаточной партией —
+после первой партии входа, как в цепочке ProdSchedule.gs). Параллельные ветки встают одновременно на разных людей.
+Цепочка (каждая операция берёт предыдущую по номеру) планируется ровно как раньше."""
 
 from __future__ import annotations
 
@@ -11,6 +16,7 @@ from uuid import UUID
 from .domain import (
     BusyInterval,
     DEFAULT_SHIFT,
+    OperationInput,
     OperatorSkill,
     ProductionOperation,
     ProductionTask,
@@ -64,6 +70,68 @@ def work_seconds_between(
                 total += int((upper - lower).total_seconds())
         current = datetime.combine(current.date() + timedelta(days=1), datetime.min.time(), current.tzinfo)
     return int(total * work_rate(shift))
+
+
+def network_order(operations: tuple[ProductionOperation, ...]) -> tuple[ProductionOperation, ...]:
+    """Топологический порядок по входам: операция — после всех своих входов; из готовых первой идёт меньший номер
+    (цепочка остаётся в порядке номеров, ветки — в порядке номеров технолога)."""
+    by_id = {operation.id: operation for operation in operations}
+    waiting = {
+        operation.id: {item.input_operation_id for item in operation.inputs if item.input_operation_id in by_id}
+        for operation in operations
+    }
+    result: list[ProductionOperation] = []
+    while waiting:
+        ready = [by_id[operation_id] for operation_id, sources in waiting.items() if not sources]
+        if not ready:
+            raise ProductionValidationError("Схема этапов задания замкнута в цикл")
+        current = min(ready, key=lambda operation: operation.position)
+        result.append(current)
+        del waiting[current.id]
+        for sources in waiting.values():
+            sources.discard(current.id)
+    return tuple(result)
+
+
+def upstream_ids(operations: tuple[ProductionOperation, ...], operation_id: UUID) -> frozenset[UUID]:
+    """Все операции, чей полуфабрикат доходит до этой (входы, их входы, …). В цепочке — все меньшие номера."""
+    inputs = {operation.id: [item.input_operation_id for item in operation.inputs] for operation in operations}
+    found: set[UUID] = set()
+    pending = list(inputs.get(operation_id, ()))
+    while pending:
+        current = pending.pop()
+        if current in found or current == operation_id:
+            continue
+        found.add(current)
+        pending.extend(inputs.get(current, ()))
+    return frozenset(found)
+
+
+def waited_input(task: ProductionTask, operation_id: UUID) -> ProductionOperation | None:
+    """Вход с планом, которого операция ждёт дольше всех: на каждой входной ветке — ближайшая операция с плановым
+    окном, из них — кончающая позже всех. В цепочке — ближайший по номеру этап с планом, как раньше."""
+    by_id = {operation.id: operation for operation in task.operations}
+    nearest: dict[UUID, ProductionOperation] = {}
+    seen: set[UUID] = set()
+    pending = [item.input_operation_id for item in task.operation(operation_id).inputs]
+    while pending:
+        current = pending.pop()
+        if current in seen or current not in by_id:
+            continue
+        seen.add(current)
+        operation = by_id[current]
+        if operation.planned_finish is not None:
+            nearest[current] = operation
+        else:
+            pending.extend(item.input_operation_id for item in operation.inputs)
+    if not nearest:
+        return None
+    return max(nearest.values(), key=lambda operation: (operation.planned_finish, operation.position))
+
+
+def edge_batch(edge: OperationInput, transfer_batch: int) -> int:
+    """Передаточная партия ребра (решение 4): своя на ребре, иначе — партия варианта задания."""
+    return ceil(edge.transfer_batch) if edge.transfer_batch is not None else transfer_batch
 
 
 def batch_sizes(quantity: int) -> tuple[int, ...]:
@@ -206,30 +274,34 @@ def schedule_task(
                 share.planned_start, share.planned_finish,
             ))
 
-    result: list[ScheduledOperation] = []
+    plans: dict[UUID, ScheduledOperation] = {}
+    rates: dict[UUID, Decimal] = {}
+    by_id = {operation.id: operation for operation in task.operations}
     warnings: list[str] = []
-    previous_operation: ProductionOperation | None = None
-    previous_plan: ScheduledOperation | None = None
-    previous_rate = Decimal(1)
     crew_limit = max(1, min(5, max_crew))
 
-    for operation in task.operations:
+    def ready(operation: ProductionOperation, rate: Decimal) -> list[tuple[ProductionOperation, datetime]]:
+        """Допустимый старт по каждому входу: после первой передаточной партии входа (chain_start ProdSchedule.gs)."""
+        return [
+            (by_id[edge.input_operation_id], chain_start(
+                by_id[edge.input_operation_id], plans[edge.input_operation_id], rates[edge.input_operation_id],
+                operation, rate, task.quantity, edge_batch(edge, transfer_batch), holidays, shift,
+            ))
+            for edge in operation.inputs if edge.input_operation_id in plans
+        ]
+
+    for operation in network_order(task.operations):
         if operation.id in fixed_ids:
             placed = ScheduledOperation(
                 operation.id, operation.position, operation.operator_ids,
                 operation.planned_start, operation.planned_finish, False,
             )
             current_rate = _rate(skills, operation.code, placed.operator_ids)
-            if previous_operation and previous_plan:
-                needed = chain_start(
-                    previous_operation, previous_plan, previous_rate,
-                    operation, current_rate, task.quantity, transfer_batch,
-                    holidays, shift,
-                )
+            for source, needed in ready(operation, current_rate):
                 if placed.start < needed:
                     warnings.append(
                         f"Этап {operation.position} назначен раньше готовности деталей с этапа "
-                        f"{previous_operation.position}"
+                        f"{source.position}"
                     )
         else:
             candidates = tuple(
@@ -244,13 +316,7 @@ def schedule_task(
 
             def fit(crew: tuple[UUID, ...]) -> ScheduledOperation:
                 rate = _rate(skills, operation.code, crew)
-                earliest = now
-                if previous_operation and previous_plan:
-                    earliest = max(earliest, chain_start(
-                        previous_operation, previous_plan, previous_rate,
-                        operation, rate, task.quantity, transfer_batch,
-                        holidays, shift,
-                    ))
+                earliest = max([now, *(needed for _, needed in ready(operation, rate))])
                 plan = plan_operation(
                     operation=operation, quantity=task.quantity, operator_ids=crew,
                     requested_start=None, earliest_start=earliest,
@@ -277,14 +343,17 @@ def schedule_task(
                 occupied.setdefault(operator_id, []).append(BusyInterval(
                     f"{task.number} · этап {operation.position}", placed.start, placed.finish,
                 ))
-        result.append(placed)
-        previous_operation, previous_plan, previous_rate = operation, placed, current_rate
+        plans[operation.id] = placed
+        rates[operation.id] = current_rate
 
-    last_operation = task.operations[-1]
-    last_plan = result[-1]
+    result = [plans[operation.id] for operation in task.operations]
+    # Первые изделия выходят из финальной операции — той, чей полуфабрикат никто не берёт.
+    last_operation = task.final_operation
+    last_plan = plans[last_operation.id]
     first_duration = ceil(
         last_operation.setup_seconds
-        + min(transfer_batch, task.quantity) * last_operation.seconds_per_unit / max(Decimal(1), previous_rate)
+        + min(transfer_batch, task.quantity) * last_operation.seconds_per_unit
+        / max(Decimal(1), rates[last_operation.id])
     )
     first_ready = min(
         last_plan.finish,
