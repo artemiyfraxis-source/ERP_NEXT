@@ -184,13 +184,14 @@ def test_print_and_return_sheet_endpoints(fulfillment_api):
     assert missing.status_code == 404
 
 
-def test_handout_requires_receiver_role(fulfillment_api):
+def test_handout_requires_handout_edit(fulfillment_api):
+    # The matrix decides (access levels): picking on edit with handout only on view does not write off.
     client, _, _ = fulfillment_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Технолог", department="КБ"),
         email="engineer@example.test",
-        roles=frozenset({"engineer"}),
-        permissions={"fulfillment": "edit", "handout": "edit"},
+        roles=frozenset({"tech_lead"}),
+        permissions={"fulfillment": "edit", "handout": "view"},
     )
 
     response = client.post(

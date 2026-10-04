@@ -46,7 +46,7 @@ def production_api():
     app.state.procurement_uow_factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=master_id, name="Мастер", department="Производство"),
-        email="master@example.test", roles=frozenset({"master"}), permissions={"production": "edit"},
+        email="master@example.test", roles=frozenset({"foreman"}), permissions={"production": "edit", "myops": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: datetime(2026, 9, 22, 9, 0)
     app.dependency_overrides[moscow_today] = lambda: datetime(2026, 9, 22).date()
@@ -249,7 +249,7 @@ def test_operator_cannot_mutate_resource_plan(production_api):
     client, operator_id = production_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=operator_id, name="Оператор", department="Производство"),
-        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
     )
 
     response = client.post(
@@ -519,7 +519,7 @@ def test_operator_starts_and_cancels_work_from_confirmed_previous_box(production
         uow.commit()
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=operator_id, name="Оператор", department="Производство"),
-        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
     )
 
     inputs = client.get(
@@ -543,7 +543,7 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
     master = app.dependency_overrides[authenticated_principal]
     operator = lambda: Principal(
         actor=Actor(id=operator_id, name="Оператор", department="Производство"),
-        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
     )
     task = launch_from_card(
         client, "correction-api-v1", "591K.3", "КБ-1", 10,
@@ -685,7 +685,7 @@ def test_task_list_reports_operation_fact_state_and_wip(production_api):
     master = app.dependency_overrides[authenticated_principal]
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=operator_id, name="Оператор", department="Производство"),
-        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
     )
     started = client.post(
         f"/api/production/tasks/{task['id']}/operations/{task['operations'][1]['id']}/work/start",
@@ -742,7 +742,7 @@ def test_first_operation_starts_and_submits_without_an_issued_kit(production_api
     assert assigned.status_code == 200, assigned.text
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=operator_id, name="Оператор", department="Производство"),
-        email="operator@example.test", roles=frozenset({"staff"}), permissions={"production": "view"},
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
     )
 
     started = client.post(

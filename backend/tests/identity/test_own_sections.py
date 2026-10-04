@@ -10,7 +10,7 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.modules.identity.domain import ROLE_DEFAULTS, ROLE_SEED, ROLES, SECTION_LABELS, AccessMode, role_permissions
+from app.modules.identity.domain import LEVEL_SECTION_LABELS, LEVEL_SEED, AccessMode, level_permissions
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
 
@@ -22,34 +22,30 @@ client = TestClient(app)
 # ── Defaults ───────────────────────────────────────────────────────────────────────────────────────
 
 
-def test_every_role_files_requests_and_sees_its_own_by_default():
-    for role in ROLES:
-        assert (ROLE_SEED.get(role) or ROLE_DEFAULTS[role])["newrequest"] is AccessMode.EDIT, role
-        assert (ROLE_SEED.get(role) or ROLE_DEFAULTS[role])["myrequests"] is AccessMode.EDIT, role
+def test_every_level_files_requests_and_sees_its_own_by_default():
+    for level, row in LEVEL_SEED.items():  # superadmin/admin: everything anyway
+        assert row["newrequest"] is AccessMode.EDIT, level
+        assert row["myrequests"] is AccessMode.EDIT, level
 
 
 def test_handout_defaults_follow_who_hands_out_and_who_reads_fulfillment():
-    handout = {role: (ROLE_SEED.get(role) or ROLE_DEFAULTS[role]).get("handout") for role in ROLES}
-    assert handout == {
-        "admin": AccessMode.EDIT, "receiver": AccessMode.EDIT,
-        "engineer": AccessMode.VIEW, "prodhead": AccessMode.VIEW, "master": AccessMode.VIEW,
-        "buyer": None, "management": None, "pm": None, "staff": None, "estimator": None, "qc": None,
-    }
+    handout = {level: row.get("handout") for level, row in LEVEL_SEED.items()}
+    assert handout == {"foreman": AccessMode.EDIT, "tech_lead": AccessMode.VIEW, "commercial": None, "operator": None}
 
 
 def test_access_screen_lists_the_three_keys_next_to_their_neighbours():
-    keys = list(SECTION_LABELS)
+    keys = list(LEVEL_SECTION_LABELS)
     assert keys.index("newrequest") < keys.index("myrequests") < keys.index("requests")
     assert keys.index("handout") == keys.index("fulfillment") + 1
-    assert (SECTION_LABELS["newrequest"], SECTION_LABELS["myrequests"], SECTION_LABELS["handout"]) == (
-        "Оформить заявку", "Мои заявки", "Выдача со списанием",
-    )
+    assert (
+        LEVEL_SECTION_LABELS["newrequest"], LEVEL_SECTION_LABELS["myrequests"], LEVEL_SECTION_LABELS["handout"],
+    ) == ("Оформить заявку", "Мои заявки", "Выдача со списанием")
 
 
 def test_closing_requests_keeps_filing_and_own_rows():
-    staff = role_permissions("staff", {**ROLE_SEED["staff"], "requests": AccessMode.NONE})
-    assert "requests" not in staff
-    assert staff["newrequest"] is AccessMode.EDIT and staff["myrequests"] is AccessMode.EDIT
+    commercial = level_permissions("commercial", {**LEVEL_SEED["commercial"], "requests": AccessMode.NONE}, {})
+    assert "requests" not in commercial
+    assert commercial["newrequest"] is AccessMode.EDIT and commercial["myrequests"] is AccessMode.EDIT
 
 
 # ── Guards ─────────────────────────────────────────────────────────────────────────────────────────

@@ -35,8 +35,8 @@ from .domain import (
 
 router = APIRouter(prefix="/api/shipping", tags=["shipping"])
 # SUPPLYMAP `portalIssueGuard_(…, 'ship')`: упаковать в карточке проекта, сформировать отгрузочные и
-# поправить «Заказано» может и менеджер, и кладовщик.
-shipping_editor_principal = require_section("shipping", "edit", roles=frozenset({"pm", "receiver", "admin"}))
+# поправить «Заказано» может и менеджер («Отгрузка»), и кладовщик («Отгрузка — склад») — правка любого из двух.
+shipping_editor_principal = require_section(("shipping", "shipping_goods"), "edit")
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 
 

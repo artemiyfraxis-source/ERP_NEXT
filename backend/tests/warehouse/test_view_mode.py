@@ -48,9 +48,9 @@ def test_edit_tools_stay_closed_in_view_mode(warehouse_api, path):  # noqa: F811
     assert client.get(path).status_code == 403
 
 
-def test_role_outside_the_section_cannot_read_even_with_a_grant(warehouse_api):  # noqa: F811
+def test_a_level_without_the_section_cannot_read(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
-    as_viewer("engineer", "warehouse")
+    as_viewer("tech_lead", "fulfillment", "edit")  # access levels: «Склад» closed in the matrix
 
     assert client.get("/api/stock").status_code == 403
 

@@ -43,8 +43,8 @@ def test_putaway_sheet_is_storekeeper_work(receiving_api):  # noqa: F811
     assert client.get("/api/receiving/putaway-sheet").status_code == 403
 
 
-def test_role_outside_the_section_cannot_read(receiving_api):  # noqa: F811
+def test_a_level_without_the_section_cannot_read(receiving_api):  # noqa: F811
     client, _ = receiving_api
-    as_viewer("estimator", "receiving")  # estimator is neither in the receiving role list nor a full-access role
+    as_viewer("commercial", "warehouse", "edit")  # access levels: «Приёмка» is closed in the matrix
 
     assert client.get("/api/receiving").status_code == 403

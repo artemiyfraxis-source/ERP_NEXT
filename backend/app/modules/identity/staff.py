@@ -10,6 +10,11 @@ so the id that owns their history stays.
 квалификация, «в должности с», непосредственный руководитель (not oneself, no closed loop); a department may have a
 head. Every change is in the audit.
 
+Уровень доступа (owner 04.10.2026, docs/migration/access-levels-plan.md): every employee has one. The levels
+superadmin/admin are granted and taken away only by a superadministrator — and so is switching off or deleting their
+holder (решено агентом — проверить); at least one active superadmin/admin must remain. The old screen may still send
+only the legacy role: the level then follows it.
+
 Флаги «Монтажник (работает в цеху)» (`shop_worker`: who gets shop work) and «Мастер площадки» (`site_master`: whose
 fitters the card lists), access-levels plan T3: optional on create and update. Not given on create — derived from the
 role (site, department) as `level_migration` does; not given on update — kept, except that a flag still agreeing with
@@ -30,7 +35,7 @@ from app.shared.identity import Actor
 
 from .application import UnitOfWork
 from .domain import (
-    AccessMode,
+    FULL_ACCESS_LEVELS,
     IdentityUser,
     IdentityValidationError,
     check_manager_chain,
@@ -46,10 +51,9 @@ from .domain import (
     normalize_login,
     normalize_name,
     normalize_personnel_number,
+    normalize_level,
     normalize_role,
     normalize_site,
-    effective_permissions,
-    role_permissions,
 )
 from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
 
@@ -57,12 +61,17 @@ from .level_migration import followed_flags, level_for_role, shop_worker_rule, s
 DEPARTMENTS_AGGREGATE = uuid5(NAMESPACE_URL, "fraxis-erp:identity:departments")
 DEPARTMENTS_LIMIT = 500
 LAST_ADMIN = (
-    "Нужен хотя бы один администратор с доступом к «Сотрудникам» и «Доступам» — иначе некому будет вернуть права."
+    "Нужен хотя бы один активный суперадминистратор или администратор — иначе некому будет вернуть права."
 )
+SUPERADMIN_ONLY = "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор."
 
 
 class StaffConflict(ValueError):
     """The change is valid on its own but collides with the directory (duplicate login, last admin)."""
+
+
+class StaffForbidden(PermissionError):
+    """The actor's level may not make this change (superadmin/admin levels are a superadministrator's to give)."""
 
 
 @dataclass(frozen=True)
@@ -86,7 +95,8 @@ KEEP = Keep.KEEP
 class NewEmployee:
     email: str
     name: str
-    role: str
+    role: str = ""  # legacy role; "" — none. Without `access_level` the level follows it.
+    access_level: str = ""
     password: str = ""  # empty → no password: the employee signs in by PIN (SUPPLYMAP had PINs only)
     login: str = ""  # empty → the e-mail, as SUPPLYMAP logged in by e-mail
     department: str = ""
@@ -105,9 +115,10 @@ class NewEmployee:
 class EmployeeChange:
     name: str
     department: str
-    role: str
+    role: str  # legacy role; "" — stays as stored
     active: bool
     site: str | None = None
+    access_level: str = ""  # "" — stays, unless the legacy role changes (then it follows the role)
     password: str | None = None  # None / empty → the password stays
     pin: str | None = None  # None / empty → the PIN stays (portalStaffSave: pin is optional)
     # Кадровые поля: KEEP → as stored; "" / None → cleared.
@@ -203,12 +214,38 @@ class CreatedEmployee:
     pin: str  # the PIN the administrator entered, or the one generated for a blank field — shown once
 
 
-def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfWork) -> CreatedEmployee:
+def _level_of(user: IdentityUser) -> str:
+    return user.access_level or level_for_role(user.role)
+
+
+def _actor_level(uow: UnitOfWork, actor: Actor, actor_level: str | None) -> str:
+    """The level of the session making the change; without one, the actor's stored level."""
+    if actor_level is not None:
+        return actor_level
+    stored = uow.identity.user_for_update(actor.id)
+    return _level_of(stored) if stored is not None else ""
+
+
+def _ensure_superadmin(uow: UnitOfWork, actor: Actor, actor_level: str | None) -> None:
+    if _actor_level(uow, actor, actor_level) != "superadmin":
+        raise StaffForbidden(SUPERADMIN_ONLY)
+
+
+def create_employee(
+    data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfWork, *, actor_level: str | None = None,
+) -> CreatedEmployee:
+    """`actor_level` — the level of the session that makes the change (None: read the actor's stored level)."""
     email = normalize_email(data.email)
     login = normalize_login(data.login or email)
     name = normalize_name(data.name)
     department = normalize_department(data.department)
-    role = normalize_role(data.role)
+    role = normalize_role(data.role) if str(data.role or "").strip() else ""
+    if str(data.access_level or "").strip():
+        level = normalize_level(data.access_level)
+    elif role:
+        level = level_for_role(role)
+    else:
+        raise IdentityValidationError("Укажите уровень доступа.")
     site = normalize_site(data.site)
     # Without a password the credential is a hash of a random secret nobody knows: only the PIN opens the door.
     password_hash = hash_password(data.password or secrets.token_urlsafe(32))
@@ -220,14 +257,14 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
     qualification = normalize_job_text(data.qualification, QUALIFICATION)
     now = as_utc(now)
     with uow:
+        if level in FULL_ACCESS_LEVELS:
+            _ensure_superadmin(uow, actor, actor_level)
         if uow.identity.identifiers_taken({login, email}):
             raise StaffConflict("Сотрудник с таким логином или e-mail уже есть.")
         user = IdentityUser(
             id=uuid4(), login=login, email=email, name=name, department=department, role=role, site=site,
             active=True, personnel_number=personnel_number, job_title=job_title, qualification=qualification,
-            job_since=data.job_since, manager_id=data.manager_id,
-            # The level the column default would take from the role; set here because the flags are written with it.
-            access_level=level_for_role(role),
+            job_since=data.job_since, manager_id=data.manager_id, access_level=level,
             shop_worker=(
                 shop_worker_rule(role, site, department) if data.shop_worker is None else bool(data.shop_worker)
             ),
@@ -235,11 +272,11 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
         )
         users = uow.identity.all_users()
         _check_personnel(uow, user, None, users)
-        # The role's sections come from the «Доступы» matrix row of the role; nothing is seeded.
+        # The sections come from the level's «Доступы» matrix row; nothing personal is seeded.
         uow.identity.add_user(user, password_hash, {}, pin_hash)
         details = {
             "login": login, "email": email, "name": name, "department": department, "role": role,
-            "site": site or "", "pin": "назначен",
+            "access_level": level, "site": site or "", "pin": "назначен",
         }
         personnel = {
             "personnel_number": personnel_number, "job_title": job_title, "qualification": qualification,
@@ -252,41 +289,36 @@ def create_employee(data: NewEmployee, actor: Actor, now: datetime, uow: UnitOfW
         return CreatedEmployee(user=user, pin=pin)
 
 
-def access_keepers(
-    users: list[IdentityUser],
-    admin_matrix: dict[str, AccessMode],
-    exceptions: dict[UUID, dict[str, AccessMode]],
-) -> set[UUID]:
-    """Active administrators who can still open «Сотрудники» (`staffdir` edit + the admin role; «Доступы» is the admin
-    role alone) — after the matrix row of the admin role and their own exceptions. SUPPLYMAP portalAccessSave drops
-    `admin.staffdir = none` for the same reason."""
-    base = role_permissions("admin", admin_matrix)
-    return {
-        user.id
-        for user in users
-        if user.active and user.role == "admin"
-        and effective_permissions(base, exceptions.get(user.id, {})).get("staffdir") is AccessMode.EDIT
-    }
+def access_keepers(users: list[IdentityUser]) -> set[UUID]:
+    """Active superadmins and admins: they always open «Сотрудники» and «Доступы» (the matrix cannot close them)."""
+    return {user.id for user in users if user.active and _level_of(user) in FULL_ACCESS_LEVELS}
 
 
-def ensure_access_keeper(
-    uow: UnitOfWork,
-    *,
-    user: IdentityUser | None = None,
-    admin_matrix: dict[str, AccessMode] | None = None,
-    exceptions: tuple[UUID, dict[str, AccessMode]] | None = None,
-) -> None:
-    """portalStaffSave «хотя бы один администратор» + portalAccessSave «себе вход в настройки не закрываем»: after the
-    change (a user row, the admin matrix row or one person's exceptions) someone must still be able to return rights.
-    Call inside an open unit of work; the admin rows are locked, so two admins cannot shut each other out at once."""
+def ensure_access_keeper(uow: UnitOfWork, *, user: IdentityUser | None = None) -> None:
+    """portalStaffSave «хотя бы один администратор»: after the change of `user` someone active with the level
+    superadmin or admin must remain to return rights. Call inside an open unit of work; their rows are locked, so two
+    administrators cannot shut each other out at once."""
     uow.identity.active_admin_ids()
     users = [user if user is not None and row.id == user.id else row for row in uow.identity.all_users()]
-    matrix = admin_matrix if admin_matrix is not None else uow.identity.all_role_access().get("admin", {})
-    personal = uow.identity.all_user_access()
-    if exceptions is not None:
-        personal[exceptions[0]] = exceptions[1]
-    if not access_keepers(users, matrix, personal):
+    if not access_keepers(users):
         raise StaffConflict(LAST_ADMIN)
+
+
+def _guard_full_level(
+    uow: UnitOfWork, current: IdentityUser, updated: IdentityUser | None, actor: Actor, actor_level: str | None,
+) -> None:
+    """A superadmin/admin level is given and taken (switching the holder off or deleting them included) only by a
+    superadministrator, and one active holder must remain. `updated` None — the employee is deleted."""
+    was_full = _level_of(current) in FULL_ACCESS_LEVELS
+    becomes_full = updated is not None and _level_of(updated) in FULL_ACCESS_LEVELS
+    level_changed = updated is not None and _level_of(updated) != _level_of(current)
+    switched = updated is None or updated.active != current.active
+    if (level_changed and (was_full or becomes_full)) or (was_full and switched):
+        _ensure_superadmin(uow, actor, actor_level)
+    before = current.active and was_full
+    after = updated is not None and updated.active and becomes_full
+    if before and not after:
+        ensure_access_keeper(uow, user=updated if updated is not None else replace(current, active=False))
 
 
 def _work_flags(
@@ -302,11 +334,13 @@ def _work_flags(
 
 
 def update_employee(
-    user_id: UUID, change: EmployeeChange, actor: Actor, now: datetime, uow: UnitOfWork,
+    user_id: UUID, change: EmployeeChange, actor: Actor, now: datetime, uow: UnitOfWork, *,
+    actor_level: str | None = None,
 ) -> IdentityUser:
     name = normalize_name(change.name)
     department = normalize_department(change.department)
-    role = normalize_role(change.role)
+    typed_role = normalize_role(change.role) if str(change.role or "").strip() else None
+    typed_level = normalize_level(change.access_level) if str(change.access_level or "").strip() else None
     site = normalize_site(change.site)
     password_hash = hash_password(change.password) if change.password else None
     pin_hash = hash_pin(change.pin) if str(change.pin or "").strip() else None
@@ -326,18 +360,25 @@ def update_employee(
         current = uow.identity.user_for_update(user_id)
         if current is None:
             raise KeyError("Сотрудник не найден.")
+        role = typed_role if typed_role is not None else current.role
+        if typed_level is not None:
+            level = typed_level
+        elif role != current.role:
+            level = level_for_role(role)  # an old screen changes the role: the level follows it
+        else:
+            level = _level_of(current)
+        current = replace(current, access_level=_level_of(current))
         updated = replace(
-            current, name=name, department=department, role=role, site=site, active=bool(change.active), **personnel,
-            **_work_flags(current, change, role, site, department),
+            current, name=name, department=department, role=role, site=site, active=bool(change.active),
+            access_level=level, **personnel, **_work_flags(current, change, role, site, department),
         )
-        if current.role == "admin" and current.active and (updated.role != "admin" or not updated.active):
-            ensure_access_keeper(uow, user=updated)
+        _guard_full_level(uow, current, updated, actor, actor_level)
         users = uow.identity.all_users()
         _check_personnel(uow, updated, current, users)
         changes = {
             key: [_shown(getattr(current, key)), _shown(getattr(updated, key))]
-            for key in ("name", "department", "role", "site", "active", "personnel_number", "job_title",
-                        "qualification", "job_since", *WORK_FLAGS)
+            for key in ("name", "department", "role", "access_level", "site", "active", "personnel_number",
+                        "job_title", "qualification", "job_since", *WORK_FLAGS)
             if getattr(current, key) != getattr(updated, key)
         }
         if current.manager_id != updated.manager_id:
@@ -369,7 +410,9 @@ class RemovedEmployee:
     deleted: bool  # True — erased; False — has history, so switched off and hidden (the id keeps owning it)
 
 
-def remove_employee(user_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> RemovedEmployee:
+def remove_employee(
+    user_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork, *, actor_level: str | None = None,
+) -> RemovedEmployee:
     """«Удалить» on «Сотрудники» (owner 2026-10-01 «функцию по удалению сотрудника»). An employee nobody's work points
     at (never assigned, never moved stock, only signed in at most) is erased with their login. One with history is
     switched off instead — login closed, sessions revoked, gone from every pick list — because operations, ЖУК, stock
@@ -381,8 +424,7 @@ def remove_employee(user_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork)
         current = uow.identity.user_for_update(user_id)
         if current is None:
             raise KeyError("Сотрудник не найден.")
-        if current.role == "admin" and current.active:
-            ensure_access_keeper(uow, user=replace(current, active=False))
+        _guard_full_level(uow, current, None, actor, actor_level)
         details = {"login": current.login, "name": current.name}
         if uow.identity.user_history(user_id) == 0:
             uow.identity.delete_user(user_id)
@@ -403,11 +445,19 @@ def remove_employee(user_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork)
         return RemovedEmployee(user=updated, deleted=False)
 
 
-def ensure_admin_remains(user_id: UUID, uow: UnitOfWork) -> None:
-    """The same last-admin rule for the standalone deactivation route; call inside an open unit of work."""
+def ensure_admin_remains(
+    user_id: UUID, uow: UnitOfWork, actor: Actor | None = None, actor_level: str | None = None,
+) -> None:
+    """The same rules for the standalone deactivation route (a superadmin/admin is switched off by a superadmin only;
+    one must remain); call inside an open unit of work."""
     current = uow.identity.user_for_update(user_id)
-    if current is not None and current.role == "admin" and current.active:
-        ensure_access_keeper(uow, user=replace(current, active=False))
+    if current is None:
+        return
+    if actor is None:
+        if current.active and _level_of(current) in FULL_ACCESS_LEVELS:
+            ensure_access_keeper(uow, user=replace(current, active=False))
+        return
+    _guard_full_level(uow, current, replace(current, active=False), actor, actor_level)
 
 
 def save_departments(values: list[str], actor: Actor, now: datetime, uow: UnitOfWork) -> list[str]:

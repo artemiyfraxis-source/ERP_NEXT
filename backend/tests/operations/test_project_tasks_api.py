@@ -13,7 +13,8 @@ from app.main import app
 from app.modules.identity.domain import SECTION_LABELS
 from app.modules.operations.domain import ProjectTask, ProjectTaskError
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
-from app.shared.http_auth import Principal, authenticated_principal
+from app.shared.http_auth import authenticated_principal
+from tests.access_levels import principal_as
 from app.shared.persistence import AuditEventRow, create_schema
 from tests.factories import Actor
 
@@ -42,9 +43,11 @@ def add_task(factory, *, project="708К.4", item="КБ1", module="production", k
 
 
 def principal(roles, permissions, name="Сотрудник"):
-    return lambda: Principal(
-        actor=Actor(id=UUID("40000000-0000-0000-0000-000000000002"), name=name, department="Цех"),
-        email="worker@example.test", roles=frozenset(roles), permissions=permissions,
+    """An old role and its sections, as the access levels give them to the same person (tests/access_levels.py)."""
+    (role,) = roles
+    return lambda: principal_as(
+        role, permissions, actor=Actor(id=UUID("40000000-0000-0000-0000-000000000002"), name=name, department="Цех"),
+        email="worker@example.test",
     )
 
 
