@@ -6,6 +6,7 @@ import { canAct } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { openPrintSheets } from "./print";
 import { formatDate } from "./format";
+import { isoDay } from "./Gantt";
 
 /* Отгрузка — вкладки SUPPLYMAP openShipHub: «Проекты» (карточка отгрузки проекта), «Отправки» (реестр всех
    отправок) и «Готовая продукция» (склад ГП). Все три — над одними данными, как portalShipList. */
@@ -437,11 +438,11 @@ function BoxesEditor({ shipment, busy, mutate, onDone }: { shipment: Shipment; b
 
 function AcceptCell({ good, busy, mutate }: { good: FinishedGood; busy: string; mutate: Mutate }) {
   const [amount, setAmount] = useState("");
-  const [day, setDay] = useState("");
+  const [day, setDay] = useState(() => isoDay(new Date()));
   return <div className="inline-qty" onClick={(event) => event.stopPropagation()}>
     <input aria-label={`Принять ${good.project} ${good.item_index}`} type="number" min="0.000001" step="any" placeholder={String(Math.max(num(good.ordered) - num(good.accepted), 0))} value={amount} onChange={(event) => setAmount(event.target.value)} />
-    <input aria-label={`Дата поступления ${good.project} ${good.item_index}`} type="date" title="пусто = сегодня" value={day} onChange={(event) => setDay(event.target.value)} />
-    <button className="secondary small" disabled={!amount || Boolean(busy)} onClick={() => void mutate(`accept:${good.id}`, () => shippingApi.accept(good.id, good.version, amount, day || undefined), "Готовая продукция принята").then((saved) => { if (saved) { setAmount(""); setDay(""); } })}>Принять</button>
+    <input aria-label={`Дата поступления ${good.project} ${good.item_index}`} type="date" title="Дата поступления из цеха (по умолчанию сегодня)" value={day} onChange={(event) => setDay(event.target.value)} />
+    <button className="secondary small" disabled={!amount || Boolean(busy)} onClick={() => void mutate(`accept:${good.id}`, () => shippingApi.accept(good.id, good.version, amount, day || undefined), "Готовая продукция принята").then((saved) => { if (saved) { setAmount(""); setDay(isoDay(new Date())); } })}>Принять</button>
   </div>;
 }
 
