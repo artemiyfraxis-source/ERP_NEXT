@@ -16,3 +16,4 @@
 - [Gate red without failures](gate-red-without-failures.md) — pytest-current symlink exit 1 (fixed by conftest basetemp); drift tests blind for 9 of 11 modules
 - [Windows Python CRLF](windows-python-crlf.md) — Python text-mode writes CRLF into the LF-only repo; use newline=""
 - [Techcards per project](techcards-bulk.md) — projects wiped 30.09 (migration 0078); owner creates them, one project from Google only on request
+- [Parallel sessions](parallel-sessions.md) — several sessions share the checkout; ListAgents before removing a worktree or committing to a foreign branch
