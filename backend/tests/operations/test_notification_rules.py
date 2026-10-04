@@ -1,4 +1,4 @@
-"""OP-1: producers address users by id / identity role; Operations delivers to active users only."""
+"""OP-1: producers address users by id / audience; Operations delivers to active users only."""
 
 from dataclasses import replace
 from datetime import date, datetime
@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.modules.identity.infrastructure import IdentityUserRow
+from app.modules.identity.infrastructure import IdentityLevelAccessRow, IdentityUserRow
 from app.modules.operations.application import PoisonNotificationMessage, dispatch_next_notification
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from app.modules.procurement.application import dispatch_next_procurement_requested, notify_initiators
@@ -37,7 +37,7 @@ from app.modules.shipping.application import (
 )
 from app.modules.shipping.domain import DeliveryTerms, UpdType
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
-from app.shared.notifications import notification_requested
+from app.shared.notifications import SUPPLY_AUDIENCE, TECHNOLOGIST_AUDIENCE, notification_requested
 from app.shared.persistence import OutboxMessageRow, create_schema
 from tests.factories import Actor
 
@@ -70,6 +70,12 @@ def sessions():
                 id=actor.id, login=login, email=f"{login}@example.test", name=actor.name,
                 department=actor.department, role=role, site=None, active=active,
             ))
+        # The level matrix the audiences read (the roles above map to levels by default): the buyer's level edits
+        # «Лист закупки», the project manager's «Отгрузка», the storekeeper's «Отгрузка — склад».
+        for level, section in (
+            ("tech_lead", "procurement"), ("commercial", "shipping"), ("foreman", "shipping_goods"),
+        ):
+            session.add(IdentityLevelAccessRow(level=level, section=section, mode="edit"))
         session.commit()
     yield factory
     engine.dispose()
@@ -95,12 +101,12 @@ def _publish(sessions, message) -> UUID:
     return message.id
 
 
-def test_roles_and_ids_resolve_to_active_users_only(sessions):
+def test_audiences_and_ids_resolve_to_active_users_only(sessions):
     _publish(sessions, notification_requested(
-        key="t:roles", now=NOW, title="Роли", body="", kind="info",
-        roles=("buyer", "admin"), user_ids=(INITIATOR.id,),
+        key="t:audiences", now=NOW, title="Аудитории", body="", kind="info",
+        audiences=(SUPPLY_AUDIENCE, TECHNOLOGIST_AUDIENCE), user_ids=(INITIATOR.id,),
     ))
-    assert _deliver(sessions) == {"victor": ["Роли"], "artemiy": ["Роли"], "ivanov": ["Роли"]}
+    assert _deliver(sessions) == {"victor": ["Аудитории"], "artemiy": ["Аудитории"], "ivanov": ["Аудитории"]}
 
 
 def test_unmatched_recipient_is_dropped_not_poisoned(sessions):
@@ -116,7 +122,7 @@ def test_unmatched_recipient_is_dropped_not_poisoned(sessions):
 
 
 def test_broken_recipient_id_is_poison(sessions):
-    message = notification_requested(key="t:bad", now=NOW, title="x", body="", kind="info", roles=("buyer",))
+    message = notification_requested(key="t:bad", now=NOW, title="x", body="", kind="info", audiences=(SUPPLY_AUDIENCE,))
     message = replace(message, payload={**message.payload, "recipient_user_ids": "not-a-uuid"})
     _publish(sessions, message)
     with pytest.raises(PoisonNotificationMessage):

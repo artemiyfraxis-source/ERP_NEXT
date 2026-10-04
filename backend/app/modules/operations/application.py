@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
+from app.shared.notifications import LEGACY_ROLE_AUDIENCES
 
 from .domain import Notification, NotificationValidationError, ProjectTask, normalize_recipient
 
@@ -32,9 +33,9 @@ class NotificationRepository(Protocol):
 
 
 class RecipientDirectory(Protocol):
-    """Active identity users behind the ids and role keys a producer addressed."""
+    """Active identity users behind the ids and audiences a producer addressed (identity's read port)."""
     def emails_for_users(self, user_ids: tuple[UUID, ...]) -> Sequence[str]: ...
-    def emails_for_roles(self, roles: tuple[str, ...]) -> Sequence[str]: ...
+    def emails_for_audiences(self, audiences: tuple[str, ...]) -> Sequence[str]: ...
 
 
 class OutboxRepository(Protocol):
@@ -142,15 +143,18 @@ def _split(value: object) -> tuple[str, ...]:
 
 
 def _recipient_emails(payload: dict, uow: UnitOfWork) -> tuple[str, ...] | None:
-    """`notifyRecipients_` (Notify.gs:10-19) over explicit e-mails, user ids and identity roles.
+    """`notifyRecipients_` (Notify.gs:10-19) over explicit e-mails, user ids and audiences.
 
     None: the event names nobody at all (a broken producer, poison). An empty tuple: it names users
-    that are gone, inactive or hold no such role; SUPPLYMAP drops that silently (`if (!list.length)`).
+    that are gone, inactive or in no such audience; SUPPLYMAP drops that silently (`if (!list.length)`).
+    A message published before audiences carries role keys (`recipient_roles`): the four that producers used
+    resolve to the same audiences; any other key names nobody.
     """
     emails = _split(payload.get("recipients"))
     raw_ids = _split(payload.get("recipient_user_ids"))
-    roles = _split(payload.get("recipient_roles"))
-    if not emails and not raw_ids and not roles:
+    audiences = _split(payload.get("recipient_audiences"))
+    legacy_roles = _split(payload.get("recipient_roles"))
+    if not emails and not raw_ids and not audiences and not legacy_roles:
         return None
     try:
         user_ids = tuple(UUID(value) for value in raw_ids)
@@ -159,8 +163,14 @@ def _recipient_emails(payload: dict, uow: UnitOfWork) -> tuple[str, ...] | None:
     resolved = list(emails)
     if user_ids:
         resolved.extend(uow.recipients.emails_for_users(user_ids))
-    if roles:
-        resolved.extend(uow.recipients.emails_for_roles(roles))
+    for role in legacy_roles:
+        if role not in LEGACY_ROLE_AUDIENCES:
+            logger.warning("Notification names role %r, which has no audience; nobody is addressed by it", role)
+    audiences = tuple(dict.fromkeys((
+        *audiences, *(LEGACY_ROLE_AUDIENCES[role] for role in legacy_roles if role in LEGACY_ROLE_AUDIENCES),
+    )))
+    if audiences:
+        resolved.extend(uow.recipients.emails_for_audiences(audiences))
     return tuple(dict.fromkeys(normalize_recipient(email) for email in resolved))
 
 

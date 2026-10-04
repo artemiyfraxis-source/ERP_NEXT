@@ -107,7 +107,7 @@ def network_shop(operations: tuple[ProductionOperation, ...] | None = None) -> S
     with sessions() as session:
         session.add(IdentityUserRow(
             id=OPERATOR_ID, login="operator", email="operator@example.test", name="Оператор",
-            department="Производство", role="staff", site="ЦАР", active=True,
+            department="Производство", role="staff", site="ЦАР", active=True, shop_worker=True,
         ))
         session.add(FulfillmentRequestRow(
             id=request_id, number="REQ.26.0001", source_idempotency_key="kit-network",

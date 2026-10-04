@@ -13,8 +13,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
-from app.modules.identity.domain import ROLE_SEED, AccessMode, IdentityUser, hash_password
-from app.modules.identity.infrastructure import SqlAlchemyIdentityUnitOfWork, provision_user, seed_role_matrix
+from app.modules.identity.domain import AccessMode, IdentityUser, hash_password
+from app.modules.identity.infrastructure import (
+    IdentityUserRow,
+    SqlAlchemyIdentityUnitOfWork,
+    provision_user,
+    seed_level_matrix,
+)
 from app.modules.operations.domain import ProjectTask
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from app.modules.production.application import Absence, LaunchProductionCommand, launch_production
@@ -72,8 +77,8 @@ def erp():
     )
     with sessions() as session:
         for user, personal in people:
-            provision_user(session, user, password, role_access=ROLE_SEED.get(user.role, {}), user_access=personal)
-        seed_role_matrix(session)
+            provision_user(session, user, password, user_access=personal)
+        seed_level_matrix(session)
         session.commit()
     yield SimpleNamespace(
         sessions=sessions,
@@ -174,7 +179,8 @@ def test_header_shows_person_roles_site_and_activity(erp):
 
     assert body["header"] == {
         "id": str(MASTER), "name": "Мастер Пётр", "department": "Цех",
-        "roles": [{"key": "master", "label": "Мастер"}], "site": "ЦАР", "site_label": "Москва", "active": True,
+        # The access level (role master → Бригадир); the job title is among the personnel fields.
+        "roles": [{"key": "foreman", "label": "Бригадир"}], "site": "ЦАР", "site_label": "Москва", "active": True,
     }
     assert body["as_of"] == "2026-10-14"
 
@@ -189,7 +195,7 @@ def test_header_without_site_and_department_is_null_not_blank(erp):
 
     assert header["department"] is None
     assert header["site"] is None and header["site_label"] is None
-    assert header["roles"] == [{"key": "estimator", "label": "Сметчик"}]
+    assert header["roles"] == [{"key": "commercial", "label": "Коммерческое руководство"}]
 
 
 def test_personnel_fields_come_from_the_staff_directory(erp):
@@ -242,6 +248,43 @@ def test_master_without_a_site_sees_every_fitter_but_not_the_dismissed_or_himsel
 def test_other_roles_have_no_subordinates(erp):
     assert card(erp, FITTER)["subordinates"] == []
     assert card(erp, ADMIN)["subordinates"] == []
+
+
+def _flag(erp, user_id, **flags):
+    with erp.sessions() as session:
+        row = session.get(IdentityUserRow, user_id)
+        for name, value in flags.items():
+            setattr(row, name, value)
+        session.commit()
+
+
+def test_a_fitter_without_the_shop_flag_is_not_a_subordinate(erp):
+    _flag(erp, FITTER_2, shop_worker=False)
+
+    assert [item["name"] for item in card(erp, MASTER)["subordinates"]] == ["Монтажник Анна"]
+
+
+def test_anyone_with_the_shop_flag_is_a_subordinate_whatever_the_level(erp):
+    engineer = UUID("60000000-0000-0000-0000-000000000009")
+    with erp.sessions() as session:
+        provision_user(session, replace(
+            _user(engineer, "engineer", "Инженер в цеху", "engineer", "Техотдел", "ЦАР"),
+            access_level="tech_lead", shop_worker=True,
+        ), hash_password(PASSWORD))
+        session.commit()
+
+    names = [item["name"] for item in card(erp, MASTER)["subordinates"]]
+
+    assert names == ["Инженер в цеху", "Монтажник Анна", "Монтажник Борис"]
+
+
+def test_subordinates_follow_the_site_master_flag_not_the_role(erp):
+    _flag(erp, MASTER, site_master=False)
+    _flag(erp, FITTER, site_master=True)
+
+    assert card(erp, MASTER)["subordinates"] == []
+    # A site master who works in the shop himself is not his own subordinate.
+    assert [item["name"] for item in card(erp, FITTER)["subordinates"]] == ["Монтажник Борис"]
 
 
 # ── Проекты ──────────────────────────────────────────────────────────────
@@ -458,7 +501,7 @@ def test_tasks_are_the_open_ones_in_sections_the_person_edits(erp):
     project_task(erp, "shipping", title="Оформить отгрузку")
     project_task(erp, "production", title="Уже сделана", status_open=False)
 
-    # Мастер правит «production» (ROLE_SEED), отгрузку только смотрит; технолог правит всё.
+    # Мастер (Бригадир) правит «production» (строка уровня), отгрузку не правит; администратор правит всё.
     master = card(erp, MASTER)["tasks"]
     assert master["count"] == 1
     assert master["items"][0] | {"id": "-"} == {
@@ -472,7 +515,7 @@ def test_tasks_are_the_open_ones_in_sections_the_person_edits(erp):
 def test_a_personal_exception_changes_the_sections_of_the_card(erp):
     project_task(erp, "shipping")
     with erp.identity() as uow:
-        uow.identity.replace_user_access(FITTER, {"shipping": AccessMode.EDIT})
+        uow.identity.replace_user_level_access(FITTER, {"shipping": AccessMode.EDIT})
         uow.commit()
 
     assert card(erp, FITTER)["tasks"]["count"] == 1

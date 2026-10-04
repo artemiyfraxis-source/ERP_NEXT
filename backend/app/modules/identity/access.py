@@ -6,7 +6,8 @@ per-person «Доступ» column of Staff.gs (staffAccessClean_, edited in sdA
 sit on top of the person's level (`identity_user_level_access`); the role tables are legacy and no longer written.
 Differences, «решено агентом — проверить»: an empty cell = closed; a personal exception may be an explicit `none`;
 unknown levels/sections are refused (422), not silently dropped; superadmin/admin are full whatever is stored, so their
-rows are neither shown nor saved (a cell sent for them is ignored) and their personal exceptions stay dormant."""
+rows are neither shown nor saved (a cell sent for them is ignored). Their personal exceptions open nothing more, but a
+section held explicitly that way puts them into that section's notification audience (identity/audiences.py)."""
 
 from __future__ import annotations
 
@@ -113,7 +114,7 @@ def save_user_access(
     user_id: UUID, access: dict[str, str], actor: Actor, now: datetime, uow: UnitOfWork,
 ) -> dict[str, AccessMode]:
     """sdAccessModal_ + portalStaffSave `access`: one person's exceptions, stronger than the level (`none` closes).
-    A superadmin/admin keeps everything whatever is stored here."""
+    A superadmin/admin keeps everything whatever is stored here (an explicit section only adds its notifications)."""
     now = as_utc(now)
     with uow:
         user = uow.identity.user_for_update(user_id)

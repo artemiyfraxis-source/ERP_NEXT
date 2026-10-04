@@ -616,7 +616,10 @@ class SqlAlchemyOperatorRepository:
 
     @staticmethod
     def _domain(row: IdentityUserRow) -> Operator:
-        return Operator(row.id, row.name, row.site or "", row.active, row.department or "", row.role)
+        return Operator(
+            row.id, row.name, row.site or "", row.active, row.department or "",
+            shop_worker=bool(row.shop_worker), site_master=bool(row.site_master),
+        )
 
     def get(self, operator_id: UUID) -> Operator | None:
         row = self.session.get(IdentityUserRow, operator_id)

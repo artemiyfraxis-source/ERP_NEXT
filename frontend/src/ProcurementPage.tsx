@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
+  failureText,
   manualRatePrompt,
   procurementApi,
   type InvoiceUpload,
@@ -16,9 +17,10 @@ import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet"
 import { ProcurementFillForm } from "./ProcurementFillForm";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import {
-  ApprovalStage, AwaitingInvoiceStage, OtherStage, ReadyStage, ReceiptStage, ToPayStage,
-  type RowAction,
+  AwaitingInvoiceStage, BackorderStage, COMPACT_BELOW, OtherStage, PaidStage, StageHeading, ToPayStage,
+  type BulkState, type RowAction,
 } from "./ProcurementStages";
+import { runInPool } from "./bulk";
 import { formatDate } from "./format";
 import type { LineEditing } from "./ProcurementCellEdit";
 
@@ -27,8 +29,24 @@ const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 
 type ProcurementTab = "queues" | "sheet" | "suppliers";
 
-// Стадии «Мои позиции» в порядке пайплайна (PUR_STATUS_ORDER) + «Согласование» вне линейного порядка.
-const STAGES = ["В работе", "Готов к запросу", "Жду счет", "В оплату", "Согласование", "В пути", "Карантин"];
+// Статусы, у которых есть свой блок «Мои позиции» (владелец, 04.10): В работе (с «Готов к запросу») → Жду счёт →
+// Ждёт оплаты → Оплачено (в пути и карантин). «Согласование» — только дозавоз; обычная строка, поставленная туда
+// до отключения этапа, и любой новый статус — в «Прочие позиции».
+const BLOCK_STATUSES = new Set(["В работе", "Готов к запросу", "Жду счет", "В оплату", "В пути", "Карантин"]);
+const APPROVAL = "Согласование";
+const isBackorderLine = (line: ProcurementLine) => line.status === APPROVAL && line.is_backorder;
+
+// После «Взять в работу» сервер дозаполняет пустые поля в фоне (~3 с): очередь перечитывается дважды.
+const AUTOFILL_REFRESH_MS = [4000, 10000];
+
+type BulkBlock = "inwork" | "awaiting" | "topay" | "paid";
+
+/** Свежие строки встают на место старых, новые — в конец; строк, которых в ответе нет, это не касается. */
+function mergeLines(current: ProcurementLine[], fresh: ProcurementLine[]) {
+  const byId = new Map(fresh.map((line) => [line.id, line]));
+  const known = new Set(current.map((line) => line.id));
+  return [...current.map((line) => byId.get(line.id) ?? line), ...fresh.filter((line) => !known.has(line.id))];
+}
 
 const availableColumns: DataColumn<ProcurementLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>рев. {line.revision}</small></> },
@@ -73,7 +91,14 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
 
 function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   const [units, setUnits] = useState<string[]>(DEFAULT_UNITS);
-  const [filling, setFilling] = useState(false);
+  const [fillOpen, setFillOpen] = useState(false);
+  // Только что взятые строки → их версия при взятии: пока сервер не дозаполнил строку, на ней «заполняется…».
+  const [autofill, setAutofill] = useState<Map<string, number>>(new Map());
+  const timers = useRef<number[]>([]);
+  const [bulk, setBulk] = useState<(BulkState & { block: BulkBlock }) | null>(null);
+  // «Внести КП» по очереди: первый заказ открыт, остальные ждут.
+  const [kpQueue, setKpQueue] = useState<string[]>([]);
+  const [kpTotal, setKpTotal] = useState(0);
   const [available, setAvailable] = useState<ProcurementLine[]>([]);
   const [mine, setMine] = useState<ProcurementLine[]>([]);
   const [availableCursor, setAvailableCursor] = useState<string | null>(null);
@@ -84,7 +109,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   const [orders, setOrders] = useState<SupplierOrder[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState<"available" | "mine" | "">("");
-  const [kpReference, setKpReference] = useState("");
+  const kpReference = kpQueue[0] ?? "";
   const loadingQueue = refreshing || Boolean(loadingMore);
   const interactionLocked = Boolean(busyId) || loadingQueue;
   const secondQueue = readOnly ? procurementApi.inWork : procurementApi.mine;
@@ -138,7 +163,37 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   useEffect(() => {
     void reload();
     if (!readOnly) procurementApi.meta().then((meta) => setUnits(meta.units)).catch(() => undefined);
+    return () => timers.current.forEach((timer) => window.clearTimeout(timer));
   }, []);
+
+  /** Взятые строки сервер дозаполняет в фоне (поставщик по ссылке, наименование на сайте, изготовитель, страна):
+   *  «Мои позиции» перечитываются через ~4 и ~10 с. Свежие значения встают только в нетронутые ячейки —
+   *  набранное в «В работе» лежит поверх строки и не стирается. */
+  function watchAutofill(taken: ProcurementLine[]) {
+    if (!taken.length) return;
+    setAutofill((current) => new Map([...current, ...taken.map((line): [string, number] => [line.id, line.version])]));
+    AUTOFILL_REFRESH_MS.forEach((delay, index) => {
+      const last = index === AUTOFILL_REFRESH_MS.length - 1;
+      timers.current.push(window.setTimeout(() => void refreshTaken(taken.map((line) => line.id), last), delay));
+    });
+  }
+
+  async function refreshTaken(ids: string[], last: boolean) {
+    let fresh: ProcurementLine[] = [];
+    try {
+      fresh = (await secondQueue()).lines;
+      setMine((current) => mergeLines(current, fresh));
+    } catch { /* фоновое обновление: следующее или «Обновить» */ }
+    const versions = new Map(fresh.map((line) => [line.id, line.version]));
+    setAutofill((current) => {
+      const next = new Map(current);
+      for (const id of ids) {
+        const version = versions.get(id);
+        if (last || (version !== undefined && version !== current.get(id))) next.delete(id);
+      }
+      return next;
+    });
+  }
 
   /** `portalTakeInWork`: выбранные «Новый» строки — одним запросом. */
   async function takeMany(lines: ProcurementLine[]) {
@@ -149,6 +204,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
       const result = await procurementApi.take(lines.map((line) => line.id));
       const skipped = result.skipped ?? [];
       setNotice(`Взято в работу: ${result.lines.length}` + (skipped.length ? `; пропущено (уже в работе или дальше): ${skipped.join(", ")}` : ""));
+      watchAutofill(result.lines);
       await reload(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось взять строки");
@@ -186,6 +242,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     try {
       const result = await procurementApi.take([line.id]);
       setNotice(result.skipped?.length ? `${line.legacy_id} пропущена: уже в работе или дальше` : `${line.legacy_id} взята в работу`);
+      watchAutofill(result.lines);
       await reload(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось взять строку");
@@ -214,12 +271,42 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }
   }
 
-  async function buildRequests() {
+  /** Массовое действие блока по выбранным строкам: не больше 4 запросов сразу, ход «12 из 40» под заголовком
+   *  блока, в конце — итог и отказы по строкам; потом очередь перечитывается. */
+  async function runMany(block: BulkBlock, label: string, rows: ProcurementLine[], work: (line: ProcurementLine) => Promise<unknown>, doneWord: string) {
+    if (interactionLocked || !rows.length) return;
+    setBusyId(`bulk:${block}`);
+    setError("");
+    setBulk({ block, label, done: 0, total: rows.length });
+    try {
+      const failures = await runInPool(rows, work, (done) => setBulk((current) => (current?.block === block ? { ...current, done } : current)));
+      setBulk({
+        block, label, done: rows.length, total: rows.length,
+        summary: `${doneWord}: ${rows.length - failures.length} из ${rows.length}`,
+        failures: failures.map(({ item, error }) => `${item.legacy_id}: ${failureText(error, "не выполнено")}`),
+      });
+      await reload(true);
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  function cancelMany(lines: ProcurementLine[]) {
+    if (!lines.length || !window.confirm(`Отменить строк: ${lines.length}? Отмена окончательная.`)) return Promise.resolve();
+    return runMany("inwork", "Отменяем строки", lines, (line) => procurementApi.cancelLine(line.id, line.version), "Отменено");
+  }
+
+  function reconcileMany(lines: ProcurementLine[]) {
+    return runMany("paid", "Сверяем курс с ЦБ", lines, (line) => procurementApi.reconcileRate(line.id, line.version), "Курс сверен");
+  }
+
+  /** Запросы поставщикам: по выбранным строкам «Готов к запросу» (без выбора — по всем своим). */
+  async function buildRequests(lines?: ProcurementLine[]) {
     if (interactionLocked) return;
     setBusyId("supplier-requests");
     setError("");
     try {
-      const result = await procurementApi.buildSupplierRequests();
+      const result = await procurementApi.buildSupplierRequests(lines?.map((line) => line.id));
       setOrders(result.orders);
       const parts = [`Сформировано запросов: ${result.orders.length}`];
       if (result.skipped.length) parts.push(`пропущено: ${result.skipped.join(", ")}`);
@@ -234,19 +321,17 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   }
 
   const stage = (status: string) => mine.filter((line) => line.status === status);
-  const inWork = stage("В работе");
-  const ready = stage("Готов к запросу");
+  // «В работе» — сначала строки в работе, под ними «Готов к запросу» (они ждут запроса поставщику).
+  const inWorkBlock = [...stage("В работе"), ...stage("Готов к запросу")];
   const awaiting = stage("Жду счет");
   const toPay = stage("В оплату");
-  const approval = stage("Согласование");
-  const inTransit = stage("В пути");
-  const quarantine = stage("Карантин");
-  const other = mine.filter((line) => !STAGES.includes(line.status));
+  const paid = [...stage("В пути"), ...stage("Карантин")];
+  const backorders = mine.filter(isBackorderLine);
+  const other = mine.filter((line) => !BLOCK_STATUSES.has(line.status) && !isBackorderLine(line));
 
   const run = (line: ProcurementLine, operation: () => Promise<unknown>, message: string) => {
     void advance(line, operation, message).catch(() => undefined);
   };
-  const putOnApproval = (line: ProcurementLine) => run(line, () => procurementApi.putOnApproval(line.id, line.version), `${line.legacy_id}: на согласовании`);
   const cancelLine = (line: ProcurementLine) => {
     if (!window.confirm(`Отменить ${line.legacy_id}? Отмена окончательная.`)) return;
     run(line, () => procurementApi.cancelLine(line.id, line.version), `${line.legacy_id}: строка отменена`);
@@ -256,13 +341,11 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   const form = (line: ProcurementLine) => ({ line, busy: busyId === line.id, disabled: interactionLocked, onAdvance: advance });
   const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", panel: () => <TraceabilityForm {...form(line)} /> });
   const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", panel: () => <SplitAction {...form(line)} /> });
-  const approve = (line: ProcurementLine): RowAction => ({ label: "На согласование", run: () => putOnApproval(line) });
   const cancel = (line: ProcurementLine): RowAction => ({ label: "Отменить строку", run: () => cancelLine(line) });
   const replaceInvoice = (line: ProcurementLine): RowAction[] => (
     line.invoice_url ? [{ label: "Заменить счёт…", panel: () => <InvoiceReplaceForm {...form(line)} /> }] : []
   );
 
-  const readyActions = (line: ProcurementLine) => [traceability(line), split(line), approve(line), cancel(line)];
   const awaitingActions = (line: ProcurementLine): RowAction[] => [
     {
       label: "Суммы и счёт строки…",
@@ -274,7 +357,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
         </>
       ),
     },
-    traceability(line), split(line), approve(line), cancel(line),
+    traceability(line), split(line), cancel(line),
   ];
   const toPayActions = (line: ProcurementLine): RowAction[] => [
     {
@@ -288,19 +371,17 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
       title: "Если ЦБ не отдал курс, его можно ввести вручную",
       panel: () => <PaymentAction {...form(line)} disabled={interactionLocked || line.pay_missing.length > 0} />,
     },
-    ...replaceInvoice(line), traceability(line), split(line), approve(line), cancel(line),
+    ...replaceInvoice(line), traceability(line), split(line), cancel(line),
   ];
-  const approvalActions = (line: ProcurementLine): RowAction[] => line.is_backorder
-    ? [
-      {
-        label: "Отменить дозавоз",
-        title: "Поставщик вернул деньги — остаток уйдёт новой заявкой",
-        run: () => run(line, () => procurementApi.cancelBackorder(line.id, line.version), `${line.legacy_id}: дозавоз отменён, остаток ушёл новой заявкой`),
-      },
-      ...replaceInvoice(line), split(line),
-    ]
-    : [cancel(line), ...replaceInvoice(line), split(line)];
-  const receiptActions = (line: ProcurementLine): RowAction[] => [
+  const backorderActions = (line: ProcurementLine): RowAction[] => [
+    {
+      label: "Отменить дозавоз",
+      title: "Поставщик вернул деньги — остаток уйдёт новой заявкой",
+      run: () => run(line, () => procurementApi.cancelBackorder(line.id, line.version), `${line.legacy_id}: дозавоз отменён, остаток ушёл новой заявкой`),
+    },
+    ...replaceInvoice(line), split(line),
+  ];
+  const paidActions = (line: ProcurementLine): RowAction[] => [
     ...(line.exchange_rate_manual ? [{
       label: "Сверить курс с ЦБ",
       title: "Курс введён вручную — сверьте с ЦБ, когда он ответит",
@@ -308,13 +389,24 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }] : []),
     ...replaceInvoice(line), split(line),
   ];
-  const otherActions = (line: ProcurementLine) => [split(line)];
+  // Строка, поставленная на согласование до отключения этапа (владелец, 04.10), продолжает закупку отсюда.
+  const otherActions = (line: ProcurementLine): RowAction[] => line.status === APPROVAL
+    ? [
+      { label: "Продолжить закупку", run: () => run(line, () => procurementApi.resumeFromApproval(line.id, line.version), `${line.legacy_id}: строка вернулась в работу`) },
+      cancel(line), split(line),
+    ]
+    : [split(line)];
   // Комментарий и ожидаемая дата правятся в ячейке: свежая строка встаёт на место без перезагрузки очереди,
   // а 409 перечитывает очередь (другая правка успела раньше).
   const editing: LineEditing = {
     onSaved: (saved) => setMine((current) => current.map((item) => (item.id === saved.id ? saved : item))),
     onConflict: () => reload(true),
   };
+  const openKp = (references: string[]) => {
+    setKpQueue(references);
+    setKpTotal(references.length);
+  };
+  const bulkOf = (block: BulkBlock) => ({ bulk: bulk?.block === block ? bulk : null, onCloseBulk: () => setBulk(null) });
   const stageProps = { disabled: interactionLocked, busyId, editing };
 
   return (
@@ -337,8 +429,8 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
         <span><strong>{mine.length}</strong> {readOnly ? "в работе" : "у меня"}</span>
       </div>
 
-      <section className="panel table-panel">
-        <div className="panel-heading"><h2>Неразобранные</h2>{!readOnly && <span>Берите только то, что будете вести</span>}</div>
+      <section className="panel table-panel procurement-stage">
+        <StageHeading title="Неразобранные" count={available.length} hint={readOnly ? undefined : "Берите только то, что будете вести"} />
         <DataTable
           label="Неразобранные"
           rows={available}
@@ -348,6 +440,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
           }]}
           rowKey={(line) => line.id}
           storageKey="procurement-available"
+          compactBelow={COMPACT_BELOW}
           emptyText="Свободных позиций нет"
           bulkActions={readOnly ? [] : [{ label: "Взять в работу", run: takeMany, disabled: () => interactionLocked }]}
         />
@@ -359,7 +452,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
       </section>
 
       {readOnly && (
-        <section className="panel table-panel">
+        <section className="panel table-panel procurement-stage">
           <div className="panel-heading"><h2>В работе у закупщиков</h2><span>Только просмотр</span></div>
           <DataTable
             label="В работе у закупщиков"
@@ -378,45 +471,37 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
       )}
 
       {!readOnly && <section className="work-list">
-        <div className="panel-heading">
-          <h2>Мои позиции</h2>
-          <div className="heading-actions">
-            <button type="button" className="secondary small" disabled={interactionLocked} onClick={() => setFilling((current) => !current)}>Заполнить данные</button>
-          </div>
-        </div>
-        {filling && (
+        <h2 className="section-title">Мои позиции</h2>
+        <ProcurementInWorkTable
+          lines={inWorkBlock}
+          units={units}
+          disabled={interactionLocked}
+          busyId={busyId}
+          editing={editing}
+          filling={autofill}
+          {...bulkOf("inwork")}
+          onChanged={(message) => { setNotice(message); void reload(true); }}
+          onError={setError}
+          onCancel={cancelLine}
+          onCancelMany={cancelMany}
+          onBuildRequests={buildRequests}
+          onFill={() => setFillOpen((current) => !current)}
+          renderDetail={(line) => (
+            <>
+              <TraceabilityForm {...form(line)} />
+              <SplitAction {...form(line)} />
+            </>
+          )}
+        />
+        {fillOpen && (
           <ProcurementFillForm
             units={units}
-            onClose={() => setFilling(false)}
+            onClose={() => setFillOpen(false)}
             onSaved={(message) => {
               setNotice(message);
               void reload(true);
             }}
           />
-        )}
-        {inWork.length > 0 && (
-          <section className="panel table-panel">
-            <div className="panel-heading"><h2>В работе <span className="stage-count">{inWork.length}</span></h2><span>Заполните данные прямо в таблице</span></div>
-            <ProcurementInWorkTable
-              lines={inWork}
-              units={units}
-              disabled={interactionLocked}
-              busyId={busyId}
-              onChanged={(message) => { setNotice(message); void reload(true); }}
-              onError={setError}
-              onPutOnApproval={putOnApproval}
-              onCancel={cancelLine}
-              renderDetail={(line) => (
-                <>
-                  <TraceabilityForm {...form(line)} />
-                  <SplitAction {...form(line)} />
-                </>
-              )}
-            />
-          </section>
-        )}
-        {ready.length > 0 && (
-          <ReadyStage {...stageProps} lines={ready} actionsOf={readyActions} building={busyId === "supplier-requests"} onBuild={() => void buildRequests()} />
         )}
         {orders.map((order) => (
           <article className="panel procurement-card" key={order.order_number}>
@@ -433,40 +518,32 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             <pre className="supplier-letter">{order.letter}</pre>
           </article>
         ))}
-        {awaiting.length > 0 && (
-          <AwaitingInvoiceStage {...stageProps} lines={awaiting} actionsOf={awaitingActions} onOpenKp={setKpReference} onPrint={printStoredDocument} />
-        )}
+        <AwaitingInvoiceStage {...stageProps} {...bulkOf("awaiting")} lines={awaiting} actionsOf={awaitingActions} onOpenKp={openKp} onPrint={printStoredDocument} />
         {kpReference && (
           <KpForm
             key={kpReference}
             reference={kpReference}
-            onClose={() => setKpReference("")}
+            queue={kpTotal > 1 ? { index: kpTotal - kpQueue.length + 1, total: kpTotal } : undefined}
+            onClose={() => setKpQueue([])}
             onSaved={(message, failure) => {
               setNotice(message);
               setError(failure);
-              setKpReference("");
+              setKpQueue((current) => current.slice(1));
               void reload(true);
             }}
           />
         )}
-        {toPay.length > 0 && <ToPayStage {...stageProps} lines={toPay} actionsOf={toPayActions} onMarkPaid={markPaidMany} />}
-        {approval.length > 0 && (
-          <ApprovalStage
+        <ToPayStage {...stageProps} {...bulkOf("topay")} lines={toPay} actionsOf={toPayActions} onMarkPaid={markPaidMany} />
+        <PaidStage {...stageProps} {...bulkOf("paid")} lines={paid} actionsOf={paidActions} onReconcile={reconcileMany} />
+        {backorders.length > 0 && (
+          <BackorderStage
             {...stageProps}
-            lines={approval}
-            actionsOf={approvalActions}
-            onResume={(line) => run(line, () => procurementApi.resumeFromApproval(line.id, line.version), `${line.legacy_id}: одобрено, строка вернулась в работу`)}
+            lines={backorders}
+            actionsOf={backorderActions}
             onConfirmBackorder={(line, date) => run(line, () => procurementApi.confirmBackorder(line.id, line.version, date), `${line.legacy_id}: досыл подтверждён, передано в приёмку`)}
           />
         )}
-        {inTransit.length > 0 && (
-          <ReceiptStage {...stageProps} title="В пути" hint="Переданы в приёмку" storageKey="procurement-in-transit" lines={inTransit} actionsOf={receiptActions} />
-        )}
-        {quarantine.length > 0 && (
-          <ReceiptStage {...stageProps} title="Карантин" hint="Приёмка нашла несоответствие — ждёт решения" storageKey="procurement-quarantine" lines={quarantine} actionsOf={receiptActions} />
-        )}
         {other.length > 0 && <OtherStage {...stageProps} lines={other} actionsOf={otherActions} />}
-        {!mine.length && <div className="panel empty">Пока ничего не взято в работу.</div>}
         {mineCursor && (
           <button className="secondary" disabled={interactionLocked} onClick={() => void loadMore("mine", mineCursor)}>
             {loadingMore === "mine" ? "Загружаем…" : "Ещё мои"}
@@ -845,8 +922,10 @@ function readBase64(file: File): Promise<string> {
 }
 
 /** SUPPLYMAP «Внести КП» (Kp.gs, KpForm.html): every «Жду счет» line of one supplier order at once. */
-function KpForm({ reference, onClose, onSaved }: {
+function KpForm({ reference, queue, onClose, onSaved }: {
   reference: string;
+  /** Несколько выбранных заказов идут по очереди: этот — `index` из `total`. */
+  queue?: { index: number; total: number };
   onClose: () => void;
   onSaved: (message: string, failure: string) => void;
 }) {
@@ -944,7 +1023,7 @@ function KpForm({ reference, onClose, onSaved }: {
   return (
     <form className="panel table-panel" onSubmit={submit} aria-label={`КП по заказу ${reference}`}>
       <div className="panel-heading">
-        <h2>Внести КП · заказ {reference}</h2>
+        <h2>Внести КП · заказ {reference}{queue && <span className="stage-count">{queue.index} из {queue.total}</span>}</h2>
         <span>Строки заказа в статусе «Жду счет»</span>
       </div>
       {failure && <div className="error-banner" role="alert">{failure}</div>}

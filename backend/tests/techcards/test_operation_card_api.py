@@ -261,6 +261,45 @@ def test_auto_build_uses_workshop_gost_awg_map_from_references(operation_library
     assert built.json()["document"]["operations"][0]["fields"]["crimpHeight"] == "0,84 - 0,89"
 
 
+def test_manual_assembly_builds_through_the_same_endpoint_and_refuses_an_empty_list(operation_library_api):
+    operation_library_api.put(
+        "/api/techcards/templates/supplymap-library",
+        json={"sourceCommit": SOURCE_COMMIT, "templates": [_template("one", "OP_ONE")]},
+    )
+    created = operation_library_api.post(
+        "/api/techcards/projects",
+        json={"project": "P-203", "item_index": "КБ2", "product_name": "Провод нетиповой"},
+    ).json()
+    config = {
+        "mode": "manual", "assemblyIndex": "КБ2", "assemblyName": "Провод нетиповой", "partQty": 4,
+        "ops": [
+            {"type": "libraryOp", "templateId": "one", "opNum": "OP_ONE", "label": "Операция", "tOp": "30"},
+            {"type": "customOp", "label": "Своя операция", "tPrep": "60",
+             "steps": [{"kind": "Контроль", "text": "Проверить", "tolerance": "по КД"}]},
+        ],
+        "route": {"blocks": [{"key": "b1", "ops": [1, 2], "final": True}], "edges": []},
+    }
+
+    empty = operation_library_api.post(
+        f"/api/techcards/projects/{created['id']}/build",
+        json={"version": created["version"], "config": {**config, "ops": []}},
+    )
+    built = operation_library_api.post(
+        f"/api/techcards/projects/{created['id']}/build",
+        json={"version": created["version"], "config": config},
+    )
+
+    assert empty.status_code == 422
+    assert empty.json()["detail"] == "Ручная сборка: добавьте хотя бы одну операцию — из библиотеки или свою"
+    assert built.status_code == 200, built.json()
+    document = built.json()["document"]
+    assert document["kit"]["mode"] == "manual"
+    assert [item["card"]["name"] for item in document["operations"]] == ["Операция", "Своя операция"]
+    assert document["operations"][1]["card"]["steps"][0]["kind"] == "Контроль"
+    assert document["route"]["source"] == "manual"
+    assert document["build_config"]["mode"] == "manual"
+
+
 def _sided(source_id: str, code: str, side: str) -> dict:
     template = _template(source_id, code)
     template["title"] = f"{code} | Операция ({side})"

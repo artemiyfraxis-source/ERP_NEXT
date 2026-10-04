@@ -209,7 +209,7 @@ it("edits an issued ETK operation from the UI and shows the new revision (portal
 
   render(<TechcardsPage principal={engineer} view="projects" />);
   fireEvent.click(await screen.findByRole("button", { name: /Править/ }));
-  expect(screen.getByText(/поднимет ревизию до 2/)).toBeInTheDocument();
+  expect(screen.getByText("Сохранение — ревизия 2")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод по КД" } });
   fireEvent.click(screen.getByRole("button", { name: "＋ Контроль" }));
   fireEvent.change(screen.getByLabelText("Шаг 2"), { target: { value: "Измерить длину" } });
@@ -411,7 +411,7 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   expect(screen.getByText("Перенесено из шаблона БД.ТК, в ERP не правилась")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /Править/ }));
-  expect(screen.getByLabelText("Требование безопасности")).toHaveValue("Работать в очках");
+  expect(screen.getByText("Работать в очках")).toHaveClass("tc-preview");
   fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод в размер" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 

@@ -42,13 +42,13 @@ class AccessMode(str, Enum):
 
 # ── Legacy: the role model (until 04.10.2026) ──────────────────────────────────────────────────────────────
 # Authorization no longer reads anything in this block (see «Уровни доступа» below). It stays one release for the
-# role column and role tables that are still stored, the department guard (role names are not departments), the staff
-# import and the personal card (workflows/employee_card.py, switched in task T3).
+# role column and role tables that are still stored, the department guard (role names are not departments) and the
+# staff import.
 # «Как задумано ролью»: the sections each role was meant to have. Since SUPPLYMAP 01.09.2026 (Portal.gs
 # portalApplyAccess_) a section is open only when EXPLICITLY granted — by the role's matrix row or a personal
-# exception; an empty cell = closed. ROLE_SEED is therefore not applied at run time: migration 0056 wrote it into
-# `identity_role_access` once, so nobody lost access on the switch, and `seed_role_matrix` does the same for a fresh
-# database. It stays here as the editor's reference of what a role was set up with.
+# exception; an empty cell = closed. ROLE_SEED was never applied at run time: migration 0056 wrote it into
+# `identity_role_access` once, so nobody lost access on the switch. It stays as the reference of what a role was set up
+# with (the level transfer's tests use it as the role-era matrix).
 # View grants on procurement / receiving / warehouse (ID-6) follow SUPPLYMAP's role sets (Portal.gs portalButtons_):
 # buyer → склад, receiver → закупка, prodhead/management → закупка+приёмка+склад, master/staff → приёмка+склад.
 # NAV-SECTIONS: «Оформить заявку» (`newrequest`) and «Мои заявки» (`myrequests`) are open to every role, as in
@@ -167,15 +167,8 @@ SECTION_LABELS: dict[str, str] = {
     "staffdir": "Сотрудники",
     "operations": "Системный журнал",
 }
-# Legacy: the roles that had full access in the role model (owner, 2026-09-29). Replaced by FULL_ACCESS_LEVELS
-# (superadmin, admin) for every gate; kept only for workflows/employee_card.py until task T3 switches it.
-FULL_ACCESS_ROLES = frozenset({"admin", "buyer", "prodhead", "management"})
-# What an EMPTY cell means (`role_permissions`): closed for every role, except the full-access roles above, which have
-# every section on edit no matter what the matrix or a personal exception says (ID-5, SUPPLYMAP portalAdminAccess_,
-# 14.09.2026, extended 2026-09-29) — a new section needs no entry anywhere.
-ROLE_DEFAULTS: dict[str, dict[str, AccessMode]] = {
-    role: {section: AccessMode.EDIT for section in SECTION_LABELS} for role in FULL_ACCESS_ROLES
-}
+# The role model's «always full» roles (admin, buyer, prodhead, management) and its role_permissions are gone: the
+# full levels are FULL_ACCESS_LEVELS (superadmin, admin) below; level_migration keeps the frozen old model.
 
 
 @dataclass(frozen=True)
@@ -285,20 +278,12 @@ def _overlay(base: dict[str, AccessMode], overrides: dict[str, AccessMode]) -> d
     return result
 
 
-def role_permissions(role: str, overrides: dict[str, AccessMode]) -> dict[str, AccessMode]:
-    """The role's sections: the «Доступы» matrix row (view/edit open, `none` or empty closes); the full-access roles
-    start from «edit everywhere» (ROLE_DEFAULTS) and ignore the matrix entirely — their access cannot be reduced."""
-    if role in FULL_ACCESS_ROLES:
-        return {section: AccessMode.EDIT for section in SECTION_LABELS}
-    return _overlay(ROLE_DEFAULTS.get(role, {}), overrides)
-
-
 def effective_permissions(
-    role_access: dict[str, AccessMode],
+    row: dict[str, AccessMode],
     user_access: dict[str, AccessMode],
 ) -> dict[str, AccessMode]:
-    """portalAccessFor_: the personal exception is stronger than the role (`none` takes a section away)."""
-    return _overlay(role_access, user_access)
+    """portalAccessFor_: the personal exception is stronger than the matrix row (`none` takes a section away)."""
+    return _overlay(row, user_access)
 
 
 def secret_hash(value: str) -> str:
@@ -308,7 +293,7 @@ def secret_hash(value: str) -> str:
 # ── «Сотрудники» (ID-8, SUPPLYMAP Staff.gs portalStaffGet/portalStaffSave/staffDepts_) ─────────────
 
 # Legacy: PORTAL_ROLE_LABELS_ (Portal.gs), the labels of the old role keys. The screens show LEVEL_LABELS now; these
-# stay for the legacy `role` field, the department guard below and the personal card until task T3.
+# stay for the legacy `role` field and the department guard below.
 ROLE_LABELS: dict[str, str] = {
     "admin": "Технолог",
     "buyer": "Специалист по снабжению",

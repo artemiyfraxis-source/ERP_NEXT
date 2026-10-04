@@ -319,6 +319,8 @@ class SupplierOrder:
 class BuildSupplierRequestsCommand:
     actor: Actor
     now: datetime
+    # Only these ready lines (the buyer ticked them on «Мои позиции»); None — every ready line of the buyer.
+    line_ids: frozenset[UUID] | None = None
 
 
 @dataclass(frozen=True)
@@ -1064,7 +1066,10 @@ def build_supplier_requests(
     the Moscow day. Every line of a formed group goes «Жду счет» in the same transaction as its order.
     """
     with uow:
-        groups, other_buyer = group_supplier_requests(uow.procurement.ready_for_request(), command.actor)
+        ready = uow.procurement.ready_for_request()
+        if command.line_ids is not None:
+            ready = [line for line in ready if line.id in command.line_ids]
+        groups, other_buyer = group_supplier_requests(ready, command.actor)
         if not groups:
             message = f"Нет ваших строк «{ProcurementStatus.READY.value}»"
             if other_buyer:

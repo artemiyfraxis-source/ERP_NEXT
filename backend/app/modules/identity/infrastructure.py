@@ -31,8 +31,8 @@ from app.shared.persistence import SqlAlchemyAuditRepository, SqlAlchemyOutboxRe
 from app.shared.clock import as_utc
 
 from .application import IdentitySession, PinRecord
-from .domain import FULL_ACCESS_LEVELS, LEVEL_SEED, ROLE_SEED, AccessMode, IdentityUser, normalize_login
-from .level_migration import level_for_role, shop_worker_rule, site_master_rule
+from .domain import FULL_ACCESS_LEVELS, LEVEL_SEED, AccessMode, IdentityUser, normalize_login
+from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
 
 
 # A row inserted without a level (a fixture, an old caller that knows only the role) takes it from its role, and the
@@ -267,18 +267,19 @@ def _write_personnel(row: IdentityUserRow, user: IdentityUser) -> None:
     row.manager_id = user.manager_id
 
 
-def _follow_role(row: IdentityUserRow, user: IdentityUser) -> None:
-    """The level is what the gates read: written as the user carries it; a user without one gets it from the legacy role
-    when that changes. Until the flags are edited directly (access-levels plan, T3/T6), changing the old role (site,
-    department) re-derives them."""
+def _follow_role(row: IdentityUserRow, user: IdentityUser, flags_as_given: bool) -> None:
+    """The level is what the gates read: written as the user carries it; a user without one (an old caller that knows
+    only the role) gets it from the legacy role when that changes. The two flags: `flags_as_given` — the caller decided
+    them itself («Сотрудники», T3) and they are written as carried; otherwise they follow the role, site and department
+    unless set against the rule by hand (`followed_flags`)."""
     if user.access_level:
         row.access_level = user.access_level
     elif row.role != user.role:
         row.access_level = level_for_role(user.role)
-    if row.role != user.role:
-        row.site_master = site_master_rule(user.role)
-    if (row.role, row.site, row.department) != (user.role, user.site, user.department):
-        row.shop_worker = shop_worker_rule(user.role, user.site, user.department)
+    if flags_as_given:
+        row.shop_worker, row.site_master = user.shop_worker, user.site_master
+    else:
+        row.shop_worker, row.site_master = followed_flags(row, user.role, user.site, user.department)
 
 
 def _session_domain(row: IdentitySessionRow) -> IdentitySession:
@@ -320,19 +321,6 @@ class SqlAlchemyIdentityRepository:
     def user_level_access(self, user_id: UUID) -> dict[str, AccessMode]:
         rows = self.session.scalars(
             select(IdentityUserLevelAccessRow).where(IdentityUserLevelAccessRow.user_id == user_id)
-        )
-        return {row.section: AccessMode(row.mode) for row in rows}
-
-    # Legacy role tables: not read by the gates (the personal card reads them until task T3).
-    def role_access(self, role: str) -> dict[str, AccessMode]:
-        rows = self.session.scalars(
-            select(IdentityRoleAccessRow).where(IdentityRoleAccessRow.role == role)
-        )
-        return {row.section: AccessMode(row.mode) for row in rows}
-
-    def user_access(self, user_id: UUID) -> dict[str, AccessMode]:
-        rows = self.session.scalars(
-            select(IdentityUserAccessRow).where(IdentityUserAccessRow.user_id == user_id)
         )
         return {row.section: AccessMode(row.mode) for row in rows}
 
@@ -528,11 +516,11 @@ class SqlAlchemyIdentityRepository:
         )
         self.session.execute(delete(IdentityUserRow).where(IdentityUserRow.id == user_id))
 
-    def update_user(self, user: IdentityUser) -> None:
+    def update_user(self, user: IdentityUser, *, flags_as_given: bool = False) -> None:
         row = self.session.get(IdentityUserRow, user.id)
         if row is None:
             raise KeyError(f"Identity user not found: {user.id}")
-        _follow_role(row, user)
+        _follow_role(row, user, flags_as_given)
         row.name = user.name
         row.department = user.department
         row.role = user.role
@@ -618,34 +606,8 @@ class SqlAlchemyIdentityRepository:
             for section, mode in overrides.items()
         )
 
-    # Legacy role tables (kept one release; the «Доступы» screen no longer writes them).
-
-    def all_role_access(self) -> dict[str, dict[str, AccessMode]]:
-        result: dict[str, dict[str, AccessMode]] = {}
-        for row in self.session.scalars(select(IdentityRoleAccessRow)):
-            result.setdefault(row.role, {})[row.section] = AccessMode(row.mode)
-        return result
-
-    def all_user_access(self) -> dict[UUID, dict[str, AccessMode]]:
-        result: dict[UUID, dict[str, AccessMode]] = {}
-        for row in self.session.scalars(select(IdentityUserAccessRow)):
-            result.setdefault(row.user_id, {})[row.section] = AccessMode(row.mode)
-        return result
-
-    def replace_role_access(self, role: str, overrides: dict[str, AccessMode]) -> None:
-        self.session.execute(delete(IdentityRoleAccessRow).where(IdentityRoleAccessRow.role == role))
-        self.session.add_all(
-            IdentityRoleAccessRow(role=role, section=section, mode=mode.value)
-            for section, mode in overrides.items()
-        )
-
-    def replace_user_access(self, user_id: UUID, overrides: dict[str, AccessMode]) -> None:
-        self.session.execute(delete(IdentityUserAccessRow).where(IdentityUserAccessRow.user_id == user_id))
-        self.session.add_all(
-            IdentityUserAccessRow(user_id=user_id, section=section, mode=mode.value)
-            for section, mode in overrides.items()
-        )
-
+    # The role tables (`identity_role_access`, `identity_user_access`) are legacy: nothing reads or writes them at run
+    # time any more; the «было / стало» report reads them over SQL.
 
     # ── PIN and «Режим админа» ──
 
@@ -737,13 +699,6 @@ class SqlAlchemyIdentityUnitOfWork:
         self.committed = True
 
 
-def seed_role_matrix(session: Session) -> None:
-    """Legacy: every role's ROLE_SEED as explicit role-matrix cells, where nothing is stored yet — what migration 0056
-    did. The gates read the level matrix (seed_level_matrix); this stays for the personal card until task T3."""
-    for role, row in ROLE_SEED.items():
-        _seed_role_access(session, role, row)
-
-
 def seed_level_matrix(session: Session, rows: dict[str, dict[str, AccessMode]] | None = None) -> None:
     """The level matrix of a database built without migrations (tests, fixtures): LEVEL_SEED (or `rows`) for every
     level that has no stored cell yet — what migration 0086 writes for a level nobody holds. superadmin/admin need none:
@@ -759,7 +714,7 @@ def seed_level_matrix(session: Session, rows: dict[str, dict[str, AccessMode]] |
 
 
 def _seed_role_access(session: Session, role: str, defaults: dict[str, AccessMode]) -> None:
-    """Explicit matrix rows for tests and fixtures; existing rows stay."""
+    """Legacy role-matrix rows for fixtures of the role-era data; existing rows stay."""
     for section, mode in defaults.items():
         if session.get(IdentityRoleAccessRow, (role, section)) is None:
             session.add(IdentityRoleAccessRow(role=role, section=section, mode=mode.value))
@@ -776,7 +731,7 @@ def provision_user(
     level_access: dict[str, AccessMode] | None = None,
 ) -> None:
     """A user row with its login, e-mail and credential. `level_access` = the person's level exceptions (what the gates
-    read); `role_access` / `user_access` write the legacy role tables (the personal card reads them until task T3)."""
+    read); `role_access` / `user_access` write the legacy role tables (fixtures of the role-era data)."""
     login = normalize_login(user.login)
     email = normalize_login(user.email)
     # A user that carries its level writes it; otherwise the column defaults take it from the role.

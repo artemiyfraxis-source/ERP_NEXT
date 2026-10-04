@@ -582,6 +582,104 @@ def test_create_takes_personnel_fields_into_the_row_and_the_audit(staff_api):
     )
 
 
+# ── Флаги «Монтажник (работает в цеху)» и «Мастер площадки» (access-levels plan T3) ──────────────────
+
+
+def _flags(user: dict) -> tuple[bool, bool]:
+    return user["shop_worker"], user["site_master"]
+
+
+def test_directory_shows_the_two_flags(staff_api):
+    admin = _client("admin", "admin-password")
+    fitter = admin.post("/api/auth/staff", json={
+        "email": "fitter@example.test", "name": "Монтажник", "department": "Монтаж", "role": "staff", "site": "ЦАР",
+    }).json()["user"]
+
+    users = {user["login"]: user for user in admin.get("/api/auth/staff").json()["users"]}
+
+    assert _flags(users["buyer"]) == (False, False)
+    assert _flags(users[fitter["login"]]) == (True, False)
+
+
+def test_create_without_flags_takes_them_from_the_role_and_with_flags_as_given(staff_api):
+    admin = _client("admin", "admin-password")
+    master = admin.post("/api/auth/staff", json=NEW).json()["user"]
+    engineer = admin.post("/api/auth/staff", json={
+        "email": "engineer@example.test", "name": "Инженер в цеху", "department": "Цех", "role": "engineer",
+        "shop_worker": True, "site_master": True,
+    })
+
+    assert _flags(master) == (False, True)  # role master → «Мастер площадки», not a fitter
+    assert engineer.status_code == 201, engineer.text
+    assert _flags(engineer.json()["user"]) == (True, True)
+    with staff_api() as session:
+        row = session.get(IdentityUserRow, UUID(engineer.json()["user"]["id"]))
+        assert (row.shop_worker, row.site_master, row.access_level) == (True, True, "tech_lead")
+    created = {event.details["login"]: event.details for event in _events(staff_api, "identity.user_created")}
+    assert (created["engineer@example.test"]["shop_worker"], created["engineer@example.test"]["site_master"]) == (
+        "да", "да",
+    )
+    assert "shop_worker" not in created["sidorov@example.test"]
+
+
+def test_update_sets_the_flags_and_audits_them(staff_api):
+    admin = _client("admin", "admin-password")
+    response = admin.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(shop_worker=True, site_master=True))
+
+    assert response.status_code == 200, response.text
+    assert _flags(response.json()["user"]) == (True, True)
+    [event] = _events(staff_api, "identity.user_updated")
+    assert json.loads(event.details["changes"]) == {"shop_worker": [False, True], "site_master": [False, True]}
+    with staff_api() as session:
+        row = session.get(IdentityUserRow, BUYER_ID)
+        assert (row.shop_worker, row.site_master, row.role) == (True, True, "buyer")
+
+
+def test_flags_left_out_or_null_stay_as_stored(staff_api):
+    admin = _client("admin", "admin-password")
+    assert admin.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(shop_worker=True, site_master=True)).status_code == 200
+
+    kept = admin.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(site="ЦАР")).json()["user"]
+    nulls = admin.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(site="ЦАР", shop_worker=None, site_master=None))
+
+    # A buyer is no fitter by the old rule, yet the flag set by hand survives a site change the screen made.
+    assert _flags(kept) == (True, True)
+    assert nulls.status_code == 200 and _flags(nulls.json()["user"]) == (True, True)
+
+
+def test_a_new_role_without_flags_re_derives_them_and_given_flags_win(staff_api):
+    admin = _client("admin", "admin-password")
+    fitter = admin.post("/api/auth/staff", json={
+        "email": "fitter@example.test", "name": "Монтажник", "department": "Монтаж", "role": "staff", "site": "ЦАР",
+    }).json()["user"]
+    body = {"name": "Монтажник", "department": "Монтаж", "site": "ЦАР", "active": True}
+
+    promoted = admin.put(f"/api/auth/staff/{fitter['id']}", json={**body, "role": "master"}).json()["user"]
+    working = admin.put(f"/api/auth/staff/{fitter['id']}", json={
+        **body, "role": "staff", "shop_worker": True, "site_master": True,
+    }).json()["user"]
+
+    # The old screen still edits only the role: staff → master stops shop work and makes a site master.
+    assert _flags(promoted) == (False, True)
+    # Given flags are written as given, even where the role would derive otherwise.
+    assert _flags(working) == (True, True)
+
+
+def test_a_flag_set_by_hand_survives_a_role_change_and_a_department_rename(staff_api):
+    admin = _client("admin", "admin-password")
+    master = admin.post("/api/auth/staff", json={**NEW, "shop_worker": True}).json()["user"]
+    body = {"name": "Сидоров", "department": "Цех", "site": "ЖУК", "active": True}
+
+    moved = admin.put(f"/api/auth/staff/{master['id']}", json={**body, "role": "engineer"}).json()["user"]
+    renamed = admin.post("/api/auth/departments/rename", json={"source": "Цех", "target": "Цех 2"})
+    users = {user["id"]: user for user in admin.get("/api/auth/staff").json()["users"]}
+
+    # «Монтажник» was set against the role rule, so it stays; «Мастер площадки» followed the role, so it goes.
+    assert _flags(moved) == (True, False)
+    assert renamed.status_code == 200, renamed.text
+    assert users[master["id"]]["department"] == "Цех 2" and _flags(users[master["id"]]) == (True, False)
+
+
 def _head(client: TestClient, department: str, head: UUID | None):
     return client.put("/api/auth/departments/head", json={"department": department, "head_id": str(head) if head else None})
 

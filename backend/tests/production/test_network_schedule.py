@@ -265,7 +265,7 @@ def _uow_factory():
         for operator_id, login in ((X, "first"), (Y, "second")):
             session.add(IdentityUserRow(
                 id=operator_id, login=login, email=f"{login}@example.test", name=login,
-                department="Производство", role="staff", site="ЦАР", active=True,
+                department="Производство", role="staff", site="ЦАР", active=True, shop_worker=True,
             ))
         session.commit()
     return engine, (lambda: SqlAlchemyProductionUnitOfWork(sessions))

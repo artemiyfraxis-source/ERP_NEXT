@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import identity_level_report
+from app.modules.identity import domain
 from app.modules.identity.domain import (
     ADMIN_MODE_EMAIL,
     LEVEL_SECTION_LABELS,
@@ -30,7 +31,9 @@ from app.modules.identity.domain import (
 )
 from app.modules.identity.infrastructure import IdentityUserRow, SqlAlchemyIdentityRepository, provision_user
 from app.modules.identity.level_migration import (
+    NOTIFICATION_AUDIENCES,
     OLD_FULL_ACCESS_ROLES,
+    OLD_ROLE_LABELS,
     OLD_SECTIONS,
     ROLE_TO_LEVEL,
     Person,
@@ -195,11 +198,14 @@ def test_notification_audiences_and_administrators():
         audience.key: ({logins[i] for i in audience.before}, {logins[i] for i in audience.after})
         for audience in checks.audiences
     }
+    # The administrators (tech, gd) are full everywhere but join a section's audience only by a personal exception, so
+    # the section audiences hold the old role's people plus the former full-access buyer and head of production, whose
+    # compensating exceptions give them the edit (the risk the plan names).
     assert audiences == {
         "admin": ({"tech"}, {"tech", "gd"}),
-        "buyer": ({"buyer"}, {"tech", "gd", "buyer", "prodhead"}),
-        "pm": ({"pm"}, {"tech", "gd", "buyer", "prodhead", "pm"}),
-        "receiver": ({"receiver"}, {"tech", "gd", "buyer", "prodhead", "receiver"}),
+        "buyer": ({"buyer"}, {"buyer", "prodhead"}),
+        "pm": ({"pm"}, {"buyer", "prodhead", "pm"}),
+        "receiver": ({"receiver"}, {"buyer", "prodhead", "receiver"}),
     }
     assert {logins[i] for i in checks.admins_before} == {"tech"}
     assert {logins[i] for i in checks.admins_after} == {"tech", "gd"}
@@ -258,9 +264,26 @@ def test_the_migration_computes_the_same_as_the_module():
                 assert person_permissions_after(result, person.id) == result.usable[person.id]
 
 
-# ── The gates ───────────────────────────────────────────────────────────────────────────────────────
+# ── The gates and the legacy keys ───────────────────────────────────────────────────────────────────
 # T2 switched the routes to the contract (GATES.after): tests/identity/test_level_gates.py checks every route
 # dependency against it. GATES.before stays the frozen old model this transfer and the report are measured with.
+
+
+def test_frozen_old_model_matches_the_legacy_data():
+    from app.shared import notifications
+    from app.workflows import owner_alerts
+
+    # The role column and the role tables are still stored (legacy, one release): same keys, labels and sections.
+    assert OLD_SECTIONS == tuple(domain.SECTION_LABELS)
+    assert OLD_ROLE_LABELS == domain.ROLE_LABELS
+    assert set(ROLE_TO_LEVEL) == domain.ROLES
+    # The role keys modules addressed before audiences: the old outbox rows still carry them.
+    keys = {key for key, _label, _rule in NOTIFICATION_AUDIENCES}
+    assert keys == set(notifications.LEGACY_ROLE_AUDIENCES) == {"admin", "buyer", "pm", "receiver"}
+    assert set(notifications.LEGACY_ROLE_AUDIENCES.values()) == notifications.AUDIENCES
+    assert set(owner_alerts.OWNER_AUDIENCES) | set(owner_alerts.DISPOSAL_AUDIENCES) <= notifications.AUDIENCES
+    new_sections = {"myops", "quality", "shipping_goods"}
+    assert set(LEVEL_SECTION_LABELS) == (set(domain.SECTION_LABELS) - {"staffdir"}) | new_sections
 
 
 # ── Migration 0086 on SQLite ───────────────────────────────────────────────────────────────────────

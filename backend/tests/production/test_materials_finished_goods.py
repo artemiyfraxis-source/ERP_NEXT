@@ -31,7 +31,7 @@ def stage_three_setup(*, fulfillment: bool):
     with sessions() as session:
         session.add(IdentityUserRow(
             id=operator_id, login="operator", email="operator@example.test", name="Оператор",
-            department="Производство", role="staff", site="ЦАР", active=True,
+            department="Производство", role="staff", site="ЦАР", active=True, shop_worker=True,
         ))
         if request_id and line_id:
             session.add(FulfillmentRequestRow(

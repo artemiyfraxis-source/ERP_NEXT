@@ -60,7 +60,7 @@ function BlockBox({ block, title, totals, selected, onSelect }: {
  * стрелке правится, блок открывается — его операции настраиваются как в генераторе. Без правок схема собирается
  * автоматически (`value` = null); любая правка делает её ручной, «Сбросить к автоматической» возвращает null.
  */
-export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange, error, notice, skipped, renderOp }: {
+export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange, error, notice, skipped, renderOp, derive = deriveRoute, defaultOpen = false, timeSource = "время из последней сборки ЭТК" }: {
   /** Операции, которые попадут в сборку: номер, название, норма на партию (null — ЭТК ещё не собиралась). */
   ops: RouteOp[];
   /** Наименование изделия — название итогового блока. */
@@ -77,6 +77,12 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   skipped?: number[];
   /** Операция так, как её настраивает генератор (шаблон и времена) — показывается в открытом блоке. */
   renderOp?: (position: number) => ReactNode;
+  /** Схема без правок (`value` = null). По умолчанию — по правилам ЭТК; ручной сборке — цепочка по списку. */
+  derive?: (ops: RouteOp[]) => Route;
+  /** Показать схему сразу, даже цепочкой. */
+  defaultOpen?: boolean;
+  /** Откуда время в итоге «на изделие». */
+  timeSource?: string;
 }) {
   const [selected, setSelected] = useState("");
   const [shown, setShown] = useState<boolean | null>(null);
@@ -85,7 +91,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   const [splitAfter, setSplitAfter] = useState("");
   const [addFrom, setAddFrom] = useState("");
 
-  const route = useMemo(() => value ?? deriveRoute(ops), [value, ops]);
+  const route = useMemo(() => value ?? derive(ops), [value, ops, derive]);
   const totals = useMemo(() => routeTotals(route, ops, quantity), [route, ops, quantity]);
   const chain = useMemo(() => routeChain(route), [route]);
   const layout = useMemo(() => routeLayout(route), [route]);
@@ -94,7 +100,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   const byKey = new Map(route.blocks.map((block) => [block.key, block]));
   const finalBlock = route.blocks.find((block) => block.final);
   const total = finalBlock ? totals.get(finalBlock.key) : undefined;
-  const open = shown ?? (!chain || value !== null || !!error);
+  const open = shown ?? (defaultOpen || !chain || value !== null || !!error);
   const block = byKey.get(selected);
 
   function apply(next: Route): boolean {
@@ -219,7 +225,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     </div>
     <div className="route-summary">
       {pluralBlocks(route.blocks.length)} · {ops.length} оп.
-      {total?.rolled != null && <> · на изделие <strong>{formatMinutes(total.rolled)} мин</strong> (время из последней сборки ЭТК)</>}
+      {total?.rolled != null && <> · на изделие <strong>{formatMinutes(total.rolled)} мин</strong> ({timeSource})</>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="warning-inline">{notice}</div>}

@@ -13,7 +13,12 @@ head. Every change is in the audit.
 Уровень доступа (owner 04.10.2026, docs/migration/access-levels-plan.md): every employee has one. The levels
 superadmin/admin are granted and taken away only by a superadministrator — and so is switching off or deleting their
 holder (решено агентом — проверить); at least one active superadmin/admin must remain. The old screen may still send
-only the legacy role: the level then follows it."""
+only the legacy role: the level then follows it.
+
+Флаги «Монтажник (работает в цеху)» (`shop_worker`: who gets shop work) and «Мастер площадки» (`site_master`: whose
+fitters the card lists), access-levels plan T3: optional on create and update. Not given on create — derived from the
+role (site, department) as `level_migration` does; not given on update — kept, except that a flag still agreeing with
+that rule moves with a new role, site or department (`followed_flags`), until the screens edit them (T6)."""
 
 from __future__ import annotations
 
@@ -50,7 +55,7 @@ from .domain import (
     normalize_role,
     normalize_site,
 )
-from .level_migration import level_for_role, shop_worker_rule, site_master_rule
+from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
 
 
 DEPARTMENTS_AGGREGATE = uuid5(NAMESPACE_URL, "fraxis-erp:identity:departments")
@@ -102,6 +107,8 @@ class NewEmployee:
     qualification: str = ""
     job_since: date | None = None
     manager_id: UUID | None = None
+    shop_worker: bool | None = None  # None → from the role, site and department
+    site_master: bool | None = None  # None → from the role
 
 
 @dataclass(frozen=True)
@@ -120,9 +127,13 @@ class EmployeeChange:
     qualification: str | Keep = KEEP
     job_since: date | None | Keep = KEEP
     manager_id: UUID | None | Keep = KEEP
+    # Флаги: KEEP → as stored; one that agrees with the role rule moves with a new role (site, department).
+    shop_worker: bool | Keep = KEEP
+    site_master: bool | Keep = KEEP
 
 
 PERSONNEL_FIELDS = ("personnel_number", "job_title", "qualification", "job_since", "manager_id")
+WORK_FLAGS = ("shop_worker", "site_master")
 JOB_TITLE = "Должность"
 QUALIFICATION = "Категория / квалификация"
 
@@ -254,7 +265,10 @@ def create_employee(
             id=uuid4(), login=login, email=email, name=name, department=department, role=role, site=site,
             active=True, personnel_number=personnel_number, job_title=job_title, qualification=qualification,
             job_since=data.job_since, manager_id=data.manager_id, access_level=level,
-            shop_worker=shop_worker_rule(role, site, department), site_master=site_master_rule(role),
+            shop_worker=(
+                shop_worker_rule(role, site, department) if data.shop_worker is None else bool(data.shop_worker)
+            ),
+            site_master=site_master_rule(role) if data.site_master is None else bool(data.site_master),
         )
         users = uow.identity.all_users()
         _check_personnel(uow, user, None, users)
@@ -269,6 +283,7 @@ def create_employee(
             "job_since": _shown(data.job_since), "manager": _person(data.manager_id, users),
         }
         details.update({key: value for key, value in personnel.items() if value})
+        details.update({key: "да" for key in WORK_FLAGS if getattr(user, key)})
         _audit(uow, user.id, "identity.user_created", actor, now, details)
         uow.commit()
         return CreatedEmployee(user=user, pin=pin)
@@ -304,6 +319,18 @@ def _guard_full_level(
     after = updated is not None and updated.active and becomes_full
     if before and not after:
         ensure_access_keeper(uow, user=updated if updated is not None else replace(current, active=False))
+
+
+def _work_flags(
+    current: IdentityUser, change: EmployeeChange, role: str, site: str | None, department: str,
+) -> dict[str, bool]:
+    """The flags after the change: as given; KEEP — as stored, except a flag that follows the role rule moves with a
+    new role (site, department), as the repository does for every other writer (`followed_flags`)."""
+    followed_shop_worker, followed_site_master = followed_flags(current, role, site, department)
+    return {
+        "shop_worker": followed_shop_worker if change.shop_worker is KEEP else bool(change.shop_worker),
+        "site_master": followed_site_master if change.site_master is KEEP else bool(change.site_master),
+    }
 
 
 def update_employee(
@@ -343,7 +370,7 @@ def update_employee(
         current = replace(current, access_level=_level_of(current))
         updated = replace(
             current, name=name, department=department, role=role, site=site, active=bool(change.active),
-            access_level=level, **personnel,
+            access_level=level, **personnel, **_work_flags(current, change, role, site, department),
         )
         _guard_full_level(uow, current, updated, actor, actor_level)
         users = uow.identity.all_users()
@@ -351,14 +378,14 @@ def update_employee(
         changes = {
             key: [_shown(getattr(current, key)), _shown(getattr(updated, key))]
             for key in ("name", "department", "role", "access_level", "site", "active", "personnel_number",
-                        "job_title", "qualification", "job_since")
+                        "job_title", "qualification", "job_since", *WORK_FLAGS)
             if getattr(current, key) != getattr(updated, key)
         }
         if current.manager_id != updated.manager_id:
             changes["manager"] = [_person(current.manager_id, users), _person(updated.manager_id, users)]
         if not changes and password_hash is None and pin_hash is None:
             return current
-        uow.identity.update_user(updated)
+        uow.identity.update_user(updated, flags_as_given=True)
         if password_hash is not None:
             uow.identity.set_password(user_id, password_hash)
         # portalStaffSave: a new PIN replaces the hash; open sessions stay, as in SUPPLYMAP.

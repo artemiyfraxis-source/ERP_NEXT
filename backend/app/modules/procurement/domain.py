@@ -228,6 +228,7 @@ def stage_from_receipts(statuses: Iterable[str]) -> ProcurementStatus | None:
 
 
 _BACKORDER_OFFLINE = "У дозавоза свои действия: подтвердить досыл или отменить дозавоз"
+APPROVAL_DISABLED = "Этап согласования отключён: позиция идёт сразу к запросу поставщику"
 
 
 @dataclass(frozen=True)
@@ -721,13 +722,14 @@ class ProcurementLine:
         return replace(self, status=ProcurementStatus.CANCELLED, version=self.version + 1)
 
     def put_on_approval(self, actor: Actor) -> ProcurementLine:
-        """`PUR_STATUS_OFFLINE`: «Согласование» stands outside the linear order, set at any stage before payment."""
-        self._require_offline_allowed(actor)
-        if self.status is ProcurementStatus.APPROVAL:
-            return self
-        if self.status is ProcurementStatus.CANCELLED:
-            raise ProcurementValidationError("Строка отменена — отмена окончательная")
-        return replace(self, buyer=self.buyer or actor, status=ProcurementStatus.APPROVAL, version=self.version + 1)
+        """Owner, 04.10.2026: the manual approval stage is off — a line goes straight to the supplier request.
+
+        SUPPLYMAP parked a line in «Согласование» at any unpaid stage (`PUR_STATUS_OFFLINE`); here that move is
+        refused. «Согласование» still holds backorders (`create_backorder_line`, from receiving) and any line parked
+        before the switch, which leaves it through `resume_from_approval` or `cancel`."""
+        if self.is_backorder:
+            raise ProcurementValidationError(_BACKORDER_OFFLINE)
+        raise ProcurementValidationError(APPROVAL_DISABLED)
 
     def resume_from_approval(self, actor: Actor) -> ProcurementLine:
         """Approved: the line returns to the stage its own data has reached (`statusRegressed_` skips offline)."""

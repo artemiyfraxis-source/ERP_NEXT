@@ -1579,29 +1579,40 @@ consumer-функциях и dead-letter после исчерпания пов�
 ### Продюсеры уведомлений (OP-1)
 
 Модуль публикует `notification.requested` через `app/shared/notifications.py` и адресует **id пользователя**
-и/или **ключ роли Identity**, а не почту и не имя. Operations при доставке превращает их в почты активных
-пользователей (`SqlAlchemyRecipientDirectory`); неактивный, удалённый или ненайденный адресат молча
+и/или **аудиторию** (`technologist`, `supply`, `project_manager`, `storekeeper`), а не почту, не имя и не ключ
+роли. Operations при доставке превращает их в почты активных пользователей (`SqlAlchemyRecipientDirectory` →
+читающий порт Identity `audience_directory`); неактивный, удалённый или ненайденный адресат молча
 пропускается (как `if (!list.length) return` в `notifyDispatch_`), событие без адресатов вообще — poison.
+
+Аудитория — правило по разделам (`identity/audiences.py`, одно и для доставки, и для отчёта «было / стало»
+`level_migration.verify`): `technologist` (технолог, владелец, безопасность) — суперадминистраторы и администраторы;
+`supply` — правка «Лист закупки» (`procurement`), `project_manager` — правка «Отгрузка» (`shipping`), `storekeeper` —
+правка «Отгрузка — склад» (`shipping_goods`); право человека = строка его уровня в `identity_level_access` поверх
+личных исключений `identity_user_level_access`, только активные. Суперадмин и админ полные везде, поэтому в
+аудиторию раздела попадают лишь при личном исключении на этот раздел (строка матрицы их уровня не в счёт). Старые
+ключи ролей в `recipient_roles` уже лежащих в outbox сообщений читаются как прежде: `admin` → `technologist`,
+`buyer` → `supply`, `pm` → `project_manager`, `receiver` → `storekeeper`; любой другой ключ никого не адресует.
 
 | Правило SUPPLYMAP | Где в ERP | Кому |
 |---|---|---|
-| Блокирующее несоответствие ВК (`Receiving.gs:757-788`) | `inspect_receiving`: статус ≠ «Принято» и есть характер | брак → роль `admin`, прочее → `buyer`, смесь → оба |
-| Авто-Карантин по таймеру (`OwnerTick.gs:573-581`) | `quarantine_overdue_waiting` | те же роли |
+| Блокирующее несоответствие ВК (`Receiving.gs:757-788`) | `inspect_receiving`: статус ≠ «Принято» и есть характер | брак → `technologist`, прочее → `supply`, смесь → обе |
+| Авто-Карантин по таймеру (`OwnerTick.gs:573-581`) | `quarantine_overdue_waiting` | те же аудитории |
 | Смена статуса Закупки (`OwnerTick.gs:872-903`, `NOTIFY_PURCHASE_STATUSES`) | `notify_initiators` в `run_timers` | `procurement_lines.initiator_id` |
 | Комплект готов к выдаче (`Issue.gs:459-474`) | `mark_ready` | `fulfillment_requests.requester_id` |
-| Трек-номер отправки (`Shipment.gs:840-850`) | `update_documents`, трек изменился и не пуст | `shipments.manager_id`, нет — все `pm` |
-| УПД приложена (`Shipment.gs:888`) | `update_documents`, ссылка на УПД изменилась и не пуста | роль `receiver` |
+| Трек-номер отправки (`Shipment.gs:840-850`) | `update_documents`, трек изменился и не пуст | `shipments.manager_id`, нет — аудитория `project_manager` |
+| УПД приложена (`Shipment.gs:888`) | `update_documents`, ссылка на УПД изменилась и не пуста | аудитория `storekeeper` |
 
 **Решено агентом — проверить (OP-1, 2026-09-29; пункт «Технолог» — подтверждено владельцем 2026-10-04):**
 - «Технолог» = роль `admin`, не `engineer` (подтверждено владельцем 2026-10-04). Задание предлагало `engineer`, но в SUPPLYMAP `PORTAL_ROLE_LABELS_`
   подписывает «Технолог» именно `admin` (`engineer` — «Инженер»), и адресат `QUAR_TECH_EMAILS` в `STAFF_BY_EMAIL`
-  имеет роль `admin`. «Снабжение» = `buyer`. Поменять — одна константа `TECHNOLOGIST_ROLE`.
+  имеет роль `admin`. «Снабжение» = `buyer`. С 04.10.2026 (уровни доступа) вместо ролей — аудитории `technologist`
+  (суперадмин + админ) и `supply` (правка «Листа закупки»); старые ключи в outbox — `LEGACY_ROLE_AUDIENCES`.
 - Уведомление о статусе Закупки — опрос состояния, как в SUPPLYMAP, а не хук в каждой команде: так его видят
   все пути смены статуса (действия закупщика, синхронизация с приёмкой, отмена). Анти-дубль —
   `procurement_lines.notified_status` (аналог `notified_<id>`), ставится и когда адресата нет.
   Миграция взводит его текущим статусом, чтобы релиз не разослал уведомления по всем открытым строкам.
 - Несоответствия ВК — одно уведомление на строку, SUPPLYMAP собирал одно письмо на прогон листа.
-- Трек без найденного менеджера уходит всем `pm` — это правило `shipTrackRecipients_`, а не молчание.
+- Трек без найденного менеджера уходит всей аудитории `project_manager` (бывшие `pm`) — это правило `shipTrackRecipients_`, а не молчание.
 - Инициатор новой строки закупки — автор заявки (`initiator_id` в `procurement.requested`); выдача и отгрузка
   берут id автора команды. Миграция 0039 заполняет старые строки: закупка — по `requests.actor_id`, затем
   все три таблицы — по единственному совпадению имени с `identity_users.name` (пробелы и регистр не важны).

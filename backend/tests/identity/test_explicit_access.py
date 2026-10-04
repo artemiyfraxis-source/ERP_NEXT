@@ -9,24 +9,22 @@ from alembic import command
 from alembic.config import Config
 
 from app.modules.identity.domain import (
-    FULL_ACCESS_ROLES,
-    ROLE_DEFAULTS,
+    ACCESS_LEVELS,
+    FULL_ACCESS_LEVELS,
+    FULL_LEVEL_SECTIONS,
     ROLE_SEED,
-    ROLES,
-    SECTION_LABELS,
     AccessMode,
-    role_permissions,
+    level_permissions,
 )
 from tests.identity.test_access import _client, access_api  # noqa: F401  (fixture)
 
 
-def test_only_full_access_roles_have_anything_without_a_cell():
-    # Full-access roles (admin, buyer, prodhead, management) are edit everywhere; every other role's empty cell closes.
-    for role in ROLES - FULL_ACCESS_ROLES:
-        assert role_permissions(role, {}) == {}, role
-    for role in FULL_ACCESS_ROLES:
-        assert role_permissions(role, {}) == {section: AccessMode.EDIT for section in SECTION_LABELS}, role
-    assert set(ROLE_DEFAULTS) == FULL_ACCESS_ROLES
+def test_only_superadmin_and_admin_have_anything_without_a_cell():
+    # The full levels are edit everywhere; every other level's empty cell closes.
+    for level in set(ACCESS_LEVELS) - FULL_ACCESS_LEVELS:
+        assert level_permissions(level, {}, {}) == {}, level
+    for level in FULL_ACCESS_LEVELS:
+        assert level_permissions(level, {}, {}) == {section: AccessMode.EDIT for section in FULL_LEVEL_SECTIONS}, level
 
 
 def test_newrequest_follows_the_matrix(access_api):  # noqa: F811

@@ -17,7 +17,7 @@ from app.modules.identity.application import (
     change_own_password,
     login,
 )
-from app.modules.identity.domain import ROLE_SEED, SECTION_LABELS, AccessMode, role_permissions
+from app.modules.identity.domain import FULL_LEVEL_SECTIONS, ROLE_SEED, SECTION_LABELS, AccessMode, level_permissions
 from app.modules.identity.infrastructure import IdentityLoginThrottleRow
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, OutboxMessageRow
@@ -34,10 +34,10 @@ client = TestClient(app)
 
 
 def test_admin_has_every_section_on_edit_without_a_matrix():
-    assert role_permissions("admin", {}) == {section: AccessMode.EDIT for section in SECTION_LABELS}
-    # A full-access role ignores the matrix: a none/view cell cannot reduce it (owner 2026-09-29).
-    everything = {section: AccessMode.EDIT for section in SECTION_LABELS}
-    assert role_permissions("admin", {"tcgen": AccessMode.NONE, "erpref": AccessMode.VIEW}) == everything
+    everything = {section: AccessMode.EDIT for section in FULL_LEVEL_SECTIONS}
+    assert level_permissions("admin", {}, {}) == everything
+    # A full level ignores the matrix: a none/view cell cannot reduce it (owner 2026-09-29, access levels 04.10).
+    assert level_permissions("admin", {"tcgen": AccessMode.NONE, "erpref": AccessMode.VIEW}, {}) == everything
 
 
 def test_new_keys_are_sections_of_their_own():
@@ -189,7 +189,7 @@ def test_thirty_failures_over_all_accounts_close_the_login_and_alert_admins(iden
         alerts = list(session.scalars(select(OutboxMessageRow)))
         failed = list(session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "identity.login_failed")))
     assert len(alerts) == 1
-    assert alerts[0].payload["recipient_roles"] == "admin" and alerts[0].payload["type"] == "security"
+    assert alerts[0].payload["recipient_audiences"] == "technologist" and alerts[0].payload["type"] == "security"
     assert "всего — 30" in alerts[0].payload["body"]
     assert len(failed) == 30 and failed[-1].details["total"] == "30"
 

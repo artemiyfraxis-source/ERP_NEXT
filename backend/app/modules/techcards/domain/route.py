@@ -126,6 +126,23 @@ def derive_route(ops: Sequence[RouteOp], final_name: str = "") -> Route:
     return route
 
 
+def chain_route(ops: Sequence[RouteOp], final_name: str = "") -> Route:
+    """One block per operation in list order, each feeding the next; the last one is the product. The start of a
+    hand-assembled scheme («Ручная сборка»): it is the technologist's own, so production follows it (manual)."""
+    if not ops:
+        raise RouteError("нет операций")
+    last = ops[-1].position
+    blocks = [
+        Block(f"b{op.position}", (final_name or op.name) if op.position == last else op.name, (op.position,),
+              op.position == last)
+        for op in ops
+    ]
+    edges = [Edge(f"b{source.position}", f"b{target.position}") for source, target in zip(ops, ops[1:])]
+    route = _ordered(blocks, edges, manual=True)
+    validate_route(route, [op.position for op in ops])
+    return route
+
+
 def _position(value: object) -> int:
     if isinstance(value, bool):
         raise RouteError(f"«{value}» — укажите номер операции")

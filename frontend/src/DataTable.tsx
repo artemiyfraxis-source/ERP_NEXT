@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { selectRange } from "./bulk";
 import { displayCell } from "./format";
 
 /* Общая таблица разделов — то, что в SUPPLYMAP давал лист Google и портальные таблицы (portalGetView,
@@ -66,6 +67,9 @@ export interface DataTableProps<T> {
   onSearch?: (query: string) => void;
   searchLabel?: string;
   searchPlaceholder?: string;
+  /** Пока строк меньше — без строки поиска/фильтров/колонок и без «Показано N из N»: маленькой таблице они
+      только мешают (блоки «Мои позиции» в листе закупки). По умолчанию всегда полная. */
+  compactBelow?: number;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -158,7 +162,9 @@ export function DataTable<T>({
   onSearch,
   searchLabel,
   searchPlaceholder,
+  compactBelow = 0,
 }: DataTableProps<T>) {
+  const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -231,12 +237,13 @@ export function DataTable<T>({
     });
   }
 
-  function toggleRow(key: string, checked: boolean) {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (checked) next.add(key); else next.delete(key);
-      return next;
-    });
+  // Shift+щелчок по флажку отмечает (или снимает) все строки от прошлого щелчка до этого, как в таблицах.
+  const anchor = useRef<string | null>(null);
+  function toggleRow(key: string, checked: boolean, shift: boolean) {
+    const order = shown.map(rowKey);
+    const from = anchor.current;
+    setSelected((current) => selectRange(order, current, from, key, checked, shift));
+    anchor.current = key;
   }
 
   const allShownSelected = shown.length > 0 && shown.every((row) => selected.has(rowKey(row)));
@@ -296,7 +303,7 @@ export function DataTable<T>({
         >
           {selectable && (
             <td onClick={(event) => event.stopPropagation()}>
-              <input type="checkbox" aria-label={`Выбрать ${key}`} checked={selected.has(key)} onChange={(event) => toggleRow(key, event.target.checked)} />
+              <input type="checkbox" aria-label={`Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} />
             </td>
           )}
           {visible.map((column, index) => (
@@ -320,7 +327,7 @@ export function DataTable<T>({
 
   return (
     <section className="data-table" aria-label={label}>
-      <div className="filters table-toolbar">
+      {!compact && <div className="filters table-toolbar">
         <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
           <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? "Поиск по всем колонкам"} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
           {onSearch && <button type="submit" className="secondary small">Найти</button>}
@@ -335,7 +342,7 @@ export function DataTable<T>({
           <button type="button" className="secondary small" onClick={() => setChoosingColumns((current) => !current)}>Колонки</button>
           {exportName && <button type="button" className="secondary small" onClick={download}>Excel</button>}
         </div>
-      </div>
+      </div>}
       {activeFilters.length > 0 && (
         <div className="filter-tags" aria-label="Выбранные фильтры">
           {activeFilters.map((column) => (
@@ -414,10 +421,12 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
-      <div className="table-footer">
-        <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>
-        {filtered.length > shown.length && <button type="button" className="secondary small" onClick={() => setLimit((current) => current + pageSize)}>Показать ещё</button>}
-      </div>
+      {!compact && (
+        <div className="table-footer">
+          <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>
+          {filtered.length > shown.length && <button type="button" className="secondary small" onClick={() => setLimit((current) => current + pageSize)}>Показать ещё</button>}
+        </div>
+      )}
     </section>
   );
 }

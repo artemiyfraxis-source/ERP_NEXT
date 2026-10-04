@@ -155,6 +155,12 @@ class TakeInWorkInput(BaseModel):
     line_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
+class SupplierRequestsInput(BaseModel):
+    """Ticked ready lines; no body — every ready line of the buyer, as SUPPLYMAP's single button did."""
+
+    line_ids: list[UUID] = Field(min_length=1, max_length=500)
+
+
 class PaidBatchItemInput(BaseModel):
     line_id: UUID
     version: int = Field(ge=1)
@@ -939,11 +945,13 @@ def supplier_requests(
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    payload: SupplierRequestsInput | None = None,
 ) -> dict:
+    line_ids = frozenset(payload.line_ids) if payload else None
     try:
         result = _retry_transaction(
             lambda: build_supplier_requests(
-                BuildSupplierRequestsCommand(actor=principal.actor, now=now),
+                BuildSupplierRequestsCommand(actor=principal.actor, now=now, line_ids=line_ids),
                 uow_factory(),
             )
         )
@@ -1284,6 +1292,8 @@ def _offline(action: OfflineAction):
 
 
 # «Согласование» / «Отменено» (`PUR_STATUS_OFFLINE`): outside the linear order, any stage before payment.
+# The manual move into «Согласование» is off (owner, 04.10.2026): the endpoint stays and answers 422 with the
+# reason; the exit (`/resume`) still serves a line parked before the switch.
 router.post("/{line_id}/approval")(_offline(OfflineAction.APPROVAL))
 router.post("/{line_id}/approval/resume")(_offline(OfflineAction.RESUME))
 router.post("/{line_id}/cancel")(_offline(OfflineAction.CANCEL))

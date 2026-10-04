@@ -11,8 +11,8 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.shared.notifications import (
-    PROJECT_MANAGER_ROLE,
-    STOREKEEPER_ROLE,
+    PROJECT_MANAGER_AUDIENCE,
+    STOREKEEPER_AUDIENCE,
     NotificationOutbox,
     notification_requested,
     publish_notification,
@@ -549,7 +549,7 @@ def _notify_documents(before: Shipment, after: Shipment, now: datetime, uow: Uni
             kind="ship",
             reference=after.number,
             user_ids=(after.manager_id,),
-            roles=() if after.manager_id else (PROJECT_MANAGER_ROLE,),
+            audiences=() if after.manager_id else (PROJECT_MANAGER_AUDIENCE,),
         ))
     # Shipment.gs:888 `shipUpdAttach_`: storekeepers print the УПД, so a newly attached file goes to them.
     if after.upd_url and after.upd_url != before.upd_url:
@@ -565,7 +565,7 @@ def _notify_documents(before: Shipment, after: Shipment, now: datetime, uow: Uni
             ),
             kind="ship",
             reference=after.number,
-            roles=(STOREKEEPER_ROLE,),
+            audiences=(STOREKEEPER_AUDIENCE,),
         ))
 
 

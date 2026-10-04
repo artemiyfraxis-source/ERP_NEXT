@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, UniqueConstraint, Uuid, case, delete, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.modules.identity.infrastructure import IdentityUserRow
+from app.modules.identity.audience_directory import audience_emails, user_emails
 from app.shared.persistence import (
     AuditEventRow,
     Base,
@@ -230,30 +230,16 @@ class SqlAlchemyNotificationRepository:
 
 
 class SqlAlchemyRecipientDirectory:
-    """Reads identity users to resolve addressed ids/roles; a deactivated user gets nothing."""
+    """Resolves addressed ids/audiences through identity's read port; a deactivated user gets nothing."""
 
     def __init__(self, session: Session):
         self.session = session
 
     def emails_for_users(self, user_ids: tuple[UUID, ...]) -> list[str]:
-        if not user_ids:
-            return []
-        return sorted(self.session.scalars(
-            select(IdentityUserRow.email).where(
-                IdentityUserRow.id.in_(user_ids),
-                IdentityUserRow.active.is_(True),
-            )
-        ))
+        return user_emails(self.session, user_ids)
 
-    def emails_for_roles(self, roles: tuple[str, ...]) -> list[str]:
-        if not roles:
-            return []
-        return sorted(self.session.scalars(
-            select(IdentityUserRow.email).where(
-                IdentityUserRow.role.in_(roles),
-                IdentityUserRow.active.is_(True),
-            )
-        ))
+    def emails_for_audiences(self, audiences: tuple[str, ...]) -> list[str]:
+        return audience_emails(self.session, audiences)
 
 
 class SqlAlchemyOperationsRepository:

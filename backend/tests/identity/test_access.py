@@ -27,7 +27,6 @@ from app.modules.identity.domain import (
     effective_permissions,
     hash_password,
     level_permissions,
-    role_permissions,
 )
 from app.modules.identity.infrastructure import (
     IdentityLevelAccessRow,
@@ -36,6 +35,7 @@ from app.modules.identity.infrastructure import (
     provision_user,
     seed_level_matrix,
 )
+from app.modules.identity.level_migration import old_permissions
 from app.modules.requests.api import moscow_now
 from app.shared.persistence import AuditEventRow, create_schema
 
@@ -288,8 +288,8 @@ def test_migration_folds_seeded_defaults_back_without_changing_anyones_access(tm
         ("management", "warehouse"): "edit",  # the administrator's change stays
     }
     # A non-full role's row is interpreted as saved (the legacy role model, frozen in level_migration).
-    staffed = role_permissions("receiver", {**ROLE_SEED["receiver"], "erpref": AccessMode.NONE})
-    assert {section: mode.value for section, mode in staffed.items()} == {
+    row = {section: mode.value for section, mode in {**ROLE_SEED["receiver"], "erpref": AccessMode.NONE}.items()}
+    assert old_permissions("receiver", row, {}) == {
         "newrequest": "edit", "myrequests": "edit",  # NAV-SECTIONS defaults, not stored
         "receiving": "edit", "warehouse": "edit", "fulfillment": "edit", "handout": "edit",
         "shipping": "edit", "procurement": "view",

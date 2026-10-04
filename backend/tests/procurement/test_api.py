@@ -120,6 +120,30 @@ def test_available_queue_uses_bounded_cursor_pages(procurement_api):
     assert client.get("/api/procurement/available").status_code == 403
 
 
+def test_supplier_requests_are_formed_only_for_the_ticked_ready_lines(procurement_api):
+    client, first, sessions = procurement_api
+    second = consume_procurement_requested(message(2), SqlAlchemyProcurementUnitOfWork(sessions))
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(first.id), str(second.id)]}).json()["lines"]
+    for item, supplier in zip(taken, ("ООО А", "ООО Б")):
+        ready = client.patch(
+            f"/api/procurement/{item['id']}/facts",
+            json={"version": item["version"], "supplier": supplier, "actual_quantity": "2", "actual_unit": "шт"},
+        )
+        assert ready.json()["line"]["status"] == "Готов к запросу"
+
+    picked = client.post("/api/procurement/supplier-requests", json={"line_ids": [str(second.id)]})
+    nothing = client.post("/api/procurement/supplier-requests", json={"line_ids": [str(second.id)]})
+    empty = client.post("/api/procurement/supplier-requests", json={"line_ids": []})
+
+    assert picked.status_code == 200, picked.text
+    assert [order["supplier"] for order in picked.json()["orders"]] == ["ООО Б"]
+    assert [line["id"] for line in picked.json()["lines"]] == [str(second.id)]
+    statuses = {line["id"]: line["status"] for line in client.get("/api/procurement/mine").json()["lines"]}
+    assert statuses == {str(first.id): "Готов к запросу", str(second.id): "Жду счет"}
+    assert nothing.status_code == 422
+    assert empty.status_code == 422
+
+
 def test_buyer_can_take_and_complete_own_line_idempotently(procurement_api):
     client, line, sessions = procurement_api
 
@@ -343,6 +367,55 @@ def test_cbr_outage_returns_manual_rate_prompt_then_marks_manual_rate(procuremen
     )
 
 
+def paid_with_backorder(client, line, sessions):
+    """A paid line whose first inspection came short: receiving parks the remainder as a `-Д` line."""
+    with sessions() as session:  # payment needs a delivery point with a receiving warehouse
+        session.get(ProcurementLineRow, line.id).delivery_point = "г. Москва, ул. 6-я Радиальная, д. 17"
+        session.commit()
+    version = awaiting_invoice(client, line)
+    saved = client.patch(
+        f"/api/procurement/{line.id}/money",
+        json={"version": version, "currency": "RUB", "price": "100", "vat_rate": "22", "invoice_item_name": "SMA"},
+    ).json()["line"]
+    invoiced = client.post(
+        f"/api/procurement/{line.id}/invoice",
+        json={"version": saved["version"], "invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25"},
+    ).json()["line"]
+    client.post(f"/api/procurement/{line.id}/paid", json={"version": invoiced["version"]})
+    uow = SqlAlchemyProcurementUnitOfWork(sessions)
+    with uow:
+        uow.outbox.add(
+            OutboxMessage(
+                id=UUID("00000000-0000-0000-0000-00000000b001"),
+                topic="procurement.backorder_requested",
+                idempotency_key="receiving:api:backorder",
+                created_at=datetime(2026, 9, 20, 10, 0),
+                payload={"procurement_line_id": str(line.id), "backorder_quantity": "1"},
+            )
+        )
+        uow.commit()
+    return dispatch_next_backorder_requested(datetime(2026, 9, 20, 10, 1), SqlAlchemyProcurementUnitOfWork(sessions))
+
+
+def test_backorder_stays_in_approval_with_its_own_cancel_while_manual_approval_is_off(procurement_api, rates):
+    client, line, sessions = procurement_api
+    backorder = paid_with_backorder(client, line, sessions)
+    assert backorder.status.value == "Согласование"
+
+    generic = client.post(f"/api/procurement/{backorder.id}/approval", json={"version": 1})
+    cancelled = client.post(f"/api/procurement/{backorder.id}/backorder/cancel", json={"version": 1})
+
+    assert generic.status_code == 422
+    assert generic.json()["detail"] == "У дозавоза свои действия: подтвердить досыл или отменить дозавоз"
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["line"]["status"] == "Отменено"
+    with sessions() as session:
+        reorders = session.scalars(
+            select(OutboxMessageRow).where(OutboxMessageRow.topic == "requests.reorder_requested")
+        ).all()
+    assert [row.payload["legacy_id"] for row in reorders] == ["SM-20260915-01-Д"]
+
+
 def test_backorder_is_confirmed_through_api_with_version_check(procurement_api, rates):
     client, line, sessions = procurement_api
     with sessions() as session:  # payment needs a delivery point with a receiving warehouse
@@ -513,30 +586,34 @@ def test_replacement_permission_document_prints_once_allowed_and_voids_when_forb
     assert missing.status_code == 404
 
 
-def test_line_is_parked_approved_and_cancelled_through_api_with_audit(procurement_api):
+def test_manual_approval_is_refused_and_a_line_parked_before_the_switch_resumes_through_api(procurement_api):
     client, line, sessions = procurement_api
     version = awaiting_invoice(client, line)
 
-    parked = client.post(f"/api/procurement/{line.id}/approval", json={"version": version})
-    stale = client.post(f"/api/procurement/{line.id}/approval/resume", json={"version": version})
-    resumed = client.post(
-        f"/api/procurement/{line.id}/approval/resume", json={"version": parked.json()["line"]["version"]},
-    )
-    cancelled = client.post(f"/api/procurement/{line.id}/cancel", json={"version": resumed.json()["line"]["version"]})
-    again = client.post(f"/api/procurement/{line.id}/approval", json={"version": cancelled.json()["line"]["version"]})
+    refused = client.post(f"/api/procurement/{line.id}/approval", json={"version": version})
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "Этап согласования отключён: позиция идёт сразу к запросу поставщику"
+    assert client.get("/api/procurement/mine").json()["lines"][0]["status"] == "Жду счет"
 
-    assert parked.status_code == 200, parked.text
-    assert parked.json()["line"]["status"] == "Согласование"
+    with sessions() as session:  # parked before the owner switched the stage off (04.10.2026)
+        row = session.get(ProcurementLineRow, line.id)
+        row.status, row.version = "Согласование", version + 1
+        session.commit()
+    stale = client.post(f"/api/procurement/{line.id}/approval/resume", json={"version": version})
+    resumed = client.post(f"/api/procurement/{line.id}/approval/resume", json={"version": version + 1})
+    cancelled = client.post(f"/api/procurement/{line.id}/cancel", json={"version": resumed.json()["line"]["version"]})
+
     assert stale.status_code == 409
+    assert resumed.status_code == 200, resumed.text
     assert resumed.json()["line"]["status"] == "Жду счет"
     assert cancelled.json()["line"]["status"] == "Отменено"
-    assert again.status_code == 422
     assert all(item["id"] != str(line.id) for item in client.get("/api/procurement/mine").json()["lines"])
     with sessions() as session:
         events = session.scalars(
             select(AuditEventRow.event_type).where(AuditEventRow.aggregate_id == line.id)
         ).all()
-    assert events[-3:] == ["procurement.approval_requested", "procurement.approved", "procurement.cancelled"]
+    assert "procurement.approval_requested" not in events
+    assert events[-2:] == ["procurement.approved", "procurement.cancelled"]
 
 
 def test_foreign_buyer_cannot_cancel_claimed_line(procurement_api):
