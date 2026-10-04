@@ -16,6 +16,7 @@ from .plan import (
     PlanEvent,
     PlanProjectSnapshot,
     normalize_project_number,
+    plan_mark_value,
     summarize_journal,
     validate_plan_note,
 )
@@ -64,6 +65,7 @@ class AddPlanEventCommand:
     now: datetime
     item_index: str = ""
     value: str = ""
+    field: str = ""
 
 
 def replace_plan_projects(
@@ -103,11 +105,22 @@ def add_plan_event(command: AddPlanEventCommand, uow: PlanUnitOfWork) -> PlanEve
         "blocker": command.blocker, "text": command.text,
         "deadline": command.deadline,
         "item_index": command.item_index, "value": command.value,
+        "field": command.field,
     }
     validate_plan_note(payload, command.known_projects)
     project = normalize_project_number(command.project)
     kind = PLAN_KINDS[command.kind]
     text = str(command.text or "").strip()
+    value = str(command.value or "").strip()
+    field_name = ""
+    if command.kind == "mark":
+        # «Отметка плана»: ручное значение колонки листа «ЗАГРУЗ»; пустое — вернуть вычисленное.
+        field_name = str(command.field or "").strip()
+        normalized = plan_mark_value(field_name, command.value, command.text)
+        if field_name == "comment":
+            text, value = normalized, ""
+        else:
+            value = normalized or "авто"
     with uow:
         if command.kind == "deadline":
             current = summarize_journal(uow.plan_events.list(project=project)).get(project)
@@ -119,13 +132,16 @@ def add_plan_event(command: AddPlanEventCommand, uow: PlanUnitOfWork) -> PlanEve
             kind=kind, blocker=command.blocker if command.kind == "block" else "",
             text=text, deadline=command.deadline if command.kind == "deadline" else None,
             item_index=str(command.item_index or "").strip().upper(),
-            value=str(command.value or "").strip(),
+            value=value, field=field_name,
         )
         event = uow.plan_events.add(event)
+        details = {"project": project, "kind": kind}
+        if field_name:
+            details.update({"field": field_name, "value": text if field_name == "comment" else value})
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=event.id, event_type="production.plan_event_added",
             actor=command.actor, occurred_at=command.now,
-            details={"project": project, "kind": kind},
+            details=details,
         ))
         uow.commit()
     return event

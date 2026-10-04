@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -22,7 +24,18 @@ from app.workflows.production_plan import build_production_plan
 
 from .application import UnitOfWork
 from .domain import ProductionValidationError
-from .plan import KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, PlanEvent, PlanProjectSnapshot
+from .plan import (
+    KIT_STAGES,
+    PLAN_BLOCKERS,
+    PLAN_MARK_ARRIVAL,
+    PLAN_MARK_SUPPLIED,
+    PROJECT_TERMINALS,
+    SHOP_STATUSES,
+    TC_REVIEW_VALUES,
+    PlanEvent,
+    PlanProjectSnapshot,
+)
+from .plan_sheet import calendar_span
 from .plan_application import (
     AddPlanEventCommand,
     ReplacePlanProjectsCommand,
@@ -57,6 +70,7 @@ class PlanEventPayload(BaseModel):
     deadline: date | None = None
     item_index: str = Field(default="", max_length=64)
     value: str = Field(default="", max_length=64)
+    field: str = Field(default="", max_length=32)
 
 
 def _factory(request: Request, name: str, *, required: bool = False):
@@ -114,8 +128,18 @@ def _event_result(event: PlanEvent) -> dict[str, Any]:
         "occurred_at": event.occurred_at.isoformat(), "who": event.who,
         "kind": event.kind, "blocker": event.blocker, "text": event.text,
         "deadline": event.deadline.isoformat() if event.deadline else None,
-        "item_index": event.item_index, "value": event.value,
+        "item_index": event.item_index, "value": event.value, "field": event.field,
     }
+
+
+def _processed(outputs) -> dict[UUID, Decimal]:
+    """prodOpState_ input: good + scrap per operation, from active (not superseded) outputs."""
+    result: dict[UUID, Decimal] = {}
+    for output in outputs:
+        result[output.operation_id] = result.get(output.operation_id, Decimal(0)) + (
+            output.good_quantity + output.defect_quantity
+        )
+    return result
 
 
 @router.get("")
@@ -144,14 +168,20 @@ def production_plan(
     goods = _safe_read("goods", shipping_uow_factory, lambda uow: tuple(uow.goods.list(limit=10_000)))
     requests = _safe_read("requests", requests_uow_factory, lambda uow: tuple(uow.requests.recent(10_000)))
     procurement = _safe_read("procurement", procurement_uow_factory, lambda uow: tuple(uow.procurement.list(limit=10_000)))
+    running = tuple(task.id for task in tasks)
+    outputs = _safe_read("outputs", production_uow_factory, lambda uow: tuple(uow.outputs.active_for_tasks(running)))
     rows = build_production_plan(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods,
         requests=requests, procurement=procurement, projects=projects,
-        events=events, today=today, kitsets=kitsets,
+        events=events, today=today, kitsets=kitsets, processed=_processed(outputs),
     )
+    first_day, last_day = calendar_span(today)
     return {
         "blockers": list(PLAN_BLOCKERS), "stages": list(KIT_STAGES), "terminals": list(PROJECT_TERMINALS),
         "review_values": list(TC_REVIEW_VALUES),
+        "shop_statuses": list(SHOP_STATUSES), "supplied_values": list(PLAN_MARK_SUPPLIED),
+        "arrival_values": list(PLAN_MARK_ARRIVAL),
+        "today": today.isoformat(), "calendar_from": first_day.isoformat(), "calendar_to": last_day.isoformat(),
         "rows": [{
             "project": row.project, "customer": row.customer,
             "opened_on": row.opened_on.isoformat() if row.opened_on else None,
@@ -190,6 +220,16 @@ def production_plan(
                 "who": row.journal.last.who, "text": row.journal.last.text,
             },
             "events": [_event_result(event) for event in row.journal.events[:30]],
+            "group": row.group,
+            "sheet": {
+                name: {"value": cell.value, "auto": cell.auto, "manual": cell.manual}
+                for name, cell in (row.sheet or {}).items()
+            },
+            "calendar": {
+                "work": [day.isoformat() for day in row.calendar.work],
+                "starts": {day.isoformat(): quantity for day, quantity in row.calendar.starts},
+                "notes": {day.isoformat(): text for day, text in row.calendar.notes},
+            },
         } for row in rows],
     }
 
@@ -234,7 +274,7 @@ def save_plan_event(
         event = add_plan_event(AddPlanEventCommand(
             project=payload.project, kind=payload.kind, blocker=payload.blocker,
             text=payload.text, deadline=payload.deadline,
-            item_index=payload.item_index, value=payload.value,
+            item_index=payload.item_index, value=payload.value, field=payload.field,
             known_projects=tuple(known_projects), actor=principal.actor, now=now,
         ), uow_factory())
     except (ProductionValidationError, IntegrityError) as error:

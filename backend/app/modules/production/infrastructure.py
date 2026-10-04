@@ -186,6 +186,7 @@ class ProductionPlanEventRow(Base):
     deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
     item_index: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     value: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    field: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
 
 
 class ProductionBoxRow(Base):
@@ -674,7 +675,7 @@ class SqlAlchemyPlanEventRepository:
             id=row.id, project=row.project, occurred_at=row.occurred_at,
             who=row.who, kind=row.kind, blocker=row.blocker,
             text=row.text, deadline=row.deadline, sequence=row.sequence,
-            item_index=row.item_index, value=row.value,
+            item_index=row.item_index, value=row.value, field=row.field,
         )
 
     def list(self, project: str | None = None, limit: int = 10_000) -> list[PlanEvent]:
@@ -695,7 +696,7 @@ class SqlAlchemyPlanEventRepository:
             id=stored.id, project=stored.project, sequence=stored.sequence,
             occurred_at=stored.occurred_at, who=stored.who, kind=stored.kind,
             blocker=stored.blocker, text=stored.text, deadline=stored.deadline,
-            item_index=stored.item_index, value=stored.value,
+            item_index=stored.item_index, value=stored.value, field=stored.field,
         ))
         return stored
 
