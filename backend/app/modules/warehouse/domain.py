@@ -326,7 +326,13 @@ class StockLot:
             return self
         return replace(self, **values, version=self.version + 1)
 
-    def edit_row(self, changes: Mapping[str, object], *, kitting_reserve: Decimal = Decimal("0")) -> StockLot:
+    def edit_row(
+        self,
+        changes: Mapping[str, object],
+        *,
+        kitting_reserve: Decimal = Decimal("0"),
+        procurement_reserve: Decimal = Decimal("0"),
+    ) -> StockLot:
         """Manual edit of the whole stock row (SUPPLYMAP Stock05.gs stock05EditRowLocked_ 1027-1079).
 
         `changes` holds only the fields to set (a missing key is left alone); a text field set to "" is
@@ -382,6 +388,13 @@ class StockLot:
             raise WarehouseValidationError(
                 f"Комплектация держит на партии {self.grn} резерв {_shown(kitting_reserve)}{unit}: РЕЗЕРВ меньше "
                 "не ставится. Сначала сними резерв в комплектации."
+            )
+        # «Со склада» of procurement lines reserves through the same РЕЗЕРВ: the hand edit may not go under both.
+        if updated.reserved != self.reserved and updated.reserved < kitting_reserve + procurement_reserve:
+            raise WarehouseValidationError(
+                f"Закупка держит на партии {self.grn} резерв «Со склада» {_shown(procurement_reserve)}{unit}"
+                + (f" (и комплектация {_shown(kitting_reserve)}{unit})" if kitting_reserve else "")
+                + ": РЕЗЕРВ меньше не ставится. Сначала снимите «Со склада» в листе закупки."
             )
         return replace(updated, version=self.version + 1)
 

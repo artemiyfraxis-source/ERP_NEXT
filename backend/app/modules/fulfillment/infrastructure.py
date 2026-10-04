@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
+from app.modules.procurement.infrastructure import SqlAlchemyStockCoverRepository
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
@@ -255,6 +256,8 @@ class SqlAlchemyFulfillmentUnitOfWork:
         self.writeoffs = SqlAlchemyWriteOffJournal(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
+        # «Со склада» of procurement lines: a kit of the same project takes those reserves over.
+        self.stock_covers = SqlAlchemyStockCoverRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

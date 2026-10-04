@@ -165,6 +165,8 @@ class EditLotRowCommand:
     actor: Actor
     now: datetime
     kitting_reserve: Decimal = Decimal("0")
+    # «Со склада»: the reserve procurement lines hold on the lot.
+    procurement_reserve: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -1093,7 +1095,11 @@ def edit_lot_row(command: EditLotRowCommand, uow: UnitOfWork) -> tuple[StockLot,
     Nothing changed → the lot as it was and no audit event («Изменений нет.»)."""
     with uow:
         current = _versioned(command.lot_id, command.expected_version, uow)
-        updated = current.edit_row(command.changes, kitting_reserve=command.kitting_reserve)
+        updated = current.edit_row(
+            command.changes,
+            kitting_reserve=command.kitting_reserve,
+            procurement_reserve=command.procurement_reserve,
+        )
         changes = lot_row_changes(current, updated)
         if not changes:
             return current, []

@@ -20,12 +20,14 @@ from sqlalchemy import (
     Uuid,
     and_,
     false,
+    func,
     or_,
     select,
     update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
+from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
 from app.shared.identity import Actor
 from app.shared.persistence import (
     Base,
@@ -39,6 +41,7 @@ from .domain import (
     ProcurementStatus,
     ProcurementTraceability,
     ReplacementDecision,
+    StockCover,
     designation_key,
 )
 from .money import FactMoney
@@ -132,6 +135,8 @@ class ProcurementLineRow(Base):
     standard: Mapped[str | None] = mapped_column(String(255))
     # The last status the initiator was notified of (OwnerTick.gs notified_<id>); owned by the sweep.
     notified_status: Mapped[str | None] = mapped_column(String(32))
+    # «Со склада»: the part of КОЛ-ВО (Расчет) our lots reserve for the line (procurement_stock_covers).
+    stock_covered: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0")
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -212,6 +217,7 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         quality_document_number=line.trace.quality_document_number,
         quality_document_date=line.trace.quality_document_date,
         standard=line.trace.standard,
+        stock_covered=line.stock_covered,
     )
 
 
@@ -297,6 +303,7 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
             quality_document_date=row.quality_document_date,
             standard=row.standard,
         ),
+        stock_covered=row.stock_covered if row.stock_covered is not None else Decimal("0"),
     )
 
 
@@ -702,6 +709,105 @@ class SqlAlchemyInvoiceFileRepository:
         ), row.content
 
 
+class ProcurementStockCoverRow(Base):
+    """«Со склада»: a reserve one procurement line holds on one warehouse lot (StockCover)."""
+
+    __tablename__ = "procurement_stock_covers"
+    __table_args__ = (Index("ix_procurement_stock_covers_lot_quantity", "lot_id", "quantity"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    line_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("procurement_lines.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    legacy_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    project_reference: Mapped[str | None] = mapped_column(String(128), index=True)
+    lot_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False)
+    package: Mapped[str] = mapped_column(String(32), nullable=False)
+    storage_location: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    trimmed: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    consumed: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    consumed_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    released_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+def _cover_row(cover: StockCover) -> ProcurementStockCoverRow:
+    return ProcurementStockCoverRow(
+        id=cover.id, version=cover.version, line_id=cover.line_id, legacy_id=cover.legacy_id,
+        project_reference=cover.project_reference, lot_id=cover.lot_id, warehouse=cover.warehouse, grn=cover.grn,
+        package=cover.package, storage_location=cover.storage_location, unit=cover.unit, quantity=cover.quantity,
+        trimmed=cover.trimmed, consumed=cover.consumed, consumed_by=cover.consumed_by, created_at=cover.created_at,
+        created_by=cover.created_by, created_by_id=cover.created_by_id, released_at=cover.released_at,
+    )
+
+
+def _cover_domain(row: ProcurementStockCoverRow) -> StockCover:
+    return StockCover(
+        id=row.id, version=row.version, line_id=row.line_id, legacy_id=row.legacy_id,
+        project_reference=row.project_reference, lot_id=row.lot_id, warehouse=row.warehouse, grn=row.grn,
+        package=row.package, storage_location=row.storage_location, unit=row.unit, quantity=row.quantity,
+        trimmed=row.trimmed, consumed=row.consumed, consumed_by=row.consumed_by, created_at=row.created_at,
+        created_by=row.created_by, created_by_id=row.created_by_id, released_at=row.released_at,
+    )
+
+
+class SqlAlchemyStockCoverRepository:
+    """«Со склада» reserves. Read by Procurement (cover/release), Fulfillment (a kit of the same project takes
+    them over) and the warehouse screen (who holds a lot's РЕЗЕРВ)."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get(self, cover_id: UUID) -> StockCover | None:
+        row = self.session.get(ProcurementStockCoverRow, cover_id)
+        return _cover_domain(row) if row is not None else None
+
+    def for_line(self, line_id: UUID) -> list[StockCover]:
+        rows = self.session.scalars(
+            select(ProcurementStockCoverRow)
+            .where(ProcurementStockCoverRow.line_id == line_id)
+            .order_by(ProcurementStockCoverRow.created_at, ProcurementStockCoverRow.id)
+        )
+        return [_cover_domain(row) for row in rows]
+
+    def active_on_lots(self, lot_ids: Sequence[UUID]) -> list[StockCover]:
+        if not lot_ids:
+            return []
+        rows = self.session.scalars(
+            select(ProcurementStockCoverRow)
+            .where(ProcurementStockCoverRow.lot_id.in_(tuple(lot_ids)), ProcurementStockCoverRow.quantity > 0)
+            .order_by(ProcurementStockCoverRow.created_at, ProcurementStockCoverRow.id)
+        )
+        return [_cover_domain(row) for row in rows]
+
+    def reserved_on_lot(self, lot_id: UUID) -> Decimal:
+        """What «Со склада» holds in reserve on one lot (the warehouse row edit may not go under it)."""
+        total = self.session.scalar(
+            select(func.coalesce(func.sum(ProcurementStockCoverRow.quantity), 0))
+            .where(ProcurementStockCoverRow.lot_id == lot_id)
+        )
+        return Decimal(str(total or 0))
+
+    def add(self, cover: StockCover) -> None:
+        incoming = _cover_row(cover)
+        stored = self.session.get(ProcurementStockCoverRow, cover.id)
+        if stored is None:
+            self.session.add(incoming)
+            return
+        for column in ProcurementStockCoverRow.__table__.columns:
+            if column.name != "id":
+                setattr(stored, column.name, getattr(incoming, column.name))
+
+
 class SqlAlchemyProcurementUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -715,6 +821,9 @@ class SqlAlchemyProcurementUnitOfWork:
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         self.files = SqlAlchemyInvoiceFileRepository(self.session)
+        # «Со склада»: the cover and the lot's РЕЗЕРВ move in one transaction.
+        self.stock_covers = SqlAlchemyStockCoverRepository(self.session)
+        self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
