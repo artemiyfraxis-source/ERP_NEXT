@@ -1468,10 +1468,6 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .inwork-cell { display: flex; align-items: center; gap: 4px; }
 .inwork-name { white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 .inwork-menu { position: relative; width: 40px; }
-.inwork-popup { position: absolute; right: 0; top: 100%; z-index: 20; display: grid; min-width: 270px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 4px; }
-.inwork-popup button { text-align: left; background: none; border: 0; padding: 6px 8px; font-size: 13px; cursor: pointer; }
-.inwork-popup button:hover:not(:disabled) { background: var(--accent); }
-.inwork-popup button:disabled { color: var(--muted-foreground); cursor: not-allowed; }
 .inwork-detail td { background: var(--card); padding: 8px 12px; }
 .stock-picker { display: grid; gap: 6px; }
 .stock-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -1485,6 +1481,30 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .inwork-name { max-width: 340px; }
 .inwork-table td { padding: 1px 4px; }
 .inwork-table input, .inwork-table select { height: 24px; }
+.inwork-context { white-space: nowrap; color: var(--muted-foreground); }
+
+/* ── Лист закупки: стадии «Мои позиции» (ProcurementStages) ── */
+.panel-heading h2 .stage-count { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.heading-actions { display: flex; align-items: center; gap: 12px; }
+.row-menu { display: inline-block; }
+.row-menu-popup { z-index: 60; display: grid; min-width: 250px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 4px; }
+.row-menu-popup button { text-align: left; background: none; border: 0; padding: 6px 8px; font-size: 13px; cursor: pointer; }
+.row-menu-popup button:hover:not(:disabled) { background: var(--accent); }
+.row-menu-popup button:disabled { color: var(--muted-foreground); cursor: not-allowed; }
+.line-panel { border-top: 1px solid var(--border); }
+.line-panel .panel-heading { padding: 12px 20px 8px; }
+.line-panel-body { padding: 0 20px 14px; }
+.line-panel-body .form-grid, .line-panel-body .facts-grid { padding-left: 0; padding-right: 0; }
+.line-panel .hint, .line-panel .money-summary { display: block; margin: 10px 0 0; color: var(--muted-foreground); font-size: 12px; }
+.doc-links { display: inline-flex; align-items: baseline; gap: 10px; }
+.doc-links a, .doc-links .link-button { padding: 0; color: var(--primary); }
+.backorder-action { display: inline-flex; align-items: center; gap: 8px; }
+.backorder-action input { height: 26px; }
+.order-lines td.num { text-align: right; font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) {
+  .row-menu > button { min-height: 36px; min-width: 40px; }
+  .row-menu-popup button { min-height: 40px; }
+}
 
 /* ── Производственный план: лист «ЗАГРУЗ» (PlanLoadSheet.tsx) ─────────────────────────────────────────── */
 :root {
