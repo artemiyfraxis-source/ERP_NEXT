@@ -86,6 +86,6 @@ def test_a_fully_reserved_lot_is_offered_to_its_project_only(env):  # noqa: F811
     assert [(l["grn"], l["available"], l.get("reserved")) for l in lots("/api/issues/lots?project=591К.3")] == [
         ("FRX.26.0000005", "10", "10")]
     assert lots("/api/issues/lots") == [] and lots("/api/issues/lots?project=700К.1") == []
-    assert [(l["grn"], l["available"]) for l in lots("/api/techcards/kitsets/lots?project=591К.3")] == [
-        ("FRX.26.0000005", "10")]
+    assert [(l["grn"], l["available"], l.get("reserved")) for l in lots("/api/techcards/kitsets/lots?project=591К.3")] == [
+        ("FRX.26.0000005", "10", "10")]
     assert lots("/api/techcards/kitsets/lots") == []

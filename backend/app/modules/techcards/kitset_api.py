@@ -266,6 +266,7 @@ def lots(
         "lot_id": str(lot.id), "warehouse": lot.warehouse, "grn": lot.grn, "package": lot.package,
         "article": lot.article, "name": lot.name, "unit": lot.unit,
         "storage_location": lot.storage_location, "available": _number(free_for_project(lot, held)),
+        **({"reserved": _number(held[lot.id])} if held.get(lot.id) else {}),
     } for lot in found if free_for_project(lot, held) > 0]}
 
 

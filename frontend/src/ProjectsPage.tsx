@@ -109,7 +109,7 @@ function GenTab({ card, principal, index, pick, done }: {
     <div className="seg-tabs sub" role="tablist" aria-label="Сборка">{card.assemblies.map((item) =>
       <button key={item.index} role="tab" aria-selected={item.index === index} className={item.index === index ? "on" : ""} onClick={() => pick(item.index)}>{item.index}</button>)}</div>
     {!index && <div className="empty">Выбери сборку — генератор откроется здесь.</div>}
-    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : "нет"}</p>}
+    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
     {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
@@ -557,7 +557,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
         <td>{kdCell(assembly)}</td>
         <td>{assembly.techcard && assembly.techcard.stages > 0
           ? <button className="link-button" onClick={() => (assembly.techcard!.issued ? openTc : openGen)(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} эт.</button>
-          : <span className="muted">нет</span>}</td>
+          : <span className="muted">{assembly.techcard ? "не собрана" : "нет"}</span>}</td>
         <td>{stageCell(assembly)}</td>
         <td>{reviewCell(assembly)}</td>
       </tr>)}</tbody>
@@ -672,7 +672,7 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
       ? <div className="page-actions"><button className="primary" onClick={() => setIssuing(true)}>Отправить на комплектацию</button><span className="muted kit-autosave">{autosave}</span></div>
       : <p className="page-sub">Раздел открыт на просмотр — править и отправлять нельзя.</p>}
     {issuing && <IssueDialog project={card.project} close={() => setIssuing(false)} done={(text) => { setIssuing(false); setNote(text); }} />}
-    {picking && <LotPicker component={picking.component} batch={kitBatch(draftOf(picking.assembly, picking.component).per, picking.assembly.run, draftOf(picking.assembly, picking.component).scrap)}
+    {picking && <LotPicker project={card.project} component={picking.component} batch={kitBatch(draftOf(picking.assembly, picking.component).per, picking.assembly.run, draftOf(picking.assembly, picking.component).scrap)}
       current={draftOf(picking.assembly, picking.component).lot}
       close={() => setPicking(null)}
       pick={(lot) => { edit(picking.assembly, picking.component, { lot }); void save(picking.assembly, picking.component, { lot }); setPicking(null); }} />}
@@ -691,18 +691,18 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
   </div>;
 }
 
-function LotPicker({ component, batch, current, close, pick }: {
-  component: KitsetComponent; batch: number; current: KitsetLot | null; close: () => void; pick: (lot: KitsetLot | null) => void;
+function LotPicker({ project, component, batch, current, close, pick }: {
+  project: string; component: KitsetComponent; batch: number; current: KitsetLot | null; close: () => void; pick: (lot: KitsetLot | null) => void;
 }) {
   const [query, setQuery] = useState(component.name || component.art);
   const [lots, setLots] = useState<KitsetStockLot[] | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      kitsetsApi.lots(query).then((result) => setLots(result.lots)).catch((reason) => setError(message(reason, "Склад не ответил")));
+      kitsetsApi.lots(query, project).then((result) => setLots(result.lots)).catch((reason) => setError(message(reason, "Склад не ответил")));
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [query, project]);
   return <div className="panel kit-modal" role="dialog" aria-label="Выбор ГРН">
     <h3>ГРН для «{component.name || component.art}»</h3>
     <p className="page-sub">Нужно на партию: {batch}. Выбранный ГРН зарезервируется при отправке на комплектацию.</p>
@@ -712,7 +712,7 @@ function LotPicker({ component, batch, current, close, pick }: {
       <thead><tr><th>Склад</th><th>ГРН</th><th>Пакет</th><th>Наименование</th><th>Место</th><th>Доступно</th><th /></tr></thead>
       <tbody>{(lots || []).map((lot) => <tr key={lot.lot_id} className={current?.grn === lot.grn && (current?.package || "") === lot.package ? "selected" : ""}>
         <td>{lot.warehouse}</td><td>{lot.grn}</td><td>{lot.package}</td><td>{lot.name}</td><td>{lot.storage_location}</td>
-        <td className="num">{lot.available} {lot.unit}</td>
+        <td className="num">{lot.available} {lot.unit}{lot.reserved && <div className="muted">из них резерв проекта {lot.reserved} {lot.unit}</div>}</td>
         <td><button className="secondary small" onClick={() => pick({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package })}>Выбрать</button></td>
       </tr>)}</tbody>
     </table></div>
