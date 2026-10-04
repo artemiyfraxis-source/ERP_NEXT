@@ -707,7 +707,10 @@ def take_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    suppliers: Annotated[SupplierDirectory | None, Depends(procurement_supplier_directory)],
 ) -> dict:
+    """`portalTakeInWork`: the lines become the buyer's; an empty ПОСТАВЩИК fills from the link's domain at once,
+    the page-dependent fields (name on the site, manufacturer, country) fill in the background."""
     try:
         lines, skipped = _retry_transaction(
             lambda: take_procurement_in_work_batch(
@@ -717,6 +720,7 @@ def take_lines(
                     now=now,
                 ),
                 uow_factory(),
+                suppliers,
             )
         )
     except ProcurementValidationError as error:
