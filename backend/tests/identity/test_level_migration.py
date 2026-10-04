@@ -201,11 +201,14 @@ def test_notification_audiences_and_administrators():
         audience.key: ({logins[i] for i in audience.before}, {logins[i] for i in audience.after})
         for audience in checks.audiences
     }
+    # The administrators (tech, gd) are full everywhere but join a section's audience only by a personal exception, so
+    # the section audiences hold the old role's people plus the former full-access buyer and head of production, whose
+    # compensating exceptions give them the edit (the risk the plan names).
     assert audiences == {
         "admin": ({"tech"}, {"tech", "gd"}),
-        "buyer": ({"buyer"}, {"tech", "gd", "buyer", "prodhead"}),
-        "pm": ({"pm"}, {"tech", "gd", "buyer", "prodhead", "pm"}),
-        "receiver": ({"receiver"}, {"tech", "gd", "buyer", "prodhead", "receiver"}),
+        "buyer": ({"buyer"}, {"buyer", "prodhead"}),
+        "pm": ({"pm"}, {"buyer", "prodhead", "pm"}),
+        "receiver": ({"receiver"}, {"buyer", "prodhead", "receiver"}),
     }
     assert {logins[i] for i in checks.admins_before} == {"tech"}
     assert {logins[i] for i in checks.admins_after} == {"tech", "gd"}
@@ -305,12 +308,11 @@ def test_frozen_old_model_matches_the_code():
     assert OLD_SECTIONS == tuple(domain.SECTION_LABELS)
     assert OLD_ROLE_LABELS == domain.ROLE_LABELS
     assert set(ROLE_TO_LEVEL) == domain.ROLES
+    # The role keys modules addressed before audiences: the old outbox rows still carry them.
     keys = {key for key, _label, _rule in NOTIFICATION_AUDIENCES}
-    assert keys == {
-        notifications.TECHNOLOGIST_ROLE, notifications.SUPPLY_ROLE, notifications.PROJECT_MANAGER_ROLE,
-        notifications.STOREKEEPER_ROLE,
-    }
-    assert set(owner_alerts.OWNER_ROLES) | set(owner_alerts.DISPOSAL_ROLES) <= keys
+    assert keys == set(notifications.LEGACY_ROLE_AUDIENCES) == {"admin", "buyer", "pm", "receiver"}
+    assert set(notifications.LEGACY_ROLE_AUDIENCES.values()) == notifications.AUDIENCES
+    assert set(owner_alerts.OWNER_AUDIENCES) | set(owner_alerts.DISPOSAL_AUDIENCES) <= notifications.AUDIENCES
     new_sections = {"myops", "quality", "shipping_goods"}
     assert set(LEVEL_SECTION_LABELS) == (set(domain.SECTION_LABELS) - {"staffdir"}) | new_sections
 

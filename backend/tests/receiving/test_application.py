@@ -264,14 +264,14 @@ def test_overdue_waiting_is_quarantined_by_the_system_with_notify_targets():
     assert event.details["to_status"] == "Карантин"
     assert event.details["waiting_since"] == "2026-09-24"
     assert event.details["notify"] == ["Технолог", "Снабжение"]
-    # ВК «Ожидание» alerted at once; the automatic move alerts the same roles again (OwnerTick.gs:573-581).
+    # ВК «Ожидание» alerted at once; the automatic move alerts the same audiences again (OwnerTick.gs:573-581).
     alert, auto = uow.outbox.items
     assert alert.topic == auto.topic == "notification.requested"
     assert alert.payload["type"] == "nonconformity" and "в течение 2 раб. дн." in alert.payload["body"]
     assert auto.payload["type"] == "quarantine"
     assert auto.payload["title"] == f"Авто-Карантин (нет решения 2 р.д.) — {line.legacy_id}"
     assert "В «Ожидании» с 24.09.2026" in auto.payload["body"]
-    assert alert.payload["recipient_roles"] == auto.payload["recipient_roles"] == "admin,buyer"
+    assert alert.payload["recipient_audiences"] == auto.payload["recipient_audiences"] == "technologist,supply"
     assert uow.commits == commits + 1
     assert quarantine_overdue_waiting(datetime(2026, 9, 29, 8, 0), uow) == []
 
@@ -421,16 +421,16 @@ def _notifications(uow):
 
 
 @pytest.mark.parametrize(
-    ("change", "roles"),
+    ("change", "audiences"),
     [
-        # Receiving.gs:771-788 via quarNotifyTargets_: брак → технолог (role admin, «Технолог»)…
-        ({"manual_nonconformities": ("Механическое повреждение / брак",)}, "admin"),
-        # …anything else → снабжение (role buyer).
-        ({"shipping_document_url": None}, "buyer"),
-        ({"fact_quantity": Decimal("8"), "document_quantity": Decimal("8")}, "buyer"),
+        # Receiving.gs:771-788 via quarNotifyTargets_: брак → технолог (аудитория «Технолог»: суперадмин и админ)…
+        ({"manual_nonconformities": ("Механическое повреждение / брак",)}, "technologist"),
+        # …anything else → снабжение (редактируют «Лист закупки»).
+        ({"shipping_document_url": None}, "supply"),
+        ({"fact_quantity": Decimal("8"), "document_quantity": Decimal("8")}, "supply"),
     ],
 )
-def test_blocking_nonconformity_notifies_by_nature(change, roles):
+def test_blocking_nonconformity_notifies_by_nature(change, audiences):
     uow = Uow()
     line = consume_receiving_expected(message(), uow)
     inspected = inspect_receiving(
@@ -445,7 +445,7 @@ def test_blocking_nonconformity_notifies_by_nature(change, roles):
     )
     assert inspected.status is not ReceivingStatus.ACCEPTED
     (note,) = _notifications(uow)
-    assert note.payload["recipient_roles"] == roles
+    assert note.payload["recipient_audiences"] == audiences
     assert note.payload["recipient_user_ids"] == ""
     assert note.payload["type"] == "nonconformity"
     assert note.payload["reference"] == inspected.legacy_id

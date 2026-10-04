@@ -29,8 +29,8 @@ from app.modules.receiving.domain import QUARANTINE_WORKDAYS, ReceivingStatus, w
 from app.modules.receiving.infrastructure import ReceivingLineRow
 from app.modules.requests.infrastructure import RequestRow
 from app.shared.notifications import (
-    SUPPLY_ROLE,
-    TECHNOLOGIST_ROLE,
+    SUPPLY_AUDIENCE,
+    TECHNOLOGIST_AUDIENCE,
     notification_requested,
     publish_notification,
 )
@@ -38,11 +38,12 @@ from app.shared.persistence import SqlAlchemyOutboxRepository
 
 # Config.gs:228 QUAR_DAYS_DISPOSAL.
 QUARANTINE_DAYS_DISPOSAL = 90
-# Config.gs:231 QUAR_DISPOSAL_EMAILS = Виктор (buyer) + Артемий (admin, «Технолог»).
-DISPOSAL_ROLES = (TECHNOLOGIST_ROLE, SUPPLY_ROLE)
+# Config.gs:231 QUAR_DISPOSAL_EMAILS = Виктор (снабжение) + Артемий («Технолог»).
+DISPOSAL_AUDIENCES = (TECHNOLOGIST_AUDIENCE, SUPPLY_AUDIENCE)
 # Config.gs:238 OVERDUE_DIGEST_EMAILS = [] and CONFIG.ERROR_ALERT_EMAIL = '' → the owner of the
-# script. ERP has no «owner» account; the owner's role is admin. Решено агентом — проверить.
-OWNER_ROLES = ("admin",)
+# script. ERP has no «owner» account; the owner's alerts go to the superadministrators and administrators
+# (the technologist audience). Решено агентом — проверить.
+OWNER_AUDIENCES = (TECHNOLOGIST_AUDIENCE,)
 # CONFIG.ERROR_ALERT_COOLDOWN_H || 6.
 ERROR_ALERT_COOLDOWN = timedelta(hours=6)
 DIGEST_LIMIT = 25
@@ -197,7 +198,7 @@ def daily_overdue_digest(now: datetime, sessions: sessionmaker[Session]) -> bool
             title="Дайджест — просрочки и Карантин",
             body=text,
             kind="digest",
-            roles=OWNER_ROLES,
+            audiences=OWNER_AUDIENCES,
         ))
         session.commit()
         return published
@@ -249,7 +250,7 @@ def quarantine_escalations(now: datetime, sessions: sessionmaker[Session]) -> in
                 ),
                 kind="disposal",
                 reference=line.legacy_id,
-                roles=DISPOSAL_ROLES,
+                audiences=DISPOSAL_AUDIENCES,
             ))
             notified[key] = {"d": True}
             changed = True
@@ -300,7 +301,7 @@ def alert_on_dead_letters(now: datetime, sessions: sessionmaker[Session]) -> int
                     + "\n\nПодробности — «Системный журнал»."
                 ),
                 kind="error",
-                roles=OWNER_ROLES,
+                audiences=OWNER_AUDIENCES,
             ))
         session.commit()
         return 0 if first_run else len(digest)
