@@ -1639,3 +1639,52 @@ select.zg-supplied:hover, select.zg-supplied:focus { outline: 1px solid color-mi
   .zg-table input[type="checkbox"] { width: 20px; height: 20px; }
   .zg-pop button { min-height: 40px; }
 }
+
+/* «Личная карточка» сотрудника: шапка, вкладка «Обзор» и карточки в 3 колонки на 27", в 2 на 16", в 1 на планшете. */
+.ec-page { display: grid; gap: 12px; align-content: start; }
+.ec-page > .panel, .ec-grid > .panel { margin-top: 0; }
+.profile-panel { display: grid; justify-items: start; }
+.profile-panel .profile-card { justify-self: stretch; }
+.ec-head { display: flex; align-items: center; gap: 16px; padding: 16px 20px; }
+.ec-avatar { flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--primary) 14%, white); color: var(--primary); font-size: 20px; font-weight: 600; }
+.ec-id { flex: 1; min-width: 0; }
+.ec-id h1 { margin: 0 0 2px; }
+.ec-sub { margin: 0; font-size: 14px; }
+.ec-meta { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 2px 18px; color: var(--muted-foreground); font-size: 13px; }
+.ec-meta strong { color: var(--foreground); font-weight: 600; }
+.ec-badge { flex: none; border-radius: 999px; padding: 4px 12px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ec-badge.on { background: #e3f5e8; color: #15803d; }
+.ec-tabs { display: flex; align-items: center; gap: 12px; }
+.ec-tabs .seg-tabs { margin: 0; }
+.ec-asof { margin-left: auto; color: var(--muted-foreground); font-size: 12px; }
+/* Cards of different height pack into balanced columns (no empty gaps under short cards); the concept's order reads down each column. */
+.ec-grid { column-count: 1; column-gap: 12px; }
+.ec-grid > .panel { break-inside: avoid; margin-bottom: 12px; }
+@media (min-width: 1281px) { .ec-grid { column-count: 2; } }
+@media (min-width: 2000px) { .ec-grid { column-count: 3; } }
+@media (pointer: coarse) and (max-width: 1600px) { .ec-grid { column-count: 1; } }
+.panel.ec-card > h2:first-child { display: flex; align-items: center; gap: 8px; padding: 12px 16px 6px; }
+.ec-body { display: grid; align-content: start; gap: 6px; padding: 0 16px 14px; font-size: 13px; }
+.ec-body p { margin: 0; }
+.ec-facts { margin: 0; }
+.ec-fact { display: grid; grid-template-columns: minmax(7em, 10em) 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); }
+.ec-fact:first-child { border-top: 0; }
+.ec-fact dt { color: var(--muted-foreground); }
+.ec-fact dd { margin: 0; overflow-wrap: anywhere; }
+.ec-list { margin: 0; padding: 0; list-style: none; }
+.ec-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: 1px solid var(--border); }
+.ec-row:first-child { border-top: 0; }
+.ec-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ec-note { color: var(--muted-foreground); font-size: 12.5px; }
+.ec-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ec-project { display: grid; grid-template-columns: minmax(5em, 7em) 1fr 10.5em; }
+.ec-project .ec-date { text-align: right; }
+.ec-nodata { color: #637069; }
+.ec-big { font-size: 28px; font-weight: 600; line-height: 1.2; }
+.ec-big span { color: var(--muted-foreground); font-size: 16px; font-weight: 400; }
+.ec-sub-title { margin: 8px 0 0; color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.ec-code { display: block; color: var(--muted-foreground); font-size: 11px; }
+.ec-stars { color: #a16207; letter-spacing: 1px; }
+.ec-now { margin-left: 8px; border-radius: 999px; padding: 1px 8px; background: #fdf3d8; color: #8a5a00; font-size: 11px; font-weight: 600; }
+.ec-body .link-button { padding: 0; font-size: 13px; font-weight: 600; }
+.ec-body > .link-button { justify-self: start; margin-top: 4px; }
