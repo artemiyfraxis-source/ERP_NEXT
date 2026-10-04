@@ -2208,6 +2208,44 @@ export const operationsApi = {
   outbox: () => api<OutboxHealth>("/api/operations/outbox"),
 };
 
+/** Задача модулю по проекту: её ставит арбитр ERP по событию модуля (ARCH-TRACK-3). */
+export type ProjectTaskStatus = "open" | "done" | "cancelled";
+export type ProjectTaskItem = {
+  id: string;
+  /** Номер проекта в каноническом виде («708К.4»). */
+  project: string;
+  /** КБ («КБ1»); пусто — задача на весь проект. */
+  item_index: string;
+  /** Раздел, которому задача: ключ доступа (`production`, `shipping`, …) и его название («Производство»). */
+  module: string;
+  module_label: string;
+  /** Вид задачи: `plan_item`, `launch_task`, `ship_goods`. */
+  kind: string;
+  /** Текст по-русски: «Поставить в план: 708К.4 КБ1». */
+  title: string;
+  status: ProjectTaskStatus;
+  /** «Открыта» / «Закрыта» / «Отменена». */
+  status_label: string;
+  created_at: string;
+  closed_at: string | null;
+  /** Кто закрыл: сотрудник или «Арбитр ERP». */
+  closed_by: string;
+  /** Тип события журнала, из которого задача родилась. */
+  source_type: string;
+  /** Может ли текущий сотрудник закрыть её руками. */
+  can_close: boolean;
+};
+
+export const projectTasksApi = {
+  list: (filters: { project?: string; module?: string; status?: ProjectTaskStatus | "" } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) if (value?.trim()) params.set(key, value.trim());
+    return api<{ tasks: ProjectTaskItem[] }>(`/api/project-tasks${params.size ? `?${params}` : ""}`);
+  },
+  close: (id: string) =>
+    api<{ task: ProjectTaskItem }>(`/api/project-tasks/${encodeURIComponent(id)}/close`, { method: "POST" }),
+};
+
 /** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */
 export interface KitsetKbStage {
   index: string;
@@ -2384,7 +2422,8 @@ const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURICompo
 /** Запись трека проекта: что создано в одном из модулей. `at` — ISO-время; null — события ещё нет (такие идут в конце). */
 export type ProjectTrackEntry = {
   at: string | null;
-  /** Раздел ERP по-русски: «Заявки», «Закупка», «Приёмка», «Комплектация», «Производство», «Отгрузка», … */
+  /** Раздел ERP по-русски: «Заявки», «Закупка», «Приёмка», «Комплектация», «Производство», «Отгрузка», «Задачи», …
+   * У «Задачи» kind — текст задачи, ref — кому она («Производство»), status — «Открыта»/«Закрыта». */
   module: string;
   /** Что за запись: «Запрос на комплектацию», «Задание запущено», … */
   kind: string;

@@ -1,4 +1,4 @@
-"""Portal inbox plus restricted audit and outbox diagnostics."""
+"""Portal inbox, the module tasks of a project, plus restricted audit and outbox diagnostics."""
 
 from collections.abc import Callable
 from datetime import datetime
@@ -8,14 +8,28 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from app.modules.production.plan import normalize_project_number
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
     authenticated_principal,
     operations_view_principal,
+    production_edit_principal,
+    production_view_principal,
+    projects_view_principal,
+    require_section,
+    shipping_manager_principal,
+    shipping_view_principal,
 )
 
-from .application import MarkReadCommand, UnitOfWork, mark_notifications_read
+from .application import (
+    CloseProjectTaskCommand,
+    MarkReadCommand,
+    UnitOfWork,
+    close_project_task,
+    mark_notifications_read,
+)
+from .domain import ProjectTask, ProjectTaskError, task_module_label
 
 
 router = APIRouter(tags=["operations"])
@@ -124,3 +138,92 @@ def outbox(
             "dead": row["dead"],
         } for row in health["failures"]],
     }
+
+
+# ── Задачи модулям по проекту (ARCH-TRACK-3, C2) ─────────────────────────
+# Читает задачу тот, кому открыт её раздел или «Проекты» (карточка проекта показывает всё по проекту); закрывает —
+# тот, кто правит раздел задачи: те же ворота, что у самого действия (запуск задания, оформление отправки).
+# Полный доступ проходит сквозь список ролей в `require_section`.
+_TASK_GATES = {
+    "production": (production_view_principal, production_edit_principal),
+    "shipping": (shipping_view_principal, shipping_manager_principal),
+}
+
+
+def _task_gates(module: str):
+    return _TASK_GATES.get(module) or (require_section(module, "view"), require_section(module, "edit"))
+
+
+def _passes(gate, principal: Principal) -> bool:
+    try:
+        gate(principal)
+    except HTTPException:
+        return False
+    return True
+
+
+def _project_task(task: ProjectTask, can_close: bool) -> dict:
+    return {
+        "id": str(task.id),
+        "project": task.project,
+        "item_index": task.item_index,
+        "module": task.module,
+        "module_label": task_module_label(task.module),
+        "kind": task.kind,
+        "title": task.title,
+        "status": task.status.value,
+        "status_label": task.status_label,
+        "created_at": task.created_at.isoformat(),
+        "closed_at": task.closed_at.isoformat() if task.closed_at is not None else None,
+        "closed_by": task.closed_by,
+        "source_type": task.source_type,
+        "can_close": can_close and task.is_open,
+    }
+
+
+@router.get("/api/project-tasks")
+def project_tasks(
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(operations_uow_factory)],
+    project: Annotated[str, Query(max_length=255)] = "",
+    module: Annotated[str, Query(max_length=64)] = "",
+    status: Annotated[str, Query(pattern="^(open|done|cancelled)?$")] = "",
+    limit: Annotated[int, Query(ge=1, le=1000)] = 500,
+) -> dict:
+    """Задачи, которые арбитр поставил модулям: фильтр по проекту (как в треке — «708K.4» = «708К.4»), разделу, статусу."""
+    with uow_factory() as uow:
+        tasks = uow.project_tasks.list(
+            project=normalize_project_number(project) if project.strip() else "",
+            module=module.strip(), status=status, limit=limit,
+        )
+    whole_project = _passes(projects_view_principal, principal)
+    rights: dict[str, tuple[bool, bool]] = {}
+    for task in tasks:
+        if task.module not in rights:
+            view, edit = _task_gates(task.module)
+            rights[task.module] = (_passes(view, principal), _passes(edit, principal))
+    return {"tasks": [
+        _project_task(task, rights[task.module][1]) for task in tasks if whole_project or rights[task.module][0]
+    ]}
+
+
+@router.post("/api/project-tasks/{task_id}/close")
+def close_task(
+    task_id: UUID,
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(operations_uow_factory)],
+) -> dict:
+    """Закрыть задачу руками — то, что арбитр не замечает сам. Право — правка раздела задачи."""
+    with uow_factory() as uow:
+        task = uow.project_tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    _task_gates(task.module)[1](principal)
+    try:
+        closed = close_project_task(CloseProjectTaskCommand(task_id, principal.actor, now), uow_factory())
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Задача не найдена") from error
+    except ProjectTaskError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"task": _project_task(closed, True)}

@@ -5,13 +5,19 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, String, Text, Uuid, case, func, select
+from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, UniqueConstraint, Uuid, case, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.modules.identity.infrastructure import IdentityUserRow
-from app.shared.persistence import AuditEventRow, Base, OutboxMessageRow, SqlAlchemyOutboxRepository
+from app.shared.persistence import (
+    AuditEventRow,
+    Base,
+    OutboxMessageRow,
+    SqlAlchemyAuditRepository,
+    SqlAlchemyOutboxRepository,
+)
 
-from .domain import Notification
+from .domain import Notification, ProjectTask, ProjectTaskStatus
 
 
 class NotificationRow(Base):
@@ -34,6 +40,99 @@ class OperationsJobMarkRow(Base):
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[str] = mapped_column(Text(), nullable=False)
     marked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProjectTaskRow(Base):
+    """Задачи модулям по проекту (ARCH-TRACK-3, C2); одно событие журнала даёт не больше одной задачи вида."""
+
+    __tablename__ = "project_tasks"
+    __table_args__ = (
+        UniqueConstraint("kind", "source_event_id", name="ux_project_tasks_kind_source_event"),
+        CheckConstraint("status IN ('open', 'done', 'cancelled')", name="ck_project_tasks_status"),
+        Index("ix_project_tasks_project", "project"),
+        Index("ix_project_tasks_module_status", "module", "status"),
+        Index("ix_project_tasks_status_kind", "status", "kind"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    item_index: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    module: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_event_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    subject_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_by: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+
+
+class SqlAlchemyProjectTaskRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProjectTaskRow) -> ProjectTask:
+        return ProjectTask(
+            id=row.id, project=row.project, item_index=row.item_index, module=row.module, kind=row.kind,
+            title=row.title, source_event_id=row.source_event_id, source_type=row.source_type,
+            subject_id=row.subject_id, status=ProjectTaskStatus(row.status), created_at=row.created_at,
+            closed_at=row.closed_at, closed_by=row.closed_by,
+        )
+
+    def add(self, task: ProjectTask) -> None:
+        self.session.add(ProjectTaskRow(**{**task.__dict__, "status": task.status.value}))
+
+    def save(self, task: ProjectTask) -> None:
+        row = self.session.get(ProjectTaskRow, task.id)
+        if row is None:
+            raise KeyError(f"Project task not found: {task.id}")
+        row.status = task.status.value
+        row.closed_at = task.closed_at
+        row.closed_by = task.closed_by
+
+    def get(self, task_id: UUID) -> ProjectTask | None:
+        row = self.session.get(ProjectTaskRow, task_id)
+        return self._domain(row) if row is not None else None
+
+    def by_source(self, kind: str, source_event_id: UUID) -> ProjectTask | None:
+        row = self.session.scalar(select(ProjectTaskRow).where(
+            ProjectTaskRow.kind == kind, ProjectTaskRow.source_event_id == source_event_id,
+        ))
+        return self._domain(row) if row is not None else None
+
+    def open_for(self, kind: str, project: str, item_index: str) -> ProjectTask | None:
+        row = self.session.scalar(select(ProjectTaskRow).where(
+            ProjectTaskRow.kind == kind, ProjectTaskRow.project == project,
+            ProjectTaskRow.item_index == item_index, ProjectTaskRow.status == ProjectTaskStatus.OPEN.value,
+        ).limit(1))
+        return self._domain(row) if row is not None else None
+
+    def open_of_kinds(self, kinds: tuple[str, ...]) -> list[ProjectTask]:
+        if not kinds:
+            return []
+        rows = self.session.scalars(select(ProjectTaskRow).where(
+            ProjectTaskRow.status == ProjectTaskStatus.OPEN.value, ProjectTaskRow.kind.in_(kinds),
+        ).order_by(ProjectTaskRow.created_at, ProjectTaskRow.id))
+        return [self._domain(row) for row in rows]
+
+    def list(
+        self, *, project: str = "", module: str = "", status: str = "", limit: int = 500,
+    ) -> list[ProjectTask]:
+        """Задачи по возрастанию времени — очередь: старая сверху. Пустой фильтр — без условия."""
+        statement = select(ProjectTaskRow)
+        if project:
+            statement = statement.where(ProjectTaskRow.project == project)
+        if module:
+            statement = statement.where(ProjectTaskRow.module == module)
+        if status:
+            statement = statement.where(ProjectTaskRow.status == status)
+        rows = self.session.scalars(
+            statement.order_by(ProjectTaskRow.created_at, ProjectTaskRow.id).limit(limit)
+        )
+        return [self._domain(row) for row in rows]
 
 
 class SqlAlchemyJobMarks:
@@ -213,6 +312,8 @@ class SqlAlchemyOperationsUnitOfWork:
         self.operations = SqlAlchemyOperationsRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         self.marks = SqlAlchemyJobMarks(self.session)
+        self.project_tasks = SqlAlchemyProjectTaskRepository(self.session)
+        self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

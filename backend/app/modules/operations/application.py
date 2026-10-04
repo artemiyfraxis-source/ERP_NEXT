@@ -1,4 +1,4 @@
-"""Reliable notification consumer and inbox commands."""
+"""Reliable notification consumer, inbox commands and closing a project task by hand."""
 
 from __future__ import annotations
 
@@ -6,11 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 from typing import Protocol, Sequence
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from app.shared.events import OutboxMessage
+from app.shared.events import AuditEvent, OutboxMessage
+from app.shared.identity import Actor
 
-from .domain import Notification, NotificationValidationError, normalize_recipient
+from .domain import Notification, NotificationValidationError, ProjectTask, normalize_recipient
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,47 @@ class UnitOfWork(Protocol):
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
     def commit(self) -> None: ...
+
+
+class ProjectTaskRepository(Protocol):
+    def get(self, task_id: UUID) -> ProjectTask | None: ...
+    def save(self, task: ProjectTask) -> None: ...
+
+
+class AppendOnlyRepository(Protocol):
+    def add(self, item) -> None: ...
+
+
+class ProjectTasksUnitOfWork(Protocol):
+    project_tasks: ProjectTaskRepository
+    audit: AppendOnlyRepository
+    def __enter__(self): ...
+    def __exit__(self, exc_type, exc, traceback): ...
+    def commit(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class CloseProjectTaskCommand:
+    task_id: UUID
+    actor: Actor
+    now: datetime
+
+
+def close_project_task(command: CloseProjectTaskCommand, uow: ProjectTasksUnitOfWork) -> ProjectTask:
+    """Закрыть задачу руками (то, что арбитр не видит сам). Права на раздел задачи проверяет API."""
+    with uow:
+        task = uow.project_tasks.get(command.task_id)
+        if task is None:
+            raise KeyError(f"Project task not found: {command.task_id}")
+        closed = task.close(command.now, command.actor.name)
+        uow.project_tasks.save(closed)
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=closed.id, event_type="operations.project_task_closed",
+            actor=command.actor, occurred_at=command.now,
+            details={"kind": closed.kind, "project": closed.project, "item_index": closed.item_index},
+        ))
+        uow.commit()
+        return closed
 
 
 @dataclass(frozen=True)
