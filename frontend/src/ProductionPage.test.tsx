@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPage } from "./ProductionPage";
 import { forgetOpenProject } from "./MasterBoard";
-import type { Principal, ProductionTask } from "./api";
+import type { Principal, ProductionOperation, ProductionTask } from "./api";
 
 const principal: Principal = {
   user: {
@@ -504,4 +504,125 @@ it("hands a task to ZHUK whole and shows the ZHUK master no hourly grid", async 
   await openBoardProject("591K.3");
   fireEvent.click(await screen.findByRole("button", { name: "Отдать в ЖУК" }));
   await waitFor(() => expect(sent).toEqual({ version: task.version, site: "ЖУК" }));
+});
+
+// Сетевой график (ARCH-TRACK-2, B4): две нарезки идут в сборку, сборка — финал; вторая нарезка режет по 2 на изделие.
+const cutA = "71000000-0000-0000-0000-0000000000a1";
+const cutB = "71000000-0000-0000-0000-0000000000b2";
+const assembly = "71000000-0000-0000-0000-0000000000c3";
+const stageOp = (id: string, position: number, stage: string, extra: Partial<ProductionOperation>): ProductionOperation => ({
+  ...task.operations[0], id, position, stage, code: `OP-0${position}`, operator_ids: [], planned_start: null, planned_finish: null,
+  ...extra,
+});
+const branched: ProductionTask = { ...task, assigned: 0, operations: [
+  stageOp(cutA, 1, "Нарезка А", { inputs: [], first: true, final: false, required_quantity: "10" }),
+  stageOp(cutB, 2, "Нарезка Б", { inputs: [], first: true, final: false, required_quantity: "20", fact: { good: "5", defect: "0", processed: "5" }, state: "в работе" }),
+  stageOp(assembly, 3, "Сборка", {
+    inputs: [
+      { operation_id: cutA, position: 1, per_unit: "1", transfer_batch: null },
+      { operation_id: cutB, position: 2, per_unit: "2", transfer_batch: null },
+    ],
+    first: false, final: true, required_quantity: "10",
+  }),
+] };
+const FEEDS = "из этапов 1 «Нарезка А», 2 «Нарезка Б» ×2";
+const operatorPrincipal: Principal = {
+  user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+  roles: ["staff"], permissions: { production: "view" },
+};
+
+it("shows on the task Gantt where the assembly takes its parts from, and how many each branch must hand in", async () => {
+  masterFetch(() => null, [branched]);
+  render(<ProductionPage principal={principal} />);
+  await openBoardProject("591K.3");
+  fireEvent.click(await screen.findByRole("button", { name: /ПЗ-0001/ }));
+
+  // «Из этапов …» — только на сборке; у нарезок (начало веток) этой строки нет.
+  expect(await screen.findAllByText(FEEDS)).toHaveLength(1);
+  // Нарезка Б сдаёт 20 по заданию на 10 изделий, а не тираж.
+  expect(screen.getByText(/сдано 5 из 20/)).toBeInTheDocument();
+  expect(screen.queryByText(/из 10/)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /^2 Нарезка Б/ }));
+  expect(await screen.findByText(/591K.3.КБ1 × 10 · сдать 20 шт/)).toBeInTheDocument();
+});
+
+it("keeps a chain task as it was: no «из этапов», the second stage reads «с этапа 1»", async () => {
+  const chain: ProductionTask = { ...task, operations: [
+    stageOp(cutA, 1, "Резка", { inputs: [], first: true, final: false, required_quantity: "10" }),
+    stageOp(cutB, 2, "Обжим", {
+      operator_ids: ["10000000-0000-0000-0000-000000000002"],
+      inputs: [{ operation_id: cutA, position: 1, per_unit: "1", transfer_batch: null }], first: false, final: true, required_quantity: "10",
+    }),
+  ] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [{ ...chain, operations: [chain.operations[1]] }] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    if (path.endsWith("/inputs")) return json({ boxes: [], materials: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ProductionPage principal={operatorPrincipal} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "▶ Начать" }));
+  expect(await screen.findByText(/из которых берёшь детали \(с этапа 1, подтверждённые мастером\)/)).toBeInTheDocument();
+  expect(screen.queryByText(/из этапов/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/сдать/)).not.toBeInTheDocument();
+});
+
+it("tells the fitter of the assembly which stages the boxes come from, and lets a branch start take materials", async () => {
+  // «Мои операции» отдают задание с одной операцией — названия входов в нём лежат в самих входах (`stage`).
+  const named = (operation: ProductionOperation): ProductionOperation => ({
+    ...operation,
+    inputs: operation.inputs?.map((input) => ({ ...input, stage: branched.operations.find((item) => item.id === input.operation_id)?.stage })),
+  });
+  const mineTask = (operation: ProductionOperation): ProductionTask => ({ ...branched, operations: [{ ...named(operation), operator_ids: [operatorPrincipal.user.id] }] });
+  let mine = mineTask(branched.operations[2]);
+  const box = (number: string, position: number, operationId: string) => ({
+    id: `74000000-0000-0000-0000-00000000000${position}`, number, version: 1, task_id: branched.id, operation_id: operationId, item: branched.item,
+    operation_position: position, operator_id: "x", quantity: "5", consumed: "0", reserved: "0", rejected: "0", available: "5",
+    status: "Подтверждена", created_at: "2026-09-22T09:00:00+03:00", closed_at: null, closed_by: null, confirmed_at: null, confirmed_by: null, return_reason: "",
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [mine] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    if (path.endsWith("/inputs")) return json(mine.operations[0].id === assembly
+      ? { boxes: [box("000001-8", 1, cutA), box("000002-6", 2, cutB)], materials: [] }
+      : { boxes: [], materials: [{ fulfillment_line_id: "72000000-0000-0000-0000-000000000001", article: "WIRE-1", name: "Провод", unit: "м", grn: "PPM.26.0000001", package: "П1", issued: "10", consumed: "0", reserved: "0", available: "10" }] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  // Сборка: коробки с нескольких этапов, штуки на изделие — в карточке и в форме старта.
+  const { unmount } = render(<ProductionPage principal={operatorPrincipal} mine />);
+  expect(await screen.findByText(new RegExp(FEEDS))).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "▶ Начать" }));
+  expect(await screen.findByText(new RegExp(`${FEEDS}; подтверждённые мастером`))).toBeInTheDocument();
+  expect(await screen.findByText(/Подтверждённые: этап 1: 000001-8 \(5 шт\), этап 2: 000002-6 \(5 шт\)/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Номера коробок")).toBeInTheDocument();
+  unmount();
+
+  // Вторая нарезка стоит под номером 2, но входов у неё нет: коробок не просит, берёт материалы комплекта.
+  mine = mineTask(branched.operations[1]);
+  render(<ProductionPage principal={operatorPrincipal} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "▶ Начать" }));
+  expect(await screen.findByLabelText("Количество из партии PPM.26.0000001 П1")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Номера коробок")).not.toBeInTheDocument();
+  expect(screen.getByText(/сдать 20 шт/)).toBeInTheDocument();
+});
+
+it("sends to QC only the box of the final operation of the scheme", async () => {
+  const qcPrincipal: Principal = { ...principal, roles: ["qc"], permissions: { production: "edit" } };
+  const box = (number: string, position: number, operationId: string) => ({
+    id: `74000000-0000-0000-0000-00000000010${position}`, number, version: 1, task_id: branched.id, operation_id: operationId, item: branched.item,
+    operation_position: position, operator_id: "10000000-0000-0000-0000-000000000002", quantity: "5", consumed: "0", reserved: "0", rejected: "0",
+    available: "5", status: "Подтверждена", created_at: "2026-09-22T09:00:00+03:00", closed_at: null, closed_by: null,
+    confirmed_at: "2026-09-22T10:00:00+03:00", confirmed_by: "Мастер", return_reason: "",
+  });
+  masterFetch((path) => path === "/api/production/boxes"
+    ? json({ boxes: [box("000001-8", 1, cutA), box("000002-6", 2, cutB), box("000003-4", 3, assembly)] })
+    : null, [branched]);
+  render(<ProductionPage principal={qcPrincipal} />);
+  expect(await screen.findByLabelText("Годные ОТК 000003-4")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Годные ОТК 000001-8")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Годные ОТК 000002-6")).not.toBeInTheDocument();
 });
