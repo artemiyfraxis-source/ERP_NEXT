@@ -301,11 +301,18 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .techcards-page.embedded > .page-sub:first-child { margin-top: 0; }
 
 .reference-tiles .tile { min-height: 0; }
-.notification-list { display: grid; gap: 12px; margin-top: 16px; }
-.notification-card { padding: 17px 19px; }
-.notification-card.unread { border-left: 3px solid var(--primary); }
-.notification-card.read { opacity: .7; }
-.notification-card p { margin: 12px 0; color: var(--muted-foreground); white-space: pre-line; }
+.notifications-page .data-table .cell-wrap { max-width: min(920px, 60vw); }
+.notifications-page .notification-title { display: block; font-weight: 600; }
+.notifications-page .notification-body { display: block; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
+.notifications-page tr.notif-read td { color: var(--muted-foreground); }
+.notifications-page tr.notif-read .notification-title { font-weight: 400; }
+.notifications-page tr.notif-unread td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.notifications-page .notification-detail { margin: 0; padding: 4px 0; white-space: pre-line; }
+.notifications-page .row-actions { display: inline-flex; gap: 14px; opacity: .5; transition: opacity .12s; }
+.notifications-page tr:hover .row-actions, .notifications-page tr:focus-within .row-actions, .notifications-page tr.open .row-actions { opacity: 1; }
+.notifications-page .row-actions .link-button { padding: 0; }
+@media (hover: none) { .notifications-page .row-actions { opacity: 1; } }
+@media (pointer: coarse) { .notifications-page .row-actions .link-button { min-height: 40px; } }
 .operations-metrics { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; margin: 18px 0; }
 .operations-metrics .metric { display: grid; gap: 7px; border: 1px solid var(--border); border-radius: 12px; padding: 15px; background: var(--card); }
 .operations-metrics .metric span { color: var(--muted-foreground); font-size: 11px; }

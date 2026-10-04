@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, UniqueConstraint, Uuid, case, func, select
+from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, UniqueConstraint, Uuid, case, delete, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.modules.identity.infrastructure import IdentityUserRow
@@ -206,6 +206,27 @@ class SqlAlchemyNotificationRepository:
         for row in self.session.scalars(statement):
             row.read_at = now
         return self.unread_count(email)
+
+    def delete(self, email: str, notification_id: UUID) -> bool:
+        """Remove one inbox item of this recipient; another user's id is simply not found."""
+        row = self.session.scalar(select(NotificationRow).where(
+            NotificationRow.id == notification_id,
+            NotificationRow.recipient_email == email.casefold(),
+        ))
+        if row is None:
+            return False
+        self.session.delete(row)
+        self.session.flush()
+        return True
+
+    def delete_many(self, email: str, *, ids: tuple[UUID, ...] = (), only_read: bool = False) -> int:
+        """Remove the recipient's own items: the given ids, and/or only the read ones; nothing given = his whole inbox."""
+        statement = delete(NotificationRow).where(NotificationRow.recipient_email == email.casefold())
+        if ids:
+            statement = statement.where(NotificationRow.id.in_(ids))
+        if only_read:
+            statement = statement.where(NotificationRow.read_at.is_not(None))
+        return int(self.session.execute(statement).rowcount or 0)
 
 
 class SqlAlchemyRecipientDirectory:
