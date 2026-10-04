@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.modules.fulfillment.application import free_for_project, project_reserve_by_lot
 from app.modules.fulfillment.domain import FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
@@ -251,6 +252,7 @@ def lots(
     request: Request,
     _principal: Annotated[Principal, Depends(projects_edit_principal)],
     q: Annotated[str, Query(max_length=255)] = "",
+    project: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
     """The warehouse picker of the spec (stockPick_): the whole stock with a search, not only «matching names» —
     a matched list misses when acceptance named the goods differently from the КД."""
@@ -259,11 +261,12 @@ def lots(
         return {"lots": []}
     with factory() as uow:
         found = uow.warehouse.list(limit=300, query=q, include_zero=False)
+        held = project_reserve_by_lot(uow, found, project.strip())  # the project's «Со склада» reserve is its own
     return {"lots": [{
         "lot_id": str(lot.id), "warehouse": lot.warehouse, "grn": lot.grn, "package": lot.package,
         "article": lot.article, "name": lot.name, "unit": lot.unit,
-        "storage_location": lot.storage_location, "available": _number(lot.available),
-    } for lot in found if lot.available > 0]}
+        "storage_location": lot.storage_location, "available": _number(free_for_project(lot, held)),
+    } for lot in found if free_for_project(lot, held) > 0]}
 
 
 def _kitset(request: Request, project: str) -> Kitset:

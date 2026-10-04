@@ -43,6 +43,8 @@ from .application import (
     build_issue_return_sheet,
     cancel_fulfillment,
     close_issued,
+    free_for_project,
+    project_reserve_by_lot,
     complete_kit,
     complete_return,
     create_fulfillment,
@@ -249,12 +251,15 @@ def available_lots(
     _principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
     q: Annotated[str, Query(max_length=255)] = "",
+    project: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
+    """`project` (optional): the kit's project — its own «Со склада» reserve on a lot counts as available."""
     with uow_factory() as uow:
         lots = uow.warehouse.list(limit=5000, query=q, include_zero=False)
+        held = project_reserve_by_lot(uow, lots, project.strip())
     candidates = [
         lot for lot in lots
-        if lot.available > 0  # portalIssueStock: every lot with a balance, whatever its unit
+        if free_for_project(lot, held) > 0  # portalIssueStock: every lot with a balance, whatever its unit
     ]  # portalIssueStock: the whole warehouse at once, the browser searches
     return {"lots": [{
         "id": str(lot.id),
@@ -265,7 +270,8 @@ def available_lots(
         "name": lot.name,
         "unit": lot.unit,
         "storage_location": lot.storage_location,
-        "available": _number(lot.available),
+        "available": _number(free_for_project(lot, held)),
+        **({"reserved": _number(held[lot.id])} if held.get(lot.id) else {}),
     } for lot in candidates]}
 
 

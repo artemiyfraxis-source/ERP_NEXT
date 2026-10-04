@@ -58,33 +58,44 @@ const prepared = files.map((file) => {
   };
 });
 
-function requirementIdentity(line) {
+function requirementName(line) {
   const requirement = line.split("#", 1)[0].trim();
   if (!requirement) return null;
   const match = requirement.match(/^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==([^;\s]+)$/);
   if (!match) throw new Error(`Unsupported techcards requirement: ${requirement}`);
-  return `${match[1].toLowerCase().replaceAll("_", "-")}==${match[2]}`;
+  return { name: match[1].toLowerCase().replaceAll("_", "-"), version: match[2] };
 }
 
+// ERP's backend/requirements.lock.txt is the one source of versions. The side branch pins its own
+// toolchain (fastapi/uvicorn/pytest) which ERP does not port, so only a missing PACKAGE is an error
+// (same rule as test/architecture.test.mjs); a different version is informational.
 const sourceRequirements = prepared.find(({ to }) =>
   to.endsWith("requirements.source.txt"),
-).content.split(/\r?\n/).map(requirementIdentity).filter(Boolean);
-const centralLock = (await readFile(join(root, "backend", "requirements.lock.txt"), "utf8"))
-  .split(/\r?\n/).map(requirementIdentity).filter(Boolean);
-const centralSet = new Set(centralLock);
-const missingRequirements = sourceRequirements.filter((item) => !centralSet.has(item));
+).content.split(/\r?\n/).map(requirementName).filter(Boolean);
+const centralVersions = new Map((await readFile(join(root, "backend", "requirements.lock.txt"), "utf8"))
+  .split(/\r?\n/).map(requirementName).filter(Boolean).map(({ name, version }) => [name, version]));
+const missingRequirements = sourceRequirements.filter(({ name }) => !centralVersions.has(name));
 if (missingRequirements.length) {
   throw new Error(
-    `Techcards dependencies are absent from backend/requirements.lock.txt: ${missingRequirements.join(", ")}. Update the ERP lock before syncing.`,
+    `Techcards dependencies are absent from backend/requirements.lock.txt: ${missingRequirements.map(({ name, version }) => `${name}==${version}`).join(", ")}. Add the package to the ERP lock before syncing.`,
   );
 }
+for (const { name, version } of sourceRequirements) {
+  if (centralVersions.get(name) !== version) {
+    console.log(`note: ${name}: side branch ${version}, ERP lock ${centralVersions.get(name)} (ERP lock wins)`);
+  }
+}
 
+const metadataPath = join(root, "backend", "app", "modules", "techcards", "SOURCE.json");
+// Keep everything this script does not own (project-cards/grapher/operation-library sub-pins on main):
+// only sourceRef, sourceCommit and files are rewritten, in their original key order.
+const previousMetadata = JSON.parse(await readFile(metadataPath, "utf8").catch(() => "{}"));
 const sourceMetadata = {
+  ...previousMetadata,
   sourceRef,
   sourceCommit,
   files: prepared.map(({ from, to, sha256 }) => ({ from, to, sha256 })),
 };
-const metadataPath = join(root, "backend", "app", "modules", "techcards", "SOURCE.json");
 const outputs = [
   ...prepared.map(({ to, content }) => ({ destination: join(root, to), content })),
   { destination: metadataPath, content: `${JSON.stringify(sourceMetadata, null, 2)}\n` },

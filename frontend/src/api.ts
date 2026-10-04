@@ -540,6 +540,8 @@ export interface FulfillmentCalcLine {
     unit: string;
     storage_location: string;
     qty: string;
+    /** The part taken from the project's own «Со склада» reserve (absent when none). */
+    reserved?: string;
   }>;
 }
 

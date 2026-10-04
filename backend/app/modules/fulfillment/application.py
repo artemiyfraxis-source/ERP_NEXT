@@ -198,6 +198,27 @@ def _project_covers(uow: UnitOfWork, lot: StockLot, purpose: str) -> list[StockC
     return [cover for cover in covers.active_on_lots([lot.id]) if cover.serves_project(project)]
 
 
+def project_reserve_by_lot(uow, lots: Sequence[StockLot], project: str) -> dict[UUID, Decimal]:
+    """How much of each lot the project's own «Со склада» reserves hold — the part the project's kit takes first
+    (`_reserve_for_kit`). Every preview and picker that shows what a kit can get from a lot adds it to ДОСТУПНО
+    (other projects see plain ДОСТУПНО = БАЛАНС − РЕЗЕРВ, which already leaves the reserve out). Without a project or
+    the procurement covers port → {}."""
+    covers = getattr(uow, "stock_covers", None)
+    ids = [lot.id for lot in lots if lot.reserved > 0]
+    if covers is None or not project or not ids:
+        return {}
+    held: dict[UUID, Decimal] = {}
+    for cover in covers.active_on_lots(ids):
+        if cover.serves_project(project):
+            held[cover.lot_id] = held.get(cover.lot_id, Decimal("0")) + cover.quantity
+    return held
+
+
+def free_for_project(lot: StockLot, held: dict[UUID, Decimal]) -> Decimal:
+    """What a kit of the project can take from the lot: ДОСТУПНО plus the project's own reserve on it."""
+    return max(lot.available, Decimal("0")) + held.get(lot.id, Decimal("0"))
+
+
 def _take_over_covers(
     covers: Sequence[StockCover],
     amount: Decimal,
