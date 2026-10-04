@@ -195,6 +195,11 @@ class IdentityUser:
     qualification: str = ""  # категория / квалификация
     job_since: date | None = None  # в должности с
     manager_id: UUID | None = None  # непосредственный руководитель
+    # Уровень доступа and the two flags (0086). Read from the database; until the screens edit them, a new or re-roled
+    # employee gets them from the role (infrastructure). "" — not read yet (a user built in memory).
+    access_level: str = ""
+    shop_worker: bool = False  # «Монтажник (работает в цеху)»
+    site_master: bool = False  # «Мастер площадки»
 
 
 def normalize_login(value: str) -> str:
@@ -434,3 +439,98 @@ def check_manager_chain(
             )
         seen.add(current)
         current = managers.get(current)
+
+
+# ── Уровни доступа вместо ролей-должностей (owner 04.10.2026, docs/migration/access-levels-plan.md) ──────────
+# Migration 0086 stores the level of every person (`identity_users.access_level`), the level matrix
+# (`identity_level_access`) and the personal exceptions on top of it (`identity_user_level_access`); the gates still run
+# on the old roles until they are switched over. Должность is the separate free-text `job_title`.
+
+# Highest first.
+ACCESS_LEVELS = ("superadmin", "admin", "commercial", "tech_lead", "foreman", "operator")
+ACCESS_LEVEL_LABELS: dict[str, str] = {
+    "superadmin": "Суперадминистратор",  # ГД, учредители
+    "admin": "Администратор",  # менеджер высшего звена, отвечающий за систему; дирекция
+    "commercial": "Коммерческое руководство",  # маркетинг, продажи
+    "tech_lead": "Технический руководитель",  # нач. производства, главный технолог, закупщик
+    "foreman": "Бригадир",  # бригадир, кладовщик
+    "operator": "Оператор",  # конечный исполнитель
+}
+# Always edit everywhere, whatever the matrix or a personal exception says; only these see «Доступы», «Сотрудники» and
+# the administrator's tools.
+FULL_ACCESS_LEVELS = frozenset({"superadmin", "admin"})
+# The level matrix: the role matrix's sections without «Сотрудники» (a full-access level's own) plus «Задания» (the
+# operator's own tasks, split off `production`), «ОТК» (quality edits, split off `production`) and «Отгрузка — склад»
+# (the storekeeper's shipping actions, split off `shipping`).
+LEVEL_SECTION_LABELS: dict[str, str] = {
+    "projects": "Проекты",
+    "techcards": "Техкарты проектов",
+    "erptctpl": "Шаблоны техкарт",
+    "tcgen": "Генератор техкарт",
+    "erpref": "Справочник",
+    "production": "Планирование и производственный план",
+    "myops": "Задания",
+    "quality": "ОТК",
+    "newrequest": "Оформить заявку",
+    "myrequests": "Мои заявки",
+    "requests": "Заявки",
+    "procurement": "Лист закупки",
+    "receiving": "Приёмка",
+    "warehouse": "Склад",
+    "fulfillment": "Запросы на комплектацию (набор)",
+    "handout": "Выдача со списанием",
+    "shipping": "Отгрузка",
+    "shipping_goods": "Отгрузка — склад",
+    "operations": "Системный журнал",
+}
+# The plan's default matrix: a level nobody holds yet (and a fresh database) starts from it. A level with people gets
+# its row from what they could really do (level_migration). «Оформить заявку» and «Мои заявки» stay open to everyone,
+# as with the roles («Оформлять могут все роли»; решено агентом — проверить).
+_FILE_REQUESTS = {"newrequest": AccessMode.EDIT, "myrequests": AccessMode.EDIT}
+LEVEL_SEED: dict[str, dict[str, AccessMode]] = {
+    "commercial": {
+        **_FILE_REQUESTS,
+        "projects": AccessMode.VIEW,
+        "shipping": AccessMode.VIEW,
+        "procurement": AccessMode.VIEW,
+        "warehouse": AccessMode.VIEW,
+        "production": AccessMode.VIEW,
+        "requests": AccessMode.EDIT,
+    },
+    "tech_lead": {
+        **_FILE_REQUESTS,
+        "projects": AccessMode.EDIT,
+        "techcards": AccessMode.EDIT,
+        "erptctpl": AccessMode.EDIT,
+        "tcgen": AccessMode.EDIT,
+        "erpref": AccessMode.EDIT,
+        "production": AccessMode.EDIT,
+        "procurement": AccessMode.EDIT,
+        "requests": AccessMode.EDIT,
+        "fulfillment": AccessMode.EDIT,
+        "receiving": AccessMode.VIEW,
+        "warehouse": AccessMode.VIEW,
+        "handout": AccessMode.VIEW,
+        "quality": AccessMode.VIEW,
+        "shipping": AccessMode.VIEW,
+    },
+    "foreman": {
+        **_FILE_REQUESTS,
+        "production": AccessMode.EDIT,
+        "myops": AccessMode.EDIT,
+        "receiving": AccessMode.EDIT,
+        "warehouse": AccessMode.EDIT,
+        "fulfillment": AccessMode.EDIT,
+        "handout": AccessMode.EDIT,
+        "shipping_goods": AccessMode.EDIT,
+        "procurement": AccessMode.VIEW,
+        "quality": AccessMode.VIEW,
+    },
+    "operator": {
+        **_FILE_REQUESTS,
+        "myops": AccessMode.EDIT,
+        "receiving": AccessMode.VIEW,
+        "warehouse": AccessMode.VIEW,
+        "erpref": AccessMode.VIEW,
+    },
+}
