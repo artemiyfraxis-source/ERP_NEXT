@@ -216,6 +216,7 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
     assert deleted.status_code == 200, deleted.text
     res = deleted.json()["res"]
     assert (res["deleted"], res["cards"]["cards"], res["gp"]["deleted"], res["erp"]) == (3, 1, 2, {"Проекты": 1})
+    assert res["journal"] == {"deleted": 1}  # the manual stage mark «В работе» goes with the project
     gone = client.get("/api/techcards/kitsets/708К.4")
     assert gone.status_code == 404
     assert gone.json()["detail"]["gone"] is True
@@ -223,6 +224,8 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
     _load(client)
     back = client.get("/api/techcards/kitsets/708К.4").json()
     assert [item["id"] for item in back["assemblies"][0]["kd"]] == [document["id"]]
+    # …а журнал начинается с чистого листа: старая отметка этапа не возвращается.
+    assert back["journal"] == [] and back["assemblies"][0]["stage"]["manual"] is False
     assert client.get(f"/api/techcards/kitsets/708К.4/documents/{document['id']}").content == b"%PDF-1.4 test"
 
 

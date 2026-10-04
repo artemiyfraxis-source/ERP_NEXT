@@ -28,6 +28,11 @@ it("folds per-line maps and trims decimal zeros", () => {
   expect(auditDetails({ quantity: "39.000000", fields: ["carrier", "shipping_point"] })).toBe("кол-во: 39 · поля: перевозчик, адрес отгрузки");
 });
 
+it("names the journal wipe of a deleted project", () => {
+  expect(auditEventName("production.plan_events_deleted")).toBe("Журнал проекта удалён");
+  expect(auditDetails({ project: "708К.4", events: 4 })).toBe("проект: 708К.4 · записей: 4");
+});
+
 it("names the automatic fill after «Взять в работу» and its fields in Russian", () => {
   expect(auditEventName("procurement.autofilled")).toBe("Заполнено автоматически");
   expect(auditDetails({ legacy_id: "SM-20261004-01", fields: ["supplier", "site_name", "manufacturer", "country"] })).toBe(
