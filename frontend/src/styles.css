@@ -21,6 +21,20 @@
   --sheet-selected: #eef8f6;
   --sheet-invalid: #b91c1c;
   --sheet-invalid-bg: #fdf1f0;
+  /* Тоны статусов (те же, что у .tone-ok/.tone-warn/.tone-danger) и мягкие фоны; формы генератора. */
+  --tone-ok: #15803d;
+  --tone-warn: #a16207;
+  --tone-danger: #b91c1c;
+  --warn-soft: #fff7e6;
+  --warn-border: #f0b44c;
+  --seg-bg: #e9eeee;
+  --seg-fg: #4b5a58;
+  --switch-off: #cfd6d5;
+  --chip-box: #a9b3b1;
+  --table-head: #f3f6f6;
+  --table-head-fg: #3d4a5c;
+  --table-zebra: #f3f6f7;
+  --panel-soft: #f4f7f7;
 }
 
 * { box-sizing: border-box; }
@@ -923,87 +937,223 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mo-time { margin-left: auto; color: var(--muted-foreground); }
 .mo-s, .mo-d { color: var(--muted-foreground); }
 .mo-fact { font-size: 13px; }
-/* Генератор техкарт (порт SUPPLYMAP TcGenInline.html) */
-.tcgen { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; }
-.tcgen h3 { margin: 12px 0 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
-.tcgen .gcard, .tcgen .ep-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card); display: grid; gap: 8px; }
-.tcgen .gen-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-.tcgen .gen-tab-btn { border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 6px 12px; font-weight: 600; }
-.tcgen .gen-tab-btn.gactive { border-color: var(--primary); color: var(--primary); }
-.tcgen .field-label { display: grid; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
-.tcgen .field-label.inline { max-width: 220px; }
-.tcgen .info-kv { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 12px; }
-.tcgen .spy { width: 100%; font-size: 12px; }
-.tcgen .spy input { width: 100%; }
-.tcgen .gbadge { border-radius: 6px; padding: 1px 6px; font-size: 11px; background: #eef2f7; }
-.tcgen .badge-wire { background: #e0f2fe; } .tcgen .badge-term { background: #fef3c7; } .tcgen .badge-conn { background: #dcfce7; }
-.tcgen .section-hdr { display: flex; align-items: center; gap: 12px; }
-.tcgen .btn-link { border: 0; background: none; color: var(--primary); cursor: pointer; font-size: 12px; padding: 0; }
-.tcgen .btn-add { border: 1px dashed var(--border); background: var(--card); border-radius: 8px; padding: 5px 10px; font-size: 12px; font-weight: 600; justify-self: start; }
-.tcgen .btn-remove { border: 0; background: none; color: var(--muted-foreground); font-size: 16px; padding: 0 4px; cursor: pointer; }
-.tcgen .wire-entry { display: grid; grid-template-columns: minmax(0, 2fr) repeat(auto-fit, minmax(90px, 1fr)) auto; gap: 8px; align-items: end; }
-.tcgen .ter-row, .tcgen .op-times { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; align-items: end; }
-.tcgen .radio-row, .tcgen .chip-row, .tcgen .ep-route, .tcgen .ep-method { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; }
-.tcgen .toggle-row, .tcgen .ep-otp { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
-.tcgen .ep-head { display: flex; justify-content: space-between; align-items: center; }
-.tcgen .ep-badge { font-weight: 700; color: var(--primary); }
-.tcgen .ep-auto { font-size: 11px; color: var(--muted-foreground); }
-.tcgen .ep-sdr { font-size: 12px; } .tcgen .ep-sdr-warn { color: #b45309; }
-.tcgen .ep-pin, .tcgen .twist-pair-row { display: flex; gap: 6px; align-items: center; }
-.tcgen .ep-links { display: grid; gap: 4px; font-size: 12px; }
-.tcgen .ep-links b { font-variant-numeric: tabular-nums; }
-.tcgen .cut-info { padding: 6px 8px; border: 1px solid #bcd8d5; background: #f0f7f6; border-radius: 6px; font-size: 12px; }
-.tcgen .cut-info.warn { border-color: #fde68a; background: #fffbeb; }
-.tcgen .coax-add { border: 1px dashed #e0a800; background: #fff8e1; border-radius: 6px; padding: 8px; display: grid; gap: 6px; }
-.tcgen .coax-dims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.tcgen .grapher-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.tcgen .op-item { display: grid; grid-template-columns: 28px 1fr; gap: 8px; border-bottom: 1px solid var(--border); padding: 8px 0; }
-.tcgen .op-badge { width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
-.tcgen .op-title { font-weight: 600; }
-.tcgen .op-match.found, .tcgen .ok-text { color: #065f46; } .tcgen .op-match.not-found { color: #b45309; }
-.tcgen .f-ok { border-color: #34d399; } .tcgen .f-warn { border-color: #f59e0b; background: #fffbeb; } .tcgen .f-empty { border-color: #f87171; }
-.tcgen .muted { color: var(--muted-foreground); }
-/* Генератор компактный, как #tcgen SUPPLYMAP (TcGenInline.html): узкая колонка, поля по размеру значения, флажки и
-   радиокнопки в строку с подписью. Глобальные label{grid}/input{width:100%} здесь перекрыты. */
-.tcgen { max-width: 920px; }
-.tcgen label { font-weight: 600; font-size: 12px; }
-.tcgen input, .tcgen select { padding: 5px 8px; font-size: 13px; border-radius: 6px; }
-.tcgen input[type="checkbox"], .tcgen input[type="radio"] { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--primary); }
-.tcgen .radio-row label, .tcgen .ep-method label, .tcgen .chip-row label, .tcgen .ep-route label, .tcgen .toggle-row, .tcgen .ep-otp { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.tcgen .toggle-row, .tcgen .ep-otp { display: flex; }
-.tcgen .toggle-row { font-size: 13px; padding: 2px 0; }
-/* Подпись длиннее строки переносится внутри себя, а не уезжает под галочку целиком («Двойной обжим — …»). */
-.tcgen .ep-otp { font-weight: 500; flex-wrap: nowrap; }
+/* Генератор техкарт (порт SUPPLYMAP TcGenInline.html; дизайн — владелец 04.10). Слева ввод секциями (на широком —
+   в две колонки), справа липкий «Итог»: операции, схема полуфабрикатов, одна кнопка. На планшете и узком ноутбуке —
+   одна колонка, итог внизу, кнопка прилипает к низу экрана. Поля нейтральные: цвет — только у ошибки и пропуска. */
+.tcgen { --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235f6b85' stroke-width='1.5'/%3E%3C/svg%3E");
+  display: grid; gap: 10px; font-size: 13px; color: var(--foreground); }
+.tcgen .gen-modes { margin: 0; justify-self: start; }
+.tcgen .gen-layout { display: grid; grid-template-columns: minmax(0, 1fr) clamp(480px, 42%, 980px); gap: 14px; align-items: start; }
+.tcgen .gen-main { min-width: 0; container-type: inline-size; }
+.tcgen .gen-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+@container (min-width: 1000px) {
+  .tcgen .gen-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tcgen .gen-grid > .full { grid-column: 1 / -1; }
+}
 .project-etk .etk-empty { color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
-.tcgen .ep-otp input[type="number"] { width: 52px; }
-.tcgen .gen-tabs { gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 4px; }
-.tcgen .gen-tab-btn { border: 0; border-bottom: 2px solid transparent; margin-bottom: -2px; border-radius: 0; background: none; padding: 6px 14px; color: var(--muted-foreground); cursor: pointer; }
-.tcgen .gen-tab-btn.gactive { border-bottom-color: var(--primary); color: var(--primary); }
-.tcgen .spy th, .tcgen .spy td { padding: 3px 6px; }
-.tcgen .field-label.len { max-width: 200px; }
-.tcgen .wire-entry { grid-template-columns: minmax(0, 1fr) 90px auto; }
-.tcgen .wire-entry.cores { grid-template-columns: minmax(0, 1fr) 90px 70px 100px auto; }
-.tcgen .wire-entry.adv { grid-template-columns: minmax(0, 1fr) 130px 90px auto; }
-.tcgen .wire-entry.adv.cores { grid-template-columns: minmax(0, 1fr) 130px 90px 70px 100px auto; }
-.tcgen .ter-row { grid-template-columns: repeat(auto-fill, minmax(110px, 150px)); }
-.tcgen .op-times { grid-template-columns: repeat(3, 110px); }
-.tcgen .ep-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 10px; align-items: start; }
-.tcgen .ep-sides > div { display: grid; gap: 6px; }
-.tcgen .ep-sides h3 { margin-top: 4px; }
-.tcgen .gen-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
-.tcgen .gen-actions .toggle-row { margin-right: auto; }
 
-/* Схема полуфабрикатов (ARCH-TRACK-1): блоки слева направо, стрелки с числом штук, открытый блок — его операции. */
-.tcgen .route-editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+/* Секция — карточка с заголовком в строку: название, серая сводка, ссылки справа. */
+.tcgen .gsec { min-width: 0; display: grid; gap: 10px; align-content: start; padding: 12px 14px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.tcgen .gsec-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-height: 20px; }
+.tcgen .gsec-head .gsec-meta + *, .tcgen .gsec-head h3 + :not(.gsec-meta) { margin-left: auto; }
+.tcgen .gsec-head select { width: auto; }
+.tcgen h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--foreground); }
+.tcgen h4 { margin: 0 0 2px; color: var(--muted-foreground); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.tcgen .gsec-meta { display: inline-flex; flex-wrap: wrap; gap: 2px 12px; color: var(--muted-foreground); font-size: 12px; }
+.tcgen .gsec-meta .kv b { color: var(--foreground); font-weight: 600; }
+.tcgen .gempty { padding: 8px 0; color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .muted { color: var(--muted-foreground); }
+
+/* Поля: подпись над полем, единица внутри, без стрелок у чисел. */
+.tcgen input, .tcgen select, .tcgen textarea { min-width: 0; padding: 5px 8px; border-radius: 6px; font-size: 13px; }
+.tcgen input:not([type="checkbox"]):not([type="radio"]), .tcgen select { height: 32px; }
+.tcgen select, .tcgen .gpick-face { appearance: none; -webkit-appearance: none; padding-right: 28px; background: var(--card) var(--chevron) right 10px center / 10px 6px no-repeat; }
+.tcgen select:hover, .tcgen .gpick:hover .gpick-face { border-color: var(--chip-box); }
+.tcgen input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.tcgen input[type="number"]::-webkit-inner-spin-button, .tcgen input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.tcgen .gfield { display: grid; gap: 3px; align-content: start; min-width: 0; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.tcgen .gfield-label { display: flex; align-items: baseline; gap: 6px; min-height: 16px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tcgen .gfield-label small { overflow: hidden; color: var(--muted-foreground); font-size: 11.5px; font-weight: 400; text-overflow: ellipsis; }
+.tcgen .gfield.short { width: 170px; }
+.tcgen .gunit { position: relative; display: block; min-width: 0; }
+.tcgen .gunit > input { width: 100%; padding-right: 36px; }
+.tcgen .gunit::after { content: attr(data-unit); position: absolute; top: 50%; right: 8px; transform: translateY(-50%); color: var(--muted-foreground); font-size: 12px; font-weight: 400; pointer-events: none; }
+.tcgen input.is-warn { border-color: var(--warn-border); background: var(--warn-soft); }
+.tcgen .field-label { display: grid; gap: 3px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.tcgen .opt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 10px; align-items: end; }
+.tcgen .opt-grid > .span2 { grid-column: span 2; }
+.tcgen .opt-note { margin: 0; padding: 2px 0; color: var(--muted-foreground); font-size: 12px; }
+
+/* Сегменты — как .seg-tabs, мельче. */
+.tcgen .gseg { display: inline-flex; flex-wrap: wrap; gap: 2px; justify-self: start; max-width: 100%; padding: 3px; border-radius: 9px; background: var(--seg-bg); }
+.tcgen .gseg button { display: inline-flex; align-items: baseline; gap: 6px; border: 0; border-radius: 7px; padding: 5px 12px; background: transparent; color: var(--seg-fg); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.tcgen .gseg button small { color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+.tcgen .gseg button:hover { color: var(--foreground); }
+.tcgen .gseg button.on { background: var(--card); color: var(--primary); box-shadow: 0 1px 3px rgba(0, 26, 24, .12); }
+
+/* Обработка: переключатель с подписью и подсказкой; включённая раскрывает поля под собой. */
+.tcgen .gopt { display: grid; gap: 8px; padding: 7px 0; border-top: 1px solid var(--border); }
+.tcgen h4 + .gopt, .tcgen .gsec-head + .gopt, .tcgen .opt-grid + .gopt { border-top: 0; }
+.tcgen .gsw { display: flex; align-items: flex-start; gap: 10px; color: var(--foreground); font-size: 13px; font-weight: 500; cursor: pointer; }
+.tcgen .gsw input { appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 30px; height: 18px; min-height: 0; margin: 1px 0 0; padding: 0; border: 0; border-radius: 999px; background: var(--switch-off); cursor: pointer; transition: background .15s; }
+.tcgen .gsw input::before { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); transition: transform .15s; }
+.tcgen .gsw input:checked { background: var(--primary); }
+.tcgen .gsw input:checked::before { transform: translateX(12px); }
+.tcgen .gsw input:focus { box-shadow: none; }
+.tcgen .gsw input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.tcgen .gsw-text { display: grid; gap: 1px; min-width: 0; }
+.tcgen .gsw-text small { color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.tcgen .gopt-body { display: grid; gap: 8px; margin-left: 15px; padding: 4px 0 4px 24px; border-left: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); }
+.tcgen .proc-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 6px 24px; align-items: start; }
+.tcgen .proc-group { display: grid; min-width: 0; }
+
+/* Чип-флажок: провод, конец, параметр разъёма. */
+.tcgen .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.tcgen .gchip { position: relative; display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 11px 4px 27px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--foreground); font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.tcgen .gchip small { color: var(--muted-foreground); font-size: 11.5px; font-weight: 400; }
+.tcgen .gchip input { position: absolute; width: 1px; height: 1px; min-height: 0; opacity: 0; pointer-events: none; }
+.tcgen .gchip::before { content: ""; position: absolute; top: 50%; left: 9px; width: 11px; height: 11px; transform: translateY(-50%); border: 1.5px solid var(--chip-box); border-radius: 3px; background: var(--card); }
+.tcgen .gchip:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.tcgen .gchip.on { border-color: color-mix(in srgb, var(--primary) 55%, transparent); background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
+.tcgen .gchip.on::before { border-color: var(--primary); background: var(--primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 5.2l2 2 4-4.4' fill='none' stroke='white' stroke-width='1.7'/%3E%3C/svg%3E") center / 9px no-repeat; }
+.tcgen .gchip:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+/* Кнопки-ссылки, добавить, убрать. */
+.tcgen .btn-link { display: inline; border: 0; padding: 0; background: none; color: var(--primary); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.tcgen .btn-link:hover { text-decoration: underline; }
+.tcgen .btn-add { justify-self: start; border: 1px dashed var(--chip-box); border-radius: 8px; padding: 5px 12px; background: transparent; color: var(--primary); font-size: 12.5px; font-weight: 600; }
+.tcgen .btn-add:hover { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.tcgen .btn-remove { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; padding: 0; background: none; color: var(--muted-foreground); font-size: 17px; line-height: 1; cursor: pointer; }
+.tcgen .btn-remove:hover { background: var(--accent); color: var(--tone-danger); }
+.tcgen .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Данные из листа — плотная таблица как DataTable. */
+.tcgen .gtable-wrap { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.tcgen .gtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tcgen .gtable th { position: sticky; top: 0; z-index: 1; padding: 6px 10px; background: var(--table-head); color: var(--table-head-fg); font-weight: 600; border-bottom: 1px solid var(--border); }
+.tcgen .gtable td { height: 30px; padding: 4px 10px; white-space: normal; }
+.tcgen .gtable tbody tr:nth-child(even) td { background: var(--table-zebra); }
+.tcgen .gtable tbody tr:last-child td { border-bottom: 0; }
+.tcgen .gtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .gtable-empty { color: var(--muted-foreground); text-align: center; }
+.tcgen .gbadge { border-radius: 6px; padding: 1px 7px; background: #eef2f7; font-size: 11.5px; white-space: nowrap; }
+.tcgen .badge-wire { background: #e0f2fe; } .tcgen .badge-term { background: #fef3c7; } .tcgen .badge-conn { background: #dcfce7; }
+
+/* Кабели: длина и длина реза в строку, кабели — строками с общей шапкой. */
+.tcgen .cut-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 18px; }
+.tcgen .cut-result { display: grid; gap: 1px; padding-bottom: 2px; font-size: 13px; }
+.tcgen .cut-result b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.tcgen .cut-result small { color: var(--muted-foreground); font-size: 12px; }
+.tcgen .cut-result.warn small { color: var(--tone-warn); }
+.tcgen .wire-list { display: grid; gap: 6px; }
+.tcgen .wire-row { display: grid; grid-template-columns: minmax(0, 1fr) 76px 28px; gap: 8px; align-items: center; }
+.tcgen .wire-row.adv { grid-template-columns: minmax(0, 1fr) 112px 76px 28px; }
+.tcgen .wire-row.cores { grid-template-columns: minmax(0, 1fr) 76px 64px 100px 28px; }
+.tcgen .wire-row.adv.cores { grid-template-columns: minmax(0, 1fr) 112px 76px 64px 100px 28px; }
+.tcgen .wire-row.head { margin-bottom: -3px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+
+/* Сторона — разъёмы строками внутри секции (без рамки в рамке); пустая сторона — одна строка. */
+.tcgen .ep-side { container-type: inline-size; }
+.tcgen .ep-side.is-empty { padding-top: 10px; padding-bottom: 10px; }
+.tcgen .ep-card { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid var(--border); }
+.tcgen .gsec-head + .ep-card { padding-top: 2px; border-top: 0; }
+.tcgen .ep-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tcgen .ep-badge { flex: none; min-width: 30px; border-radius: 6px; padding: 1px 7px; background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); font-size: 12.5px; text-align: center; }
+.tcgen .ep-title { overflow: hidden; font-size: 13.5px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.tcgen .ep-kind { color: var(--muted-foreground); font-size: 12.5px; white-space: nowrap; }
+.tcgen .ep-head .btn-remove { margin-left: auto; }
+.tcgen .ep-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; align-items: end; max-width: 1040px; }
+.tcgen .ep-grid > .lead { grid-column: 1 / -1; }
+.tcgen .ep-grid.coax { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+@container (min-width: 600px) {
+  .tcgen .ep-grid:not(.coax) { grid-template-columns: minmax(0, 1.3fr) max-content minmax(0, 1.2fr); }
+  .tcgen .ep-grid > .lead:first-child { grid-column: auto; }
+  .tcgen .ep-grid > .lead:not(:first-child) { max-width: 420px; }
+}
+@container (min-width: 1000px) {
+  .tcgen .ep-grid:not(.coax) { grid-template-columns: minmax(0, 1.3fr) max-content minmax(0, 1.2fr) minmax(0, 1fr); }
+  .tcgen .ep-grid > .lead { grid-column: auto; }
+}
+.tcgen .ep-ter { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 10px; }
+.tcgen .ep-ter > .gfield { width: 92px; }
+.tcgen .ep-ter > .gfield.wide { width: 160px; }
+.tcgen .ep-ter > .gfield.mid { width: 150px; }
+.tcgen .ep-norm { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; color: var(--muted-foreground); font-size: 12px; }
+.tcgen .ep-per { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-size: 12.5px; font-weight: 500; }
+.tcgen .ep-per input { width: 54px; }
+.tcgen .ep-sdr { font-size: 12.5px; }
+.tcgen .op-code, .tcgen .code { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }
+.tcgen .ep-more summary { color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.tcgen .ep-more[open] > summary { margin-bottom: 8px; }
+.tcgen .ep-more > small { display: block; margin-top: 6px; }
+.tcgen .ep-pins { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; }
+.tcgen .ep-pin { display: grid; grid-template-columns: minmax(0, 1fr) 120px; align-items: center; gap: 8px; color: var(--foreground); font-size: 12.5px; font-weight: 500; }
+.tcgen .ep-links { gap: 4px; font-size: 12.5px; }
+.tcgen .ep-links b { font-variant-numeric: tabular-nums; }
+.tcgen .coax-info { color: var(--muted-foreground); font-size: 12px; }
+.tcgen .coax-add { display: grid; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); }
+.tcgen .coax-add > .secondary { justify-self: start; }
+.tcgen .twist-pairs { display: grid; gap: 6px; }
+.tcgen .twist-pair-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px; gap: 6px; align-items: center; max-width: 440px; }
+.tcgen .grapher-box table th, .tcgen .grapher-box table td { white-space: normal; }
+
+/* «Итог»: липкий справа; тело листается внутри, кнопка внизу всегда на экране. Отступы липких — за вычетом padding
+   .workspace (30 px; 20 px на планшете): липкое считается от края его содержимого, а прилипать надо к краю экрана. */
+.tcgen .gen-side { position: sticky; top: -18px; min-width: 0; max-height: calc(100dvh - 24px); display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; background: var(--card); container-type: inline-size; }
+.tcgen .gen-side-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; gap: 12px; align-content: start; padding: 12px 14px; }
+.tcgen .gen-side-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.tcgen .gen-side-head h3 { font-size: 15px; }
+.tcgen .gen-foot { position: sticky; bottom: -30px; z-index: 3; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; background: var(--card); }
+.tcgen .gen-foot > .primary { min-width: 180px; }
+.tcgen .gen-foot > .error-banner { flex: 1; margin: 0; padding: 8px 12px; }
+.tcgen .gen-status { flex: 1; color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .gen-foot-sum { display: none; margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .gen-more { margin: 0; display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.tcgen .gen-more > .secondary { justify-self: start; }
+.tcgen .gen-more .build-config { min-width: 0; }
+
+/* Операции — таблица: № · операция (код серым) · карточка · три времени. Узкий итог — карточка второй строкой. */
+.tcgen .op-list { display: grid; }
+.tcgen .op-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) repeat(3, 76px); grid-template-areas: "num name t1 t2 t3" ". card card card card"; gap: 4px 6px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.tcgen .op-row > .op-num { grid-area: num; }
+.tcgen .op-row > .op-name { grid-area: name; }
+.tcgen .op-row > .op-card { grid-area: card; }
+.tcgen .op-row.head { grid-template-areas: "num name t1 t2 t3"; padding: 0 0 5px; color: var(--muted-foreground); font-size: 11.5px; font-weight: 600; }
+.tcgen .op-row.head > :nth-child(3) { display: none; }
+.tcgen .op-row.head > :nth-child(n+4) { text-align: right; padding-right: 2px; }
+@container (min-width: 760px) {
+  .tcgen .op-row { grid-template-columns: 22px minmax(150px, 1fr) minmax(220px, 1.15fr) repeat(3, 82px); grid-template-areas: "num name card t1 t2 t3"; gap: 4px 8px; }
+  .tcgen .op-row.head { grid-template-areas: "num name card t1 t2 t3"; }
+  .tcgen .op-row.head > :nth-child(3) { display: block; grid-area: card; }
+}
+.tcgen .op-num { align-self: start; padding-top: 1px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .op-name { display: grid; gap: 1px; min-width: 0; }
+.tcgen .op-title { font-size: 12.5px; font-weight: 600; line-height: 1.3; }
+.tcgen .op-row.is-off .op-title { color: var(--muted-foreground); }
+.tcgen .op-card { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tcgen .op-card .gpick { flex: 1 1 auto; }
+.tcgen .op-nodb { flex: none; color: var(--tone-warn); font-size: 11.5px; white-space: nowrap; }
+.tcgen .op-row .gunit > input { padding-right: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .op-badge { display: inline-grid; place-items: center; flex: none; min-width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 700; }
+/* Карточка: поле показывает русское название, под ним — обычный select (список «название · код»). */
+.tcgen .gpick { position: relative; display: block; min-width: 0; }
+.tcgen .gpick-face { display: block; height: 32px; padding-top: 7px; padding-left: 8px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); font-size: 12.5px; white-space: nowrap; text-overflow: ellipsis; }
+.tcgen .gpick select { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; opacity: 0; cursor: pointer; }
+.tcgen .gpick:focus-within .gpick-face { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.tcgen .gpick.warn .gpick-face { border-color: var(--warn-border); background-color: var(--warn-soft); color: var(--tone-warn); }
+.tcgen .gmark { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; }
+.tcgen .gmark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tcgen .gmark.ok { background: color-mix(in srgb, var(--tone-ok) 12%, transparent); color: var(--tone-ok); }
+
+/* Схема полуфабрикатов (ARCH-TRACK-1) — в итоге: блоки слева направо, стрелки с числом штук, открытый блок — его операции. */
+.tcgen .route-editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
 .tcgen .route-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
-.tcgen .route-head h3 { margin: 12px 0 4px; }
 .tcgen .route-toggle { margin-left: auto; }
 .tcgen .route-badge { border-radius: 999px; padding: 1px 8px; background: var(--accent); color: var(--muted-foreground); font-size: 11px; }
 .tcgen .route-badge.manual { background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
 .tcgen .route-summary { color: var(--muted-foreground); font-size: 12px; }
 .tcgen .route-summary strong { color: var(--foreground); }
-/* Генератор — колонка 920 px; схема берёт всю ширину панели (cqw — ширина .gen-pane) и листается внутри себя. */
-.tcgen .route-scroll { width: 100%; width: 100cqw; overflow-x: auto; padding: 2px 2px 8px; }
+.tcgen .route-scroll { width: 100%; overflow-x: auto; padding: 2px 2px 8px; }
 .tcgen .route-canvas { position: relative; }
 .tcgen .route-canvas svg { position: absolute; inset: 0; pointer-events: none; }
 .tcgen .route-edge-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.5; }
@@ -1011,78 +1161,104 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .route-cell { position: absolute; }
 .tcgen .route-edge-label { position: absolute; transform: translate(-50%, -50%); }
 .tcgen .route-per { width: 46px; padding: 2px 4px; text-align: center; background: var(--card); font-variant-numeric: tabular-nums; }
-.tcgen .route-block { width: 100%; height: 100%; min-height: 76px; display: grid; align-content: start; gap: 2px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 12px; overflow: hidden; }
+.tcgen .route-block { width: 100%; height: 100%; min-height: 72px; display: grid; align-content: start; gap: 2px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 12px; overflow: hidden; }
 .tcgen .route-block:hover { border-color: var(--primary); }
 .tcgen .route-block.is-final { border: 2px solid var(--primary); padding: 6px 9px; background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
 .tcgen .route-block.is-selected { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent); }
 .tcgen .route-block-tag { justify-self: start; border-radius: 999px; padding: 0 7px; background: color-mix(in srgb, var(--primary) 16%, transparent); font-size: 11px; font-weight: 700; }
-.tcgen .route-block-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 1.3; }
+.tcgen .route-block-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12.5px; font-weight: 600; line-height: 1.3; }
 .tcgen .route-block-meta, .tcgen .route-block-time { color: var(--muted-foreground); }
-.tcgen .route-chain { width: 100%; width: 100cqw; display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px 0; margin: 0; padding: 0; list-style: none; }
+.tcgen .route-chain { width: 100%; display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px 0; margin: 0; padding: 0; list-style: none; }
 .tcgen .route-chain li { display: flex; align-items: center; }
-.tcgen .route-chain .route-block { width: 184px; height: auto; }
+.tcgen .route-chain .route-block { width: 172px; height: auto; }
 .tcgen .route-link { display: flex; align-items: center; gap: 3px; padding: 0 6px; color: var(--muted-foreground); }
-.tcgen .route-panel { gap: 10px; }
-.tcgen .route-panel-head { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
-.tcgen .route-panel-head .field-label { flex: 1; min-width: 220px; max-width: 420px; }
+.tcgen .route-panel { display: grid; gap: 10px; padding: 10px 12px; border-radius: 8px; background: var(--panel-soft); }
+.tcgen .route-panel-head { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.tcgen .route-panel-head .field-label { flex: 1; min-width: 200px; max-width: 420px; }
 .tcgen .route-ops { display: grid; gap: 2px; }
-.tcgen .route-op { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 4px 12px; align-items: start; }
-.tcgen .route-op .op-item { border-bottom: 0; }
-.tcgen .route-op-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
-.tcgen .route-move { padding-top: 8px; }
-.tcgen .route-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px; align-items: end; border-top: 1px solid var(--border); padding-top: 8px; }
+.tcgen .route-op { display: grid; gap: 4px; }
+.tcgen .route-op .op-row { border-bottom: 0; }
+.tcgen .route-op-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 0; }
+.tcgen .route-move { max-width: 360px; padding-bottom: 6px; }
+.tcgen .route-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 16px; align-items: end; border-top: 1px solid var(--border); padding-top: 8px; }
 .tcgen .route-act { display: flex; align-items: end; gap: 8px; }
 .tcgen .route-act .field-label { flex: 1; min-width: 0; }
 .tcgen .route-inputs { display: grid; gap: 2px; font-size: 12px; }
 .tcgen .route-input-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-/* Ручная сборка (владелец 04.10): свой список операций — карточка на операцию, поля сеткой по 4, текст своей операции
-   в три колонки, выбор карточки — таблица библиотеки с категориями. */
-.tcgen .manual-assembly { display: grid; gap: 8px; }
-.tcgen .manual-hdr { flex-wrap: wrap; row-gap: 4px; }
-.tcgen .manual-hdr h3 { margin: 12px 0 4px; }
-.tcgen .manual-add { margin-left: auto; display: flex; gap: 6px; }
-.tcgen .manual-ops { gap: 0; padding-top: 2px; padding-bottom: 2px; }
-.tcgen .manual-op { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
-.tcgen .manual-op:last-child { border-bottom: 0; }
+
+/* Ручная сборка (владелец 04.10): свой список операций — строка на операцию, поля сеткой, текст своей операции в три
+   колонки, выбор карточки — таблица библиотеки с категориями. */
+.tcgen .manual-hdr .manual-add { margin-left: auto; display: flex; gap: 6px; }
+.tcgen .manual-picker { display: grid; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--panel-soft); }
+.tcgen .manual-picker .section-hdr { display: flex; align-items: center; gap: 12px; }
+.tcgen .manual-picker .manual-close { margin-left: auto; }
+.tcgen .manual-picker .table-wrap { max-height: 360px; }
+.tcgen .manual-ops { display: grid; }
+.tcgen .manual-op { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
 .tcgen .manual-op-head { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.tcgen .manual-op-head > .op-badge { margin-top: 5px; }
 .tcgen .manual-op-name { display: grid; gap: 2px; max-width: 560px; }
-.tcgen .manual-op-name input { font-weight: 600; font-size: 14px; }
-.tcgen .manual-op-name small { color: var(--muted-foreground); font-size: 11px; }
-.tcgen .manual-op-name code { margin-right: 6px; font-size: 11px; }
+.tcgen .manual-op-name input { font-size: 14px; font-weight: 600; }
+.tcgen .manual-op-name small { color: var(--muted-foreground); font-size: 11.5px; }
+.tcgen .manual-op-name .op-code { margin-right: 6px; }
 .tcgen .manual-op-tools { display: flex; gap: 4px; align-items: center; }
 .tcgen .manual-op-tools .small { min-width: 30px; padding: 3px 8px; }
-/* Две строки на операцию: на изделие · подготовка · сек/шт · норма · параметры, затем результат · примечание. */
-.tcgen .manual-grid { display: grid; grid-template-columns: 84px 108px 116px 112px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-left: 36px; align-items: end; }
+.tcgen .manual-grid { display: grid; grid-template-columns: 92px 112px 116px 112px minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; margin-left: 36px; align-items: end; }
 .tcgen .manual-grid .wide { grid-column: span 2; }
 .tcgen .manual-grid .result { grid-column: span 4; }
 .tcgen .manual-norm { display: grid; gap: 2px; padding-bottom: 5px; }
 .tcgen .manual-norm small { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
-.tcgen .section-hdr .manual-close { margin-left: auto; }
 .tcgen .manual-norm b { font-size: 14px; font-variant-numeric: tabular-nums; }
-.tcgen .manual-text { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-left: 36px; }
-.tcgen .manual-text textarea { width: 100%; padding: 5px 8px; border-radius: 6px; font: inherit; font-size: 13px; resize: vertical; }
+.tcgen .manual-text { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; margin-left: 36px; }
+.tcgen .manual-text .gfield-label { white-space: normal; }
+.tcgen .manual-text textarea { width: 100%; padding: 6px 8px; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 400; color: var(--foreground); resize: vertical; }
 .tcgen .manual-comps { margin-left: 36px; font-size: 12px; }
-.tcgen .manual-comps summary { color: var(--muted-foreground); font-weight: 600; cursor: pointer; }
+.tcgen .manual-comps summary { color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
 .tcgen .manual-comp-list { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
-.tcgen .manual-comp { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; }
-.tcgen .manual-comp.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, var(--card)); }
-.tcgen .manual-comp label { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; cursor: pointer; }
-.tcgen .manual-comp input[inputmode] { width: 60px; padding: 2px 6px; }
+.tcgen .manual-comp { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; }
+.tcgen .manual-comp.on { border-color: color-mix(in srgb, var(--primary) 55%, transparent); background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
+.tcgen .manual-comp label { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.tcgen .manual-comp input[type="checkbox"] { width: 14px; height: 14px; min-height: 0; margin: 0; accent-color: var(--primary); }
+.tcgen .manual-comp input[inputmode] { width: 60px; height: 26px; padding: 2px 6px; }
 .tcgen .manual-comp small { color: var(--muted-foreground); }
-.tcgen .manual-picker .table-wrap { max-height: 360px; }
 .tcgen .manual-card-name small { margin-left: 6px; color: var(--muted-foreground); font-size: 11px; }
 .tcgen .manual-card-detail { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; font-size: 12px; }
-.tcgen .manual-op-row { flex-wrap: wrap; }
-@media (max-width: 900px) {
+@container (max-width: 900px) {
+  .tcgen .manual-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-left: 0; }
+  .tcgen .manual-grid .wide, .tcgen .manual-grid .result { grid-column: span 2; }
+  .tcgen .manual-grid > .wide:last-child { grid-column: 1 / -1; }
+  .tcgen .manual-text, .tcgen .manual-comps { margin-left: 0; }
+}
+@container (max-width: 600px) {
   .tcgen .manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tcgen .manual-grid .wide, .tcgen .manual-grid .result { grid-column: 1 / -1; }
   .tcgen .manual-text { grid-template-columns: minmax(0, 1fr); }
 }
-@media (pointer: coarse) {
-  .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
-  .tcgen .manual-grid input, .tcgen .manual-op-name input { min-height: 40px; }
+
+/* Тон — после всех правил секций, чтобы перекрыть их цвет. */
+.tcgen .tone-ok { color: var(--tone-ok); }
+.tcgen .tone-warn { color: var(--tone-warn); }
+.tcgen .tone-danger { color: var(--tone-danger); }
+
+/* Узкий ноутбук и планшет — одна колонка: итог внизу, кнопка прилипает к низу экрана, пока виден генератор. */
+@media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) {
+  .tcgen .gen-layout { grid-template-columns: minmax(0, 1fr); }
+  .tcgen .gen-side { display: contents; }
+  .tcgen .gen-side-body { overflow: visible; border: 1px solid var(--border); border-radius: 10px; background: var(--card); container-type: inline-size; }
+  .tcgen .gen-foot { bottom: -20px; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 -6px 18px rgba(0, 26, 24, .1); }
+  .tcgen .gen-foot-sum { display: block; }
 }
 @media (pointer: coarse) {
+  .tcgen input:not([type="checkbox"]):not([type="radio"]), .tcgen select, .tcgen .gpick-face { height: 40px; }
+  .tcgen .gpick-face { padding-top: 11px; }
+  .tcgen .gseg button { align-items: center; min-height: 40px; padding: 7px 14px; }
+  .tcgen .gsw { align-items: center; min-height: 40px; }
+  .tcgen .gsw input { margin-top: 0; }
+  .tcgen .gchip { min-height: 40px; align-items: center; }
+  .tcgen .btn-link, .tcgen .btn-add { min-height: 40px; }
+  .tcgen .btn-remove { width: 40px; height: 40px; }
+  .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
+  .tcgen .manual-comp input[inputmode] { height: 36px; }
   .tcgen .route-per { min-height: 40px; width: 52px; }
   .tcgen .route-act .small, .tcgen .route-panel select, .tcgen .route-panel input { min-height: 40px; }
   .tcgen .route-toggle, .tcgen .route-head .btn-link, .tcgen .route-panel-head .btn-link { min-height: 40px; }
@@ -1448,8 +1624,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
 .seg-tabs.sub { margin-bottom: 8px; }
 .gen-pane { display: grid; gap: 10px; container-type: inline-size; }
-.tcgen .gen-actions { align-items: flex-start; margin-top: 10px; }
-.tcgen .gen-actions > .primary { min-width: 160px; }
 .gen-more { margin-right: auto; display: grid; gap: 8px; color: var(--muted-foreground); }
 .gen-more[open] { color: var(--foreground); }
 .gen-more > .secondary { justify-self: start; }
