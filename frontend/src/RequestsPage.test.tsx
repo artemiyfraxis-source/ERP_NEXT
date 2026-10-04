@@ -19,7 +19,7 @@ const schema: RequestSchema = {
   purposes: ["RND"],
   delivery_points: ["Москва"],
   units: ["шт"],
-  categories: ["Общепром"],
+  categories: ["Общепром", "ИП", "ОП"],
 };
 
 const row: RequestRow = {
@@ -70,13 +70,13 @@ describe("RequestsPage", () => {
     });
 
     render(<RequestsPage principal={principal} view="create" />);
-    fireEvent.change(await screen.findByLabelText(/Наименование/), {
+    fireEvent.change(await screen.findByLabelText("Наименование, строка 1"), {
       target: { value: "Разъём" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Создать заявку" }));
+    fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("network disconnected");
 
-    fireEvent.click(screen.getByRole("button", { name: "Создать заявку" }));
+    fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
     expect(await screen.findByText("Создана заявка REQ-1")).toBeInTheDocument();
 
     const writes = fetchMock.mock.calls.filter(
@@ -161,7 +161,7 @@ describe("RequestsPage", () => {
     );
 
     expect(await screen.findByText("Последние заявки")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Создать заявку" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Оформить" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "В закупку" })).not.toBeInTheDocument();
   });
 
@@ -179,7 +179,7 @@ describe("RequestsPage", () => {
     expect(await screen.findByText("REQ-1")).toBeInTheDocument();
     expect(screen.getByText("Жду счет")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Мои заявки", level: 1 })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Создать заявку" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Оформить" })).not.toBeInTheDocument();
     // Server-side filter by actor id: the shared /api/requests list is never fetched for this view.
     expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/requests")).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith("/api/requests/mine?limit=50&offset=0", expect.anything());
@@ -219,7 +219,7 @@ describe("RequestsPage", () => {
     // NAV-SECTIONS: `newrequest` alone opens the form; the shared list (`requests`) is not even asked for.
     render(<RequestsPage principal={{ ...principal, roles: ["staff"], permissions: { newrequest: "edit" } }} view="create" />);
 
-    expect(await screen.findByRole("button", { name: "Создать заявку" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Оформить" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Оформить заявку", level: 1 })).toBeInTheDocument();
     expect(screen.queryByText("REQ-1")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/requests")).toBe(false);
@@ -237,7 +237,7 @@ describe("RequestsPage", () => {
 
     expect(await screen.findByText("Последние заявки")).toBeInTheDocument();
     expect(screen.queryByText("Новая заявка")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Создать заявку" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Оформить" })).not.toBeInTheDocument();
   });
 
   it("RQ-IMPORT-UI: «Вставить из Excel» recognizes pasted headers and creates the whole batch", async () => {
@@ -252,7 +252,7 @@ describe("RequestsPage", () => {
     });
 
     render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Создать заявку" });
+    await screen.findByRole("button", { name: "Оформить" });
     fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
 
     fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон из Excel/), {
@@ -262,7 +262,7 @@ describe("RequestsPage", () => {
 
     expect(await screen.findByDisplayValue("Разъём SMA")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Кабель РК")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Создать заявки (2)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Оформить 2 позиции" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/requests",
@@ -275,8 +275,8 @@ describe("RequestsPage", () => {
     expect(body.requests).toHaveLength(2);
     expect(body.requests[0]).toMatchObject({ name: "Разъём SMA", quantity: "3", unit: "шт", delivery_point: "Москва" });
     expect(body.requests[1]).toMatchObject({ name: "Кабель РК", quantity: "10", unit: "м" });
-    expect(await screen.findByText("Создано заявок из Excel: 2")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Создать заявку" })).toBeInTheDocument();
+    expect(await screen.findByText("Создано заявок: 2 (REQ-1, REQ-2)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Оформить" })).toBeInTheDocument();
   });
 
   it("RQ-IMPORT-UI: «Вставить из Excel» reports unrecognized headers instead of silently dropping them", async () => {
@@ -287,7 +287,7 @@ describe("RequestsPage", () => {
     });
 
     render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Создать заявку" });
+    await screen.findByRole("button", { name: "Оформить" });
     fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
     fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон из Excel/), {
       target: { value: "Наименование\tЦвет\nРазъём\tкрасный" },
@@ -329,7 +329,7 @@ describe("RequestsPage", () => {
     });
 
     render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Создать заявку" });
+    await screen.findByRole("button", { name: "Оформить" });
     fireEvent.click(screen.getByRole("button", { name: "Из расчёта" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Загрузить" }));
@@ -339,20 +339,20 @@ describe("RequestsPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Загрузить" }));
 
-    expect(await screen.findByText("DB-9M")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("DB-9M")).toBeInTheDocument();
     const [, loadInit] = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === "/api/requests/import/calc")!;
     expect(JSON.parse(String(loadInit?.body))).toEqual({ url: "https://docs.google.com/spreadsheets/d/1AbC/edit" });
     expect(screen.getByText(/не найден в реестре открытых проектов/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Ед.изм: DB-9M")).toHaveValue("шт");
-    expect(screen.getByLabelText("Документ качества: DB-9M")).toHaveValue("Нет");
-    fireEvent.change(screen.getByLabelText("Категория: DB-9M"), { target: { value: "ОП" } });
-    expect(screen.getByLabelText("Документ качества: DB-9M")).toHaveValue("Да");
-    expect(screen.getByLabelText("Документ качества: DB-9M")).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Ед.изм: DB-9M"), { target: { value: "компл" } });
+    expect(screen.getByLabelText("Ед., строка 1")).toHaveValue("шт");
+    expect(screen.getByLabelText("Док. качества, строка 1")).toHaveValue("Нет");
+    fireEvent.change(screen.getByLabelText("Категория, строка 1"), { target: { value: "ОП" } });
+    expect(screen.getByLabelText("Док. качества, строка 1")).toHaveValue("Да");
+    expect(screen.getByLabelText("Док. качества, строка 1")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Ед., строка 1"), { target: { value: "компл" } });
     fireEvent.change(screen.getByLabelText("Дедлайн (на всю пачку) *"), { target: { value: "2026-10-01" } });
     fireEvent.change(screen.getByLabelText(/Точка отгрузки \(на всю пачку\)/), { target: { value: "Москва" } });
     fireEvent.change(screen.getByLabelText(/План. дата — всем/), { target: { value: "2026-10-20" } });
-    fireEvent.click(screen.getByRole("button", { name: "Создать заявки" }));
+    fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/requests/import",
@@ -379,7 +379,7 @@ describe("RequestsPage", () => {
 
     render(<RequestsPage principal={principal} view="create" />);
 
-    expect(await screen.findByText("DB-9M")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("DB-9M")).toBeInTheDocument();
     expect(screen.getByLabelText("Ссылка на расчёт")).toHaveValue("https://docs.google.com/spreadsheets/d/1AbC/edit");
     const [, loadInit] = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === "/api/requests/import/calc")!;
     expect(JSON.parse(String(loadInit?.body))).toEqual({ url: "https://docs.google.com/spreadsheets/d/1AbC/edit" });
@@ -399,18 +399,18 @@ describe("RequestsPage", () => {
     });
 
     render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Создать заявку" });
+    await screen.findByRole("button", { name: "Оформить" });
     fireEvent.click(screen.getByRole("button", { name: "Из расчёта" }));
     fireEvent.change(screen.getByPlaceholderText(/Вставь сюда диапазон листа ЗКП/), {
       target: { value: "Тип\tОбозначение\tНа проект\tБез НДС\nКабель\tМГТФ\t2\t10" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Распознать" }));
 
-    expect(await screen.findByText("МГТФ")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("МГТФ")).toBeInTheDocument();
     const [, init] = fetchMock.mock.calls.find(([reqInput]) => String(reqInput) === "/api/requests/import/parse")!;
     expect(JSON.parse(String(init?.body)).grid[1]).toEqual(["Кабель", "МГТФ", "2", "10"]);
   });
-  it("manual form: several positions share «Общее для всех позиций» and go in one batch", async () => {
+  it("manual grid: common fields go to every row, the whole batch is one POST", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);
       if (path === "/api/requests/schema") {
@@ -424,23 +424,24 @@ describe("RequestsPage", () => {
     });
 
     render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Создать заявку" });
-    fireEvent.click(screen.getByRole("button", { name: "+ Добавить позицию" }));
-    const names = screen.getAllByLabelText(/Наименование/);
-    expect(names).toHaveLength(2);
-    fireEvent.change(names[0], { target: { value: "Разъём" } });
+    await screen.findByRole("button", { name: "Оформить" });
+    fireEvent.click(screen.getByRole("button", { name: "+ Добавить строку" }));
+    expect(screen.getAllByLabelText(/^Наименование, строка/)).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText("Наименование, строка 1"), { target: { value: "Разъём" } });
     // Ручной ввод: номер не из реестра вписывается как есть, реестр только подсказывает.
     expect(screen.getByRole("combobox", { name: "Цель (проект)" })).toHaveAttribute("aria-autocomplete", "list");
     fireEvent.change(screen.getByLabelText("Цель (проект)"), { target: { value: "48К.13" } });
-    fireEvent.change(screen.getByLabelText("Категория"), { target: { value: "ОП" } });
-    fireEvent.change(screen.getAllByLabelText("Артикул КД")[0], { target: { value: "АБВГ.123" } });
-    fireEvent.change(screen.getAllByLabelText("Цена с НДС")[0], { target: { value: "120" } });
+    fireEvent.change(screen.getByLabelText("Категория", { selector: ".rg-common select" }), { target: { value: "ОП" } });
+    // the common category reached every row, and the rule «ОП → Да» with it
+    expect(screen.getByLabelText("Категория, строка 2")).toHaveValue("ОП");
+    expect(screen.getByLabelText("Док. качества, строка 2")).toHaveValue("Да");
+    fireEvent.change(screen.getByLabelText("Артикул КД, строка 1"), { target: { value: "АБВГ.123" } });
+    fireEvent.change(screen.getByLabelText("Цена с НДС, строка 1"), { target: { value: "120" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "Создать заявки (2)" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Позиция 2: заполни Наименование");
-
-    fireEvent.change(screen.getAllByLabelText(/Наименование/)[1], { target: { value: "Кабель" } });
-    fireEvent.click(screen.getByRole("button", { name: "Создать заявки (2)" }));
+    // row 2 has no name: it is blank, not an error — only row 1 is sent
+    expect(screen.getByRole("button", { name: "Оформить 1 позицию" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Наименование, строка 2"), { target: { value: "Кабель" } });
+    fireEvent.click(screen.getByRole("button", { name: "Оформить 2 позиции" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/requests", expect.objectContaining({ method: "POST" })));
     const [, init] = fetchMock.mock.calls.find(([reqInput, reqInit]) => String(reqInput) === "/api/requests" && reqInit?.method === "POST")!;
@@ -449,6 +450,88 @@ describe("RequestsPage", () => {
     expect(body.requests[0]).toMatchObject({ name: "Разъём", project_reference: "48К.13", category: "ОП", quality_document: "Да", design_article: "АБВГ.123", price_with_vat: "120" });
     expect(body.requests[1]).toMatchObject({ name: "Кабель", project_reference: "48К.13", category: "ОП", quality_document: "Да", delivery_point: "Москва" });
     expect(await screen.findByText("Создано заявок: 2 (REQ-1, REQ-2)")).toBeInTheDocument();
+  });
+
+  it("T7: a block pasted into the grid fills rows and columns; 100 rows fit, the rest is dropped", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/requests/schema") return json(schema);
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    render(<RequestsPage principal={principal} view="create" />);
+    await screen.findByRole("button", { name: "Оформить" });
+
+    // without a header row: from the focused cell, in the order Наименование · Тип · Артикул КД · Кол-во · Ед.
+    const block = Array.from({ length: 3 }, (_, i) => `Разъём ${i + 1}\tКомплектующие\tАБВ.${i}\t${i + 2},5\tм`).join("\n");
+    fireEvent.paste(screen.getByLabelText("Наименование, строка 1"), { clipboardData: { getData: () => block } });
+    expect(screen.getAllByLabelText(/^Наименование, строка/)).toHaveLength(3);
+    expect(screen.getByLabelText("Наименование, строка 3")).toHaveValue("Разъём 3");
+    expect(screen.getByLabelText("Артикул КД, строка 2")).toHaveValue("АБВ.1");
+    expect(screen.getByLabelText("Кол-во, строка 1")).toHaveValue("2.5");
+    expect(screen.getByLabelText("Ед., строка 3")).toHaveValue("м");
+    expect(screen.getByRole("button", { name: "Оформить 3 позиции" })).toBeInTheDocument();
+
+    // a pasted block with a header row is read by column names and goes after the filled rows
+    const big = ["Наименование\tКоличество", ...Array.from({ length: 100 }, (_, i) => `Позиция ${i + 1}\t1`)].join("\n");
+    fireEvent.paste(screen.getByLabelText("Наименование, строка 1"), { clipboardData: { getData: () => big } });
+    expect(screen.getAllByLabelText(/^Наименование, строка/)).toHaveLength(100);
+    expect(screen.getByRole("alert")).toHaveTextContent("Не вошло строк: 3");
+    expect(screen.getByText(/Позиций:/)).toHaveTextContent("Позиций: 100 из 100");
+    expect(screen.getByRole("button", { name: "+ Добавить строку" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Оформить 100 позиций" })).toBeInTheDocument();
+  });
+
+  it("T7: Enter moves down, on the last row it adds a row; copy and remove work per row", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/requests/schema") return json(schema);
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    render(<RequestsPage principal={principal} view="create" />);
+    await screen.findByRole("button", { name: "Оформить" });
+
+    const first = screen.getByLabelText("Наименование, строка 1");
+    fireEvent.change(first, { target: { value: "Разъём" } });
+    fireEvent.keyDown(first, { key: "Enter" });
+    const second = await screen.findByLabelText("Наименование, строка 2");
+    await waitFor(() => expect(second).toHaveFocus());
+    fireEvent.change(second, { target: { value: "Кабель" } });
+    fireEvent.click(screen.getByRole("button", { name: "Копия строки 1" }));
+    expect(screen.getByLabelText("Наименование, строка 2")).toHaveValue("Разъём");
+    expect(screen.getByLabelText("Наименование, строка 3")).toHaveValue("Кабель");
+    fireEvent.click(screen.getByRole("button", { name: "Убрать строку 1" }));
+    expect(screen.getByLabelText("Наименование, строка 1")).toHaveValue("Разъём");
+    expect(screen.getAllByLabelText(/^Наименование, строка/)).toHaveLength(2);
+  });
+
+  it("T7: errors are marked in the cells with a count, nothing is sent until they are fixed", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests" && init?.method === "POST") return json({ requests: [row] }, 201);
+      if (path === "/api/requests") return json({ requests: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    render(<RequestsPage principal={principal} view="create" />);
+    await screen.findByRole("button", { name: "Оформить" });
+
+    const block = ["Разъём\tКомплектующие\tA\t0\tшт", "Кабель\tКомплектующие\tB\tabc\tм", "Клемма\tКомплектующие\tC\t3\tшт"].join("\n");
+    fireEvent.paste(screen.getByLabelText("Наименование, строка 1"), { clipboardData: { getData: () => block } });
+    expect(screen.getByRole("status")).toHaveTextContent("2 позиции с ошибкой");
+    expect(screen.getByLabelText("Кол-во, строка 1")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Кол-во, строка 2")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Ед., строка 3")).not.toHaveAttribute("aria-invalid");
+
+    fireEvent.click(screen.getByRole("button", { name: "Оформить 3 позиции" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("2 позиции с ошибкой");
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/requests" && init?.method === "POST")).toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Кол-во, строка 1"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Кол-во, строка 2"), { target: { value: "5" } });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Оформить 3 позиции" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/requests" && init?.method === "POST")).toBe(true));
+    const [, init] = fetchMock.mock.calls.find(([input, reqInit]) => String(input) === "/api/requests" && reqInit?.method === "POST")!;
+    expect(JSON.parse(String(init?.body)).requests.map((item: { name: string; quantity: string; unit: string }) => [item.name, item.quantity, item.unit]))
+      .toEqual([["Разъём", "4", "шт"], ["Кабель", "5", "м"], ["Клемма", "3", "шт"]]);
   });
 
   it("Excel template: copies the headers and offers the .csv; recognizes SUPPLYMAP headers and dd.mm.yyyy dates", async () => {
@@ -461,7 +544,7 @@ describe("RequestsPage", () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
     render(<RequestsPage principal={principal} view="create" />);
-    await screen.findByRole("button", { name: "Создать заявку" });
+    await screen.findByRole("button", { name: "Оформить" });
     fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
     fireEvent.click(screen.getByRole("button", { name: "Скопировать заголовки" }));
     await waitFor(() => expect(writeText).toHaveBeenCalled());
@@ -477,7 +560,7 @@ describe("RequestsPage", () => {
 
     expect(await screen.findByDisplayValue("АБВ.1")).toBeInTheDocument();
     expect(screen.getByDisplayValue("https://x.test")).toBeInTheDocument();
-    expect(screen.getByText(/Своё у позиции: Плановая дата — 2026-11-05/)).toBeInTheDocument();
+    expect(screen.getByLabelText("План. дата, строка 1")).toHaveValue("2026-11-05");
   });
 
   it("«Мои заявки» shows the purchase columns: buyer, supplier, order, expected date, sum", async () => {
