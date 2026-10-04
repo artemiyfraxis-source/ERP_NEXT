@@ -1,39 +1,24 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { DataTable, matchesWords, type DataColumn } from "./DataTable";
-import { procurementApi, type ProcurementLine } from "./api";
+import { DataTable, matchesWords } from "./DataTable";
+import { failureText, procurementApi, type ProcurementLine } from "./api";
+import type { LineEditing } from "./ProcurementCellEdit";
+import { buildSheetColumns } from "./ProcurementSheetColumns";
 
 /* Лист закупки целиком и обзор «По поставщикам» — то, что в SUPPLYMAP давали вид purchase
-   (portalViewDefs_) и portalPurchaseBySupplier. Оба только для чтения: правки живут на этапах
-   в очередях закупщика. */
+   (portalViewDefs_) и portalPurchaseBySupplier. Лист открыт на чтение; правятся только «Комментарий» и
+   «Ожид. дата» — в своих строках закупщика, прямо в ячейке (колонки и их порядок — ProcurementSheetColumns). */
 
 const NO_SUPPLIER = "Без поставщика";
 
-export const sheetColumns: DataColumn<ProcurementLine>[] = [
-  { key: "legacy_id", title: "System ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>рев. {line.revision}</small></> },
-  { key: "status", title: "Статус", value: (line) => line.status, filter: true },
-  { key: "priority", title: "Приоритет", value: (line) => line.priority, filter: true },
-  { key: "task_type", title: "Тип задачи", value: (line) => line.task_type ?? "", filter: true, hidden: true },
-  { key: "designation", title: "Назначение", value: (line) => line.designation },
-  { key: "project", title: "Проект", value: (line) => line.project_reference, hidden: true },
-  { key: "name", title: "Наименование", value: (line) => line.calculated_name, wrap: true },
-  { key: "article", title: "Артикул КД", value: (line) => line.design_article, hidden: true },
-  { key: "qty", title: "Кол-во", value: (line) => `${line.actual_quantity ?? line.calculated_quantity} ${line.actual_unit ?? line.calculated_unit}` },
-  { key: "buyer", title: "Закупщик", value: (line) => line.buyer, filter: true },
-  { key: "supplier", title: "Поставщик", value: (line) => line.supplier, filter: true },
-  { key: "order", title: "№ заказа", value: (line) => line.order_number },
-  { key: "sum", title: "Сумма (факт)", value: (line) => line.actual_sum, numeric: true },
-  { key: "point", title: "Точка отгрузки", value: (line) => line.delivery_point, hidden: true },
-  { key: "planned", title: "План. дата", value: (line) => line.planned_date },
-  { key: "eta", title: "Ожид. дата", value: (line) => line.expected_arrival },
-  { key: "initiator", title: "Инициатор", value: (line) => line.initiator, hidden: true },
-  { key: "link", title: "Ссылка", value: (line) => line.link, hidden: true, render: (line) => line.link ? <a href={line.link} target="_blank" rel="noreferrer">открыть</a> : "—" },
-];
+/** Колонки обзора «По поставщикам»: часть листа, в своём порядке. */
+const SUPPLIER_VIEW_KEYS = ["status", "designation", "name", "buyer", "order"];
 
 function message(reason: unknown, fallback: string) {
   return reason instanceof Error ? reason.message : fallback;
 }
 
-export function ProcurementSheetView() {
+/** `buyerName` — имя вошедшего: правка комментария и даты открыта только в строках, где он закупщик. */
+export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } = {}) {
   const [lines, setLines] = useState<ProcurementLine[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [buyers, setBuyers] = useState<string[]>([]);
@@ -53,7 +38,7 @@ export function ProcurementSheetView() {
       setBuyers(result.buyers);
       setApplied(filters);
     } catch (reason) {
-      setError(message(reason, "Лист закупки не загрузился"));
+      setError(failureText(reason, "Лист закупки не загрузился"));
     } finally {
       setLoading(false);
     }
@@ -64,6 +49,20 @@ export function ProcurementSheetView() {
     procurementApi.meta().then((meta) => setStatuses(meta.statuses)).catch(() => undefined);
   }, []);
 
+  /** Свежая строка после правки в ячейке — на её место в листе, без перезагрузки страниц. */
+  const replaceLine = (saved: ProcurementLine) => setLines((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+
+  /** 409: строку уже меняли — перечитываем именно её (поиск по System ID, затем по id среди найденных). */
+  async function reloadLine(stale: ProcurementLine) {
+    const result = await procurementApi.sheet({ q: stale.legacy_id });
+    const fresh = result.lines.find((item) => item.id === stale.id);
+    if (fresh) replaceLine(fresh);
+    else await load(applied);
+  }
+
+  const editing: LineEditing = { onSaved: replaceLine, onConflict: reloadLine };
+  const columns = buildSheetColumns({ editing, buyerName, disabled: loading });
+
   // Server-side отбор: status and buyer apply at once, the search on «Найти»/Enter — all in the table's own toolbar.
   function apply(next: typeof draft) {
     setDraft(next);
@@ -71,15 +70,15 @@ export function ProcurementSheetView() {
   }
 
   return (
-    <section className="panel table-panel">
-      <div className="panel-heading"><h2>Весь лист закупки</h2><span>Все статусы и закупщики, только просмотр</span></div>
+    <section className="panel table-panel procurement-sheet">
+      <div className="panel-heading"><h2>Весь лист закупки</h2><span>Все статусы и закупщики · в своих строках правятся «Комментарий» и «Ожид. дата»</span></div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <DataTable
         label="Лист закупки"
         rows={lines}
-        columns={sheetColumns}
+        columns={columns}
         rowKey={(line) => line.id}
-        storageKey="procurement-sheet"
+        storageKey="procurement-sheet-v2"
         exportName="Лист закупки"
         emptyText={loading ? "Загружаем…" : "Строк нет"}
         onSearch={(q) => apply({ ...draft, q })}
@@ -104,6 +103,11 @@ export function ProcurementSheetView() {
     </section>
   );
 }
+
+const supplierViewColumns = (() => {
+  const all = buildSheetColumns();
+  return SUPPLIER_VIEW_KEYS.flatMap((key) => all.filter((column) => column.key === key)).map((column) => ({ ...column, hidden: false }));
+})();
 
 type SupplierGroup = { name: string; lines: ProcurementLine[]; statuses: Map<string, number>; orders: Set<string> };
 
@@ -162,7 +166,7 @@ export function ProcurementBySupplier() {
           <DataTable
             label={`Позиции поставщика ${opened.name}`}
             rows={opened.lines}
-            columns={sheetColumns.filter((column) => ["status", "name", "designation", "order", "buyer"].includes(column.key)).map((column) => ({ ...column, hidden: false }))}
+            columns={supplierViewColumns}
             rowKey={(line) => line.id}
           />
         </>

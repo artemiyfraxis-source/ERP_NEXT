@@ -598,14 +598,15 @@ it("shows each stage after «В работе» as its own table, not a card per 
   expect(container.querySelectorAll(".procurement-card")).toHaveLength(0);
 
   const head = (name: string) => within(screen.getByRole("region", { name })).getAllByRole("columnheader").map((cell) => cell.textContent);
-  expect(head("Готов к запросу")).toEqual(["ID", "Наименование", "Наименование на сайте", "Назначение", "Поставщик", "Кол-во (факт)", "Точка отгрузки", "Срок", ""]);
+  expect(head("Готов к запросу")).toEqual(["ID", "Наименование", "Наименование на сайте", "Назначение", "Поставщик", "Кол-во (факт)", "Точка отгрузки", "Срок", "Комментарий", ""]);
   expect(head("Жду счет")).toEqual(["№ заказа", "Поставщик", "Позиций", "Заказ от", "Ожидается", "КП внесено", "Документ", ""]);
-  expect(head("В оплату")).toEqual(["", "ID", "№ заказа", "Поставщик", "Наименование", "Кол-во (факт)", "Сумма, ₽", "Счёт", "Ожидается", "Готовность", ""]);
+  expect(head("В оплату")).toEqual(["", "ID", "№ заказа", "Поставщик", "Наименование", "Кол-во (факт)", "Сумма, ₽", "Счёт", "Ожид. дата", "Готовность", "Комментарий", ""]);
   // «Основание» (дозавоз), «Сумма» и валютные колонки появляются, когда есть что в них показать.
-  expect(head("Согласование")).toEqual(["ID", "Наименование", "Поставщик", "Кол-во", "Вид", "Решение", ""]);
-  expect(head("В пути")).toEqual(["ID", "Наименование", "Поставщик", "№ заказа", "Кол-во (факт)", "Ожидается", "Счёт", "Сумма, ₽", ""]);
-  expect(head("Карантин")).toEqual(["ID", "Наименование", "Поставщик", "№ заказа", "Кол-во (факт)", "Ожидается", "Счёт", "Сумма, ₽", ""]);
-  // «Ожидается» в пути — датой по-русски.
+  expect(head("Согласование")).toEqual(["ID", "Наименование", "Поставщик", "Кол-во", "Вид", "Комментарий", "Решение", ""]);
+  // «Ожид. дата» правится в ячейке, «Факт. дата» (приёмка) только показана; «Комментарий» — последний перед меню.
+  expect(head("В пути")).toEqual(["ID", "Наименование", "Поставщик", "№ заказа", "Кол-во (факт)", "Ожид. дата", "Факт. дата", "Счёт", "Сумма, ₽", "Комментарий", ""]);
+  expect(head("Карантин")).toEqual(["ID", "Наименование", "Поставщик", "№ заказа", "Кол-во (факт)", "Ожид. дата", "Факт. дата", "Счёт", "Сумма, ₽", "Комментарий", ""]);
+  // «Ожид. дата» в пути — датой по-русски.
   expect(within(screen.getByRole("region", { name: "В пути" })).getByText("12.10.2026")).toBeInTheDocument();
 });
 
@@ -940,4 +941,169 @@ it("uploads one invoice file for the whole order in the КП form and fills № 
   expect(saved).toMatchObject({ order_reference: "PO-001", invoice_url: UPLOADED.url });
   const rows = saved?.rows as Record<string, unknown>[];
   expect(rows.map((row) => [row.invoice_number, row.invoice_date])).toEqual([["58", "2026-09-14"], ["58", "2026-09-14"]]);
+});
+
+// ── Комментарий и Ожид. дата — прямо в ячейке стадии ─────────────────────────────────────────────────
+
+const staged = (n: number, status: string, extra: Partial<ProcurementLine> = {}): ProcurementLine => ({
+  ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт",
+  id: `30000000-0000-0000-0000-0000000002${n}0`, legacy_id: `REQ-${n}`, status, version: 3, ...extra,
+});
+
+it("edits «Комментарий» on every stage after «В работе» and «Ожид. дата» from «Жду счет» to «Карантин»", async () => {
+  const lines = [
+    staged(1, "В работе"),
+    staged(2, "Готов к запросу", { note: "Ждём ответ поставщика" }),
+    staged(3, "Жду счет", { order_number: "PO-009", expected_arrival: "2026-10-10" }),
+    staged(4, "В оплату", { invoice_url: "https://files.test/i.pdf", pay_missing: [], expected_arrival: "2026-10-11" }),
+    staged(5, "Согласование"),
+    staged(6, "В пути", { expected_arrival: "2026-10-12", actual_arrival: "2026-10-03", order_number: "PO-001" }),
+    staged(7, "Карантин", { expected_arrival: "2026-10-13", actual_arrival: "2026-10-04", order_number: "PO-001" }),
+    staged(8, "Готово", { actual_arrival: "2026-10-02" }),
+  ];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  await screen.findByRole("region", { name: "В пути" });
+  fireEvent.click(await screen.findByText("PO-009")); // раскрыть заказ «Жду счет»
+
+  const noteOn = (id: string) => screen.queryByRole("button", { name: `Комментарий ${id}` });
+  const dateOn = (id: string) => screen.queryByRole("button", { name: `Ожид. дата ${id}` });
+  // Комментарий — на каждой стадии после «В работе» (в самой «В работе» таблица своя, без него).
+  for (const id of ["REQ-2", "REQ-3", "REQ-4", "REQ-5", "REQ-6", "REQ-7", "REQ-8"]) expect(noteOn(id), id).toBeInTheDocument();
+  expect(noteOn("REQ-1")).not.toBeInTheDocument();
+  // Ожид. дата — от «Жду счет» до «Карантин»; в «Готов к запросу» и «Согласование» её нет, в «Готово» только показ.
+  for (const id of ["REQ-3", "REQ-4", "REQ-6", "REQ-7"]) expect(dateOn(id), id).toBeInTheDocument();
+  for (const id of ["REQ-2", "REQ-5", "REQ-8"]) expect(dateOn(id), id).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Ожид. дата REQ-6" })).toHaveTextContent("12.10.2026");
+  // «Факт. дата» — день приёмки, только показ.
+  const transit = within(screen.getByRole("region", { name: "В пути" }));
+  expect(transit.getByText("03.10.2026")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Карантин" })).getByText("04.10.2026")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Прочие позиции" })).getByText("02.10.2026")).toBeInTheDocument();
+});
+
+it("saves a typed «Комментарий» and «Ожид. дата» of a stage line with its version and shows the saved line", async () => {
+  const transit = staged(6, "В пути", { expected_arrival: "2026-10-12", note: null });
+  const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: [transit] });
+    if (init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body));
+      sent.push({ path, body });
+      return json({ line: path.endsWith("/note") ? { ...transit, note: body.note, version: 4 } : { ...transit, expected_arrival: body.expected_arrival, version: 5 } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Комментарий REQ-6" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Комментарий REQ-6" }), { target: { value: "Груз в Казани" } });
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Комментарий REQ-6" }), { key: "Enter" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Комментарий REQ-6" })).toHaveTextContent("Груз в Казани"));
+
+  fireEvent.click(screen.getByRole("button", { name: "Ожид. дата REQ-6" }));
+  fireEvent.change(screen.getByLabelText("Ожид. дата REQ-6"), { target: { value: "2026-10-18" } });
+  fireEvent.blur(screen.getByLabelText("Ожид. дата REQ-6"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Ожид. дата REQ-6" })).toHaveTextContent("18.10.2026"));
+  expect(sent).toEqual([
+    { path: `/api/procurement/${transit.id}/note`, body: { version: 3, note: "Груз в Казани" } },
+    { path: `/api/procurement/${transit.id}/expected-arrival`, body: { version: 4, expected_arrival: "2026-10-18" } },
+  ]);
+});
+
+it("edits the date and the note of a line inside an opened «Жду счет» order", async () => {
+  const waiting = staged(3, "Жду счет", { order_number: "PO-001", expected_arrival: "2026-10-10" });
+  const sent: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: [waiting] });
+    if (init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body));
+      sent.push(`${path} ${init.body}`);
+      return json({ line: { ...waiting, ...("note" in body ? { note: body.note } : { expected_arrival: body.expected_arrival }), version: 4 } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  await openOrder("PO-001");
+  fireEvent.click(screen.getByRole("button", { name: "Ожид. дата REQ-3" }));
+  fireEvent.change(screen.getByLabelText("Ожид. дата REQ-3"), { target: { value: "2026-10-15" } });
+  fireEvent.keyDown(screen.getByLabelText("Ожид. дата REQ-3"), { key: "Enter" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Ожид. дата REQ-3" })).toHaveTextContent("15.10.2026"));
+  // Дата строки сдвинула и «Ожидается» самого заказа — группа считается по строкам.
+  expect(within(screen.getByRole("region", { name: "Жду счет" })).getAllByText("15.10.2026").length).toBeGreaterThanOrEqual(2);
+
+  fireEvent.click(screen.getByRole("button", { name: "Комментарий REQ-3" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Комментарий REQ-3" }), { target: { value: "Счёт обещали во вторник" } });
+  fireEvent.blur(screen.getByRole("textbox", { name: "Комментарий REQ-3" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Комментарий REQ-3" })).toHaveTextContent("Счёт обещали во вторник"));
+  expect(sent).toEqual([
+    `/api/procurement/${waiting.id}/expected-arrival {"version":3,"expected_arrival":"2026-10-15"}`,
+    `/api/procurement/${waiting.id}/note {"version":4,"note":"Счёт обещали во вторник"}`,
+  ]);
+});
+
+it("on 409 in a stage table says the line changed and rereads the queue; on 422 shows the server text", async () => {
+  const toPay = staged(4, "В оплату", { invoice_url: "https://files.test/i.pdf", pay_missing: [], expected_arrival: "2026-10-11", note: "старый" });
+  const fresh = { ...toPay, note: "поправили в другой вкладке", version: 8 };
+  let reloaded = false;
+  const patches: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") {
+      const result = json({ lines: [reloaded ? fresh : toPay] });
+      reloaded = true;
+      return result;
+    }
+    if (init?.method === "PATCH") {
+      patches.push(`${path.split("/").pop()} ${init.body}`);
+      return path.endsWith("/note")
+        ? problem(409, "Конкурентное изменение: обновите данные и повторите команду")
+        : problem(422, "Ожидаемая дата поступления не может быть раньше заказа");
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Комментарий REQ-4" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Комментарий REQ-4" }), { target: { value: "мой текст" } });
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Комментарий REQ-4" }), { key: "Enter" });
+  expect(await screen.findByText("Строку изменили — обновите")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Комментарий REQ-4" })).toHaveTextContent("поправили в другой вкладке"));
+
+  fireEvent.click(screen.getByRole("button", { name: "Ожид. дата REQ-4" }));
+  fireEvent.change(screen.getByLabelText("Ожид. дата REQ-4"), { target: { value: "2020-01-01" } });
+  fireEvent.keyDown(screen.getByLabelText("Ожид. дата REQ-4"), { key: "Enter" });
+  expect(await screen.findByText("Ожидаемая дата поступления не может быть раньше заказа")).toBeInTheDocument();
+  expect(patches).toEqual(['note {"version":3,"note":"мой текст"}', 'expected-arrival {"version":8,"expected_arrival":"2020-01-01"}']);
+});
+
+it("opens the buyer's own line of the whole sheet for editing by the signed-in name", async () => {
+  const mine = { ...line, id: "30000000-0000-0000-0000-000000000077", legacy_id: "REQ-77", status: "В пути", buyer: "Артемий", expected_arrival: "2026-10-12" };
+  const other = { ...mine, id: "30000000-0000-0000-0000-000000000078", legacy_id: "REQ-78", buyer: "Петров" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: [] });
+    if (path === "/api/procurement/meta") return json({ units: [], statuses: [] });
+    if (path === "/api/procurement/lines") return json({ lines: [mine, other], next_cursor: null, buyers: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage buyerName="Артемий" />);
+  fireEvent.click(screen.getByRole("button", { name: "Весь лист" }));
+  expect(await screen.findByRole("button", { name: "Ожид. дата REQ-77" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Ожид. дата REQ-78" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Комментарий REQ-77" })).toBeInTheDocument();
 });

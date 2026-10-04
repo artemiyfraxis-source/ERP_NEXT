@@ -28,6 +28,7 @@ const EVENT_NAMES: Record<string, string> = {
   "procurement.actual_arrival": "Фактическая дата прихода",
   "receiving.expected_arrival_copied": "Ожидаемая дата передана в приёмку",
   "procurement.taken_in_work": "Взято в работу",
+  "procurement.autofilled": "Заполнено автоматически",
   "procurement.facts_saved": "Данные поставки сохранены",
   "procurement.kp_saved": "КП сохранено",
   "procurement.money_saved": "Суммы сохранены",
@@ -176,6 +177,7 @@ const EVENT_NAMES: Record<string, string> = {
   "identity.user_deleted": "Сотрудник удалён",
   "identity.departments_saved": "Отделы сохранены",
   "identity.department_renamed": "Отдел переименован",
+  "identity.department_head_set": "Руководитель отдела назначен",
   "identity.role_access_saved": "Доступы ролей сохранены",
   "identity.user_access_saved": "Исключения доступа сохранены",
   "identity.admin_mode_on": "Режим администратора включён",
@@ -202,6 +204,7 @@ const DETAIL_LABELS: Record<string, string> = {
 const FIELD_LABELS: Record<string, string> = {
   carrier: "перевозчик", contact: "контакт", phone: "телефон", receiver: "получатель", shipping_point: "адрес отгрузки",
   terms: "условия", upd_type: "тип УПД", deadline: "срок", note: "примечание", address: "адрес", customer: "заказчик",
+  supplier: "поставщик", site_name: "наименование (сайт)", manufacturer: "изготовитель", country: "страна",
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

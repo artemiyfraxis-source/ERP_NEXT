@@ -56,9 +56,10 @@ it("warns instead of printing when nothing is waiting to be put away", async () 
   });
 
   render(<WarehousePage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Лист перемещения" }));
+  // The first test of the file pays for the cold import; under a full parallel run 1 s is not enough.
+  fireEvent.click(await screen.findByRole("button", { name: "Лист перемещения" }, { timeout: 5000 }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("Нет позиций для раскладки");
+  expect(await screen.findByRole("alert", {}, { timeout: 5000 })).toHaveTextContent("Нет позиций для раскладки");
 });
 
 it("prints a putaway sheet for accepted lots waiting for a shelf — same mechanism as FF-8", async () => {

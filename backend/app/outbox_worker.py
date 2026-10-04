@@ -44,6 +44,7 @@ from app.workflows.supplier_directory import ReferencesSupplierDirectory
 from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
 from app.workflows.arbiter import PoisonTriggerMessage, close_followed_up, dispatch_next_trigger, feed_triggers
 from app.workflows.kitset_names import kitset_names_tick
+from app.workflows.procurement_autofill import AUTOFILL_TICK_CAP, procurement_autofill_tick
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from app.workflows.owner_alerts import alert_on_dead_letters, daily_overdue_digest, quarantine_escalations
 
@@ -58,6 +59,12 @@ _last_tail = float("-inf")
 ARBITER_CLOSE_INTERVAL_SECONDS = 30.0
 _last_arbiter_close = float("-inf")
 _tail_thread: threading.Thread | None = None
+# «Взять в работу» → name / manufacturer / country from the supplier's page (Guards.gs inWorkSideEffects_) run on their
+# own thread too, but on a short beat: the buyer is looking at the line while it fills, so the minute of the tail
+# group would be too slow, and a dead supplier site (15 s timeout) must not hold the outbox dispatch either.
+AUTOFILL_INTERVAL_SECONDS = 3.0
+_last_autofill = float("-inf")
+_autofill_thread: threading.Thread | None = None
 
 
 def dispatch_available(
@@ -272,6 +279,28 @@ def start_tail_jobs(sessions: sessionmaker[Session]) -> bool:
     return True
 
 
+def run_autofill_job(sessions: sessionmaker[Session], cap: int = AUTOFILL_TICK_CAP) -> int:
+    """Procurement lines taken into work: the page-dependent fields fill themselves. A failure is logged, never raised."""
+    try:
+        return int(procurement_autofill_tick(sessions, cap=cap))
+    except Exception:  # noqa: BLE001 — one broken job must not stop the worker
+        logging.exception("Autofill job failed; retrying next tick")
+        return 0
+
+
+def start_autofill_job(sessions: sessionmaker[Session]) -> bool:
+    """Start the autofill on a background thread, at most every AUTOFILL_INTERVAL_SECONDS and never two at a time."""
+    global _last_autofill, _autofill_thread
+    if _autofill_thread is not None and _autofill_thread.is_alive():
+        return False
+    if time.monotonic() - _last_autofill < AUTOFILL_INTERVAL_SECONDS:
+        return False
+    _last_autofill = time.monotonic()
+    _autofill_thread = threading.Thread(target=run_autofill_job, args=(sessions,), name="procurement-autofill", daemon=True)
+    _autofill_thread.start()
+    return True
+
+
 def drain_available(sessions: sessionmaker[Session], *, limit: int = 100) -> int:
     total = 0
     while True:
@@ -300,11 +329,13 @@ def main() -> None:
         if args.once:
             run_timers(sessions)
             run_tail_jobs(sessions)
+            run_autofill_job(sessions, cap=args.limit)
             drain_available(sessions, limit=args.limit)
             return
         while True:
             run_timers(sessions)
             start_tail_jobs(sessions)
+            start_autofill_job(sessions)
             dispatch_available(sessions, limit=args.limit)
             time.sleep(max(args.interval, 0.1))
     finally:

@@ -213,7 +213,7 @@ export function App() {
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
-        {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement", ["buyer", "admin"])} />}
+        {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement", ["buyer", "admin"])} buyerName={principal.user.name} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving", ["receiver", "admin"])} />}
         {activeSection === "stock" && <WarehousePage admin={principal.roles.includes("admin")} readOnly={!canAct(principal, "warehouse", ["receiver", "admin"])} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}

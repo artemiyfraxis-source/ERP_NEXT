@@ -21,6 +21,7 @@ from .invoice_file import (
     INVOICE_FILE_LIMIT, INVOICE_FILE_PATH, InvoiceInfo, invoice_file_name, recognise_invoice,
 )
 from .domain import (
+    AUTOFILL_TOPIC,
     UNSET as UNSET_FACT,
     _PAID_STATUSES,
     KpEntry,
@@ -739,17 +740,24 @@ def dispatch_next_backorder_requested(
 def take_procurement_in_work(
     command: TakeProcurementInWorkCommand,
     uow: UnitOfWork,
+    suppliers: SupplierDirectory | None = None,
 ) -> list[ProcurementLine]:
-    return take_procurement_in_work_batch(command, uow)[0]
+    return take_procurement_in_work_batch(command, uow, suppliers)[0]
 
 
 def take_procurement_in_work_batch(
     command: TakeProcurementInWorkCommand,
     uow: UnitOfWork,
+    suppliers: SupplierDirectory | None = None,
 ) -> tuple[list[ProcurementLine], list[ProcurementLine]]:
     """`portalTakeInWork` → `takeRowsInWork_`: every selected «Новый» line becomes the buyer's; a line that
     is already further along (taken by another buyer, or past «В работе») is skipped, not an error.
-    Returns (lines now the buyer's, skipped lines). The buyer's own «В работе» line is a read-only retry."""
+    Returns (lines now the buyer's, skipped lines). The buyer's own «В работе» line is a read-only retry.
+
+    `inWorkSideEffects_` (Guards.gs:458): an empty ПОСТАВЩИК is filled from the ССЫЛКА's domain through the
+    «домен → поставщик» map right here (a map lookup, cheap). The page-dependent fields — НАИМЕНОВАНИЕ (САЙТ),
+    ИЗГОТОВИТЕЛЬ and the СТРАНА from it — are only queued (`procurement.autofill_requested`, same transaction):
+    50 lines must not wait on 50 supplier sites, `app.workflows.procurement_autofill` fills them in the background."""
     line_ids = list(dict.fromkeys(command.line_ids))
     if not line_ids:
         raise ProcurementValidationError("Не выбрано ни одной строки закупки")
@@ -764,20 +772,26 @@ def take_procurement_in_work_batch(
 
         taken: list[ProcurementLine] = []
         skipped: list[ProcurementLine] = []
-        changed: list[tuple[ProcurementLine, ProcurementLine]] = []
+        changed: list[tuple[ProcurementLine, ProcurementLine, tuple[str, ...]]] = []
+        supplier_map: dict[str, str] | None = None
         for before in current:
             try:
                 after = before.take_in_work(command.actor)
             except ProcurementValidationError:
                 skipped.append(before)
                 continue
-            taken.append(after)
+            filled: tuple[str, ...] = ()
             if after != before:
-                changed.append((before, after))
+                if suppliers is not None and not (after.supplier or "").strip() and (after.link or "").strip():
+                    if supplier_map is None:
+                        supplier_map = _supplier_map(suppliers)
+                    after, filled = after.fill_empty(supplier=supplier_from_link(after.link, supplier_map))
+                changed.append((before, after, filled))
+            taken.append(after)
         if not changed:
             return taken, skipped
 
-        for before, after in changed:
+        for before, after, filled in changed:
             uow.procurement.add(after)
             uow.audit.add(
                 AuditEvent(
@@ -793,8 +807,155 @@ def take_procurement_in_work_batch(
                     },
                 )
             )
+            if filled:
+                uow.audit.add(_autofilled_event(after, filled, command.actor, command.now))
+            if after.autofill_wanted:
+                uow.outbox.add(
+                    OutboxMessage(
+                        id=uuid4(),
+                        topic=AUTOFILL_TOPIC,
+                        idempotency_key=f"autofill:{after.id}:v{after.version}",
+                        created_at=command.now,
+                        payload={
+                            "line_id": str(after.id),
+                            "version": str(after.version),
+                            "legacy_id": after.legacy_id,
+                        },
+                    )
+                )
         uow.commit()
         return taken, skipped
+
+
+def _supplier_map(suppliers: SupplierDirectory) -> dict[str, str]:
+    """The map is a convenience: a References failure must not stop the buyer from taking lines into work."""
+    try:
+        return suppliers.supplier_map()
+    except Exception:  # noqa: BLE001
+        _log.warning("supplier map unavailable for the take-in-work fill", exc_info=True)
+        return {}
+
+
+def _autofilled_event(
+    line: ProcurementLine, fields: Sequence[str], actor: Actor, now: datetime
+) -> AuditEvent:
+    return AuditEvent(
+        id=uuid4(),
+        aggregate_id=line.id,
+        event_type="procurement.autofilled",
+        actor=actor,
+        occurred_at=now,
+        details={"legacy_id": line.legacy_id, "fields": list(fields)},  # type: ignore[dict-item]
+    )
+
+
+@dataclass(frozen=True)
+class PageInfo:
+    """What one page behind a ССЫЛКА gives (`fetchPageInfo_`): the item's name on the site and its brand."""
+
+    title: str = ""
+    brand: str = ""
+
+
+class PageInfoFetcher(Protocol):
+    """Port to the supplier's site. A network error or a code >= 400 is an EMPTY `PageInfo`, never an exception."""
+
+    def info(self, url: str) -> PageInfo: ...
+
+
+@dataclass(frozen=True)
+class AutofillRequest:
+    """One queued line, as it stood when the take queued it: what the background fill may still write."""
+
+    message_id: UUID
+    line_id: UUID
+    version: int
+    legacy_id: str
+    link: str
+    site_name: str
+    manufacturer: str
+    country: str
+
+
+@dataclass(frozen=True)
+class ApplyAutofillCommand:
+    request: AutofillRequest
+    site_name: str
+    manufacturer: str
+    country: str
+    now: datetime
+
+
+def next_autofill_request(now: datetime, uow: DispatchUnitOfWork) -> AutofillRequest | None:
+    """Claim the next queued line that still has something to fill; None — the queue is empty.
+
+    A line that is gone, changed since the take (`version`), no longer «В работе» or already complete needs no
+    fill: its message is closed here, silently. The live message stays open until `apply_autofill` closes it,
+    so the site fetch in between runs outside any transaction."""
+    with uow:
+        while True:
+            message = uow.outbox.next_unpublished(AUTOFILL_TOPIC, now)
+            if message is None:
+                uow.commit()
+                return None
+            try:
+                line_id = UUID(str(message.payload.get("line_id")))
+                version = int(str(message.payload.get("version")))
+            except ValueError as error:
+                reason = "procurement.autofill_requested: invalid line_id or version"
+                uow.outbox.mark_failed(message.id, now, reason)
+                uow.commit()
+                raise PoisonOutboxMessage(message.id, reason) from error
+            line = uow.procurement.get(line_id)
+            if (
+                line is None
+                or line.version != version
+                or line.status is not ProcurementStatus.IN_WORK
+                or not line.autofill_wanted
+            ):
+                uow.outbox.mark_published(message.id, now)
+                continue
+            uow.commit()  # closes the stale messages above and releases the claim before the site is fetched
+            return AutofillRequest(
+                message_id=message.id,
+                line_id=line.id,
+                version=line.version,
+                legacy_id=line.legacy_id,
+                link=(line.link or "").strip(),
+                site_name=(line.site_name or "").strip(),
+                manufacturer=(line.trace.manufacturer or "").strip(),
+                country=(line.trace.country or "").strip(),
+            )
+
+
+def apply_autofill(command: ApplyAutofillCommand, uow: DispatchUnitOfWork) -> tuple[str, ...]:
+    """Write what the site gave into the line's EMPTY fields and close the message. Returns the fields written.
+
+    The line is read again: a version other than the queued one means the buyer (or the pipeline) touched it
+    while the site was being fetched — nothing is written. A field the buyer filled meanwhile is not overwritten
+    either (`fill_empty`). The version is NOT bumped: an open «Заполнить данные» form must stay valid, and the
+    write is still guarded by the version at the database (a concurrent change makes the commit fail, not win)."""
+    request = command.request
+    with uow:
+        line = uow.procurement.get(request.line_id)
+        written: tuple[str, ...] = ()
+        if line is not None and line.version == request.version and line.status is ProcurementStatus.IN_WORK:
+            filled, written = line.fill_empty(
+                site_name=command.site_name, manufacturer=command.manufacturer, country=command.country
+            )
+            if written:
+                uow.procurement.add(filled)
+                uow.audit.add(_autofilled_event(filled, written, SYSTEM_ACTOR, command.now))
+        uow.outbox.mark_published(request.message_id, command.now)
+        uow.commit()
+        return written
+
+
+def fail_autofill(message_id: UUID, now: datetime, error: str, uow: DispatchUnitOfWork) -> None:
+    """The fill broke for a reason of ours (not the site's — those are an empty `PageInfo`): retry with backoff."""
+    with uow:
+        uow.outbox.mark_failed(message_id, now, error)
+        uow.commit()
 
 
 def save_procurement_facts(

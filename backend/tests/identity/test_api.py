@@ -111,6 +111,21 @@ def test_login_cookie_resolves_principal_and_logout_revokes_it(identity_api):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_profile_carries_blank_personnel_fields_until_they_are_filled(identity_api):
+    client = identity_api
+    assert client.post("/api/auth/login", json={"login": "petrov", "password": "correct-password"}).status_code == 200
+
+    profile = client.get("/api/auth/profile").json()
+
+    assert profile["name"] == "Петров" and profile["department"] == "Закупки"
+    assert {key: profile[key] for key in (
+        "personnel_number", "job_title", "qualification", "job_since", "manager_id", "manager", "department_head",
+    )} == {
+        "personnel_number": "", "job_title": "", "qualification": "", "job_since": None, "manager_id": None,
+        "manager": None, "department_head": None,
+    }
+
+
 def test_cookie_authenticated_write_requires_matching_csrf(identity_api):
     client = identity_api
     assert client.post(

@@ -1043,6 +1043,45 @@ export interface ReferenceBase {
 
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
+/** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
+export type CableKind = "coax" | "wire" | "other";
+
+export interface BasesResult {
+  bases: ReferenceBase[];
+  /** Records per stored tab and per cable list — the counts on the tab chips. */
+  tabs?: Partial<Record<TechOperationTab, number>>;
+  cables?: Record<CableKind, number>;
+}
+
+/** The D1·D2·D3 row the ETK generator uses for a coax cable (СПР.КАБ · коаксиал). */
+export interface CableDiameters {
+  id: string;
+  cable: string;
+  D1: string;
+  D2: string;
+  D3: string;
+}
+
+export interface CableRow {
+  /** БД.ПРОВ record id, or `dia:<id>` for a cable that is only in the D-table. */
+  id: string;
+  kind: CableKind;
+  auto_kind: CableKind;
+  reason: string;
+  manual: boolean;
+  cable: string;
+  record: TechOperationRecord | null;
+  dia: CableDiameters | null;
+  /** No own D row: the row of the same family («RG58» for «RG-58 A/U»), to copy from. */
+  dia_hint: CableDiameters | null;
+}
+
+export interface CablesResult {
+  columns: string[];
+  counts: Record<CableKind, number>;
+  rows: CableRow[];
+}
+
 export interface TechOperationRecord {
   id: string;
   tab: TechOperationTab;
@@ -1366,10 +1405,37 @@ export interface OwnProfile {
   role_label: string;
   site: string;
   site_label: string;
+  /** «Личная карточка»: кадровые поля, blank until the administrator fills them. */
+  personnel_number?: string;
+  job_title?: string;
+  qualification?: string;
+  job_since?: string | null;
+  manager_id?: string | null;
+  manager?: PersonRef | null;
+  department_head?: PersonRef | null;
+}
+
+export interface PersonRef {
+  id: string;
+  name: string;
+}
+
+/** Кадровые поля «Личной карточки»: «» / null — не заполнено. `job_since` — ISO date (2026-10-04). */
+export interface PersonnelFields {
+  /** Табельный номер, unique (FRX-0017). */
+  personnel_number: string;
+  /** Должность. */
+  job_title: string;
+  /** Категория / квалификация. */
+  qualification: string;
+  /** В должности с. */
+  job_since: string | null;
+  /** Непосредственный руководитель (id сотрудника). */
+  manager_id: string | null;
 }
 
 /** ID-8 «Сотрудники»: the directory as the administrator sees it. No password ever comes back. */
-export interface Employee {
+export interface Employee extends PersonnelFields {
   id: string;
   login: string;
   email: string;
@@ -1385,11 +1451,13 @@ export interface Employee {
 export interface StaffDirectory {
   users: Employee[];
   departments: string[];
+  /** Отдел → id руководителя (только отделы с руководителем). */
+  department_heads: Record<string, string>;
   roles: Array<{ key: string; label: string }>;
   sites: Array<{ code: string; city: string }>;
 }
 
-export interface EmployeeCreate {
+export interface EmployeeCreate extends PersonnelFields {
   login: string;
   email: string;
   name: string;
@@ -1401,7 +1469,8 @@ export interface EmployeeCreate {
   pin: string;
 }
 
-export interface EmployeeUpdate {
+/** A personnel field left out stays as stored; «» / null clears it. */
+export interface EmployeeUpdate extends Partial<PersonnelFields> {
   name: string;
   department: string;
   role: string;
@@ -1426,6 +1495,12 @@ export const staffApi = {
     api<{ departments: string[]; users: number }>("/api/auth/departments/rename", {
       method: "POST",
       body: JSON.stringify({ source, target }),
+    }),
+  /** Руководитель отдела; `headId` null — без руководителя. */
+  setDepartmentHead: (department: string, headId: string | null) =>
+    api<{ departments: string[]; department_heads: Record<string, string> }>("/api/auth/departments/head", {
+      method: "PUT",
+      body: JSON.stringify({ department, head_id: headId }),
     }),
 };
 
@@ -2144,7 +2219,12 @@ export const shippingApi = {
 };
 
 export const referencesApi = {
-  bases: () => api<{ bases: ReferenceBase[] }>("/api/references/bases"),
+  bases: () => api<BasesResult>("/api/references/bases"),
+  cables: () => api<CablesResult>("/api/references/cables"),
+  moveCable: (recordId: string, kind: CableKind) =>
+    api<CableRow>(`/api/references/cables/${recordId}/kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
+  saveCableDiameters: (payload: { cable: string; dia_id: string | null; old: Record<string, string>; value: Record<string, string> }) =>
+    api<CableDiameters>("/api/references/cables/diameters", { method: "PUT", body: JSON.stringify(payload) }),
   maps: () => api<ReferenceMaps>("/api/references/maps"),
   saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
     method: "PUT",

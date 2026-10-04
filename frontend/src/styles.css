@@ -305,11 +305,11 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .reference-fields small { color: var(--muted-foreground); font-size: 9px; text-transform: uppercase; }
 .reference-tiles { margin-bottom: 14px; }
 /* «База данных»: tab groups read as one sheet bar; every tab below is a DataTable. */
-.db-tabs { display: flex; flex-wrap: wrap; gap: 14px 22px; margin: 16px 0 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-.db-tab-group { display: grid; gap: 6px; }
-.db-tab-group-title { color: var(--muted-foreground); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
-.db-tab-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.db-tab { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 11px; color: var(--foreground); background: var(--card); font-size: 13px; font-weight: 500; }
+.db-tabs { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 12px 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.db-tab-group { display: grid; gap: 4px; align-content: start; }
+.db-tab-group-title { color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.db-tab-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.db-tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; color: var(--foreground); background: var(--card); font-size: 13px; font-weight: 500; }
 .db-tab:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
 .db-tab.active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
 .db-tab-count { border-radius: 999px; padding: 0 7px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; font-weight: 400; }
@@ -320,6 +320,20 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
 .db-form label { display: grid; gap: 3px; min-width: 180px; }
 .techcards-page.embedded > .page-sub:first-child { margin-top: 0; }
+/* «Кабели и провода»: the row opens its editor under itself — D1·D2·D3 first, then the БД.ПРОВ cells. */
+.cable-editor { display: grid; gap: 12px; }
+.cable-dia { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; }
+.cable-dia label { display: grid; gap: 3px; width: 130px; }
+.cable-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 12px; }
+.cable-form label { display: grid; gap: 3px; min-width: 0; }
+.cable-form label.wide { grid-column: span 2; }
+.cable-dia small, .cable-form small, .cable-kind small { color: var(--muted-foreground); font-size: 11px; }
+.cable-actions { align-items: end; margin-top: 0; }
+.cable-kind { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+.cable-kind .muted { font-size: 12px; }
+.cable-clip { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cable-card { padding: 4px 0; }
+.cable-card small { font-size: 11px; text-transform: none; }
 
 .reference-tiles .tile { min-height: 0; }
 .notifications-page .data-table .cell-wrap { max-width: min(920px, 60vw); }
@@ -1402,6 +1416,21 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .staff-dep-list { display: grid; gap: 8px; width: min(100%, 420px); }
 .staff-dep-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .staff-dep-rename input { width: 240px; }
+/* «Личная карточка»: руководители отделов — compact table + one picker row. */
+.staff-dep-heads { display: grid; gap: 8px; width: min(100%, 560px); }
+.staff-dep-heads .table-wrap { max-height: 320px; overflow-y: auto; }
+.staff-dep-heads th, .staff-dep-heads td { padding: 6px 12px; }
+.staff-dep-heads tr.selected td { background: var(--accent); }
+.staff-dep-heads .staff-dep-rename { flex-wrap: nowrap; }
+.staff-dep-heads .staff-dep-rename select { flex: 1 1 150px; width: auto; min-width: 0; }
+.staff-dep-heads .staff-dep-rename input { flex: 1 1 200px; width: auto; min-width: 0; }
+.staff-dep-heads .staff-dep-rename button { flex: none; }
+/* A табельный номер («FRX-0017») never breaks at its hyphen. */
+.staff-page td.tab-no { white-space: nowrap; }
+/* The employee form closes without holes: E-mail at creation takes two columns (half a row on 27", the whole row in
+   two columns); the «Вход разрешён» box sits on the inputs' line. */
+@media (min-width: 721px) { .staff-form > .pair { grid-column: span 2; } }
+.staff-form > .staff-form-check { align-self: end; min-height: 38px; }
 .operations-queue { margin-left: auto; color: var(--muted-foreground); font-size: 13px; }
 
 /* ===== T7: «Оформить заявку» — таблица позиций (RequestGrid). Свой блок, чтобы не мешать соседним правкам. ===== */
@@ -1505,6 +1534,26 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
   .row-menu > button { min-height: 36px; min-width: 40px; }
   .row-menu-popup button { min-height: 40px; }
 }
+
+/* ── Правка «Комментария» и «Ожид. даты» в ячейке (ProcurementCellEdit) ── */
+.cell-edit { display: block; width: 100%; margin: 0; padding: 1px 5px; border: 1px solid transparent; border-bottom: 1px dashed #c3cbd4; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 13px; line-height: 1.35; text-align: left; white-space: inherit; cursor: text; }
+.cell-edit:hover, .cell-edit:focus-visible { border-color: var(--primary); border-bottom-style: dashed; background: var(--card); outline: none; }
+.cell-edit-empty { color: var(--muted-foreground); }
+.cell-edit-input { width: 100%; min-width: 160px; padding: 3px 6px; border-radius: 6px; font-size: 13px; line-height: 1.35; }
+input.cell-edit-input[type="date"] { width: 130px; min-width: 0; }
+textarea.cell-edit-input { min-height: 62px; resize: vertical; }
+.data-table td small.cell-edit-error, .cell-edit-error { display: block; margin-top: 2px; color: #852a24; font-size: 11.5px; white-space: normal; }
+.order-lines td.note-cell { min-width: 180px; max-width: 220px; white-space: normal; }
+.order-lines td.missing-cell { min-width: 150px; max-width: 220px; white-space: normal; }
+.procurement-sheet td.num { font-variant-numeric: tabular-nums; }
+/* Весь лист и стадии: ключевые колонки вместе с «Комментарием» должны влезать в 16" без прокрутки вбок —
+   отступы у́же, длинный текст (наименование, комментарий) переносится раньше; на 27" — как в других таблицах. */
+.procurement-sheet .data-table th, .procurement-sheet .data-table td,
+.procurement-stage .data-table th, .procurement-stage .data-table td { padding-left: 6px; padding-right: 6px; }
+.procurement-sheet .data-table .cell-wrap { max-width: 210px; }
+.procurement-stage .data-table .cell-wrap { max-width: 180px; }
+@media (min-width: 1900px) { .procurement-sheet .data-table .cell-wrap, .procurement-stage .data-table .cell-wrap { max-width: 340px; } }
+@media (pointer: coarse) { .data-table td .cell-edit, .cell-edit-input { min-height: 40px; } }
 
 /* ── Производственный план: лист «ЗАГРУЗ» (PlanLoadSheet.tsx) ─────────────────────────────────────────── */
 :root {

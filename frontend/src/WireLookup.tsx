@@ -5,14 +5,18 @@ import type { TechOperationRecord } from "./api";
     1571…, для сопоставления»). Same match as the ETK generator (SUPPLYMAP TcGenerator.gs wireDiaFromTable_ /
     TcGenInline lookupWireDia_): the mark by occurrence in the article, the row by «NN AWG», else by the ГОСТ section. */
 
-type Row = { awg: string; gost: string; core: string; byMark: Record<string, string> };
-type Mark = { name: string; norm: string };
+export type WireRow = { awg: string; gost: string; core: string; byMark: Record<string, string> };
+export type WireMark = { name: string; norm: string };
+type Row = WireRow;
+type Mark = WireMark;
 
 const markNorm = (value: string) => value.toLowerCase().replace(/[\s-]/g, "");
 const num = (value: string) => { const n = parseFloat(String(value || "").replace(",", ".")); return Number.isFinite(n) ? n : NaN; };
-const shown = (value: string | undefined) => (value && value.trim() && value.trim() !== "—" ? value.trim() : "");
+export const shownWireValue = (value: string | undefined) => (value && value.trim() && value.trim() !== "—" ? value.trim() : "");
+const shown = shownWireValue;
 
-function parse(records: TechOperationRecord[]): { marks: Mark[]; rows: Row[] } {
+/** The AWG table (СПР.КАБ · AWG records, keys = sheet header in order) → the marks and rows the generator matches. */
+export function parseWireTable(records: TechOperationRecord[]): { marks: Mark[]; rows: Row[] } {
   if (!records.length) return { marks: [], rows: [] };
   const headers = Object.keys(records[0].fields);
   const awgCol = headers.findIndex((h) => h.trim().toLowerCase() === "awg");
@@ -47,7 +51,7 @@ export function matchWire(article: string, marks: Mark[], rows: Row[]): { mark: 
 }
 
 export function WireLookup({ records }: { records: TechOperationRecord[] }) {
-  const { marks, rows } = useMemo(() => parse(records), [records]);
+  const { marks, rows } = useMemo(() => parseWireTable(records), [records]);
   const [mark, setMark] = useState("");
   const [size, setSize] = useState("");
   const [article, setArticle] = useState("");
@@ -76,7 +80,7 @@ export function WireLookup({ records }: { records: TechOperationRecord[] }) {
     {result(sizeRow, markItem)}
     {article.trim() && (matched ? (matched.row ? result(matched.row, matched.mark)
       : <div className="warning-inline">Марка {matched.mark.name} найдена, сечение не распознано: укажите «NN AWG» или сечение ГОСТ.</div>)
-      : <div className="warning-inline">Марка не распознана: в артикуле нет ни одной из {marks.length} марок СПР.КАБ, генератор возьмёт Ø вручную.</div>)}
+      : <div className="warning-inline">Марка не распознана: в артикуле нет ни одной из {marks.length} марок таблицы AWG, генератор возьмёт Ø вручную.</div>)}
     <p className="page-sub">Так же сопоставляет генератор ЭТК: марку ищет в артикуле провода, строку — по «NN AWG», иначе по сечению ГОСТ. Сечение ГОСТ → AWG для обжима — из этой же таблицы.</p>
   </article>;
 }

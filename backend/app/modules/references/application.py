@@ -12,7 +12,8 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-from .domain import EDITABLE_TABS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
+from .cables import DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, diameter_index
+from .domain import EDITABLE_TABS, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
 from .technology import TECH_SNAPSHOT_SCHEMA_VERSION, schema_display_text, schema_keys, sync_schema_fields
 
 
@@ -103,7 +104,7 @@ def _audit(event_type: str, actor: Actor, now: datetime, details: dict, uow: Uni
 
 
 def replace_maps(command: ReplaceMapsCommand, uow: UnitOfWork) -> tuple[ReferenceEntry, ...]:
-    kinds = frozenset(ReferenceKind) if command.kinds is None else command.kinds
+    kinds = frozenset(MAP_KINDS) if command.kinds is None else command.kinds
     given = {
         ReferenceKind.SUPPLIER: command.suppliers,
         ReferenceKind.COUNTRY: command.countries,
@@ -255,6 +256,103 @@ def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperatio
         uow.tech_operations.save(record)
         _audit("references.tech_record_created", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
+        }, uow)
+        uow.commit()
+    return record
+
+
+# --- «Кабели и провода»: the three lists, moving a БД.ПРОВ row between them, D1·D2·D3 of a coax cable ---
+
+def cable_overrides(entries: Sequence[ReferenceEntry]) -> dict[str, CableKind]:
+    return {entry.normalized_key: CableKind(entry.value) for entry in entries if entry.kind == ReferenceKind.CABLE_KIND}
+
+
+def list_cables(uow: UnitOfWork) -> list[CableRow]:
+    """Every БД.ПРОВ row with its list, and the D-table cables without a БД.ПРОВ row, sorted by the cable key so a
+    family («RG58», «RG-58 A/U», «RG-58 C/U») stands together."""
+    with uow:
+        wires = uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000)
+        diameters = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)
+        overrides = cable_overrides(uow.references.list())
+    return sorted(cable_rows(wires, diameters, overrides), key=lambda row: (row.key, row.cable))
+
+
+@dataclass(frozen=True)
+class SetCableKindCommand:
+    record_id: UUID
+    kind: CableKind
+    actor: Actor
+    now: datetime
+
+
+def set_cable_kind(command: SetCableKindCommand, uow: UnitOfWork) -> CableRow:
+    """Moves a БД.ПРОВ row to a list. The choice is stored by the cable's mark in the `cable_kind` map: it survives a
+    mirror reload and leaves the row's cells to the mirror. Moving it back to its automatic list removes the entry."""
+    with uow:
+        record = uow.tech_operations.get(command.record_id)
+        if record is None or record.tab != TechOperationTab.WIRE:
+            raise LookupError("Кабель не найден в БД.ПРОВ")
+        mark = cable_mark(record)
+        key = normalized_cable_key(mark)
+        diameters = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)
+        auto, _reason = auto_kind(record.fields, mark, frozenset(diameter_index(diameters)))
+        entries = [entry for entry in uow.references.list()
+                   if not (entry.kind == ReferenceKind.CABLE_KIND and entry.normalized_key == key)]
+        if command.kind != auto:
+            position = max((entry.position for entry in entries if entry.kind == ReferenceKind.CABLE_KIND), default=-1) + 1
+            entries.append(ReferenceEntry.create(ReferenceKind.CABLE_KIND, mark, command.kind.value, position))
+        uow.references.replace(tuple(entries))
+        _audit("references.cable_kind_set", command.actor, command.now, {
+            "record_id": str(record.id), "mark": mark, "kind": command.kind.value, "manual": command.kind != auto,
+        }, uow)
+        uow.commit()
+    [row] = [item for item in cable_rows([record], diameters, cable_overrides(entries)) if item.record is not None]
+    return row
+
+
+@dataclass(frozen=True)
+class SetCoaxDiametersCommand:
+    cable: str
+    dia_id: UUID | None  # the D-table row the screen showed (None — the cable had none)
+    old: dict[str, str]
+    value: dict[str, str]
+    actor: Actor
+    now: datetime
+
+
+def set_coax_diameters(command: SetCoaxDiametersCommand, uow: UnitOfWork) -> TechOperationRecord:
+    """D1·D2·D3 of a coax cable from «Коаксиальные кабели» (owner 04.10.2026; the SUPPLYMAP portal keeps СПР.КАБ
+    view-only, ERP edits it here). The row edited is the one the generator uses for the name (the last of its key); a
+    cable without one gets a new D-table row named as the cable, so the generator finds it by that name. Values are
+    numbers in mm or empty; the old values must match (stale otherwise). The row is marked edited in ERP, so a mirror
+    reload keeps it."""
+    key = normalized_cable_key(command.cable)
+    values = {name: clean_diameter(name, command.value.get(name, "")) for name in DIAMETERS}
+    with uow:
+        current = diameter_index(uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)).get(key)
+        if (current.id if current else None) != command.dia_id:
+            raise StaleRecordError("Диаметры этого кабеля уже поменяли — откройте его заново")
+        if current is None:
+            if not any(values.values()):
+                raise ReferenceValidationError("Заполните хотя бы один диаметр")
+            cable = str(command.cable).strip()
+            # After every sheet row («00001»…): the list order is the generator's, a new name must not reorder twins.
+            record = TechOperationRecord.create(
+                tab=TechOperationTab.KAB_COAX, display_text=cable, search_text="", source_sheet="",
+                sort_key=f"99999 {cable}", fields={"Кабель": cable, **values}, edited_in_erp=True,
+            )
+            event = "references.tech_record_created"
+        else:
+            stale = [name for name in DIAMETERS
+                     if str(current.fields.get(name, "")).strip() != str(command.old.get(name, "")).strip()]
+            if stale:
+                raise StaleRecordError(f"{', '.join(stale)}: уже поменяли — откройте кабель заново")
+            record = replace(current, fields={**current.fields, **values}, edited_in_erp=True)
+            record = replace(record, normalized_search=_search_text(record))
+            event = "references.tech_record_edited"
+        uow.tech_operations.save(record)
+        _audit(event, command.actor, command.now, {
+            "record_id": str(record.id), "tab": record.tab.value, "fields": list(DIAMETERS),
         }, uow)
         uow.commit()
     return record

@@ -6,6 +6,7 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
+from datetime import date
 from enum import Enum
 from uuid import UUID
 
@@ -188,6 +189,12 @@ class IdentityUser:
     role: str
     site: str | None
     active: bool
+    # «Личная карточка» (owner 04.10.2026): кадровые поля. Empty text / None = not filled.
+    personnel_number: str = ""  # табельный номер, unique when set (FRX-0017)
+    job_title: str = ""  # должность
+    qualification: str = ""  # категория / квалификация
+    job_since: date | None = None  # в должности с
+    manager_id: UUID | None = None  # непосредственный руководитель
 
 
 def normalize_login(value: str) -> str:
@@ -384,3 +391,46 @@ def department_list(*sources: list[str]) -> list[str]:
                 continue
             result[name.casefold()] = name
     return sorted(result.values(), key=_ru_key)
+
+
+# ── Кадровые поля «Личной карточки» (native, owner 04.10.2026; no SUPPLYMAP source) ──────────────
+
+PERSONNEL_NUMBER_LIMIT = 32
+
+
+def normalize_personnel_number(value: str | None) -> str:
+    """Табельный номер (FRX-0017): optional; spaces collapsed and letters upper-cased, so «frx-0017» and «FRX-0017» are
+    one number and the unique index catches both."""
+    number = " ".join(str(value or "").split()).upper()
+    if len(number) > PERSONNEL_NUMBER_LIMIT:
+        raise IdentityValidationError(f"Табельный номер длиннее {PERSONNEL_NUMBER_LIMIT} символов.")
+    return number
+
+
+def normalize_job_text(value: str | None, label: str) -> str:
+    """Должность, категория / квалификация: free text, optional."""
+    text = " ".join(str(value or "").split())
+    if len(text) > TEXT_LIMIT:
+        raise IdentityValidationError(f"{label} длиннее {TEXT_LIMIT} символов.")
+    return text
+
+
+def check_manager_chain(
+    user_id: UUID, manager_id: UUID | None, managers: dict[UUID, UUID | None], names: dict[UUID, str],
+) -> None:
+    """Непосредственный руководитель: not the employee themself, and no closed loop — walking up from the new manager
+    (`managers`: employee → their manager, as stored) must never come back to the employee."""
+    if manager_id is None:
+        return
+    if manager_id == user_id:
+        raise IdentityValidationError("Сотрудник не может быть руководителем сам себе.")
+    seen: set[UUID] = set()
+    current: UUID | None = manager_id
+    while current is not None and current not in seen:
+        if current == user_id:
+            raise IdentityValidationError(
+                f"Замкнутый круг подчинения: «{names.get(user_id, 'сотрудник')}» уже стоит в цепочке руководителей "
+                f"«{names.get(manager_id, 'руководитель')}». Выберите другого руководителя."
+            )
+        seen.add(current)
+        current = managers.get(current)

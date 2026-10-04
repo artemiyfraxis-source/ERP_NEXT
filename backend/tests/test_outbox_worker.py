@@ -94,3 +94,26 @@ def test_run_timers_syncs_receipt_stages_before_notifying_and_survives_a_concurr
 
     monkeypatch.setattr(outbox_worker, "sync_receipt_stages", stale)
     assert outbox_worker.run_timers(object()) == 1
+
+
+def test_autofill_job_runs_on_its_own_thread_every_few_seconds_and_swallows_errors(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        outbox_worker, "procurement_autofill_tick", lambda sessions, cap: calls.append((sessions, cap)) or 2
+    )
+    monkeypatch.setattr(outbox_worker, "_last_autofill", float("-inf"))
+    monkeypatch.setattr(outbox_worker, "_autofill_thread", None)
+    clock = iter([1000.0, 1000.0, 1001.0, 1004.0, 1004.0])
+    monkeypatch.setattr(outbox_worker.time, "monotonic", lambda: next(clock))
+    assert outbox_worker.start_autofill_job("s") is True
+    outbox_worker._autofill_thread.join()
+    assert outbox_worker.start_autofill_job("s") is False  # the beat is not over
+    assert outbox_worker.start_autofill_job("s") is True
+    outbox_worker._autofill_thread.join()
+    assert calls == [("s", outbox_worker.AUTOFILL_TICK_CAP)] * 2
+
+    def boom(sessions, cap):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(outbox_worker, "procurement_autofill_tick", boom)
+    assert outbox_worker.run_autofill_job("s") == 0
