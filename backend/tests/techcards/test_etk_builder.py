@@ -410,8 +410,10 @@ def test_tinned_free_end_of_the_cut_crimp_takes_the_tin_strip_length():
     assert strip_of(_crimp_tin_config(empty_b))["lenB"] == ""
 
 
-@pytest.mark.parametrize(("length", "tolerance"), [(104, "±3 мм"), (500, "±3 мм"), (501, "±5 мм"), (2400, "±5 мм"), (0, "")])
-def test_cut_length_tolerance_is_3_mm_up_to_500_mm_and_5_mm_above(length: int, tolerance: str):
+@pytest.mark.parametrize(("length", "tolerance"), [
+    (104, "±3 мм"), (428, "±3 мм"), (429, "±4 мм"), (500, "±4 мм"), (501, "±5 мм"), (714, "±5 мм"), (715, "±6 мм"), (1300, "±10 мм"), (2000, "±14 мм"), (0, ""),
+])
+def test_cut_length_tolerance_is_at_least_3_mm_up_to_500_mm_and_5_mm_above_else_0_7_percent(length: int, tolerance: str):
     config = _crimp_tin_config({"a": True, "lenA": "1,2", "b": True, "lenB": "3"})
     config["ops"][0]["wires"][0]["length"] = length
     assert build_etk(config, CARDS, operation_library_commit="x")["operations"][0]["fields"]["cutTolerance"] == tolerance

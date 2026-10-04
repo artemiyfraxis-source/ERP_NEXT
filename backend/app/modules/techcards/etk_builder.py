@@ -389,15 +389,16 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
 
 
 def _cut_tolerance(op: Mapping[str, Any], wire_data: Mapping[str, Any]) -> str:
-    """Допуск длины реза: введённый технологом в операции — как есть; иначе ±3 мм до 500 мм длины и ±5 мм длиннее
-    (владелец 04.10: «(+/-)1мм» по 0,7 % длины из SUPPLYMAP слишком строг)."""
+    """Допуск длины реза: введённый технологом в операции — как есть; иначе 0,7 % длины (SUPPLYMAP, вверх до мм), но не
+    строже ±3 мм до 500 мм длины и ±5 мм длиннее (владелец 04.10: «(+/-)1мм» — перебор, «хотя бы 3–5»)."""
     manual = str(op.get("cutTolerance") or "").strip()
     if manual:
         return manual
     length = _decimal(str(wire_data.get("length") or "").split("\n", 1)[0])
     if not length:
         return ""
-    return "±3 мм" if length <= 500 else "±5 мм"
+    by_length = max(1, int((length * Decimal(7) / 1000).to_integral_value(rounding="ROUND_CEILING")))
+    return f"±{max(3 if length <= 500 else 5, by_length)} мм"
 
 
 def _tin_strip_length(config: Mapping[str, Any], end: str) -> str:
