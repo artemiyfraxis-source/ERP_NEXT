@@ -2304,6 +2304,78 @@ export const projectTasksApi = {
     api<{ task: ProjectTaskItem }>(`/api/project-tasks/${encodeURIComponent(id)}/close`, { method: "POST" }),
 };
 
+/**
+ * «Личная карточка» сотрудника (концепт владельца, 04.10): сводка по человеку из всех модулей, только чтение.
+ * Нет данных — `null` или пустой список, не выдуманный ноль; модуль не подключён на сервере — раздел пустой
+ * (`count`/`hours`/`sessions` = null).
+ */
+export type EmployeeCardSite = "ЦАР" | "ЖУК" | "АДМ";
+export type EmployeeCardHeader = {
+  id: string;
+  /** ФИО. */
+  name: string;
+  department: string | null;
+  /** Роли с русскими названиями: `{ key: "master", label: "Мастер" }`. */
+  roles: Array<{ key: string; label: string }>;
+  /** Площадка и её город («ЦАР» → «Москва»); null — человек видит все площадки. */
+  site: EmployeeCardSite | null;
+  site_label: string | null;
+  active: boolean;
+};
+export type EmployeeCardSubordinate = { id: string; name: string; site: string | null; department: string | null };
+/** Проект человека: «Исполнитель» (операции задания) и/или «Инициатор заявок»; срок — из снимка плана. */
+export type EmployeeCardProject = {
+  /** Номер проекта в каноническом виде («708К.4»). */
+  project: string;
+  roles: Array<"Исполнитель" | "Инициатор заявок">;
+  /** ISO-дата; null — в снимке плана срока нет. */
+  deadline: string | null;
+};
+export type EmployeeCardSkill = {
+  /** Код операции из матрицы компетенций. */
+  operation: string;
+  allowed: boolean;
+  stars: number;
+  /** Десятичная строка: "1.25". */
+  coefficient: string;
+};
+export type EmployeeCardAbsence = { kind: string; from_date: string; to_date: string };
+export type EmployeeCardRequest = { id: string; number: string; name: string; status: string };
+export type EmployeeCardTask = {
+  id: string;
+  project: string;
+  item_index: string | null;
+  module: string;
+  module_label: string;
+  kind: string;
+  title: string;
+  created_at: string;
+};
+export type EmployeeCard = {
+  /** Дата, на которую собрана карточка (Москва). */
+  as_of: string;
+  header: EmployeeCardHeader;
+  /** Для мастера — монтажники его площадки, иначе пусто. */
+  subordinates: EmployeeCardSubordinate[];
+  projects: EmployeeCardProject[];
+  skills: EmployeeCardSkill[];
+  /** Текущие и будущие отсутствия по возрастанию даты; `next_vacation` — ближайший «Отпуск». */
+  absences: { upcoming: EmployeeCardAbsence[]; next_vacation: EmployeeCardAbsence | null };
+  /** Отработано по закрытым рабочим сессиям за текущий месяц (Москва); hours null — сессий нет. */
+  hours_this_month: { month: string; label: string; hours: number | null; sessions: number | null };
+  /** Свои открытые заявки: всего и первые 10, новые сверху. */
+  requests: { count: number | null; items: EmployeeCardRequest[] };
+  /** Открытые задачи арбитра в разделах, которые человек правит: всего и первые 10, старые сверху. */
+  tasks: { count: number | null; items: EmployeeCardTask[] };
+};
+
+export const employeeCardApi = {
+  /** Своя карточка — открыта любому вошедшему. */
+  me: () => api<EmployeeCard>("/api/employee-card/me"),
+  /** Чужая — только с доступом к разделу «Сотрудники» (403 без него, 404 — нет такого сотрудника). */
+  byId: (id: string) => api<EmployeeCard>(`/api/employee-card/${encodeURIComponent(id)}`),
+};
+
 /** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */
 export interface KitsetKbStage {
   index: string;
