@@ -6,7 +6,8 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Iterable
+from decimal import Decimal
+from typing import Iterable, Mapping
 from uuid import UUID
 
 from app.modules.fulfillment.domain import FulfillmentRequest, FulfillmentStatus
@@ -31,8 +32,18 @@ from app.modules.production.plan import (
     project_stage,
     summarize_journal,
     summarize_kit_marks,
+    summarize_plan_marks,
     summarize_supply,
     supply_bucket,
+)
+from app.modules.production.plan_sheet import (
+    SheetCalendar,
+    SheetCell,
+    calendar_span,
+    ready_percent,
+    sheet_calendar,
+    sheet_cells,
+    sheet_group,
 )
 from app.modules.requests.domain import Request
 from app.modules.shipping.domain import FinishedGood
@@ -78,6 +89,10 @@ class ProductionPlanRow:
     plan: ProjectTaskPlan | None
     journal: ProjectJournal
     terminal: bool = False
+    # Лист «ЗАГРУЗ»: колонки (авто + ручная отметка), группа строки, календарь по дням.
+    sheet: Mapping[str, SheetCell] | None = None
+    group: str = "active"
+    calendar: SheetCalendar = SheetCalendar()
 
 
 def _project_for_request(request: Request) -> str:
@@ -199,6 +214,7 @@ def build_production_plan(
     events: Iterable[PlanEvent],
     today: date,
     kitsets: Iterable[Kitset] = (),
+    processed: Mapping[UUID, Decimal] | None = None,
 ) -> tuple[ProductionPlanRow, ...]:
     cards = tuple(cards)
     tasks = tuple(tasks)
@@ -208,6 +224,12 @@ def build_production_plan(
     project_snapshots = {normalize_project_number(item.project): item for item in projects}
     journal = summarize_journal(events)
     marks = summarize_kit_marks(events)
+    plan_marks = summarize_plan_marks(events)
+    processed = processed or {}
+    first_day, last_day = calendar_span(today)
+    tasks_by_project: dict[str, list[ProductionTask]] = {}
+    for task in tasks:
+        tasks_by_project.setdefault(normalize_project_number(task.project), []).append(task)
     supply = _safe("supply", lambda: _supply(requests, procurement))
     task_plan = _safe("tasks", lambda: _task_plan(tasks))
 
@@ -259,12 +281,30 @@ def build_production_plan(
             terminal,
             marks,
         )
+        project_tasks = tasks_by_project.get(project, [])
+        project_marks = plan_marks.get(project, {})
+        project_plan = task_plan.get(project)
+        is_terminal = bool(terminal) or (project_journal.status is None and bool(snapshot and snapshot.terminal))
+        cells = _safe("sheet", lambda: sheet_cells(
+            stage=stage,
+            blocker=project_journal.blocker.type if project_journal.blocker else "",
+            supply=supply.get(project),
+            assigned=project_plan.assigned if project_plan else 0,
+            ready=ready_percent(stage.status, project_tasks, processed),
+            marks=project_marks,
+        ))
         rows.append(ProductionPlanRow(
             project=project, customer=customer, opened_on=opened_on,
             deadline=deadline, days_left=days_left(deadline, today),
-            stage=stage, supply=supply.get(project), plan=task_plan.get(project),
+            stage=stage, supply=supply.get(project), plan=project_plan,
             journal=project_journal,
-            terminal=bool(terminal) or (project_journal.status is None and bool(snapshot and snapshot.terminal)),
+            terminal=is_terminal,
+            sheet=cells,
+            group=sheet_group(cells["status"].value if "status" in cells else "", is_terminal),
+            calendar=_safe(
+                "calendar", lambda: sheet_calendar(project_tasks, project_marks, first_day, last_day),
+                SheetCalendar(),
+            ),
         ))
     return tuple(sorted(rows, key=lambda row: (
         row.journal.blocker is None,

@@ -641,7 +641,20 @@ export interface ProductionPlanEvent {
   deadline: string | null;
   item_index: string;
   value: string;
+  /** Колонка листа «ЗАГРУЗ» у записи «Отметка плана». */
+  field?: string;
 }
+
+/** Ячейка листа «ЗАГРУЗ»: показанное значение, вычисленное ERP и признак ручной отметки поверх него. */
+export interface ProductionPlanSheetCell {
+  value: string;
+  auto: string;
+  manual: boolean;
+}
+
+export type ProductionPlanSheetField =
+  | "comment" | "status" | "ready" | "in_plan" | "customer_supplied" | "kit_checked" | "kit_present"
+  | "zkp" | "kit_arrival" | "tc_ready" | "test_sb" | "kit_picked";
 
 export interface ProductionPlanRow {
   project: string;
@@ -681,12 +694,23 @@ export interface ProductionPlanRow {
   blocker: null | { type: string; text: string; since: string; who: string };
   last: null | { occurred_at: string; who: string; text: string };
   events: ProductionPlanEvent[];
+  /** Группа строки листа: на паузе сверху, в работе, готово/отгрузка внизу, закрытые проекты отдельно. */
+  group?: "hold" | "active" | "done" | "closed";
+  sheet?: Partial<Record<ProductionPlanSheetField, ProductionPlanSheetCell>>;
+  /** Календарь проекта: плановые дни работ, кол-во задания в первый день, отметки дней. Даты ISO. */
+  calendar?: { work: string[]; starts: Record<string, number>; notes: Record<string, string> };
 }
 
 export interface ProductionPlanResult {
   blockers: string[];
   stages: string[];
   review_values: string[];
+  shop_statuses?: string[];
+  supplied_values?: string[];
+  arrival_values?: string[];
+  today?: string;
+  calendar_from?: string;
+  calendar_to?: string;
   rows: ProductionPlanRow[];
 }
 
@@ -1988,12 +2012,13 @@ export const productionPlanApi = {
   load: () => api<ProductionPlanResult>("/api/production/plan"),
   addEvent: (payload: {
     project: string;
-    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview";
+    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark";
     blocker?: string;
     text?: string;
     deadline?: string | null;
     item_index?: string;
     value?: string;
+    field?: string;
   }) => api<{ event: ProductionPlanEvent }>("/api/production/plan/events", {
     method: "POST",
     body: JSON.stringify(payload),
