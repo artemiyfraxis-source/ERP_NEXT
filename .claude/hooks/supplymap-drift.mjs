@@ -27,19 +27,39 @@ if (!existsSync(join(supplymap, ".git")) || !existsSync(modulesDir)) process.exi
 const git = (...args) => execFileSync("git", ["-C", supplymap, ...args], { encoding: "utf8" }).trim();
 const tryGit = (...args) => { try { return git(...args); } catch { return null; } };
 
+// Code paths only: docs/memory commits do not change domain rules.
+const code = ["--", "*.gs", "*.html", "_local/tooling/test/fixtures"];
+const known = (commit) => typeof commit === "string" && /^[0-9a-f]{7,40}$/i.test(commit) &&
+  tryGit("cat-file", "-e", `${commit}^{commit}`) !== null;
+const onMain = (commit) => tryGit("merge-base", "--is-ancestor", commit, "main") !== null;
+const behindOf = (commit) => Number(tryGit("rev-list", "--count", `${commit}..main`, ...code) ?? 0);
+
+// Nested pins (projectCardsSourceCommit, grapherImport.sourceCommit, operationLibrary.sourceCommit, …).
+const subPins = (node, top = true) =>
+  !node || typeof node !== "object" ? [] : Object.entries(node).flatMap(([key, value]) =>
+    typeof value === "object" ? subPins(value, false)
+      : /sourcecommit$/i.test(key) && !(top && key === "sourceCommit") ? [value] : []);
+
 const pins = [];
 for (const name of readdirSync(modulesDir)) {
   const file = join(modulesDir, name, "SOURCE.json");
   if (!existsSync(file)) continue;
-  const commit = JSON.parse(readFileSync(file, "utf8")).sourceCommit;
-  if (commit && tryGit("cat-file", "-e", `${commit}^{commit}`) !== null) pins.push({ name, commit });
+  const source = JSON.parse(readFileSync(file, "utf8"));
+  let commit = source.sourceCommit;
+  if (!known(commit)) continue;
+  // A top pin on a SUPPLYMAP side branch (techcards core: feat/techmap-web-generator) is not on main, so
+  // `pin..main` would count every main commit since the fork. When the module also pins main through sub-pins,
+  // measure from the oldest of them — everything on main is tracked there.
+  if (!onMain(commit)) {
+    const mainSubs = [...new Set(subPins(source).filter((c) => known(c) && onMain(c)))];
+    if (mainSubs.length) commit = mainSubs.sort((a, b) => behindOf(b) - behindOf(a))[0];
+  }
+  pins.push({ name, commit });
 }
 if (!pins.length) process.exit(0);
 
-// Code paths only: docs/memory commits do not change domain rules.
-const code = ["--", "*.gs", "*.html", "_local/tooling/test/fixtures"];
 const lag = pins
-  .map((p) => ({ ...p, behind: Number(tryGit("rev-list", "--count", `${p.commit}..main`, ...code) ?? 0) }))
+  .map((p) => ({ ...p, behind: behindOf(p.commit) }))
   .filter((p) => p.behind > 0)
   .sort((a, b) => b.behind - a.behind);
 if (!lag.length) {

@@ -6,6 +6,7 @@ import pytest
 from app.modules.techcards.operation_cards import (
     OperationCardImage,
     build_operation_records,
+    normalize_record_edit,
     parse_operation_library,
     parse_operation_template,
 )
@@ -174,6 +175,25 @@ def test_bundled_library_resolves_to_one_record_per_code_without_error():
         "PRS_TERMINAL_auto": ("A", "B"), "SDR_COAX_housing": ("A", "B"), "SDR_COAX_pin": ("A", "B"),
         "SDR_COAX_pin_R/A": ("A", "B"), "STRIP_COAX_auto": ("A", "B"),
     }
+
+
+def test_every_bundled_record_saves_back_through_the_record_editor_with_its_step_kinds():
+    """SUPPLYMAP 95251c0/f2d87f8 tcRecordResyncFromTemplate: the template parser put the step kind in `section` while
+    tcRecordSave_ read `type`, so resync failed on the first step of any code. In ERP the parser and the record editor
+    share one step shape (`kind`): a record built from any bundled template must pass the editor's normalization
+    unchanged in kinds and texts."""
+    backend = Path(__file__).resolve().parents[2]
+    payload = json.loads((backend / "data" / "techcard-library.json").read_text(encoding="utf-8"))
+    records = build_operation_records(parse_operation_library(payload["templates"]))
+
+    for record in records:
+        edit = normalize_record_edit({
+            "name": record.name or record.code, "safety": record.safety, "defects": record.defects,
+            "revision": record.revision,
+            "steps": [step.__dict__ for step in record.steps],
+            "tooling": [tool.__dict__ for tool in record.tooling],
+        })
+        assert [(step.kind, step.text) for step in edit.steps] == [(step.kind, step.text) for step in record.steps], record.code
 
 
 def test_revision_placeholder_becomes_empty():
