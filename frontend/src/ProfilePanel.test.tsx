@@ -43,3 +43,14 @@ it("shows role, department and site and changes the own password", async () => {
   await waitFor(() => expect(sent).toEqual([{ current: "old-password", new: "new-password-1" }]));
   expect(await screen.findByText("Пароль изменён.")).toBeInTheDocument();
 });
+
+it("offers «Моя карточка» only where the screen can open it", () => {
+  const open = vi.fn();
+  const view = render(<ProfilePanel />);
+  expect(screen.queryByRole("button", { name: "Моя карточка" })).not.toBeInTheDocument();
+  view.unmount();
+
+  render(<ProfilePanel openCard={open} />);
+  fireEvent.click(screen.getByRole("button", { name: "Моя карточка" }));
+  expect(open).toHaveBeenCalledTimes(1);
+});

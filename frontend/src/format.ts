@@ -15,6 +15,12 @@ export function formatDate(value: string | null | undefined): string {
   return `${pad(moment.getDate())}.${pad(moment.getMonth() + 1)}.${moment.getFullYear()} ${pad(moment.getHours())}:${pad(moment.getMinutes())}`;
 }
 
+/** Только день: «2026-10-01T00:00:00+03:00» → «01.10.2026»; не ISO — как есть, пусто — пустая строка. */
+export function formatDay(value: string | null | undefined): string {
+  const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : String(value ?? "");
+}
+
 /** Ячейка таблицы: ISO-дату показываем по-русски, остальное не трогаем. */
 export function displayCell<T>(value: T): T | string {
   return typeof value === "string" ? formatDate(value) : value;

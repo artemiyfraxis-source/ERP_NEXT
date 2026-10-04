@@ -75,7 +75,7 @@ it("spreads a block pasted from Excel over columns and rows", () => {
     clipboardData: { getData: () => "ЧипДип\tЦАР\t5\tкг\nЭлитан\tЖУК\t7\tшт\n" },
   });
   expect((screen.getByLabelText("Поставщик SM-1") as HTMLInputElement).value).toBe("ЧипДип");
-  expect((screen.getByLabelText("Площадка SM-1") as HTMLInputElement).value).toBe("ЦАР");
+  expect((screen.getByLabelText("Наименование на сайте SM-1") as HTMLInputElement).value).toBe("ЦАР");
   expect((screen.getByLabelText("Факт. кол-во SM-1") as HTMLInputElement).value).toBe("5");
   expect((screen.getByLabelText("Ед. SM-1") as HTMLSelectElement).value).toBe("кг");
   expect((screen.getByLabelText("Поставщик SM-2") as HTMLInputElement).value).toBe("Элитан");
@@ -88,8 +88,45 @@ it("keeps rare actions in the row menu", () => {
   fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
   expect(screen.getByRole("menuitem", { name: "Со склада" })).toBeEnabled();
   expect(screen.queryByRole("menuitem", { name: /Снять/ })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("menuitem", { name: "Замена, прослеживаемость, раздробить…" }));
+  expect(screen.queryByRole("menuitem", { name: /Замена/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Прослеживаемость, раздробить…" }));
   expect(screen.getByText("детали")).toBeInTheDocument();
+});
+
+it("closes the row menu on an outside click and opens it again from the button", () => {
+  renderTable([line(1)]);
+  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
+  expect(screen.getByRole("menu")).toBeInTheDocument();
+  fireEvent.mouseDown(document.body);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+});
+
+it("names the site field «Наименование на сайте» and shows the request context read-only", () => {
+  renderTable([line(1, {
+    task_type: "Закупка", priority: "Срочный", category: "Общепром", item_type: "Комплектующие",
+    calculated_quantity: "7", calculated_unit: "кг", site_name: "Разъём SMA на сайте",
+  })]);
+  const head = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+  expect(head).toEqual([
+    "Позиция", "Тип задачи", "Приоритет", "Категория", "Тип", "Кол-во (расчёт)", "Ед. (расчёт)",
+    "Поставщик *", "Наименование на сайте", "Факт. кол-во *", "Ед. *", "Артикул", "Уточнённое наименование", "Ссылка", "",
+  ]);
+  expect(head).not.toContain("Площадка");
+  const row = screen.getByText("Закупка").closest("tr")!;
+  expect(Array.from(row.querySelectorAll("td")).slice(1, 7).map((cell) => cell.textContent)).toEqual(["Закупка", "Срочный", "Общепром", "Комплектующие", "7", "кг"]);
+  expect(row.querySelectorAll("input[aria-label]")).toHaveLength(6);
+  expect((screen.getByLabelText("Наименование на сайте SM-1") as HTMLInputElement).value).toBe("Разъём SMA на сайте");
+});
+
+it("does not offer the retired substitution or quality-document fields", () => {
+  renderTable([line(1)], { renderDetail: () => <span>детали</span> });
+  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
+  expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+    "Со склада", "Прослеживаемость, раздробить…", "На согласование", "Отменить строку",
+  ]);
 });
 
 const cover = { id: "c1", line_id: "x", label: "", lot_id: "lot-1", warehouse: "ЦАР", grn: "ГРН-7", package: "П1", storage_location: "A-1", unit: "шт", quantity: "2", consumed: "0", consumed_by: null, active: true, created_at: "", created_by: "Петров", released_at: null };

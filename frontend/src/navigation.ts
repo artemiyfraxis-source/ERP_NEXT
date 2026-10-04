@@ -5,8 +5,8 @@ import type { AccessMode, Principal } from "./api";
    cards, and the sidebar groups the same sections in the same order — one list feeds all three. */
 
 export type Section =
-  | "cabinet"
-  | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops"
+  | "cabinet" | "card"
+  | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement"
   | "receiving" | "stock" | "issues" | "handout" | "shipping"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
@@ -48,6 +48,10 @@ const FULFILLMENT_ROLES = ["engineer", "receiver", "prodhead", "master", "admin"
 // Array order = card order inside a block = sidebar order.
 export const NAV: NavItem[] = [
   { id: "cabinet", label: "Личный кабинет" },
+  // «Личная карточка» (owner concept 04.10): own card from the sidebar profile, someone else's from «Сотрудники»
+  // (?section=card&user=<id>). No access key — own card is open to everyone, the backend gates other people's. Not a
+  // menu item or a tile (`within`), and no menu highlight (the home screen is its parent).
+  { id: "card", label: "Личная карточка", block: "mgmt", within: "cabinet" },
   // Производство
   // «Проекты» (SUPPLYMAP erptechmap): карточки наборов — состав, спецификация, снабжение, генератор, готовые ТК.
   { id: "projects", label: "Проекты", sub: "проекты · состав · спецификация · генератор", permission: "projects", block: "prod" },
@@ -63,6 +67,10 @@ export const NAV: NavItem[] = [
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "refs", within: "references" },
   { id: "production", label: "Ресурсное планирование", sub: "запуск · назначение операторов · график", permission: "production", roles: ["master", "prodhead", "management", "qc", "admin"], block: "prod" },
   { id: "myops", label: "Задания", sub: "мои операции", permission: "production", roles: ["staff", "master", "admin"], block: "prod" },
+  // «ОТК» (owner, 04.10.2026): очередь на проверку, брак цеха и ОТК, средства измерения — не часть планирования. Открывается
+  // тем, кто и раньше видел эти блоки: правка раздела производства у мастера (решает по браку), ОТК (проверяет, ведёт реестр)
+  // и администратора; роли с полным доступом проходят список (hasRole).
+  { id: "quality", label: "ОТК", sub: "очередь на проверку · брак · средства измерения", permission: "production", minimum: "edit", roles: ["master", "qc", "admin"], block: "prod" },
   // Снабжение. «Оформить заявку» and «Мои заявки» are sections of their own, not actions inside «Заявки»
   // (SUPPLYMAP Portal.gs PORTAL_SECTIONS_, owner 27.08.2026): a rank-and-file user needs the form and own rows.
   // NAV-SECTIONS: each has its own access key, so «Заявки» can be closed without taking them away.

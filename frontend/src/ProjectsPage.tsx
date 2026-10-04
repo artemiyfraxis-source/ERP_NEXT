@@ -76,13 +76,15 @@ export function readFileBase64(file: File): Promise<string> {
   });
 }
 
-/** Mirror of the server `batch_quantity`: расход × тираж × (1 + брак/100), до сотых — «На партию» при вводе. */
-export function kitBatch(per: string, run: string, scrap: string) {
+/** Mirror of the server `batch_quantity`: расход × тираж × (1 + брак/100), до сотых; штучное — затем вверх до
+ *  целого (половинки штуки не бывает, Василий 04.10), метры остаются до сотых — «На партию» при вводе. */
+export function kitBatch(per: string, run: string, scrap: string, unit: string) {
   const num = (value: string) => {
     const parsed = parseFloat(String(value ?? "").replace(/\s/g, "").replace(",", "."));
     return Number.isFinite(parsed) ? parsed : 0;
   };
-  return Math.round(num(per) * num(run) * (1 + num(scrap) / 100) * 100) / 100;
+  const batch = Math.round(num(per) * num(run) * (1 + num(scrap) / 100) * 100) / 100;
+  return unit === "шт" ? Math.ceil(batch) : batch;
 }
 
 /** «Генератор» карточки проекта (SUPPLYMAP renderGen_ / mountGen_): сверху сборки проекта, ниже генератор выбранной.
@@ -655,7 +657,7 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
       render: ({ assembly, component }) => <input aria-label={`% брака ${component.art}`} value={draftOf(assembly, component).scrap} disabled={!canEdit} onChange={(event) => edit(assembly, component, { scrap: event.target.value })} onBlur={() => void save(assembly, component)} /> },
     { key: "batch", title: "На партию", width: 104, numeric: true, value: ({ assembly, component }) => {
       const draft = draftOf(assembly, component);
-      return kitBatch(draft.per, assembly.run, draft.scrap);
+      return kitBatch(draft.per, assembly.run, draft.scrap, component.unit);
     } },
     { key: "unit", title: "Ед.", width: 56, value: ({ component }) => component.unit },
     { key: "lot", title: "ГРН склада", width: 230, value: ({ assembly, component }) => {
@@ -675,7 +677,7 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
       ? <div className="page-actions"><button className="primary" onClick={() => setIssuing(true)}>Отправить на комплектацию</button><span className="muted kit-autosave">{autosave}</span></div>
       : <p className="page-sub">Раздел открыт на просмотр — править и отправлять нельзя.</p>}
     {issuing && <IssueDialog project={card.project} close={() => setIssuing(false)} done={(text) => { setIssuing(false); setNote(text); }} />}
-    {picking && <LotPicker project={card.project} component={picking.component} batch={kitBatch(draftOf(picking.assembly, picking.component).per, picking.assembly.run, draftOf(picking.assembly, picking.component).scrap)}
+    {picking && <LotPicker project={card.project} component={picking.component} batch={kitBatch(draftOf(picking.assembly, picking.component).per, picking.assembly.run, draftOf(picking.assembly, picking.component).scrap, picking.component.unit)}
       current={draftOf(picking.assembly, picking.component).lot}
       close={() => setPicking(null)}
       pick={(lot) => { edit(picking.assembly, picking.component, { lot }); void save(picking.assembly, picking.component, { lot }); setPicking(null); }} />}

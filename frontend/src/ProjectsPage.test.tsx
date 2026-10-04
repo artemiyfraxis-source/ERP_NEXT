@@ -366,6 +366,15 @@ describe("ProjectsPage", () => {
     expect(JSON.parse(String(lotCall?.[1]?.body)).edits[0].lot).toEqual({ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "" });
   });
 
+  it("shows a piece line's batch in whole pieces while typing", async () => {
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Спецификация" }));
+    fireEvent.change(screen.getByLabelText("На 1 шт 43025-0400"), { target: { value: "1,5" } });
+    expect(screen.getByText("16")).toBeTruthy();  // 1,5 × 10 × 1,05 = 15,75 → 16 шт
+    expect(screen.getByText("15.75")).toBeTruthy();  // провод в метрах — до сотых
+  });
+
   it("sends the kit to picking only with a deadline", async () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
@@ -427,8 +436,15 @@ describe("ProjectsPage", () => {
   });
 
   it("mirrors the server batch formula and delete summary", () => {
-    expect(kitBatch("1,5", "10", "5")).toBe(15.75);
-    expect(kitBatch("", "10", "5")).toBe(0);
+    expect(kitBatch("1,5", "10", "5", "м")).toBe(15.75);
+    expect(kitBatch("1,5", "3", "5", "м")).toBe(4.73);
+    expect(kitBatch("", "10", "5", "м")).toBe(0);
+    // Штучное — вверх до целого после брака (половинки штуки не бывает): 4,725 → 5; целое остаётся целым.
+    expect(kitBatch("1,5", "3", "5", "шт")).toBe(5);
+    expect(kitBatch("0.333", "3", "5", "шт")).toBe(2);
+    expect(kitBatch("2", "10", "5", "шт")).toBe(21);
+    expect(kitBatch("0.1", "30", "0", "шт")).toBe(3);
+    expect(kitBatch("", "10", "5", "шт")).toBe(0);
     expect(deleteSummary({ project: "708К.4", deleted: 3, erp: { "Проекты": 1 }, cards: { cards: 2, revisions: 1 }, gp: { deleted: 2, kept: 1 } }))
       .toBe("Снесено строк: спецификация 3, проекты 1, техкарты 2, склад ГП 2. На складе ГП осталось с движением: 1");
     const tails = {

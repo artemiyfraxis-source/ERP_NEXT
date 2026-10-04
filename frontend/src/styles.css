@@ -215,7 +215,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .execution-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
 .execution-actions label, .start-work label, .production-box label { display: grid; gap: 4px; font-size: 12px; }
 .execution-actions input, .start-work input { width: 125px; }
-/* Коробки на подтверждение и брак мастера: в один ряд, чтобы доска назначения не уезжала за экран. */
+/* ОТК: брак ОТК и брак цеха — в один ряд. */
 .review-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; align-items: start; margin: 16px 0; }
 .review-row:empty { display: none; }
 .review-row > .box-review { margin: 0; }
@@ -229,6 +229,12 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .execution-hint { grid-column: 1 / -1; }
 .danger-text { color: var(--danger); }
 .traceability-search, .instrument-registry { margin: 16px 0; padding: 18px; }
+/* Реестр СИ: форма открывается над таблицей, панель уже даёт отступ — своих не добавляем. */
+.panel.instrument-registry > .data-table { padding: 0; }
+/* Пустая очередь и пустой брак — одной строкой, а не высокой плашкой посреди страницы. */
+.box-review > .empty { padding: 2px 0 4px !important; text-align: left; font-size: 13px; }
+.instrument-registry .form-grid { padding: 0 0 4px; }
+.instrument-registry .instrument-form .form-actions { margin: 6px 0 16px; }
 .traceability-search .search-row { display: flex; gap: 8px; margin: 12px 0; }
 .traceability-search .search-row input { flex: 1; min-width: 220px; }
 .genealogy-result { display: grid; gap: 12px; }
@@ -238,11 +244,8 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .operation-assign { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(210px, .5fr) auto; gap: 10px; align-items: end; padding: 10px; border-radius: 8px; background: #f7f9f9; }
 .operation-assign select[multiple] { min-height: 82px; }
 .production-calendar { margin-top: 18px; padding: 18px; }
-.shift-editor, .schedule-controls, .skill-row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
-.shift-editor { margin-bottom: 16px; }
-.shift-editor > div:first-child { flex: 1 1 100%; display: grid; }
-.weekday-picker { display: flex; gap: 8px; flex-wrap: wrap; align-self: center; }
-.weekday-picker label, .schedule-controls > label:last-of-type, .skill-row > label:first-of-type { display: flex; flex-direction: row; align-items: center; gap: 5px; }
+.schedule-controls, .skill-row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.schedule-controls > label:last-of-type, .skill-row > label:first-of-type { display: flex; flex-direction: row; align-items: center; gap: 5px; }
 .skills-editor, .skills-grid, .schedule-panel, .schedule-variants, .schedule-route { display: grid; gap: 12px; }
 .skill-row, .schedule-variant { padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .skill-row > div:first-child { min-width: 180px; display: grid; margin-right: auto; }
@@ -253,11 +256,29 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .schedule-variant > div:first-child, .schedule-route span { display: grid; }
 .calendar-add { display: flex; gap: 10px; align-items: end; margin-bottom: 12px; }
 .calendar-add label { min-width: 180px; }
-.absence-add { display: grid; grid-template-columns: 1fr 160px 150px 150px auto; }
 .calendar-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 16px; }
 .calendar-chip { border: 0; border-radius: 999px; padding: 5px 10px; color: var(--foreground); background: var(--accent); font-size: 12px; }
-.calendar-absences { display: grid; gap: 6px; }
-.calendar-absences > div { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border); padding: 8px 0; font-size: 12px; }
+/* Календарь цеха: два блока — «Смена» и «Нерабочие дни и отсутствия», поля на общей сетке .form-grid, один «Сохранить». */
+.production-calendar .calendar-block + .calendar-block { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.production-calendar .calendar-block h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.production-calendar .form-grid { padding: 0; }
+.production-calendar .field-group { display: grid; gap: 6px; align-content: start; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.production-calendar .weekday-toggles { justify-self: start; margin: 0; }
+@media (min-width: 1600px) { .production-calendar .form-grid > .weekdays { grid-column: span 3; } }
+.production-calendar .calendar-add { margin-bottom: 10px; }
+.production-calendar .calendar-block .form-actions { margin: 10px 0 14px; }
+.production-calendar > .form-actions { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.production-calendar .cal-add { border-color: var(--primary); color: var(--primary); }
+.production-calendar .cal-add:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 8%, white); }
+.production-calendar .cal-add:disabled { cursor: not-allowed; }
+.holiday-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 16px; }
+.holiday-chip { display: inline-flex; align-items: center; gap: 2px; border-radius: 999px; padding: 2px 3px 2px 11px; background: var(--accent); font-size: 12.5px; }
+.holiday-chip button { border: 0; border-radius: 999px; padding: 2px 7px; color: #a33830; background: transparent; font-size: 15px; line-height: 1; }
+.holiday-chip button:hover { background: #fde8e8; }
+.cal-empty { color: var(--muted-foreground); font-size: 12.5px; }
+.calendar-absences .row-end { text-align: right; }
+.calendar-absences .link-button { padding: 0; }
+@media (pointer: coarse) { .weekday-toggles button, .holiday-chip button { min-height: 40px; min-width: 40px; } }
 .shipping-tabs { display: flex; gap: 8px; margin: 18px 0; }
 .shipping-tabs .active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
 .shipping-add { justify-content: flex-end; margin: -54px 0 18px; }
@@ -595,7 +616,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
   .fulfillment-actions { align-items: stretch; flex-direction: column; }
   .fulfillment-actions label { width: 100%; }
   .return-line { grid-template-columns: 1fr; }
-  .production-launch-grid, .route-draft, .production-operation, .operation-assign, .absence-add, .shipping-form, .shipping-request, .shipment-docs, .reference-columns, .reference-map-head, .reference-row, .box-grid { grid-template-columns: 1fr; }
+  .production-launch-grid, .route-draft, .production-operation, .operation-assign, .shipping-form, .shipping-request, .shipment-docs, .reference-columns, .reference-map-head, .reference-row, .box-grid { grid-template-columns: 1fr; }
   .genealogy-edges > div { grid-template-columns: 1fr; }
   .shipping-lines { grid-column: auto; grid-template-columns: 1fr; }
   .shipping-add { margin: 0 0 14px; }
@@ -607,35 +628,47 @@ fieldset.form-grid { padding: 16px 18px 18px; }
   .plan-note-text { grid-column: auto; }
 }
 
-/* NAV-ACCESS «Доступы»: role × section matrix on the shared DataTable. The section column stays pinned while the
-   roles scroll; each cell is a pill coloured by the effective mode, an empty cell (role default) stays pale. */
-.access-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0; color: var(--muted-foreground); font-size: 12px; }
-.access-legend > span:not(.access-pill) { margin-right: 6px; }
-.access-matrix .grid.wide { width: 100%; }
-.access-matrix th { white-space: normal; min-width: 88px; max-width: 120px; line-height: 1.35; vertical-align: bottom; }
-.access-matrix th, .access-matrix td { padding: 7px 6px; text-align: center; }
-.access-matrix th:first-child, .access-matrix td:first-child { position: sticky; left: 0; z-index: 1; min-width: 220px; max-width: 300px; padding-left: 14px; text-align: left; background: var(--card); box-shadow: inset -1px 0 var(--border); }
-.access-matrix tbody tr:hover td { background: #fafbfc; }
-.access-pill { position: relative; display: inline-block; min-width: 84px; border: 1px solid transparent; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; line-height: 1.45; text-align: center; white-space: nowrap; }
-.access-legend .access-pill { min-width: 0; }
-.access-pill.access-edit { color: #00745f; background: color-mix(in srgb, var(--primary) 16%, white); }
-.access-pill.access-view { color: #1f4fa3; background: #e6eefc; }
-.access-pill.access-none { color: #9a3b3b; background: #fbeaea; }
-.access-pill.access-default { background: transparent; font-weight: 400; }
-.access-pill.access-default.access-edit { color: #3f8f80; }
-.access-pill.access-default.access-view { color: #5a78b0; }
-.access-pill.access-default.access-none { color: #b7bdca; }
+/* NAV-ACCESS «Доступы»: role × section matrix on the shared DataTable. Dense for the 16" laptop (owner, 04.10): rows
+   ~28 px, a compact chip per cell in the tone of the effective mode (tone-ok / tone-info / tone-danger), roles in
+   normal-case 12 px headers, the section column pinned if the roles still have to scroll. An empty cell (the role's
+   default) stays pale, a changed one gets an amber ring, a role that is always full shows «полный» with a padlock. */
+.access-page .page-head { margin-bottom: 6px; }
+.access-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px; margin: 6px 0 10px; }
+.access-bar .shipping-tabs { gap: 6px; margin: 0; }
+.access-bar .shipping-tabs button { padding: 5px 14px; font-size: 13px; }
+.access-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted-foreground); font-size: 12px; }
+.access-legend > span:not(.access-pill) { margin-right: 8px; }
+.access-help { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: 1px solid var(--border); border-radius: 50%; color: var(--muted-foreground); font-size: 11px; line-height: 1; cursor: help; }
+.access-help:hover, .access-help:focus-visible { border-color: var(--primary); color: var(--primary); outline: none; }
+.access-pill { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 22px; min-width: 0; border: 1px solid transparent; border-radius: 6px; padding: 0 7px; background: color-mix(in srgb, currentColor 11%, white); font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.access-pill.access-default { background: transparent; font-weight: 400; opacity: .8; }
+.access-pill.access-default.access-none { color: var(--muted-foreground); opacity: .55; }
+.access-pill.access-fixed { background: transparent; font-weight: 500; opacity: .85; cursor: default; }
+.access-lock { flex: none; }
 .access-cell { cursor: pointer; }
-.access-cell select { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; opacity: 0; cursor: pointer; }
-.access-cell:hover { border-color: var(--border); }
+.access-cell select { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.access-cell:hover { border-color: color-mix(in srgb, currentColor 40%, transparent); }
 .access-cell:focus-within { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
-.access-pill.access-changed { box-shadow: 0 0 0 2px #f2b84b; }
-.access-people .access-pill.access-default.access-none, .access-people .access-cell.access-default { color: var(--muted-foreground); }
-.access-people { max-width: 920px; }
-.access-people .grid.wide { width: 100%; }
-.access-people th:not(:first-child), .access-people td:not(:first-child) { width: 170px; text-align: center; }
-.access-savebar { position: sticky; bottom: 0; z-index: 5; align-items: center; padding: 10px 0; background: var(--background); }
-.access-dirty-note { margin-right: auto; color: #a86a00; font-size: 13px; }
+.access-pill.access-changed { box-shadow: 0 0 0 2px #f2b84b; opacity: 1; }
+.access-page .data-table { gap: 6px; }
+.access-page .data-table .table-wrap { max-height: calc(100dvh - 210px); }
+.access-page .data-table thead th { padding: 5px 3px; font-size: 12px; font-weight: 600; letter-spacing: 0; line-height: 1.2; text-transform: none; text-align: center; vertical-align: bottom; white-space: normal; min-width: 72px; max-width: 90px; }
+.access-page .data-table thead th:first-child { min-width: 190px; max-width: none; padding-left: 12px; text-align: left; }
+.access-page .data-table tbody td { height: 28px; padding: 2px 3px; text-align: center; }
+.access-page .data-table tbody td.key { min-width: 190px; padding-left: 12px; font-weight: 400; text-align: left; }
+.access-page .data-table .cell-wrap { max-width: 215px; line-height: 1.25; }
+.access-people { max-width: 760px; }
+.access-people .filters select { max-width: 460px; }
+.access-people .data-table thead th:not(:first-child) { min-width: 150px; max-width: 200px; }
+.access-people .access-cell.access-default { color: var(--muted-foreground); }
+.access-savebar { position: sticky; bottom: 0; z-index: 5; flex-wrap: nowrap; justify-content: flex-start; align-items: center; gap: 8px; margin: 8px 0 0; padding: 8px 0; border-top: 1px solid var(--border); background: var(--background); }
+.access-savebar button { padding: 5px 14px; font-size: 12.5px; }
+.access-dirty-note { color: #a86a00; font-size: 12.5px; }
+@media (pointer: coarse) {
+  .access-page .data-table tbody td { height: 40px; }
+  .access-pill { height: 34px; min-width: 76px; }
+  .access-pill.access-fixed, .access-legend .access-pill { height: 22px; min-width: 0; }
+}
 
 /* «Проекты» — карточки наборов (SUPPLYMAP openKitsetHub / openKitsetCard). */
 .kit-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; font-size: 13px; }
@@ -918,7 +951,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .plan-legend .gantt-bar { position: static; display: inline-block; height: 18px; padding: 0 6px; font-size: var(--zg-font-sm); line-height: 18px; }
 @media (max-width: 1024px) { .plan-table td:nth-child(6), .plan-table th:nth-child(6) { display: none; } }
 @media (max-width: 640px) { .plan-load .gantt-label { flex-basis: 150px; width: 150px; } }
-.access-matrix thead th:first-child { z-index: 3; }
 /* Row buttons stay row-sized so a button column does not double every row's height. */
 .data-table td button.small, .data-table td .secondary, .data-table td .primary { padding: 2px 10px; border-radius: 7px; font-size: 12px; line-height: 1.5; }
 @media (pointer: coarse) { .data-table td button { min-height: 32px; } }
@@ -994,8 +1026,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .filter-tag { display: inline-flex; align-items: center; gap: 4px; border: 1px solid color-mix(in srgb, var(--primary) 35%, white); border-radius: 999px; padding: 3px 10px; color: var(--foreground); background: color-mix(in srgb, var(--primary) 9%, white); font-size: 12.5px; }
 .filter-tag span { color: var(--muted-foreground); }
 .filter-tags .link-button { padding: 0 4px; font-size: 12.5px; }
-.action-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
-.action-row .compact { padding: 7px 13px; font-size: 13px; }
 .stock-search { flex: 1 1 320px; max-width: 640px; }
 .table-toolbar select { width: auto; }
 .panel .filters { background: var(--card); }
@@ -1009,21 +1039,59 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 
 /* Склад как «Склад 0.5» в SUPPLYMAP: плотная таблица по сериям, партии карточками. */
 .stock-hint { max-width: 900px; margin: 10px 0 12px; }
-.stock-toolbar { align-items: center; }
+/* Экран 16" ≈ 1536 px (и 1400 планшета): заголовок + действия в одной строке, фильтры в одной, таблица без
+   горизонтальной прокрутки — наименование забирает остаток ширины и обрезается «…» (полный текст в подсказке). */
+.stock-page { padding-bottom: 12px; }
+.stock-page .page-head { flex-wrap: wrap; row-gap: 8px; margin-bottom: 8px; }
+.stock-page .page-actions { flex-wrap: wrap; align-items: center; }
+.stock-page .page-actions > button, .stock-page .more-menu > button, .stock-toolbar button { height: 36px; padding: 0 14px; font-size: 13px; white-space: nowrap; }
+.stock-toolbar { align-items: center; gap: 8px 14px; margin-bottom: 8px; }
+.stock-toolbar .search, .stock-toolbar select { height: 36px; padding: 0 10px; font-size: 13px; }
 .stock-toolbar .inline-select { display: flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; }
 .stock-toolbar .inline-select select { width: auto; }
 .stock-toolbar > select { width: auto; }
+.stock-toolbar .toolbar-end { gap: 6px; }
+.stock-page .column-chooser { margin-bottom: 8px; padding: 4px 12px 8px; }
+.stock-page .column-chooser legend { padding: 0 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.more-menu { position: relative; }
+.more-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: grid; min-width: 200px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .14); }
+.more-menu-list button { height: 34px; border: 0; border-radius: 6px; padding: 0 12px; color: var(--foreground); background: none; font-size: 13px; text-align: left; white-space: nowrap; }
+.more-menu-list button:hover:not(:disabled), .more-menu-list button:focus-visible { background: var(--accent); }
 .stock-table th .th-sort { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
 .stock-table .stock-grn { color: var(--muted-foreground); font-size: 12.5px; }
-/* Колонки по содержимому, остаток ширины забирает «Наименование» (последняя): без пустот между колонками на 27". */
-.stock-table > thead > tr > th, .stock-table > tbody > tr:not(.stock-group-row):not(.stock-cards-row) > td { width: 1%; }
-.stock-table > thead > tr > th.stock-name, .stock-table > tbody > tr:not(.stock-group-row):not(.stock-cards-row) > td.stock-name { width: auto; max-width: none; }
-.stock-table > thead > tr > th, .stock-table > tbody > tr > td { white-space: nowrap; }
-.stock-table td.text:not(.stock-name) { white-space: nowrap; min-width: 0; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-.stock-table td.stock-name { white-space: normal; }
-.stock-group-row td { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+/* The table fits the box: fixed layout, fixed narrow columns, a few columns in percent so a 27" screen shares its
+   extra width instead of leaving one huge name column; the name takes the rest. Below ~1040 px of box it scrolls
+   inside its own frame with the name column frozen. */
+.stock-page > .table-wrap { max-height: max(360px, calc(100dvh - 172px)); overflow: auto; }
+.stock-table { table-layout: fixed; width: 100%; min-width: 1040px; }
+.stock-page .stock-table > thead > tr > th, .stock-page .stock-table > tbody > tr > td { padding: 6px 10px; white-space: nowrap; }
+.stock-table > thead > tr > th { overflow: hidden; text-overflow: ellipsis; }
+.stock-table td.cut, .stock-table td.stock-name { overflow: hidden; text-overflow: ellipsis; }
+/* The name is the key of the row (bold, dark like DataTable's key column): the whole row opens the lots, so it need not look like a link. */
+.stock-table td.stock-name .table-link { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: inherit; font-weight: 600; color: var(--foreground); }
+.stock-table td.stock-name .table-link:hover { color: var(--primary); }
+.stock-table .num { min-width: 0; }
+.stock-col-article { width: 15%; }
+.stock-col-grn { width: 128px; }
+.stock-col-balance { width: 98px; }
+.stock-col-lots { width: 76px; }
+.stock-col-available { width: 96px; }
+.stock-col-place { width: 12%; }
+.stock-col-warehouse { width: 64px; }
+.stock-col-purpose { width: 104px; }
+.stock-col-series { width: 12%; }
+.stock-col-type { width: 126px; }
+.stock-table td.stock-name, .stock-table th.stock-name { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 var(--border); }
+.stock-table > thead > tr > th.stock-name { z-index: 3; }
+.stock-table > tbody > tr.stock-group-row > td { background: #e9f0ef; color: #38504d; text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+/* The group header stays in view when the table is scrolled sideways: its label is pinned, the band spans the row. */
+.stock-group-label { position: sticky; left: 10px; }
 .stock-article-row.open td { background: #eaf6f4; }
-.stock-cards-row > td { background: #f6f8f8; padding: 12px 16px; }
+.stock-table > tbody > tr.stock-cards-row > td { background: #f6f8f8; padding: 12px 16px; white-space: normal; }
+.stock-cards-row .lot-cards { position: sticky; left: 16px; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 32px); }
+/* Tablet: the bar with «☰» takes a row; no hover there, so a long name wraps to two lines instead of hiding in a tooltip. */
+@media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) { .stock-page > .table-wrap { max-height: max(360px, calc(100dvh - 224px)); } }
+@media (pointer: coarse) { .stock-table td.stock-name .table-link { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; } }
 .lot-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
 .lot-card { display: grid; gap: 8px; align-content: start; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--card); white-space: normal; }
 .lot-card.busy { opacity: .6; }
@@ -1409,10 +1477,6 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .inwork-cell { display: flex; align-items: center; gap: 4px; }
 .inwork-name { white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 .inwork-menu { position: relative; width: 40px; }
-.inwork-popup { position: absolute; right: 0; top: 100%; z-index: 20; display: grid; min-width: 270px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 4px; }
-.inwork-popup button { text-align: left; background: none; border: 0; padding: 6px 8px; font-size: 13px; cursor: pointer; }
-.inwork-popup button:hover:not(:disabled) { background: var(--accent); }
-.inwork-popup button:disabled { color: var(--muted-foreground); cursor: not-allowed; }
 .inwork-detail td { background: var(--card); padding: 8px 12px; }
 .stock-picker { display: grid; gap: 6px; }
 .stock-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -1426,6 +1490,30 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .inwork-name { max-width: 340px; }
 .inwork-table td { padding: 1px 4px; }
 .inwork-table input, .inwork-table select { height: 24px; }
+.inwork-context { white-space: nowrap; color: var(--muted-foreground); }
+
+/* ── Лист закупки: стадии «Мои позиции» (ProcurementStages) ── */
+.panel-heading h2 .stage-count { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.heading-actions { display: flex; align-items: center; gap: 12px; }
+.row-menu { display: inline-block; }
+.row-menu-popup { z-index: 60; display: grid; min-width: 250px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 4px; }
+.row-menu-popup button { text-align: left; background: none; border: 0; padding: 6px 8px; font-size: 13px; cursor: pointer; }
+.row-menu-popup button:hover:not(:disabled) { background: var(--accent); }
+.row-menu-popup button:disabled { color: var(--muted-foreground); cursor: not-allowed; }
+.line-panel { border-top: 1px solid var(--border); }
+.line-panel .panel-heading { padding: 12px 20px 8px; }
+.line-panel-body { padding: 0 20px 14px; }
+.line-panel-body .form-grid, .line-panel-body .facts-grid { padding-left: 0; padding-right: 0; }
+.line-panel .hint, .line-panel .money-summary { display: block; margin: 10px 0 0; color: var(--muted-foreground); font-size: 12px; }
+.doc-links { display: inline-flex; align-items: baseline; gap: 10px; }
+.doc-links a, .doc-links .link-button { padding: 0; color: var(--primary); }
+.backorder-action { display: inline-flex; align-items: center; gap: 8px; }
+.backorder-action input { height: 26px; }
+.order-lines td.num { text-align: right; font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) {
+  .row-menu > button { min-height: 36px; min-width: 40px; }
+  .row-menu-popup button { min-height: 40px; }
+}
 
 /* ── Производственный план: лист «ЗАГРУЗ» (PlanLoadSheet.tsx) ─────────────────────────────────────────── */
 :root {
@@ -1560,3 +1648,52 @@ select.zg-supplied:hover, select.zg-supplied:focus { outline: 1px solid color-mi
   .zg-table input[type="checkbox"] { width: 20px; height: 20px; }
   .zg-pop button { min-height: 40px; }
 }
+
+/* «Личная карточка» сотрудника: шапка, вкладка «Обзор» и карточки в 3 колонки на 27", в 2 на 16", в 1 на планшете. */
+.ec-page { display: grid; gap: 12px; align-content: start; }
+.ec-page > .panel, .ec-grid > .panel { margin-top: 0; }
+.profile-panel { display: grid; justify-items: start; }
+.profile-panel .profile-card { justify-self: stretch; }
+.ec-head { display: flex; align-items: center; gap: 16px; padding: 16px 20px; }
+.ec-avatar { flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--primary) 14%, white); color: var(--primary); font-size: 20px; font-weight: 600; }
+.ec-id { flex: 1; min-width: 0; }
+.ec-id h1 { margin: 0 0 2px; }
+.ec-sub { margin: 0; font-size: 14px; }
+.ec-meta { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 2px 18px; color: var(--muted-foreground); font-size: 13px; }
+.ec-meta strong { color: var(--foreground); font-weight: 600; }
+.ec-badge { flex: none; border-radius: 999px; padding: 4px 12px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ec-badge.on { background: #e3f5e8; color: #15803d; }
+.ec-tabs { display: flex; align-items: center; gap: 12px; }
+.ec-tabs .seg-tabs { margin: 0; }
+.ec-asof { margin-left: auto; color: var(--muted-foreground); font-size: 12px; }
+/* Cards of different height pack into balanced columns (no empty gaps under short cards); the concept's order reads down each column. */
+.ec-grid { column-count: 1; column-gap: 12px; }
+.ec-grid > .panel { break-inside: avoid; margin-bottom: 12px; }
+@media (min-width: 1281px) { .ec-grid { column-count: 2; } }
+@media (min-width: 2000px) { .ec-grid { column-count: 3; } }
+@media (pointer: coarse) and (max-width: 1600px) { .ec-grid { column-count: 1; } }
+.panel.ec-card > h2:first-child { display: flex; align-items: center; gap: 8px; padding: 12px 16px 6px; }
+.ec-body { display: grid; align-content: start; gap: 6px; padding: 0 16px 14px; font-size: 13px; }
+.ec-body p { margin: 0; }
+.ec-facts { margin: 0; }
+.ec-fact { display: grid; grid-template-columns: minmax(7em, 10em) 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); }
+.ec-fact:first-child { border-top: 0; }
+.ec-fact dt { color: var(--muted-foreground); }
+.ec-fact dd { margin: 0; overflow-wrap: anywhere; }
+.ec-list { margin: 0; padding: 0; list-style: none; }
+.ec-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: 1px solid var(--border); }
+.ec-row:first-child { border-top: 0; }
+.ec-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ec-note { color: var(--muted-foreground); font-size: 12.5px; }
+.ec-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ec-project { display: grid; grid-template-columns: minmax(5em, 7em) 1fr 10.5em; }
+.ec-project .ec-date { text-align: right; }
+.ec-nodata { color: #637069; }
+.ec-big { font-size: 28px; font-weight: 600; line-height: 1.2; }
+.ec-big span { color: var(--muted-foreground); font-size: 16px; font-weight: 400; }
+.ec-sub-title { margin: 8px 0 0; color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.ec-code { display: block; color: var(--muted-foreground); font-size: 11px; }
+.ec-stars { color: #a16207; letter-spacing: 1px; }
+.ec-now { margin-left: 8px; border-radius: 999px; padding: 1px 8px; background: #fdf3d8; color: #8a5a00; font-size: 11px; font-weight: 600; }
+.ec-body .link-button { padding: 0; font-size: 13px; font-weight: 600; }
+.ec-body > .link-button { justify-self: start; margin-top: 4px; }

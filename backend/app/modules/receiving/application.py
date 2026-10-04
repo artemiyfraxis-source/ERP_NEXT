@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Iterable, Protocol, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
@@ -85,6 +85,8 @@ class ReceivingRepository(Protocol):
     def awaiting_placement(self, limit: int = 500) -> Sequence[ReceivingLine]: ...
     def by_status(self, status: ReceivingStatus, limit: int = 500) -> Sequence[ReceivingLine]: ...
     def statuses_by_procurement_line(self, procurement_line_ids: Sequence[UUID]) -> dict[UUID, list[str]]: ...
+    def latest_inspection_by_procurement_line(self, procurement_line_ids: Sequence[UUID]) -> dict[UUID, date]: ...
+    def open_by_procurement_lines(self, procurement_line_ids: Sequence[UUID]) -> Sequence[ReceivingLine]: ...
     def all_grns(self) -> Sequence[str]: ...
     def legacy_ids_starting_with(self, prefix: str) -> Sequence[str]: ...
 
@@ -857,6 +859,47 @@ def quarantine_overdue_waiting(now: datetime, uow: UnitOfWork, *, limit: int = 2
         if moved:
             uow.commit()
     return moved
+
+
+@dataclass(frozen=True)
+class CopyExpectedArrivalCommand:
+    """ОЖИД. ДАТА by procurement line id, as the buyer has it now."""
+
+    dates: Mapping[UUID, date | None]
+    actor: Actor
+    now: datetime
+
+
+def copy_expected_arrival(command: CopyExpectedArrivalCommand, uow: UnitOfWork) -> list[ReceivingLine]:
+    """OwnerTick.gs syncExpectedDateToWaitlist_: the buyer's ОЖИД. ДАТА goes to every open delivery of the line —
+    the line itself and its batches `-ПN`; accepted, returned and archived deliveries keep theirs."""
+    if not command.dates:
+        return []
+    changed: list[ReceivingLine] = []
+    with uow:
+        for line in uow.receiving.open_by_procurement_lines(list(command.dates)):
+            updated = line.follow_expected_arrival(command.dates.get(line.procurement_line_id))
+            if updated is line:
+                continue
+            uow.receiving.add(updated)
+            uow.audit.add(
+                AuditEvent(
+                    id=uuid4(),
+                    aggregate_id=line.id,
+                    event_type="receiving.expected_arrival_copied",
+                    actor=command.actor,
+                    occurred_at=command.now,
+                    details={
+                        "legacy_id": line.legacy_id,
+                        "expected_arrival": updated.expected_arrival.isoformat() if updated.expected_arrival else "",
+                        "previous_expected_arrival": line.expected_arrival.isoformat() if line.expected_arrival else "",
+                    },
+                )
+            )
+            changed.append(updated)
+        if changed:
+            uow.commit()
+    return changed
 
 
 def receiving_queue(

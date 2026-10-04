@@ -34,6 +34,9 @@ from .application import (
     SplitProcurementLineCommand,
     SetReplacementCommand,
     SetTraceabilityCommand,
+    SetNoteCommand,
+    SetExpectedArrivalCommand,
+    ExpectedArrivalCopier,
     RecordInvoiceCommand,
     UploadInvoiceFileCommand,
     invoice_file,
@@ -64,6 +67,8 @@ from .application import (
     split_procurement_line,
     set_procurement_replacement,
     set_procurement_traceability,
+    set_procurement_note,
+    set_procurement_expected_arrival,
     record_invoice,
     replace_invoice,
     mark_procurement_paid,
@@ -87,6 +92,7 @@ from .application import (
 from .domain import (
     ACTUAL_UNITS,
     BY_SUPPLIER_STAGES,
+    NOTE_MAX_LENGTH,
     STATUS_ORDER,
     ProcurementStatus,
     SPLIT_MAX_COPIES,
@@ -102,6 +108,7 @@ from .domain import (
     normalize_invoice_url,
 )
 from app.modules.warehouse.domain import StockLot
+from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
@@ -282,6 +289,15 @@ class BackorderConfirmInput(VersionInput):
     expected_arrival: date
 
 
+class NoteInput(VersionInput):
+    # Coarse transport bound; the domain checks the trimmed note against NOTE_MAX_LENGTH with a Russian message.
+    note: str = Field(default="", max_length=NOTE_MAX_LENGTH * 2)
+
+
+class ExpectedArrivalInput(VersionInput):
+    expected_arrival: date
+
+
 class MoneyPayload(BaseModel):
     version: int = Field(ge=1)
     driver: Literal["net", "gross", "vat", "qty", "sum"] | None = None
@@ -389,6 +405,12 @@ def procurement_supplier_directory(request: Request) -> SupplierDirectory | None
     return getattr(request.app.state, "procurement_supplier_directory", None)
 
 
+def procurement_receiving(request: Request) -> ExpectedArrivalCopier | None:
+    """Receiving's ОЖИД. ДАТА copy (`app.workflows.receipt_stage`); without Receiving wired the receipt tick copies."""
+    factory = getattr(request.app.state, "receiving_uow_factory", None)
+    return ReceivingStatusLookup(factory) if callable(factory) else None
+
+
 def procurement_exchange_rates(request: Request) -> ExchangeRates:
     rates = getattr(request.app.state, "procurement_exchange_rates", None)
     if rates is None:
@@ -424,6 +446,10 @@ def _line_result(line: ProcurementLine) -> dict:
         "calculated_name": line.calculated_name,
         "calculated_quantity": _decimal_result(line.calculated_quantity),
         "calculated_unit": line.calculated_unit,
+        # ЦЕНА / ЦЕНА С НДС / СУММА (Расчет): the calc prices the request came with.
+        "calculated_price": _decimal_result(line.calculated_price),
+        "calculated_price_with_vat": _decimal_result(line.calculated_price_with_vat),
+        "calculated_sum": _decimal_result(line.calculated_sum),
         "buyer": line.buyer.name if line.buyer else None,
         "supplier": line.supplier,
         "site_name": line.site_name,
@@ -436,6 +462,10 @@ def _line_result(line: ProcurementLine) -> dict:
         # «ЗАКАЗ» (SupplierRequest.gs): ссылка на документ запроса в строке.
         "order_url": order_document_url(line.order_number) if line.order_number else None,
         "expected_arrival": line.expected_arrival.isoformat() if line.expected_arrival else None,
+        # ФАКТ. ДАТА: the latest inspection date of the line's deliveries (set by the receipt tick).
+        "actual_arrival": line.actual_arrival.isoformat() if line.actual_arrival else None,
+        # КОММЕНТАРИЙ: the buyer's free note.
+        "note": line.note,
         "invoice_url": line.invoice_url,
         "paid_at": line.paid_at.isoformat() if line.paid_at else None,
         "currency": line.money.currency,
@@ -996,6 +1026,54 @@ def traceability(
             ),
             uow_factory(),
             suppliers,
+        )
+    )
+
+
+@router.patch("/{line_id}/note")
+def note(
+    line_id: UUID,
+    payload: NoteInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """КОММЕНТАРИЙ: the buyer's free note, from «В работе» on; not on «Новый»/«Отменено»."""
+    return _transition(
+        lambda: set_procurement_note(
+            SetNoteCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                note=payload.note,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
+
+
+@router.patch("/{line_id}/expected-arrival")
+def expected_arrival(
+    line_id: UUID,
+    payload: ExpectedArrivalInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    receiving: Annotated[ExpectedArrivalCopier | None, Depends(procurement_receiving)],
+) -> dict:
+    """ОЖИД. ДАТА by hand, «Жду счет» … «Карантин»; open deliveries in Receiving (and their batches) follow it."""
+    return _transition(
+        lambda: set_procurement_expected_arrival(
+            SetExpectedArrivalCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                expected_arrival=payload.expected_arrival,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+            receiving,
         )
     )
 

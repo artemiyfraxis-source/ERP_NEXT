@@ -44,7 +44,12 @@ function managerCandidates(users: Employee[], selfId: string | null, currentId: 
   return users.filter((user) => user.id === currentId || (user.active && user.id !== selfId && !(selfId && reportsToSelf(user.id))));
 }
 
-export function StaffPage() {
+export function StaffPage({ openCard, openUserId }: {
+  /** «Карточка» в строке: личная карточка сотрудника. */
+  openCard?: (id: string) => void;
+  /** Открыть форму правки этого сотрудника сразу (кнопка «Редактировать» на его карточке). */
+  openUserId?: string | null;
+} = {}) {
   const [data, setData] = useState<StaffDirectory | null>(null);
   const [editing, setEditing] = useState<{ id: string | null; draft: Draft } | null>(null);
   const [departments, setDepartments] = useState("");
@@ -68,8 +73,17 @@ export function StaffPage() {
   }
 
   useEffect(() => {
-    load().catch((reason) => setError(errorText(reason, "Не удалось загрузить справочник сотрудников")));
+    load()
+      .then((loaded) => {
+        const user = openUserId ? loaded.users.find((item) => item.id === openUserId) : undefined;
+        if (user) startEdit(user, loaded.users);
+      })
+      .catch((reason) => setError(errorText(reason, "Не удалось загрузить справочник сотрудников")));
   }, []);
+  // The form sits under the table: a person sent here from the card must see it, not the top of a long list.
+  useEffect(() => {
+    if (openUserId && editing?.id === openUserId) document.getElementById("staff-edit-form")?.scrollIntoView?.({ block: "start" });
+  }, [openUserId, editing?.id]);
 
   async function run(operation: () => Promise<string>) {
     if (busy) return;
@@ -159,9 +173,11 @@ export function StaffPage() {
     return name ? `Руководитель отдела «${department}» — ${name}` : `У отдела «${department}» больше нет руководителя`;
   });
 
-  function startEdit(user: Employee) {
+  /** `users` — the list just loaded, when the form opens before `data` reaches the render (sent from the card). */
+  function startEdit(user: Employee, users?: Employee[]) {
     const { pin_set: _pinSet, ...fields } = user;
-    const managerText = user.manager_id ? labels.get(user.manager_id) ?? "" : "";
+    const names = users ? personLabels(users) : labels;
+    const managerText = user.manager_id ? names.get(user.manager_id) ?? "" : "";
     setEditing({ id: user.id, draft: { ...fields, password: "", pin: "", managerText } });
   }
 
@@ -191,6 +207,7 @@ export function StaffPage() {
             <td>{roleLabel(user.role)}</td>
             <td>{user.active ? "активен" : "отключён"}</td>
             <td className="row-action-cell"><span className="row-actions">
+              {openCard && <button className="secondary small row-action" aria-label={`Карточка ${user.name}`} onClick={(event) => { event.stopPropagation(); openCard(user.id); }}>Карточка</button>}
               <button className="secondary small row-action" aria-label={`Править ${user.name}`} onClick={(event) => { event.stopPropagation(); startEdit(user); }}>Править</button>
               <button className="secondary small row-action" aria-label={`Удалить ${user.name}`} disabled={busy} onClick={(event) => { event.stopPropagation(); remove(user); }}>Удалить</button>
             </span></td>
@@ -258,7 +275,7 @@ function EmployeeForm({ data, labels, editing, busy, onChange, onSave, onCancel 
   const managers = managerCandidates(data.users, id, draft.manager_id);
   const managerIdByLabel = new Map(managers.map((user) => [labels.get(user.id) ?? user.name, user.id]));
   const setManager = (text: string) => onChange({ ...draft, managerText: text, manager_id: managerIdByLabel.get(text.trim()) ?? null });
-  return <div className="panel">
+  return <div className="panel" id="staff-edit-form">
     <h2>{creating ? "Новый сотрудник" : `Правка: ${draft.name}`}</h2>
     <div className="form-grid staff-form">
       <label>ФИО<input aria-label="ФИО" value={draft.name} onChange={(event) => set("name", event.target.value)} /></label>

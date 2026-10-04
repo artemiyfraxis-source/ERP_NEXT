@@ -10,17 +10,24 @@ import {
   type ProcurementTraceabilityInput,
   type SupplierOrder,
 } from "./api";
-import { openPrintSheet, printStoredDocument } from "./print";
+import { printStoredDocument } from "./print";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementFillForm } from "./ProcurementFillForm";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
+import {
+  ApprovalStage, AwaitingInvoiceStage, OtherStage, ReadyStage, ReceiptStage, ToPayStage,
+  type RowAction,
+} from "./ProcurementStages";
 import { formatDate } from "./format";
 
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 
 type ProcurementTab = "queues" | "sheet" | "suppliers";
+
+// Стадии «Мои позиции» в порядке пайплайна (PUR_STATUS_ORDER) + «Согласование» вне линейного порядка.
+const STAGES = ["В работе", "Готов к запросу", "Жду счет", "В оплату", "Согласование", "В пути", "Карантин"];
 
 const availableColumns: DataColumn<ProcurementLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>рев. {line.revision}</small></> },
@@ -29,6 +36,11 @@ const availableColumns: DataColumn<ProcurementLine>[] = [
   { key: "planned", title: "Срок", value: (line) => line.planned_date, render: (line) => <>{formatDate(line.planned_date)}<small>{line.priority}</small></> },
   { key: "priority", title: "Приоритет", value: (line) => line.priority, filter: true, hidden: true },
   { key: "qty", title: "Кол-во", value: (line) => `${line.calculated_quantity} ${line.calculated_unit}` },
+  // Поставщик не обязателен для «Взять в работу», но без него запрос поставщику не сформируется — это видно сразу.
+  {
+    key: "supplier", title: "Поставщик", value: (line) => line.supplier ?? "", filter: true,
+    render: (line) => line.supplier || <span className="tone-warn">нет (запрос не сформируется)</span>,
+  },
 ];
 
 const inWorkColumns: DataColumn<ProcurementLine>[] = [
@@ -39,20 +51,6 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
   { key: "supplier", title: "Поставщик · заказ", value: (line) => line.supplier, render: (line) => <>{line.supplier || "—"}<small>{line.order_number || ""}</small></> },
   { key: "eta", title: "Ожидается", value: (line) => line.expected_arrival },
 ];
-
-const toPayColumns: DataColumn<ProcurementLine>[] = [
-  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id },
-  { key: "order", title: "№ заказа", value: (line) => line.order_number },
-  { key: "supplier", title: "Поставщик", value: (line) => line.supplier },
-  { key: "name", title: "Наименование", value: (line) => line.calculated_name },
-  { key: "sum", title: "Сумма", value: (line) => line.actual_sum, numeric: true },
-  { key: "invoice", title: "Счёт", value: (line) => line.invoice_url, render: (line) => line.invoice_url ? <a href={line.invoice_url} target="_blank" rel="noreferrer">счёт</a> : "—" },
-];
-
-/** `portalPurchaseToPay`: свои строки «В оплату» со счётом — кандидаты на «Оплачено → В пути». */
-function payable(line: ProcurementLine) {
-  return line.status === "В оплату" && Boolean(line.invoice_url) && !line.paid_at;
-}
 
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
@@ -234,9 +232,83 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }
   }
 
-  const inWork = mine.filter((line) => line.status === "В работе");
-  const rest = mine.filter((line) => line.status !== "В работе");
-  const readyCount = mine.filter((line) => line.status === "Готов к запросу").length;
+  const stage = (status: string) => mine.filter((line) => line.status === status);
+  const inWork = stage("В работе");
+  const ready = stage("Готов к запросу");
+  const awaiting = stage("Жду счет");
+  const toPay = stage("В оплату");
+  const approval = stage("Согласование");
+  const inTransit = stage("В пути");
+  const quarantine = stage("Карантин");
+  const other = mine.filter((line) => !STAGES.includes(line.status));
+
+  const run = (line: ProcurementLine, operation: () => Promise<unknown>, message: string) => {
+    void advance(line, operation, message).catch(() => undefined);
+  };
+  const putOnApproval = (line: ProcurementLine) => run(line, () => procurementApi.putOnApproval(line.id, line.version), `${line.legacy_id}: на согласовании`);
+  const cancelLine = (line: ProcurementLine) => {
+    if (!window.confirm(`Отменить ${line.legacy_id}? Отмена окончательная.`)) return;
+    run(line, () => procurementApi.cancelLine(line.id, line.version), `${line.legacy_id}: строка отменена`);
+  };
+
+  // Редкие действия строки — в её меню «⋯»; формы раскрываются под таблицей стадии.
+  const form = (line: ProcurementLine) => ({ line, busy: busyId === line.id, disabled: interactionLocked, onAdvance: advance });
+  const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", panel: () => <TraceabilityForm {...form(line)} /> });
+  const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", panel: () => <SplitAction {...form(line)} /> });
+  const approve = (line: ProcurementLine): RowAction => ({ label: "На согласование", run: () => putOnApproval(line) });
+  const cancel = (line: ProcurementLine): RowAction => ({ label: "Отменить строку", run: () => cancelLine(line) });
+  const replaceInvoice = (line: ProcurementLine): RowAction[] => (
+    line.invoice_url ? [{ label: "Заменить счёт…", panel: () => <InvoiceReplaceForm {...form(line)} /> }] : []
+  );
+
+  const readyActions = (line: ProcurementLine) => [traceability(line), split(line), approve(line), cancel(line)];
+  const awaitingActions = (line: ProcurementLine): RowAction[] => [
+    {
+      label: "Суммы и счёт строки…",
+      panel: () => (
+        <>
+          <MoneyForm {...form(line)} />
+          <MoneySummary line={line} />
+          <RecordInvoiceForm {...form(line)} />
+        </>
+      ),
+    },
+    traceability(line), split(line), approve(line), cancel(line),
+  ];
+  const toPayActions = (line: ProcurementLine): RowAction[] => [
+    {
+      label: "Суммы по счёту…",
+      panel: () => line.pay_missing.length > 0
+        ? <><MoneyForm {...form(line)} /><small className="hint">Оплата закрыта, пока не заполнено: {line.pay_missing.join(", ")}</small></>
+        : <MoneySummary line={line} />,
+    },
+    {
+      label: "Оплатить одну строку…",
+      title: "Если ЦБ не отдал курс, его можно ввести вручную",
+      panel: () => <PaymentAction {...form(line)} disabled={interactionLocked || line.pay_missing.length > 0} />,
+    },
+    ...replaceInvoice(line), traceability(line), split(line), approve(line), cancel(line),
+  ];
+  const approvalActions = (line: ProcurementLine): RowAction[] => line.is_backorder
+    ? [
+      {
+        label: "Отменить дозавоз",
+        title: "Поставщик вернул деньги — остаток уйдёт новой заявкой",
+        run: () => run(line, () => procurementApi.cancelBackorder(line.id, line.version), `${line.legacy_id}: дозавоз отменён, остаток ушёл новой заявкой`),
+      },
+      ...replaceInvoice(line), split(line),
+    ]
+    : [cancel(line), ...replaceInvoice(line), split(line)];
+  const receiptActions = (line: ProcurementLine): RowAction[] => [
+    ...(line.exchange_rate_manual ? [{
+      label: "Сверить курс с ЦБ",
+      title: "Курс введён вручную — сверьте с ЦБ, когда он ответит",
+      run: () => run(line, () => procurementApi.reconcileRate(line.id, line.version), `${line.legacy_id}: курс сверен с ЦБ`),
+    }] : []),
+    ...replaceInvoice(line), split(line),
+  ];
+  const otherActions = (line: ProcurementLine) => [split(line)];
+  const stageProps = { disabled: interactionLocked, busyId };
 
   return (
     <section className="page">
@@ -299,13 +371,11 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
       )}
 
       {!readOnly && <section className="work-list">
-        <div className="panel-heading"><h2>Мои позиции</h2><span>Изменения защищены версией строки</span></div>
-        <div className="inline-action">
-          <small>Готово к запросу: {readyCount}. Запросы группируются по поставщику и типу задачи, № заказа PO-NNN.</small>
-          <button className="primary small" disabled={interactionLocked || readyCount === 0} onClick={() => void buildRequests()}>
-            {busyId === "supplier-requests" ? "Формируем…" : "Сформировать запросы поставщикам"}
-          </button>
-          <button type="button" className="secondary small" disabled={interactionLocked} onClick={() => setFilling((current) => !current)}>Заполнить данные</button>
+        <div className="panel-heading">
+          <h2>Мои позиции</h2>
+          <div className="heading-actions">
+            <button type="button" className="secondary small" disabled={interactionLocked} onClick={() => setFilling((current) => !current)}>Заполнить данные</button>
+          </div>
         </div>
         {filling && (
           <ProcurementFillForm
@@ -317,22 +387,34 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             }}
           />
         )}
-        {mine.some(payable) && (
+        {inWork.length > 0 && (
           <section className="panel table-panel">
-            <div className="panel-heading"><h2>К оплате</h2><span>Отметьте оплаченные счета — строки уйдут «В пути» в приёмку</span></div>
-            <DataTable
-              label="К оплате"
-              rows={mine.filter(payable)}
-              columns={toPayColumns}
-              rowKey={(line) => line.id}
-              bulkActions={[{ label: "Оплачено → В пути", run: markPaidMany, disabled: () => interactionLocked }]}
+            <div className="panel-heading"><h2>В работе <span className="stage-count">{inWork.length}</span></h2><span>Заполните данные прямо в таблице</span></div>
+            <ProcurementInWorkTable
+              lines={inWork}
+              units={units}
+              disabled={interactionLocked}
+              busyId={busyId}
+              onChanged={(message) => { setNotice(message); void reload(true); }}
+              onError={setError}
+              onPutOnApproval={putOnApproval}
+              onCancel={cancelLine}
+              renderDetail={(line) => (
+                <>
+                  <TraceabilityForm {...form(line)} />
+                  <SplitAction {...form(line)} />
+                </>
+              )}
             />
           </section>
+        )}
+        {ready.length > 0 && (
+          <ReadyStage {...stageProps} lines={ready} actionsOf={readyActions} building={busyId === "supplier-requests"} onBuild={() => void buildRequests()} />
         )}
         {orders.map((order) => (
           <article className="panel procurement-card" key={order.order_number}>
             <div className="procurement-title">
-              <div><strong>{order.order_number} · {order.supplier}</strong><small>{order.task_type} · от {order.order_date} · позиций: {order.line_ids.length}</small></div>
+              <div><strong>{order.order_number} · {order.supplier}</strong><small>{order.task_type} · от {formatDate(order.order_date)} · позиций: {order.line_ids.length}</small></div>
             </div>
             {order.document && (
               <div className="supplier-document">
@@ -344,6 +426,9 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             <pre className="supplier-letter">{order.letter}</pre>
           </article>
         ))}
+        {awaiting.length > 0 && (
+          <AwaitingInvoiceStage {...stageProps} lines={awaiting} actionsOf={awaitingActions} onOpenKp={setKpReference} onPrint={printStoredDocument} />
+        )}
         {kpReference && (
           <KpForm
             key={kpReference}
@@ -357,41 +442,23 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             }}
           />
         )}
-        {inWork.length > 0 && (
-          <section className="panel table-panel">
-            <div className="panel-heading"><h2>В работе</h2><span>Заполните данные прямо в таблице</span></div>
-            <ProcurementInWorkTable
-              lines={inWork}
-              units={units}
-              disabled={interactionLocked}
-              busyId={busyId}
-              onChanged={(message) => { setNotice(message); void reload(true); }}
-              onError={setError}
-              onPutOnApproval={(line) => void advance(line, () => procurementApi.putOnApproval(line.id, line.version), `${line.legacy_id}: на согласовании`).catch(() => undefined)}
-              onCancel={(line) => {
-                if (!window.confirm(`Отменить ${line.legacy_id}? Отмена окончательная.`)) return;
-                void advance(line, () => procurementApi.cancelLine(line.id, line.version), `${line.legacy_id}: строка отменена`).catch(() => undefined);
-              }}
-              renderDetail={(line) => (
-                <>
-                  <ReplacementControl line={line} busy={busyId === line.id} disabled={interactionLocked} onAdvance={advance} />
-                  <TraceabilityForm line={line} busy={busyId === line.id} disabled={interactionLocked} onAdvance={advance} />
-                  <SplitAction line={line} busy={busyId === line.id} disabled={interactionLocked} onAdvance={advance} />
-                </>
-              )}
-            />
-          </section>
-        )}
-        {rest.map((line) => (
-          <ProcurementCard
-            key={`${line.id}:${line.version}`}
-            line={line}
-            busy={busyId === line.id}
-            disabled={interactionLocked}
-            onAdvance={advance}
-            onOpenKp={setKpReference}
+        {toPay.length > 0 && <ToPayStage {...stageProps} lines={toPay} actionsOf={toPayActions} onMarkPaid={markPaidMany} />}
+        {approval.length > 0 && (
+          <ApprovalStage
+            {...stageProps}
+            lines={approval}
+            actionsOf={approvalActions}
+            onResume={(line) => run(line, () => procurementApi.resumeFromApproval(line.id, line.version), `${line.legacy_id}: одобрено, строка вернулась в работу`)}
+            onConfirmBackorder={(line, date) => run(line, () => procurementApi.confirmBackorder(line.id, line.version, date), `${line.legacy_id}: досыл подтверждён, передано в приёмку`)}
           />
-        ))}
+        )}
+        {inTransit.length > 0 && (
+          <ReceiptStage {...stageProps} title="В пути" hint="Переданы в приёмку" storageKey="procurement-in-transit" lines={inTransit} actionsOf={receiptActions} />
+        )}
+        {quarantine.length > 0 && (
+          <ReceiptStage {...stageProps} title="Карантин" hint="Приёмка нашла несоответствие — ждёт решения" storageKey="procurement-quarantine" lines={quarantine} actionsOf={receiptActions} />
+        )}
+        {other.length > 0 && <OtherStage {...stageProps} lines={other} actionsOf={otherActions} />}
         {!mine.length && <div className="panel empty">Пока ничего не взято в работу.</div>}
         {mineCursor && (
           <button className="secondary" disabled={interactionLocked} onClick={() => void loadMore("mine", mineCursor)}>
@@ -403,22 +470,12 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   );
 }
 
-function ProcurementCard({
-  line,
-  busy,
-  disabled,
-  onAdvance,
-  onOpenKp,
-}: {
+/** «Жду счет», счёт строки по одному (когда он не общий на заказ): файл → ссылка, № и дата → «В оплату». */
+function RecordInvoiceForm({ line, busy, disabled, onAdvance }: {
   line: ProcurementLine;
   busy: boolean;
   disabled: boolean;
-  onOpenKp: (reference: string) => void;
-  onAdvance: (
-    line: ProcurementLine,
-    operation: () => Promise<unknown>,
-    message: string,
-  ) => Promise<void>;
+  onAdvance: Advance;
 }) {
   const [invoiceUrl, setInvoiceUrl] = useState(line.invoice_url ?? "");
   // № and date of an uploaded file; empty keeps what the money form saved (uploadInvoice setIf).
@@ -429,107 +486,24 @@ function ProcurementCard({
   const moneyMissing = line.pay_missing.filter((name) => name !== "ОЖИД. ДАТА");
 
   return (
-    <article className="panel procurement-card">
-      <div className="procurement-title">
-        <div><strong>{line.legacy_id} · {line.calculated_name}</strong><small>{line.designation} · {line.calculated_quantity} {line.calculated_unit}</small></div>
-        <span className="status">{line.status}</span>
-      </div>
-      {REPLACEMENT_STATUSES.has(line.status) && (
-        <ReplacementControl line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
-      )}
-      {REPLACEMENT_STATUSES.has(line.status) && (
-        <TraceabilityForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
-      )}
-      {line.permission_number && <ReplacementPermissionPrint line={line} />}
-      {line.status === "Готов к запросу" && (
-        <small className="hint">Поставщик: {line.supplier} — строка войдёт в запрос поставщику при формировании.</small>
-      )}
-      {line.order_number && (
-        <div className="supplier-document">
-          <small className="hint">Заказ {line.order_number} от {formatDate(line.order_date)}</small>
-          {line.order_url && <>
-            <a className="secondary small" href={line.order_url} target="_blank" rel="noreferrer">Открыть документ</a>
-            <button type="button" className="secondary small" onClick={() => printStoredDocument(line.order_url!)}>Печать</button>
-          </>}
-        </div>
-      )}
-      {line.status === "Готов к запросу" && line.replacement_open && (
-        <small className="hint">Есть незакрытая замена — заказ этого поставщика не сформируется до решения «Разрешено».</small>
-      )}
-      {line.status === "Жду счет" && (
-        <>
-          {line.order_number && (
-            <div className="card-footer">
-              <small>Все строки заказа {line.order_number} одной формой, можно из файла КП</small>
-              <button type="button" className="secondary small" disabled={disabled} onClick={() => onOpenKp(line.order_number ?? "")}>Внести КП</button>
-            </div>
-          )}
-          <MoneyForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
-          <MoneySummary line={line} />
-          <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.recordInvoice(line.id, line.version, invoiceUrl, expectedArrival, invoiceNumber, invoiceDate), `${line.legacy_id}: счёт передан в оплату`).catch(() => undefined); }}>
-            <InvoiceFileUpload lineId={line.id} disabled={disabled} onUploaded={(upload) => {
-              setInvoiceUrl(upload.url);
-              setInvoiceFile(true);
-              setInvoiceNumber(upload.invoice_number);
-              setInvoiceDate(upload.invoice_date);
-            }} />
-            <label>Ссылка на счёт<input required value={invoiceUrl} onChange={(event) => setInvoiceUrl(event.target.value)} /></label>
-            {invoiceFile && <>
-              <label>№ счёта по файлу<input value={invoiceNumber} onChange={(event) => setInvoiceNumber(event.target.value)} placeholder={line.invoice_number ?? ""} /></label>
-              <label>Дата счёта по файлу<input type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} /></label>
-            </>}
-            <label>Ожидаемая дата<input type="date" required value={expectedArrival} onChange={(event) => setExpectedArrival(event.target.value)} /></label>
-            <button className="primary small" disabled={disabled || moneyMissing.length > 0}>{busy ? "Сохраняем…" : "В оплату"}</button>
-          </form>
-          {moneyMissing.length > 0 && <small className="hint">Для счёта не хватает: {moneyMissing.join(", ")}</small>}
-        </>
-      )}
-      {line.status === "В оплату" && (
-        <>
-          {line.pay_missing.length > 0 ? (
-            <>
-              <MoneyForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
-              <small className="hint">Оплата закрыта, пока не заполнено: {line.pay_missing.join(", ")}</small>
-            </>
-          ) : (
-            <MoneySummary line={line} />
-          )}
-          <PaymentAction line={line} busy={busy} disabled={disabled || line.pay_missing.length > 0} onAdvance={onAdvance} />
-        </>
-      )}
-      {line.status === "Согласование" && line.is_backorder && (
-        <>
-          <p className="money-summary">
-            <small>Дозавоз по {line.legacy_id.replace(/-Д\d*$/, "")}: недовоз уже оплачен по счёту {line.invoice_number ? `№ ${line.invoice_number}` : line.invoice_url}. Поставщик подтвердил досыл — укажите новую дату; вернул деньги — отмените, остаток уйдёт новой заявкой.</small>
-          </p>
-          <MoneySummary line={line} />
-          <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.confirmBackorder(line.id, line.version, expectedArrival), `${line.legacy_id}: досыл подтверждён, передано в приёмку`).catch(() => undefined); }}>
-            <label>Новая ожидаемая дата<input type="date" required value={expectedArrival} onChange={(event) => setExpectedArrival(event.target.value)} /></label>
-            <button className="primary small" disabled={disabled}>{busy ? "Проводим…" : "Досыл подтверждён → в пути"}</button>
-            <button type="button" className="secondary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.cancelBackorder(line.id, line.version), `${line.legacy_id}: дозавоз отменён, остаток ушёл новой заявкой`).catch(() => undefined)}>Отменить дозавоз</button>
-          </form>
-        </>
-      )}
-      {!line.is_backorder && OFFLINE_FROM.includes(line.status) && (
-        <OfflineActions line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
-      )}
-      {line.status === "В пути" && (
-        <>
-          <div className="success-banner">Позиция передана в приёмку · ожидается {line.expected_arrival}</div>
-          <MoneySummary line={line} />
-          {line.exchange_rate_manual && (
-            <div className="card-footer">
-              <small>Курс введён вручную — сверьте с ЦБ, когда он ответит</small>
-              <button className="secondary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.reconcileRate(line.id, line.version), `${line.legacy_id}: курс сверен с ЦБ`).catch(() => undefined)}>{busy ? "Сверяем…" : "Сверить курс с ЦБ"}</button>
-            </div>
-          )}
-        </>
-      )}
-      {line.invoice_url && line.status !== "Жду счет" && line.status !== "Отменено" && (
-        <InvoiceReplaceForm line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
-      )}
-      <SplitAction line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
-    </article>
+    <>
+      <form className="inline-action" onSubmit={(event) => { event.preventDefault(); void onAdvance(line, () => procurementApi.recordInvoice(line.id, line.version, invoiceUrl, expectedArrival, invoiceNumber, invoiceDate), `${line.legacy_id}: счёт передан в оплату`).catch(() => undefined); }}>
+        <InvoiceFileUpload lineId={line.id} disabled={disabled} onUploaded={(upload) => {
+          setInvoiceUrl(upload.url);
+          setInvoiceFile(true);
+          setInvoiceNumber(upload.invoice_number);
+          setInvoiceDate(upload.invoice_date);
+        }} />
+        <label>Ссылка на счёт<input required value={invoiceUrl} onChange={(event) => setInvoiceUrl(event.target.value)} /></label>
+        {invoiceFile && <>
+          <label>№ счёта по файлу<input value={invoiceNumber} onChange={(event) => setInvoiceNumber(event.target.value)} placeholder={line.invoice_number ?? ""} /></label>
+          <label>Дата счёта по файлу<input type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} /></label>
+        </>}
+        <label>Ожидаемая дата<input type="date" required value={expectedArrival} onChange={(event) => setExpectedArrival(event.target.value)} /></label>
+        <button className="primary small" disabled={disabled || moneyMissing.length > 0}>{busy ? "Сохраняем…" : "В оплату"}</button>
+      </form>
+      {moneyMissing.length > 0 && <small className="hint">Для счёта не хватает: {moneyMissing.join(", ")}</small>}
+    </>
   );
 }
 
@@ -632,50 +606,10 @@ function SplitAction({ line, busy, disabled, onAdvance }: {
   );
 }
 
-const REPLACEMENT_STATUSES = new Set(["В работе", "Готов к запросу", "Жду счет", "В оплату"]);
-
-type ReplacementChoice = "" | "no" | "open" | "Разрешено" | "Запрещено";
-
-function replacementChoice(line: ProcurementLine): ReplacementChoice {
-  if (line.replacement === null) return "";
-  if (!line.replacement) return "no";
-  return line.replacement_decision ?? "open";
-}
-
-function ReplacementControl({ line, busy, disabled, onAdvance }: {
-  line: ProcurementLine;
-  busy: boolean;
-  disabled: boolean;
-  onAdvance: Advance;
-}) {
-  function choose(choice: ReplacementChoice) {
-    if (!choice || choice === replacementChoice(line)) return;
-    const replacement = choice !== "no";
-    const decision = choice === "Разрешено" || choice === "Запрещено" ? choice : null;
-    void onAdvance(
-      line,
-      () => procurementApi.setReplacement(line.id, line.version, replacement, decision),
-      `${line.legacy_id}: замена — ${replacement ? decision ?? "ждём решения" : "нет"}`,
-    ).catch(() => undefined);
-  }
-
-  return (
-    <div className="inline-action">
-      <label>Замена
-        <select value={replacementChoice(line)} disabled={disabled || busy} onChange={(event) => choose(event.target.value as ReplacementChoice)}>
-          <option value="" disabled>не отмечено</option>
-          <option value="no">Нет</option>
-          <option value="open">Да — ждём решения</option>
-          <option value="Разрешено">Да — Разрешено</option>
-          <option value="Запрещено">Да — Запрещено</option>
-        </select>
-      </label>
-    </div>
-  );
-}
-
-// «Лист закупки» TRACE_COLUMNS.PURCHASE: ИЗГОТОВИТЕЛЬ, СТРАНА, ТИП ДОК., № / ДАТА ДОК. КАЧЕСТВА (+ СТАНДАРТ) —
-// уходят в приёмку со снимком поставки; пустая СТРАНА подставляется по изготовителю из справочника.
+// «Лист закупки» TRACE_COLUMNS.PURCHASE: ИЗГОТОВИТЕЛЬ, СТРАНА, СТАНДАРТ — уходят в приёмку со снимком поставки;
+// пустая СТРАНА подставляется по изготовителю из справочника. Тип, № и дата документа качества на экране не
+// показываются (владелец снял блок 29.08, Portal.gs PORTAL_RETIRED_COLS_), но уже записанные значения уходят
+// в сохранение как есть — данные не теряются.
 function TraceabilityForm({ line, busy, disabled, onAdvance }: {
   line: ProcurementLine;
   busy: boolean;
@@ -693,8 +627,8 @@ function TraceabilityForm({ line, busy, disabled, onAdvance }: {
   const [draft, setDraft] = useState<ProcurementTraceabilityInput>(initial);
   useEffect(() => { setDraft(initial()); }, [line.version]);
 
-  function field(name: keyof ProcurementTraceabilityInput, value: string) {
-    setDraft((current) => ({ ...current, [name]: name === "quality_document_date" ? value || null : value }));
+  function field(name: "manufacturer" | "country" | "standard", value: string) {
+    setDraft((current) => ({ ...current, [name]: value }));
   }
 
   function save(event: FormEvent) {
@@ -703,76 +637,18 @@ function TraceabilityForm({ line, busy, disabled, onAdvance }: {
   }
 
   return (
-    <details className="build-config">
-      <summary>Прослеживаемость: изготовитель, страна, документ качества</summary>
-      <form onSubmit={save}>
-        <div className="form-grid">
-          <label>Изготовитель<input value={draft.manufacturer} onChange={(e) => field("manufacturer", e.target.value)} /></label>
-          <label>Страна<input value={draft.country} onChange={(e) => field("country", e.target.value)} placeholder="по изготовителю" /></label>
-          <label>Тип док.<input value={draft.quality_document_type} onChange={(e) => field("quality_document_type", e.target.value)} /></label>
-          <label>№ док. качества<input value={draft.quality_document_number} onChange={(e) => field("quality_document_number", e.target.value)} /></label>
-          <label>Дата док. качества<input type="date" value={draft.quality_document_date ?? ""} onChange={(e) => field("quality_document_date", e.target.value)} /></label>
-          <label>Стандарт<input value={draft.standard} onChange={(e) => field("standard", e.target.value)} /></label>
-        </div>
-        <div className="card-footer"><small>Уходит в приёмку при оплате</small><button className="secondary small" disabled={disabled || busy}>Сохранить прослеживаемость</button></div>
-      </form>
-    </details>
-  );
-}
-
-function ReplacementPermissionPrint({ line }: { line: ProcurementLine }) {
-  const [error, setError] = useState("");
-
-  async function print() {
-    setError("");
-    try {
-      const { sheet } = await procurementApi.replacementPermissionSheet(line.id);
-      openPrintSheet(sheet);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось сформировать разрешение");
-    }
-  }
-
-  return (
-    <div className="inline-action">
-      <button type="button" className="secondary small" onClick={() => void print()}>
-        Печать «Разрешение на замену» {line.permission_number}
-      </button>
-      {error && <div className="error-banner" role="alert">{error}</div>}
-    </div>
+    <form onSubmit={save}>
+      <div className="form-grid">
+        <label>Изготовитель<input value={draft.manufacturer} onChange={(e) => field("manufacturer", e.target.value)} /></label>
+        <label>Страна<input value={draft.country} onChange={(e) => field("country", e.target.value)} placeholder="по изготовителю" /></label>
+        <label>Стандарт<input value={draft.standard} onChange={(e) => field("standard", e.target.value)} /></label>
+      </div>
+      <div className="card-footer"><small>Уходит в приёмку при оплате</small><button className="secondary small" disabled={disabled || busy}>Сохранить прослеживаемость</button></div>
+    </form>
   );
 }
 
 type Advance = (line: ProcurementLine, operation: () => Promise<unknown>, message: string) => Promise<void>;
-
-// «Согласование» / «Отменено» stand outside the linear order (SUPPLYMAP `PUR_STATUS_OFFLINE`): any stage before payment.
-const OFFLINE_FROM = ["В работе", "Готов к запросу", "Жду счет", "В оплату", "Согласование"];
-
-function OfflineActions({ line, busy, disabled, onAdvance }: {
-  line: ProcurementLine;
-  busy: boolean;
-  disabled: boolean;
-  onAdvance: Advance;
-}) {
-  const parked = line.status === "Согласование";
-
-  function cancel() {
-    if (!window.confirm(`Отменить ${line.legacy_id}? Отмена окончательная.`)) return;
-    void onAdvance(line, () => procurementApi.cancelLine(line.id, line.version), `${line.legacy_id}: строка отменена`).catch(() => undefined);
-  }
-
-  return (
-    <div className="card-footer">
-      <small>{parked ? "Ждёт одобрения — заказ не формируется" : "Нужно одобрение или позиция больше не нужна?"}</small>
-      {parked ? (
-        <button className="primary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.resumeFromApproval(line.id, line.version), `${line.legacy_id}: одобрено, строка вернулась в работу`).catch(() => undefined)}>{busy ? "Проводим…" : "Одобрено — продолжить"}</button>
-      ) : (
-        <button className="secondary small" disabled={disabled} onClick={() => void onAdvance(line, () => procurementApi.putOnApproval(line.id, line.version), `${line.legacy_id}: на согласовании`).catch(() => undefined)}>На согласование</button>
-      )}
-      <button type="button" className="secondary small" disabled={disabled} onClick={cancel}>Отменить строку</button>
-    </div>
-  );
-}
 
 type MoneyDraft = {
   currency: string;
