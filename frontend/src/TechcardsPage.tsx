@@ -333,7 +333,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     }} /> : selectedOp ? <OpOnlyDetail record={selectedOp} canEdit={canEditOps} onSaved={replaceOp} onBack={() => setSelectedOpCode("")} /> : templateDetail && selectedTemplateId ? (editingTemplate ? <TcCardEditForm
       code={templateDetail.code}
       initial={editDraft(templateDetail.name, templateDetail.document)}
-      hint="Правки пишутся в библиотеку ERP и попадают в ТК проектов при следующей сборке; при обновлении снимка SUPPLYMAP правленая карточка сохраняется. Пустые шаги и строки оснастки при сохранении отбрасываются, номера проставятся сами."
+      saveNote="Сохранение — в библиотеку, в ТК проектов при следующей сборке"
       onCancel={() => setEditingTemplate(false)}
       onSave={saveTemplate}
     /> : <TemplateDetail template={templateDetail} op={opByCode.get(templateDetail.code)} canEditOp={canEditOps} onOpSaved={replaceOp} canEdit={canEditTemplates} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
