@@ -254,6 +254,13 @@ class SqlAlchemyRequestRepository:
         row = self.session.get(RequestRow, request_id)
         return _request_domain(row) if row is not None else None
 
+    def delete(self, request_id: UUID) -> None:
+        """Заявка, ещё не взятая в закупку; выданное ей обозначение остаётся занятым (request_designations)."""
+        row = self.session.get(RequestRow, request_id)
+        if row is not None:
+            self.session.delete(row)
+            self.session.flush()
+
     def recent(self, limit: int, search: str = "") -> list[Request]:
         statement = (
             select(RequestRow)

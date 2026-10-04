@@ -419,10 +419,12 @@ def delete(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKitsetDelete`: проект уходит целиком во всех разделах сразу."""
+    """`portalKitsetDelete`: проект уходит целиком во всех разделах сразу, с хвостами без движения."""
     return {"res": _run(lambda: flow.delete_kitset(
         project, principal.actor, now,
         techcards_factory(request), production_factory(request), shipping_factory(request),
+        fulfillment_uow=fulfillment_factory(request), requests_uow=requests_factory(request),
+        procurement_stages=getattr(request.app.state, "procurement_stage_lookup", None),
     ))}
 
 

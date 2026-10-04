@@ -3,8 +3,10 @@
     ERP_DATABASE_URL=... python -m app.modules.warehouse.import_stock --dir ../data/import --dry-run
 
 A rerun is a top-up («догрузка»): new lots are created; a lot the import made and ERP never moved is brought to
-the sheet (ПРИХОД, СПИСАНО, место, паспорт) with a «догрузка из Google» journal event, and new СПИСАНИЕ rows join
-its history; a lot ERP has moved (write-off, issue, reserve, move, edit) is left as it is and reported.
+the sheet (ПРИХОД, СПИСАНО, место, паспорт, склад) with a «догрузка из Google» journal event, and new СПИСАНИЕ rows
+join its history; a lot ERP has moved (write-off, issue, reserve, move, edit) is never changed: if Google left its
+ПРИХОД/СПИСАНО as the last run brought them, ERP is ahead (reconciled against the ERP balance); if Google changed
+them too, the lot is a conflict to settle by hand and its new СПИСАНИЕ rows are listed, not journalled.
 
 Exit code: 0 — everything reconciled; 1 — some rows were not taken or differ (see the report);
 2 — the export cannot be read or ERP_DATABASE_URL is not set.
@@ -43,10 +45,11 @@ class TotalLine:
     sheet_balance: Decimal
     erp_balance: Decimal
     unreadable_rows: int = 0
+    erp_moves: Decimal = Decimal("0")  # ERP − sheet on lots where ERP is ahead of an unchanged Google row
 
     @property
     def ok(self) -> bool:
-        return self.sheet_balance == self.erp_balance and not self.unreadable_rows
+        return self.sheet_balance + self.erp_moves == self.erp_balance and not self.unreadable_rows
 
 
 @dataclass(frozen=True)
@@ -91,25 +94,30 @@ def reconcile(export: StockExport, result: LegacyStockImportResult) -> Reconcili
     sheet_rows = [(lot.key, lot.unit, lot.balance) for lot in export.lots]
     sheet_rows += [((r.sheet, r.grn, r.package), r.unit, r.balance)
                    for r in export.rejected if r.sheet in STOCK_SHEETS]
-    totals: dict[tuple[str, str], list] = defaultdict(lambda: [Decimal("0"), Decimal("0"), 0])
+    # ERP moved these lots after the import and Google did not change them: the sheet is behind, not wrong.
+    ahead = {row.key for row, _ in result.erp_ahead}
+    totals: dict[tuple[str, str], list] = defaultdict(lambda: [Decimal("0"), Decimal("0"), 0, Decimal("0")])
     by_grn: dict[tuple[str, str], list] = {}
     for key, unit, balance in sheet_rows:
         lot = result.erp_lots.get(key)
         erp = lot.balance if lot is not None else Decimal("0")
+        moved = erp - balance if key in ahead and balance is not None else Decimal("0")
         line = totals[(key[0], unit)]
         line[1] += erp
+        line[3] += moved
         if balance is None:
             line[2] += 1
         else:
             line[0] += balance
-        grn = by_grn.setdefault((key[0], key[1]), [unit, Decimal("0"), Decimal("0")])
+        grn = by_grn.setdefault((key[0], key[1]), [unit, Decimal("0"), Decimal("0"), Decimal("0")])
         grn[1] = None if balance is None or grn[1] is None else grn[1] + balance
         grn[2] += erp
+        grn[3] += moved
     report = Reconciliation(
-        totals=[TotalLine(w, u, s, e, bad) for (w, u), (s, e, bad) in sorted(totals.items())],
+        totals=[TotalLine(w, u, s, e, bad, moved) for (w, u), (s, e, bad, moved) in sorted(totals.items())],
         grn_count=len(by_grn),
-        grn_mismatches=[GrnLine(w, g, unit, sheet, erp) for (w, g), (unit, sheet, erp) in sorted(by_grn.items())
-                        if sheet != erp],
+        grn_mismatches=[GrnLine(w, g, unit, sheet, erp) for (w, g), (unit, sheet, erp, moved) in sorted(by_grn.items())
+                        if sheet is None or sheet + moved != erp],
         stock_rejected=len([r for r in export.rejected if r.sheet in STOCK_SHEETS]) + len(result.rejected),
         conflicts=len(result.conflicts),
     )
@@ -143,8 +151,8 @@ def format_report(export: StockExport, result: LegacyStockImportResult, check: R
         lines.append(f"  {name}: строк {sheet.rows_total}, пустых {sheet.blank_rows}")
     lines += ["", "Партии:",
               f"  создано {len(result.created)}, приведено к Google {len(result.synced)}, "
-              f"без изменений {len(result.unchanged)}, не тронуто (расходятся с ERP) {len(result.conflicts)}, "
-              f"отклонено {check.stock_rejected}"]
+              f"без изменений {len(result.unchanged)}, ERP впереди Google {len(result.erp_ahead)}, "
+              f"не тронуто (расходятся с ERP) {len(result.conflicts)}, отклонено {check.stock_rejected}"]
     for row, changes in result.synced:
         listed = "; ".join(f"{column} {was or '—'} → {now or '—'}" for _, column, was, now in changes)
         lines.append(f"  догрузка из Google {row.sheet}:{row.row_number} {row.grn}"
@@ -155,6 +163,13 @@ def format_report(export: StockExport, result: LegacyStockImportResult, check: R
         lines.append(f"  отклонено {sheet}:{number} {grn or '—'}: {reason}")
     for row, reason in result.conflicts:
         lines.append(f"  не изменено {row.sheet}:{row.row_number} {row.grn}: {reason}")
+    for row, movements in result.erp_ahead:
+        lot = result.erp_lots.get(row.key)
+        label = row.grn + (f" / {row.package}" if row.package else "")
+        erp = _n(lot.balance) if lot is not None else "?"
+        where = f", в ERP на складе {lot.warehouse}" if lot is not None and lot.warehouse != row.warehouse else ""
+        lines.append(f"  ERP впереди Google: {row.warehouse} {label} — лист {_n(row.balance)} / ERP {erp} {row.unit}"
+                     f"{where} (в ERP после загрузки: {movements}; в Google не менялась) — оставлена как в ERP")
     for lot in result.missing_in_sheet:
         label = lot.grn + (f" / {lot.package}" if lot.package else "")
         lines.append(f"  нет в листе, в ERP оставлена как есть: {lot.warehouse} {label}, остаток {_n(lot.balance)} {lot.unit}")
@@ -164,6 +179,9 @@ def format_report(export: StockExport, result: LegacyStockImportResult, check: R
     lines += ["", "Сверка БАЛАНС по складам (лист / ERP):"]
     for total in check.totals:
         mark = "совпадает" if total.ok else "РАСХОДИТСЯ"
+        if total.erp_moves:
+            sign = "+" if total.erp_moves > 0 else "−"
+            mark += f" (с учётом движений в ERP после загрузки: {sign}{_n(abs(total.erp_moves))})"
         unread = f", нечитаемых строк {total.unreadable_rows}" if total.unreadable_rows else ""
         lines.append(f"  {total.warehouse}, {total.unit}: {_n(total.sheet_balance)} / {_n(total.erp_balance)} — {mark}{unread}")
     if not check.totals:
@@ -176,8 +194,13 @@ def format_report(export: StockExport, result: LegacyStockImportResult, check: R
     journal_rejected = [r for r in export.rejected if r.sheet == WRITEOFF_SHEET]
     lines += ["", f"Журнал {WRITEOFF_SHEET} (история, количества не двигает): строк {journal.rows_total if journal else 0}",
               f"  в историю новых партий {result.history_imported}, догружено к прежним {result.history_synced}, "
-              f"уже было или партия менялась в ERP {result.history_for_existing_lots}, "
+              f"уже было {result.history_for_existing_lots}, "
+              f"не внесено (партию двигал ERP) {len(result.history_not_synced)}, "
               f"без партии {len(result.history_without_lot)}, отклонено {len(journal_rejected)}"]
+    for row in result.history_not_synced:
+        label = row.grn + (f" / {row.package}" if row.package else "")
+        lines.append(f"  не внесено СПИСАНИЕ:{row.row_number} {row.warehouse} {label} {_n(row.quantity)} "
+                     f"{row.unit} «{row.reason}» {row.date} — партию уже двигал ERP, сверить вручную")
     for row in result.history_without_lot:
         lines.append(f"  без партии {WRITEOFF_SHEET}:{row.row_number} {row.warehouse} {row.grn}")
     for row in journal_rejected:

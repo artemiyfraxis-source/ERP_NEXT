@@ -530,6 +530,32 @@ class SqlAlchemyProductionRepository:
         for stale in existing.values():
             self.session.delete(stale)
 
+    def worked(self, task_ids) -> set[UUID]:
+        """Задания со следом работы: короб, сессия, выработка, брак или «взял/закончил» в доле монтажника."""
+        ids = list(task_ids)
+        if not ids:
+            return set()
+        found: set[UUID] = set()
+        for column in (ProductionBoxRow.task_id, ProductionWorkSessionRow.task_id,
+                       ProductionOutputRow.task_id, ProductionDefectRow.task_id):
+            found.update(self.session.scalars(select(column).where(column.in_(ids)).distinct()))
+        share = ProductionOperationOperatorRow
+        found.update(self.session.scalars(
+            select(ProductionOperationRow.task_id)
+            .join(share, share.operation_id == ProductionOperationRow.id)
+            .where(ProductionOperationRow.task_id.in_(ids), or_(share.started_at.is_not(None), share.finished_at.is_not(None)))
+            .distinct()
+        ))
+        return found
+
+    def delete(self, task_id: UUID) -> None:
+        """Задание без следа работы (см. `worked`) уходит с долями, операциями и своими серийными номерами."""
+        operations = select(ProductionOperationRow.id).where(ProductionOperationRow.task_id == task_id)
+        self.session.execute(delete(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operation_id.in_(operations)))
+        self.session.execute(delete(ProductionSerialRow).where(ProductionSerialRow.task_id == task_id))
+        self.session.execute(delete(ProductionOperationRow).where(ProductionOperationRow.task_id == task_id))
+        self.session.execute(delete(ProductionTaskRow).where(ProductionTaskRow.id == task_id))
+
 
 class SqlAlchemyOperatorRepository:
     def __init__(self, session: Session): self.session = session

@@ -14,6 +14,7 @@ import { openPrintSheet, printStoredDocument } from "./print";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementFillForm } from "./ProcurementFillForm";
+import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import { formatDate } from "./format";
 
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
@@ -51,28 +52,6 @@ const toPayColumns: DataColumn<ProcurementLine>[] = [
 /** `portalPurchaseToPay`: свои строки «В оплату» со счётом — кандидаты на «Оплачено → В пути». */
 function payable(line: ProcurementLine) {
   return line.status === "В оплату" && Boolean(line.invoice_url) && !line.paid_at;
-}
-
-type FactsDraft = {
-  supplier: string;
-  site_name: string;
-  link: string;
-  design_article: string;
-  calculated_name: string;
-  actual_quantity: string;
-  actual_unit: string;
-};
-
-function draftFrom(line: ProcurementLine): FactsDraft {
-  return {
-    supplier: line.supplier ?? "",
-    site_name: line.site_name ?? "",
-    link: line.link ?? "",
-    design_article: line.design_article ?? "",
-    calculated_name: line.calculated_name,
-    actual_quantity: line.actual_quantity ?? line.calculated_quantity,
-    actual_unit: line.actual_unit ?? line.calculated_unit,
-  };
 }
 
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
@@ -216,25 +195,6 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }
   }
 
-  async function save(line: ProcurementLine, draft: FactsDraft) {
-    if (interactionLocked) return;
-    setBusyId(line.id);
-    setError("");
-    try {
-      const facts = Object.fromEntries(
-        Object.entries(draft).map(([key, value]) => [key, value.trim() || null]),
-      );
-      await procurementApi.save(line.id, { version: line.version, ...facts });
-      setNotice(`${line.legacy_id} сохранена`);
-      await reload(true);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось сохранить строку");
-      throw reason;
-    } finally {
-      setBusyId("");
-    }
-  }
-
   async function advance(
     line: ProcurementLine,
     operation: () => Promise<unknown>,
@@ -274,6 +234,8 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }
   }
 
+  const inWork = mine.filter((line) => line.status === "В работе");
+  const rest = mine.filter((line) => line.status !== "В работе");
   const readyCount = mine.filter((line) => line.status === "Готов к запросу").length;
 
   return (
@@ -395,16 +357,39 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             }}
           />
         )}
-        {mine.map((line) => (
+        {inWork.length > 0 && (
+          <section className="panel table-panel">
+            <div className="panel-heading"><h2>В работе</h2><span>Заполните данные прямо в таблице</span></div>
+            <ProcurementInWorkTable
+              lines={inWork}
+              units={units}
+              disabled={interactionLocked}
+              busyId={busyId}
+              onChanged={(message) => { setNotice(message); void reload(true); }}
+              onError={setError}
+              onPutOnApproval={(line) => void advance(line, () => procurementApi.putOnApproval(line.id, line.version), `${line.legacy_id}: на согласовании`).catch(() => undefined)}
+              onCancel={(line) => {
+                if (!window.confirm(`Отменить ${line.legacy_id}? Отмена окончательная.`)) return;
+                void advance(line, () => procurementApi.cancelLine(line.id, line.version), `${line.legacy_id}: строка отменена`).catch(() => undefined);
+              }}
+              renderDetail={(line) => (
+                <>
+                  <ReplacementControl line={line} busy={busyId === line.id} disabled={interactionLocked} onAdvance={advance} />
+                  <TraceabilityForm line={line} busy={busyId === line.id} disabled={interactionLocked} onAdvance={advance} />
+                  <SplitAction line={line} busy={busyId === line.id} disabled={interactionLocked} onAdvance={advance} />
+                </>
+              )}
+            />
+          </section>
+        )}
+        {rest.map((line) => (
           <ProcurementCard
             key={`${line.id}:${line.version}`}
             line={line}
             busy={busyId === line.id}
             disabled={interactionLocked}
-            onSave={save}
             onAdvance={advance}
             onOpenKp={setKpReference}
-            units={units}
           />
         ))}
         {!mine.length && <div className="panel empty">Пока ничего не взято в работу.</div>}
@@ -422,24 +407,19 @@ function ProcurementCard({
   line,
   busy,
   disabled,
-  onSave,
   onAdvance,
   onOpenKp,
-  units = DEFAULT_UNITS,
 }: {
   line: ProcurementLine;
   busy: boolean;
   disabled: boolean;
-  units?: string[];
   onOpenKp: (reference: string) => void;
-  onSave: (line: ProcurementLine, draft: FactsDraft) => Promise<void>;
   onAdvance: (
     line: ProcurementLine,
     operation: () => Promise<unknown>,
     message: string,
   ) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(() => draftFrom(line));
   const [invoiceUrl, setInvoiceUrl] = useState(line.invoice_url ?? "");
   // № and date of an uploaded file; empty keeps what the money form saved (uploadInvoice setIf).
   const [invoiceFile, setInvoiceFile] = useState(false);
@@ -448,34 +428,12 @@ function ProcurementCard({
   const [expectedArrival, setExpectedArrival] = useState(line.expected_arrival ?? "");
   const moneyMissing = line.pay_missing.filter((name) => name !== "ОЖИД. ДАТА");
 
-  function field(name: keyof FactsDraft, value: string) {
-    setDraft((current) => ({ ...current, [name]: value }));
-  }
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    void onSave(line, draft).catch(() => undefined);
-  }
-
   return (
     <article className="panel procurement-card">
       <div className="procurement-title">
         <div><strong>{line.legacy_id} · {line.calculated_name}</strong><small>{line.designation} · {line.calculated_quantity} {line.calculated_unit}</small></div>
         <span className="status">{line.status}</span>
       </div>
-      {line.status === "В работе" && <form onSubmit={submit}><div className="facts-grid">
-        <label>Поставщик *<input value={draft.supplier} onChange={(e) => field("supplier", e.target.value)} required /></label>
-        <label>Площадка<input value={draft.site_name} onChange={(e) => field("site_name", e.target.value)} /></label>
-        <label>Фактическое количество *<input type="number" min="0.000001" step="any" value={draft.actual_quantity} onChange={(e) => field("actual_quantity", e.target.value)} required /></label>
-        <label>Единица *<select value={draft.actual_unit} onChange={(e) => field("actual_unit", e.target.value)} required>
-          <option value="">—</option>
-          {(units.includes(draft.actual_unit) || !draft.actual_unit ? units : [draft.actual_unit, ...units]).map((unit) => <option key={unit} value={unit}>{unit}</option>)}
-        </select></label>
-        <label>Артикул<input value={draft.design_article} onChange={(e) => field("design_article", e.target.value)} /></label>
-        <label>Уточнённое наименование<input value={draft.calculated_name} onChange={(e) => field("calculated_name", e.target.value)} /></label>
-        <label className="wide">Ссылка<input type="url" value={draft.link} onChange={(e) => field("link", e.target.value)} placeholder="https://…" /></label>
-      </div>
-      <div className="card-footer"><small>Версия {line.version} · план {formatDate(line.planned_date)}</small><button className="primary small" disabled={disabled}>{busy ? "Сохраняем…" : "Сохранить"}</button></div></form>}
       {REPLACEMENT_STATUSES.has(line.status) && (
         <ReplacementControl line={line} busy={busy} disabled={disabled} onAdvance={onAdvance} />
       )}

@@ -165,6 +165,8 @@ class EditLotRowCommand:
     actor: Actor
     now: datetime
     kitting_reserve: Decimal = Decimal("0")
+    # «Со склада»: the reserve procurement lines hold on the lot.
+    procurement_reserve: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -504,8 +506,11 @@ class ImportLegacyStockCommand:
     could not take; their ERP state is read back too, so the report compares every sheet row.
 
     `sync` is the top-up («догрузка»): a lot the import made and ERP never moved is brought to the sheet
-    values (a `warehouse.legacy_synced` event), and new СПИСАНИЕ rows join its history. A lot ERP has moved
-    stays as it is and is reported as a conflict."""
+    values (a `warehouse.legacy_synced` event; a lot Google moved to the other warehouse follows it), and new
+    СПИСАНИЕ rows join its history. A lot ERP has moved stays as it is: when Google left its ПРИХОД/СПИСАНО as
+    the last run brought them, ERP is simply ahead (`erp_ahead`); when Google changed them too, it is a conflict
+    to settle by hand, and its new СПИСАНИЕ rows are listed (`history_not_synced`), not journalled.
+    A sheet row finds the lot made from it by the import mark, wherever ERP has moved it since."""
 
     lots: tuple[LegacyStockRow, ...]
     writeoffs: tuple[LegacyWriteOffRow, ...]
@@ -532,17 +537,29 @@ class LegacyStockImportResult:
     synced: list[tuple[LegacyStockRow, list[tuple[str, str, str, str]]]] = field(default_factory=list)
     history_synced: int = 0
     missing_in_sheet: list[StockLot] = field(default_factory=list)
+    # ERP moved the lot after the import, Google left its ПРИХОД/СПИСАНО as they were: ERP kept, not a conflict.
+    erp_ahead: list[tuple[LegacyStockRow, str]] = field(default_factory=list)
+    # New СПИСАНИЕ rows of a lot ERP has moved or made itself: listed for a manual check, not journalled.
+    history_not_synced: list[LegacyWriteOffRow] = field(default_factory=list)
     committed: bool = False
 
 
+LEGACY_SOURCE_PREFIX = "supplymap-import:"
+
+
 def legacy_import_source_id(key: LotKey) -> str:
-    return "supplymap-import:" + ":".join(key)
+    return LEGACY_SOURCE_PREFIX + ":".join(key)
+
+
+def _is_imported(lot: StockLot) -> bool:
+    return any(source.startswith(LEGACY_SOURCE_PREFIX) for source in lot.source_receiving_ids)
 
 
 def _legacy_differences(lot: StockLot, row: LegacyStockRow) -> list[str]:
-    if legacy_import_source_id(row.key) not in lot.source_receiving_ids:
+    if not _is_imported(lot):
         return ["партия уже есть в ERP и заведена не импортом"]
     expected = {
+        "СКЛАД": (lot.warehouse, row.warehouse),
         "ПРИХОД": (lot.inbound, row.inbound),
         "СПИСАНО": (lot.written_off, row.written_off),
         "МЕСТО ХРАНЕНИЯ": (lot.storage_location, normalize_location_as_is(row.storage_location)),
@@ -594,9 +611,36 @@ def _import_version(trail: list[tuple[str, dict]]) -> int | None:
     return version
 
 
-def _erp_movements(lot: StockLot, uow: UnitOfWork) -> str:
+def _trail_quantity(value: object) -> Decimal | None:
+    try:
+        return Decimal(str(value).replace(" ", "").replace(",", "."))
+    except (DecimalException, ValueError):
+        return None
+
+
+def _google_quantity_changes(trail: list[tuple[str, dict]], row: LegacyStockRow) -> list[str]:
+    """How the sheet's ПРИХОД/СПИСАНО moved since the last import run brought them («СПИСАНО 2 → 4»). The runs
+    record them in `legacy_imported` (inbound, written_off) and `legacy_synced` (<field>_to when it changed).
+    No record → the sheet is taken as changed, so a lot ERP moved is never overwritten on a guess."""
+    last: dict[str, Decimal | None] = {}
+    for event_type, details in trail:
+        if event_type == "warehouse.legacy_imported":
+            last = {name: _trail_quantity(details.get(name, "")) for name in ("inbound", "written_off")}
+        elif event_type == "warehouse.legacy_synced" and last:
+            for name in ("inbound", "written_off"):
+                if f"{name}_to" in details:
+                    last[name] = _trail_quantity(details[f"{name}_to"])
+    changes = []
+    for name, column in (("inbound", "ПРИХОД"), ("written_off", "СПИСАНО")):
+        was, now = last.get(name), getattr(row, name)
+        if was != now:
+            shown = "?" if was is None else format(was.normalize(), "f").replace(".", ",")
+            changes.append(f"{column} {shown} → {format(now.normalize(), 'f').replace('.', ',')}")
+    return changes
+
+
+def _erp_movements(lot: StockLot, trail: list[tuple[str, dict]], uow: UnitOfWork) -> str:
     """What ERP itself did to an imported lot ("" — nothing: the lot is still what the import left)."""
-    trail = uow.warehouse.audit_trail(lot.id)
     own_events = [event_type for event_type, _ in trail if event_type not in LEGACY_EVENTS]
     own_writeoffs = [entry for entry in uow.writeoffs.for_lot(lot.id) if entry.kind != "legacy"]
     found = []
@@ -665,56 +709,118 @@ def _journal_legacy_writeoff(
     uow.writeoffs.add(replace(entry, unit=writeoff.unit or lot.unit))
 
 
+def _find_imported_lot(
+    row: LegacyStockRow, by_mark: dict[str, StockLot], sheet_keys: set[LotKey], uow: UnitOfWork,
+) -> StockLot | None:
+    """The ERP lot of a sheet row: the lot the import made from this row (by its mark — a whole-lot transfer in ERP
+    changes СКЛАД, the key, so the key alone would make a second lot), else the lot at the key, else a lot the
+    import made from the same ГРН+ПАКЕТ in the other warehouse that the sheet no longer has there (Google moved
+    the row to this warehouse)."""
+    lot = by_mark.get(legacy_import_source_id(row.key))
+    if lot is None:
+        lot = uow.warehouse.by_key(*row.key)
+    if lot is None:
+        for warehouse in WAREHOUSES:
+            other = (warehouse, row.grn, row.package)
+            candidate = by_mark.get(legacy_import_source_id(other))
+            if warehouse != row.warehouse and other not in sheet_keys and candidate is not None \
+                    and (candidate.warehouse, candidate.grn, candidate.package) == other:
+                lot = candidate
+                break
+    return lot
+
+
+def _sync_legacy_lot(
+    existing: StockLot, row: LegacyStockRow, command: ImportLegacyStockCommand, uow: UnitOfWork,
+) -> tuple[StockLot, list[LotRowChange]]:
+    """A lot ERP never moved follows the sheet row, СКЛАД included (Google moved the whole row); the lot then also
+    carries the import mark of its new key."""
+    relocated = existing.warehouse != row.warehouse
+    base = existing
+    if relocated:
+        occupied = uow.warehouse.by_key(*row.key)
+        if occupied is not None and occupied.id != existing.id:
+            raise WarehouseValidationError(f"на складе {row.warehouse} уже есть другая партия с этим ГРН и пакетом")
+        mark = legacy_import_source_id(row.key)
+        sources = existing.source_receiving_ids
+        base = replace(existing, warehouse=row.warehouse,
+                       source_receiving_ids=sources if mark in sources else (*sources, mark))
+    updated = base.edit_row(_legacy_row_values(row))
+    if updated.version == existing.version:
+        updated = replace(updated, version=existing.version + 1)
+    changes = ([("warehouse", "СКЛАД", existing.warehouse, row.warehouse)] if relocated else []) \
+        + lot_row_changes(base, updated)
+    details: dict[str, object] = {
+        "source": command.source, "sheet": row.sheet, "row": str(row.row_number),
+        "grn": updated.grn, "package": updated.package, "warehouse": updated.warehouse,
+        "reason": LEGACY_SYNC_REASON, "version": str(updated.version),
+        "changes": "; ".join(f"{column}: «{was or '—'}» → «{now or '—'}»" for _, column, was, now in changes),
+    }
+    for field_name, _, was, now in changes:
+        details[f"{field_name}_from"], details[f"{field_name}_to"] = was, now
+    uow.warehouse.add(updated)
+    uow.audit.add(AuditEvent(
+        id=uuid4(), aggregate_id=updated.id, event_type="warehouse.legacy_synced",
+        actor=command.actor, occurred_at=command.now, details=details,
+    ))
+    return updated, changes
+
+
 def import_legacy_stock(command: ImportLegacyStockCommand, uow: UnitOfWork) -> LegacyStockImportResult:
-    """Create-only and idempotent: a key already in ERP is compared and reported, never changed.
+    """Idempotent: a rerun over the same export changes nothing; over a newer one it adds only the difference.
 
     Quantities come from the stock sheet (ПРИХОД, СПИСАНО); РЕЗЕРВ is not transferred. The СПИСАНИЕ journal
-    is history only: every row becomes an audit event on a lot created in this run and moves no quantity.
+    is history only: its rows become audit events and journal rows and move no quantity.
     One transaction for the whole import; dry_run runs the same path and rolls it back.
     """
     result = LegacyStockImportResult()
     with uow:
+        by_mark: dict[str, StockLot] = {}
+        for lot in uow.warehouse.every():
+            for source in lot.source_receiving_ids:
+                if source.startswith(LEGACY_SOURCE_PREFIX):
+                    by_mark[source] = lot
+        sheet_keys = {row.key for row in command.lots} | set(command.reconcile_keys)
         created_lots: dict[LotKey, StockLot] = {}
-        existing_keys: set[LotKey] = set()
-        untouched: dict[LotKey, StockLot] = {}  # sync: imported lots ERP never moved — their history is topped up
+        found: dict[LotKey, StockLot] = {}  # sheet key → the ERP lot it already has (as it is after this run)
+        claimed: set[UUID] = set()
+        untouched: dict[UUID, StockLot] = {}  # sync: imported lots ERP never moved — their history is topped up
         for row in command.lots:
-            existing = uow.warehouse.by_key(*row.key)
+            existing = _find_imported_lot(row, by_mark, sheet_keys, uow)
             if existing is not None:
-                existing_keys.add(row.key)
+                if existing.id in claimed:
+                    result.rejected.append((row, "эта партия ERP уже сопоставлена другой строке листа"))
+                    continue
+                claimed.add(existing.id)
+                found[row.key] = existing
                 differences = _legacy_differences(existing, row)
-                imported = legacy_import_source_id(row.key) in existing.source_receiving_ids
-                movements = _erp_movements(existing, uow) if command.sync and imported else ""
+                imported = _is_imported(existing)
+                trail = uow.warehouse.audit_trail(existing.id) if command.sync and imported else []
+                movements = _erp_movements(existing, trail, uow) if command.sync and imported else ""
                 if command.sync and imported and not movements:
-                    untouched[row.key] = existing
+                    untouched[existing.id] = existing
                 if not differences:
                     result.unchanged.append(row)
                 elif not command.sync or not imported:
                     result.conflicts.append((row, "расходится с ERP: " + ", ".join(differences)))
                 elif movements:
-                    result.conflicts.append((row, f"в ERP уже были движения ({movements}) — партия не тронута; "
-                                                  "расходится с Google: " + ", ".join(differences)))
+                    google = _google_quantity_changes(trail, row)
+                    if existing.warehouse != row.warehouse \
+                            and legacy_import_source_id(row.key) not in existing.source_receiving_ids:
+                        google.insert(0, f"СКЛАД {existing.warehouse} → {row.warehouse}")
+                    if google:
+                        result.conflicts.append((row, (
+                            f"в ERP уже были движения ({movements}), в Google после загрузки: {', '.join(google)} — "
+                            "партия не тронута, сверить вручную; расходится с Google: " + ", ".join(differences))))
+                    else:
+                        result.erp_ahead.append((row, movements))
                 else:
                     try:
-                        updated = existing.edit_row(_legacy_row_values(row))
+                        updated, changes = _sync_legacy_lot(existing, row, command, uow)
                     except WarehouseValidationError as error:
                         result.rejected.append((row, str(error)))
                         continue
-                    changes = lot_row_changes(existing, updated)
-                    details: dict[str, object] = {
-                        "source": command.source, "sheet": row.sheet, "row": str(row.row_number),
-                        "grn": updated.grn, "package": updated.package, "warehouse": updated.warehouse,
-                        "reason": LEGACY_SYNC_REASON, "version": str(updated.version),
-                        "changes": "; ".join(f"{column}: «{was or '—'}» → «{now or '—'}»"
-                                             for _, column, was, now in changes),
-                    }
-                    for field_name, _, was, now in changes:
-                        details[f"{field_name}_from"], details[f"{field_name}_to"] = was, now
-                    uow.warehouse.add(updated)
-                    uow.audit.add(AuditEvent(
-                        id=uuid4(), aggregate_id=updated.id, event_type="warehouse.legacy_synced",
-                        actor=command.actor, occurred_at=command.now, details=details,
-                    ))
-                    untouched[row.key] = updated
+                    found[row.key] = untouched[existing.id] = updated
                     result.synced.append((row, changes))
                 continue
             try:
@@ -738,30 +844,35 @@ def import_legacy_stock(command: ImportLegacyStockCommand, uow: UnitOfWork) -> L
             if row.reserved > 0:
                 result.reserve_not_transferred.append(row)
 
-        # Top-up: the СПИСАНИЕ rows an untouched lot does not hold yet. Row numbers and the export stamp move between
-        # exports, so a row is matched by what it says (КОЛ-ВО, ОСНОВАНИЕ, НАЗНАЧЕНИЕ, КТО), counted per lot.
-        held: dict[LotKey, Counter] = {}
-        for key, lot in untouched.items():
-            held[key] = Counter(_writeoff_signature(e.quantity, e.reason, e.purpose, e.author)
-                                for e in uow.writeoffs.for_lot(lot.id) if e.kind == "legacy")
+        # СПИСАНИЕ rows a lot does not hold yet. Row numbers and the export stamp move between exports, so a row is
+        # matched by what it says (КОЛ-ВО, ОСНОВАНИЕ, НАЗНАЧЕНИЕ, КТО), counted per lot. A row's СКЛАД is where the
+        # lot was then: a lot moved since is still found by its import mark.
+        held: dict[UUID, Counter] = {}
         for writeoff in command.writeoffs:
             lot = created_lots.get(writeoff.key)
-            if lot is None and writeoff.key in untouched and writeoff.quantity > 0:
-                signature = _writeoff_signature(writeoff.quantity, writeoff.reason, writeoff.purpose, writeoff.author)
-                if held[writeoff.key][signature] > 0:
-                    held[writeoff.key][signature] -= 1
+            if lot is not None:
+                result.history_imported += 1
+            else:
+                lot = found.get(writeoff.key) or by_mark.get(legacy_import_source_id(writeoff.key))
+                if lot is None:
+                    result.history_without_lot.append(writeoff)
+                    continue
+                if writeoff.quantity <= 0:
                     result.history_for_existing_lots += 1
                     continue
-                lot = untouched[writeoff.key]
-                result.history_synced += 1
-            elif lot is not None:
-                result.history_imported += 1
-            if lot is None:
-                if writeoff.key in existing_keys:
+                if lot.id not in held:
+                    held[lot.id] = Counter(_writeoff_signature(e.quantity, e.reason, e.purpose, e.author)
+                                           for e in uow.writeoffs.for_lot(lot.id) if e.kind == "legacy")
+                signature = _writeoff_signature(writeoff.quantity, writeoff.reason, writeoff.purpose, writeoff.author)
+                if held[lot.id][signature] > 0:
+                    held[lot.id][signature] -= 1
                     result.history_for_existing_lots += 1
-                else:
-                    result.history_without_lot.append(writeoff)
-                continue
+                    continue
+                if lot.id not in untouched:
+                    result.history_not_synced.append(writeoff)
+                    continue
+                lot = untouched[lot.id]
+                result.history_synced += 1
             uow.audit.add(AuditEvent(
                 id=uuid4(), aggregate_id=lot.id, event_type="warehouse.legacy_writeoff_history",
                 actor=command.actor, occurred_at=command.now,
@@ -785,15 +896,14 @@ def import_legacy_stock(command: ImportLegacyStockCommand, uow: UnitOfWork) -> L
         for year, number in sorted(highest.items()):
             result.manual_numbers[year] = uow.warehouse.ensure_manual_number(year, number)
 
+        # The lot each sheet row has in ERP as it is now (a lot ERP moved to the other warehouse included).
         for key in (*(row.key for row in command.lots), *command.reconcile_keys):
-            result.erp_lots[key] = uow.warehouse.by_key(*key)
+            known = found.get(key) or by_mark.get(legacy_import_source_id(key))
+            result.erp_lots[key] = uow.warehouse.get(known.id) if known is not None else uow.warehouse.by_key(*key)
         if command.sync:
-            # Imported lots the sheet no longer has: reported only, ERP keeps them as they are.
-            result.missing_in_sheet = [
-                lot for lot in uow.warehouse.every()
-                if (lot.warehouse, lot.grn, lot.package) not in result.erp_lots
-                and legacy_import_source_id((lot.warehouse, lot.grn, lot.package)) in lot.source_receiving_ids
-            ]
+            # Imported lots no sheet row has: reported only, ERP keeps them as they are.
+            listed = {lot.id for lot in result.erp_lots.values() if lot is not None}
+            result.missing_in_sheet = [lot for lot in uow.warehouse.every() if lot.id not in listed and _is_imported(lot)]
         if not command.dry_run:
             uow.commit()
             result.committed = True
@@ -985,7 +1095,11 @@ def edit_lot_row(command: EditLotRowCommand, uow: UnitOfWork) -> tuple[StockLot,
     Nothing changed → the lot as it was and no audit event («Изменений нет.»)."""
     with uow:
         current = _versioned(command.lot_id, command.expected_version, uow)
-        updated = current.edit_row(command.changes, kitting_reserve=command.kitting_reserve)
+        updated = current.edit_row(
+            command.changes,
+            kitting_reserve=command.kitting_reserve,
+            procurement_reserve=command.procurement_reserve,
+        )
         changes = lot_row_changes(current, updated)
         if not changes:
             return current, []

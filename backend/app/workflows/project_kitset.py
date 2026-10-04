@@ -20,11 +20,13 @@ from uuid import UUID, uuid4
 from app.modules.fulfillment.application import (
     BindLotCommand,
     CreateFulfillmentCommand,
+    DeleteFulfillmentCommand,
     UnitOfWork as FulfillmentUnitOfWork,
     bind_lot,
     create_fulfillment,
+    delete_fulfillment,
 )
-from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentRequest, FulfillmentValidationError
+from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError
 from app.modules.procurement.domain import ProcurementLine
 from app.modules.production.domain import ProductionTask
 from app.modules.production.plan import (
@@ -62,6 +64,7 @@ from app.modules.requests.domain import (
     CalcImport,
     CalcImportItem,
     Request,
+    RequestStatus,
     ValidationError as RequestValidationError,
     build_import_drafts,
     parse_calc_number,
@@ -712,12 +715,16 @@ def delete_kitset(
     techcards_uow: Callable[[], TechcardsUnitOfWork],
     production_uow: Callable[[], PlanUnitOfWork] | None,
     shipping_uow: Callable[[], ShippingUnitOfWork] | None,
+    fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None = None,
+    requests_uow: Callable[[], RequestsUnitOfWork] | None = None,
+    procurement_stages: Any = None,
 ) -> dict[str, Any]:
     """The card goes everywhere at once: composition and spec, the registry row, issued techcards with their
-    revisions, finished-goods rows without movement. Left alone: shop tasks (people's work), purchase requests,
-    fulfillment requests and finished goods that already moved — those belong to their own sections. КД stays too,
-    as in `tcKitsetDelete`: its register rows (with the files) outlive the card and show up again when the
-    project is loaded from the calculation anew."""
+    revisions, finished-goods rows without movement, and the project's tails that never moved
+    (`purge_project_tails`: tasks without work, kit requests without issue, purchase requests not yet in
+    procurement). Anything with movement stays and is named in ``tails.kept``. КД stays too, as in
+    `tcKitsetDelete`: its register rows (with the files) outlive the card and show up again when the project is
+    loaded from the calculation anew."""
     project = str(project or "").strip()
     if not project:
         raise KitsetValidationError("Не указан номер проекта")
@@ -750,10 +757,223 @@ def delete_kitset(
     if shipping_uow is not None:
         dropped = drop_project(DropProjectCommand(project=kitset.project, actor=actor, now=now), shipping_uow())
         gp = {"deleted": dropped.deleted, "kept": dropped.kept}
+    # Хвосты без движения — отличие от tcKitsetDelete (решено агентом 04.10 — проверить): карточка уже удалена, поэтому
+    # сбой здесь не валит удаление, а возвращается текстом; добить можно командой purge_project_tails.
+    tails: dict[str, Any] | None = None
+    tails_error = ""
+    if fulfillment_uow is not None or production_uow is not None or requests_uow is not None:
+        try:
+            tails = purge_project_tails(
+                kitset.project, actor, now, fulfillment_uow=fulfillment_uow, production_uow=production_uow,
+                requests_uow=requests_uow, procurement_stages=procurement_stages,
+            ).payload()
+        except Exception as error:  # noqa: BLE001 — карточка уже снесена, ответ должен дойти
+            _log.exception("Хвосты проекта %s не удалены", kitset.project)
+            tails_error = f"Задания, запросы на комплектацию и заявки проекта не удалены: {error}"
     return {
         "project": kitset.project, "deleted": lines, "erp": erp,
         "cards": {"cards": cards, "revisions": revisions}, "gp": gp,
+        "tails": tails, "tails_error": tails_error,
     }
+
+
+# ── Хвосты проекта без движения (отличие от tcKitsetDelete, решено агентом 04.10 — проверить) ──
+
+
+TAIL_FULFILLMENT = "fulfillment"
+TAIL_PRODUCTION = "production"
+TAIL_REQUESTS = "requests"
+TAIL_SECTIONS = (TAIL_FULFILLMENT, TAIL_PRODUCTION, TAIL_REQUESTS)
+_TAIL_NOUNS = {
+    TAIL_FULFILLMENT: ("запрос на комплектацию", "запроса на комплектацию", "запросов на комплектацию"),
+    TAIL_PRODUCTION: ("производственное задание", "производственных задания", "производственных заданий"),
+    TAIL_REQUESTS: ("заявка на закупку", "заявки на закупку", "заявок на закупку"),
+}
+# Собранный, но не выданный комплект физически лежит в коробке: удалить его молча — потерять след на полке.
+_PICKED = frozenset({FulfillmentStatus.COMPLETE, FulfillmentStatus.READY})
+
+
+def _plural(count: int, forms: tuple[str, str, str]) -> str:
+    tail = count % 100
+    if 11 <= tail <= 14:
+        form = forms[2]
+    else:
+        form = forms[0] if count % 10 == 1 else forms[1] if 2 <= count % 10 <= 4 else forms[2]
+    return f"{count} {form}"
+
+
+@dataclass(frozen=True)
+class TailEntry:
+    section: str
+    label: str
+    reason: str = ""
+
+
+@dataclass
+class ProjectTails:
+    """What a project's purge removed (or would remove, on a dry run) and what stayed with a reason."""
+
+    project: str
+    applied: bool
+    deleted: list[TailEntry] = field(default_factory=list)
+    kept: list[TailEntry] = field(default_factory=list)
+    freed: int = 0
+
+    def count(self, entries: list[TailEntry], section: str) -> int:
+        return sum(1 for entry in entries if entry.section == section)
+
+    @property
+    def message(self) -> str:
+        removed = [
+            _plural(self.count(self.deleted, section), _TAIL_NOUNS[section])
+            for section in TAIL_SECTIONS if self.count(self.deleted, section)
+        ]
+        verb = "Удалено" if self.applied else "Будет удалено"
+        text = f"{verb}: {', '.join(removed)}" if removed else (
+            "Удалять нечего: заданий, запросов на комплектацию и заявок без движения нет"
+        )
+        if self.freed:
+            text += f"; резерв снят по {self.freed} {'строке' if self.freed % 10 == 1 and self.freed % 100 != 11 else 'строкам'}"
+        groups: dict[tuple[str, str], list[str]] = {}
+        for entry in self.kept:
+            groups.setdefault((entry.section, entry.reason), []).append(entry.label)
+        if groups:
+            text += ". Осталось: " + "; ".join(
+                f"{_plural(len(labels), _TAIL_NOUNS[section])} — {reason} ({', '.join(labels)})"
+                for (section, reason), labels in groups.items()
+            )
+        return text + "."
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            **{section: {"deleted": self.count(self.deleted, section), "kept": self.count(self.kept, section)}
+               for section in TAIL_SECTIONS},
+            "freed": self.freed,
+            "kept": [{"section": entry.section, "label": entry.label, "reason": entry.reason} for entry in self.kept],
+            "message": self.message,
+        }
+
+
+def _pages(read: Callable[[UUID | None], list], size: int = 500) -> list:
+    items: list = []
+    after = None
+    while True:
+        page = list(read(after))
+        items.extend(page)
+        if len(page) < size:
+            return items
+        after = page[-1].id
+
+
+def request_matches_project(canon: str, request: Request) -> bool:
+    """Заявка проекта — по № проекта, по цели или по обозначению «проект.NNN», как `project_request_count`."""
+    return canon in (
+        normalize_project_number(request.project_reference) if request.project_reference else "",
+        project_from_purpose(request.purpose),
+        project_from_purpose(request.designation),
+    )
+
+
+def purge_project_tails(
+    project: str, actor: Actor, now: datetime, *,
+    fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None = None,
+    production_uow: Callable[[], Any] | None = None,
+    requests_uow: Callable[[], RequestsUnitOfWork] | None = None,
+    procurement_stages: Any = None,
+    apply: bool = True,
+) -> ProjectTails:
+    """Tails of a deleted project that never moved go; anything with movement stays and is named with a reason.
+
+    Production tasks without recorded work (no box, session, output, defect, «взял/закончил») and not handed to a
+    site whole; kit requests with nothing issued and not picked — their reserve goes back to the lot; purchase
+    requests still «Новый» with no procurement line. The project is matched exactly after normalisation
+    (`normalize_project_number` / `project_from_purpose`), so «719К.2» never touches «719К.21». The same code path
+    serves the cascade of `delete_kitset` and the `purge_project_tails` command (``apply=False`` — dry run)."""
+    canon = normalize_project_number(project)
+    if not canon:
+        raise KitsetValidationError("Не указан номер проекта")
+    tails = ProjectTails(project=str(project).strip(), applied=apply)
+    busy_requests: set[UUID] = set()
+
+    if production_uow is not None:
+        with production_uow() as uow:
+            tasks = sorted((task for task in _pages(lambda after: uow.production.list(limit=500, after_id=after))
+                            if normalize_project_number(task.project) == canon), key=lambda task: task.number)
+            worked = uow.production.worked([task.id for task in tasks]) if tasks else set()
+            for task in tasks:
+                label = f"{task.number} · {task.item}"
+                if task.id in worked:
+                    reason = "отмечена работа"
+                elif task.handed_to:
+                    reason = f"отдано в {task.handed_to}, там работу в ERP не отмечают"
+                else:
+                    tails.deleted.append(TailEntry(TAIL_PRODUCTION, label))
+                    if apply:
+                        uow.production.delete(task.id)
+                        uow.audit.add(AuditEvent(
+                            id=uuid4(), aggregate_id=task.id, event_type="production.task_deleted", actor=actor,
+                            occurred_at=now, details={"project": task.project, "number": task.number,
+                                                      "item": task.item, "reason": "project_deleted"},
+                        ))
+                    continue
+                tails.kept.append(TailEntry(TAIL_PRODUCTION, label, reason))
+                if task.fulfillment_request_id is not None:
+                    busy_requests.add(task.fulfillment_request_id)
+            if apply and tasks:
+                uow.commit()
+
+    if fulfillment_uow is not None:
+        with fulfillment_uow() as uow:
+            requests = [request for request in _pages(lambda after: uow.fulfillment.list(limit=500, after_id=after))
+                        if project_from_purpose(request.purpose) == canon]
+        for request in requests:
+            label = f"{request.number} · {request.purpose}"
+            if any(line.issued > 0 for line in request.lines):
+                reason = "по нему уже выдано со склада"
+            elif request.status in _PICKED:
+                reason = "комплект уже собран, разберите его в «Комплектации»"
+            elif request.id in busy_requests:
+                reason = "к нему привязано задание с отмеченной работой"
+            else:
+                if not apply:
+                    tails.deleted.append(TailEntry(TAIL_FULFILLMENT, label))
+                    tails.freed += sum(1 for line in request.lines if line.lot is not None and line.reserved > 0)
+                    continue
+                try:
+                    deleted = delete_fulfillment(DeleteFulfillmentCommand(request.id, actor, now), fulfillment_uow())
+                except (ValueError, KeyError) as error:
+                    reason = f"не удалось удалить: {error}"
+                else:
+                    tails.deleted.append(TailEntry(TAIL_FULFILLMENT, label))
+                    tails.freed += deleted.freed
+                    continue
+            tails.kept.append(TailEntry(TAIL_FULFILLMENT, label, reason))
+
+    if requests_uow is not None:
+        with requests_uow() as uow:
+            requests = sorted((request for request in uow.requests.recent(1_000_000)
+                               if request_matches_project(canon, request)), key=lambda request: request.legacy_id)
+            fresh = [request.id for request in requests if request.status is RequestStatus.NEW]
+            stages = procurement_stages.stages_for(fresh) if procurement_stages is not None and fresh else {}
+            for request in requests:
+                label = f"{request.legacy_id} · {request.name}"
+                if request.status is not RequestStatus.NEW:
+                    tails.kept.append(TailEntry(TAIL_REQUESTS, label, f"уже в закупке («{request.status.value}»)"))
+                    continue
+                if request.id in stages:
+                    tails.kept.append(TailEntry(TAIL_REQUESTS, label, f"уже в закупке («{stages[request.id]}»)"))
+                    continue
+                tails.deleted.append(TailEntry(TAIL_REQUESTS, label))
+                if apply:
+                    uow.requests.delete(request.id)
+                    uow.audit.add(AuditEvent(
+                        id=uuid4(), aggregate_id=request.id, event_type="request.deleted", actor=actor,
+                        occurred_at=now, details={"project": tails.project, "legacy_id": request.legacy_id,
+                                                  "designation": request.designation, "reason": "project_deleted"},
+                    ))
+            if apply and requests:
+                uow.commit()
+    return tails
 
 
 # ── КД (TcKd.gs) ────────────────────────────────────────────────────────
@@ -824,5 +1044,5 @@ __all__ = [
     "ChangeProjectStatusCommand", "change_project_status",
     "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
     "assembly_calc_ops", "generator_bom", "issue_from_kitset", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
-    "supply_rows", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
+    "supply_rows", "ProjectTails", "TailEntry", "purge_project_tails", "request_matches_project", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
 ]
