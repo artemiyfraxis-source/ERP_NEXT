@@ -10,9 +10,9 @@ import {
   type ProductionTask,
 } from "./api";
 import { canAct } from "./navigation";
-import { matchesWords } from "./DataTable";
 import { Gantt, deadlineEnd, parseMoment, type GanttBar, type GanttRow } from "./Gantt";
 import { sharesOf } from "./MasterBoard";
+import { PlanLoadSheet, markText, type SheetMark } from "./PlanLoadSheet";
 
 const emptyPlan: ProductionPlanResult = { blockers: [], stages: [], review_values: [], rows: [] };
 
@@ -30,26 +30,6 @@ function dayMonth(value: string) {
   return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit" }).format(new Date(value.length === 10 ? `${value}T00:00:00` : value));
 }
 
-// SUPPLYMAP PLAN_FILTERS_: «в работе» — not terminal in the registry and not everything shipped.
-const planActive = (row: ProductionPlanRow) => !row.terminal && row.stage !== "Отгружено";
-const PLAN_FILTERS: Array<[string, string, (row: ProductionPlanRow) => boolean]> = [
-  ["active", "В работе", planActive],
-  ["blocked", "С блокером", (row) => planActive(row) && Boolean(row.blocker)],
-  ["late", "Просрочено", (row) => planActive(row) && row.days_left !== null && row.days_left < 0],
-  ["noplan", "Без плана цеха", (row) => planActive(row) && !row.plan && !["В работе", "КБ на складе"].includes(row.stage)],
-  ["all", "Все", () => true],
-];
-
-// planRenderList_ sort: blocked first, then by days to deadline (burning first), no deadline last.
-export function sortPlanRows(rows: ProductionPlanRow[]) {
-  return [...rows].sort((a, b) => {
-    if (Boolean(a.blocker) !== Boolean(b.blocker)) return a.blocker ? -1 : 1;
-    const da = a.days_left ?? 1e9;
-    const db = b.days_left ?? 1e9;
-    return da - db || a.project.localeCompare(b.project, "ru");
-  });
-}
-
 // planDaysTag_
 function daysTag(row: ProductionPlanRow) {
   if (row.days_left === null || !row.deadline) return <span className="plan-tag">без дедлайна</span>;
@@ -57,28 +37,6 @@ function daysTag(row: ProductionPlanRow) {
   const tone = days < 0 ? "late" : days <= 3 ? "soon" : "ok";
   const text = days < 0 ? `просрочен ${-days} дн` : days === 0 ? "дедлайн сегодня" : `${days} дн до ${dayMonth(row.deadline)}`;
   return <span className={`plan-tag ${tone}`} title={`Дедлайн ${shortDate(row.deadline)}`}>{text}</span>;
-}
-
-// planKbText_: how many KBs reached each stage of the ladder.
-export function kbText(row: ProductionPlanRow, stages: string[]) {
-  if (!row.kits.length) return "нет состава";
-  const at = (stage: string) => {
-    const index = stages.indexOf(stage);
-    return row.kits.filter((item) => stages.indexOf(item.status) >= index).length;
-  };
-  return `КБ ${row.kits.length}: ТК ${at("ТК готова")} · набрано ${at("КБ набрана")} · на складе ${at("КБ на складе")}`;
-}
-
-// planSupplyText_: «на складе 12/20 · в пути 5 · в закупке 3 · ждём до 03.10 · давальч. 1/2».
-export function supplyText(supply: ProductionPlanRow["supply"]) {
-  if (!supply) return "заявок нет";
-  const parts = [`на складе ${supply.stock}/${supply.total}`];
-  if (supply.transit) parts.push(`в пути ${supply.transit}`);
-  if (supply.buying) parts.push(`в закупке ${supply.buying}`);
-  if (supply.request) parts.push(`заявка ${supply.request}`);
-  if (supply.eta && supply.stock < supply.total) parts.push(`ждём до ${supply.eta.slice(0, 5)}`);
-  if (supply.customer_supplied) parts.push(`давальч. ${supply.customer_supplied_stock}/${supply.customer_supplied}`);
-  return parts.join(" · ");
 }
 
 // Изделие задания, как в SUPPLYMAP (tcKitItemId_): проект + индекс КБ.
@@ -164,8 +122,6 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   const [loadError, setLoadError] = useState("");
   const [week, setWeek] = useState(0);
   const [selectedProject, setSelectedProject] = useState("");
-  const [filter, setFilter] = useState("active");
-  const [query, setQuery] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -194,11 +150,14 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
       .catch((reason) => setLoadError(reason instanceof Error ? reason.message : "Задания не загружены"));
   }, []);
 
-  const current = PLAN_FILTERS.find(([id]) => id === filter) ?? PLAN_FILTERS[0];
-  const rows = useMemo(() => {
-    // #planQ: № проекта или заказчик — the shared DataTable word search over those two fields.
-    return sortPlanRows(data.rows.filter(current[2]).filter((row) => matchesWords([row.project, row.customer], query)));
-  }, [data.rows, current, query]);
+  const sheetSpan = useMemo(() => {
+    // Календарь листа: сегодня −7 … +60 дней; сервер присылает границы, без них считаем сами.
+    const today = new Date();
+    const iso = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    const shift = (days: number) => iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + days));
+    return { today: data.today ?? shift(0), from: data.calendar_from ?? shift(-7), to: data.calendar_to ?? shift(60) };
+  }, [data.today, data.calendar_from, data.calendar_to]);
+  const activeCount = data.rows.filter((row) => (row.group ?? (row.terminal ? "closed" : "active")) !== "closed").length;
   const selected = data.rows.find((row) => row.project === selectedProject) ?? null;
 
   const span = useMemo(() => {
@@ -227,42 +186,32 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     }
   }
 
+  async function addMark(mark: SheetMark) {
+    await addEvent({ project: mark.project, kind: "mark", blocker: "", text: mark.text ?? "", deadline: null, field: mark.field, value: mark.value ?? "" });
+  }
+
+  function openRow(row: ProductionPlanRow) {
+    // № проекта открывает его карточку (владелец 29.09: панель снизу неудобна); проект без карточки — журнал сбоку.
+    if (openProjectCard && row.kits.length) openProjectCard(row.project);
+    else setSelectedProject(row.project);
+  }
+
   return <section className="page production-plan-page">
     <header className="page-head">
       <h1>Производственный план</h1>
-      <span className="page-count">{rows.length}</span>
+      <span className="page-count">{activeCount}</span>
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
 
-    <section className="panel plan-projects" aria-label="Проекты">
-      <div className="plan-section-head"><h2>Проекты</h2>
-        <div className="plan-filters" role="group" aria-label="Фильтр проектов">
-          {PLAN_FILTERS.map(([id, label, test]) => <button key={id} className={id === current[0] ? "secondary active" : "secondary"} onClick={() => setFilter(id)}>
-            {label}<b>{data.rows.filter(test).length}</b>
-          </button>)}
-          <input aria-label="Поиск проекта" placeholder="№ проекта или заказчик" value={query} onChange={(event) => setQuery(event.target.value)} />
-        </div>
-      </div>
-      <div className="table-wrap"><table className="plan-table">
-        <thead><tr><th>Проект</th><th>Этап</th><th>Дедлайн</th><th>Комплектующие</th><th>План цеха</th><th>Последняя запись</th></tr></thead>
-        <tbody>
-          {rows.map((row) => <tr key={row.project} className={`${row.project === selectedProject ? "selected" : ""}${row.terminal ? " dim" : ""}`}
-            onClick={() => {
-              // Клик по проекту открывает его карточку (владелец 29.09: панель снизу неудобна); проект без карточки —
-              // журнал сбоку, поверх списка.
-              if (openProjectCard && row.kits.length) openProjectCard(row.project);
-              else setSelectedProject(row.project === selectedProject ? "" : row.project);
-            }}>
-            <td><strong>{row.project}</strong><div className="plan-customer">{row.customer}</div></td>
-            <td><div className="plan-tags"><span className="plan-tag stage">{row.stage}</span>{row.blocker && <span className="plan-tag blocker" title={row.blocker.text}>{row.blocker.type}</span>}</div><small>{kbText(row, data.stages)}</small></td>
-            <td><div>{shortDate(row.deadline)}</div>{daysTag(row)}</td>
-            <td><small>{supplyText(row.supply)}</small></td>
-            <td>{row.plan ? <small>{row.plan.start ? dayMonth(row.plan.start) : "без сроков"}{row.plan.finish ? ` – ${dayMonth(row.plan.finish)}` : ""} · {row.plan.tasks} зад. · назначено {row.plan.assigned}/{row.plan.total}</small> : <small className="muted">нет заданий</small>}</td>
-            <td><small>{row.last ? `${dayMonth(row.last.occurred_at)} · ${row.last.text}` : "—"}</small></td>
-          </tr>)}
-          {loaded && !rows.length && <tr><td colSpan={6} className="empty">Под этот фильтр проектов нет.</td></tr>}
-        </tbody>
-      </table></div>
+    <section className="panel plan-projects zg-panel" aria-label="Загрузка цеха">
+      <div className="plan-section-head"><h2>Загрузка цеха</h2><span className="zg-span">{shortDate(sheetSpan.from)} – {shortDate(sheetSpan.to)}</span></div>
+      {!loaded ? <div className="empty">Загрузка…</div>
+        : <PlanLoadSheet rows={data.rows} from={sheetSpan.from} to={sheetSpan.to} today={sheetSpan.today} holidays={holidays}
+          shopStatuses={data.shop_statuses ?? []} suppliedValues={data.supplied_values ?? ["НЕТ", "ДА", "Ч/Т"]}
+          arrivalValues={data.arrival_values ?? ["Склад", "Ждем", "???"]} canEdit={canEdit} busy={busy}
+          onMark={addMark}
+          onDeadline={(project, deadline) => addEvent({ project, kind: "deadline", blocker: "", text: "", deadline })}
+          onOpenProject={openRow} onOpenJournal={(row) => setSelectedProject(row.project)} />}
       {selected && <div className="plan-drawer" role="dialog" aria-label={`Проект ${selected.project}`}>
         <div className="plan-drawer-scrim" onClick={() => setSelectedProject("")} />
         <div className="plan-drawer-body">
@@ -342,7 +291,7 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
       {kind !== "unblock" && <label className="plan-note-text">Комментарий<textarea value={text} onChange={(event) => setText(event.target.value)} /></label>}
       <button className="primary" disabled={busy || !valid} onClick={() => void submit()}>Записать</button>
     </div></section>}
-    <section className="plan-journal"><h3>История</h3>{row.events.map((event) => <article key={event.id}><div><strong>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}</strong><time>{moment(event.occurred_at)}</time></div><p>{event.text || "Без комментария"}</p><small>{event.who}</small></article>)}{!row.events.length && <div className="empty">Записей пока нет.</div>}</section>
+    <section className="plan-journal"><h3>История</h3>{row.events.map((event) => <article key={event.id}><div><strong>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}</strong><time>{moment(event.occurred_at)}</time></div><p>{event.field ? markText(event) : event.text || "Без комментария"}</p><small>{event.who}</small></article>)}{!row.events.length && <div className="empty">Записей пока нет.</div>}</section>
   </aside>;
 }
 
