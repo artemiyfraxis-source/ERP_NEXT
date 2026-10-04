@@ -35,7 +35,13 @@ function added(entered: WarehouseLot[], errors: Array<{ i: number; error: string
   return json({ added: entered.length, lots: entered, assigned: [], errors });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
+
+/** The reference tools of the page sit behind «Ещё ▾». */
+async function openMore() {
+  fireEvent.click(await screen.findByRole("button", { name: /^Ещё/ }));
+  return within(screen.getByRole("menu"));
+}
 
 it("warns instead of printing when nothing is waiting to be put away", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -738,10 +744,11 @@ it("offers «Журнал склада» to the administrator only", async () =>
   const { unmount } = render(<WarehousePage />);
   expect(await screen.findByText("FRX.26.0000001")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Журнал склада" })).not.toBeInTheDocument();
+  expect((await openMore()).queryByRole("menuitem", { name: "Журнал склада" })).not.toBeInTheDocument();
   unmount();
 
   render(<WarehousePage admin />);
-  fireEvent.click(await screen.findByRole("button", { name: "Журнал склада" }));
+  fireEvent.click((await openMore()).getByRole("menuitem", { name: "Журнал склада" }));
   expect(await screen.findByText("Ничего не нашлось.")).toBeInTheDocument();
 });
 
@@ -762,6 +769,10 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   for (const name of ["+ Внести позиции", "↔ Переместить", "Стеллажи", "Типы", "Выгрузить", "Загрузить правки", "Лист перемещения", "− Списать", "✎ Правка"]) {
     expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   }
+  // Nothing is left for «Ещё» to hold, so the menu itself is gone; the read-only tools stay.
+  expect(screen.queryByRole("button", { name: /^Ещё/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Обновить" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Таблица склада" })).toBeInTheDocument();
   expect(requested.every((call) => call === "GET /api/stock")).toBe(true);
 });
 
@@ -814,4 +825,125 @@ it("shows the ГРН assigned to entered rows and copies them tab-separated", as
   expect(await screen.findByText("Записано на склад: 1")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Скопировать" }));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith("OLD.26.0000007\tCON-001\t10 шт\t1F4\tЦАР"));
+});
+
+it("keeps the daily actions in the row and the reference tools behind «Ещё ▾»", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  for (const name of ["+ Внести позиции", "↔ Переместить", "Лист перемещения", "Обновить"]) {
+    expect(screen.getByRole("button", { name })).toBeInTheDocument();
+  }
+  // Not in the row any more, and not rendered while the menu is closed.
+  for (const name of ["Стеллажи", "Типы", "Выгрузить", "Загрузить правки", "Журнал склада"]) {
+    expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name })).not.toBeInTheDocument();
+  }
+  const trigger = screen.getByRole("button", { name: /^Ещё/ });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+  const menu = await openMore();
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(menu.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Стеллажи", "Типы", "Выгрузить", "Загрузить правки"]);
+});
+
+it("«Ещё ▾» holds «Журнал склада» too for the administrator", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage admin />);
+  const menu = await openMore();
+  expect(menu.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Стеллажи", "Типы", "Выгрузить", "Загрузить правки", "Журнал склада"]);
+});
+
+it("a menu item runs its action and closes the menu; Escape and a tap outside close it as well", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  fireEvent.click((await openMore()).getByRole("menuitem", { name: "Загрузить правки" }));
+  expect(screen.getByRole("region", { name: "Загрузить правки склада" })).toBeInTheDocument();
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+  const trigger = screen.getByRole("button", { name: /^Ещё/ });
+  await openMore();
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+
+  await openMore();
+  fireEvent.pointerDown(document.body);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+  // Pressing the trigger again closes it, too.
+  await openMore();
+  fireEvent.click(trigger);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+});
+
+it("the column the rows are grouped by is the group header, not a column of every row", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  // Grouped by series (the default): «Серия» is the header «LOT-2409 · 1».
+  expect(screen.queryByRole("columnheader", { name: "Серия" })).not.toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Тип" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "type" } });
+  expect(screen.getByRole("columnheader", { name: "Серия" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Тип" })).not.toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
+  expect(screen.getByRole("columnheader", { name: "Серия" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Тип" })).toBeInTheDocument();
+});
+
+it("«Колонки» switches the optional columns off and remembers the choice; the name stays", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+
+  const { unmount } = render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  const headers = () => screen.getAllByRole("columnheader").map((header) => header.textContent?.replace(/\s*[▲▼]$/, ""));
+  expect(headers()).toEqual(["Наименование", "Артикул", "ГРН", "Остаток", "Партий", "Места", "Склад", "Тип"]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  const chooser = within(screen.getByRole("group", { name: "Показывать колонки" }));
+  expect(chooser.queryByLabelText("Наименование")).not.toBeInTheDocument();
+  expect(chooser.queryByLabelText("Серия")).not.toBeInTheDocument();
+  fireEvent.click(chooser.getByLabelText("Места"));
+  fireEvent.click(chooser.getByLabelText("Тип"));
+  expect(headers()).toEqual(["Наименование", "Артикул", "ГРН", "Остаток", "Партий", "Склад"]);
+  expect(screen.getByText("GHR-04V-S")).toBeInTheDocument();
+  unmount();
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  expect(headers()).toEqual(["Наименование", "Артикул", "ГРН", "Остаток", "Партий", "Склад"]);
+});
+
+it("the lot table follows the same columns; «Назначение» is off until asked for", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
+  const table = screen.getByRole("table", { name: "Таблица склада" });
+  const headers = () => within(table).getAllByRole("columnheader").map((header) => header.textContent);
+  expect(headers()).toEqual(["Наименование", "Артикул", "ГРН", "Остаток", "Доступно", "Место", "Склад", "Серия", "Тип"]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  fireEvent.click(screen.getByLabelText("Назначение"));
+  expect(headers()).toContain("Назначение");
+  expect(within(table).getByText("FRX.001")).toBeInTheDocument();
+});
+
+it("a long name is cut to its column and carries the full text as a tooltip", async () => {
+  const long = "Разъём вилка GHR-04V-S, 4 контакта, шаг 1.25 мм, угловой, на плату, позолоченный";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [{ ...lot, name: long }], total: 1, truncated: 0, next_cursor: null }));
+
+  render(<WarehousePage />);
+  const name = await screen.findByRole("button", { name: "Показать партии (1)" });
+  expect(name).toHaveTextContent(long);
+  expect(name).toHaveAttribute("title", long);
+  expect(screen.getByText("GHR-04V-S").closest("td")).toHaveAttribute("title", "GHR-04V-S");
 });
