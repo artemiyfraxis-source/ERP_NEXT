@@ -108,30 +108,38 @@ function daysTone(days: number | null) {
 }
 
 type ColumnKey = ProductionPlanSheetField | "project" | "customer" | "days_left" | "deadline";
-interface Column { key: ColumnKey; label: string; width: number; wide?: boolean; title?: string }
+/** `label` — короткая подпись в одну строку; `name` — полное название колонки листа (подсказка и доступное имя). */
+interface Column { key: ColumnKey; label: string; name: string; width: number; wide?: boolean; left?: boolean; hint?: string }
 
-// Порядок и названия — как в листе «ЗАГРУЗ». Первые пять закреплены всегда, остальные — на широком экране.
+// Порядок — как в листе «ЗАГРУЗ»; ширина — по содержимому, подпись — короткая. Первые пять колонок закреплены
+// всегда, остальные — на широком экране (≥1900 px), чтобы календарь начинался сразу за ними.
 const COLUMNS: Column[] = [
-  { key: "comment", label: "Комментарий", width: 176 },
-  { key: "status", label: "Статус", width: 150 },
-  { key: "ready", label: "% Готов", width: 54 },
-  { key: "in_plan", label: "В плане", width: 46 },
-  { key: "project", label: "№ Проекта", width: 92 },
-  { key: "customer", label: "Наименование организации", width: 168, wide: true },
-  { key: "customer_supplied", label: "Есть давал", width: 58, wide: true, title: "Давальческие комплектующие: НЕТ, ДА или Ч/Т — частично" },
-  { key: "kit_checked", label: "Пров компл", width: 46, wide: true, title: "Комплектация проверена" },
-  { key: "kit_present", label: "Компл есть", width: 46, wide: true, title: "Все комплектующие на складе" },
-  { key: "zkp", label: "ЗКП", width: 42, wide: true, title: "Авто: на проект есть заявки" },
-  { key: "kit_arrival", label: "Дата прихода компл.", width: 78, wide: true },
-  { key: "tc_ready", label: "Тех кар", width: 46, wide: true, title: "На каждую КБ выдана ТК" },
-  { key: "test_sb", label: "Тест С/Б", width: 46, wide: true },
-  { key: "kit_picked", label: "Компл набр", width: 46, wide: true, title: "Каждая КБ набрана" },
-  { key: "days_left", label: "Ост дн", width: 50, wide: true },
-  { key: "deadline", label: "Дедлайн", width: 80, wide: true },
+  { key: "comment", label: "Комментарий", name: "Комментарий", width: 120, left: true },
+  { key: "status", label: "Статус", name: "Статус", width: 116, left: true },
+  { key: "ready", label: "Готов %", name: "% Готов", width: 54, hint: "выпуск против количества задания, по норме" },
+  { key: "in_plan", label: "В плане", name: "В плане", width: 54, hint: "на проект назначены операции" },
+  { key: "project", label: "№", name: "№ Проекта", width: 78, left: true },
+  { key: "customer", label: "Заказчик", name: "Наименование организации", width: 136, wide: true, left: true },
+  { key: "customer_supplied", label: "Давал", name: "Есть давал", width: 48, wide: true, hint: "давальческие комплектующие: НЕТ, ДА или Ч/Т — частично" },
+  { key: "kit_checked", label: "Пров.", name: "Пров компл", width: 44, wide: true, hint: "комплектация проверена" },
+  { key: "kit_present", label: "Компл.", name: "Компл есть", width: 52, wide: true, hint: "все комплектующие на складе" },
+  { key: "zkp", label: "ЗКП", name: "ЗКП", width: 40, wide: true, hint: "авто: на проект есть заявки" },
+  { key: "kit_arrival", label: "Приход", name: "Дата прихода компл.", width: 54, wide: true, hint: "когда придут комплектующие" },
+  { key: "tc_ready", label: "ТК", name: "Тех кар", width: 36, wide: true, hint: "на каждую КБ выдана ТК" },
+  { key: "test_sb", label: "Тест С/Б", name: "Тест С/Б", width: 60, wide: true },
+  { key: "kit_picked", label: "Набр.", name: "Компл набр", width: 46, wide: true, hint: "каждая КБ набрана" },
+  { key: "days_left", label: "Ост. дн", name: "Ост дн", width: 52, wide: true, hint: "дней до дедлайна" },
+  { key: "deadline", label: "Дедлайн", name: "Дедлайн", width: 66, wide: true },
 ];
 const FLAG_FIELDS = new Set<ColumnKey>(["in_plan", "kit_checked", "kit_present", "zkp", "tc_ready", "test_sb", "kit_picked"]);
 const LEFTS = COLUMNS.reduce<number[]>((lefts, column, index) => [...lefts, index ? lefts[index - 1] + COLUMNS[index - 1].width : 0], []);
 const NARROW_EDGE = COLUMNS.findIndex((column) => column.key === "project");
+const FROZEN_WIDTH = COLUMNS.reduce((sum, column) => sum + column.width, 0);
+
+/** Подсказка к шапке: полное название колонки листа и, где нужно, что она значит. */
+export function columnTitle(column: Pick<Column, "name" | "hint">) {
+  return column.hint ? `${column.name} — ${column.hint}` : column.name;
+}
 
 type Editing = { project: string; field: string; top: number; left: number };
 
@@ -187,31 +195,32 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
       <input aria-label="Поиск проекта" placeholder="№ проекта или заказчик" value={query} onChange={(event) => setQuery(event.target.value)} />
       {groups.closed.length > 0 && <label className="zg-toggle"><input type="checkbox" checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} />Закрытые проекты · {groups.closed.length}</label>}
       <span className="zg-legend" aria-label="Обозначения">
-        <span><i className="zg-key-bar" />плановые работы</span>
-        <span><i className="zg-key-qty">12</i>запуск, шт</span>
-        <span><i className="zg-key-arrival" />приход комплектующих</span>
-        <span><i className="zg-key-deadline" />дедлайн</span>
-        <span><i className="zg-key-manual" />отмечено вручную</span>
+        <span title="Плановые работы по проекту"><i className="zg-key-bar" />работы</span>
+        <span title="Количество запуска в штуках"><i className="zg-key-qty">12</i>запуск, шт</span>
+        <span title="День прихода комплектующих"><i className="zg-key-arrival" />приход</span>
+        <span title="Дедлайн проекта"><i className="zg-key-deadline" />дедлайн</span>
+        <span title="Значение поставлено вручную поверх расчёта ERP"><i className="zg-key-manual" />вручную</span>
       </span>
     </div>
     <div className="zg-wrap">
-      <table className="zg-table" aria-label="Загрузка цеха по проектам">
+      <table className="zg-table" aria-label="Загрузка цеха по проектам" style={{ width: `calc(${FROZEN_WIDTH}px + ${days.length} * var(--zg-day))` }}>
         <colgroup>
           {COLUMNS.map((column) => <col key={column.key} style={{ width: column.width }} />)}
           {days.map((day) => <col key={day.iso} className="zg-day-col" />)}
         </colgroup>
         <thead>
           <tr>
-            {COLUMNS.map((column, index) => <th key={column.key} title={column.title} {...frozen(index)}>{column.label}</th>)}
-            {days.map((day) => <th key={day.iso} className={dayClass(day, today, "zg-day-head")}><span>{day.weekday}</span>{day.label}</th>)}
+            {COLUMNS.map((column, index) => <th key={column.key} title={columnTitle(column)} {...frozen(index, column.left ? "zg-left" : "")}>{column.label}</th>)}
+            {days.map((day) => <th key={day.iso} className={dayClass(day, today, "zg-day-head")}
+              title={`${day.weekday} ${formatDate(day.iso)}${day.iso === today ? " · сегодня" : ""}`}><span>{day.weekday}</span>{day.label}</th>)}
           </tr>
         </thead>
         <tbody>
           {visible.map(([group, label]) => groups[group].length > 0 && <SheetGroupRows key={group} group={group} label={label} rows={groups[group]}
             days={days} today={today} canEdit={canEdit} busy={busy} suppliedValues={suppliedValues}
             open={open} mark={mark} onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} />)}
-          {!shown && <tr><td colSpan={COLUMNS.length + days.length} className="empty zg-empty">
-            {query ? "Под этот поиск проектов нет." : "Проектов в плане нет — заведите проект в «Проектах»."}
+          {!shown && <tr><td colSpan={COLUMNS.length + days.length} className="zg-empty">
+            <span className="zg-empty-text">{query ? "Под этот поиск проектов нет." : "Проектов в плане нет — заведите проект в «Проектах»."}</span>
           </td></tr>}
         </tbody>
       </table>
@@ -295,7 +304,7 @@ function SheetCellView({ column, index, row, canEdit, busy, suppliedValues, open
     return td(<button className="zg-project" title={row.kits.length ? "Открыть карточку проекта" : "Открыть журнал проекта"} onClick={() => onOpenProject(row)}>{row.project}</button>);
   }
   if (key === "customer") {
-    return td(<button className="zg-link" title="Журнал проекта" onClick={() => onOpenJournal(row)}>{row.customer || "—"}</button>);
+    return td(<button className="zg-link" title={row.customer ? `${row.customer} — журнал проекта` : "Журнал проекта"} onClick={() => onOpenJournal(row)}>{row.customer || "—"}</button>);
   }
   if (key === "days_left") {
     return td(row.days_left ?? "", `zg-days ${daysTone(row.days_left)}`);
@@ -307,28 +316,28 @@ function SheetCellView({ column, index, row, canEdit, busy, suppliedValues, open
   const value = cell?.value ?? "";
   if (FLAG_FIELDS.has(key)) {
     const checked = value === "да";
-    return td(<input type="checkbox" aria-label={`${column.label} · ${row.project}`} checked={checked} disabled={!canEdit || busy}
+    return td(<input type="checkbox" aria-label={`${column.name} · ${row.project}`} checked={checked} disabled={!canEdit || busy}
       onChange={(event) => {
         const next = event.target.checked ? "да" : "нет";
         // Вернули расчётное значение — ручная отметка снимается.
         void mark(row.project, key, next === cell?.auto ? "авто" : next);
-      }} />, "zg-center", { title: manualTitle(cell) ?? column.title });
+      }} />, "zg-center", { title: manualTitle(cell) ?? columnTitle(column) });
   }
   if (key === "customer_supplied") {
     return td(canEdit
-      ? <select aria-label={`${column.label} · ${row.project}`} className={`zg-supplied s-${value === "Ч/Т" ? "part" : value === "ДА" ? "yes" : "no"}`}
+      ? <select aria-label={`${column.name} · ${row.project}`} className={`zg-supplied s-${value === "Ч/Т" ? "part" : value === "ДА" ? "yes" : "no"}`}
         value={cell?.manual ? value : "авто"} disabled={busy}
         onChange={(event) => void mark(row.project, key, event.target.value === cell?.auto ? "авто" : event.target.value)}>
         <option value="авто">{cell?.auto ?? "НЕТ"}</option>
         {suppliedValues.filter((item) => item !== cell?.auto).map((item) => <option key={item} value={item}>{item}</option>)}
       </select>
       : <span className={`zg-supplied s-${value === "Ч/Т" ? "part" : value === "ДА" ? "yes" : "no"}`}>{value}</span>,
-    "zg-center", { title: manualTitle(cell) ?? column.title });
+    "zg-center", { title: manualTitle(cell) ?? columnTitle(column) });
   }
   const click = { onClick: (event: MouseEvent<HTMLElement>) => open(event, row.project, key) };
   if (key === "status") {
     return td(<span className="zg-chips">{statusList(value).map((item) => <span key={item} className={`zg-chip t-${STATUS_TONES[item] ?? "erp"}`}>{item}</span>)}</span>,
-      editable, { title: manualTitle(cell) ?? (row.blocker ? `${row.blocker.type}: ${row.blocker.text}` : undefined), ...click });
+      editable, { title: [value, manualTitle(cell), row.blocker ? `${row.blocker.type}: ${row.blocker.text}` : ""].filter(Boolean).join(" — ") || undefined, ...click });
   }
   if (key === "ready") {
     const percent = Number(value);
