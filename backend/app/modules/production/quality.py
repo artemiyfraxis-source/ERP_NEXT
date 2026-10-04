@@ -144,7 +144,8 @@ def inspect_box(command: InspectBoxCommand, uow: QualityUnitOfWork) -> tuple[Pro
         task = uow.production.get(box.task_id)
         if task is None:
             raise KeyError(f"Production task not found: {box.task_id}")
-        if box.operation_position != max(operation.position for operation in task.operations):
+        # Сетевой график: ОТК принимает выход финальной операции (из неё выходит изделие), а не max номера.
+        if box.operation_id != task.final_operation.id:
             raise ProductionValidationError("ОТК принимает только выход последней операции")
         if box.available != box.available.to_integral_value():
             raise ProductionValidationError("Поштучный контроль требует целого количества")
