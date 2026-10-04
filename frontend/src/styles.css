@@ -1026,8 +1026,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .filter-tag { display: inline-flex; align-items: center; gap: 4px; border: 1px solid color-mix(in srgb, var(--primary) 35%, white); border-radius: 999px; padding: 3px 10px; color: var(--foreground); background: color-mix(in srgb, var(--primary) 9%, white); font-size: 12.5px; }
 .filter-tag span { color: var(--muted-foreground); }
 .filter-tags .link-button { padding: 0 4px; font-size: 12.5px; }
-.action-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
-.action-row .compact { padding: 7px 13px; font-size: 13px; }
 .stock-search { flex: 1 1 320px; max-width: 640px; }
 .table-toolbar select { width: auto; }
 .panel .filters { background: var(--card); }
@@ -1041,21 +1039,59 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 
 /* Склад как «Склад 0.5» в SUPPLYMAP: плотная таблица по сериям, партии карточками. */
 .stock-hint { max-width: 900px; margin: 10px 0 12px; }
-.stock-toolbar { align-items: center; }
+/* Экран 16" ≈ 1536 px (и 1400 планшета): заголовок + действия в одной строке, фильтры в одной, таблица без
+   горизонтальной прокрутки — наименование забирает остаток ширины и обрезается «…» (полный текст в подсказке). */
+.stock-page { padding-bottom: 12px; }
+.stock-page .page-head { flex-wrap: wrap; row-gap: 8px; margin-bottom: 8px; }
+.stock-page .page-actions { flex-wrap: wrap; align-items: center; }
+.stock-page .page-actions > button, .stock-page .more-menu > button, .stock-toolbar button { height: 36px; padding: 0 14px; font-size: 13px; white-space: nowrap; }
+.stock-toolbar { align-items: center; gap: 8px 14px; margin-bottom: 8px; }
+.stock-toolbar .search, .stock-toolbar select { height: 36px; padding: 0 10px; font-size: 13px; }
 .stock-toolbar .inline-select { display: flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; }
 .stock-toolbar .inline-select select { width: auto; }
 .stock-toolbar > select { width: auto; }
+.stock-toolbar .toolbar-end { gap: 6px; }
+.stock-page .column-chooser { margin-bottom: 8px; padding: 4px 12px 8px; }
+.stock-page .column-chooser legend { padding: 0 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.more-menu { position: relative; }
+.more-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: grid; min-width: 200px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .14); }
+.more-menu-list button { height: 34px; border: 0; border-radius: 6px; padding: 0 12px; color: var(--foreground); background: none; font-size: 13px; text-align: left; white-space: nowrap; }
+.more-menu-list button:hover:not(:disabled), .more-menu-list button:focus-visible { background: var(--accent); }
 .stock-table th .th-sort { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
 .stock-table .stock-grn { color: var(--muted-foreground); font-size: 12.5px; }
-/* Колонки по содержимому, остаток ширины забирает «Наименование» (последняя): без пустот между колонками на 27". */
-.stock-table > thead > tr > th, .stock-table > tbody > tr:not(.stock-group-row):not(.stock-cards-row) > td { width: 1%; }
-.stock-table > thead > tr > th.stock-name, .stock-table > tbody > tr:not(.stock-group-row):not(.stock-cards-row) > td.stock-name { width: auto; max-width: none; }
-.stock-table > thead > tr > th, .stock-table > tbody > tr > td { white-space: nowrap; }
-.stock-table td.text:not(.stock-name) { white-space: nowrap; min-width: 0; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-.stock-table td.stock-name { white-space: normal; }
-.stock-group-row td { text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+/* The table fits the box: fixed layout, fixed narrow columns, a few columns in percent so a 27" screen shares its
+   extra width instead of leaving one huge name column; the name takes the rest. Below ~1040 px of box it scrolls
+   inside its own frame with the name column frozen. */
+.stock-page > .table-wrap { max-height: max(360px, calc(100dvh - 172px)); overflow: auto; }
+.stock-table { table-layout: fixed; width: 100%; min-width: 1040px; }
+.stock-page .stock-table > thead > tr > th, .stock-page .stock-table > tbody > tr > td { padding: 6px 10px; white-space: nowrap; }
+.stock-table > thead > tr > th { overflow: hidden; text-overflow: ellipsis; }
+.stock-table td.cut, .stock-table td.stock-name { overflow: hidden; text-overflow: ellipsis; }
+/* The name is the key of the row (bold, dark like DataTable's key column): the whole row opens the lots, so it need not look like a link. */
+.stock-table td.stock-name .table-link { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: inherit; font-weight: 600; color: var(--foreground); }
+.stock-table td.stock-name .table-link:hover { color: var(--primary); }
+.stock-table .num { min-width: 0; }
+.stock-col-article { width: 15%; }
+.stock-col-grn { width: 128px; }
+.stock-col-balance { width: 98px; }
+.stock-col-lots { width: 76px; }
+.stock-col-available { width: 96px; }
+.stock-col-place { width: 12%; }
+.stock-col-warehouse { width: 64px; }
+.stock-col-purpose { width: 104px; }
+.stock-col-series { width: 12%; }
+.stock-col-type { width: 126px; }
+.stock-table td.stock-name, .stock-table th.stock-name { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 var(--border); }
+.stock-table > thead > tr > th.stock-name { z-index: 3; }
+.stock-table > tbody > tr.stock-group-row > td { background: #e9f0ef; color: #38504d; text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+/* The group header stays in view when the table is scrolled sideways: its label is pinned, the band spans the row. */
+.stock-group-label { position: sticky; left: 10px; }
 .stock-article-row.open td { background: #eaf6f4; }
-.stock-cards-row > td { background: #f6f8f8; padding: 12px 16px; }
+.stock-table > tbody > tr.stock-cards-row > td { background: #f6f8f8; padding: 12px 16px; white-space: normal; }
+.stock-cards-row .lot-cards { position: sticky; left: 16px; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 32px); }
+/* Tablet: the bar with «☰» takes a row; no hover there, so a long name wraps to two lines instead of hiding in a tooltip. */
+@media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) { .stock-page > .table-wrap { max-height: max(360px, calc(100dvh - 224px)); } }
+@media (pointer: coarse) { .stock-table td.stock-name .table-link { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; } }
 .lot-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
 .lot-card { display: grid; gap: 8px; align-content: start; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--card); white-space: normal; }
 .lot-card.busy { opacity: .6; }
