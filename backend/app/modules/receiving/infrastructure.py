@@ -8,14 +8,14 @@ from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, or_, select, text
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, func, or_, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.identity import Actor
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
 from .application import StoredReceivingFile
-from .domain import ReceivingLine, ReceivingStatus
+from .domain import EXPECTED_ARRIVAL_FOLLOWS, ReceivingLine, ReceivingStatus
 
 
 class ReceivingLineRow(Base):
@@ -372,6 +372,41 @@ class SqlAlchemyReceivingRepository:
             for procurement_line_id, status in rows:
                 statuses.setdefault(procurement_line_id, []).append(status)
         return statuses
+
+    def latest_inspection_by_procurement_line(self, procurement_line_ids) -> dict[UUID, date]:
+        """ФАКТ. ДАТА of each procurement line: the latest ВК date over all its delivery rows (batches, archive)."""
+        ids = list(procurement_line_ids)
+        latest: dict[UUID, date] = {}
+        for start in range(0, len(ids), 500):
+            rows = self.session.execute(
+                select(ReceivingLineRow.procurement_line_id, func.max(ReceivingLineRow.inspected_on))
+                .where(
+                    ReceivingLineRow.procurement_line_id.in_(ids[start:start + 500]),
+                    ReceivingLineRow.inspected_on.is_not(None),
+                )
+                .group_by(ReceivingLineRow.procurement_line_id)
+            )
+            for procurement_line_id, inspected_on in rows:
+                if inspected_on is not None:
+                    latest[procurement_line_id] = inspected_on
+        return latest
+
+    def open_by_procurement_lines(self, procurement_line_ids) -> list[ReceivingLine]:
+        """Delivery rows still waited for (В пути / Ожидание / Карантин) of the given procurement lines."""
+        ids = list(procurement_line_ids)
+        open_statuses = [status.value for status in EXPECTED_ARRIVAL_FOLLOWS]
+        found: list[ReceivingLine] = []
+        for start in range(0, len(ids), 500):
+            rows = self.session.scalars(
+                select(ReceivingLineRow)
+                .where(
+                    ReceivingLineRow.procurement_line_id.in_(ids[start:start + 500]),
+                    ReceivingLineRow.status.in_(open_statuses),
+                )
+                .order_by(ReceivingLineRow.created_at, ReceivingLineRow.id)
+            )
+            found.extend(_domain(row) for row in rows)
+        return found
 
     def by_status(self, status: ReceivingStatus, limit: int = 500) -> list[ReceivingLine]:
         rows = self.session.scalars(
