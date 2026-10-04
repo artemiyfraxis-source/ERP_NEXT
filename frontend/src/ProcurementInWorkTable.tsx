@@ -1,14 +1,17 @@
 import { Fragment, useState, type ClipboardEvent, type ReactNode } from "react";
 import { ApiError, failureText, procurementApi, type ProcurementLine } from "./api";
 import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
+import { RowMenu } from "./ProcurementRowMenu";
 
 const fmtQty = (value: number) => String(Math.round(value * 1e6) / 1e6).replace(".", ",");
 
 /* «Мои позиции» в статусе «В работе»: одна строка таблицы на позицию, обязательные поля — прямо в ячейках
-   (Поставщик, Площадка, Факт. кол-во, Ед., Артикул, Уточнённое наименование, Ссылка). Правленые строки
-   сохраняются одной кнопкой «Сохранить всё» через тот же пакетный вызов, что и «Заполнить данные».
-   Редкие действия (замена, прослеживаемость, раздробить, согласование, отмена) — в меню «⋯» строки;
-   новый пункт меню — одна строка в массиве `menuItems` ниже. */
+   (Поставщик, Наименование на сайте, Факт. кол-во, Ед., Артикул, Уточнённое наименование, Ссылка). Правленые
+   строки сохраняются одной кнопкой «Сохранить всё» через тот же пакетный вызов, что и «Заполнить данные».
+   Для контекста слева от правки — то, что SUPPLYMAP показывает в «Заполнить данные»: тип задачи, приоритет,
+   категория, тип, кол-во и ед. по расчёту. Редкие действия (прослеживаемость, раздробить, согласование,
+   отмена) — в меню «⋯» строки; новый пункт меню — одна строка в массиве `menuItems` ниже.
+   «Наименование на сайте» — поле НАИМЕНОВАНИЕ (Сайт): оно печатается названием позиции в письме поставщику. */
 
 export const LINK_HINT = "Ссылка на товар у поставщика. Если позиция есть на складе — «Со склада» в меню строки";
 
@@ -34,7 +37,7 @@ type Field = keyof InWorkDraft;
 // Порядок колонок — он же порядок вставки из Excel.
 const FIELDS: { key: Field; title: string; width: number }[] = [
   { key: "supplier", title: "Поставщик *", width: 170 },
-  { key: "site_name", title: "Площадка", width: 120 },
+  { key: "site_name", title: "Наименование на сайте", width: 190 },
   { key: "actual_quantity", title: "Факт. кол-во *", width: 90 },
   { key: "actual_unit", title: "Ед. *", width: 70 },
   { key: "design_article", title: "Артикул", width: 130 },
@@ -54,6 +57,17 @@ export function inWorkDraftOf(line: ProcurementLine): InWorkDraft {
   };
 }
 
+// Из заявки, только для чтения (PURCHASE_INWORK_COLS_ в Portal.gs: ТИП ЗАДАЧИ … ЕД.ИЗМ (Расчет)).
+const CONTEXT: { key: string; title: string; width: number; value: (line: ProcurementLine) => string }[] = [
+  { key: "task_type", title: "Тип задачи", width: 90, value: (line) => line.task_type ?? "" },
+  { key: "priority", title: "Приоритет", width: 90, value: (line) => line.priority ?? "" },
+  { key: "category", title: "Категория", width: 100, value: (line) => line.category ?? "" },
+  { key: "item_type", title: "Тип", width: 100, value: (line) => line.item_type ?? "" },
+  { key: "calculated_quantity", title: "Кол-во (расчёт)", width: 80, value: (line) => line.calculated_quantity },
+  { key: "calculated_unit", title: "Ед. (расчёт)", width: 70, value: (line) => line.calculated_unit },
+];
+const COLUMN_COUNT = 1 + CONTEXT.length + FIELDS.length + 1; // позиция + контекст + правка + меню
+
 type Stored = { version: number; values: InWorkDraft };
 type Update = { line: ProcurementLine; key: Field; value: string };
 
@@ -72,7 +86,6 @@ export function ProcurementInWorkTable({ lines, units, disabled, busyId, onChang
   const [edits, setEdits] = useState<Record<string, Stored>>({});
   const [invalid, setInvalid] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(null);
-  const [menu, setMenu] = useState<string | null>(null);
   const [stockFor, setStockFor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -224,6 +237,7 @@ export function ProcurementInWorkTable({ lines, units, disabled, busyId, onChang
           <thead>
             <tr>
               <th>Позиция</th>
+              {CONTEXT.map((column) => <th key={column.key} style={{ minWidth: column.width }}>{column.title}</th>)}
               {FIELDS.map((field) => <th key={field.key} style={{ minWidth: field.width }} title={field.key === "link" ? LINK_HINT : undefined}>{field.title}</th>)}
               <th aria-label="Действия" />
             </tr>
@@ -231,10 +245,10 @@ export function ProcurementInWorkTable({ lines, units, disabled, busyId, onChang
           <tbody>
             {lines.map((line, rowIndex) => {
               const covered = coveredOf(line);
-              const menuItems: { label: string; disabled?: boolean; title?: string; run?: () => void }[] = [
+              const menuItems: { label: string; disabled?: boolean; title?: string; run: () => void }[] = [
                 { label: "Со склада", run: () => { setOpen(null); setStockFor(stockFor === line.id ? null : line.id); } },
                 ...(covered > 0 ? [{ label: "Снять «Со склада»", run: () => void releaseStock(line) }] : []),
-                { label: "Замена, прослеживаемость, раздробить…", run: () => { setStockFor(null); setOpen(open === line.id ? null : line.id); } },
+                { label: "Прослеживаемость, раздробить…", run: () => { setStockFor(null); setOpen(open === line.id ? null : line.id); } },
                 { label: "На согласование", run: () => onPutOnApproval(line) },
                 { label: "Отменить строку", run: () => onCancel(line) },
               ];
@@ -243,23 +257,16 @@ export function ProcurementInWorkTable({ lines, units, disabled, busyId, onChang
                   <tr className={isEdited(line) ? "edited" : undefined}>
                     <td className="inwork-name">
                       <strong>{line.legacy_id}</strong> <span title={`${line.calculated_name} · ${line.designation}`}>{line.calculated_name}</span>
-                      <small> · {line.calculated_quantity} {line.calculated_unit}</small>
                       {covered > 0 && <small className="stock-note"> · со склада: {fmtQty(covered)} {line.calculated_unit} · к закупке: {fmtQty(Number(toBuyOf(line)))}</small>}
                     </td>
+                    {CONTEXT.map((column) => <td key={column.key} className="inwork-context">{column.value(line)}</td>)}
                     {FIELDS.map((field, colIndex) => <td key={field.key}>{cell(line, rowIndex, colIndex)}</td>)}
                     <td className="inwork-menu">
-                      <button type="button" className="secondary small" aria-label={`Действия ${line.legacy_id}`} aria-expanded={menu === line.id} disabled={disabled || busyId === line.id} onClick={() => setMenu(menu === line.id ? null : line.id)}>⋯</button>
-                      {menu === line.id && (
-                        <div className="inwork-popup" role="menu">
-                          {menuItems.map((item) => (
-                            <button key={item.label} type="button" role="menuitem" disabled={item.disabled} title={item.title} onClick={() => { setMenu(null); item.run?.(); }}>{item.label}</button>
-                          ))}
-                        </div>
-                      )}
+                      <RowMenu label={`Действия ${line.legacy_id}`} disabled={disabled || busyId === line.id} items={menuItems} />
                     </td>
                   </tr>
                   {stockFor === line.id && (
-                    <tr className="inwork-detail"><td colSpan={FIELDS.length + 2}>
+                    <tr className="inwork-detail"><td colSpan={COLUMN_COUNT}>
                       <ProcurementStockPicker
                         line={line}
                         disabled={disabled}
@@ -268,7 +275,7 @@ export function ProcurementInWorkTable({ lines, units, disabled, busyId, onChang
                       />
                     </td></tr>
                   )}
-                  {open === line.id && <tr className="inwork-detail"><td colSpan={FIELDS.length + 2}>{renderDetail(line)}</td></tr>}
+                  {open === line.id && <tr className="inwork-detail"><td colSpan={COLUMN_COUNT}>{renderDetail(line)}</td></tr>}
                 </Fragment>
               );
             })}

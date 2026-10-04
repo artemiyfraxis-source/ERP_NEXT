@@ -150,6 +150,22 @@ const awaitingInvoice: ProcurementLine = {
   actual_unit: "шт",
 };
 
+/** Меню «⋯» строки стадии → пункт меню (кнопка ждёт конца перезагрузки очереди). */
+async function pickRowAction(id: string, item: string | RegExp) {
+  await clickWhenEnabled(`Действия ${id}`);
+  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+}
+
+async function clickWhenEnabled(name: string | RegExp) {
+  await waitFor(() => expect(screen.getByRole("button", { name })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name }));
+}
+
+/** «Жду счет»: строки заказа раскрываются по строке таблицы заказов. */
+async function openOrder(number: string) {
+  fireEvent.click(await screen.findByText(number));
+}
+
 function problem(status: number, detail: unknown) {
   return new Response(JSON.stringify({ detail }), {
     status,
@@ -176,6 +192,8 @@ it("keeps the invoice closed until fact money is saved with the edited field as 
   });
 
   render(<ProcurementPage />);
+  await openOrder("Без № заказа");
+  await pickRowAction("REQ-1", "Суммы и счёт строки…");
   const toPay = await screen.findByRole("button", { name: "В оплату" });
   expect(toPay).toBeDisabled();
   expect(screen.getByText(/Для счёта не хватает: ВАЛЮТА/)).toBeInTheDocument();
@@ -210,6 +228,8 @@ it("asks for a manual rate when the CBR is down and resends the money with it", 
   });
 
   render(<ProcurementPage />);
+  await openOrder("Без № заказа");
+  await pickRowAction("REQ-1", "Суммы и счёт строки…");
   fireEvent.change(await screen.findByLabelText(/Валюта/), { target: { value: "USD" } });
   fireEvent.change(screen.getByLabelText("Цена без НДС"), { target: { value: "10" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить суммы" }));
@@ -246,10 +266,10 @@ it("confirms a paid backorder with a new date or cancels it", async () => {
 
   render(<ProcurementPage />);
   expect(await screen.findByText(/Дозавоз по REQ-1: недовоз уже оплачен по счёту № 17/)).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Новая ожидаемая дата"), { target: { value: "2026-10-12" } });
+  fireEvent.change(screen.getByLabelText("Новая ожидаемая дата REQ-1-Д"), { target: { value: "2026-10-12" } });
   fireEvent.click(screen.getByRole("button", { name: "Досыл подтверждён → в пути" }));
   await waitFor(() => expect(calls).toHaveLength(1));
-  fireEvent.click(await screen.findByRole("button", { name: "Отменить дозавоз" }));
+  await pickRowAction("REQ-1-Д", "Отменить дозавоз");
 
   await waitFor(() => expect(calls).toHaveLength(2));
   expect(calls[0]).toEqual([`/api/procurement/${backorder.id}/backorder/confirm`, { version: 3, expected_arrival: "2026-10-12" }]);
@@ -275,16 +295,16 @@ it("parks a line on approval, resumes it and cancels only after confirmation", a
   const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
 
   render(<ProcurementPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Действия REQ-1" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "На согласование" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Одобрено — продолжить" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Действия REQ-1" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "На согласование" }));
+  await pickRowAction("REQ-1", "На согласование");
+  expect(await screen.findByRole("heading", { name: /Согласование/ })).toBeInTheDocument();
+  await clickWhenEnabled("Одобрено — продолжить");
+  expect(await screen.findByText("REQ-1: одобрено, строка вернулась в работу")).toBeInTheDocument();
+  await pickRowAction("REQ-1", "На согласование");
   await waitFor(() => expect(calls).toHaveLength(3));
-  fireEvent.click(await screen.findByRole("button", { name: "Отменить строку" }));
+  await pickRowAction("REQ-1", "Отменить строку");
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(calls).toHaveLength(3);
-  fireEvent.click(screen.getByRole("button", { name: "Отменить строку" }));
+  await pickRowAction("REQ-1", "Отменить строку");
 
   await waitFor(() => expect(calls).toHaveLength(4));
   expect(calls.map(([path, body]) => [path.replace(`/api/procurement/${line.id}`, ""), body.version])).toEqual([
@@ -302,8 +322,12 @@ it("does not offer generic approval or cancel on a backorder", async () => {
   });
 
   render(<ProcurementPage />);
-  expect(await screen.findByRole("button", { name: "Отменить дозавоз" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Отменить строку" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Досыл подтверждён → в пути" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Одобрено — продолжить" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Действия REQ-1-Д" }));
+  expect(screen.getByRole("menuitem", { name: "Отменить дозавоз" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Отменить строку" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "На согласование" })).not.toBeInTheDocument();
 });
 
 it("forms supplier requests for ready lines in one batch and shows the letters", async () => {
@@ -343,19 +367,22 @@ it("forms supplier requests for ready lines in one batch and shows the letters",
   });
 
   render(<ProcurementPage />);
-  expect(await screen.findByText(/Готово к запросу: 1/)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /Готов к запросу/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сформировать запросы поставщикам" }));
 
   expect(await screen.findByText("Сформировано запросов: 1; строк других закупщиков не тронуто: 2")).toBeInTheDocument();
   expect(screen.getByText("ООО А · REQ# 16.09.2026 - MR#D-1 PO-001")).toBeInTheDocument();
-  expect(await screen.findByText("Заказ PO-001 от 16.09.2026")).toBeInTheDocument();
+  // Сформированный заказ — строка таблицы «Жду счет»: № заказа, поставщик, дата, документ.
+  const order = (await screen.findByText("PO-001", { selector: "td" })).closest("tr")!;
+  expect(within(order).getByText("ООО А")).toBeInTheDocument();
+  expect(within(order).getByText("16.09.2026")).toBeInTheDocument();
   expect(screen.getByText("Запросы поставщикам/2026/09 Сентябрь/ООО А/PO-001 от 16.09.2026.html")).toBeInTheDocument();
   const links = screen.getAllByRole("link", { name: "Открыть документ" });
   expect(links.map((link) => link.getAttribute("href"))).toEqual([
     "/api/procurement/supplier-requests/PO-001/document", "/api/procurement/supplier-requests/PO-001/document",
   ]);
   expect(screen.getAllByRole("button", { name: "Печать" })).toHaveLength(2);
-  expect(screen.getByRole("button", { name: "Сформировать запросы поставщикам" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Сформировать запросы поставщикам" })).not.toBeInTheDocument();
 });
 
 it("replaces the invoice of a paid line without touching its payment", async () => {
@@ -382,8 +409,8 @@ it("replaces the invoice of a paid line without touching its payment", async () 
   });
 
   render(<ProcurementPage />);
-  fireEvent.click(await screen.findByText("Заменить счёт"));
-  fireEvent.change(screen.getByLabelText("Ссылка на новый счёт"), { target: { value: "https://files.test/invoice-v2.pdf" } });
+  await pickRowAction("REQ-1", "Заменить счёт…");
+  fireEvent.change(await screen.findByLabelText("Ссылка на новый счёт"), { target: { value: "https://files.test/invoice-v2.pdf" } });
   fireEvent.change(screen.getByLabelText("№ счёта"), { target: { value: " 18 " } });
   fireEvent.click(screen.getByRole("button", { name: "Заменить" }));
 
@@ -410,7 +437,8 @@ it("splits an own line into supplier copies with its optimistic version", async 
   });
 
   render(<ProcurementPage />);
-  fireEvent.change(await screen.findByLabelText(/Раздробить по поставщикам/), { target: { value: "3" } });
+  await pickRowAction("REQ-1", "Раздробить по поставщикам…");
+  fireEvent.change(await screen.findByLabelText(/Раздробить по поставщикам, копий/), { target: { value: "3" } });
   fireEvent.click(screen.getByRole("button", { name: "Раздробить" }));
 
   await waitFor(() => expect(splitBody).toEqual({ version: 3, copies: 3 }));
@@ -471,78 +499,238 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
   expect(await screen.findByText("Заказ PO-001: КП сохранено по 2 строкам, счёт передан в оплату")).toBeInTheDocument();
 });
 
-it("warns that an open replacement blocks the supplier order and saves the decision", async () => {
-  const ready: ProcurementLine = {
-    ...line,
-    status: "Готов к запросу",
-    buyer: "Закупщик",
-    supplier: "Поставщик",
-    actual_quantity: "2",
-    actual_unit: "шт",
-    replacement: true,
-    replacement_open: true,
-  };
-  let current = ready;
-  let replacementBody: Record<string, unknown> | undefined;
+it("hides the retired substitution and quality-document fields on every stage", async () => {
+  const base: ProcurementLine = { ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт" };
+  const lines: ProcurementLine[] = [
+    { ...base, id: "30000000-0000-0000-0000-0000000000a1", legacy_id: "REQ-A", status: "В работе", replacement: true },
+    {
+      ...base, id: "30000000-0000-0000-0000-0000000000a2", legacy_id: "REQ-B", status: "Готов к запросу",
+      replacement: true, replacement_open: true, quality_document: "Да",
+    },
+    {
+      ...base, id: "30000000-0000-0000-0000-0000000000a3", legacy_id: "REQ-C", status: "Жду счет", order_number: "PO-001",
+      replacement: true, replacement_decision: "Разрешено", permission_number: "РЗ-20260929-01", permission_date: "2026-09-29",
+    },
+    {
+      ...base, id: "30000000-0000-0000-0000-0000000000a4", legacy_id: "REQ-D", status: "В оплату", invoice_url: "https://files.test/i.pdf",
+      pay_missing: [], replacement: true, replacement_decision: "Разрешено", permission_number: "РЗ-20260929-02",
+    },
+  ];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: /Готов к запросу/ });
+  expect(screen.queryByLabelText("Замена")).not.toBeInTheDocument();
+  expect(screen.queryByText(/незакрытая замена/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Разрешение на замену/ })).not.toBeInTheDocument();
+
+  // Меню строк: ни «Замены», ни «Разрешения на замену», ни документа качества.
+  const menus: Record<string, string[]> = {};
+  for (const id of ["REQ-A", "REQ-B", "REQ-D"]) {
+    fireEvent.click(screen.getByRole("button", { name: `Действия ${id}` }));
+    menus[id] = screen.getAllByRole("menuitem").map((item) => item.textContent ?? "");
+    fireEvent.mouseDown(document.body);
+  }
+  expect(menus["REQ-B"]).toEqual(["Прослеживаемость…", "Раздробить по поставщикам…", "На согласование", "Отменить строку"]);
+  for (const items of Object.values(menus)) {
+    expect(items.filter((item) => /замен(а|у)(?! счёт)|качества|разрешен/i.test(item))).toEqual([]);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Действия REQ-A" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Прослеживаемость, раздробить…" }));
+  expect(await screen.findByLabelText("Изготовитель")).toBeInTheDocument();
+  expect(screen.queryByLabelText("№ док. качества")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Тип док.")).not.toBeInTheDocument();
+});
+
+it("lists unsorted lines with their supplier and says when a line has none", async () => {
+  const withSupplier = { ...line, status: "Новый", supplier: "ЧипДип" };
+  const without = { ...line, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", status: "Новый", supplier: null };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [withSupplier, without], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const table = await screen.findByRole("region", { name: "Неразобранные" });
+  expect(within(table).getByRole("columnheader", { name: "Поставщик" })).toBeInTheDocument();
+  const first = within(table).getByText("REQ-1").closest("tr")!;
+  const second = within(table).getByText("REQ-2").closest("tr")!;
+  expect(within(first).getByText("ЧипДип")).toBeInTheDocument();
+  expect(within(first).queryByText(/нет \(запрос не сформируется\)/)).not.toBeInTheDocument();
+  expect(within(second).getByText("нет (запрос не сформируется)")).toBeInTheDocument();
+});
+
+it("shows each stage after «В работе» as its own table, not a card per line", async () => {
+  const base: ProcurementLine = { ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт" };
+  const at = (n: number, status: string, extra: Partial<ProcurementLine> = {}): ProcurementLine => ({
+    ...base, id: `30000000-0000-0000-0000-0000000001${n}0`, legacy_id: `REQ-${n}`, status, ...extra,
+  });
+  const lines = [
+    at(1, "В работе"),
+    at(2, "Готов к запросу"),
+    at(3, "Жду счет", { order_number: "PO-001" }),
+    at(4, "В оплату", { invoice_url: "https://files.test/i.pdf", pay_missing: [] }),
+    at(5, "Согласование"),
+    at(6, "В пути", { invoice_url: "https://files.test/i.pdf", expected_arrival: "2026-10-12", order_number: "PO-001" }),
+    at(7, "Карантин", { invoice_url: "https://files.test/j.pdf", order_number: "PO-001" }),
+  ];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  const { container } = render(<ProcurementPage />);
+  await screen.findByRole("region", { name: "В пути" });
+  const headings = screen.getAllByRole("heading", { level: 2 });
+  const stages = ["В работе", "Готов к запросу", "Жду счет", "В оплату", "Согласование", "В пути", "Карантин"];
+  const order = headings.map((heading) => stages.find((stage) => heading.textContent?.startsWith(stage))).filter(Boolean);
+  expect(order).toEqual(stages);
+  expect(container.querySelectorAll(".procurement-card")).toHaveLength(0);
+
+  const head = (name: string) => within(screen.getByRole("region", { name })).getAllByRole("columnheader").map((cell) => cell.textContent);
+  expect(head("Готов к запросу")).toEqual(["ID", "Наименование", "Наименование на сайте", "Назначение", "Поставщик", "Кол-во (факт)", "Точка отгрузки", "Срок", ""]);
+  expect(head("Жду счет")).toEqual(["№ заказа", "Поставщик", "Позиций", "Заказ от", "Ожидается", "КП внесено", "Документ", ""]);
+  expect(head("В оплату")).toEqual(["", "ID", "№ заказа", "Поставщик", "Наименование", "Кол-во (факт)", "Сумма, ₽", "Счёт", "Ожидается", "Готовность", ""]);
+  // «Основание» (дозавоз), «Сумма» и валютные колонки появляются, когда есть что в них показать.
+  expect(head("Согласование")).toEqual(["ID", "Наименование", "Поставщик", "Кол-во", "Вид", "Решение", ""]);
+  expect(head("В пути")).toEqual(["ID", "Наименование", "Поставщик", "№ заказа", "Кол-во (факт)", "Ожидается", "Счёт", "Сумма, ₽", ""]);
+  expect(head("Карантин")).toEqual(["ID", "Наименование", "Поставщик", "№ заказа", "Кол-во (факт)", "Ожидается", "Счёт", "Сумма, ₽", ""]);
+  // «Ожидается» в пути — датой по-русски.
+  expect(within(screen.getByRole("region", { name: "В пути" })).getByText("12.10.2026")).toBeInTheDocument();
+});
+
+it("groups «Жду счет» by order and opens «Внести КП» for the chosen order only", async () => {
+  const first = { ...line, status: "Жду счет" as const, buyer: "Закупщик", supplier: "ООО А", order_number: "PO-001", order_date: "2026-10-01", actual_quantity: "2", actual_unit: "шт" };
+  const second = { ...first, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", calculated_name: "Кабель", version: 4 };
+  const third = { ...first, id: "30000000-0000-0000-0000-000000000003", legacy_id: "REQ-3", calculated_name: "Болт", supplier: "ООО Б", order_number: "PO-002", version: 5, actual_sum: "120" };
+  const requested: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    requested.push(path);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: [first, second, third] });
+    if (path === "/api/procurement/kp?reference=PO-002") return json({ order_reference: "PO-002", lines: [third] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const table = await screen.findByRole("region", { name: "Жду счет" });
+  const rows = within(table).getAllByRole("row").slice(1);
+  expect(rows).toHaveLength(2);
+  expect(within(rows[0]).getByText("PO-001")).toBeInTheDocument();
+  expect(within(rows[0]).getByText("ООО А")).toBeInTheDocument();
+  expect(within(rows[0]).getByText("2")).toBeInTheDocument();
+  expect(within(rows[0]).getByText("0 из 2")).toBeInTheDocument();
+  expect(within(rows[1]).getByText("PO-002")).toBeInTheDocument();
+  expect(within(rows[1]).getByText("ООО Б")).toBeInTheDocument();
+  expect(within(rows[1]).getByText("1 из 1")).toBeInTheDocument();
+  expect(within(table).getAllByRole("button", { name: "Внести КП" })).toHaveLength(2);
+
+  fireEvent.click(within(rows[1]).getByRole("button", { name: "Внести КП" }));
+  const form = await screen.findByRole("form", { name: "КП по заказу PO-002" });
+  expect(await within(form).findByLabelText("REQ-3 Кол-во (факт)")).toBeInTheDocument();
+  expect(within(form).queryByLabelText("REQ-1 Кол-во (факт)")).not.toBeInTheDocument();
+  expect(requested).toContain("/api/procurement/kp?reference=PO-002");
+  expect(requested).not.toContain("/api/procurement/kp?reference=PO-001");
+  // Кнопка не раскрыла строки заказа: они открываются по строке таблицы.
+  expect(within(table).queryByText("Кабель")).not.toBeInTheDocument();
+  fireEvent.click(within(rows[0]).getByText("PO-001"));
+  expect(within(table).getByText("Кабель")).toBeInTheDocument();
+  expect(within(table).getByRole("button", { name: "Действия REQ-2" })).toBeInTheDocument();
+});
+
+it("lists «В оплату» to tick as paid and says what a line lacks before it can be paid", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const ready = { ...line, id: "30000000-0000-0000-0000-000000000005", legacy_id: "REQ-5", status: "В оплату", buyer: "Закупщик", invoice_url: "https://files.test/i.pdf", pay_missing: [], version: 7, actual_sum: "244" };
+  const noInvoice = { ...line, id: "30000000-0000-0000-0000-000000000006", legacy_id: "REQ-6", status: "В оплату", buyer: "Закупщик", invoice_url: null, pay_missing: ["СЧЕТ"], version: 2 };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.body) bodies.push({ path, ...JSON.parse(String(init.body)) });
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines: [ready, noInvoice] });
+    if (path === "/api/procurement/paid") return json({ lines: [ready], done: 1, already: 0, no_invoice: ["REQ-6"], failed: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const table = await screen.findByRole("region", { name: "В оплату" });
+  expect(within(within(table).getByText("REQ-5").closest("tr")!).getByText("можно оплачивать")).toBeInTheDocument();
+  expect(within(within(table).getByText("REQ-6").closest("tr")!).getByText("нет счёта")).toBeInTheDocument();
+  expect(within(table).getByRole("link", { name: "счёт" })).toHaveAttribute("href", "https://files.test/i.pdf");
+
+  fireEvent.click(screen.getByLabelText(`Выбрать ${ready.id}`));
+  fireEvent.click(screen.getByLabelText(`Выбрать ${noInvoice.id}`));
+  fireEvent.click(screen.getByRole("button", { name: "Оплачено → В пути" }));
+  await waitFor(() => expect(bodies).toContainEqual({
+    path: "/api/procurement/paid",
+    items: [{ line_id: ready.id, version: 7 }, { line_id: noInvoice.id, version: 2 }],
+  }));
+  expect(await screen.findByText("Оплачено → В пути: 1; без счёта: REQ-6")).toBeInTheDocument();
+});
+
+it("pays one «В оплату» line from its menu and asks for the rate when the CBR is silent", async () => {
+  const ready = { ...line, status: "В оплату", buyer: "Закупщик", invoice_url: "https://files.test/i.pdf", pay_missing: [], expected_arrival: "2026-10-05" };
+  const bodies: Record<string, unknown>[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [current] });
-    if (path.endsWith("/replacement") && init?.method === "PATCH") {
-      replacementBody = JSON.parse(String(init.body));
-      current = { ...ready, version: 4, replacement_decision: "Разрешено", replacement_open: false };
-      return json({ line: current });
+    if (path === "/api/procurement/mine") return json({ lines: [ready] });
+    if (path.endsWith("/paid") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      bodies.push(body);
+      if (!body.manual_exchange_rate) {
+        return problem(409, { code: "manual_rate_required", currency: "USD", date: "2026-10-04", message: "ЦБ не отдал курс USD на 04.10.2026 — введите курс вручную" });
+      }
+      return json({ line: { ...ready, status: "В пути", version: 4 } });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ProcurementPage />);
-  expect(await screen.findByText(/незакрытая замена/)).toBeInTheDocument();
-
-  fireEvent.change(screen.getByLabelText("Замена"), { target: { value: "Разрешено" } });
-
-  await waitFor(() => expect(replacementBody).toEqual({ version: 3, replacement: true, decision: "Разрешено" }));
-  await waitFor(() => expect(screen.queryByText(/незакрытая замена/)).not.toBeInTheDocument());
+  await pickRowAction("REQ-1", "Оплатить одну строку…");
+  fireEvent.click(await screen.findByRole("button", { name: "Оплачено → в пути" }));
+  fireEvent.change(await screen.findByLabelText(/Курс, ₽ за 1 USD/), { target: { value: "95,5" } });
+  fireEvent.click(screen.getByRole("button", { name: "Оплачено → в пути" }));
+  await waitFor(() => expect(bodies).toEqual([{ version: 3 }, { version: 3, manual_exchange_rate: "95,5" }]));
 });
 
-it("DOC-1: prints «Разрешение на замену» once the decision is «Разрешено»", async () => {
-  const allowed: ProcurementLine = {
-    ...line,
-    status: "Готов к запросу",
-    buyer: "Закупщик",
-    supplier: "Поставщик",
-    design_article: "КД-АРТ-001",
-    site_name: "Аналог XYZ",
-    actual_quantity: "2",
-    actual_unit: "шт",
-    replacement: true,
-    replacement_decision: "Разрешено",
-    replacement_open: false,
-    permission_number: "РЗ-20260929-01",
-    permission_date: "2026-09-29",
+it("«В пути»: offers to reconcile a hand-typed rate only for lines that have one", async () => {
+  const manual = {
+    ...line, status: "В пути", buyer: "Закупщик", invoice_url: "https://files.test/i.pdf", paid_at: "2026-10-01T12:00:00+03:00", pay_missing: [],
+    source_currency: "USD", source_sum: "100", exchange_rate: "95.5", exchange_rate_date: "2026-10-01", exchange_rate_manual: true, actual_sum: "9550",
   };
-  const printedPaths: string[] = [];
-  const printWindow = { document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
-  vi.spyOn(window, "open").mockReturnValue(printWindow as unknown as Window);
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const plain = { ...line, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", status: "В пути", buyer: "Закупщик", invoice_url: "https://files.test/j.pdf", pay_missing: [] };
+  const posted: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    printedPaths.push(path);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [allowed] });
-    if (path.endsWith("/replacement-permission")) return json({ sheet: {
-      title: "РАЗРЕШЕНИЕ НА ЗАМЕНУ РЗ-20260929-01", subtitle: "", columns: [], rows: [], note: "", sign: "",
-    } });
+    if (path === "/api/procurement/mine") return json({ lines: [manual, plain] });
+    if (path.endsWith("/exchange-rate/reconcile") && init?.method === "POST") {
+      posted.push(`${path} ${init.body}`);
+      return json({ line: { ...manual, exchange_rate_manual: false, version: 4 } });
+    }
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ProcurementPage />);
-  const button = await screen.findByRole("button", { name: /Печать «Разрешение на замену» РЗ-20260929-01/ });
-
-  fireEvent.click(button);
-
-  await waitFor(() => expect(printedPaths).toContain(`/api/procurement/${allowed.id}/replacement-permission`));
-  await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
-  expect(printWindow.document.write.mock.calls[0][0]).toContain("РАЗРЕШЕНИЕ НА ЗАМЕНУ РЗ-20260929-01");
+  const table = await screen.findByRole("region", { name: "В пути" });
+  expect(within(table).getByText(/вручную, сверьте/)).toBeInTheDocument();
+  expect(within(table).getByText("100 USD")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Действия REQ-2" }));
+  expect(screen.queryByRole("menuitem", { name: "Сверить курс с ЦБ" })).not.toBeInTheDocument();
+  fireEvent.mouseDown(document.body);
+  await pickRowAction("REQ-1", "Сверить курс с ЦБ");
+  await waitFor(() => expect(posted).toEqual([`/api/procurement/${manual.id}/exchange-rate/reconcile {"version":3}`]));
 });
 
 it("ID-6: view mode lists free and in-work lines without any buyer control", async () => {
@@ -615,8 +803,11 @@ it("offers the actual unit as a list", async () => {
   await waitFor(() => expect(Array.from(unit.options).map((option) => option.value)).toEqual(["", "шт", "кг", "компл"]));
 });
 
-it("saves traceability of an own line: maker, country, quality document, standard", async () => {
-  const own: ProcurementLine = { ...line, status: "Готов к запросу", buyer: "Закупщик", supplier: "Поставщик" };
+it("saves traceability of an own line: maker, country, standard; the retired quality-document fields stay untouched", async () => {
+  const own: ProcurementLine = {
+    ...line, status: "Готов к запросу", buyer: "Закупщик", supplier: "Поставщик",
+    quality_document_type: "Паспорт", quality_document_number: "П-17", quality_document_date: "2026-09-01",
+  };
   let body: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -630,14 +821,16 @@ it("saves traceability of an own line: maker, country, quality document, standar
   });
 
   render(<ProcurementPage />);
+  await pickRowAction("REQ-1", "Прослеживаемость…");
   fireEvent.change(await screen.findByLabelText("Изготовитель"), { target: { value: "Molex" } });
-  fireEvent.change(screen.getByLabelText("№ док. качества"), { target: { value: "П-17" } });
-  fireEvent.change(screen.getByLabelText("Дата док. качества"), { target: { value: "2026-09-01" } });
   fireEvent.change(screen.getByLabelText("Стандарт"), { target: { value: "ГОСТ 23587-96" } });
+  expect(screen.queryByLabelText("Тип док.")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("№ док. качества")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Дата док. качества")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить прослеживаемость" }));
 
   await waitFor(() => expect(body).toEqual({
-    version: 3, manufacturer: "Molex", country: "", quality_document_type: "", quality_document_number: "П-17",
+    version: 3, manufacturer: "Molex", country: "", quality_document_type: "Паспорт", quality_document_number: "П-17",
     quality_document_date: "2026-09-01", standard: "ГОСТ 23587-96",
   }));
 });
@@ -670,6 +863,8 @@ it("uploads the invoice file, prefills its recognised № and date and sends the
   });
 
   render(<ProcurementPage />);
+  await openOrder("PO-001");
+  await pickRowAction("REQ-1", "Суммы и счёт строки…");
   const file = new File(["%PDF-1.4"], "счёт.pdf", { type: "application/pdf" });
   fireEvent.change(await screen.findByLabelText("Файл счёта"), { target: { files: [file] } });
 
@@ -700,8 +895,8 @@ it("says to type № and date by hand when the invoice file has no text", async 
   });
 
   render(<ProcurementPage />);
-  fireEvent.click(await screen.findByText("Заменить счёт"));
-  fireEvent.change(screen.getByLabelText("Файл счёта"), { target: { files: [new File(["jpg"], "scan.jpg", { type: "image/jpeg" })] } });
+  await pickRowAction("REQ-1", "Заменить счёт…");
+  fireEvent.change(await screen.findByLabelText("Файл счёта"), { target: { files: [new File(["jpg"], "scan.jpg", { type: "image/jpeg" })] } });
 
   expect(await screen.findByText(/Счёт\.jpg · Текст из файла не читается/)).toBeInTheDocument();
   expect(screen.getByLabelText("Ссылка на новый счёт")).toHaveValue(UPLOADED.url);
