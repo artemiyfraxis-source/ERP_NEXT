@@ -347,8 +347,8 @@ def test_api_offers_boxes_of_every_input_and_marks_sources_inputs_and_the_final(
     assert {position: row["final"] for position, row in rows.items()} == {1: False, 2: False, 3: False, 4: True}
     assert {position: row["required_quantity"] for position, row in rows.items()} == {1: "10", 2: "5", 3: "5", 4: "5"}
     assert rows[3]["inputs"] == [
-        {"operation_id": str(by_position[1].id), "position": 1, "per_unit": "2", "transfer_batch": None},
-        {"operation_id": str(by_position[2].id), "position": 2, "per_unit": "1", "transfer_batch": None},
+        {"operation_id": str(by_position[1].id), "position": 1, "stage": by_position[1].stage, "per_unit": "2", "transfer_batch": None},
+        {"operation_id": str(by_position[2].id), "position": 2, "stage": by_position[2].stage, "per_unit": "1", "transfer_batch": None},
     ]
 
 

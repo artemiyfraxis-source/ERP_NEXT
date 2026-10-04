@@ -278,6 +278,7 @@ def _result(task: ProductionTask, facts: dict | None = None) -> dict:
     starts = [operation.planned_start for operation in task.operations if operation.planned_start]
     finishes = [operation.planned_finish for operation in task.operations if operation.planned_finish]
     positions = {operation.id: operation.position for operation in task.operations}
+    stages = {operation.id: operation.stage for operation in task.operations}
     required = {operation.id: operation_quantity(task, operation) for operation in task.operations}
     final_id = task.final_operation.id if task.operations else None
     return {
@@ -308,6 +309,7 @@ def _result(task: ProductionTask, facts: dict | None = None) -> dict:
             "required_quantity": _number(required[operation.id]),
             "inputs": [{
                 "operation_id": str(item.input_operation_id), "position": positions.get(item.input_operation_id),
+                "stage": stage_name(stages.get(item.input_operation_id, "")),
                 "per_unit": _number(item.per_unit),
                 "transfer_batch": _number(item.transfer_batch) if item.transfer_batch is not None else None,
             } for item in operation.inputs],
