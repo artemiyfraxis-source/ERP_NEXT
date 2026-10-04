@@ -131,9 +131,11 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showLaunch && canEdit && <LaunchForm tasks={tasks} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} />}
-    {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-    {!mine && canEdit && <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-    {!mine && canEdit && <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />}
+    {!mine && canEdit && <div className="review-row">
+      <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />
+      <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />
+      <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />
+    </div>}
     {!mine && canQuality && <QualityPanel boxes={boxes} tasks={tasks} instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
     {!mine && canQuality && <InstrumentRegistry instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
     {mine && <MyQueue tasks={tasks} session={execution.session} busy={busy} mutate={mutate} />}
@@ -158,7 +160,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       canEdit={canEdit} busy={busy} mutate={mutate}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
-    {mine && loaded && !tasks.length && <div className="empty">Назначенных операций пока нет.</div>}
+    {mine && loaded && !tasks.length && <div className="empty">Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании».</div>}
   </section>;
 }
 
@@ -638,8 +640,11 @@ function MyQueue({ tasks, session, busy, mutate }: {
     const base = `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}, ${weekdays[date.getDay()]}`;
     return diff === 0 ? `Сегодня · ${base}` : diff === 1 ? `Завтра · ${base}` : diff < 0 ? `Начато ранее · ${base}` : base;
   };
-  let last: string | null = null;
-  return <div className="my-queue">{tasks.map((task) => {
+  const isDone = (task: ProductionTask) => {
+    const operation = task.operations[0];
+    return Boolean(operation && (operation.state === "выполнена" || operation.my_share?.finished_at));
+  };
+  const renderCard = (task: ProductionTask, last: { title: string | null }) => {
     const operation = task.operations[0];
     if (!operation) return null;
     // Своя доля: у раздробленной операции у монтажника свои штуки и своё время.
@@ -649,28 +654,41 @@ function MyQueue({ tasks, session, busy, mutate }: {
     const startAt = parseDate(plannedStart);
     const finishAt = parseDate(plannedFinish);
     const title = dayTitle(startAt);
-    const header = title !== last ? <div className="mo-day">{title}</div> : null;
-    last = title;
+    const header = title !== last.title ? <div className="mo-day">{title}</div> : null;
+    last.title = title;
     const running = Boolean(session && session.task_id === task.id && session.operation_id === operation.id);
-    const done = operation.state === "выполнена" || Boolean(share?.finished_at);
+    const done = isDone(task);
     const late = Boolean(finishAt && finishAt < now && !done);
     const key = `${task.id}:${operation.id}`;
     const processed = Number(operation.fact?.processed ?? 0);
+    const stage = operation.stage || `Этап ${operation.position}`;
     return <div key={key}>
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
-        <div className="mo-h"><b>{operation.stage || `Этап ${operation.position}`}</b>{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(plannedStart)} → ${formatDate(plannedFinish)}` : "время не назначено"}</span></div>
+        <div className="mo-h"><b>{stage}</b>{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(plannedStart)} → ${formatDate(plannedFinish)}` : "время не назначено"}</span></div>
         <div className="mo-s">{task.number} · этап {operation.position} · <b>{itemId(task)}</b> × {task.quantity}{task.name ? ` · ${task.name}` : ""}{share?.quantity != null ? <> · <b>твои {share.quantity} шт</b></> : null}</div>
-        {operation.description && <div className="mo-d">{operation.description}</div>}
+        {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
         <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {task.quantity}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatDate(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatDate(share.finished_at)}` : ""}</div>
         {!running && !done && <div className="mo-act">
-          <button className="primary small" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>
+          <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>
         </div>}
         {!running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} />}
       </div>
     </div>;
-  })}</div>;
+  };
+  // Невыполненное — наверх по дням плана; выполненное свёрнуто ниже, чтобы «Начать» не искали под сделанным.
+  const active = tasks.filter((task) => !isDone(task));
+  const finished = tasks.filter(isDone);
+  const activeMark = { title: null as string | null };
+  const finishedMark = { title: null as string | null };
+  return <div className="my-queue">
+    {active.map((task) => renderCard(task, activeMark))}
+    {!active.length && finished.length > 0 && <div className="empty">Невыполненных операций нет — все назначенные сданы.</div>}
+    {finished.length > 0 && <details className="mo-finished"><summary>Выполнено · {finished.length}</summary>
+      <div className="my-queue">{finished.map((task) => renderCard(task, finishedMark))}</div>
+    </details>}
+  </div>;
 }
 
 function OperatorExecution({ execution, tasks, busy, mutate }: {
@@ -896,7 +914,7 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
     const last = task ? Math.max(...task.operations.map((operation) => operation.position)) : -1;
     return box.status === "Подтверждена" && !box.qc_inspected && box.operation_position === last;
   });
-  if (!ready.length) return null;
+  if (!ready.length) return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">0</span></div><div className="empty">Коробок на проверку нет — они появятся, когда мастер подтвердит коробку с последней операции.</div></div>;
   const update = (boxId: string, patch: Partial<{ accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] }>) => setDrafts((current) => {
     const previous = current[boxId] ?? { accepted: "", rejected: "0", character: "", description: "", instrumentIds: [] };
     return { ...current, [boxId]: { ...previous, ...patch } };

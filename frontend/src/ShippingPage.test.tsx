@@ -95,6 +95,15 @@ describe("ShippingPage", () => {
     expect(screen.getByText("ГП.26.0000002")).toBeInTheDocument();
   });
 
+  it("shows today as the receipt date of an acceptance instead of an empty field", async () => {
+    render(<ShippingPage principal={principal} />);
+    fireEvent.click(screen.getByRole("button", { name: "Готовая продукция" }));
+    const field = await screen.findByLabelText("Дата поступления 591К.3 КБ1");
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    expect(field).toHaveValue(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`);
+  });
+
   it("accepts with an explicit receipt date", async () => {
     render(<ShippingPage principal={principal} />);
     fireEvent.click(screen.getByRole("button", { name: "Готовая продукция" }));

@@ -391,6 +391,17 @@ it("groups the operator queue by plan day and hides start for a completed operat
   expect(screen.getByText(/^Завтра · /)).toBeInTheDocument();
   expect(screen.getByText(/вместе с: Мастер/)).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "▶ Начать" })).toHaveLength(1);
+  // Сделанное свёрнуто под невыполненным: «Начать» не ищут среди готового.
+  expect(screen.getByText("Выполнено · 1")).toBeInTheDocument();
+  expect(screen.getByText(/^Сегодня · /).closest("details")).not.toBeNull();
+  expect(screen.getByText(/^Завтра · /).closest("details")).toBeNull();
+});
+
+it("tells the QC inspector when no box waits for inspection", async () => {
+  const qcPrincipal: Principal = { ...principal, roles: ["qc"], permissions: { production: "edit" } };
+  masterFetch(() => null);
+  render(<ProductionPage principal={qcPrincipal} />);
+  expect(await screen.findByText(/Коробок на проверку нет/)).toBeInTheDocument();
 });
 
 it("lets the master hand out operations of issued projects to installers and launch a ready card", async () => {
