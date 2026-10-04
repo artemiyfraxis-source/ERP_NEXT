@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { Principal } from "./api";
 
@@ -10,9 +10,14 @@ const principal: Principal = {
     name: "Сотрудник",
     department: "КБ",
   },
-  roles: ["staff"],
+  roles: ["operator"],
+  access_level: "operator",
   permissions: { requests: "view", procurement: "view" },
 };
+
+// Access levels (owner 04.10.2026): the level key travels in `roles` and `access_level`; the screens read sections only.
+const as = (level: string, permissions: Principal["permissions"], extra: Partial<Principal> = {}): Principal =>
+  ({ ...principal, roles: [level], access_level: level, permissions, ...extra });
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -43,8 +48,18 @@ it("returns to login when an active session is rejected", async () => {
   expect(await screen.findByRole("button", { name: "Войти" }, { timeout: 5000 })).toBeInTheDocument();
 });
 
-it("does not show procurement to a role outside its view set, even with a view grant", async () => {
+it("opens procurement by the section grant alone: the level's name decides nothing", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json(principal));
+
+  render(<App />);
+
+  expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Лист закупки" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Заявки" })).toBeInTheDocument();
+});
+
+it("closes procurement without a grant on it, whatever the level", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ ...principal, permissions: { requests: "view" } }));
 
   render(<App />);
 
@@ -53,25 +68,12 @@ it("does not show procurement to a role outside its view set, even with a view g
   expect(screen.getByRole("button", { name: "Заявки" })).toBeInTheDocument();
 });
 
-it("does not show procurement to a non-buyer even with an edit override", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    json({ ...principal, permissions: { ...principal.permissions, procurement: "edit" } }),
-  );
-
-  render(<App />);
-
-  expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Лист закупки" })).not.toBeInTheDocument();
-});
-
 it("ID-6: a view grant opens procurement, receiving and stock read-only", async () => {
   window.history.replaceState({}, "", "/login?section=stock");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json({
-      ...principal,
-      roles: ["management"],
-      permissions: { procurement: "view", receiving: "view", warehouse: "view" },
+      ...as("commercial", { procurement: "view", receiving: "view", warehouse: "view" }),
     });
     if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
@@ -89,7 +91,7 @@ it("ID-6: a storekeeper keeps the edit controls", async () => {
   window.history.replaceState({}, "", "/login?section=stock");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({ ...principal, roles: ["receiver"], permissions: { warehouse: "edit" } });
+    if (path === "/api/auth/me") return json(as("foreman", { warehouse: "edit" }));
     if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     if (path === "/api/stock/item-types") return json({ types: [], choices: [] });
     throw new Error(`Unexpected request: ${path}`);
@@ -105,11 +107,7 @@ it("opens the native warehouse at the live ERP stock route", async () => {
   window.history.replaceState({}, "", "/login?section=stock");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({
-      ...principal,
-      roles: ["receiver"],
-      permissions: { warehouse: "edit" },
-    });
+    if (path === "/api/auth/me") return json(as("foreman", { warehouse: "edit" }));
     if (path === "/api/stock") {
       return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
     }
@@ -126,11 +124,7 @@ it("opens native production fulfillment at the issues route", async () => {
   window.history.replaceState({}, "", "/login?section=issues");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({
-      ...principal,
-      roles: ["master"],
-      permissions: { fulfillment: "view" },
-    });
+    if (path === "/api/auth/me") return json(as("foreman", { fulfillment: "view" }));
     if (path === "/api/issues") return json({ requests: [], next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -145,11 +139,7 @@ it("opens native resource planning at the production route", async () => {
   window.history.replaceState({}, "", "/login?section=production");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({
-      ...principal,
-      roles: ["prodhead"],
-      permissions: { production: "view" },
-    });
+    if (path === "/api/auth/me") return json(as("tech_lead", { production: "view" }));
     if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
     if (path === "/api/production/operators") return json({ operators: [] });
     throw new Error(`Unexpected request: ${path}`);
@@ -161,11 +151,11 @@ it("opens native resource planning at the production route", async () => {
   expect(await screen.findByText("Проектов с выданной техкартой пока нет.")).toBeInTheDocument();
 });
 
-it("opens the ОТК section at the quality route for a QC inspector", async () => {
+it("opens the ОТК section at the quality route for an edit grant on «ОТК»", async () => {
   window.history.replaceState({}, "", "/login?section=quality");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({ ...principal, roles: ["qc"], permissions: { production: "edit" } });
+    if (path === "/api/auth/me") return json(as("foreman", { quality: "edit", production: "view" }));
     if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
     if (path === "/api/production/boxes") return json({ boxes: [] });
     if (path === "/api/production/instruments") return json({ instruments: [] });
@@ -180,11 +170,11 @@ it("opens the ОТК section at the quality route for a QC inspector", async () 
   expect(screen.getByRole("button", { name: "ОТК" })).toBeInTheDocument();
 });
 
-it("does not open the ОТК section to a fitter, who lands on the cabinet", async () => {
+it("does not open the ОТК section without the quality key, even with edit on planning", async () => {
   window.history.replaceState({}, "", "/login?section=quality");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({ ...principal, roles: ["staff"], permissions: { production: "view" } });
+    if (path === "/api/auth/me") return json(as("foreman", { production: "edit", myops: "edit" }));
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -199,11 +189,7 @@ it("opens the native production plan at the prodplan route", async () => {
   window.history.replaceState({}, "", "/login?section=prodplan");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({
-      ...principal,
-      roles: ["prodhead"],
-      permissions: { production: "view" },
-    });
+    if (path === "/api/auth/me") return json(as("tech_lead", { production: "view" }));
     if (path === "/api/production/plan") return json({ blockers: [], stages: [], rows: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -218,11 +204,7 @@ it("opens native finished-goods and shipping at the shipping route", async () =>
   window.history.replaceState({}, "", "/login?section=shipping");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({
-      ...principal,
-      roles: ["receiver"],
-      permissions: { shipping: "edit" },
-    });
+    if (path === "/api/auth/me") return json(as("foreman", { shipping_goods: "edit" }));
     if (path === "/api/shipping/goods") return json({ goods: [] });
     if (path === "/api/shipping/shipments") return json({ shipments: [] });
     if (path === "/api/shipping/project-addressees") return json({ addressees: [] });
@@ -233,7 +215,7 @@ it("opens native finished-goods and shipping at the shipping route", async () =>
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Готовая продукция и отгрузка", level: 1 })).toBeInTheDocument();
-  // Кладовщику первой открывается «Готовая продукция» (SUPPLYMAP SHIP_ROLE_VIEWS_).
+  // Кладовщику (правка «Отгрузка — склад» без правки «Отгрузки») первой открывается «Готовая продукция» (SUPPLYMAP SHIP_ROLE_VIEWS_).
   expect(await screen.findByText("Строк готовой продукции пока нет.")).toBeInTheDocument();
 });
 
@@ -305,7 +287,7 @@ it("opens the own card from «Моя карточка» in the sidebar profile a
 it("opens someone else's card from ?section=card&user= and edits through the staff form", async () => {
   const other = "20000000-0000-0000-0000-000000000002";
   window.history.replaceState({}, "", `/login?section=card&user=${other}`);
-  const admin = { ...principal, roles: ["admin"], permissions: { staffdir: "edit" } };
+  const admin = as("admin", { staffdir: "edit" });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/auth/me") return json(admin);
@@ -325,15 +307,11 @@ it("opens someone else's card from ?section=card&user= and edits through the sta
   expect(window.location.search).toBe(`?section=staff&user=${other}`);
 });
 
-it("opens the restricted operations journal for management", async () => {
+it("opens the restricted operations journal by the operations key", async () => {
   window.history.replaceState({}, "", "/login?section=operations");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({
-      ...principal,
-      roles: ["management"],
-      permissions: { operations: "view" },
-    });
+    if (path === "/api/auth/me") return json(as("tech_lead", { operations: "view" }));
     if (path === "/api/operations/audit") return json({ events: [] });
     if (path === "/api/operations/outbox") return json({ total: 0, published: 0, pending: 0, dead: 0, failures: [] });
     throw new Error(`Unexpected request: ${path}`);
@@ -421,7 +399,7 @@ it("NAV-1: handout is its own route and shows only requests waiting for the shop
   const base = { id: "i1", version: 1, number: "FRX-ISS-1", purpose: "КБ1", requester: "Инженер", lines: [] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/api/auth/me") return json({ ...principal, roles: ["master"], permissions: { handout: "view" } });
+    if (path === "/api/auth/me") return json(as("foreman", { handout: "view" }));
     if (path === "/api/issues") return json({ requests: [
       { ...base, id: "i1", number: "FRX-ISS-1", status: "Новая" },
       { ...base, id: "i2", number: "FRX-ISS-2", status: "Готов к выдаче" },
@@ -460,8 +438,8 @@ it("shows the unread bell on every screen and opens the inbox, which clears it",
 });
 
 it("switches «Режим админа» for the allowed account and shows it in the menu (portalToggleAdmin)", async () => {
-  const victor = { ...principal, roles: ["pm"], role_label: "Менеджер по проектам", can_admin_mode: true, admin_mode: false };
-  const lifted = { ...victor, roles: ["admin"], role_label: "Технолог · режим", admin_mode: true, permissions: { staffdir: "edit" } };
+  const victor = { ...as("commercial", {}), role_label: "Коммерческое руководство", can_admin_mode: true, admin_mode: false };
+  const lifted = { ...victor, ...as("admin", { staffdir: "edit" }), role_label: "Администратор · режим", admin_mode: true };
   const bodies: unknown[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -474,10 +452,10 @@ it("switches «Режим админа» for the allowed account and shows it in
   });
 
   render(<App />);
-  expect(await screen.findByText("Менеджер по проектам")).toBeInTheDocument();
+  expect(await screen.findByText("Коммерческое руководство")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Режим админа" }));
 
-  expect(await screen.findByText("Технолог · режим")).toBeInTheDocument();
+  expect(await screen.findByText("Администратор · режим")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Выйти из админа" })).toBeInTheDocument();
   expect(bodies).toEqual([{ on: true }]);
 });
@@ -487,4 +465,105 @@ it("offers no admin mode to other accounts", async () => {
   render(<App />);
   expect(await screen.findByText("Добрый день, Сотрудник")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Режим админа" })).not.toBeInTheDocument();
+});
+
+function navigationOf() {
+  return within(screen.getByRole("navigation", { name: "Основная навигация" }));
+}
+
+it("shows superadmin «Доступы» and «Сотрудники» in the menu, whatever the permissions map holds", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("superadmin", {})));
+
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+
+  expect(navigationOf().getByRole("button", { name: "Доступы" })).toBeInTheDocument();
+  expect(navigationOf().getByRole("button", { name: "Сотрудники" })).toBeInTheDocument();
+  expect(navigationOf().getByRole("button", { name: "Системный журнал" })).toBeInTheDocument();
+  expect(screen.getByText("Суперадминистратор")).toBeInTheDocument();
+});
+
+it("hides «Доступы» and «Сотрудники» from every other level, even with an edit grant on the directory", async () => {
+  for (const level of ["commercial", "tech_lead", "foreman", "operator"]) {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as(level, { staffdir: "edit", requests: "view" })));
+    const view = render(<App />);
+    await screen.findByText("Добрый день, Сотрудник");
+    expect(navigationOf().queryByRole("button", { name: "Доступы" })).not.toBeInTheDocument();
+    expect(navigationOf().queryByRole("button", { name: "Сотрудники" })).not.toBeInTheDocument();
+    view.unmount();
+    vi.restoreAllMocks();
+  }
+});
+
+it("shows an operator «Задания» only with the myops grant", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("operator", { newrequest: "edit", myrequests: "edit", production: "edit" })));
+  const without = render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  expect(navigationOf().queryByRole("button", { name: "Задания" })).not.toBeInTheDocument();
+  without.unmount();
+  vi.restoreAllMocks();
+
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("operator", { newrequest: "edit", myrequests: "edit", myops: "edit" })));
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  expect(navigationOf().getByRole("button", { name: "Задания" })).toBeInTheDocument();
+});
+
+it("marks a card «только просмотр» when every key that opens it is a view grant, «Отгрузка» included", async () => {
+  window.history.replaceState({}, "", "/?block=stock");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("commercial", { warehouse: "edit", shipping: "view", shipping_goods: "view", receiving: "view" })));
+
+  render(<App />);
+  await screen.findByRole("heading", { name: /Склад/, level: 1 });
+
+  const tile = (name: string) => within(screen.getByRole("main")).getByRole("button", { name });
+  expect(within(tile("Отгрузка")).getByText("только просмотр")).toBeInTheDocument();
+  expect(within(tile("Приёмка")).getByText("только просмотр")).toBeInTheDocument();
+  expect(within(tile("Склад")).queryByText("только просмотр")).not.toBeInTheDocument();
+});
+
+it("marks no card «только просмотр» for a level with full access", async () => {
+  window.history.replaceState({}, "", "/?block=stock");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("admin", { shipping: "view" })));
+
+  render(<App />);
+  await screen.findByRole("heading", { name: /Склад/, level: 1 });
+
+  expect(within(screen.getByRole("main")).queryByText("только просмотр")).not.toBeInTheDocument();
+});
+
+it("names the level under the user from `access_level` when the payload has no role_label", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(as("foreman", { requests: "view" })));
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  expect(screen.getByText("Бригадир")).toBeInTheDocument();
+});
+
+describe("the update-failure banner", () => {
+  const failure = { ok: false, kind: "update", reason: "обновление не собралось" };
+  const serve = (me: Principal) => vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/me") return json(me);
+    if (path === "/update-status.json") return json(failure);
+    if (path === "/version.json") return json({ version: "1" });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  it("is shown to someone who edits more than their own work, and to full access", async () => {
+    for (const me of [as("foreman", { warehouse: "edit" }), as("commercial", { requests: "edit" }), as("admin", {})]) {
+      serve(me);
+      const view = render(<App />);
+      expect(await screen.findByText(/обновление не собралось/)).toBeInTheDocument();
+      view.unmount();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("is not shown to an operator whose edit rights are their own tasks and requests", async () => {
+    serve(as("operator", { newrequest: "edit", myrequests: "edit", myops: "edit", warehouse: "view" }));
+    render(<App />);
+    await screen.findByText("Добрый день, Сотрудник");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText(/обновление не собралось/)).not.toBeInTheDocument();
+  });
 });

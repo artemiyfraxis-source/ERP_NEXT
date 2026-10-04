@@ -6,8 +6,9 @@ import type { EmployeeCard, Principal } from "./api";
 const ME = "10000000-0000-0000-0000-000000000001";
 const OTHER = "20000000-0000-0000-0000-000000000002";
 
-function principal(permissions: Principal["permissions"] = {}, roles = ["staff"]): Principal {
-  return { user: { id: ME, email: "me@example.test", name: "Иванов Пётр", department: "Монтаж" }, roles, permissions };
+// Access levels: the level key travels in `roles` and `access_level`; «Сотрудники» belongs to superadmin / admin alone.
+function principal(permissions: Principal["permissions"] = {}, level = "operator"): Principal {
+  return { user: { id: ME, email: "me@example.test", name: "Иванов Пётр", department: "Монтаж" }, roles: [level], access_level: level, permissions };
 }
 
 const FULL: EmployeeCard = {
@@ -166,7 +167,7 @@ it("opens another person's card by id with the staff-directory back link and no 
   const seen = serve({ ...FULL, header: { ...FULL.header, id: OTHER, name: "Сидоров Олег" } });
   const openStaff = vi.fn();
   const openMyRequests = vi.fn();
-  render(<EmployeeCardPage principal={principal({ staffdir: "view" })} userId={OTHER} openStaff={openStaff} openMyRequests={openMyRequests} />);
+  render(<EmployeeCardPage principal={principal({}, "admin")} userId={OTHER} openStaff={openStaff} openMyRequests={openMyRequests} />);
 
   expect(await screen.findByRole("heading", { level: 1, name: "Сидоров Олег" })).toBeInTheDocument();
   expect(seen[0]).toBe(`/api/employee-card/${OTHER}`);
@@ -183,24 +184,41 @@ it("uses the own endpoint when the id is the signed-in person's", async () => {
   expect(seen[0]).toBe("/api/employee-card/me");
 });
 
-it("shows «Редактировать» only with edit access to the staff directory", async () => {
+it("shows «Редактировать» only to superadmin and admin, never by a grant on the staff directory", async () => {
   serve(FULL);
-  for (const [permissions, roles] of [[{ staffdir: "view" }, ["admin"]], [{}, ["staff"]]] as const) {
-    const view = render(<EmployeeCardPage principal={principal({ ...permissions }, [...roles])} openStaffEdit={vi.fn()} />);
+  for (const level of ["commercial", "tech_lead", "foreman", "operator"]) {
+    const view = render(<EmployeeCardPage principal={principal({ staffdir: "edit" }, level)} openStaffEdit={vi.fn()} />);
     await screen.findByRole("heading", { level: 1, name: "Иванов Пётр Сергеевич" });
     expect(screen.queryByRole("button", { name: "Редактировать" })).toBeNull();
     view.unmount();
   }
-  render(<EmployeeCardPage principal={principal({ staffdir: "edit" }, ["admin"])} />);
+  for (const level of ["superadmin", "admin"]) {
+    const view = render(<EmployeeCardPage principal={principal({}, level)} openStaffEdit={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Редактировать" })).toBeInTheDocument();
+    view.unmount();
+  }
+  render(<EmployeeCardPage principal={principal({}, "admin")} />);
   await screen.findByRole("heading", { level: 1, name: "Иванов Пётр Сергеевич" });
   // Без обработчика открывать нечего — кнопки нет и у администратора.
   expect(screen.queryByRole("button", { name: "Редактировать" })).toBeNull();
 });
 
+it("links a subordinate to their card only for superadmin and admin", async () => {
+  serve({ ...FULL, subordinates: [{ id: OTHER, name: "Сидоров Олег", site: "ЦАР", department: "Монтаж" }] });
+  const openCard = vi.fn();
+  const operator = render(<EmployeeCardPage principal={principal({ staffdir: "view" })} openCard={openCard} />);
+  await screen.findByText("Сидоров Олег");
+  expect(screen.queryByRole("button", { name: "Сидоров Олег" })).toBeNull();
+  operator.unmount();
+  render(<EmployeeCardPage principal={principal({}, "superadmin")} openCard={openCard} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Сидоров Олег" }));
+  expect(openCard).toHaveBeenCalledWith(OTHER);
+});
+
 it("opens the staff edit form on «Редактировать»", async () => {
   serve(FULL);
   const openStaffEdit = vi.fn();
-  render(<EmployeeCardPage principal={principal({ staffdir: "edit" }, ["admin"])} openStaffEdit={openStaffEdit} />);
+  render(<EmployeeCardPage principal={principal({}, "admin")} openStaffEdit={openStaffEdit} />);
   fireEvent.click(await screen.findByRole("button", { name: "Редактировать" }));
   expect(openStaffEdit).toHaveBeenCalledWith(ME);
 });

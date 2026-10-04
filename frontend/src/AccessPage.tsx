@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { accessApi, type AccessMode, type AccessOverview, type AccessRow, type AccessSetting } from "./api";
 // Full-access roles (owner 2026-09-29): their columns show a locked «полный» and take no edits.
-import { FULL_ACCESS_ROLES } from "./navigation";
+import { FULL_ACCESS_LEVELS } from "./navigation";
 
 /** NAV-ACCESS «Доступы» (SUPPLYMAP Portal.gs portalAccessGet/portalAccessSave, PortalApp.html openAccessHub and the
  *  per-person «Доступ» of «Сотрудники»): the role × section matrix and personal exceptions that are stronger than the
@@ -164,10 +164,10 @@ export function AccessPage() {
     ...data.roles.map((role): DataColumn<Section> => ({
       key: role.key,
       title: role.label,
-      hint: FULL_ACCESS_ROLES.has(role.key) ? `${role.label} — ${FIXED_FULL_HINT.toLowerCase()}` : role.label,
+      hint: FULL_ACCESS_LEVELS.has(role.key) ? `${role.label} — ${FIXED_FULL_HINT.toLowerCase()}` : role.label,
       value: (section) => shown(roleModes({ ...data, matrix }, role.key)[section.key]),
       render: (section) => {
-        if (FULL_ACCESS_ROLES.has(role.key)) return <FixedFullCell />;
+        if (FULL_ACCESS_LEVELS.has(role.key)) return <FixedFullCell />;
         const fallback = data.defaults[role.key]?.[section.key];
         const value = matrix[role.key]?.[section.key] ?? "";
         return <AccessCell
@@ -196,7 +196,7 @@ export function AccessPage() {
       key: "personal", title: "Исключение",
       value: (section) => personal[section.key] ? MODE_LABEL[personal[section.key]!] : "",
       render: (section) => {
-        if (FULL_ACCESS_ROLES.has(role)) return <FixedFullCell />;
+        if (FULL_ACCESS_LEVELS.has(role)) return <FixedFullCell />;
         const value = personal[section.key] ?? "";
         return <AccessCell
           label={`Исключение: ${section.label}`}

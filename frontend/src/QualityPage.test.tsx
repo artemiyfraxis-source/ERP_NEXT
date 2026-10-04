@@ -4,9 +4,12 @@ import { QualityPage } from "./QualityPage";
 import type { Principal, ProductionInstrument, ProductionOperation, ProductionTask } from "./api";
 
 const user = { id: "10000000-0000-0000-0000-000000000001", email: "u@example.test", name: "Сотрудник", department: "Производство" };
-const qc: Principal = { user, roles: ["qc"], permissions: { production: "edit" } };
-const master: Principal = { user, roles: ["master"], permissions: { production: "edit" } };
-const admin: Principal = { user, roles: ["admin"], permissions: { production: "edit" } };
+// Access levels: the section «ОТК» (`quality`) holds the inspection and the instrument registry, «Ресурсное планирование»
+// (`production`) the decisions on rejects; the reads of both come with a view of `production`.
+const as = (level: string, permissions: Principal["permissions"]): Principal => ({ user, roles: [level], access_level: level, permissions });
+const qc = as("foreman", { quality: "edit", production: "view" });
+const master = as("foreman", { production: "edit", quality: "view" });
+const admin = as("admin", {});
 
 const cutA = "71000000-0000-0000-0000-0000000000a1";
 const cutB = "71000000-0000-0000-0000-0000000000b2";
@@ -104,6 +107,34 @@ it("shows the QC inspector the queue and the instruments, not the master's rejec
   expect(headings()).toEqual(["Очередь ОТК", "Средства измерения"]);
   expect(requested).not.toContain("/api/production/defects");
   expect(requested).not.toContain("/api/production/qc/rejections");
+});
+
+it("gives the QC actions only with edit on «ОТК»: a view grant on it shows no queue and no registry", async () => {
+  const requested = qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer] });
+  render(<QualityPage principal={as("foreman", { quality: "view", production: "view" })} />);
+
+  expect(await screen.findByText("ОТК открыт вам только на просмотр.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Принять ОТК" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Очередь ОТК" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Средства измерения" })).not.toBeInTheDocument();
+  expect(requested).not.toContain("/api/production/boxes");
+  expect(requested).not.toContain("/api/production/instruments");
+});
+
+it("does not give the QC actions to edit on planning alone: that key decides rejects only", async () => {
+  const requested = qualityFetch({ boxes: [box("000003-4", 3, assembly)], instruments: [micrometer], defects: [defect] });
+  render(<QualityPage principal={as("tech_lead", { production: "edit" })} />);
+
+  expect(await screen.findByRole("heading", { name: "Брак цеха" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Принять ОТК" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Очередь ОТК" })).not.toBeInTheDocument();
+  expect(requested).not.toContain("/api/production/boxes");
+});
+
+it("gives the QC actions by edit on «ОТК» whatever the level is called", async () => {
+  qualityFetch({ boxes: [box("000003-4", 3, assembly)] });
+  render(<QualityPage principal={as("operator", { quality: "edit", production: "view" })} />);
+  expect(await screen.findByRole("button", { name: "Принять ОТК" })).toBeInTheDocument();
 });
 
 it("tells the QC inspector when no box waits for inspection", async () => {
