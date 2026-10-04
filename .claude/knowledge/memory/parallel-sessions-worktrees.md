@@ -22,5 +22,7 @@ leaving a gutted directory.
   workers created (names from your own Agent results). Locked worktrees (`claude agent … (pid)`) are live — never force.
 - Don't commit on a branch another session checked out; branch off instead. If a peer's commits show up on your
   branch, abort, `SendMessage` the peer, and rebuild on a new branch — don't `reset --hard` shared history.
+- Unsure whose a worktree/branch is → ask the owning session via `SendMessage` (ListAgents) before touching it.
+- An owner's screenshot of another session's report with no text is context, not an assignment to take that work over.
 - Tell workers to commit a WIP early so a lost worktree doesn't lose everything.
 - Related: [[erp-merge-gotchas]], [[owner-working-rules]].
