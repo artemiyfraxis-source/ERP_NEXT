@@ -18,8 +18,10 @@ from app.shared.http_auth import (
 
 from .application import (
     CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
-    StaleRecordError, UnitOfWork, create_record, edit_record, replace_maps, replace_snapshot,
+    SetCableKindCommand, SetCoaxDiametersCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
+    replace_maps, replace_snapshot, set_cable_kind, set_coax_diameters,
 )
+from .cables import DIAMETERS, CableKind, CableRow, cable_counts
 from .domain import (
     BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
     TechOperationTab,
@@ -316,14 +318,84 @@ def bases(
     templates live in «Шаблоны техкарт», so their count is not known here (null)."""
     with uow_factory() as uow:
         counts = uow.tech_operations.counts()
-    return {"bases": [
-        {
-            "id": key, "label": label, "editable": key not in VIEW_ONLY_BASES,
-            "icon": _BASE_TILES[key][0], "sub": _BASE_TILES[key][1],
-            "count": sum(counts.get(tab, 0) for tab in _BASE_TABS[key]) if key in _BASE_TABS else None,
-        }
-        for key, label in _BASE_LABELS.items()
-    ]}
+    return {
+        "bases": [
+            {
+                "id": key, "label": label, "editable": key not in VIEW_ONLY_BASES,
+                "icon": _BASE_TILES[key][0], "sub": _BASE_TILES[key][1],
+                "count": sum(counts.get(tab, 0) for tab in _BASE_TABS[key]) if key in _BASE_TABS else None,
+            }
+            for key, label in _BASE_LABELS.items()
+        ],
+        # Tab chips of «База данных»: every stored tab, and the three cable lists («Кабели и провода»).
+        "tabs": {tab.value: counts.get(tab, 0) for tab in TechOperationTab},
+        "cables": cable_counts(list_cables(uow_factory())),
+    }
+
+
+def _dia_json(record) -> dict | None:
+    if record is None:
+        return None
+    return {"id": str(record.id), "cable": record.fields.get("Кабель", record.display_text),
+            **{name: record.fields.get(name, "") for name in DIAMETERS}}
+
+
+def _cable_json(row: CableRow) -> dict:
+    return {
+        "id": str(row.record.id) if row.record else f"dia:{row.dia.id}",
+        "kind": row.kind.value, "auto_kind": row.auto.value, "reason": row.reason, "manual": row.manual,
+        "cable": row.cable, "record": _record_json(row.record) if row.record else None,
+        "dia": _dia_json(row.dia), "dia_hint": _dia_json(row.dia_hint),
+    }
+
+
+@router.get("/cables")
+def cables(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """«Кабели и провода»: БД.ПРОВ rows split into коаксиальные / монтажные / прочие (`cables.auto_kind`, or where the
+    user moved them), each coax cable joined with the D1·D2·D3 row the generator uses for its name; D-table cables
+    without a БД.ПРОВ row are coax rows of their own."""
+    rows = list_cables(uow_factory())
+    return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]), "counts": cable_counts(rows),
+            "rows": [_cable_json(row) for row in rows]}
+
+
+class CableKindPayload(BaseModel):
+    kind: CableKind
+
+
+@router.put("/cables/{record_id}/kind")
+def move_cable(
+    record_id: UUID,
+    payload: CableKindPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    row = _run_edit(lambda: set_cable_kind(SetCableKindCommand(record_id, payload.kind, principal.actor, now), uow_factory()))
+    return _cable_json(row)
+
+
+class DiametersPayload(BaseModel):
+    cable: str = Field(min_length=1, max_length=512)
+    dia_id: UUID | None = None
+    old: dict[str, str] = Field(default_factory=dict, max_length=3)
+    value: dict[str, str] = Field(max_length=3)
+
+
+@router.put("/cables/diameters")
+def save_cable_diameters(
+    payload: DiametersPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    record = _run_edit(lambda: set_coax_diameters(SetCoaxDiametersCommand(
+        cable=payload.cable, dia_id=payload.dia_id, old=payload.old, value=payload.value, actor=principal.actor, now=now,
+    ), uow_factory()))
+    return _dia_json(record)
 
 
 @router.patch("/tech-operations/{record_id}")

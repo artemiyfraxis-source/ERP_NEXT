@@ -1034,6 +1034,45 @@ export interface ReferenceBase {
 
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
+/** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
+export type CableKind = "coax" | "wire" | "other";
+
+export interface BasesResult {
+  bases: ReferenceBase[];
+  /** Records per stored tab and per cable list — the counts on the tab chips. */
+  tabs?: Partial<Record<TechOperationTab, number>>;
+  cables?: Record<CableKind, number>;
+}
+
+/** The D1·D2·D3 row the ETK generator uses for a coax cable (СПР.КАБ · коаксиал). */
+export interface CableDiameters {
+  id: string;
+  cable: string;
+  D1: string;
+  D2: string;
+  D3: string;
+}
+
+export interface CableRow {
+  /** БД.ПРОВ record id, or `dia:<id>` for a cable that is only in the D-table. */
+  id: string;
+  kind: CableKind;
+  auto_kind: CableKind;
+  reason: string;
+  manual: boolean;
+  cable: string;
+  record: TechOperationRecord | null;
+  dia: CableDiameters | null;
+  /** No own D row: the row of the same family («RG58» for «RG-58 A/U»), to copy from. */
+  dia_hint: CableDiameters | null;
+}
+
+export interface CablesResult {
+  columns: string[];
+  counts: Record<CableKind, number>;
+  rows: CableRow[];
+}
+
 export interface TechOperationRecord {
   id: string;
   tab: TechOperationTab;
@@ -2125,7 +2164,12 @@ export const shippingApi = {
 };
 
 export const referencesApi = {
-  bases: () => api<{ bases: ReferenceBase[] }>("/api/references/bases"),
+  bases: () => api<BasesResult>("/api/references/bases"),
+  cables: () => api<CablesResult>("/api/references/cables"),
+  moveCable: (recordId: string, kind: CableKind) =>
+    api<CableRow>(`/api/references/cables/${recordId}/kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
+  saveCableDiameters: (payload: { cable: string; dia_id: string | null; old: Record<string, string>; value: Record<string, string> }) =>
+    api<CableDiameters>("/api/references/cables/diameters", { method: "PUT", body: JSON.stringify(payload) }),
   maps: () => api<ReferenceMaps>("/api/references/maps"),
   saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
     method: "PUT",

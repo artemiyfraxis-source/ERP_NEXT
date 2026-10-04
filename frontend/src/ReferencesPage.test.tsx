@@ -86,7 +86,8 @@ it("shows the versioned technology snapshot as a table of its own columns", asyn
   expect(screen.getByRole("columnheader", { name: "Артикул контакта" })).toBeInTheDocument();
   // «Операции» is the erptctpl tab; БД.ОБ / БД.ПРОВ / БД.МАТ are working bases (owner: «с оборудованием то же самое»).
   expect(screen.queryByRole("button", { name: /^Операции/ })).toBeNull();
-  for (const kept of [/^Оборудование/, /^Провода и кабели/, /^Материалы/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
+  for (const kept of [/^Оборудование/, /^Монтажные провода/, /^Прочие кабели/, /^Материалы/]) expect(screen.getByRole("button", { name: kept })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Провода и кабели/ })).toBeNull();
 });
 
 
@@ -137,7 +138,7 @@ it("offers the create form on an empty tab from the known column schema", async 
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Коаксиал: разъёмы" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Коаксиальные разъёмы" }));
   const add = await screen.findByRole("button", { name: "+ Запись" });
   await waitFor(() => expect(add).toBeEnabled());
   fireEvent.click(add);
@@ -148,32 +149,25 @@ it("offers the create form on an empty tab from the known column schema", async 
   await waitFor(() => expect(created).toEqual({ tab: "coax", fields: { Наименование: "Трубка", Группа: "" } }));
 });
 
-it("shows the СПР.КАБ tables as read-only grids", async () => {
+it("shows the AWG table as a read-only grid right after the hookup wires", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
-    if (path.startsWith("/api/references/tech-operations?tab=kab_coax")) return json({
-      metadata: null, columns: ["Кабель", "D1", "D2", "D3"],
-      records: [{ id: "3", tab: "kab_coax", display_text: "RG-316", source_sheet: "Коаксиал: D1 · D2 · D3", fields: { Кабель: "RG-316", D1: "0,5", D2: "1,48", D3: "1,95" } }],
-    });
     if (path.startsWith("/api/references/tech-operations?tab=kab_awg")) return json({
       metadata: null, columns: ["AWG", "ГОСТ"],
-      records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "AWG: сечение ↔ Ø по типу кабеля", fields: { AWG: "22", ГОСТ: "0,35" } }],
+      records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "СПР.КАБ · AWG", fields: { AWG: "22", ГОСТ: "0,35" } }],
     });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [] });
     if (path === "/api/references/bases") return json({ bases: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Коаксиальные кабели: D1 · D2 · D3" }));
-  expect(await screen.findByText("1,95")).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "D3" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
-
-  fireEvent.click(screen.getByRole("button", { name: "AWG: сечение ↔ Ø по типу кабеля" }));
+  fireEvent.click(await screen.findByRole("button", { name: "AWG ↔ сечение ↔ Ø" }));
   expect(await screen.findByText("0,35")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
+  expect(screen.queryByText(/СПР\.КАБ/)).toBeNull(); // the code-like group name is gone (owner 04.10.2026)
 });
 
 it("shows record counts on the tabs and opens a base from its tab", async () => {
@@ -192,7 +186,7 @@ it("shows record counts on the tabs and opens a base from its tab", async () => 
   });
 
   render(<ReferencesPage principal={admin} />);
-  const prov = await screen.findByRole("button", { name: "Коаксиал: разъёмы" });
+  const prov = await screen.findByRole("button", { name: "Коаксиальные разъёмы" });
   await waitFor(() => expect(prov).toHaveTextContent("42"));
   expect(screen.queryByRole("button", { name: "Операции" })).toBeNull(); // no erptctpl grant
   fireEvent.click(prov);
@@ -207,6 +201,7 @@ it("opens the templates tab by its own key without the reference book (ID-3)", a
     if (path === "/api/techcards/templates") return json({ metadata: null, items: [
       { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
     ] });
+    if (path === "/api/techcards/connector-families") return json({ items: [], match: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -214,7 +209,8 @@ it("opens the templates tab by its own key without the reference book (ID-3)", a
   expect(await screen.findByText("CUT_WIRE_auto")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "База данных", level: 1 })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Терминалы" })).toBeNull();
-  expect(paths).toEqual(["/api/techcards/templates"]);
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Операции/ })).toHaveTextContent("1"));
+  expect(paths.every((path) => path.startsWith("/api/techcards/"))).toBe(true); // nothing of the reference book
 });
 
 it("lets the buyer edit supplier maps and shows no separate ГОСТ→AWG map (it is the СПР.КАБ table)", async () => {
@@ -256,7 +252,7 @@ it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them
   render(<ReferencesPage principal={admin} initialTab="coax" />);
   expect(await screen.findByText("3,5")).toBeInTheDocument(); // D3 of RG58, not the connector's own «9»
   expect(screen.queryByText("9")).toBeNull();
-  expect(screen.getAllByText("нет в СПР.КАБ")).toHaveLength(3);
+  expect(screen.getAllByText("нет у кабеля")).toHaveLength(3);
   expect(screen.getByRole("columnheader", { name: "D1 кабеля" })).toBeInTheDocument();
   fireEvent.click(screen.getAllByRole("button", { name: "Править" })[0]);
   expect(screen.getByLabelText("Поле L1")).toBeInTheDocument();

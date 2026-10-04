@@ -38,6 +38,14 @@ const OP_SCHEMA_KEYS = new Set(["opNumber", "opName", "tOp", "tPrep", "tMachine"
 
 function opCode(fields: Record<string, string>) { return (fields.opNumber || fields["Номер"] || "").trim(); }
 
+/** Cards of «Операции»: one per operation code — the templates' codes plus БД.ОП codes without a template (as
+    `operationEntries` builds them), for the tab's count in «База данных». */
+export function operationCardCount(templates: Array<{ code: string }>, opRows: Array<{ fields: Record<string, string> }>): number {
+  const codes = new Set(templates.map((item) => item.code));
+  opRows.forEach((row) => { const code = opCode(row.fields); if (code) codes.add(code); });
+  return codes.size;
+}
+
 function opColumns(fields: Record<string, string>): Array<[string, string]> {
   return Object.entries(fields).filter(([key, value]) => !OP_SCHEMA_KEYS.has(key) && String(value ?? "").trim() && String(value).trim().toUpperCase() !== "FALSE");
 }
