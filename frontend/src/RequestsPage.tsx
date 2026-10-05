@@ -784,6 +784,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                 { label: "Ждут переноса", test: (row) => row.status === "Новый" },
                 { label: "В работе", test: (row) => row.status === "В работе" },
               ]}
+              defaultPreset="Ждут переноса"
               bulkActions={canHandoff ? [{
                 label: "Перенести в закупку",
                 disabled: (selected) => selected.length > HANDOFF_LIMIT || selected.some((row) => row.status !== "Новый"),

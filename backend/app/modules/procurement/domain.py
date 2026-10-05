@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
@@ -1426,26 +1425,6 @@ def supplier_request_folder(day: date, supplier: str) -> str:
 def supplier_request_document_title(order_no: str, day: date) -> str:
     """Имя копии шаблона: `orderNo + ' от ' + dd.MM.yyyy`."""
     return f"{order_no} от {day:%d.%m.%Y}"
-
-
-# Шаблон SUPPLYMAP — обычный Google Doc: абзацы Arial 11, межстрочный 1,15, поля 2,54 см; подпозиции — с табом.
-_DOCUMENT_CSS = (
-    "@page{size:A4;margin:2.54cm}"
-    "body{font-family:Arial,Helvetica,sans-serif;font-size:11pt;line-height:1.15;color:#000;"
-    "max-width:16cm;margin:2.54cm auto;background:#fff}"
-    "p{margin:0;white-space:pre-wrap;tab-size:4}"
-    "@media print{body{margin:0;max-width:none}}"
-)
-
-
-def supplier_request_document_html(title: str, letter: str) -> str:
-    """Документ запроса: шаблон `supplierTemplateBody_` с подставленными полями, по абзацу на строку."""
-    paragraphs = "".join(f"<p>{html.escape(line) if line else '&nbsp;'}</p>" for line in letter.split("\n"))
-    return (
-        '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
-        f"<title>{html.escape(title)}</title><style>{_DOCUMENT_CSS}</style></head>"
-        f"<body>{paragraphs}</body></html>"
-    )
 
 
 SPLIT_MAX_COPIES = 30

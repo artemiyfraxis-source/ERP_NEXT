@@ -1116,16 +1116,20 @@ def supplier_request_document(
     order_number: str,
     _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    download: bool = False,
 ) -> Response:
-    """Документ запроса поставщику: открыть / распечатать (в SUPPLYMAP — ссылка на Google Doc)."""
+    """Документ запроса поставщику — PDF «Запрос PO-001.pdf»: открывается в просмотрщике браузера
+    (inline), `?download=1` — вложением (в SUPPLYMAP — ссылка на Google Doc)."""
     try:
         meta, content = supplier_order_document(order_number, uow_factory())
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Документ запроса не найден") from error
+    disposition = "attachment" if download else "inline"
     return Response(content=content, media_type=meta.content_type, headers={
-        "Content-Disposition": f"inline; filename*=UTF-8''{quote(meta.file_name)}",
-        # Файл собран сервером из данных заказа; скрипты в нём не нужны.
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(f'Запрос {order_number}.pdf')}",
+        # Без sandbox: он ломает встроенный просмотрщик PDF в Chrome. Скрипты и ресурсы файлу не нужны.
+        "Content-Security-Policy": "default-src 'none'",
+        "X-Content-Type-Options": "nosniff",
     })
 
 

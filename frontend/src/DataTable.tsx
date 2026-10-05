@@ -50,6 +50,8 @@ export interface DataTableProps<T> {
   storageKey?: string;
   label?: string;
   presets?: DataPreset<T>[];
+  /** Чип, открытый по умолчанию (пока пользователь не выбрал другой чип; «Все» не запоминается). */
+  defaultPreset?: string;
   /** Счётчики чипов — по строкам, прошедшим поиск и фильтры колонок (без самого чипа), как issFilterRender_ в
       SUPPLYMAP. По умолчанию — по всем строкам. */
   presetCountsFollowSearch?: boolean;
@@ -150,6 +152,7 @@ export function DataTable<T>({
   storageKey,
   label = "Таблица",
   presets = [],
+  defaultPreset = "",
   presetCountsFollowSearch = false,
   groupBy,
   bulkActions = [],
@@ -169,7 +172,7 @@ export function DataTable<T>({
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
-  const [preset, setPreset] = useState(saved.preset ?? "");
+  const [preset, setPreset] = useState(saved.preset || defaultPreset);
   const [hidden, setHidden] = useState<string[]>(
     saved.hidden ?? columns.filter((column) => column.hidden).map((column) => column.key),
   );

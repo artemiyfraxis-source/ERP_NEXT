@@ -185,3 +185,26 @@ it("opens a card built by hand on its tab with its list and scheme, keeps them a
   expect(onBuild.mock.calls[0][0].ops.map((op: Record<string, unknown>) => op.seq)).toEqual([4, 7]);
   expect(onBuild.mock.calls[0][0].route).toEqual({ blocks: [{ key: "b1", name: "Провод с лепестком", ops: [1, 2], final: true }], edges: [] });
 });
+
+it("marks an operation «одновременно с предыдущей»: the scheme branches and the next operation joins the branches", async () => {
+  const onBuild = mount();
+  await openManual();
+  fireEvent.click(screen.getByRole("button", { name: "+ Операция из библиотеки" }));
+  addFromLibrary(/^Резка$/, "Резка");
+  addFromLibrary(/^Усадка$/, "Усадка");
+  // У первой операции отметки нет.
+  expect(screen.queryByLabelText("Одновременно с предыдущей: Резка")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Одновременно с предыдущей: Усадка"));
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("идёт одновременно с предыдущей и завершает список");
+  expect(onBuild).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "+ Своя операция" }));
+  fireEvent.change(screen.getByLabelText("Название операции 3"), { target: { value: "Сборка" } });
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  const config = onBuild.mock.calls[0][0];
+  expect(config.ops.map((op: Record<string, unknown>) => op.parallel ?? false)).toEqual([false, true, false]);
+  expect(config.route.edges).toEqual([{ from: "b1", to: "b3", per_unit: 1 }, { from: "b2", to: "b3", per_unit: 1 }]);
+});

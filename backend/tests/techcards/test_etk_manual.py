@@ -148,6 +148,22 @@ def test_hand_drawn_scheme_feeds_blocks_with_their_quantities_and_names_the_prod
     assert steps[0].seconds_per_unit == 6 and steps[0].setup_seconds == 120
 
 
+def test_simultaneous_operations_are_branches_the_next_operation_joins():
+    # «Одновременно с предыдущей» (owner 05.10): the generator marks the op and draws it as its own branch.
+    config = manual(route={
+        "blocks": [{"key": "b1", "ops": [1], "final": False}, {"key": "b2", "ops": [2], "final": False},
+                   {"key": "b3", "ops": [3], "final": True}],
+        "edges": [{"from": "b1", "to": "b3", "per_unit": 1}, {"from": "b2", "to": "b3", "per_unit": 1}],
+    })
+    config["ops"][1]["parallel"] = True
+    document = build(config)
+    cut, solder, crimp = document["operations"]
+    assert solder["semis"] == []
+    assert [item["name"] for item in crimp["semis"]] == ["Полуфабрикат после «Резка»", "Провод с припаянным лепестком"]
+    steps = route_from_document(document)
+    assert [item.block for item in steps[2].inputs] == ["b1", "b2"]
+
+
 def test_operations_merged_into_one_block_pass_the_product_inside_it():
     route = {
         "blocks": [{"key": "b1", "ops": [1, 2], "final": False}, {"key": "b3", "ops": [3], "final": True}],

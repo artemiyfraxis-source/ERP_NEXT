@@ -461,7 +461,7 @@ it("lets the master hand out operations of issued projects to installers and lau
   expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя: 1")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
-  expect(screen.getByText("к запуску 1")).toBeInTheDocument();
+  expect(await screen.findByText("к запуску 1")).toBeInTheDocument(); // счётчик запуска приходит отдельным запросом
   expect(screen.getByText("ООО «Тест»")).toBeInTheDocument();
   expect(screen.getByText("ТК ✓")).toBeInTheDocument();
 
