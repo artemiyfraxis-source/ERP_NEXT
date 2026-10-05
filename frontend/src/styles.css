@@ -2447,15 +2447,21 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 /* Производственный план → Загрузка по людям: сетка «часы/смена» на языке «Монтажников». */
 .pl-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
 .pl-period { font-size: 14px; }
-.pl-only { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; min-height: 30px; cursor: pointer; }
+.pl-only { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; min-height: 30px; cursor: pointer; white-space: nowrap; }
+.pl-only input { width: auto; margin: 0; }
 .pl-table tbody th { padding: 2px 6px; }
 .pl-table thead th:first-child { width: 220px; }
 .pl-table tr.pl-free th b { font-weight: 500; color: var(--muted-foreground); }
 .pl-table tr.pl-free th small { color: #98a2b3; }
 .pl-table .mb-cell { font-size: 12px; }
+.pl-table .mb-cell.absent { font-size: 11px; white-space: nowrap; overflow: hidden; }
+.pl-table .mb-cell.free { background: #f8f9fb; }
+.pl-legend { font-size: 12px; }
+.pl-legend .mb-cell { width: auto; min-width: 26px; height: 20px; padding: 0 4px; font-size: 12px; }
+.pl-legend .mb-cell.late { font-weight: 700; }
 .pl-table .mb-cell > button { position: relative; }
 .mb-cell.late { box-shadow: inset 0 0 0 2px var(--tone-danger); }
-.pl-late { position: absolute; top: 0; right: 3px; font-style: normal; font-weight: 700; font-size: 11px; color: var(--tone-danger); }
+.pl-late { position: absolute; top: 1px; right: 4px; font-style: normal; font-weight: 700; font-size: 12px; line-height: 1; color: var(--tone-danger); }
 .mb-legend .mb-cell.late { box-shadow: inset 0 0 0 2px var(--tone-danger); }
 .pl-detail { margin-top: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); font-size: 13px; }
 .pl-detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
@@ -2463,7 +2469,8 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .pl-detail ul { margin: 0; padding: 0; list-style: none; }
 .pl-detail li { padding: 3px 0; border-top: 1px solid var(--border); }
 .pl-detail li small { color: var(--muted-foreground); font-size: 12px; }
+.pl-whole { display: block; font-size: 11px; color: var(--muted-foreground); }
 .pl-detail li.done { opacity: .55; }
 .pl-detail li.late strong { color: var(--tone-danger); }
-@media (pointer: coarse) { .pl-table .mb-cell, .pl-table .mb-cell > button { height: 40px; min-height: 40px; } .pl-only { min-height: 40px; } }
+@media (pointer: coarse) { .pl-table .mb-cell, .pl-table .mb-cell > button { height: 40px; min-height: 40px; } .pl-only { min-height: 40px; } .pl-head .mb-week-nav .small { min-height: 40px; padding: 3px 12px; } .pl-detail-head .mb-day-close { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; font-size: 22px; } }
 @media (max-width: 1100px) { .pl-table thead th:first-child { width: 150px; } .pl-table .mb-cell { font-size: 11px; } }

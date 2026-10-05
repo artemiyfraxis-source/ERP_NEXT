@@ -85,6 +85,26 @@ export function peopleLoad(operators: ProductionOperator[], tasks: ProductionTas
   return rows.sort((a, b) => Number(b.total > 0) - Number(a.total > 0) || a.operator.name.localeCompare(b.operator.name, "ru"));
 }
 
+const ABSENCE_SHORT: Record<string, string> = { "Больничный": "больн.", "Командировка": "командир." };
+export const absenceLabel = (kind: string) => ABSENCE_SHORT[kind] ?? kind.toLowerCase();
+
+const minuteOf = (value: string) => { const [h, m] = value.split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+const clockOf = (value: number) => new Date(value).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+
+/** Часть окна операции внутри смены этого дня; «продолжение»/«с» — день, куда или откуда окно уходит за смену. */
+export function dayPart(item: LoadItem, day: string, shift: ProductionShift) {
+  const from = dayStart(day) + minuteOf(shift.start) * 60_000;
+  const to = dayStart(day) + minuteOf(shift.finish) * 60_000;
+  const start = Math.max(item.start, from);
+  const finish = Math.min(item.finish, to);
+  const ok = finish > start;
+  const weekdayOf = (value: number) => new Date(value).toLocaleDateString("ru-RU", { weekday: "short" });
+  return {
+    start: ok ? start : item.start, finish: ok ? finish : item.finish,
+    continues: item.finish > to ? weekdayOf(item.finish) : "", resumed: item.start < from ? weekdayOf(item.start) : "",
+  };
+}
+
 const dayLabel = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString("ru-RU", { weekday: "short" });
 
 export function PeopleLoadGrid({ operators, tasks, absences, holidays, shift, week, onWeekChange }: {
@@ -136,7 +156,7 @@ export function PeopleLoadGrid({ operators, tasks, absences, holidays, shift, we
             const level = load <= 0.05 ? "free" : load < capacity * 0.5 ? "low" : load <= capacity + 0.05 ? "full" : "over";
             const inDay = itemsOnDay(person.items, day);
             const late = inDay.some((item) => item.late);
-            const text = absent ? absent.kind.slice(0, 3).toLowerCase() : !working ? "" : `${oneDecimal(load)}/${oneDecimal(capacity)}`;
+            const text = absent ? absenceLabel(absent.kind) : !working || level === "free" ? "" : `${oneDecimal(load)}/${oneDecimal(capacity)}`;
             const title = `${person.operator.name}, ${dayMonth(day)}: ${absent ? absent.kind : !working ? "нерабочий день" : `${oneDecimal(load)} из ${oneDecimal(capacity)} ч${late ? " · есть позже дедлайна" : ""}`}`;
             const picked = open?.id === person.operator.id && open.day === day;
             const className = `mb-cell ${absent ? "absent" : !working ? "off" : level}${late ? " late" : ""}${day === today ? " today" : ""}${picked ? " picked" : ""}`;
@@ -150,22 +170,29 @@ export function PeopleLoadGrid({ operators, tasks, absences, holidays, shift, we
       })}</tbody>
     </table>
     {!shown.length && <div className="empty">Нет занятых сотрудников за {period}.</div>}
-    {open && detail && <DayDetail person={detail} day={open.day} capacity={capacity} onClose={() => setOpen(null)} />}
-    <div className="mb-legend"><span className="mb-cell free">0/7</span> свободен <span className="mb-cell low">3/7</span> частично <span className="mb-cell full">7/7</span> смена занята <span className="mb-cell over">9/7</span> перегруз <span className="mb-cell absent">отп</span> отсутствует <span className="mb-cell off">&nbsp;</span> выходной <span className="mb-cell low late">!</span> есть позже дедлайна</div>
+    {open && detail && <DayDetail person={detail} day={open.day} capacity={capacity} shift={workShift} onClose={() => setOpen(null)} />}
+    <div className="mb-legend pl-legend"><span className="mb-cell free">&nbsp;</span> свободен <span className="mb-cell low">3/7</span> частично <span className="mb-cell full">7/7</span> смена занята <span className="mb-cell over">9/7</span> перегруз <span className="mb-cell absent">отпуск</span> отсутствует <span className="mb-cell off">&nbsp;</span> выходной <span className="mb-cell low late">!</span> есть позже дедлайна</div>
   </div>;
 }
 
-function DayDetail({ person, day, capacity, onClose }: { person: PersonLoad; day: string; capacity: number; onClose: () => void }) {
+function DayDetail({ person, day, capacity, shift, onClose }: { person: PersonLoad; day: string; capacity: number; shift: ProductionShift; onClose: () => void }) {
   const items = itemsOnDay(person.items, day);
-  const clock = (value: number) => new Date(value).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const stamp = (value: number) => `${dayMonth(isoOf(new Date(value)))} ${clockOf(value)}`;
   return <div className="pl-detail" role="group" aria-label={`Что в дне: ${person.operator.name}, ${dayMonth(day)}`}>
     <div className="pl-detail-head"><b>{person.operator.name} · {dayLabel(day)} {dayMonth(day)}</b>
       <span>{oneDecimal(person.hoursByDay[day] ?? 0)} из {oneDecimal(capacity)} ч</span>
-      <button className="mb-day-close" aria-label="Закрыть день" onClick={onClose}>×</button></div>
+      <button className="mb-day-close" aria-label="Закрыть день" title="Закрыть" onClick={onClose}>×</button></div>
     <ul>{items.map((item) => <li key={item.key} className={`${item.done ? "done" : ""}${item.late ? " late" : ""}`}>
       <b>{item.pz}</b> <span>{item.operation}</span>
       {item.feeds && <small> ({item.feeds})</small>}
-      <small> · {clock(item.start)}–{clock(item.finish)}{item.quantity != null ? ` · ${item.quantity} шт` : ""}</small>
+      {(() => {
+        const part = dayPart(item, day, shift);
+        const label = `${dayLabel(day)} ${clockOf(part.start)}–${clockOf(part.finish)}${part.resumed ? ` · с ${part.resumed}` : ""}${part.continues ? ` · продолжение ${part.continues}` : ""}`;
+        return <>
+          <small> · {label}{item.quantity != null ? ` · ${item.quantity} шт` : ""}</small>
+          {(part.resumed || part.continues) && <span className="pl-whole">вся операция {stamp(item.start)} – {stamp(item.finish)}</span>}
+        </>;
+      })()}
       {item.deadline && <small> · дедлайн {dayMonth(item.deadline)}</small>}
       {item.done && <em> · выполнена</em>}
       {item.late && <strong> · позже дедлайна</strong>}

@@ -428,7 +428,7 @@ it("shows people load as hours per shift: tone by load, late marker, absence, fr
     expect(mon[2].className).toContain("late");
     expect(mon[5].className).toContain("off");
     expect(rows[1].querySelectorAll("td")[3].className).toContain("absent");
-    expect(rows[1].querySelectorAll("td")[3].textContent).toBe("отп");
+    expect(rows[1].querySelectorAll("td")[3].textContent).toBe("отпуск");
     expect(rows[0].textContent).toContain("8,3 ч за 2 нед.");
     expect(rows[1].textContent).toContain("свободен");
     expect(screen.getByText("Без исполнителя: 1 опер. в 1 зад. — назначить в «Ресурсном планировании»")).toBeInTheDocument();
