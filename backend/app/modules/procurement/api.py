@@ -612,7 +612,7 @@ def my_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     after: UUID | None = None,
 ) -> dict:
     try:
@@ -630,7 +630,7 @@ def in_work_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     after: UUID | None = None,
 ) -> dict:
     """Read-only queue for «режим просмотра» (ID-6): lines taken by any buyer and not yet done."""

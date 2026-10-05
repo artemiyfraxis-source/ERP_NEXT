@@ -1732,6 +1732,9 @@ export interface InvoiceUpload {
   hint: string;
 }
 
+// «Мои позиции» / «Режим просмотра»: большие страницы — тысячи строк за 1–5 запросов, а не за 50.
+const PROCUREMENT_QUEUE_PAGE = 500;
+
 export const procurementApi = {
   kpOrder: (reference: string) =>
     api<{ order_reference: string; lines: ProcurementLine[] }>(
@@ -1761,12 +1764,12 @@ export const procurementApi = {
     ),
   mine: (after?: string) =>
     api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
-      `/api/procurement/mine${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+      `/api/procurement/mine?limit=${PROCUREMENT_QUEUE_PAGE}${after ? `&after=${encodeURIComponent(after)}` : ""}`,
     ),
   // «Режим просмотра» (ID-6): every buyer's lines in work — the read-only «что едет».
   inWork: (after?: string) =>
     api<{ lines: ProcurementLine[]; next_cursor: string | null }>(
-      `/api/procurement/in-work${after ? `?after=${encodeURIComponent(after)}` : ""}`,
+      `/api/procurement/in-work?limit=${PROCUREMENT_QUEUE_PAGE}${after ? `&after=${encodeURIComponent(after)}` : ""}`,
     ),
   // Весь лист закупки: все статусы и закупщики, поиск и отбор на сервере, страницы по курсору.
   sheet: (filters: { q?: string; status?: string; buyer?: string }, after?: string) => {

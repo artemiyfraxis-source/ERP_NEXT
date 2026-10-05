@@ -226,7 +226,7 @@ it("groups rows by saved supplier ignoring case, sums the calculated amount and 
   expect(rows[1].querySelector(".group-meta")).toHaveTextContent("2 позиции · 300,50 ₽ по расчёту");
   expect(rows[2].querySelector(".group-title")).toHaveTextContent("Без поставщика");
   expect(rows[2].querySelector(".group-meta")).toHaveTextContent("1 позиция");
-  expect(within(rows[2] as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
+  expect(within(rows[2] as HTMLElement).queryByRole("button", { name: GROUP })).not.toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: GROUP })).toHaveLength(2);
   // Порядок строк — как групп.
   expect(screen.getAllByText(/^SM-\d$/).map((cell) => cell.textContent)).toEqual(["SM-4", "SM-2", "SM-3", "SM-1"]);
@@ -410,4 +410,70 @@ it("shows the covered quantity on the row and releases it from the menu", async 
   fireEvent.click(screen.getByRole("menuitem", { name: "Снять «Со склада»" }));
   await waitFor(() => expect(onChanged).toHaveBeenCalledWith("SM-1: «Со склада» снято"));
   expect(posted).toEqual([`POST /api/procurement/${line(1).id}/stock-cover/release`]);
+});
+
+// 300 строк у 15 поставщиков: у поставщиков 1-5 по 40 строк (свёрнуты), у 6-15 по 10 (открыты).
+function bigQueue(): ProcurementLine[] {
+  const rows: ProcurementLine[] = [];
+  for (let s = 1; s <= 15; s += 1) {
+    const count = s <= 5 ? 40 : 10;
+    for (let k = 0; k < count; k += 1) {
+      const n = rows.length + 1;
+      rows.push(line(n, { id: `row-${n}`, legacy_id: `SM-${n}`, supplier: `Поставщик ${String(s).padStart(2, "0")}`, status: "Готов к запросу" }));
+    }
+  }
+  return rows;
+}
+
+const head = (title: string) => screen.getByRole("button", { name: `Группа ${title}` });
+
+it("starts groups of more than 20 rows folded without inputs and keeps open ones editable", () => {
+  window.localStorage.clear();
+  renderTable(bigQueue());
+  expect(document.querySelectorAll("tr.group-row")).toHaveLength(15);
+  expect(head("Поставщик 01")).toHaveAttribute("aria-expanded", "false");
+  expect(head("Поставщик 06")).toHaveAttribute("aria-expanded", "true");
+  // Свёрнутые: SM-1..SM-200 без полей; открытые: SM-201..SM-300 с полями.
+  expect(screen.queryByLabelText("Кол-во факт SM-1")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Кол-во факт SM-200")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Кол-во факт SM-201")).toBeInTheDocument();
+  expect(screen.getAllByLabelText(/^Кол-во факт SM-/)).toHaveLength(100);
+  // Шапка свёрнутой группы держит число, сумму и «Сформировать запрос».
+  const row = head("Поставщик 01").closest("tr")!;
+  expect(row).toHaveTextContent("40 позиций");
+  expect(within(row).getByRole("button", { name: "Сформировать запрос" })).toBeEnabled();
+});
+
+it("remembers an opened or folded group after remount", () => {
+  window.localStorage.clear();
+  const first = renderTable(bigQueue());
+  fireEvent.click(head("Поставщик 01"));
+  fireEvent.click(head("Поставщик 06"));
+  expect(screen.getByLabelText("Кол-во факт SM-1")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Кол-во факт SM-201")).not.toBeInTheDocument();
+  first.unmount();
+
+  renderTable(bigQueue());
+  expect(head("Поставщик 01")).toHaveAttribute("aria-expanded", "true");
+  expect(head("Поставщик 06")).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByLabelText("Кол-во факт SM-1")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Кол-во факт SM-201")).not.toBeInTheDocument();
+  expect(JSON.parse(window.localStorage.getItem("erp-table:procurement-inwork-groups")!).groups).toEqual({ "поставщик 01": true, "поставщик 06": false });
+});
+
+it("still saves an edit made in a group that was folded afterwards", async () => {
+  window.localStorage.clear();
+  const sent: { rows: Record<string, unknown>[] }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    sent.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify({ lines: [], saved: 1, ready: 1, skipped: [], failed: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  renderTable(bigQueue());
+  fireEvent.change(screen.getByLabelText("Артикул SM-201"), { target: { value: "A-201" } });
+  fireEvent.click(head("Поставщик 06"));
+  expect(screen.queryByLabelText("Артикул SM-201")).not.toBeInTheDocument();
+  expect(head("Поставщик 06").closest("tr")).toHaveTextContent("изменено: 1");
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0].rows).toEqual([expect.objectContaining({ line_id: "row-201", design_article: "A-201" })]);
 });

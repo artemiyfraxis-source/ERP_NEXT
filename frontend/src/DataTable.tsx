@@ -83,7 +83,7 @@ export interface DataTableProps<T> {
 
 type Sort = { key: string; direction: 1 | -1 } | null;
 
-interface Saved {
+export interface Saved {
   hidden?: string[];
   sort?: Sort;
   preset?: string;
@@ -136,7 +136,7 @@ function utf16Bytes(text: string) {
   return bytes;
 }
 
-function readSaved(storageKey?: string): Saved {
+export function readSaved(storageKey?: string): Saved {
   if (!storageKey) return {};
   try {
     return JSON.parse(window.localStorage.getItem(`erp-table:${storageKey}`) ?? "{}") as Saved;
@@ -145,7 +145,7 @@ function readSaved(storageKey?: string): Saved {
   }
 }
 
-function writeSaved(storageKey: string | undefined, saved: Saved) {
+export function writeSaved(storageKey: string | undefined, saved: Saved) {
   if (!storageKey) return;
   try {
     window.localStorage.setItem(`erp-table:${storageKey}`, JSON.stringify(saved));

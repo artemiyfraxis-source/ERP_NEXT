@@ -80,7 +80,7 @@ it("takes a line and saves facts with its optimistic version", async () => {
     if (path === "/api/procurement/available") {
       return json({ lines: taken ? [] : [line] });
     }
-    if (path === "/api/procurement/mine") {
+    if (path === "/api/procurement/mine?limit=500") {
       return json({ lines: taken ? [{ ...line, buyer: "Закупщик" }] : [] });
     }
     if (path === "/api/procurement/take" && init?.method === "POST") {
@@ -119,7 +119,7 @@ it("blocks duplicate page loads and reports refresh failures", async () => {
     if (path === "/api/procurement/available") {
       return json({ lines: [line], next_cursor: "next-page" });
     }
-    if (path === "/api/procurement/mine") {
+    if (path === "/api/procurement/mine?limit=500") {
       return json({ lines: [], next_cursor: null });
     }
     if (path === "/api/procurement/available?after=next-page") {
@@ -198,7 +198,7 @@ it("keeps the invoice closed until fact money is saved with the edited field as 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [current], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [current], next_cursor: null });
     if (path.endsWith("/money") && init?.method === "PATCH") {
       moneyBody = JSON.parse(String(init.body));
       current = {
@@ -231,7 +231,7 @@ it("asks for a manual rate when the CBR is down and resends the money with it", 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [awaitingInvoice], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [awaitingInvoice], next_cursor: null });
     if (path.endsWith("/money") && init?.method === "PATCH") {
       const body = JSON.parse(String(init.body));
       bodies.push(body);
@@ -275,7 +275,7 @@ it("confirms a paid backorder with a new date or cancels it", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [backorder], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [backorder], next_cursor: null });
     if (path.includes("/backorder/") && init?.method === "POST") {
       calls.push([path, JSON.parse(String(init.body))]);
       return json({ line: backorder });
@@ -300,7 +300,7 @@ it("does not offer generic approval or cancel on a backorder", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [backorder], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [backorder], next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -321,7 +321,7 @@ it("forms supplier requests: downloads each order's PDF, lists the skipped rows 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") {
+    if (path === "/api/procurement/mine?limit=500") {
       return json({
         lines: [formed ? {
           ...ready, status: "Жду счет", order_number: "PO-012", order_date: "2026-10-05", actual_sum: "122", calculated_sum: "100",
@@ -388,7 +388,7 @@ it("replaces the invoice of a paid line without touching its payment", async () 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [shipped], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [shipped], next_cursor: null });
     if (path.endsWith("/invoice/replace") && init?.method === "POST") {
       calls.push([path, JSON.parse(String(init.body))]);
       return json({ line: { ...shipped, invoice_url: "https://files.test/invoice-v2.pdf", version: 4 } });
@@ -416,7 +416,7 @@ it("splits an own line into supplier copies with its optimistic version", async 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") {
+    if (path === "/api/procurement/mine?limit=500") {
       return json({ lines: [{ ...line, status: "В пути", buyer: "Закупщик" }], next_cursor: null });
     }
     if (path.endsWith("/split") && init?.method === "POST") {
@@ -451,7 +451,7 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: saved ? [] : [awaiting, other] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: saved ? [] : [awaiting, other] });
     if (path === "/api/procurement/kp?reference=PO-001") return json({ order_reference: "PO-001", lines: [awaiting, other] });
     if (path === "/api/procurement/kp/parse") {
       parsed = JSON.parse(String(init?.body));
@@ -501,7 +501,7 @@ it("«Жду счёт»: the order menu opens «Внести КП» for that ord
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines });
     const reference = path.match(/kp\?reference=(PO-\d+)/)?.[1];
     if (reference) return json({ order_reference: reference, lines: lines.filter((item) => item.order_number === reference) });
     if (path === "/api/procurement/kp" && init?.method === "POST") {
@@ -552,7 +552,7 @@ it("hides the retired substitution and quality-document fields on every stage", 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -588,7 +588,7 @@ it("lists unsorted lines with their supplier and says when a line has none", asy
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [withSupplier, without], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [], next_cursor: null });
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -622,7 +622,7 @@ it("shows «Мои позиции» as separate blocks: В работе → Жд
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -696,7 +696,7 @@ it("keeps the blocks separate: «Оплачено» starts collapsed, a heading 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [awaiting, transit], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [awaiting, transit], next_cursor: null });
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -737,20 +737,135 @@ it("keeps the blocks separate: «Оплачено» starts collapsed, a heading 
   second.unmount();
 });
 
-it("keeps «В работе» on screen when it is empty: its header with 0 and one grey line, no order blocks", async () => {
+const BLOCK_NAMES = ["В работе", "Жду счёт", "Ждёт оплаты", "Оплачено", "Дозавоз", "Прочие позиции"];
+
+function mockMine(lines: ProcurementLine[]) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines });
     throw new Error(`Unexpected request: ${path}`);
   });
+}
+
+/** Строка заказа: n — номер заказа и строки, status — этап. */
+const orderLine = (n: number, status: string, extra: Partial<ProcurementLine> = {}): ProcurementLine => ({
+  ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт", status,
+  id: `30000000-0000-0000-0000-${String(n).padStart(12, "0")}`, legacy_id: `REQ-${n}`,
+  order_number: `PO-${String(n).padStart(3, "0")}`, order_date: "2026-10-01", calculated_sum: "100", ...extra,
+});
+
+const headingNames = () => screen.getAllByRole("heading", { level: 2 })
+  .map((heading) => BLOCK_NAMES.find((name) => heading.textContent?.replace(/^[▸▾]/, "").startsWith(name))).filter(Boolean);
+
+it("keeps every «Мои позиции» block on screen even with no data: six headings in order, each with 0 and one grey line", async () => {
+  mockMine([]);
+
+  const { container } = render(<ProcurementPage />);
+  await screen.findByText(/Нет строк в работе/);
+  expect(headingNames()).toEqual(BLOCK_NAMES);
+  for (const name of BLOCK_NAMES) expect(screen.getByRole("heading", { name: new RegExp(`^${name}`) })).toHaveTextContent(`${name} 0`);
+  expect(screen.getByText(/Нет строк в работе/)).toHaveClass("stage-empty");
+  expect(container.querySelectorAll(".stage-empty")).toHaveLength(6);
+  expect(screen.queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
+  expect(container.querySelectorAll("table")).toHaveLength(0);
+});
+
+it("«Блоки» hides blocks, the choice survives a remount, and a hidden block with data is named in the summary", async () => {
+  mockMine([orderLine(1, "Жду счет"), orderLine(2, "Готово"), orderLine(3, "Готово")]);
+
+  const first = render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: /^Оплачено/ });
+  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Оплачено" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Прочие позиции" }));
+  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "Дозавоз"]);
+  expect(screen.getByText("скрыто: Оплачено 2")).toBeInTheDocument();
+  first.unmount();
 
   render(<ProcurementPage />);
-  await screen.findByText(/Нет строк в работе/);
-  expect(screen.getByRole("heading", { name: /^В работе/ })).toHaveTextContent("В работе 0");
-  expect(screen.getByText(/Нет строк в работе/)).toHaveClass("stage-empty");
-  expect(screen.queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: /Жду счёт|Ждёт оплаты|Оплачено|Дозавоз|Прочие позиции/ })).not.toBeInTheDocument();
+  await screen.findByRole("heading", { name: /^Жду счёт/ });
+  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "Дозавоз"]);
+  expect(screen.getByText("скрыто: Оплачено 2")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
+  expect(screen.getByRole("checkbox", { name: "Оплачено" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Жду счёт" })).toBeChecked();
+});
+
+it("one search narrows every block and its counts (ID, name, supplier, order number, invoice number)", async () => {
+  mockMine([
+    orderLine(1, "Жду счет", { supplier: "ООО Альфа" }),
+    orderLine(2, "В оплату", { supplier: "ООО Бета", invoice_number: "СЧ-777", invoice_url: "https://files.test/i.pdf", pay_missing: [] }),
+    orderLine(3, "Готово", { supplier: "ООО Альфа" }),
+    { ...line, id: "30000000-0000-0000-0000-000000000099", legacy_id: "REQ-99", status: "В работе", supplier: "ООО Альфа" },
+  ]);
+
+  render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: /^Жду счёт/ });
+  const heading = (name: string) => screen.getByRole("heading", { name: new RegExp(`^${name}`) });
+  const search = screen.getByRole("searchbox", { name: "Поиск по моим позициям" });
+
+  fireEvent.change(search, { target: { value: "альфа" } });
+  expect(heading("В работе")).toHaveTextContent("В работе 1");
+  expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 1");
+  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
+  expect(heading("Оплачено")).toHaveTextContent("Оплачено 1");
+
+  fireEvent.change(search, { target: { value: "сч-777" } });
+  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 1");
+  expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 0");
+  expect(heading("В работе")).toHaveTextContent("В работе 0");
+
+  fireEvent.change(search, { target: { value: "po-003" } });
+  expect(heading("Оплачено")).toHaveTextContent("Оплачено 1");
+  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
+});
+
+it("shows orders · positions · расчёт / факт in a block heading", async () => {
+  mockMine([
+    orderLine(1, "Жду счет", { calculated_sum: "100", actual_sum: "120" }),
+    orderLine(1, "Жду счет", { id: "30000000-0000-0000-0000-0000000000a1", legacy_id: "REQ-1b", calculated_sum: "50", actual_sum: "60" }),
+    orderLine(2, "Жду счет", { calculated_sum: "10", actual_sum: null }),
+  ]);
+
+  render(<ProcurementPage />);
+  const block = await screen.findByRole("region", { name: "Жду счёт" });
+  expect(within(block).getByText(/^2 зак\. · 3 поз\. · расчёт 160,00 ₽ \/ факт 180,00 ₽$/)).toBeInTheDocument();
+});
+
+it("shows 30 orders and «Показать ещё» for the rest", async () => {
+  mockMine(Array.from({ length: 31 }, (_, index) => orderLine(index + 1, "Жду счет")));
+
+  render(<ProcurementPage />);
+  const block = await screen.findByRole("region", { name: "Заказы: Жду счёт" });
+  const orders = () => within(block).getAllByRole("rowgroup").filter((group) => group.getAttribute("aria-label"));
+  expect(orders()).toHaveLength(30);
+  const section = screen.getByRole("region", { name: "Жду счёт" });
+  fireEvent.click(within(section).getByRole("button", { name: /Показать ещё/ }));
+  expect(orders()).toHaveLength(31);
+  expect(within(section).queryByRole("button", { name: /Показать ещё/ })).not.toBeInTheDocument();
+});
+
+it("renders no lines for a closed order and a column hidden in «Колонки» stays hidden after a remount", async () => {
+  mockMine([orderLine(1, "Жду счет")]);
+
+  const first = render(<ProcurementPage />);
+  const block = await screen.findByRole("region", { name: "Заказы: Жду счёт" });
+  expect(within(block).queryByText("REQ-1")).not.toBeInTheDocument();
+  const section = screen.getByRole("region", { name: "Жду счёт" });
+  fireEvent.click(within(section).getByRole("button", { name: "Колонки" }));
+  fireEvent.click(within(section).getByRole("checkbox", { name: "Комментарий" }));
+  expect(within(block).queryByRole("columnheader", { name: "Комментарий" })).not.toBeInTheDocument();
+  expect(within(block).getByRole("columnheader", { name: "Расчёт, ₽" })).toBeInTheDocument();
+  first.unmount();
+
+  render(<ProcurementPage />);
+  const again = await screen.findByRole("region", { name: "Заказы: Жду счёт" });
+  expect(within(again).queryByRole("columnheader", { name: "Комментарий" })).not.toBeInTheDocument();
+  expect(within(again).getByRole("columnheader", { name: "Наименование" })).toBeInTheDocument();
+  // Другой блок свои колонки не потерял.
+  expect(JSON.parse(window.localStorage.getItem("erp-table:procurement-orders-awaiting") ?? "{}").hidden).toEqual(["note"]);
+  expect(window.localStorage.getItem("erp-table:procurement-orders-topay")).toBeNull();
 });
 
 it("takes away the manual approval stage: no «На согласование» anywhere, a line parked before goes on from «Прочие позиции»", async () => {
@@ -763,7 +878,7 @@ it("takes away the manual approval stage: no «На согласование» a
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: current, next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: current, next_cursor: null });
     if (init?.method === "POST") {
       calls.push(`${path.replace(`/api/procurement/${parked.id}`, "")} ${init.body}`);
       current = current.map((item) => (item.id === parked.id ? { ...item, status: "В работе", version: item.version + 1 } : item));
@@ -795,7 +910,7 @@ it("cancels the chosen in-work lines in bulk after one confirmation, with progre
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: lines.filter((item) => !cancelled.includes(item.id)) });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: lines.filter((item) => !cancelled.includes(item.id)) });
     if (path.endsWith("/cancel") && init?.method === "POST") {
       const id = path.split("/")[3];
       if (id === lines[3].id) return problem(422, "Строка оплачена и передана в приёмку — согласование и отмена уже невозможны");
@@ -835,7 +950,7 @@ it("shows the progress of a bulk run while lines are still being processed", asy
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines });
     if (path.endsWith("/cancel") && init?.method === "POST") {
       inFlight += 1;
       peak = Math.max(peak, inFlight);
@@ -872,7 +987,7 @@ it("forms supplier requests only for the chosen ready lines", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines });
     if (path === "/api/procurement/supplier-requests" && init?.method === "POST") {
       bodies.push(JSON.parse(String(init.body)));
       return json({ orders: [], lines: [], skipped: [], other_buyer: 0 });
@@ -900,7 +1015,7 @@ it("re-reads «Мои позиции» about 4 and 10 s after a take and shows �
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const path = String(input);
       if (path === "/api/procurement/available") return json({ lines: mineCalls ? [] : [line] });
-      if (path === "/api/procurement/mine") {
+      if (path === "/api/procurement/mine?limit=500") {
         mineCalls += 1;
         return json({ lines: mineCalls > 1 ? [serverLine] : [] });
       }
@@ -947,7 +1062,7 @@ it("groups waiting orders with their header totals and opens «Внести КП
     const path = String(input);
     requested.push(path);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [first, second, third] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [first, second, third] });
     if (path === "/api/procurement/kp?reference=PO-002") return json({ order_reference: "PO-002", lines: [third] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -980,7 +1095,7 @@ it("lists orders waiting for payment with header totals and closes «Оплач�
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [ready, noInvoice] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [ready, noInvoice] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -1009,7 +1124,7 @@ it("pays one «В оплату» line from its menu and asks for the rate when t
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [ready] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [ready] });
     if (path.endsWith("/paid") && init?.method === "POST") {
       const body = JSON.parse(String(init.body));
       bodies.push(body);
@@ -1040,7 +1155,7 @@ it("paid orders: offer to reconcile a hand-typed rate only for lines that have o
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [manual, plain] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [manual, plain] });
     if (path.endsWith("/exchange-rate/reconcile") && init?.method === "POST") {
       posted.push(`${path} ${init.body}`);
       return json({ line: { ...manual, exchange_rate_manual: false, version: 4 } });
@@ -1076,7 +1191,7 @@ it("ID-6: view mode lists free and in-work lines without any buyer control", asy
     const path = String(input);
     requested.push(`${init?.method ?? "GET"} ${path}`);
     if (path === "/api/procurement/available") return json({ lines: [free], next_cursor: null });
-    if (path === "/api/procurement/in-work") return json({ lines: [taken], next_cursor: null });
+    if (path === "/api/procurement/in-work?limit=500") return json({ lines: [taken], next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -1091,7 +1206,7 @@ it("ID-6: view mode lists free and in-work lines without any buyer control", asy
   expect(screen.queryByRole("heading", { name: "Мои позиции" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
   expect(requested.every((call) => call.startsWith("GET "))).toBe(true);
-  expect(requested).not.toContain("GET /api/procurement/mine");
+  expect(requested).not.toContain("GET /api/procurement/mine?limit=500");
 });
 
 it("takes several free lines in one request", async () => {
@@ -1102,7 +1217,7 @@ it("takes several free lines in one request", async () => {
     const path = String(input);
     if (init?.body) bodies.push({ path, ...JSON.parse(String(init.body)) });
     if (path === "/api/procurement/available") return json({ lines: [first, second], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [], next_cursor: null });
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     if (path === "/api/procurement/take") return json({ lines: [first, second] });
     throw new Error(`Unexpected request: ${path}`);
@@ -1120,7 +1235,7 @@ it("offers the actual unit as a list", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [{ ...line, buyer: "Закупщик" }], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [{ ...line, buyer: "Закупщик" }], next_cursor: null });
     if (path === "/api/procurement/meta") return json({ units: ["шт", "кг", "компл"], statuses: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -1140,7 +1255,7 @@ it("saves traceability of an own line: maker, country, standard; the retired qua
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [own] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [own] });
     if (path.endsWith("/traceability") && init?.method === "PATCH") {
       body = JSON.parse(String(init.body));
       return json({ line: { ...own, version: 4, manufacturer: "Molex", country: "США" } });
@@ -1179,7 +1294,7 @@ it("uploads the invoice file, prefills its recognised № and date and sends the
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [ready], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [ready], next_cursor: null });
     if (path === "/api/procurement/invoice-files" && init?.method === "POST") {
       uploadBody = JSON.parse(String(init.body));
       return json(UPLOADED);
@@ -1216,7 +1331,7 @@ it("says to type № and date by hand when the invoice file has no text", async 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [shipped], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [shipped], next_cursor: null });
     if (path === "/api/procurement/invoice-files") {
       return json({ ...UPLOADED, invoice_number: "", invoice_date: "", file_name: "Счёт.jpg", hint: "Текст из файла не читается (скан или картинка) — № и дату счёта впишите вручную." });
     }
@@ -1242,7 +1357,7 @@ it("uploads one invoice file for the whole order in the КП form and fills № 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: saved ? [] : [awaiting, other] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: saved ? [] : [awaiting, other] });
     if (path === "/api/procurement/kp?reference=PO-001") return json({ order_reference: "PO-001", lines: [awaiting, other] });
     if (path === "/api/procurement/invoice-files") {
       uploadBody = JSON.parse(String(init?.body));
@@ -1294,7 +1409,7 @@ it("edits «Комментарий» on every stage from «В работе» and
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines });
     throw new Error(`Unexpected request: ${path}`);
   });
 
@@ -1330,7 +1445,7 @@ it("saves a typed «Комментарий» and «Ожид. дата» of a sta
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [transit] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [transit] });
     if (init?.method === "PATCH") {
       const body = JSON.parse(String(init.body));
       sent.push({ path, body });
@@ -1363,7 +1478,7 @@ it("edits the date and the note of a line inside an opened «Жду счет» o
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [waiting] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [waiting] });
     if (init?.method === "PATCH") {
       const body = JSON.parse(String(init.body));
       sent.push(`${path} ${init.body}`);
@@ -1398,7 +1513,7 @@ it("on 409 in a stage table says the line changed and rereads the queue; on 422 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") {
+    if (path === "/api/procurement/mine?limit=500") {
       const result = json({ lines: [reloaded ? fresh : toPay] });
       reloaded = true;
       return result;
@@ -1433,7 +1548,7 @@ it("opens the buyer's own line of the whole sheet for editing by the signed-in n
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [] });
     if (path === "/api/procurement/meta") return json({ units: [], statuses: [] });
     if (path === "/api/procurement/lines") return json({ lines: [mine, other], next_cursor: null, buyers: [] });
     throw new Error(`Unexpected request: ${path}`);
@@ -1451,7 +1566,7 @@ it("shows «Неразобранные» only when there is something to take; v
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: free, next_cursor: null });
-    if (path === "/api/procurement/mine" || path === "/api/procurement/in-work") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500" || path === "/api/procurement/in-work?limit=500") return json({ lines: [], next_cursor: null });
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -1476,17 +1591,17 @@ it("reads every page of «Мои позиции» before grouping, so one order 
     const path = String(input);
     requested.push(path);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [at(1)], next_cursor: "p2" });
-    if (path === "/api/procurement/mine?after=p2") return json({ lines: [at(2)], next_cursor: "p3" });
-    if (path === "/api/procurement/mine?after=p3") return json({ lines: [at(3)], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [at(1)], next_cursor: "p2" });
+    if (path === "/api/procurement/mine?limit=500&after=p2") return json({ lines: [at(2)], next_cursor: "p3" });
+    if (path === "/api/procurement/mine?limit=500&after=p3") return json({ lines: [at(3)], next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<ProcurementPage />);
   const group = await screen.findByRole("rowgroup", { name: "PO-030 от 05.10 · ООО А" });
   expect(within(group).getByText(/^3 поз\./)).toBeInTheDocument();
-  expect(requested.filter((path) => path.startsWith("/api/procurement/mine"))).toEqual([
-    "/api/procurement/mine", "/api/procurement/mine?after=p2", "/api/procurement/mine?after=p3",
+  expect(requested.filter((path) => path.startsWith("/api/procurement/mine?limit=500"))).toEqual([
+    "/api/procurement/mine?limit=500", "/api/procurement/mine?limit=500&after=p2", "/api/procurement/mine?limit=500&after=p3",
   ]);
   expect(screen.queryByRole("button", { name: "Ещё мои" })).not.toBeInTheDocument();
 });
@@ -1496,7 +1611,7 @@ it("stops reading «Мои позиции» after 50 pages and leaves «Ещё �
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path.startsWith("/api/procurement/mine")) {
+    if (path.startsWith("/api/procurement/mine?limit=500")) {
       pages += 1;
       return json({ lines: [{ ...line, id: `30000000-0000-0000-0000-${String(pages).padStart(12, "0")}`, legacy_id: `REQ-${pages}`, buyer: "Закупщик" }], next_cursor: `p${pages + 1}` });
     }
@@ -1542,7 +1657,7 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") {
+    if (path === "/api/procurement/mine?limit=500") {
       const status = paid ? "В оплату" : "Жду счет";
       return json({ lines: [first, second, third].map((item) => ({ ...item, status, version: item.version + bump })), next_cursor: null });
     }
@@ -1647,7 +1762,7 @@ it("«Убрать» in the invoice window drops the recognised file: the picker
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [first, second], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [first, second], next_cursor: null });
     if (path === "/api/procurement/orders/PO-001/recognize" && init?.method === "POST") {
       recognizeCalls += 1;
       return json(recognized("invoice", [
@@ -1704,7 +1819,7 @@ it("«Вставить КП» reads the prices from the file, lets a wrong one b
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") {
+    if (path === "/api/procurement/mine?limit=500") {
       return json({ lines: saved ? [{ ...first, actual_price_with_vat: "120", version: 4 }, { ...second, actual_price_with_vat: "99", version: 6 }] : [first, second], next_cursor: null });
     }
     if (path === "/api/procurement/orders/PO-002/recognize") {
@@ -1761,7 +1876,7 @@ it("replaces the invoice of an order waiting for payment from its menu over the 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [toPay, shipped], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [toPay, shipped], next_cursor: null });
     if (path === "/api/procurement/orders/PO-004/recognize") {
       return json(recognized("invoice", [{ line_id: toPay.id, legacy_id: "REQ-1", version: 3, price_with_vat: "125", confidence: "article" }]));
     }
@@ -1806,7 +1921,7 @@ it("marks the order paid in one call for its «В оплату» rows only and a
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") return json({ lines: [at(1), at(2), shipped], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [at(1), at(2), shipped], next_cursor: null });
     if (path === "/api/procurement/orders/PO-003/paid" && init?.method === "POST") {
       const body = JSON.parse(String(init.body));
       bodies.push(body);
@@ -1841,7 +1956,7 @@ it("on 409 from «Оплачено» says the order changed and rereads the queu
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
-    if (path === "/api/procurement/mine") { reads += 1; return json({ lines: [ready], next_cursor: null }); }
+    if (path === "/api/procurement/mine?limit=500") { reads += 1; return json({ lines: [ready], next_cursor: null }); }
     if (path === "/api/procurement/orders/PO-003/paid" && init?.method === "POST") return problem(409, "Конкурентное изменение: обновите данные и повторите команду");
     throw new Error(`Unexpected request: ${path}`);
   });
