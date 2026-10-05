@@ -21,7 +21,8 @@ from . import rfq as service
 from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
 
 
-def rfq_option() -> None:
+def rfq_option(_principal: Annotated[Principal, Depends(procurement_view_principal)]) -> None:
+    """After the section gate: a token or a stranger is refused (401/403) before the option says 404."""
     require_option("procurement.rfq")
 
 
