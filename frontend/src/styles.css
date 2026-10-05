@@ -2714,3 +2714,11 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .procurement-stage .data-table th.num, .procurement-stage .data-table td.num { min-width: 0; }
 .order-lines th { white-space: normal; vertical-align: bottom; }
 .procurement-stage .data-table td.menu { min-width: 150px; }
+
+/* Опции стенда (Витя): «Было / Новое» по блокам; на проде не показывается. */
+.stage-options-card { display: grid; gap: 10px; margin: 6px 0; padding: 10px; border: 1px dashed var(--border); border-radius: 10px; background: var(--card); font-size: 12px; }
+.stage-options-card section { display: grid; gap: 6px; }
+.stage-option { display: grid; gap: 2px; }
+.stage-option-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.stage-option-switch { display: inline-flex; gap: 2px; }
+.stage-option small { color: var(--muted-foreground); }
