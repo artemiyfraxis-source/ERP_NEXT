@@ -64,6 +64,19 @@ TERMINAL_NONCONFORMITIES = {WRONG_ITEM, EXPIRED}
 QUANTITY_FAULTS = {SHORT_FACT, SHORT_ORDER}
 QUALITY_FAULTS = {MECHANICAL_DAMAGE, WRONG_ITEM}
 MANUAL_NONCONFORMITIES = QUALITY_FAULTS
+# Owner, 05.10.2026: good stock is never held back by a count or a missing certificate. A shortfall (недовоз,
+# недостача) is accepted by the fact quantity and still gets its acts (АН, РК) and alert; the remainder of a
+# недовоз goes to the `-Д` backorder. A missing quality document is only a warning on the line and the ВК act.
+WARNING_NONCONFORMITIES = frozenset({SURPLUS, MISSING_QUALITY_DOCUMENT})
+NON_BLOCKING_NONCONFORMITIES = WARNING_NONCONFORMITIES | QUANTITY_FAULTS
+# «Провести поставку»: the one deviation a receiver may mark on a line → its nature of nonconformity.
+DELIVERY_DEVIATIONS: dict[str, str] = {
+    "none": "",
+    "brak": MECHANICAL_DAMAGE,
+    "peresort": WRONG_ITEM,
+    "no_quality_doc": MISSING_QUALITY_DOCUMENT,
+    "expired": EXPIRED,
+}
 
 # Config.gs:221-233 — «Ожидание» без решения держится не дольше QUAR_WORKDAYS рабочих дней от даты
 # акта ВК; дальше тик сам переводит строку в «Карантин» и зовёт ответственного по характеру несоответствия.
@@ -265,7 +278,8 @@ def inspect_delivery(data: InspectionInput) -> InspectionResult:
         _append_unique(nature, SURPLUS)
 
     terminal = any(item in TERMINAL_NONCONFORMITIES for item in nature)
-    blocking = [item for item in nature if item != SURPLUS]
+    nonconforming = [item for item in nature if item != SURPLUS]
+    blocking = [item for item in nature if item not in NON_BLOCKING_NONCONFORMITIES]
     if terminal:
         status = ReceivingStatus.RETURN
         verdict = "Не годен"
@@ -276,7 +290,7 @@ def inspect_delivery(data: InspectionInput) -> InspectionResult:
         status = ReceivingStatus.ACCEPTED
         verdict = "Годен"
 
-    act_items = [item for item in blocking if item not in DOCUMENT_NONCONFORMITIES]
+    act_items = [item for item in nonconforming if item not in DOCUMENT_NONCONFORMITIES]
     quantity_fault = any(item in QUANTITY_FAULTS for item in nature)
     quality_fault = any(item in QUALITY_FAULTS for item in nature)
     complaint = quantity_fault or (
@@ -292,6 +306,61 @@ def inspect_delivery(data: InspectionInput) -> InspectionResult:
         nonconformity_act_required=bool(act_items),
         complaint_required=complaint,
     )
+
+
+def _number(value: Decimal) -> str:
+    return format(Decimal(value).normalize(), "f")
+
+
+def refuse_backorder_remainder(
+    *,
+    legacy_id: str,
+    unit: str,
+    backorder_quantity: Decimal,
+    backorder_legacy_ids: Iterable[str],
+    document_cap: Decimal,
+    fact_cap: Decimal,
+    document_quantity: Decimal,
+    fact_quantity: Decimal,
+) -> None:
+    """The remainder of a недовоз belongs to its `-Д` line: once the backorder is ordered, a re-inspection
+    of the delivery may not take more than the УПД it was computed from (the count may still be corrected up
+    to that УПД or the surplus already recorded) — otherwise the same remainder would be accepted twice."""
+    if document_quantity <= document_cap and fact_quantity <= fact_cap:
+        return
+    target = ", ".join(backorder_legacy_ids) or f"{re.sub(r'(?:-В\d+)+$', '', legacy_id)}-Д"
+    raise ReceivingValidationError(
+        f"{legacy_id}: остаток {_number(backorder_quantity)} {unit} уже заказан дозавозом «{target}» — "
+        f"довоз принимается по строке дозавоза. По этой строке — не больше {_number(document_cap)} {unit} "
+        f"по УПД и {_number(fact_cap)} {unit} по факту"
+    )
+
+
+# The receiver's queue: open deliveries first, then accepted but not yet on stock, then the rest; «Архив ВК»
+# (history of a re-done inspection) last and only on request.
+QUEUE_IN_TRANSIT, QUEUE_WAITING, QUEUE_QUARANTINE, QUEUE_TO_STOCK, QUEUE_DONE, QUEUE_ARCHIVE = range(6)
+QUEUE_PRESETS: dict[str, frozenset[int]] = {
+    "open": frozenset({QUEUE_IN_TRANSIT, QUEUE_WAITING, QUEUE_QUARANTINE}),
+    "to_stock": frozenset({QUEUE_TO_STOCK}),
+    "done": frozenset({QUEUE_DONE}),
+    "archive": frozenset({QUEUE_ARCHIVE}),
+    "all": frozenset(range(6)),
+}
+QUEUE_DEFAULT = frozenset(range(QUEUE_ARCHIVE))
+
+
+def queue_rank(status: ReceivingStatus, warehouse_event_emitted: bool) -> int:
+    if status is ReceivingStatus.IN_TRANSIT:
+        return QUEUE_IN_TRANSIT
+    if status is ReceivingStatus.WAITING:
+        return QUEUE_WAITING
+    if status is ReceivingStatus.QUARANTINE:
+        return QUEUE_QUARANTINE
+    if status is ReceivingStatus.ACCEPTED and not warehouse_event_emitted:
+        return QUEUE_TO_STOCK
+    if status is ReceivingStatus.VK_ARCHIVE:
+        return QUEUE_ARCHIVE
+    return QUEUE_DONE
 
 
 def _base_designation(value: str) -> str:

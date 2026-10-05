@@ -407,7 +407,7 @@ def assign_production(command: AssignProductionCommand, uow: UnitOfWork) -> tupl
         earliest = max([command.now, *previous_finishes])
         plan = plan_operation(
             operation=operation,
-            quantity=task.quantity,
+            quantity=task.operation_units(operation.id),
             operator_ids=command.operator_ids,
             requested_start=_same_timezone(command.requested_start, command.now) if command.requested_start else None,
             earliest_start=earliest,
@@ -567,7 +567,7 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         others: dict[UUID, OperationShare] = {}
         for share in split.others:
             if share.operator_id in split.resized and share.planned_start is not None:
-                seconds = share_seconds(operation, share.quantity, task.quantity, (share.operator_id,), skills)
+                seconds = share_seconds(task, operation, share.quantity, (share.operator_id,), skills)
                 sources[(operation.id, share.operator_id)] = crew_window or (share.planned_start, share.planned_finish)
                 share = replace(share, planned_finish=add_work_seconds(share.planned_start, seconds, calendar.holidays, calendar.shift))
             others[share.operator_id] = share
@@ -652,7 +652,7 @@ def _remove_share(
         people = tuple(share.operator_id for share in crew)
         begin = min(share.planned_start for share in crew)
         before = (begin, max(share.planned_finish for share in crew))
-        finish = add_work_seconds(begin, share_seconds(operation, None, task.quantity, people, skills), calendar.holidays, calendar.shift)
+        finish = add_work_seconds(begin, share_seconds(task, operation, None, people, skills), calendar.holidays, calendar.shift)
         rest = tuple(replace(share, planned_start=begin, planned_finish=finish) if share.quantity is None else share for share in rest)
         sources[(operation.id, None)] = before
     updated = task.with_operations((operation.with_shares(rest, command.actor.name),))
@@ -747,8 +747,10 @@ def _record_fact(
     skills = _skills(uow)
     calendar = _dispatch_calendar(uow, now)
     crew = share.quantity is None
+    # mine и total — в изделиях задания (execution переводит штуки полуфабриката «N на изделие» в изделия).
     whole = not started and total >= task.quantity
     # Какие узлы плана меняются: бригада — целиком; вся операция сдана — все доли; иначе — доля монтажника.
+    # «Взял» в бригаде ставит от «сейчас» только долю взявшего: окно бригады — от первой доли до последней.
     groups: list[tuple[NodeKey, list[OperationShare]]] = []
     if crew:
         groups.append(((operation.id, None), [item for item in operation.shares if item.quantity is None]))
@@ -765,12 +767,14 @@ def _record_fact(
         before = (min(item.planned_start for item in members), max(item.planned_finish for item in members))
         people = tuple(item.operator_id for item in members)
         finished = False
+        moving = members
         if started:
             if share.started_at is not None:
                 return
             begin = next_working_moment(now, calendar.holidays, calendar.shift)
-            seconds = share_seconds(operation, share.quantity, task.quantity, people, skills)
+            seconds = share_seconds(task, operation, share.quantity, people, skills)
             window = (begin, add_work_seconds(begin, seconds, calendar.holidays, calendar.shift))
+            moving = [item for item in members if item.operator_id == operator_id]
         else:
             target = task.quantity if crew else (members[0].quantity or task.quantity)
             done = total if crew else (mine if members[0].operator_id == operator_id else Decimal(0))
@@ -779,16 +783,19 @@ def _record_fact(
                 window = (min(before[0], now), now)
             else:
                 rate = sum((skill_of(skills, operation.code, value).coefficient for value in people), Decimal(0))
-                rest = ceil(operation.seconds_per_unit * (Decimal(target) - done) / (rate if rate > 0 else Decimal(1)))
+                units = task.operation_units(operation.id, Decimal(target) - done)
+                rest = ceil(operation.seconds_per_unit * units / (rate if rate > 0 else Decimal(1)))
                 begin = next_working_moment(now, calendar.holidays, calendar.shift)
                 window = (min(before[0], now), add_work_seconds(begin, rest, calendar.holidays, calendar.shift))
-        for item in members:
+        for item in moving:
             changed[item.operator_id] = replace(
                 item, planned_start=window[0], planned_finish=window[1],
                 started_at=now if started and item.operator_id == operator_id else item.started_at,
                 finished_at=now if finished else item.finished_at,
             )
-        if abs((window[0] - before[0]).total_seconds()) >= 60 or abs((window[1] - before[1]).total_seconds()) >= 60:
+        after = [changed.get(item.operator_id, item) for item in members]
+        after_window = (min(item.planned_start for item in after), max(item.planned_finish for item in after))
+        if abs((after_window[0] - before[0]).total_seconds()) >= 60 or abs((after_window[1] - before[1]).total_seconds()) >= 60:
             sources[key] = before
     if not changed:
         return

@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.modules.production.launchable import operation_code, route_from_document, stage_name
+from app.modules.production.launchable import launch_route, operation_code, route_from_document, stage_name
 
 
 def test_route_names_stages_in_russian_instead_of_generator_types():
@@ -119,3 +119,60 @@ def test_a_derived_scheme_keeps_the_shop_chain():
     steps = route_from_document({"build_config": {"ops": ops}, "route": route})
     assert [step.block for step in steps] == ["b1", "b2", "b3"]
     assert [[item.block for item in step.inputs] for step in steps] == [[], ["b1"], ["b2"]]
+
+
+def test_positional_blocks_apply_when_the_operations_carry_their_own_keys():
+    """Generator ops keep their opKey inside «Ручная сборка»; the scheme still lists positions — both must work."""
+    ops = [{"type": "cutWire", "opKey": "cutA"}, {"type": "cutWire", "opKey": "cutB"},
+           {"type": "insHousing", "opKey": "house"}, {"type": "insMark", "key": "mark"}]
+    route = {"source": "manual", "blocks": [
+        {"key": "wireA", "ops": [1], "final": False}, {"key": "wireB", "ops": ["2"], "final": False},
+        {"key": "harness", "ops": [3, "mark"], "final": True},  # a position and an op key in one scheme
+    ], "edges": [{"from": "wireA", "to": "harness", "per_unit": 2}, {"from": "wireB", "to": "harness"}]}
+
+    planned = launch_route({"build_config": {"ops": ops}, "route": route})
+
+    assert planned.warnings == ()
+    assert [step.block for step in planned.steps] == ["wireA", "wireB", "harness", "harness"]
+    assert _inputs(planned.steps[2]) == [("wireA", 2), ("wireB", 1)]
+
+
+def test_every_scheme_that_does_not_fit_tells_the_master_why():
+    ops = [{"type": "cutWire", "key": "a"}, {"type": "prsTerm", "key": "b"}]
+    reasons = [
+        ({"blocks": [{"key": "x", "ops": ["a", "nope"], "final": True}], "edges": []}, "операции «nope» нет в техкарте (операций 2)"),
+        ({"blocks": [{"key": "x", "ops": [1, 3], "final": True}], "edges": []}, "операции «3» нет в техкарте (операций 2)"),
+        ({"blocks": [{"key": "x", "ops": ["a"]}], "edges": []}, "операция 2 не входит ни в один блок"),
+        ({"blocks": [{"key": "x", "ops": ["a"]}, {"key": "y", "ops": [1, "b"]}], "edges": []},
+         "операция 1 входит в два блока — «x» и «y»"),
+        ({"blocks": [{"key": "x", "ops": ["a"]}, {"key": "x", "ops": ["b"]}], "edges": []}, "ключ блока «x» повторяется"),
+        ({"blocks": [{"ops": ["a", "b"]}], "edges": []}, "у блока №1 нет ключа"),
+        ({"blocks": [{"key": "x", "ops": ["a"]}, {"key": "y", "ops": ["b"]}], "edges": [{"from": "x", "to": "q"}]},
+         "стрелка «x» → «q» ведёт в блок, которого нет в схеме"),
+        ({"blocks": "oops", "edges": []}, "в схеме нет блоков"),
+    ]
+    for route, reason in reasons:
+        planned = launch_route({"build_config": {"ops": ops}, "route": route})
+        assert [step.block for step in planned.steps] == ["b1", "b2"], route
+        assert len(planned.warnings) == 1 and f"({reason})" in planned.warnings[0], (route, planned.warnings)
+    # No scheme, or the generator's own (derived) one, is the normal chain — nothing to warn about.
+    for route in (None, {}, {"source": "derived", "blocks": [{"key": "b1", "ops": [1]}], "edges": []}):
+        assert launch_route({"build_config": {"ops": ops}, "route": route}).warnings == ()
+
+
+def test_steps_take_the_etk_norm_and_split_it_into_setup_and_per_unit():
+    document = {
+        "build_config": {"partQty": 10, "ops": [
+            {"type": "cutWire", "tOp": 5, "tPrep": 120},   # ETK: 5 s × 4 wires × 10 + 120 s ≈ 5,34 min (two rows)
+            {"type": "coaxCut", "tOp": 60, "tPrep": 120},  # ETK shows tOp alone (1 min): setup is cut to the norm
+            {"type": "assembly", "tOp": 7, "tPrep": 30},   # no time rows (moved from SUPPLYMAP): the card times
+        ]},
+        "operations": [{"time": [{"name": "Провод 1", "norm": "2,67"}, {"name": "Провод 2", "norm": "2,67"}]},
+                       {"time": [{"name": "Кабель", "norm": "1"}]}, {"times": {"operation_seconds": "7"}}],
+    }
+
+    steps = route_from_document(document)
+
+    assert [(step.seconds_per_unit, step.setup_seconds) for step in steps] == [
+        (Decimal("20.04"), Decimal(120)), (Decimal(0), Decimal(60)), (Decimal(7), Decimal(30)),
+    ]

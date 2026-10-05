@@ -51,6 +51,34 @@ function isoDay(date: Date) {
 
 const done = (operation: ProductionOperation) => operation.state === "выполнена";
 
+// Прогресс операции для мастера (владелец, 05.10: «мастер видит, что сдано и что просрочено»). Всё считается из полей,
+// которые API уже отдаёт: fact.good, wip.closed (ждут подтверждения мастера), required_quantity, планы и дедлайн задания.
+export type OpFlag = "late" | "wait" | "over";
+export const FLAG_TEXT: Record<OpFlag, string> = { late: "не начато, план истёк", wait: "ждёт подтверждения", over: "позже дедлайна" };
+export type OpProgress = { required: number; good: number; waiting: number; percent: number; flags: OpFlag[] };
+
+export function opProgress(task: ProductionTask, operation: ProductionOperation, now: number = Date.now()): OpProgress {
+  const required = Number(operation.required_quantity ?? task.quantity) || 0;
+  const good = Number(operation.fact?.good ?? 0) || 0;
+  const waiting = Number(operation.wip?.closed ?? 0) || 0;
+  const percent = required > 0 ? Math.min(100, Math.round((good / required) * 100)) : 0;
+  const flags: OpFlag[] = [];
+  if (!done(operation)) {
+    const started = Number(operation.fact?.processed ?? 0) > 0 || (operation.shares ?? []).some((share) => share.started_at);
+    if (!started && operation.planned_start && new Date(operation.planned_start).getTime() < now) flags.push("late");
+    if (waiting > 0) flags.push("wait");
+    if (task.deadline && operation.planned_finish && operation.planned_finish.slice(0, 10) > task.deadline.slice(0, 10)) flags.push("over");
+  }
+  return { required, good, waiting, percent, flags };
+}
+
+function progressTone(progress: OpProgress, finished: boolean) {
+  if (progress.flags.includes("late") || progress.flags.includes("over")) return "danger";
+  if (progress.flags.includes("wait")) return "warn";
+  if (finished) return "ok";
+  return progress.good > 0 ? "info" : "neutral";
+}
+
 // Доля монтажника в операции (владелец, 30.09: «дробить операцию между людьми»): у раздробленной — свои штуки и своё
 // окно. Ответ без долей (старый) — окно всей операции.
 export function sharesOf(operation: ProductionOperation, personId: string): ProductionShare[] {
@@ -321,6 +349,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [ready, setReady] = useState<ProductionLaunchable[]>([]);
   const [selected, setSelected] = useState<{ taskId: string; operationId: string } | null>(null);
   const [onlyFree, setOnlyFree] = useState(false);
+  const [flagFilter, setFlagFilter] = useState<OpFlag | null>(null);
   const [tiles, setTiles] = useState<{ items: KitsetTile[]; statuses: string[] }>({ items: [], statuses: [] });
   const [openProject, setOpenProjectState] = useState(lastProject);
   const [openDay, setOpenDay] = useState<{ personId: string; day: string } | null>(null);
@@ -353,6 +382,16 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   projects.sort((a, b) => (deadlineOf(a) || "9999").localeCompare(deadlineOf(b) || "9999") || a.localeCompare(b, "ru"));
 
   const shown = projects.find((project) => project === openProject) ?? "";
+  // Полоса «Сегодня»: операции живых заданий (не отданных на площадку) с каждым флагом; клик фильтрует список.
+  const nowMs = Date.now();
+  const progressOf = (item: ProductionTask, op: ProductionOperation) => opProgress(item, op, nowMs);
+  const flagCounts: Record<OpFlag, number> = { late: 0, wait: 0, over: 0 };
+  for (const item of live) {
+    if (item.handed_to) continue;
+    for (const op of item.operations) for (const flag of progressOf(item, op).flags) flagCounts[flag] += 1;
+  }
+  const hasFlag = (item: ProductionTask, op: ProductionOperation) => !flagFilter || (!item.handed_to && progressOf(item, op).flags.includes(flagFilter));
+  const projectHasFlag = (project: string) => live.some((item) => item.project === project && item.operations.some((op) => hasFlag(item, op)));
   const freeOf = (project: string) => live.filter((item) => item.project === project && !item.handed_to)
     .reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
   function tileFacts(project: string) {
@@ -427,9 +466,17 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         <span className="mb-count">{unassigned ? `без исполнителя: ${unassigned}` : "всё распределено"}</span>
         <label className="mb-toggle"><input type="checkbox" checked={onlyFree} onChange={(event) => setOnlyFree(event.target.checked)} />только нераспределённые</label>
       </div>
+      {projects.length > 0 && <div className="mb-today" role="group" aria-label="Сегодня">
+        <b>Сегодня</b>
+        {(["late", "wait", "over"] as OpFlag[]).map((flag) => <button key={flag} type="button" aria-pressed={flagFilter === flag}
+          className={`mb-today-chip ${flag === "wait" ? "warn" : "danger"}${flagCounts[flag] ? "" : " zero"}${flagFilter === flag ? " on" : ""}`}
+          onClick={() => setFlagFilter(flagFilter === flag ? null : flag)}>{FLAG_TEXT[flag]}: <b>{flagCounts[flag]}</b></button>)}
+        {flagFilter && <button type="button" className="link-button" onClick={() => setFlagFilter(null)}>Сбросить</button>}
+      </div>}
       {!projects.length && <div className="empty">Проектов с выданной техкартой пока нет.</div>}
       {!shown && projects.length > 0 && <div className="tiles kit-tiles mb-tiles">{projects.map((project) => {
         if (onlyFree && !freeOf(project)) return null;
+        if (flagFilter && !projectHasFlag(project)) return null;
         const tile = tiles.items.find((item) => item.project.toLowerCase() === project.toLowerCase());
         const extra = <div className="mb-tile-extra">{tileFacts(project)}</div>;
         return tile
@@ -438,6 +485,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
             <div className="tile-body"><div className="kit-tile-head"><strong className="t-h">{project}</strong></div>{extra}</div>
           </div>;
       })}</div>}
+      {!shown && flagFilter && projects.length > 0 && !projects.some(projectHasFlag) && <div className="empty">Нет операций с отметкой «{FLAG_TEXT[flagFilter]}».</div>}
       {shown && [shown].map((project) => {
         const projectTasks = live.filter((item) => item.project === project);
         const projectReady = waiting.filter((item) => item.project === project);
@@ -445,8 +493,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         return <div className="mb-project" key={project}>
           <div className="mb-project-head"><button className="secondary small" onClick={() => setOpenProject("")}>← Все проекты</button><b>{project}</b>{deadline && <span className="mb-deadline">ДЛ {formatDay(deadline)}</span>}</div>
           {projectTasks.map((item) => {
-            const operations = item.operations.filter((op) => !onlyFree || (!done(op) && !op.operator_ids.length));
-            if (onlyFree && !operations.length) return null;
+            const operations = item.operations.filter((op) => (!onlyFree || (!done(op) && !op.operator_ids.length)) && hasFlag(item, op));
+            if ((onlyFree || flagFilter) && !operations.length) return null;
             return <div className="mb-task" key={item.id}>
               <div className="mb-task-head">
                 <button className="link-button" onClick={() => openTask(item.id)}>{item.number} · Гант</button>
@@ -459,13 +507,19 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                 <thead><tr><th>№</th><th>Операция</th><th>Норма</th><th>Исполнители</th><th>План</th></tr></thead>
                 <tbody>{operations.map((op) => {
                   const active = selected?.operationId === op.id;
+                  const progress = progressOf(item, op);
                   const people = op.operator_ids.map((id) => ({ id, name: operators.find((operator) => operator.id === id)?.name ?? "?" }));
                   return <tr key={op.id} className={`${active ? "active" : ""}${done(op) ? " done" : ""}`}>
                     <td>{op.position}</td>
                     <td>{canEdit && !done(op) && !item.handed_to
                       ? <button className="mb-op" aria-pressed={active} onClick={() => select(item, active ? null : op)}>{op.stage}{op.code ? <small> {op.code}</small> : null}</button>
                       : <span>{op.stage}{op.code ? <small> {op.code}</small> : null}</span>}
-                      {feedsText(item, op) && <div className="ap-man">{feedsText(item, op)}</div>}</td>
+                      {feedsText(item, op) && <div className="ap-man">{feedsText(item, op)}</div>}
+                      {op.fact && progress.required > 0 && <div className={`mb-progress tone-${progressTone(progress, done(op))}`}>
+                        <span>сдано {progress.good}/{progress.required}{progress.waiting > 0 ? ` · ${progress.waiting} ждут подтверждения` : ""}</span>
+                        <span className="mb-bar" role="progressbar" aria-label="Сдано" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}><i style={{ width: `${progress.percent}%` }} /></span>
+                        {!item.handed_to && progress.flags.map((flag) => <em key={flag} className={`mb-flag ${flag === "wait" ? "warn" : "danger"}`}>{FLAG_TEXT[flag]}</em>)}
+                      </div>}</td>
                     <td>{hours(op.norm_seconds)}</td>
                     <td>{done(op) ? <span className="mb-done">выполнена</span> : item.handed_to ? <span className="mb-handed-text">—</span> : <>
                       {people.map((person) => {

@@ -127,7 +127,8 @@ def test_missing_upd_no_longer_blocks_the_line():
     assert result.missing_documents is False
 
 
-def test_documents_wait_and_confirmed_defect_goes_to_quarantine():
+def test_missing_documents_are_noted_and_confirmed_defect_goes_to_quarantine():
+    # Neither a missing УПД nor a missing certificate holds the line any more (owner, 05.10.2026).
     documents = inspect_delivery(inspection(quality_document_required=True, quality_document_present=False))
     defect = inspect_delivery(
         inspection(
@@ -136,14 +137,15 @@ def test_documents_wait_and_confirmed_defect_goes_to_quarantine():
         )
     )
 
-    assert documents.status is ReceivingStatus.WAITING
+    assert documents.status is ReceivingStatus.ACCEPTED
     assert documents.missing_documents is True
     assert documents.nonconformity_act_required is False
     assert defect.status is ReceivingStatus.QUARANTINE
     assert defect.nonconformity_act_required is True
 
 
-def test_shortage_creates_backorder_and_supplier_complaint():
+def test_shortage_is_accepted_by_fact_with_backorder_and_supplier_complaint():
+    # Owner, 05.10.2026: недовоз and недостача no longer hold the good quantity back.
     result = inspect_delivery(
         inspection(
             fact_quantity=Decimal("7"),
@@ -152,10 +154,40 @@ def test_shortage_creates_backorder_and_supplier_complaint():
         )
     )
 
-    assert result.status is ReceivingStatus.WAITING
+    assert result.status is ReceivingStatus.ACCEPTED
+    assert result.verdict == "Годен"
+    assert result.accepted_quantity == Decimal("7")
+    assert result.nonconformities == ("Недостача (факт < УПД)", "Недовоз (УПД < заказ)")
     assert result.backorder_quantity == Decimal("2")
     assert result.complaint_required is True
     assert result.nonconformity_act_required is True
+
+
+def test_missing_quality_document_is_a_warning_not_a_block():
+    # Owner, 05.10.2026: the certificate is not mandatory — the line is accepted, the gap stays on it and the act.
+    result = inspect_delivery(inspection(quality_document_required=True, quality_document_present=False))
+
+    assert result.status is ReceivingStatus.ACCEPTED
+    assert result.nonconformities == ("Отсутствие / несоответствие документа по качеству",)
+    assert result.nonconformity_act_required is False and result.complaint_required is False
+    # Together with a real block the line still waits — for the other reason.
+    defect = inspect_delivery(
+        inspection(
+            quality_document_required=True,
+            manual_nonconformities=("Механическое повреждение / брак",),
+        )
+    )
+    assert defect.status is ReceivingStatus.WAITING
+
+
+def test_shortfall_with_a_defect_still_waits_and_expiry_only_with_a_date():
+    defect = inspect_delivery(
+        inspection(fact_quantity=Decimal("8"), manual_nonconformities=("Механическое повреждение / брак",))
+    )
+    no_date = inspect_delivery(inspection(expiry_date=None))
+
+    assert defect.status is ReceivingStatus.WAITING
+    assert no_date.status is ReceivingStatus.ACCEPTED
 
 
 def test_invalid_quantities_are_rejected():
@@ -326,7 +358,7 @@ def test_quarantine_notify_targets_follow_the_nature(nature, expected):
 
 def waiting_line(inspected_on=date(2026, 9, 24)):
     line = create_line_from_expected(expected_message()).inspect(
-        inspection(quality_document_required=True, inspection_date=inspected_on),
+        inspection(manual_nonconformities=("Механическое повреждение / брак",), inspection_date=inspected_on),
         Actor(name="Приёмщик", department="ОТК"),
         existing_grns=(),
     )
@@ -352,7 +384,7 @@ def test_waiting_without_decision_goes_to_quarantine_after_two_workdays():
 def test_timer_restarts_on_reinspection_and_ignores_other_statuses():
     line = waiting_line(date(2026, 9, 21))
     again = line.inspect(
-        inspection(quality_document_required=True, inspection_date=date(2026, 9, 24)),
+        inspection(manual_nonconformities=("Механическое повреждение / брак",), inspection_date=date(2026, 9, 24)),
         Actor(name="Приёмщик", department="ОТК"),
         existing_grns=(line.grn,),
     )

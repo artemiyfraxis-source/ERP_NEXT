@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
+from functools import cached_property
 from math import ceil
 from uuid import UUID, uuid4
 
@@ -279,6 +280,28 @@ def final_operation(operations: tuple[ProductionOperation, ...]) -> ProductionOp
     )
 
 
+def unit_factors(operations: tuple[ProductionOperation, ...]) -> dict[UUID, Decimal]:
+    """Сколько штук полуфабриката каждой операции идёт на одно изделие («N на изделие» на стрелке схемы): per_unit
+    по рёбрам до финальной операции перемножаются, несколько потребителей — сумма. Финальная и цепочка — 1."""
+    consumers: dict[UUID, list[tuple[UUID, Decimal]]] = {}
+    for item in operations:
+        for edge in item.inputs:
+            consumers.setdefault(edge.input_operation_id, []).append((item.id, edge.per_unit))
+    factors: dict[UUID, Decimal] = {}
+
+    def factor(operation_id: UUID, path: frozenset[UUID]) -> Decimal:
+        if operation_id not in factors:
+            targets = [(target, per_unit) for target, per_unit in consumers.get(operation_id, ()) if target not in path]
+            factors[operation_id] = sum(
+                (per_unit * factor(target, path | {operation_id}) for target, per_unit in targets), Decimal(0),
+            ) if targets else Decimal(1)
+        return factors[operation_id]
+
+    for item in operations:
+        factor(item.id, frozenset())
+    return factors
+
+
 def _check_network(operations: tuple[ProductionOperation, ...]) -> None:
     """Граф входов задания: входы — операции этого же задания, без самоссылок и повторов, без циклов, финал один."""
     ids = {operation.id for operation in operations}
@@ -371,12 +394,29 @@ class ProductionTask:
             operations=tuple(sorted(operations, key=lambda operation: operation.position)),
         )
         _check_network(task.operations)
-        return task
+        # Норма операции — на её штуки по схеме: ветка «2 на изделие» делает вдвое больше тиража.
+        return replace(task, operations=tuple(
+            replace(operation, norm_seconds=ceil(
+                operation.setup_seconds + operation.seconds_per_unit * task.operation_units(operation.id),
+            ))
+            for operation in task.operations
+        ))
 
     @property
     def final_operation(self) -> ProductionOperation:
         """Операция, из которой выходит изделие: её полуфабрикат не берёт ни одна другая операция."""
         return final_operation(self.operations)
+
+    @cached_property
+    def unit_factors(self) -> dict[UUID, Decimal]:
+        """Штук полуфабриката каждой операции на одно изделие (unit_factors): «2 на изделие» — 2."""
+        return unit_factors(self.operations)
+
+    def operation_units(self, operation_id: UUID, products: int | Decimal | None = None) -> Decimal:
+        """Сколько штук делает операция на products изделий (None — на всё задание): изделия × штук на изделие.
+        Доли, факт в изделиях и передаточные партии считаются в изделиях задания; время по норме и «готово» по
+        сданному — в штуках операции, как их сдаёт монтажник (execution.operation_quantity)."""
+        return Decimal(self.quantity if products is None else products) * self.unit_factors.get(operation_id, Decimal(1))
 
     def operation(self, operation_id: UUID) -> ProductionOperation:
         operation = next((item for item in self.operations if item.id == operation_id), None)
@@ -468,7 +508,7 @@ class ProductionTask:
 
 def operation_duration_seconds(
     operation: ProductionOperation,
-    quantity: int,
+    quantity: int | Decimal,
     operators: int | Decimal = 1,
     *,
     operator_rate: Decimal | None = None,
@@ -567,19 +607,25 @@ def next_working_moment(
     raise ProductionValidationError("Рабочий момент не найден в пределах календаря")
 
 
-def add_work_seconds(
+def clock_seconds(seconds: int | Decimal, shift: WorkShift = DEFAULT_SHIFT) -> int:
+    """Чистые секунды нормы → секунды смены на часах: растянуты на долю мелких перерывов, до минуты вверх."""
+    remaining = Decimal(max(0, seconds))
+    rate = work_rate(shift)
+    if rate < 1:
+        # Растянутое время округляем до минуты вверх, чтобы в плане не было секунд.
+        remaining = Decimal(ceil(remaining / rate / 60) * 60)
+    return int(remaining)
+
+
+def advance_clock(
     moment: datetime,
     seconds: int,
     holidays: frozenset[date],
     shift: WorkShift = DEFAULT_SHIFT,
 ) -> datetime:
+    """Момент через seconds секунд смены на часах (уже растянутых, см. clock_seconds) с первого рабочего момента."""
     current = next_working_moment(moment, holidays, shift)
-    rate = work_rate(shift)
-    # Норматив — чистые секунды работы; на часах он растягивается на долю перерывов внутри смены.
-    remaining = Decimal(max(0, seconds))
-    if rate < 1:
-        # Растянутое время округляем до минуты вверх, чтобы в плане не было секунд.
-        remaining = Decimal(ceil(remaining / rate / 60) * 60)
+    remaining = max(0, int(seconds))
     if not remaining:
         return current
     for _ in range(400):
@@ -589,7 +635,7 @@ def add_work_seconds(
             segment_start = max(current, start)
             available = int((finish - segment_start).total_seconds())
             if remaining <= available:
-                return segment_start + timedelta(seconds=int(remaining))
+                return segment_start + timedelta(seconds=remaining)
             remaining -= available
         current = next_working_moment(
             datetime.combine(current.date() + timedelta(days=1), time.min, current.tzinfo),
@@ -599,10 +645,67 @@ def add_work_seconds(
     raise ProductionValidationError("Норматив не помещается в пределы календаря")
 
 
+def rewind_clock(
+    moment: datetime,
+    seconds: int,
+    holidays: frozenset[date],
+    shift: WorkShift = DEFAULT_SHIFT,
+) -> datetime:
+    """Момент за seconds секунд смены на часах до moment — обратный ход advance_clock."""
+    remaining = max(0, int(seconds))
+    if not remaining:
+        return moment
+    day = moment.date()
+    for _ in range(400):
+        for start, finish in reversed(_day_spans(datetime.combine(day, time.min, moment.tzinfo), holidays, shift)):
+            end = min(finish, moment)
+            if end <= start:
+                continue
+            available = int((end - start).total_seconds())
+            if remaining <= available:
+                return end - timedelta(seconds=remaining)
+            remaining -= available
+        day -= timedelta(days=1)
+    raise ProductionValidationError("Рабочий момент не найден в пределах календаря")
+
+
+def clock_between(
+    start: datetime,
+    finish: datetime,
+    holidays: frozenset[date],
+    shift: WorkShift = DEFAULT_SHIFT,
+) -> int:
+    """Секунды смены на часах между моментами (перерывы смены, выходные и праздники не считаются)."""
+    if finish <= start:
+        return 0
+    total = 0
+    current = start
+    for _ in range(800):
+        if current >= finish:
+            break
+        for span_start, span_finish in _day_spans(current, holidays, shift):
+            lower = max(span_start, current)
+            upper = min(span_finish, finish)
+            if upper > lower:
+                total += int((upper - lower).total_seconds())
+        current = datetime.combine(current.date() + timedelta(days=1), datetime.min.time(), current.tzinfo)
+    return total
+
+
+def add_work_seconds(
+    moment: datetime,
+    seconds: int,
+    holidays: frozenset[date],
+    shift: WorkShift = DEFAULT_SHIFT,
+) -> datetime:
+    # Норматив — чистые секунды работы; на часах он растягивается на долю перерывов внутри смены.
+    return advance_clock(moment, clock_seconds(seconds, shift), holidays, shift)
+
+
 def plan_operation(
     *,
     operation: ProductionOperation,
-    quantity: int,
+    quantity: int | Decimal,
     operator_ids: tuple[UUID, ...],
     requested_start: datetime | None,
     earliest_start: datetime,

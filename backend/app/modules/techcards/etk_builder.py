@@ -837,14 +837,39 @@ def _chain_results(config: Mapping[str, Any]) -> list[str]:
     return names
 
 
+def _row_minutes(operation: Mapping[str, Any]) -> Decimal | None:
+    """Σ of the operation's ETK time rows, minutes per batch; None — it has no time rows."""
+    rows = [row for row in _list(operation.get("time")) if isinstance(row, Mapping)]
+    return sum((_decimal(row.get("norm")) for row in rows), Decimal(0)) if rows else None
+
+
 def _operation_minutes(operation: Mapping[str, Any], quantity: Decimal) -> Decimal:
     """The ETK time norm of the operation, minutes per batch; an operation without time rows (moved from SUPPLYMAP)
     counts its seconds per unit × batch + setup."""
-    rows = [row for row in _list(operation.get("time")) if isinstance(row, Mapping)]
-    if rows:
-        return sum((_decimal(row.get("norm")) for row in rows), Decimal(0))
+    minutes = _row_minutes(operation)
+    if minutes is not None:
+        return minutes
     times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
     return (_decimal(times.get("operation_seconds")) * quantity + _decimal(times.get("setup_seconds"))) / 60
+
+
+def _document_batch(document: Mapping[str, Any]) -> Decimal:
+    """The batch the ETK's time rows are counted for: the config's partQty, else the kit's part_quantity, else 1."""
+    config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
+    kit = document.get("kit") if isinstance(document.get("kit"), Mapping) else {}
+    quantity = _decimal(config.get("partQty")) or _decimal(kit.get("part_quantity"))
+    return quantity if quantity > 0 else Decimal(1)
+
+
+def operation_norms(document: Mapping[str, Any] | None) -> tuple[Decimal, tuple[Decimal | None, ...]]:
+    """The ETK's own time norms — what production plans by: the batch the ETK is counted for and, for every operation
+    of the document in order, its norm in minutes per batch — Σ of its time rows, as the ETK shows them and the block
+    scheme sums them. None — the operation has no time rows (moved from SUPPLYMAP, made by hand): its card's seconds
+    per unit and setup are all there is."""
+    if not isinstance(document, Mapping):
+        return Decimal(1), ()
+    operations = [item for item in _list(document.get("operations")) if isinstance(item, Mapping)]
+    return _document_batch(document), tuple(_row_minutes(operation) for operation in operations)
 
 
 def _route_ops(document: Mapping[str, Any], *, strict: bool) -> tuple[list[RouteOp], str, Decimal]:
@@ -862,8 +887,7 @@ def _route_ops(document: Mapping[str, Any], *, strict: bool) -> tuple[list[Route
         if strict:
             raise
         results = []
-    quantity = _decimal(config.get("partQty")) or _decimal(kit.get("part_quantity"))
-    quantity = quantity if quantity > 0 else Decimal(1)
+    quantity = _document_batch(document)
     ops: list[RouteOp] = []
     for position, operation in enumerate(operations, start=1):
         source = config_ops[position - 1] if aligned else operation

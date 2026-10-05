@@ -55,6 +55,7 @@ from .domain.coax import КоаксСборка
 from .domain.coax import Сторона as КоаксСторона
 from .domain.coax import построить_коакс
 from .domain.harness import Провод, Разъём, Сборка, построить
+from .etk_read import card_view
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardValidationError
 from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
@@ -254,22 +255,7 @@ def _run(operation):
 
 
 def _card_result(card: ProjectTechcard, identify: Callable[[str], str] | None = None) -> dict:
-    return {
-        "id": str(card.id),
-        "version": card.version,
-        "project": card.project,
-        "item_index": card.item_index,
-        "product_name": card.product_name,
-        "source_calculation": card.source_calculation,
-        "deadline": card.deadline.isoformat() if card.deadline else None,
-        "status": card.status.value,
-        "revision": card.revision,
-        "document": attach_route(attach_housings(attach_parts(card.document, identify))),
-        "manual_operation_keys": list(card.manual_operation_keys),
-        "created_at": card.created_at.isoformat(),
-        "updated_at": card.updated_at.isoformat(),
-        "issued_at": card.issued_at.isoformat() if card.issued_at else None,
-    }
+    return card_view(card, identify)
 
 
 def _revision_result(revision: TechcardRevision) -> dict:

@@ -631,12 +631,31 @@ export interface ProductionOperation {
   wip?: { ok: string; closed: string };
   first?: boolean;
   mates?: string[];
+  /** Готовность входов для монтажника («Мои задания») и сколько штук ему осталось сдать. */
+  readiness?: ProductionReadiness;
+  remaining?: string;
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;
   inputs?: ProductionOperationInput[];
   final?: boolean;
   required_quantity?: string;
+}
+
+export interface ProductionReadyBox {
+  id: string;
+  number: string | null;
+  /** Доступно в коробке, шт. */
+  quantity: string;
+  operation_position: number;
+  stage: string;
+}
+
+export interface ProductionReadiness {
+  state: "ready" | "assembly" | "waiting_master" | "waiting_stage" | "done";
+  text: string;
+  /** Подтверждённые мастером коробки этого ПЗ, которые можно взять на вход. */
+  boxes: ProductionReadyBox[];
 }
 
 export interface ProductionOperationInput {
@@ -857,6 +876,8 @@ export interface ProductionWorkSession {
   status: string;
   pause_started_at: string | null;
   pause_seconds: number;
+  /** Сколько штук можно сдать из взятых входных коробок; нет входов — null. */
+  input_limit?: string | null;
 }
 
 export interface ProductionMaterialSource {
@@ -1961,11 +1982,53 @@ export const procurementApi = {
     }),
 };
 
+export interface ReceivingQuery {
+  after?: string;
+  preset?: "open" | "to_stock" | "done" | "archive" | "all";
+  status?: string[];
+  limit?: number;
+}
+
+export type DeliveryDeviation = "none" | "brak" | "peresort" | "no_quality_doc" | "expired";
+
+export interface DeliveryLinePayload {
+  id: string;
+  version: number;
+  document_quantity?: string;
+  fact_quantity?: string;
+  storage_location?: string;
+  deviation?: DeliveryDeviation;
+  deviation_quantity?: string;
+  expiry_date?: string;
+}
+
+export interface DeliveryPayload {
+  lines: DeliveryLinePayload[];
+  shipping_document_url: string | null;
+  /** УПД необязателен: часто приходит по ЭДО позже («Внести УПД»). */
+  document_number?: string;
+  document_date?: string | null;
+  warehouse?: string;
+}
+
 export const receivingApi = {
-  list: (after?: string) =>
-    api<{ lines: ReceivingLine[]; next_cursor: string | null }>(
-      `/api/receiving${after ? `?after=${encodeURIComponent(after)}` : ""}`,
-    ),
+  /** `preset` (open / to_stock / done / archive / all) and the repeatable `status` filter on the server. */
+  list: (options: string | ReceivingQuery = {}) => {
+    const { after, preset, status = [], limit } = typeof options === "string" ? { after: options } as ReceivingQuery : options;
+    const query = new URLSearchParams();
+    if (after) query.set("after", after);
+    if (preset) query.set("preset", preset);
+    for (const value of status) query.append("status", value);
+    if (limit) query.set("limit", String(limit));
+    const text = query.toString();
+    return api<{ lines: ReceivingLine[]; next_cursor: string | null }>(`/api/receiving${text ? `?${text}` : ""}`);
+  },
+  /** «Провести поставку»: один УПД, позиции одного поставщика на один склад; количества — только при расхождении. */
+  acceptDelivery: (payload: DeliveryPayload) =>
+    api<{ delivery_id: string; lines: ReceivingLine[] }>("/api/receiving/deliveries", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   /** WH-6: «Принято» без места на складе — печатный бланк через тот же механизм, что FF-8 (print.ts). */
   putawaySheet: () => api<{ sheet: PrintSheet }>("/api/receiving/putaway-sheet"),
   inspect: (lineId: string, payload: Record<string, unknown>) =>
@@ -2294,6 +2357,9 @@ export const productionApi = {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew, transfer_batch: transferBatch }),
     }),
   execution: (operatorId = "") => api<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>(`/api/production/my/execution${operatorId ? `?operator_id=${operatorId}` : ""}`),
+  /** ЭТК операции для монтажника: выданная карта ПЗ и операция, на которой её открыть (не требует раздела техкарт). */
+  operationEtk: (taskId: string, operationId: string) =>
+    api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string) =>
     api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),

@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from math import ceil
 from uuid import UUID
@@ -22,7 +22,7 @@ from .domain import (
     ProductionTask,
     ProductionValidationError,
     WorkShift,
-    _day_spans,
+    clock_between,
     work_rate,
     add_work_seconds,
     plan_operation,
@@ -56,20 +56,8 @@ def work_seconds_between(
     holidays: frozenset[date],
     shift: WorkShift = DEFAULT_SHIFT,
 ) -> int:
-    if finish <= start:
-        return 0
-    total = 0
-    current = start
-    for _ in range(800):
-        if current >= finish:
-            break
-        for span_start, span_finish in _day_spans(current, holidays, shift):
-            lower = max(span_start, current)
-            upper = min(span_finish, finish)
-            if upper > lower:
-                total += int((upper - lower).total_seconds())
-        current = datetime.combine(current.date() + timedelta(days=1), datetime.min.time(), current.tzinfo)
-    return int(total * work_rate(shift))
+    """Чистые секунды работы между моментами: секунды смены на часах × доля чистой работы."""
+    return int(clock_between(start, finish, holidays, shift) * work_rate(shift))
 
 
 def network_order(operations: tuple[ProductionOperation, ...]) -> tuple[ProductionOperation, ...]:
@@ -183,6 +171,11 @@ def _rate(
     )
 
 
+def _speed(rate: Decimal) -> Decimal:
+    """Сумма коэффициентов исполнителей как есть: медленнее нормы (0,5) — вдвое дольше; без коэффициента — норма."""
+    return rate if rate > 0 else Decimal(1)
+
+
 def chain_start(
     previous: ProductionOperation,
     previous_plan: ScheduledOperation,
@@ -193,12 +186,18 @@ def chain_start(
     transfer_batch: int,
     holidays: frozenset[date],
     shift: WorkShift = DEFAULT_SHIFT,
+    *,
+    previous_factor: Decimal = Decimal(1),
+    current_factor: Decimal = Decimal(1),
 ) -> datetime:
+    """Ранний старт операции по входу (ProdSchedule.gs): после первой передаточной партии входа, и так, чтобы её
+    последняя партия не обогнала конец входа. quantity и партия — в изделиях задания; время на одно изделие — норма
+    на штуку × штук полуфабриката на изделие (previous_factor / current_factor) / коэффициент исполнителей."""
     batch = max(1, min(transfer_batch, quantity))
     batches = ceil(quantity / batch)
     last = quantity - (batches - 1) * batch
-    previous_unit = previous.seconds_per_unit / max(Decimal(1), previous_rate)
-    current_unit = current.seconds_per_unit / max(Decimal(1), current_rate)
+    previous_unit = previous.seconds_per_unit * previous_factor / _speed(previous_rate)
+    current_unit = current.seconds_per_unit * current_factor / _speed(current_rate)
     first_offset = previous.setup_seconds + batch * previous_unit - current.setup_seconds
     tail_offset = Decimal(work_seconds_between(
         previous_plan.start, previous_plan.finish, holidays, shift,
@@ -277,6 +276,7 @@ def schedule_task(
     plans: dict[UUID, ScheduledOperation] = {}
     rates: dict[UUID, Decimal] = {}
     by_id = {operation.id: operation for operation in task.operations}
+    factors = task.unit_factors
     warnings: list[str] = []
     crew_limit = max(1, min(5, max_crew))
 
@@ -286,6 +286,7 @@ def schedule_task(
             (by_id[edge.input_operation_id], chain_start(
                 by_id[edge.input_operation_id], plans[edge.input_operation_id], rates[edge.input_operation_id],
                 operation, rate, task.quantity, edge_batch(edge, transfer_batch), holidays, shift,
+                previous_factor=factors[edge.input_operation_id], current_factor=factors[operation.id],
             ))
             for edge in operation.inputs if edge.input_operation_id in plans
         ]
@@ -318,7 +319,7 @@ def schedule_task(
                 rate = _rate(skills, operation.code, crew)
                 earliest = max([now, *(needed for _, needed in ready(operation, rate))])
                 plan = plan_operation(
-                    operation=operation, quantity=task.quantity, operator_ids=crew,
+                    operation=operation, quantity=task.operation_units(operation.id), operator_ids=crew,
                     requested_start=None, earliest_start=earliest,
                     busy={key: tuple(value) for key, value in occupied.items()},
                     holidays=holidays, shift=shift, operator_rate=rate,
@@ -352,8 +353,8 @@ def schedule_task(
     last_plan = plans[last_operation.id]
     first_duration = ceil(
         last_operation.setup_seconds
-        + min(transfer_batch, task.quantity) * last_operation.seconds_per_unit
-        / max(Decimal(1), rates[last_operation.id])
+        + task.operation_units(last_operation.id, min(transfer_batch, task.quantity)) * last_operation.seconds_per_unit
+        / _speed(rates[last_operation.id])
     )
     first_ready = min(
         last_plan.finish,
