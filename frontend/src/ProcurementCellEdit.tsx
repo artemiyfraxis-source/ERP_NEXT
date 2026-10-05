@@ -17,6 +17,9 @@ const EXPECTED_OPEN = new Set(["Жду счет", "В оплату", "В пут�
 
 export const canEditNote = (line: ProcurementLine) => !NOTE_CLOSED.has(line.status);
 export const canEditExpected = (line: ProcurementLine) => EXPECTED_OPEN.has(line.status);
+/** Факт. дата: от «В пути» и дальше, включая «Готово» (ACTUAL_ARRIVAL_EDITABLE); необязательна и стирается. */
+const ACTUAL_OPEN = new Set(["В пути", "Карантин", "Готово"]);
+export const canEditActual = (line: ProcurementLine) => ACTUAL_OPEN.has(line.status);
 
 /** Что страница даёт ячейкам: куда положить свежую строку и как перечитать строку после 409. */
 export interface LineEditing {
@@ -24,7 +27,7 @@ export interface LineEditing {
   onConflict: (line: ProcurementLine) => void | Promise<unknown>;
 }
 
-export type LineField = "note" | "expected_arrival";
+export type LineField = "note" | "expected_arrival" | "actual_arrival";
 
 /** Сохраняет одно поле строки; при отказе бросает Error с текстом для ячейки. */
 export async function saveLineField(line: ProcurementLine, field: LineField, value: string, editing: LineEditing): Promise<void> {
@@ -32,7 +35,9 @@ export async function saveLineField(line: ProcurementLine, field: LineField, val
   try {
     const result = field === "note"
       ? await procurementApi.setNote(line.id, line.version, value)
-      : await procurementApi.setExpectedArrival(line.id, line.version, value);
+      : field === "actual_arrival"
+        ? await procurementApi.setActualArrival(line.id, line.version, value)
+        : await procurementApi.setExpectedArrival(line.id, line.version, value);
     saved = result.line;
   } catch (reason) {
     if (reason instanceof ApiError && reason.status === 409) {
@@ -46,7 +51,7 @@ export async function saveLineField(line: ProcurementLine, field: LineField, val
 
 type CellKind = "text" | "date";
 
-function EditableCell({ line, field, kind, label, value, shown, editing, canEdit, disabled }: {
+function EditableCell({ line, field, kind, label, value, shown, editing, canEdit, disabled, optional }: {
   line: ProcurementLine;
   field: LineField;
   kind: CellKind;
@@ -58,6 +63,8 @@ function EditableCell({ line, field, kind, label, value, shown, editing, canEdit
   editing: LineEditing;
   canEdit: boolean;
   disabled?: boolean;
+  /** Поле необязательное: пустое значение сохраняется (стирает дату). */
+  optional?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -79,8 +86,8 @@ function EditableCell({ line, field, kind, label, value, shown, editing, canEdit
   async function commit() {
     if (saving) return;
     const next = kind === "text" ? draft.trim() : draft;
-    // Дату стереть нельзя (сервер хранит её только заполненной), без изменений — сохранять нечего.
-    if (next === value || (kind === "date" && !next)) { cancel(); return; }
+    // Ожид. дату стереть нельзя (сервер хранит её только заполненной); факт. дату — можно. Без изменений — сохранять нечего.
+    if (next === value || (kind === "date" && !next && !optional)) { cancel(); return; }
     setSaving(true);
     setError("");
     try {
@@ -110,7 +117,7 @@ function EditableCell({ line, field, kind, label, value, shown, editing, canEdit
     return (
       <>
         <button type="button" className="cell-edit" aria-label={ariaLabel} title={`Изменить: ${label}`} onClick={start}>
-          {shown || <span className="cell-edit-empty">—</span>}
+          {shown || <span className="cell-edit-empty">{kind === "date" ? "дд.мм.гггг" : "добавить"}</span>}
         </button>
         {failure}
       </>
@@ -153,6 +160,18 @@ export function ExpectedDateCell({ line, editing, canEdit = true, disabled }: { 
     <EditableCell
       line={line} field="expected_arrival" kind="date" label="Ожид. дата" value={line.expected_arrival ?? ""} shown={shown}
       editing={editing} canEdit={canEdit && canEditExpected(line)} disabled={disabled}
+    />
+  );
+}
+
+/** ФАКТ. ДАТА: день приёмки. Заполняет приёмка; закупщик может проставить или поправить её сам (необязательно). */
+export function ActualDateCell({ line, editing, canEdit = true, disabled }: { line: ProcurementLine; editing?: LineEditing; canEdit?: boolean; disabled?: boolean }) {
+  const shown = formatDay(line.actual_arrival);
+  if (!editing) return <>{shown}</>;
+  return (
+    <EditableCell
+      line={line} field="actual_arrival" kind="date" label="Факт. дата" value={line.actual_arrival ?? ""} shown={shown}
+      editing={editing} canEdit={canEdit && canEditActual(line)} disabled={disabled} optional
     />
   );
 }

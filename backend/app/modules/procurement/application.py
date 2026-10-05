@@ -381,6 +381,15 @@ class SetNoteCommand:
 
 
 @dataclass(frozen=True)
+class SetActualArrivalCommand:
+    line_id: UUID
+    expected_version: int
+    actual_arrival: date | None
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
 class SetExpectedArrivalCommand:
     line_id: UUID
     expected_version: int
@@ -1333,6 +1342,28 @@ def set_procurement_note(command: SetNoteCommand, uow: UnitOfWork) -> Procuremen
         return result
 
 
+def set_procurement_actual_arrival(command: SetActualArrivalCommand, uow: UnitOfWork) -> ProcurementLine:
+    """ФАКТ. ДАТА by hand (optional): the buyer fills or corrects it; receiving's tick keeps filling it too."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.set_actual_arrival(command.actual_arrival, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.actual_arrival_set",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={
+                "actual_arrival": command.actual_arrival.isoformat() if command.actual_arrival else "",
+                "previous_actual_arrival": current.actual_arrival.isoformat() if current.actual_arrival else "",
+            },
+        )
+        if result != current:
+            uow.commit()
+        return result
+
+
 def set_procurement_expected_arrival(
     command: SetExpectedArrivalCommand,
     uow: UnitOfWork,
@@ -1895,6 +1926,7 @@ def _receiving_expected(line: ProcurementLine, now: datetime) -> OutboxMessage:
                 line.trace.quality_document_date.isoformat() if line.trace.quality_document_date else None
             ),
             "standard": line.trace.standard or "",
+            "invoice_item_name": line.invoice_item_name or "",
         },
     )
 

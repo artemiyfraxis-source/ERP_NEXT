@@ -375,7 +375,8 @@ it("shows a project's requests as one tile and a manual request as its own, as S
   expect(window.localStorage.getItem("erp.fulfillment.view")).toBe("table");
 });
 
-it("marks the kit complete once every line is closed and sends it to handout with a rack address", async () => {
+// A request every line of which got its lot before the automatic «Укомплектован» (or at creation) still has the button.
+it("marks the kit complete once every line is closed and sends it to handout with another rack address", async () => {
   const calls: Array<{ path: string; body: unknown }> = [];
   let status = "Недоукомплектован";
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -397,7 +398,10 @@ it("marks the kit complete once every line is closed and sends it to handout wit
   fireEvent.click(await screen.findByRole("button", { name: "Укомплектован" }));
   await waitFor(() => expect(calls[0]).toEqual({ path: `/api/issues/${request.id}/complete`, body: { version: 3 } }));
 
-  fireEvent.click(await screen.findByRole("button", { name: "Отправить на выдачу" }));
+  // No place used at the site yet: «Зона выдачи» is offered, «Другое место» opens the form with it filled in.
+  expect(await screen.findByText("Зона выдачи")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Другое место" }));
+  expect(screen.getByLabelText("Место выдачи текстом")).toHaveValue("Зона выдачи");
   fireEvent.change(screen.getByLabelText("Стеллаж"), { target: { value: "2" } });
   expect(within(screen.getByLabelText("Полка")).getAllByRole("option")).toHaveLength(5);
   fireEvent.change(screen.getByLabelText("Полка"), { target: { value: "C" } });
@@ -409,6 +413,37 @@ it("marks the kit complete once every line is closed and sends it to handout wit
     path: `/api/issues/${request.id}/ready`,
     body: { version: 3, place: { rack: "2", shelf: "C", num: "7", slot: "" } },
   }));
+});
+
+it("sends a complete kit to handout in one click with the place the server offers", async () => {
+  const calls: Array<{ path: string; body: unknown }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") { calls.push({ path, body: JSON.parse(String(init.body)) }); return json({ request }); }
+    if (path === "/api/issues") return json({ requests: [{ ...request, status: "Укомплектован", handout_place: "2B3", fully_reserved: true, lines: [boundLine] }], next_cursor: null, places });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<FulfillmentPage principal={principal} />);
+  await expand("FRX-ISS-26-0001");
+  expect(await screen.findByText("2B3")).toBeInTheDocument();
+  // The manual «Укомплектован» is gone: the last bound line completed the kit.
+  expect(screen.queryByRole("button", { name: "Укомплектован" })).not.toBeInTheDocument();
+  // «Другое место» opens the rack fields already set to the offered address.
+  fireEvent.click(screen.getByRole("button", { name: "Другое место" }));
+  expect(screen.getByLabelText("Стеллаж")).toHaveValue("2");
+  expect(screen.getByLabelText("Полка")).toHaveValue("B");
+  expect(screen.getByLabelText("№ на полке")).toHaveValue(3);
+  fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Отправить на выдачу" }));
+  await waitFor(() => expect(calls).toEqual([{
+    path: `/api/issues/${request.id}/ready`,
+    body: { version: 3, handout_location: "2B3" },
+  }]));
+  expect(confirm).not.toHaveBeenCalled();
 });
 
 it("closes an issued request without return on the handout screen", async () => {

@@ -529,8 +529,10 @@ def test_operator_starts_and_cancels_work_from_confirmed_previous_box(production
         f"/api/production/tasks/{task['id']}/operations/{task['operations'][1]['id']}/work/start",
         json={"inputs": [source.number]},
     )
+    running = client.get("/api/production/my/execution").json()["session"]
     cancelled = client.post(f"/api/production/work/{started.json()['session']['id']}/cancel")
 
+    assert running["input_limit"] == "10"
     assert inputs.status_code == 200, inputs.text
     assert inputs.json()["boxes"][0]["number"] == "104233-2"
     assert started.status_code == 200, started.text
@@ -626,7 +628,46 @@ def test_launch_only_from_issued_techcard_and_launchable_counts_launched(product
     assert launchable.json()["items"] == [{
         "techcard_id": launchable.json()["items"][0]["techcard_id"], "project": "800К.1", "index": "кб1",
         "item": "800К.1КБ1", "name": "Жгут", "customer": "", "run": "10", "deadline": None, "launched": 7, "operations": 1,
+        "warnings": [],
     }]
+    assert launched.json()["warnings"] == []
+
+
+def test_launch_with_a_scheme_that_does_not_fit_goes_as_a_chain_and_warns_the_master(production_api):
+    client, _operator_id = production_api
+    now = datetime(2026, 9, 22, 9, 0)
+    card = ProjectTechcard.create(
+        project="800К.3", item_index="КБ1", product_name="Жгут", source_calculation="", deadline=None, now=now,
+    ).rebuild({
+        "operations": [{"code": "OP-1", "connector": "1", "side": ""}, {"code": "OP-2", "connector": "2", "side": ""}],
+        "build_config": {"ops": [
+            {"type": "assembly", "stage": "Резка", "opNumber": "OP-1", "tOp": 30, "tPrep": 60},
+            {"type": "assembly", "stage": "Сборка", "opNumber": "OP-2", "tOp": 30, "tPrep": 60},
+        ]},
+        "kit": {"part_quantity": "10"},
+        # Операция 2 не попала ни в один блок: схема к техкарте не подходит.
+        "route": {"source": "manual", "blocks": [{"key": "b1", "ops": [1], "final": True}], "edges": []},
+    }, now).issue(now)
+    with app.state.techcards_uow_factory() as uow:
+        uow.techcards.save(card)
+        uow.commit()
+
+    launchable = client.get("/api/production/launchable").json()["items"]
+    launched = client.post(
+        "/api/production/tasks", headers={"Idempotency-Key": "bad-scheme"},
+        json={"techcard_id": str(card.id), "quantity": 10},
+    )
+
+    expected = [
+        "Схема полуфабрикатов техкарты не подошла к её операциям (операция 2 не входит ни в один блок) — этапы "
+        "задания идут цепочкой по порядку операций. Поправьте схему в техкарте и выпустите её заново.",
+    ]
+    assert [item["warnings"] for item in launchable if item["project"] == "800К.3"] == [expected]
+    assert launched.status_code == 200, launched.text
+    assert launched.json()["warnings"] == expected
+    operations = launched.json()["task"]["operations"]
+    assert [operation["position"] for operation in operations] == [1, 2]
+    assert [len(operation["inputs"]) for operation in operations] == [0, 1]
 
 
 def test_assign_preview_warns_about_admission_and_applies_speed_coefficient(production_api):

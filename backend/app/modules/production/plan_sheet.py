@@ -88,7 +88,7 @@ def ready_percent(
         for operation in task.operations:
             seen = True
             weight = Decimal(max(operation.norm_seconds, 1))
-            share = min(Decimal(processed.get(operation.id, 0)) / max(task.quantity, 1), Decimal(1))
+            share = min(Decimal(processed.get(operation.id, 0)) / max(task.operation_units(operation.id), Decimal(1)), Decimal(1))
             total += weight
             done += weight * share
     if not seen:

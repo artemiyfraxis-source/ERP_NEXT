@@ -35,6 +35,7 @@ from app.modules.warehouse.application import (
     dispatch_next_warehouse_received,
 )
 from app.modules.warehouse.infrastructure import SqlAlchemyRackLayoutStore, SqlAlchemyWarehouseUnitOfWork
+from app.modules.fulfillment.infrastructure import SqlAlchemyFulfillmentUnitOfWork
 from app.modules.operations.application import PoisonNotificationMessage, dispatch_next_notification
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
@@ -43,6 +44,7 @@ from app.shared.stop_file import watch_stop_file
 from app.workflows.supplier_directory import ReferencesSupplierDirectory
 from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
 from app.workflows.arbiter import PoisonTriggerMessage, close_followed_up, dispatch_next_trigger, feed_triggers
+from app.workflows.arrival_kits import PoisonArrivalMessage, ReceivingArrivalLookup, dispatch_next_lot_arrived
 from app.workflows.kitset_names import kitset_names_tick
 from app.workflows.procurement_autofill import AUTOFILL_TICK_CAP, procurement_autofill_tick
 from app.workflows.receipt_stage import ReceivingStatusLookup
@@ -76,6 +78,10 @@ def dispatch_available(
         raise ValueError("limit must be positive")
     dispatched = 0
     suppliers = ReferencesSupplierDirectory(lambda: SqlAlchemyReferencesUnitOfWork(sessions))
+    arrivals = ReceivingArrivalLookup(
+        lambda: SqlAlchemyReceivingUnitOfWork(sessions),
+        lambda: SqlAlchemyProcurementUnitOfWork(sessions),
+    )
     while dispatched < limit:
         progressed = False
         try:
@@ -119,6 +125,25 @@ def dispatch_available(
             dispatched += 1
             continue
         if warehouse is not None:
+            dispatched += 1
+            progressed = True
+        if dispatched >= limit:
+            break
+        try:
+            arrival = dispatch_next_lot_arrived(
+                moscow_now(),
+                lambda: SqlAlchemyFulfillmentUnitOfWork(sessions),
+                arrivals,
+            )
+        except PoisonArrivalMessage as error:
+            logging.warning("Quarantined invalid lot arrival message %s", error.message_id)
+            dispatched += 1
+            continue
+        except (IntegrityError, StaleDataError):
+            # A kit request or the lot changed under the binding (the storekeeper on the screen): retried next pass.
+            logging.warning("Kit request changed during the arrival binding; retrying next tick")
+            arrival = None
+        if arrival is not None:
             dispatched += 1
             progressed = True
         if dispatched >= limit:

@@ -540,6 +540,8 @@ export interface FulfillmentRequest {
   deadline: string | null;
   status: string;
   handout_location: string | null;
+  /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
+  handout_place?: string;
   return_location: string | null;
   fully_reserved: boolean;
   /** НЕДОБОР (issueShortText_): what a lot does not close yet. */
@@ -629,12 +631,31 @@ export interface ProductionOperation {
   wip?: { ok: string; closed: string };
   first?: boolean;
   mates?: string[];
+  /** Готовность входов для монтажника («Мои задания») и сколько штук ему осталось сдать. */
+  readiness?: ProductionReadiness;
+  remaining?: string;
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;
   inputs?: ProductionOperationInput[];
   final?: boolean;
   required_quantity?: string;
+}
+
+export interface ProductionReadyBox {
+  id: string;
+  number: string | null;
+  /** Доступно в коробке, шт. */
+  quantity: string;
+  operation_position: number;
+  stage: string;
+}
+
+export interface ProductionReadiness {
+  state: "ready" | "assembly" | "waiting_master" | "waiting_stage" | "done";
+  text: string;
+  /** Подтверждённые мастером коробки этого ПЗ, которые можно взять на вход. */
+  boxes: ProductionReadyBox[];
 }
 
 export interface ProductionOperationInput {
@@ -855,6 +876,8 @@ export interface ProductionWorkSession {
   status: string;
   pause_started_at: string | null;
   pause_seconds: number;
+  /** Сколько штук можно сдать из взятых входных коробок; нет входов — null. */
+  input_limit?: string | null;
 }
 
 export interface ProductionMaterialSource {
@@ -1723,7 +1746,8 @@ export interface ApplyOrderDocumentInput {
   invoice_number?: string | null;
   invoice_date?: string | null;
   expected_arrival?: string | null;
-  lines: (OrderLineRef & { price_with_vat: string | null })[];
+  /** `invoice_item_name` — «Наименование в счёте»; пусто — сервер берёт название с сайта поставщика. */
+  lines: (OrderLineRef & { price_with_vat: string | null; invoice_item_name?: string | null })[];
 }
 
 export interface InvoiceUpload {
@@ -1863,6 +1887,12 @@ export const procurementApi = {
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/expected-arrival`, {
       method: "PATCH",
       body: JSON.stringify({ version, expected_arrival: expectedArrival }),
+    }),
+  /** ФАКТ. ДАТА руками (необязательно): пустая строка стирает дату. */
+  setActualArrival: (lineId: string, version: number, actualArrival: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/actual-arrival`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, actual_arrival: actualArrival || null }),
     }),
   replacementPermissionSheet: (lineId: string) =>
     api<{ sheet: PrintSheet }>(`/api/procurement/${lineId}/replacement-permission`),
@@ -2327,6 +2357,9 @@ export const productionApi = {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew, transfer_batch: transferBatch }),
     }),
   execution: (operatorId = "") => api<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>(`/api/production/my/execution${operatorId ? `?operator_id=${operatorId}` : ""}`),
+  /** ЭТК операции для монтажника: выданная карта ПЗ и операция, на которой её открыть (не требует раздела техкарт). */
+  operationEtk: (taskId: string, operationId: string) =>
+    api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string) =>
     api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),

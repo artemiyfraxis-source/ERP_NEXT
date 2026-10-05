@@ -24,8 +24,10 @@ from app.shared.notifications import NotificationOutbox, notification_requested,
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
+    DEFAULT_HANDOUT_PLACE,
     FulfillmentLine,
     FulfillmentRequest,
+    FulfillmentStatus,
     FulfillmentValidationError,
     KitReserve,
     LotSnapshot,
@@ -79,6 +81,15 @@ class KitReserveRepository(Protocol):
 
     def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[KitReserve]: ...
     def add(self, reserve: KitReserve) -> None: ...
+
+
+class KitSites(Protocol):
+    """Where a kit goes on the shop floor; optional on the unit of work (`kit_sites`), see `handout_place` and
+    `mark_ready`. Without it a kit is announced to its requester only and offered «Зона выдачи»."""
+
+    def site_of(self, request: FulfillmentRequest) -> str: ...
+    def masters(self, site: str) -> Sequence[UUID]: ...
+    def last_handout(self, site: str) -> str | None: ...
 
 
 class UnitOfWork(Protocol):
@@ -417,6 +428,31 @@ def _audit(
     )
 
 
+def _audit_auto_complete(
+    before: FulfillmentRequest,
+    after: FulfillmentRequest,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+) -> None:
+    """The pick closed the last open line: «Укомплектован» set by itself gets the same journal entry as the button."""
+    if before.status is not FulfillmentStatus.COMPLETE and after.status is FulfillmentStatus.COMPLETE:
+        _audit(after, "fulfillment.completed", actor, now, {"auto": True}, uow)
+
+
+def _kit_sites(uow: UnitOfWork) -> KitSites | None:
+    return getattr(uow, "kit_sites", None)
+
+
+def handout_place(request: FulfillmentRequest, uow: UnitOfWork) -> str:
+    """The place «Отправить на выдачу» offers (owner, G1-T3 05.10.2026): the last one used for a kit of the same
+    site, otherwise «Зона выдачи». The storekeeper may change it before sending."""
+    sites = _kit_sites(uow)
+    if sites is None:
+        return DEFAULT_HANDOUT_PLACE
+    return sites.last_handout(sites.site_of(request)) or DEFAULT_HANDOUT_PLACE
+
+
 def create_fulfillment(
     command: CreateFulfillmentCommand,
     uow: UnitOfWork,
@@ -508,6 +544,7 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
         uow.warehouse.add(reserved_lot)
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity)}, uow)
+        _audit_auto_complete(request, updated, command.actor, command.now, uow)
         uow.commit()
         return updated
 
@@ -552,6 +589,7 @@ def set_off_book(command: OffBookCommand, uow: UnitOfWork) -> FulfillmentRequest
             event = "fulfillment.off_book_cleared"
         uow.fulfillment.add(updated)
         _audit(updated, event, command.actor, command.now, _off_book_details(line), uow)
+        _audit_auto_complete(request, updated, command.actor, command.now, uow)
         uow.commit()
         return updated
 
@@ -573,6 +611,57 @@ def _kit_order(request: FulfillmentRequest) -> tuple:
     """КБ in natural order (КБ1, КБ2 … КБ10), a request without a КБ last; ties by request number."""
     number = kb_number(request.purpose)
     return (number is None, number or 0, request.number)
+
+
+def _fill_line_fifo(
+    request: FulfillmentRequest,
+    line_id: UUID,
+    lots: Sequence[StockLot],
+    current_lots: dict[UUID, StockLot],
+    budget: dict[UUID, Decimal] | None,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+    details: dict,
+) -> tuple[FulfillmentRequest, Decimal, list[ProjectBinding]]:
+    """One waiting line takes what the lots give, in the order given (`_reserve_for_kit`: the project's covers, then
+    the КБ's techcard reserve, then ДОСТУПНО). A lot that falls short splits the line and the next lot takes the
+    remainder. `current_lots` holds each lot as reserved so far in this transaction; `budget` (lot id → the most it
+    may still give, None — no limit) caps a lot below its ДОСТУПНО. → (request, need left uncovered, bindings)."""
+    kb = kb_of(request.purpose)
+    line = next(row for row in request.lines if row.id == line_id)
+    need, target = line.requirement, line_id
+    bound: list[ProjectBinding] = []
+    for candidate in lots:
+        if need <= 0:
+            break
+        lot = current_lots[candidate.id]
+        wanted = need if budget is None else min(need, budget.get(lot.id, Decimal("0")))
+        if wanted <= 0:
+            continue
+        give, reserved_lot = _reserve_for_kit(request, lot, wanted, actor, now, uow)
+        if give <= 0:
+            continue
+        before = {row.id for row in request.lines}
+        request = request.bind_line(target, LotSnapshot(
+            lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
+            storage_location=lot.storage_location,
+        ), give, lot.unit)
+        current_lots[lot.id] = reserved_lot
+        uow.warehouse.add(reserved_lot)
+        if budget is not None:
+            budget[lot.id] = budget.get(lot.id, Decimal("0")) - give
+        bound.append(ProjectBinding(
+            request_id=request.id, number=request.number, kb=kb, line_id=target,
+            quantity=give, lot_id=lot.id, grn=lot.grn,
+        ))
+        _audit(request, "fulfillment.lot_bound", actor, now, {
+            "line_id": str(target), "lot_id": str(lot.id), "quantity": str(give), **details,
+        }, uow)
+        need -= give
+        if need > 0:  # the lot fell short: the split-off remainder waits for the next lot
+            target = next(row.id for row in request.lines if row.id not in before)
+    return request, max(need, Decimal("0")), bound
 
 
 def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> ProjectBindResult:
@@ -649,36 +738,16 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
                         **_off_book_details(line), "project": command.project,
                     }, uow)
                     continue
-                need, target = line.requirement, line_id
-                for candidate in lots:
-                    if need <= 0:
-                        break
-                    lot = current_lots[candidate.id]
-                    give, reserved_lot = _reserve_for_kit(request, lot, need, command.actor, command.now, uow)
-                    if give <= 0:
-                        continue
-                    before = {row.id for row in request.lines}
-                    request = request.bind_line(target, LotSnapshot(
-                        lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
-                        storage_location=lot.storage_location,
-                    ), give, lot.unit)
-                    current_lots[lot.id] = reserved_lot
-                    uow.warehouse.add(reserved_lot)
-                    bound.append(ProjectBinding(
-                        request_id=request.id, number=request.number, kb=kb, line_id=target,
-                        quantity=give, lot_id=lot.id, grn=lot.grn,
-                    ))
-                    _audit(request, "fulfillment.lot_bound", command.actor, command.now, {
-                        "line_id": str(target), "lot_id": str(lot.id), "quantity": str(give),
-                        "project": command.project,
-                    }, uow)
-                    need -= give
-                    if need > 0:  # the lot fell short: the split-off remainder waits for the next lot
-                        target = next(row.id for row in request.lines if row.id not in before)
-                short += max(need, Decimal("0"))
+                request, need, filled = _fill_line_fifo(
+                    request, line_id, lots, current_lots, None, command.actor, command.now, uow,
+                    {"project": command.project},
+                )
+                bound.extend(filled)
+                short += need
             if request is not original:
                 # Every bind bumped the version; the request changed once — one version step, as the screen expects.
                 request = replace(request, version=original.version + 1).stamped(command.now)
+                _audit_auto_complete(original, request, command.actor, command.now, uow)
                 uow.fulfillment.add(request)
                 saved.append(request)
         if not bound:
@@ -687,13 +756,127 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
         return ProjectBindResult(bound=tuple(bound), short=short, unit=unit, requests=tuple(saved))
 
 
+@dataclass(frozen=True)
+class BindArrivedLotCommand:
+    """A lot that just arrived, bought for `project`: what it is (КД articles and names of the purchase and the lot)
+    and how much arrived — the most the arrival binds, so free stock already on a topped-up lot stays free."""
+
+    project: str
+    lot_id: UUID
+    quantity: Decimal
+    articles: tuple[str, ...]
+    names: tuple[str, ...]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class ArrivedKit:
+    """One kit request of the project the arrival reached: how many of its lines it bound, how many still wait."""
+
+    request: FulfillmentRequest
+    kb: str
+    lines: int
+    quantity: Decimal
+    missing: int
+
+    @property
+    def complete(self) -> bool:
+        return self.missing == 0
+
+
+@dataclass(frozen=True)
+class ArrivedLotResult:
+    kits: tuple[ArrivedKit, ...]
+    bound: tuple[ProjectBinding, ...]
+    short: Decimal  # need of the matching lines the arrival did not cover
+
+
+def _text_key(value: str | None) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+
+
+def arrival_matches(line: FulfillmentLine, articles: Sequence[str], names: Sequence[str]) -> bool:
+    """Is the waiting kit line the item that arrived? The КД article is the key kit and purchase share
+    (techcards `supply_lines`): a line with an article matches only by article; a line without one — by name."""
+    article = _text_key(line.article)
+    if article:
+        return article in {_text_key(value) for value in articles if _text_key(value)}
+    name = _text_key(line.name)
+    return bool(name) and name in {_text_key(value) for value in names if _text_key(value)}
+
+
+def bind_arrived_lot(command: BindArrivedLotCommand, uow: UnitOfWork) -> ArrivedLotResult:
+    """An arrival binds itself to the waiting kit lines of the project it was bought for (owner 05.10.2026).
+
+    Runs inside the caller's open unit of work and does not commit: the outbox consumer commits it together with its
+    message, so a message is applied once. The lines are those of the project's open requests that still wait for a
+    lot and are the arrived item (`arrival_matches`); КБ in natural order, each line takes what the lot gives
+    (`_fill_line_fifo` — the project's own reserves, then ДОСТУПНО; never another project's reserve), at most the
+    arrived quantity in all. Kits of other projects and lines that already have a lot are not touched."""
+    empty = ArrivedLotResult(kits=(), bound=(), short=Decimal("0"))
+    key = project_key(command.project)
+    if not key or command.quantity <= 0:
+        return empty
+    lot = uow.warehouse.get(command.lot_id)
+    if lot is None:
+        return empty
+
+    def waiting(line: FulfillmentLine) -> bool:
+        return line.waiting and arrival_matches(line, command.articles, command.names)
+
+    requests = sorted(
+        (
+            request for request in uow.fulfillment.open_requests()
+            if project_key(project_of(request.purpose)) == key and any(waiting(line) for line in request.lines)
+        ),
+        key=_kit_order,
+    )
+    current_lots = {lot.id: lot}
+    budget = {lot.id: command.quantity}
+    kits: list[ArrivedKit] = []
+    bound: list[ProjectBinding] = []
+    short = Decimal("0")
+    for request in requests:
+        original = request
+        filled_here: list[ProjectBinding] = []
+        for line_id in [line.id for line in request.lines if waiting(line)]:
+            request, need, filled = _fill_line_fifo(
+                request, line_id, (lot,), current_lots, budget, command.actor, command.now, uow,
+                {"project": command.project, "source": "arrival"},
+            )
+            filled_here.extend(filled)
+            short += need
+        if request is original:
+            continue
+        request = replace(request, version=original.version + 1).stamped(command.now)
+        uow.fulfillment.add(request)
+        bound.extend(filled_here)
+        kits.append(ArrivedKit(
+            request=request,
+            kb=kb_of(request.purpose),
+            lines=len(filled_here),
+            quantity=sum((item.quantity for item in filled_here), Decimal("0")),
+            missing=len(request.open_lines()),
+        ))
+    return ArrivedLotResult(kits=tuple(kits), bound=tuple(bound), short=short)
+
+
 def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
         updated = request.mark_ready(command.handout_location).stamped(command.now)
         uow.fulfillment.add(updated)
-        _audit(updated, "fulfillment.ready", command.actor, command.now, {"handout_location": updated.handout_location}, uow)
-        # Issue.gs:459-474: the requester learns the kit is ready and where to pick it up.
+        sites = _kit_sites(uow)
+        site = sites.site_of(updated) if sites is not None else ""
+        masters = tuple(sites.masters(site)) if sites is not None else ()
+        details: dict = {"handout_location": updated.handout_location}
+        if site:  # `last_handout` of the site reads it back for the next kit
+            details["site"] = site
+        _audit(updated, "fulfillment.ready", command.actor, command.now, details, uow)
+        # Issue.gs:459-474: the requester learns the kit is ready and where to pick it up; the masters of the kit's
+        # site learn it too (owner, G1-T3 05.10.2026). One message, recipients de-duplicated: a master who requested
+        # the kit himself gets it once.
         publish_notification(uow.outbox, notification_requested(
             key=f"fulfillment:{updated.id}:ready:v{updated.version}",
             now=command.now,
@@ -704,7 +887,7 @@ def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest
             ),
             kind="ready",
             reference=updated.number,
-            user_ids=(updated.requester_id,),
+            user_ids=(updated.requester_id, *masters),
         ))
         uow.commit()
         return updated
@@ -841,7 +1024,10 @@ def complete_kit(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> Fulfi
     """FF-3: «Укомплектован» is pressed by the picker (PortalApp ISS_ACT_LABEL_ «✅ Укомплектован»)."""
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_complete().stamped(command.now)
+        completed = request.mark_complete()
+        if completed is request:  # the last pick completed it already: nothing to write
+            return request
+        updated = completed.stamped(command.now)
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.completed", command.actor, command.now, {}, uow)
         uow.commit()

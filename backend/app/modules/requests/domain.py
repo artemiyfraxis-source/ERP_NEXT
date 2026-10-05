@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException, ROUND_HALF_UP
 from enum import Enum
 from typing import Iterable, Sequence
@@ -35,17 +35,14 @@ DELIVERY_POINTS = (
 ITEM_TYPES = ("ЗИП", "Оборудование", "Расходники", "Комплектующие", "Инструмент", "СИЗ", "Услуга")
 UNITS = ("шт", "кг", "м", "л", "уп", "компл")
 CATEGORIES = ("Общепром", "ИП", "ОП")
-REQUIRED_FIELDS = (
-    "purpose",
-    "delivery_point",
-    "name",
-    "item_type",
-    "quantity",
-    "unit",
-    "quality_document",
-    "procurement_deadline",
-    "planned_date",
-)
+# Owner 05.10.2026: a purchase line needs only what nobody can guess. Everything else has a default that the
+# form shows and the buyer can change: the shipping point is the first one (the buyer's «Готов к запросу» needs
+# it), ТИП «Комплектующие», ДОК. КАЧЕСТВА by the category rule («Нет» for Общепром), СРОК ЗАКУПКИ today + 7 days,
+# ПЛАНОВАЯ ДАТА today + 14 days. A field counts as omitted when it is None; a blank string is still an error.
+REQUIRED_FIELDS = ("purpose", "name", "quantity", "unit")
+DEFAULT_ITEM_TYPE = "Комплектующие"
+DEFAULT_DEADLINE_DAYS = 7
+DEFAULT_PLANNED_DAYS = 14
 
 
 class ValidationError(ValueError):
@@ -119,14 +116,14 @@ class RequestStatus(str, Enum):
 @dataclass(frozen=True)
 class RequestDraft:
     purpose: str
-    delivery_point: str
+    delivery_point: str | None
     name: str
-    item_type: str
+    item_type: str | None
     quantity: Decimal
     unit: str
-    quality_document: str
-    procurement_deadline: date
-    planned_date: date
+    quality_document: str | None
+    procurement_deadline: date | None
+    planned_date: date | None
     project_reference: str | None = None
     category: str | None = None
     design_article: str | None = None
@@ -243,7 +240,20 @@ def apply_quality_document_rule(category: str | None, value: str | None) -> str:
     return current
 
 
-def validate_draft(draft: RequestDraft) -> RequestDraft:
+def apply_draft_defaults(draft: RequestDraft, today: date | None = None) -> RequestDraft:
+    """Fill the fields the employee left out (None); what was typed is never touched."""
+    today = today or date.today()
+    return replace(
+        draft,
+        delivery_point=DELIVERY_POINTS[0] if draft.delivery_point is None else draft.delivery_point,
+        item_type=DEFAULT_ITEM_TYPE if draft.item_type is None else draft.item_type,
+        procurement_deadline=draft.procurement_deadline or today + timedelta(days=DEFAULT_DEADLINE_DAYS),
+        planned_date=draft.planned_date or today + timedelta(days=DEFAULT_PLANNED_DAYS),
+    )
+
+
+def validate_draft(draft: RequestDraft, today: date | None = None) -> RequestDraft:
+    draft = apply_draft_defaults(draft, today)
     purpose_by_key = {item.casefold(): item for item in STATIC_PURPOSES}
     purpose_key = _text(draft.purpose).casefold()
     purpose = purpose_by_key.get(purpose_key) or PURPOSE_ALIASES.get(purpose_key)
@@ -371,7 +381,7 @@ def create_request_batch(
     normalized_drafts = []
     for index, item in enumerate(drafts, start=1):
         try:
-            normalized_drafts.append(validate_draft(item))
+            normalized_drafts.append(validate_draft(item, now.date()))
         except ValidationError as error:
             if str(error).startswith("Позиция "):
                 raise

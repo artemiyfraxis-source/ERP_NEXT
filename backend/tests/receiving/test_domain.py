@@ -239,6 +239,13 @@ def expected_message() -> OutboxMessage:
     )
 
 
+def test_expected_line_prefills_the_upd_name_from_the_invoice_name():
+    message = expected_message()
+    assert create_line_from_expected(message).document_name == ""
+    named = replace(message, payload={**message.payload, "invoice_item_name": "  Разъём 2-pin (счёт)  "})
+    assert create_line_from_expected(named).document_name == "Разъём 2-pin (счёт)"
+
+
 def test_expected_line_is_inspected_numbered_and_placed_before_warehouse():
     line = create_line_from_expected(expected_message())
     inspected = line.inspect(

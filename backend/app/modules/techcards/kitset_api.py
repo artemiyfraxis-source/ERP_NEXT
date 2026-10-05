@@ -22,7 +22,7 @@ from app.modules.fulfillment.application import free_for_project, project_reserv
 from app.modules.fulfillment.domain import FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
-from app.modules.requests.domain import unit_for_type
+from app.modules.requests.domain import ValidationError as RequestValidationError, unit_for_type
 from app.modules.production.plan import (
     KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, summarize_journal,
 )
@@ -40,7 +40,6 @@ from .kitsets import (
     KitsetValidationError,
     item_id,
     sort_kitsets,
-    supply_lines,
 )
 from .project_cards import TechcardValidationError
 
@@ -391,17 +390,59 @@ def supply(
     request: Request,
     _principal: Annotated[Principal, Depends(projects_view_principal)],
 ) -> dict:
-    """`portalKitsetSupply`: что по позициям закуплено, что едет, а что вообще не заведено."""
+    """`portalKitsetSupply`: что по позициям закуплено, что едет, что есть на складе и чего не хватает."""
     kitset = _kitset(request, project)
-    requests = _read(requests_factory(request), lambda uow: tuple(uow.requests.recent(10_000)))
-    procurement = _read(procurement_factory(request), lambda uow: tuple(uow.procurement.list(limit=10_000)))
-    lines = supply_lines(kitset, flow.supply_rows(kitset.project, requests, procurement))
+    lines, _requests = flow.project_supply(
+        kitset, requests_factory(request), procurement_factory(request), fulfillment_factory(request),
+    )
     return {"project": kitset.project, "lines": [{
         "art": line.article, "name": line.name, "kbs": list(line.kbs), "need": _number(line.need),
         "unit": unit_for_type(line.item_type),
+        "free": _number(line.free), "ordered": _number(line.ordered), "kitted": _number(line.kitted),
+        "short": _number(line.short),
         "grn": line.grn, "stage": line.stage, "received": line.received,
         "rows": [{"where": row.where, "status": row.status, "source_id": row.source_id} for row in line.rows],
     } for line in lines]}
+
+
+class OrderMissingPayload(BaseModel):
+    """«Заказать недостающее»: выбранные позиции (артикул КД), пусто — все, где не хватает."""
+
+    articles: list[str] = Field(default_factory=list, max_length=500)
+    deadline: date | None = None
+    delivery_point: str = Field(default="", max_length=512)
+
+
+@router.post("/{project}/order-missing")
+def order_missing(
+    project: str,
+    payload: OrderMissingPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Заявки на закупку недостающего: Нужно − Свободно − В закупке по каждой позиции; повтор не дублирует."""
+    if principal.permissions.get("newrequest") != "edit":
+        raise HTTPException(status_code=403, detail="Раздел «Оформить заявку» вам не открыт")
+    factory = requests_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База заявок не настроена")
+    command = flow.OrderMissingCommand(
+        project=project, articles=tuple(str(item) for item in payload.articles), actor=principal.actor, now=now,
+        deadline=payload.deadline, delivery_point=payload.delivery_point,
+    )
+
+    def run():
+        try:
+            return flow.order_missing(
+                command, techcards_factory(request), factory, procurement_uow=procurement_factory(request),
+                fulfillment_uow=fulfillment_factory(request), production_uow=production_factory(request),
+            )
+        except RequestValidationError as error:
+            raise KitsetValidationError(str(error)) from error
+
+    result = _run(run)
+    return {"created": result.created, "skipped": result.skipped, "message": result.message}
 
 
 @router.get("/{project}/track")

@@ -74,6 +74,7 @@ def test_receiver_binds_a_human_selected_lot_and_issues_only_the_complete_kit(fu
         json={"version": body["version"], "lot_id": str(lot.id)},
     )
     bound_body = bound.json()["request"]
+    listed_complete = client.get("/api/issues").json()["requests"]
     completed_kit = client.post(
         f"/api/issues/{body['id']}/complete",
         json={"version": bound_body["version"]},
@@ -109,9 +110,14 @@ def test_receiver_binds_a_human_selected_lot_and_issues_only_the_complete_kit(fu
 
     assert created.status_code == 200, created.text
     assert bound.status_code == 200, bound.text
-    assert bound_body["status"] == "Недоукомплектован"
+    # G1-T3: the lot on the only line completes the kit by itself; a late «Укомплектован» press changes nothing.
+    assert bound_body["status"] == "Укомплектован"
     assert bound_body["at_work"] == "2026-09-22T12:00:00"
     assert completed_kit.json()["request"]["status"] == "Укомплектован"
+    assert completed_kit.json()["request"]["version"] == bound_body["version"]
+    # «Отправить на выдачу» in one click: a complete kit carries the offered place (no place used yet at ЦАР).
+    assert [item.get("handout_place") for item in listed_complete] == ["Зона выдачи"]
+    assert "handout_place" not in client.get("/api/issues").json()["requests"][0]
     assert ready.status_code == 200, ready.text
     assert issued.status_code == 200, issued.text
     assert issued_body["status"] == "КБ Выдана"

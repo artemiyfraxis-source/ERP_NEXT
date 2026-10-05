@@ -202,7 +202,7 @@ def _production_entries(uow, canon: str) -> list[TrackEntry]:
         ))
         for operation in task.operations:
             processed, finished_at = done.get(operation.id, (0, None))
-            if processed and processed >= task.quantity:
+            if processed and processed >= task.operation_units(operation.id):
                 entries.append(TrackEntry(
                     finished_at, MODULE_PRODUCTION, "Операция выполнена",
                     f"{task.number} · {operation.stage or operation.code}", "Выполнена", index,

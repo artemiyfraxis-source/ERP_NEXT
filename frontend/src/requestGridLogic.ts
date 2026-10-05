@@ -85,17 +85,17 @@ export function applyCategoryRule<T extends Pick<Draft, "category" | "quality_do
 export const IMPORT_FIELDS: Array<{ key: keyof Draft; label: string; aliases: string[]; required: boolean }> = [
   { key: "purpose", label: "Назначение", aliases: [], required: true },
   { key: "project_reference", label: "Цель", aliases: ["Проект", "№ проекта"], required: false },
-  { key: "delivery_point", label: "Точка отгрузки", aliases: [], required: true },
+  { key: "delivery_point", label: "Точка отгрузки", aliases: [], required: false },
   { key: "name", label: "Наименование", aliases: [], required: true },
-  { key: "item_type", label: "Тип", aliases: [], required: true },
+  { key: "item_type", label: "Тип", aliases: [], required: false },
   { key: "category", label: "Категория", aliases: [], required: false },
   { key: "design_article", label: "Артикул КД", aliases: [], required: false },
   { key: "quantity", label: "Количество", aliases: ["Кол-во"], required: true },
   { key: "unit", label: "Единица", aliases: ["Ед.изм", "Ед. изм."], required: true },
   { key: "link", label: "Ссылка", aliases: [], required: false },
-  { key: "quality_document", label: "Документ качества", aliases: ["Док. качества"], required: true },
-  { key: "procurement_deadline", label: "Срок закупки", aliases: ["Дедлайн на закупку", "Дедлайн"], required: true },
-  { key: "planned_date", label: "Плановая дата", aliases: ["План. дата"], required: true },
+  { key: "quality_document", label: "Документ качества", aliases: ["Док. качества"], required: false },
+  { key: "procurement_deadline", label: "Срок закупки", aliases: ["Дедлайн на закупку", "Дедлайн"], required: false },
+  { key: "planned_date", label: "Плановая дата", aliases: ["План. дата"], required: false },
   { key: "price", label: "Цена", aliases: [], required: false },
   { key: "price_with_vat", label: "Цена с НДС", aliases: [], required: false },
   { key: "comment", label: "Комментарий", aliases: [], required: false },
@@ -123,13 +123,13 @@ export type GridKey =
 
 export const GRID_COLUMNS: Array<{ key: GridKey; label: string; required: boolean }> = [
   { key: "name", label: "Наименование", required: true },
-  { key: "item_type", label: "Тип", required: true },
+  { key: "item_type", label: "Тип", required: false },
   { key: "design_article", label: "Артикул КД", required: false },
   { key: "quantity", label: "Кол-во", required: true },
   { key: "unit", label: "Ед.", required: true },
   { key: "category", label: "Категория", required: false },
-  { key: "quality_document", label: "Док. качества", required: true },
-  { key: "planned_date", label: "План. дата", required: true },
+  { key: "quality_document", label: "Док. качества", required: false },
+  { key: "planned_date", label: "План. дата", required: false },
   { key: "link", label: "Ссылка", required: false },
   { key: "price", label: "Цена", required: false },
   { key: "price_with_vat", label: "Цена с НДС", required: false },
@@ -278,16 +278,14 @@ export function applyPaste(
 
 export type RowErrors = Partial<Record<keyof Draft, string>>;
 
-/** Per-cell validation of one position, as the server will judge it. */
+/** Per-cell validation of one position, as the server will judge it. Only name, quantity, unit and purpose are
+ *  mandatory; type, quality document, point and dates are prefilled and, if cleared, filled in by the server. */
 export function validateRow(draft: Draft, categories: string[]): RowErrors {
   const errors: RowErrors = {};
   if (!draft.name.trim()) errors.name = "Укажите наименование";
-  if (!draft.item_type.trim()) errors.item_type = "Укажите тип";
   const quantity = Number(draft.quantity.replace(",", "."));
   if (!draft.quantity.trim() || !Number.isFinite(quantity) || quantity <= 0) errors.quantity = "Количество больше нуля";
   if (!draft.unit.trim()) errors.unit = "Укажите единицу";
-  if (!draft.quality_document.trim()) errors.quality_document = "Да или Нет";
-  if (!draft.planned_date) errors.planned_date = "Укажите плановую дату";
   if (draft.category.trim() && categories.length && !categories.includes(draft.category)) {
     errors.category = `Категория «${draft.category}» не из списка`;
   }
@@ -296,8 +294,6 @@ export function validateRow(draft: Draft, categories: string[]): RowErrors {
     if (value && !(Number.isFinite(Number(value)) && Number(value) >= 0)) errors[key] = "Число, например 120.50";
   }
   if (!draft.purpose.trim()) errors.purpose = "Укажите назначение";
-  if (!draft.delivery_point.trim()) errors.delivery_point = "Укажите точку отгрузки";
-  if (!draft.procurement_deadline) errors.procurement_deadline = "Укажите срок закупки";
   return errors;
 }
 

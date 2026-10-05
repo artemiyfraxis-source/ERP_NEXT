@@ -222,6 +222,10 @@ RECEIPT_TO_PROCUREMENT_STATUS = {
     "Принято": ProcurementStatus.DONE,
 }
 RECEIPT_STAGES = frozenset({ProcurementStatus.IN_TRANSIT, ProcurementStatus.QUARANTINE})
+# ФАКТ. ДАТА by hand: from «В пути» on, including «Готово» (the buyer may correct the day receiving wrote).
+ACTUAL_ARRIVAL_EDITABLE = frozenset(
+    {ProcurementStatus.IN_TRANSIT, ProcurementStatus.QUARANTINE, ProcurementStatus.DONE}
+)
 
 
 def stage_from_receipts(statuses: Iterable[str]) -> ProcurementStatus | None:
@@ -782,6 +786,20 @@ class ProcurementLine:
         if moved is self:
             return replace(self, actual_arrival=arrival, version=self.version + 1)
         return replace(moved, actual_arrival=arrival)
+
+    def set_actual_arrival(self, arrival: date | None, actor: Actor) -> ProcurementLine:
+        """ФАКТ. ДАТА by hand, optional: the buyer fills or corrects the day goods came, from «В пути» on; an empty
+        value clears it. Receiving still fills it (`follow_receipts`) and never clears a date already set."""
+        self._require_owner(actor)
+        if arrival == self.actual_arrival:
+            return self
+        if self.status not in ACTUAL_ARRIVAL_EDITABLE:
+            raise ProcurementValidationError(
+                f"Фактическая дата ставится от «{ProcurementStatus.IN_TRANSIT.value}» — товар ещё не в пути"
+            )
+        if arrival is not None and arrival < self.created_at.date():
+            raise ProcurementValidationError("Фактическая дата поступления не может быть раньше заказа")
+        return replace(self, actual_arrival=arrival, version=self.version + 1)
 
     def set_note(self, note: str | None, actor: Actor) -> ProcurementLine:
         """КОММЕНТАРИЙ: the buyer's free note, from «В работе» on (`gateNotInWork_` locks a «Новый» row)."""
