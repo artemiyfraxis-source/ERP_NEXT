@@ -1,0 +1,157 @@
+"""«Мои задания» монтажника: готовность входов, коробки только своего ПЗ, лёгкое чтение."""
+
+from decimal import Decimal
+
+import pytest
+
+from app.main import app
+from app.modules.production.application import (
+    AssignProductionCommand,
+    LaunchProductionCommand,
+    assign_production,
+    launch_production,
+)
+from app.modules.production.domain import ProductionValidationError, link_inputs
+from app.modules.production.execution import StartWorkCommand, start_work
+from app.modules.production.infrastructure import SqlAlchemyBoxRepository, SqlAlchemyProductionRepository
+from app.modules.production.traceability import ProductionBox, format_box_number
+from app.shared.http_auth import Principal, authenticated_principal
+from tests.factories import Actor
+from tests.production.test_api import production_api  # noqa: F401 — фикстура API цеха
+from tests.production.test_network_execution import MASTER, NOW, _op, merge_operations
+
+
+def _launch(factory, operator_id, key, operations, item="591K.3.КБ1"):
+    task = launch_production(LaunchProductionCommand(
+        idempotency_key=key, project="591K.3", item=item, name="Жгут", quantity=5,
+        fulfillment_request_id=None, deadline=None, operations=operations, actor=MASTER, now=NOW,
+    ), factory())
+    for operation in task.operations:
+        task, _ = assign_production(AssignProductionCommand(
+            task_id=task.id, expected_version=task.version, operation_id=operation.id,
+            operator_ids=(operator_id,), requested_start=None, actor=MASTER, now=NOW,
+        ), factory())
+    return task
+
+
+def _box(task, position, sequence, operator_id, quantity="5", confirmed=True):
+    operation = next(item for item in task.operations if item.position == position)
+    box = ProductionBox.create(
+        task_id=task.id, operation_id=operation.id, item=task.item,
+        operation_position=position, operator_id=operator_id, created_at=NOW,
+    ).add_output(Decimal(quantity)).close(format_box_number(sequence), "Оператор", NOW)
+    return box.confirm("Мастер", NOW) if confirmed else box
+
+
+def _save(factory, *boxes):
+    with factory() as uow:
+        for box in boxes:
+            uow.boxes.save(box)
+        uow.commit()
+
+
+def _as_operator(operator_id):
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=operator_id, name="Оператор", department="Производство"),
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
+    )
+
+
+def _readiness(client):
+    rows = {row["operations"][0]["position"]: row["operations"][0] for row in client.get("/api/production/my").json()["tasks"]}
+    return {position: row["readiness"] for position, row in rows.items()}, rows
+
+
+def test_readiness_walks_from_not_submitted_to_ready_to_assemble(production_api):  # noqa: F811
+    client, operator_id = production_api
+    factory = app.state.production_uow_factory
+    task = _launch(factory, operator_id, "ready-1", merge_operations())
+    _as_operator(operator_id)
+
+    states, _ = _readiness(client)
+    assert states[1] == {"state": "ready", "text": "можно начинать", "boxes": []}
+    assert states[3]["state"] == "waiting_stage"
+    assert states[3]["text"] == "ждёт: Нарезка А не сдан"
+
+    waiting = _box(task, 1, 104301, operator_id, "10", confirmed=False)
+    _save(factory, waiting)
+    states, _ = _readiness(client)
+    assert states[3]["state"] == "waiting_master"
+    assert states[3]["text"] == "ждёт: Нарезка А — коробка ещё у мастера"
+
+    cut_a = _box(task, 1, 104302, operator_id, "10")
+    _save(factory, cut_a)
+    states, _ = _readiness(client)
+    assert states[3]["text"] == "ждёт: Нарезка Б не сдан"
+    assert [(box["number"], box["quantity"], box["stage"]) for box in states[3]["boxes"]] == [(cut_a.number, "10", "Нарезка А")]
+
+    cut_b = _box(task, 2, 104303, operator_id, "5")
+    _save(factory, cut_b)
+    states, _ = _readiness(client)
+    assert states[3]["state"] == "assembly"
+    assert states[3]["text"] == "готово к сборке"
+    assert sorted(box["number"] for box in states[3]["boxes"]) == sorted([cut_a.number, cut_b.number])
+    # Маркировка ждёт сборку, которой ещё нет.
+    assert states[4]["text"] == "ждёт: Сборка не сдан"
+
+
+def test_single_input_ready_and_remaining_is_the_share(production_api):  # noqa: F811
+    client, operator_id = production_api
+    factory = app.state.production_uow_factory
+    operations = link_inputs((_op(1, "Нарезка"), _op(2, "Сборка")), {2: ((1, Decimal(1)),)})
+    task = _launch(factory, operator_id, "ready-2", operations)
+    _save(factory, _box(task, 1, 104311, operator_id, "5"))
+    _as_operator(operator_id)
+
+    states, rows = _readiness(client)
+    assert states[2]["state"] == "ready" and states[2]["text"] == "можно начинать"
+    assert [box["quantity"] for box in states[2]["boxes"]] == ["5"]
+    assert rows[2]["remaining"] == "5"
+
+
+def test_my_reads_only_own_tasks_and_their_boxes(production_api, monkeypatch):  # noqa: F811
+    client, operator_id = production_api
+    factory = app.state.production_uow_factory
+    mine = _launch(factory, operator_id, "light-mine", link_inputs((_op(1, "Нарезка"), _op(2, "Сборка")), {2: ((1, Decimal(1)),)}))
+    foreign = launch_production(LaunchProductionCommand(
+        idempotency_key="light-foreign", project="591K.4", item="591K.4.КБ1", name="Чужой", quantity=3,
+        fulfillment_request_id=None, deadline=None,
+        operations=link_inputs((_op(1, "Нарезка"),), {}), actor=MASTER, now=NOW,
+    ), factory())
+    _save(factory, _box(foreign, 1, 104321, operator_id))
+    _as_operator(operator_id)
+    calls = []
+    real_box_list, real_task_list = SqlAlchemyBoxRepository.list, SqlAlchemyProductionRepository.list
+    monkeypatch.setattr(SqlAlchemyBoxRepository, "list", lambda self, **kw: calls.append(("boxes", kw)) or real_box_list(self, **kw))
+    monkeypatch.setattr(SqlAlchemyProductionRepository, "list", lambda self, *a, **kw: calls.append(("tasks", kw)) or real_task_list(self, *a, **kw))
+
+    tasks = client.get("/api/production/my").json()["tasks"]
+
+    assert {row["id"] for row in tasks} == {str(mine.id)}
+    assert ("tasks", {}) not in calls and not any(name == "tasks" for name, _ in calls)
+    box_calls = [kw for name, kw in calls if name == "boxes"]
+    assert box_calls and all(kw.get("task_id") == mine.id and kw["limit"] <= 2_000 for kw in box_calls)
+
+
+def test_start_work_refuses_a_box_of_another_task_with_the_same_item(production_api):  # noqa: F811
+    client, operator_id = production_api
+    factory = app.state.production_uow_factory
+    chain = lambda: link_inputs((_op(1, "Нарезка"), _op(2, "Сборка")), {2: ((1, Decimal(1)),)})
+    first = _launch(factory, operator_id, "foreign-1", chain())
+    second = _launch(factory, operator_id, "foreign-2", chain())
+    foreign_box = _box(first, 1, 104331, operator_id)
+    _save(factory, foreign_box)
+    actor = Actor(id=operator_id, name="Оператор", department="Производство")
+    operation = next(item for item in second.operations if item.position == 2)
+
+    with pytest.raises(ProductionValidationError, match="из другого производственного задания"):
+        start_work(StartWorkCommand(
+            task_id=second.id, operation_id=operation.id, box_numbers=(foreign_box.number,), actor=actor, now=NOW,
+        ), factory())
+
+    own = _box(second, 1, 104332, operator_id)
+    _save(factory, own)
+    session = start_work(StartWorkCommand(
+        task_id=second.id, operation_id=operation.id, box_numbers=(own.number,), actor=actor, now=NOW,
+    ), factory())
+    assert session.task_id == second.id

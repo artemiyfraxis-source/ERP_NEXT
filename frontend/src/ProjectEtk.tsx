@@ -434,13 +434,20 @@ function RouteStrip({ route, current, onPick }: { route: EtkRoute; current: numb
   </section>;
 }
 
+/** Операция, на которой открыть ЭТК (экран «Мои задания»): по коду, иначе по номеру этапа. */
+export interface EtkFocus { code: string; position: number }
+
 /** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_). */
-function EtkView({ card, canEdit, onSaved, sketches, onSketches }: {
+function EtkView({ card, canEdit, onSaved, sketches, onSketches, focus }: {
   card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void;
-  sketches: OperationSketch[]; onSketches: () => void;
+  sketches: OperationSketch[]; onSketches: () => void; focus?: EtkFocus;
 }) {
   const list = operations(card.document);
-  const [selected, setSelected] = useState(0);
+  const [selected, setSelected] = useState(() => {
+    if (!focus) return 0;
+    const found = list.findIndex((item) => focus.code && opCode(item) === focus.code);
+    return found >= 0 ? found : Math.max(0, list.findIndex((item) => item.position === focus.position));
+  });
   const [editing, setEditing] = useState(false);
   const main = useRef<HTMLDivElement>(null);
   if (!list.length) return null;
@@ -509,8 +516,8 @@ function stamp(value: string | null | undefined) {
 
 /** Вкладка «ТК КБn»: одна строка о карте и действия, схема жгута один раз, маршрут слева и операция справа, журнал
     ревизий свёрнут. Правят операции здесь («✏️ Править»); пересборка — в «Генераторе». */
-export function EtkSheet({ card, principal, title, onChange, onRebuild }: {
-  card: ProjectTechcard; principal: Principal; title?: ReactNode;
+export function EtkSheet({ card, principal, title, focus, onChange, onRebuild }: {
+  card: ProjectTechcard; principal: Principal; title?: ReactNode; focus?: EtkFocus;
   onChange: (card: ProjectTechcard) => void; onRebuild?: () => void;
 }) {
   const [revisions, setRevisions] = useState<TechcardRevision[]>([]);
@@ -553,7 +560,7 @@ export function EtkSheet({ card, principal, title, onChange, onRebuild }: {
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>⚠ Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)} />
-    <EtkView key={card.id} card={card} canEdit={canEdit} sketches={sketches} onSketches={loadSketches} onSaved={(updated) => {
+    <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} sketches={sketches} onSketches={loadSketches} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} />

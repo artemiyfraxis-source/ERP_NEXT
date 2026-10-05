@@ -629,12 +629,31 @@ export interface ProductionOperation {
   wip?: { ok: string; closed: string };
   first?: boolean;
   mates?: string[];
+  /** Готовность входов для монтажника («Мои задания») и сколько штук ему осталось сдать. */
+  readiness?: ProductionReadiness;
+  remaining?: string;
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;
   inputs?: ProductionOperationInput[];
   final?: boolean;
   required_quantity?: string;
+}
+
+export interface ProductionReadyBox {
+  id: string;
+  number: string | null;
+  /** Доступно в коробке, шт. */
+  quantity: string;
+  operation_position: number;
+  stage: string;
+}
+
+export interface ProductionReadiness {
+  state: "ready" | "assembly" | "waiting_master" | "waiting_stage" | "done";
+  text: string;
+  /** Подтверждённые мастером коробки этого ПЗ, которые можно взять на вход. */
+  boxes: ProductionReadyBox[];
 }
 
 export interface ProductionOperationInput {

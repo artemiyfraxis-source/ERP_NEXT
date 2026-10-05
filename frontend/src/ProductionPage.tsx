@@ -3,10 +3,12 @@ import {
   ApiError,
   fulfillmentApi,
   productionApi,
+  techcardsApi,
   type FulfillmentRequest,
   type Principal,
   type ProductionAbsence,
   type ProductionBox,
+  type ProjectTechcard,
   type ProductionMaterialSource,
   type ProductionLaunchable,
   type ProductionAssignPlan,
@@ -20,6 +22,7 @@ import {
   type ProductionWorkSession,
 } from "./api";
 import { canAct, canSee, hasFullAccess } from "./navigation";
+import { EtkSheet } from "./ProjectEtk";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay } from "./format";
 import { MasterBoard } from "./MasterBoard";
@@ -144,7 +147,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={readOnly ? viewedName : ""} />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-    {mine && <MyQueue tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} />}
+    {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} />}
     {!mine && selectedTask && <TaskDetail
       key={`${selectedTask.id}:${selectedTask.version}`}
       task={selectedTask}
@@ -653,7 +656,8 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
 
 // Очередь оператора (myOpsRender_): операции по дням плана — «Сегодня / Завтра / Начато ранее», факт «сдано X из N»,
 // «вместе с», «план истёк»; «Начать» нет у выполненных и недоступно, пока есть начатая работа.
-function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
+function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false }: {
+  principal: Principal;
   tasks: ProductionTask[];
   session: ProductionWorkSession | null;
   busy: string;
@@ -661,6 +665,7 @@ function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [starting, setStarting] = useState("");
+  const [etkOpen, setEtkOpen] = useState("");
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekdays = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
@@ -700,10 +705,13 @@ function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
         <div className="mo-s">{task.number} · этап {operation.position} · <b>{itemId(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>твои {share.quantity} шт</b></> : null}</div>
         {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        {operation.readiness && operation.readiness.state !== "done" && <div className={`mo-ready ${operation.readiness.state === "ready" || operation.readiness.state === "assembly" ? "tone-ok" : "tone-warn"}`}>{operation.readiness.text}{operation.readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${operation.readiness.boxes.length}` : ""}</div>}
         <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatDate(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatDate(share.finished_at)}` : ""}</div>
-        {!readOnly && !running && !done && <div className="mo-act">
-          <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>
-        </div>}
+        <div className="mo-act">
+          {!readOnly && !running && !done && <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>}
+          <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>ЭТК</button>
+        </div>
+        {etkOpen === key && <OperationEtk principal={principal} task={task} operation={operation} />}
         {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} />}
       </div>
     </div>;
@@ -719,6 +727,31 @@ function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
     {finished.length > 0 && <details className="mo-finished"><summary>Выполнено · {finished.length}</summary>
       <div className="my-queue">{finished.map((task) => renderCard(task, finishedMark))}</div>
     </details>}
+  </div>;
+}
+
+// ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции.
+function OperationEtk({ principal, task, operation }: { principal: Principal; task: ProductionTask; operation: ProductionOperation }) {
+  const [card, setCard] = useState<ProjectTechcard | null | undefined>(undefined);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    techcardsApi.list()
+      .then((result) => {
+        if (!live) return;
+        const mine = result.items.filter((item) => item.project === task.project && (task.item === `${item.project}.${item.item_index}` || task.item.endsWith(item.item_index)));
+        setCard(mine.find((item) => item.status === "Выдана") ?? mine[0] ?? null);
+      })
+      .catch((reason) => { if (live) setError(reason instanceof Error ? reason.message : "ЭТК не открылась"); });
+    return () => { live = false; };
+  }, [task.project, task.item]);
+  // Только чтение: правка и пересборка ЭТК — у технолога.
+  const viewer: Principal = { ...principal, permissions: { myops: "view" } };
+  return <div className="panel mo-etk">
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {!error && card === undefined && <div className="empty">Загрузка…</div>}
+    {card === null && <div className="empty">ЭТК для {itemId(task)} ещё не собрана.</div>}
+    {card && <EtkSheet card={card} principal={viewer} onChange={() => undefined} focus={{ code: operation.code, position: operation.position }} />}
   </div>;
 }
 
@@ -739,6 +772,10 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
   const session = execution.session;
   const task = session ? tasks.find((item) => item.id === session.task_id) : null;
   const operation = task?.operations.find((item) => item.id === session?.operation_id);
+  // «Годные» — остаток его доли: не печатать то, что уже известно.
+  useEffect(() => {
+    if (session && operation?.remaining) setGood((current) => current === "" ? operation.remaining ?? "" : current);
+  }, [session?.id, operation?.id, operation?.remaining]); // eslint-disable-line react-hooks/exhaustive-deps
   return <>
     {session && <div className="panel execution-current">
       <div className="manual-stock-head"><div><h2>Идёт работа</h2><small>{task?.number ?? session.task_id} · этап {operation?.position ?? "—"} {operation?.stage ?? ""} · с {formatDate(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}{session.status === "Пауза" ? " · на паузе" : ""}</small></div><span className="status">{session.status}</span></div>
@@ -851,7 +888,11 @@ function StartWorkForm({ task, operation, busy, mutate }: {
       .then((result) => { setBoxes(result.boxes); setMaterials(result.materials); })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"));
   }, [task.id, operation.id, operation.position]);
-  const inputs = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+  const [picked, setPicked] = useState<string[]>([]);
+  const chips = operation.readiness?.boxes.map((box) => ({ id: box.id, number: box.number ?? "", quantity: box.quantity, stage: box.stage, position: box.operation_position }))
+    ?? boxes.map((box) => ({ id: box.id, number: box.number ?? "", quantity: box.available, stage: "", position: box.operation_position }));
+  const typed = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+  const inputs = [...picked, ...typed.filter((item) => !picked.includes(item))];
   const materialInputs = materials.flatMap((material) => {
     const quantity = quantities[material.fulfillment_line_id]?.trim();
     return quantity && Number(quantity) > 0 ? [{ fulfillment_line_id: material.fulfillment_line_id, quantity }] : [];
@@ -862,7 +903,9 @@ function StartWorkForm({ task, operation, busy, mutate }: {
     {!first && <>
       <small>Введи номера коробок, из которых берёшь детали ({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`}). Несколько — через запятую или с новой строки.</small>
       <label>Номера коробок<textarea aria-label="Номера коробок" rows={3} placeholder="000001-8" value={numbers} onChange={(event) => setNumbers(event.target.value)} /></label>
-      {boxes.length > 0 && <small>Подтверждённые: {boxes.map((box) => `${source ? `этап ${box.operation_position}: ` : ""}${box.number} (${box.available} шт)`).join(", ")}</small>}
+      {chips.length > 0 && <div className="box-chips" role="group" aria-label="Готовые коробки">{chips.map((chip) => <button key={chip.id} type="button" className={`box-chip${picked.includes(chip.number) ? " on" : ""}`} aria-pressed={picked.includes(chip.number)}
+        onClick={() => setPicked((current) => current.includes(chip.number) ? current.filter((item) => item !== chip.number) : [...current, chip.number])}>
+        <b>{chip.number}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
     </>}
     <button className="primary small" disabled={busy || (!first && !inputs.length) || materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0))} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs))}>Начать</button>
   </div>;
@@ -877,7 +920,11 @@ function BoxReview({ boxes, operators, busy, mutate }: {
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const pending = boxes.filter((box) => box.status === "Закрыта оператором");
   if (!pending.length) return null;
-  return <div className="panel box-review"><div className="manual-stock-head"><h2>Коробки на подтверждение</h2><span className="page-count">{pending.length}</span></div>
+  const confirmAll = () => mutate("confirm-all", async () => {
+    for (const box of pending) await productionApi.boxAction(box.id, "confirm", box.version);
+  });
+  return <div className="panel box-review"><div className="manual-stock-head"><h2>Коробки на подтверждение</h2><span className="page-count">{pending.length}</span>
+    {pending.length > 1 && <button className="primary small" disabled={busy} onClick={() => void confirmAll()}>Подтвердить все</button>}</div>
     <div className="box-grid">{pending.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
       <strong>{box.number}</strong>
       <span>{box.item} · этап {box.operation_position}</span>

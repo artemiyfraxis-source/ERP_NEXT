@@ -2570,3 +2570,13 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .token-secret p { margin: 0 0 8px; }
 .token-secret-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .token-secret-value { flex: 1 1 360px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+/* «Мои задания»: готовность входов, крупные чипы коробок, ЭТК под карточкой (планшет — цели от 40 px). */
+.mo-ready { font-size: 13px; font-weight: 600; }
+.mo-act { display: flex; gap: 8px; flex-wrap: wrap; }
+.mo-etk { grid-column: 1 / -1; margin-top: 6px; }
+.box-chips { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.box-chip { display: grid; gap: 2px; justify-items: start; min-height: 52px; min-width: 120px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); cursor: pointer; text-align: left; font: inherit; }
+.box-chip b { font-size: 16px; letter-spacing: .04em; }
+.box-chip span { font-size: 12px; color: var(--muted-foreground); }
+.box-chip.on { border-color: var(--primary); box-shadow: inset 0 0 0 2px var(--primary); background: var(--accent); }
+@media (pointer: coarse) { .mo-act button { min-height: 44px; } .box-chip { min-height: 56px; } }
