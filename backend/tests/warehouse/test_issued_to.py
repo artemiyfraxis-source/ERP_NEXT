@@ -15,9 +15,10 @@ def _write_off(client, lot_id, quantity, purpose, version, date=None):
 
 def test_issued_to_lists_destinations_with_what_is_still_out(warehouse_api):  # noqa: F811
     client, lot = warehouse_api
-    version = _write_off(client, lot.id, "3", "FRX.001", lot.version)
+    # Distinct dates: the spelling shown is the latest write-off's, and equal timestamps have no stable order.
+    version = _write_off(client, lot.id, "3", "FRX.001", lot.version, "2026-09-10")
     version = _write_off(client, lot.id, "2", "Иванов", version, "2026-09-20")
-    version = _write_off(client, lot.id, "1", " frx.001 ", version)  # the same destination, other case and spaces
+    version = _write_off(client, lot.id, "1", " frx.001 ", version, "2026-09-25")  # the same destination, other case and spaces
     returned = client.post(f"/api/stock/batches/{lot.id}/return", json={
         "version": version, "quantity": "1", "source": "FRX.001",
     })
