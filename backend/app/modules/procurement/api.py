@@ -124,6 +124,8 @@ from .domain import (
 from app.modules.warehouse.domain import StockLot
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
+from .kpi import build_kpi
+from .today import build_today
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
@@ -689,6 +691,43 @@ def price_history_one(
         if row is None or row.buyer_id != principal.actor.id:
             raise HTTPException(status_code=404, detail="Строка не найдена")
         return history_for_row(uow.session, row)
+
+
+def _require_option(key: str) -> None:
+    if not stage_options.enabled(key):
+        raise HTTPException(status_code=404, detail="Опция выключена")
+
+
+@router.get("/today")
+def today_lines(
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Stage option `procurement.today`: the buyer's prioritized to-do list, computed on read."""
+    _require_option("procurement.today")
+    lines = buyer_procurement(principal.actor, uow_factory(), limit=5000)
+    available = available_procurement(uow_factory(), limit=1000)
+    return {"sections": build_today(lines, now.date(), len(available))}
+
+
+@router.get("/kpi")
+def buyer_kpi(
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    date_from: Annotated[date, Query(alias="from")],
+    date_to: Annotated[date, Query(alias="to")],
+    buyer: Annotated[str | None, Query(max_length=255)] = None,
+) -> dict:
+    """Stage option `procurement.kpi`: indicators of the lines paid in the period, per buyer and in total."""
+    _require_option("procurement.kpi")
+    if date_to < date_from:
+        raise HTTPException(status_code=422, detail="Конец периода раньше начала")
+    uow = uow_factory()
+    with uow:
+        lines = list(uow.procurement.list())
+        buyers = sorted(set(uow.procurement.buyer_names()), key=str.casefold)
+    return {**build_kpi(lines, date_from, date_to, buyer or None), "buyers": buyers}
 
 
 @router.get("/in-work")
