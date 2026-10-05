@@ -7,6 +7,7 @@ import {
 import { formatDate, formatDay } from "./format";
 import { ActualDateCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { RowActions, type MenuItem } from "./ProcurementRowMenu";
+import { PriceHint, usePriceHistory } from "./PriceHistoryHint";
 import { formatAmount } from "./ProcurementSheetColumns";
 
 /* «Мои позиции» листа закупки — раздельные блоки, каждый сворачивается щелчком по заголовку (владелец, 05.10:
@@ -544,6 +545,7 @@ export function OrderList({
     return next;
   });
 
+  const priceHistory = usePriceHistory(useMemo(() => lines.map((line) => line.id), [lines]));
   const groupOf = new Map(groups.flatMap((group) => group.lines.map((line) => [line.id, group] as const)));
   const allColumns: GroupColumn[] = [
     { key: "id", title: "ID", render: (line) => <strong>{line.legacy_id}</strong> },
@@ -555,7 +557,7 @@ export function OrderList({
       },
     },
     { key: "qty", title: "Кол-во факт", render: qtyOf },
-    { key: "price", title: "Цена факт, ₽", numeric: true, render: (line) => formatAmount(line.actual_price_with_vat) },
+    { key: "price", title: "Цена факт, ₽", numeric: true, render: (line) => <>{formatAmount(line.actual_price_with_vat)}<PriceHint info={priceHistory[line.id]} /></> },
     { key: "sum", title: "Сумма факт, ₽", numeric: true, render: sumCell },
     { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
     // Счёт заказа открывается из его заголовка; у строки он только если отличается от счёта заказа.

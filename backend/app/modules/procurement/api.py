@@ -14,10 +14,15 @@ from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
 from app.shared.stored_files import decode_upload, file_response
 
+from sqlalchemy import select
+
+from .infrastructure import ProcurementLineRow
+from .price_history import history_for_row
 from .application import (
     CancelBackorderCommand,
     KpRow,
@@ -637,6 +642,53 @@ def my_lines(
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return _page_result(lines, limit)
+
+
+PRICE_HISTORY_OPTION = "procurement.price_history"
+PRICE_HISTORY_BATCH = 200
+
+
+class PriceHistoryRequest(BaseModel):
+    line_ids: list[UUID] = Field(max_length=PRICE_HISTORY_BATCH)
+
+
+def _require_price_history() -> None:
+    if not stage_options.enabled(PRICE_HISTORY_OPTION):
+        raise HTTPException(status_code=404, detail="Опция выключена")
+
+
+@router.post("/price-history")
+def price_history_batch(
+    payload: PriceHistoryRequest,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """«Покупали ранее» for the buyer's own lines, one request per list; foreign or unknown ids are skipped."""
+    _require_price_history()
+    uow = uow_factory()
+    with uow:
+        rows = uow.session.scalars(
+            select(ProcurementLineRow).where(
+                ProcurementLineRow.id.in_(payload.line_ids),
+                ProcurementLineRow.buyer_id == principal.actor.id,
+            )
+        ).all()
+        return {str(row.id): history_for_row(uow.session, row) for row in rows}
+
+
+@router.get("/{line_id}/price-history")
+def price_history_one(
+    line_id: UUID,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    _require_price_history()
+    uow = uow_factory()
+    with uow:
+        row = uow.session.get(ProcurementLineRow, line_id)
+        if row is None or row.buyer_id != principal.actor.id:
+            raise HTTPException(status_code=404, detail="Строка не найдена")
+        return history_for_row(uow.session, row)
 
 
 @router.get("/in-work")
