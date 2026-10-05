@@ -232,7 +232,8 @@ def test_a_card_gone_from_the_library_and_an_own_operation_without_steps_are_war
      "Ручная сборка: операция 3 «Опрессовка терминалов»: количество на изделие должно быть числом больше нуля"),
     (lambda config: config["ops"][1].update(label=" "), "Ручная сборка: операция 2: укажите название своей операции"),
     (lambda config: config["ops"][0].update(templateId=""), "Ручная сборка: операция 1: не выбрана карточка из библиотеки"),
-    (lambda config: config["ops"][2].update(type="cutWire"),
+    # A generator type (cutWire, insTerm…) is a generator operation here (test_assembly_schema.py); an unknown one is not.
+    (lambda config: config["ops"][2].update(type="pressFit"),
      "Ручная сборка: операция 3: непонятный вид операции — выберите карточку из библиотеки или «Своя операция»"),
     (lambda config: config["ops"][0]["components"][0].update(qty="много"),
      "Ручная сборка: операция 1 «Резка»: количество «МГТФ 0,35» должно быть числом больше нуля"),

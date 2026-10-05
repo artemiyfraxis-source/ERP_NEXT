@@ -60,6 +60,7 @@ from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
 from .grapher_import import GrapherComponent, GrapherImportError, read_export
 from .connector_housings import attach_housings, connector_catalog, housing_of
+from .assembly_schema import generator_to_assembly
 from .etk_builder import attach_route
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
@@ -162,6 +163,10 @@ class GrapherComponentPayload(BaseModel):
     id: str = Field(min_length=1, max_length=255)
     article: str = Field(default="", max_length=512)
     name: str = Field(default="", max_length=512)
+
+
+class AssemblyFromGeneratorPayload(BaseModel):
+    config: dict[str, Any]
 
 
 class GrapherImportPayload(BaseModel):
@@ -312,6 +317,16 @@ def import_grapher_export(
             GrapherComponent(item.id, item.article, item.name) for item in payload.components
         ))
     except (binascii.Error, GrapherImportError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/techcards/assembly/from-generator", dependencies=[Depends(tcgen_principal)])
+def assembly_from_generator(payload: AssemblyFromGeneratorPayload) -> dict:
+    """Генераторная сборка как ручная («Ручная сборка»: блоки с операциями) — открыть и править в редакторе схемы.
+    Операции генератора идут со своими полями как есть; ничего не сохраняется."""
+    try:
+        return generator_to_assembly(payload.config)
+    except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
