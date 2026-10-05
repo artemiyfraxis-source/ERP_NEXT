@@ -25,3 +25,4 @@ backend/names-fill*.log
 frontend/dist-tools/
 backend/google-key.path
 backend/techcards-report.txt
+CLAUDE.local.md

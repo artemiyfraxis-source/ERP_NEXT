@@ -83,10 +83,12 @@ A cloud Routine (Opus, skill `.claude/skills/migrate-cloud`) fixes non-warehouse
 parallel, each on a branch `cloud/<ID>-<stamp>` that it pushes. The local run merges those branches (step 1b).
 The cloud never pushes `main`.
 
-## Git — owner rule (2026-09-24)
-- Every commit is authored by the owner only. **No `Co-Authored-By: Claude`, no "Generated with Claude
-  Code"** in commits or PRs — Claude is not a collaborator on this repo. `.claude/settings.json` turns
-  attribution off; do not add the trailers by hand either.
+## Two developers — owner + Витя (05.10.2026)
+@.claude/team/RULES.md
+
+The file above is the only shared contract; everything else in this `CLAUDE.md` is the owner's own way of
+working and doesn't bind Витя (his `.claude/settings.local.json` excludes this file). Owner sessions: keep
+Витя's `vitya/*` branches and `.claude/team/vitya/` out of orchestration, cleanups and the conveyor.
 - Releases (push to `main`, tags, deploys) happen only when the owner asks.
 
 ## Hard don'ts
