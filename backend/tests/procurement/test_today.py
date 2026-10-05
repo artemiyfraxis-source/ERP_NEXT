@@ -106,3 +106,18 @@ def test_board_puts_project_cards_in_fields_and_one_project_can_sit_in_several()
     drill = project_lines(lines, "591К.3", TODAY)
     assert len(drill) == 3  # the finished line stays out
     assert {row["field"] for row in drill} == {"Просрочена поставка", "Ждёт оплаты"}
+
+
+def test_a_field_shows_the_thirty_most_urgent_project_cards_and_counts_the_rest():
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from app.modules.procurement.today import CARDS_PER_FIELD, build_board
+
+    lines = [
+        line(ProcurementStatus.IN_TRANSIT, id=uuid4(), expected_arrival=TODAY - timedelta(days=i + 1), project_reference=f"P{i}")
+        for i in range(CARDS_PER_FIELD + 5)
+    ]
+    overdue = build_board(lines, TODAY)["sections"][0]
+    assert len(overdue["projects"]) == CARDS_PER_FIELD and overdue["projects_more"] == 5
+    assert overdue["projects"][0]["days"] == CARDS_PER_FIELD + 5  # the worst delay first

@@ -39,6 +39,7 @@ def _item(line: ProcurementLine, day: date | None, days: int | None, hint: str) 
 
 
 NO_PROJECT = "Без проекта"
+CARDS_PER_FIELD = 30
 
 
 def _age_anchor(line: ProcurementLine) -> date:
@@ -132,7 +133,9 @@ def build_board(lines: Iterable[ProcurementLine], today: date, available_count: 
         if section["key"] == "available":
             section["projects"] = []
             continue
-        section["projects"] = _project_cards(section["items"])
+        cards = _project_cards(section["items"])
+        # The most urgent cards only: a column of hundreds of projects is not read, it is scrolled past.
+        section["projects"], section["projects_more"] = cards[:CARDS_PER_FIELD], max(0, len(cards) - CARDS_PER_FIELD)
         section["items"] = []
     return {"sections": sections}
 

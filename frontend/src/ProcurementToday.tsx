@@ -18,7 +18,7 @@ export type TodayItem = {
   status?: string;
 };
 export type TodayCard = { project: string; count: number; days: number | null; date: string | null; suppliers: string[] };
-export type TodaySection = { key: string; title: string; count: number; items: TodayItem[]; projects?: TodayCard[] };
+export type TodaySection = { key: string; title: string; count: number; items: TodayItem[]; projects?: TodayCard[]; projects_more?: number };
 export type TodayLine = {
   id: string; name: string; article: string | null; supplier: string | null; order_number: string | null;
   status: string; expected: string | null; quantity: string | null; unit: string | null; field: string | null;
@@ -109,6 +109,7 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
                   </button>
                 );
               })}
+              {(section.projects_more ?? 0) > 0 && <small className="today-more">ещё проектов: {section.projects_more} — в «Очередях»</small>}
             </section>
           ))}
         </div>
