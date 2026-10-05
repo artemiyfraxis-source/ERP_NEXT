@@ -16,6 +16,8 @@ from uuid import UUID
 
 from app.modules.requests.domain import unit_for_type
 
+from .etk_parts import kit_article
+
 
 # Брак по умолчанию для метражных позиций (провод, кабель) — 5 %: столько же зашито в BOM ERP («БРАК, ДОЛЯ» = 0,05).
 # Штучным — 0 (технолог Василий, 04.10: «пока даём без брака, лучше пусть походят донабирать, чем возвраты делать»):
@@ -385,6 +387,8 @@ def _article_key(value: object) -> str:
 def supply_lines(kitset: Kitset, rows: Iterable[SupplyRow]) -> tuple[SupplyLine, ...]:
     """Positions of the spec against purchasing, keyed by the КД article (the one key calc and purchase share).
 
+    A row replaced in the calc (`kit_article`: the wire in «Наименование» differs from the КД one) is bought as the
+    item actually used, so purchases under either article count for the position.
     Stage = the LATEST row of the position (one bought, another still requested → it is on its way);
     no rows → «со склада» if the spec has a ГРН, else «не заведено».
     """
@@ -405,6 +409,9 @@ def supply_lines(kitset: Kitset, rows: Iterable[SupplyRow]) -> tuple[SupplyLine,
                     "article": component.article, "name": component.name, "type": component.type, "kbs": [],
                     "need": Decimal("0"), "grn": "", "rows": tuple(by_article.get(key, ())),
                 }
+            used = _article_key(kit_article(component.article, component.name)["art"])
+            if used != key:
+                line["rows"] += tuple(row for row in by_article.get(used, ()) if row not in line["rows"])
             if assembly.index and assembly.index not in line["kbs"]:
                 line["kbs"].append(assembly.index)
             line["need"] = (line["need"] + component.batch(assembly.run)).quantize(Decimal("0.01"))

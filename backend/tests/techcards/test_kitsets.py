@@ -20,6 +20,7 @@ from app.modules.techcards.kitsets import (
     supply_lines,
     write_from_calc,
 )
+from app.workflows.project_kitset import generator_bom
 from tests.techcards.calc_sheets import calc_sheets, grid
 
 
@@ -158,6 +159,50 @@ def test_supply_takes_latest_stage_and_marks_stock_and_missing():
     assert lines["UL1007 22AWG"].need == Decimal("15.75")
     assert lines["43025-0400"].stage == "не заведено"
     assert lines["43030-0007"].stage == "со склада"
+
+
+def _replaced_wire_kitset():
+    return manual_kitset(project="720К.1", customer="З", who="Т", now=NOW, assemblies=[{
+        "index": "КБ1", "name": "Жгут", "run": "10", "components": [
+            {"art": "Силиконовый 28AWG черный", "type": "Провод", "name": "Силиконовый 28AWG черный", "per": "0,5"},
+            {"art": "GHR-04V-S", "type": "Разъём", "name": "Колодка 4pin 1.25мм", "per": "2"},
+        ],
+    }])
+
+
+def _replace_wire(kitset):
+    changed, _ = kitset.with_edits([{"index": "КБ1", "art": "Силиконовый 28AWG черный", "per": "0,5", "scrap": "5",
+                                     "name": "Силиконовый 30AWG черный"}], who="Т", now=NOW)
+    return changed
+
+
+def test_generator_bom_takes_the_wire_replaced_in_the_calc_and_keeps_the_kd_article():
+    kitset = _replaced_wire_kitset()
+    before = generator_bom(kitset, kitset.assembly("КБ1"), [])["components"]
+    assert [(c["name"], c["art"], c["kd"]) for c in before] == [
+        ("Силиконовый 28AWG черный", "Силиконовый 28AWG черный", ""),
+        ("Колодка 4pin 1.25мм", "GHR-04V-S", ""),
+    ]
+    # The wire changed in «Наименование»: the saved card gives the generator the new one, nothing is rebuilt.
+    kitset = _replace_wire(kitset)
+    after = generator_bom(kitset, kitset.assembly("КБ1"), [])["components"]
+    assert [(c["id"], c["name"], c["art"], c["kd"]) for c in after] == [
+        ("kit-0", "Силиконовый 30AWG черный", "Силиконовый 30AWG черный", "Силиконовый 28AWG черный"),
+        ("kit-1", "Колодка 4pin 1.25мм", "GHR-04V-S", ""),
+    ]
+
+
+def test_supply_counts_purchases_of_the_wire_replaced_in_the_calc():
+    kitset = _replace_wire(_replaced_wire_kitset())
+    assert {line.article: line.stage for line in supply_lines(kitset, [])}["Силиконовый 28AWG черный"] == "не заведено"
+    lines = {line.article: line for line in supply_lines(kitset, [
+        SupplyRow("Силиконовый 30AWG черный", "Закупка", "В работе"),
+        SupplyRow("Силиконовый 28AWG черный", "Запрос", "Новая"),
+        SupplyRow("Колодка 4pin 1.25мм", "Закупка", "В работе"),  # a description is not the connector's article
+    ])}
+    wire = lines["Силиконовый 28AWG черный"]
+    assert (wire.stage, wire.name, len(wire.rows)) == ("Закупка · В работе", "Силиконовый 30AWG черный", 2)
+    assert lines["GHR-04V-S"].stage == "не заведено"
 
 
 def test_issue_tasks_one_per_assembly_and_waiting_notes():
