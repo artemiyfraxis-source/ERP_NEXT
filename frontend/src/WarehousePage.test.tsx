@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
 import type { WarehouseLot } from "./api";
+import { resetStageOptions } from "./StageOptions";
 
 const lot: WarehouseLot = {
   id: "40000000-0000-0000-0000-000000000001",
@@ -35,7 +36,7 @@ function added(entered: WarehouseLot[], errors: Array<{ i: number; error: string
   return json({ added: entered.length, lots: entered, assigned: [], errors });
 }
 
-afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); resetStageOptions(); });
 
 /** The reference tools of the page sit behind «Ещё ▾». */
 async function openMore() {
@@ -827,7 +828,8 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   expect(screen.queryByRole("button", { name: /^Ещё/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Обновить" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Таблица склада" })).toBeInTheDocument();
-  expect(requested.every((call) => call === "GET /api/stock")).toBe(true);
+  // The page only reads (the stage-options probe is a read too).
+  expect(requested.every((call) => call === "GET /api/stock" || call === "GET /api/stage-options")).toBe(true);
 });
 
 it("«История» on a lot opens a window with the journal of its ГРН only (administrator)", async () => {
@@ -1208,4 +1210,45 @@ it("quick entry suggests already entered articles by article or name and copies 
 
   fireEvent.change(article, { target: { value: `${lot.article}-NEW` } });
   expect(screen.getByLabelText("Наименование")).toHaveValue(lot.name);
+});
+
+function stageFetch(enabledKeys: string[]) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stage-options") {
+      return json({ available: true, options: ["warehouse.word_search", "warehouse.strict_quantities"].map((key) => (
+        { key, block: "Склад", title: key, before: "", after: "", enabled: enabledKeys.includes(key) })) });
+    }
+    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("makes the quantity inputs read-only and the search hint new when the stage options are on", async () => {
+  stageFetch(["warehouse.word_search", "warehouse.strict_quantities"]);
+
+  render(<WarehousePage />);
+  expect(await screen.findByPlaceholderText("Слова в любом порядке: артикул, название, ГРН, место…")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
+  fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
+  const form = within(screen.getByRole("form", { name: "Правка строки" }));
+  await waitFor(() => expect(form.getByLabelText("Приход")).toHaveAttribute("readonly"));
+  expect(form.getByLabelText("Списано")).toHaveAttribute("readonly");
+  expect(form.getByLabelText("Резерв")).toHaveAttribute("readonly");
+  expect(form.getByLabelText("Тип")).not.toHaveAttribute("readonly");
+  expect(form.getByText(/меняются только движениями/)).toBeInTheDocument();
+});
+
+it("keeps the quantity inputs editable and the old search hint when the stage options are off", async () => {
+  stageFetch([]);
+
+  render(<WarehousePage />);
+  expect(await screen.findByPlaceholderText("поиск: резистор 6-1 …")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
+  fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
+  const form = within(screen.getByRole("form", { name: "Правка строки" }));
+  expect(form.getByLabelText("Приход")).not.toHaveAttribute("readonly");
+  expect(form.queryByText(/меняются только движениями/)).toBeNull();
 });

@@ -42,7 +42,7 @@ function useStageOptions(): Payload | null {
 /** True only when the stage runs and the option is switched to «Новое». */
 export function useStageOption(key: string): boolean {
   const payload = useStageOptions();
-  return Boolean(payload?.options.find((option) => option.key === key)?.enabled);
+  return Boolean(payload?.options?.find((option) => option.key === key)?.enabled);
 }
 
 export function StageOptionsPanel({ canSwitch }: { canSwitch: boolean }) {

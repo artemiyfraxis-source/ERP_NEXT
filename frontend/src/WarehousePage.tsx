@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { SuggestInput } from "./SuggestInput";
+import { useStageOption } from "./StageOptions";
 import {
   receivingApi,
   requestsApi,
@@ -61,6 +62,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const wordSearch = useStageOption("warehouse.word_search");
   const [warehouse, setWarehouse] = useState("");
   const [includeZero, setIncludeZero] = useState(false);
   const [total, setTotal] = useState(0);
@@ -210,7 +212,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">
-        <input className="search stock-search" aria-label="Поиск по складу" placeholder="поиск: резистор 6-1 …" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input className="search stock-search" aria-label="Поиск по складу" placeholder={wordSearch ? "Слова в любом порядке: артикул, название, ГРН, место…" : "поиск: резистор 6-1 …"} value={query} onChange={(event) => setQuery(event.target.value)} />
         <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />показывать нулевые</label>
         <label className="inline-select">группировать<select aria-label="Группировка склада" value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
           <option value="">нет</option><option value="type">по типу</option><option value="place">по месту (полка)</option><option value="name">по наименованию</option><option value="series">по серии</option><option value="grn">по ГРН</option>
@@ -968,6 +970,7 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
   onSaved: () => void;
 }) {
   const [values, setValues] = useState(() => rowValues(lot));
+  const strict = useStageOption("warehouse.strict_quantities");
   const [notice, setNotice] = useState("");
   const number = (field: RowEditField) => Number(values[field].trim() || lot[field] || 0);
   const balance = Math.round((number("inbound") - number("written_off")) * 1_000_000) / 1_000_000;
@@ -997,10 +1000,12 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
     /></label>)}
     {ROW_EDIT_NUMBERS.map(([field, label]) => <label key={field}>{label}<input
       type="number" min="0" step="any" placeholder={String(lot[field] ?? "")}
+      readOnly={strict}
       value={values[field]}
       onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
     /></label>)}
     </div>
+    {strict && <p className="page-sub">Приход, списано и резерв меняются только движениями: списание, возврат, перемещение.</p>}
     <p className="page-sub" role="status">{notice || `Баланс станет: ${balance} ${lot.unit}`}</p>
     <div className="move-actions">
       <button type="button" className="secondary" onClick={onClose}>Назад</button>
