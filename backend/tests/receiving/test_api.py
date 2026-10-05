@@ -107,7 +107,7 @@ def test_documents_are_derived_from_urls_and_accepted_line_is_placed(receiving_a
         "expiry_date": "2027-01-01",
     }
 
-    waiting = client.post(
+    without_upd = client.post(
         f"/api/receiving/{line.id}/inspect",
         json={**base, "version": line.version, "has_shipping_document": True},
     )
@@ -115,7 +115,7 @@ def test_documents_are_derived_from_urls_and_accepted_line_is_placed(receiving_a
         f"/api/receiving/{line.id}/inspect",
         json={
             **base,
-            "version": waiting.json()["line"]["version"],
+            "version": without_upd.json()["line"]["version"],
             "shipping_document_url": "https://files.test/upd.pdf",
             "series": "LOT-2409",
         },
@@ -128,10 +128,15 @@ def test_documents_are_derived_from_urls_and_accepted_line_is_placed(receiving_a
         },
     )
 
-    assert waiting.status_code == 200, waiting.text
-    assert waiting.json()["line"]["status"] == "Ожидание"
+    # Owner 05.10.2026: no УПД file → still «Принято» with a ГРН, only a non-blocking note.
+    assert without_upd.status_code == 200, without_upd.text
+    assert without_upd.json()["line"]["status"] == "Принято"
+    assert without_upd.json()["line"]["grn"]
+    assert without_upd.json()["line"]["nonconformities"] == []
+    assert without_upd.json()["line"]["shipping_document_note"] == "УПД не приложен — придёт по ЭДО"
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["line"]["status"] == "Принято"
+    assert accepted.json()["line"]["shipping_document_note"] is None
     assert accepted.json()["line"]["article"] == "CON-001"
     assert accepted.json()["line"]["series"] == "LOT-2409"
     assert placed.status_code == 200, placed.text
@@ -417,7 +422,33 @@ def test_bulk_upd_blank_fields_keep_existing_values(receiving_api):
     assert line["document_date"] == "2026-09-20"
 
 
-def test_bulk_upd_rejects_accepted_line_and_applies_nothing(receiving_api):
+def test_bulk_upd_is_attached_to_accepted_line_on_stock_and_clears_the_note(receiving_api):
+    client, first = receiving_api
+    base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    accepted = client.post(
+        f"/api/receiving/{first.id}/inspect", json={**base, "version": first.version}
+    ).json()["line"]
+    on_stock = client.post(
+        f"/api/receiving/{first.id}/place", json={"version": accepted["version"], "storage_location": "1F4"}
+    ).json()["line"]
+    assert on_stock["warehouse_event_emitted"] is True
+    assert on_stock["shipping_document_note"] == "УПД не приложен — придёт по ЭДО"
+
+    response = client.post(
+        "/api/receiving/documents",
+        json={"lines": [{"id": on_stock["id"], "version": on_stock["version"]}], "document_number": "ЭДО-9"},
+    )
+
+    assert response.status_code == 200, response.text
+    line = response.json()["lines"][0]
+    assert line["status"] == "Принято"
+    assert line["document_number"] == "ЭДО-9"
+    assert line["shipping_document_note"] is None
+    assert line["warehouse_event_emitted"] is True
+    assert (line["grn"], line["accepted_quantity"]) == (on_stock["grn"], on_stock["accepted_quantity"])
+
+
+def test_bulk_upd_rejects_archived_vk_line_and_applies_nothing(receiving_api):
     client, first = receiving_api
     second = _second_line()
     base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
@@ -425,18 +456,21 @@ def test_bulk_upd_rejects_accepted_line_and_applies_nothing(receiving_api):
         f"/api/receiving/{second.id}/inspect",
         json={**base, "version": second.version, "shipping_document_url": "https://files.test/x.pdf"},
     ).json()["line"]
-    assert accepted["status"] == "Принято"
+    archived = client.post(
+        f"/api/receiving/{second.id}/vk-revision", json={"version": accepted["version"]}
+    ).json()["archived"]
+    assert archived["status"] == "Архив ВК"
 
     response = client.post(
         "/api/receiving/documents",
         json={
-            "lines": [{"id": str(first.id), "version": first.version}, {"id": accepted["id"], "version": accepted["version"]}],
+            "lines": [{"id": str(first.id), "version": first.version}, {"id": archived["id"], "version": archived["version"]}],
             "document_number": "УПД-9",
         },
     )
 
     assert response.status_code == 422
-    assert "Принято" in response.json()["detail"]
+    assert "Архив ВК" in response.json()["detail"]
     with app.state.receiving_uow_factory() as uow:
         assert uow.receiving.get(first.id).document_number == ""
         assert uow.receiving.get(first.id).version == first.version

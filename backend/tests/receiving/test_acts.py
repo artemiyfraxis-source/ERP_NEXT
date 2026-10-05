@@ -85,6 +85,23 @@ def test_incoming_act_sheet_marks_results_from_the_nature(erp):
     assert results["Документ по качеству"] == "Не требуется"
 
 
+def test_incoming_act_notes_upd_pending_until_it_is_attached(erp):
+    receiving, _, _ = erp
+    line = run(
+        receiving,
+        consume_receiving_expected(expected_message(), receiving()),
+        replace(inspection(), has_shipping_document=False, shipping_document_url=None),
+    )
+    assert line.status.value == "Принято"
+
+    results = {row[1]: row[2] for row in build_act_print_sheet(line, "incoming").rows if row[0]}
+    assert results["УПД/М-15"] == "УПД не приложен — придёт по ЭДО"
+
+    attached = line.attach_shipping_document(url=None, number="ЭДО-1", document_date=NOW.date())
+    results = {row[1]: row[2] for row in build_act_print_sheet(attached, "incoming").rows if row[0]}
+    assert results["УПД/М-15"] == "Соответствует"
+
+
 def test_api_lists_acts_and_prints_one(api):
     client, receiving, _ = api
     line = run(receiving, consume_receiving_expected(expected_message(), receiving()), inspection())

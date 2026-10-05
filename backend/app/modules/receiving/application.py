@@ -36,6 +36,7 @@ from .domain import (
     NOTIFY_SUPPLY,
     NOTIFY_TECHNOLOGIST,
     RECEIVING_FILE_PATH,
+    SHIPPING_DOCUMENT_PENDING_NOTE,
 )
 
 
@@ -1038,7 +1039,13 @@ def _incoming_results(line: ReceivingLine) -> tuple[tuple[str, str, str], ...]:
     )
     return (
         ("1", "Внешний вид, целостность тары и упаковки", mark("Механическое повреждение / брак")),
-        ("2", "УПД/М-15", mark("Отсутствие / несоответствие УПД/М-15")),
+        (
+            "2",
+            "УПД/М-15",
+            SHIPPING_DOCUMENT_PENDING_NOTE
+            if line.shipping_document_pending
+            else mark("Отсутствие / несоответствие УПД/М-15"),
+        ),
         ("3", "Идентификация (тот ли товар, соответствие счёту)", mark("Не тот товар (несоответствие счету)")),
         ("4", "Документ по качеству", quality),
         ("5", "Срок годности / дата изготовления", mark("Истёк срок годности")),
