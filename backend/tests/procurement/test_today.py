@@ -74,8 +74,8 @@ def test_today_endpoint_lists_the_buyers_lines_when_on(procurement_api, monkeypa
     assert response.status_code == 200, response.text
     sections = response.json()["sections"]
     assert [s["key"] for s in sections] == ["overdue"]
-    assert sections[0]["items"][0]["id"] == str(free_line.id)
-    assert sections[0]["items"][0]["days"] == 5  # the stubbed clock is 2026-09-15
+    assert sections[0]["projects"][0]["count"] == 1
+    assert sections[0]["projects"][0]["days"] == 5  # the stubbed clock is 2026-09-15
 
 
 def test_board_puts_project_cards_in_fields_and_one_project_can_sit_in_several():
@@ -100,6 +100,9 @@ def test_board_puts_project_cards_in_fields_and_one_project_can_sit_in_several()
     assert [card["project"] for card in overdue] == ["591К.3", "700К.1"]  # the worst delay first
     assert overdue[0]["count"] == 2 and overdue[0]["days"] == 5
     assert [card["project"] for card in fields["to_pay"]["projects"]] == ["591К.3"]
-    drill = board["projects"]["591К.3"]
+    assert all(not section["items"] for section in board["sections"])  # positions come with the drill-down only
+    from app.modules.procurement.today import project_lines
+
+    drill = project_lines(lines, "591К.3", TODAY)
     assert len(drill) == 3  # the finished line stays out
     assert {row["field"] for row in drill} == {"Просрочена поставка", "Ждёт оплаты"}

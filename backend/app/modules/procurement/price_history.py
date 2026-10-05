@@ -161,34 +161,69 @@ def load_candidates(session: Session, target: PriceItem) -> list[PriceCandidate]
         .order_by(R.paid_at.desc())
         .limit(2000)
     ).all()
-    out = []
-    for r in rows:
-        out.append(
-            PriceCandidate(
-                item=PriceItem(r.id, r.design_article, (r.calculated_name, r.invoice_item_name or "")),
-                paid_at=r.paid_at,
-                supplier=r.supplier,
-                unit_price_with_vat=unit_price_with_vat(
-                    currency=r.currency,
-                    price=r.actual_price,
-                    vat_rate=r.actual_vat_rate,
-                    price_with_vat=r.actual_price_with_vat,
-                    source_price=r.source_price,
-                    source_price_with_vat=r.source_price_with_vat,
-                    exchange_rate=r.exchange_rate,
-                ),
-                unit=r.actual_unit,
-                quantity=r.actual_quantity,
-                order_number=r.order_number,
-            )
-        )
-    return out
+    return [_candidate(r) for r in rows]
+
+
+def _candidate(r) -> PriceCandidate:
+    return PriceCandidate(
+        item=PriceItem(r.id, r.design_article, (r.calculated_name, r.invoice_item_name or "")),
+        paid_at=r.paid_at,
+        supplier=r.supplier,
+        unit_price_with_vat=unit_price_with_vat(
+            currency=r.currency,
+            price=r.actual_price,
+            vat_rate=r.actual_vat_rate,
+            price_with_vat=r.actual_price_with_vat,
+            source_price=r.source_price,
+            source_price_with_vat=r.source_price_with_vat,
+            exchange_rate=r.exchange_rate,
+        ),
+        unit=r.actual_unit,
+        quantity=r.actual_quantity,
+        order_number=r.order_number,
+    )
 
 
 def history_for_row(session: Session, row) -> dict:
     """One line's hint: past purchases and the delta of its current price against the latest one."""
     target = PriceItem(row.id, row.design_article, (row.calculated_name, row.invoice_item_name or ""))
-    history = past_purchases(target, load_candidates(session, target))
+    return _payload(row, past_purchases(target, load_candidates(session, target)))
+
+
+def history_for_rows(session: Session, rows) -> dict[str, dict]:
+    """The batch for a whole list: every paid line is read once and indexed by article and name key, instead of one
+    prefiltered query per row (200 rows × up to 2000 candidates each on a real sheet)."""
+    from .infrastructure import ProcurementLineRow as R
+
+    rows = list(rows)
+    if not rows:
+        return {}
+    by_article: dict[str, list[PriceCandidate]] = {}
+    by_name: dict[str, list[PriceCandidate]] = {}
+    for r in session.scalars(select(R).where(R.paid_at.is_not(None))):
+        candidate = _candidate(r)
+        key = article_key(candidate.item.article)
+        if key:
+            by_article.setdefault(key, []).append(candidate)
+        for name in {name_key(n) for n in candidate.item.names if name_key(n)}:
+            by_name.setdefault(name, []).append(candidate)
+    out = {}
+    for row in rows:
+        target = PriceItem(row.id, row.design_article, (row.calculated_name, row.invoice_item_name or ""))
+        key = article_key(target.article)
+        if key:
+            pool = by_article.get(key, [])
+        else:
+            seen: dict = {}
+            for name in {name_key(n) for n in target.names if name_key(n)}:
+                for candidate in by_name.get(name, []):
+                    seen[candidate.item.line_id] = candidate
+            pool = list(seen.values())
+        out[str(row.id)] = _payload(row, past_purchases(target, pool))
+    return out
+
+
+def _payload(row, history: list[PastPurchase]) -> dict:
     current = unit_price_with_vat(
         currency=row.currency,
         price=row.actual_price,

@@ -19,9 +19,16 @@ def _day(value) -> date | None:
 
 
 def supplier_lines(procurement_uow_factory: Callable) -> list[LineFacts]:
-    """Every procurement line that has a supplier text, as plain facts."""
+    """Every procurement line that has a supplier text, as plain facts. Only the columns used are selected: hydrating
+    whole 80-column rows made the directory and the card cost ~0.45 s on 5 000 lines."""
+    R = ProcurementLineRow
+    columns = (
+        R.id, R.supplier, R.status, R.invoice_item_name, R.calculated_name, R.design_article, R.actual_quantity,
+        R.calculated_quantity, R.actual_unit, R.calculated_unit, R.actual_price_with_vat, R.actual_sum, R.order_number,
+        R.order_date, R.paid_at, R.expected_arrival, R.actual_arrival,
+    )
     with procurement_uow_factory() as uow:
-        rows = uow.session.scalars(select(ProcurementLineRow).where(ProcurementLineRow.supplier.is_not(None)))
+        rows = uow.session.execute(select(*columns).where(R.supplier.is_not(None))).all()
         return [
             LineFacts(
                 id=str(row.id), supplier=row.supplier or "", status=row.status,

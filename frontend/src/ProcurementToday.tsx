@@ -17,13 +17,13 @@ export type TodayItem = {
   project?: string;
   status?: string;
 };
-export type TodayCard = { project: string; count: number; days: number | null; date: string | null; suppliers: string[]; line_ids: string[] };
+export type TodayCard = { project: string; count: number; days: number | null; date: string | null; suppliers: string[] };
 export type TodaySection = { key: string; title: string; count: number; items: TodayItem[]; projects?: TodayCard[] };
 export type TodayLine = {
   id: string; name: string; article: string | null; supplier: string | null; order_number: string | null;
   status: string; expected: string | null; quantity: string | null; unit: string | null; field: string | null;
 };
-type Board = { sections: TodaySection[]; projects?: Record<string, TodayLine[]> };
+type Board = { sections: TodaySection[] };
 
 const URGENT = new Set(["overdue", "arriving"]);
 
@@ -50,6 +50,9 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
   const [error, setError] = useState("");
   const [open, setOpen] = useState<{ project: string; field: string } | null>(null);
   const [onlyField, setOnlyField] = useState(true);
+  // Positions of the opened card, fetched on click (the board itself carries only the cards).
+  const [drill, setDrill] = useState<TodayLine[] | null>(null);
+  const [drillError, setDrillError] = useState("");
 
   useEffect(() => {
     let live = true;
@@ -59,9 +62,21 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
     return () => { live = false; };
   }, []);
 
+  const project = open?.project ?? null;
+  useEffect(() => {
+    if (project === null) return;
+    let live = true;
+    setDrill(null);
+    setDrillError("");
+    api<{ lines: TodayLine[] }>(`/api/procurement/today/project?project=${encodeURIComponent(project)}`)
+      .then((result) => { if (live) setDrill(result.lines); })
+      .catch((reason) => { if (live) setDrillError(failureText(reason, "Позиции проекта не загрузились")); });
+    return () => { live = false; };
+  }, [project]);
+
   const sections = board?.sections ?? null;
-  const drill = open ? (board?.projects?.[open.project] ?? []) : [];
-  const shown = open && onlyField ? drill.filter((row) => row.field === open.field) : drill;
+  const rowsOfProject = drill ?? [];
+  const shown = open && onlyField ? rowsOfProject.filter((row) => row.field === open.field) : rowsOfProject;
 
   return (
     <section className="page">
@@ -105,12 +120,14 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
             <span>{open.field}</span>
             <span className="today-drill-actions">
               <button type="button" className={`secondary small${onlyField ? " active" : ""}`} aria-pressed={onlyField} onClick={() => setOnlyField(true)}>В этом поле</button>
-              <button type="button" className={`secondary small${!onlyField ? " active" : ""}`} aria-pressed={!onlyField} onClick={() => setOnlyField(false)}>Все позиции проекта · {drill.length}</button>
+              <button type="button" className={`secondary small${!onlyField ? " active" : ""}`} aria-pressed={!onlyField} onClick={() => setOnlyField(false)}>Все позиции проекта{drill ? ` · ${drill.length}` : ""}</button>
               {onOpenQueues && <button type="button" className="secondary small" onClick={() => onOpenQueues()}>В «Очереди»</button>}
               <button type="button" className="link-button" onClick={() => setOpen(null)}>Закрыть</button>
             </span>
           </div>
-          <DataTable label={`Позиции проекта ${open.project}`} rows={shown} columns={lineColumns} rowKey={(row) => row.id} compactBelow={1000} />
+          {drillError && <div className="error-banner" role="alert">{drillError}</div>}
+          {!drillError && drill === null && <div className="empty">Загружаю…</div>}
+          {drill !== null && <DataTable label={`Позиции проекта ${open.project}`} rows={shown} columns={lineColumns} rowKey={(row) => row.id} compactBelow={1000} />}
         </section>
       )}
     </section>

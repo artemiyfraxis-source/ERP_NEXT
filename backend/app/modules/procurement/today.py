@@ -112,9 +112,8 @@ def _project_cards(items: list[dict]) -> list[dict]:
     """One card per project inside a field: how many positions, the worst age, the suppliers involved."""
     cards: dict[str, dict] = {}
     for item in items:
-        card = cards.setdefault(item["project"], {"project": item["project"], "count": 0, "days": None, "date": None, "suppliers": set(), "line_ids": []})
+        card = cards.setdefault(item["project"], {"project": item["project"], "count": 0, "days": None, "date": None, "suppliers": set()})
         card["count"] += 1
-        card["line_ids"].append(item["id"])
         if item["days"] is not None and (card["days"] is None or item["days"] > card["days"]):
             card["days"] = item["days"]
         if item["date"] and (card["date"] is None or item["date"] < card["date"]):
@@ -126,26 +125,25 @@ def _project_cards(items: list[dict]) -> list[dict]:
 
 
 def build_board(lines: Iterable[ProcurementLine], today: date, available_count: int = 0) -> dict:
-    """«Сегодня» as a board: fields in priority order, project cards in each field (a project may sit in several
-    fields), and every open line of those projects for the drill-down with its stage and field."""
-    lines = list(lines)
-    sections = build_today(lines, today, available_count)
-    field_of: dict[str, str] = {}
+    """«Сегодня» as a board: fields in priority order with project cards (a project may sit in several fields).
+    Positions are not sent here — a card opens them through `project_lines` (5 000 lines = 1.8 MB otherwise)."""
+    sections = build_today(list(lines), today, available_count)
     for section in sections:
         if section["key"] == "available":
             section["projects"] = []
             continue
         section["projects"] = _project_cards(section["items"])
-        for item in section["items"]:
-            field_of[item["id"]] = section["title"]
-    on_board = {card["project"] for section in sections for card in section["projects"]}
+        section["items"] = []
+    return {"sections": sections}
+
+
+def project_lines(lines: Iterable[ProcurementLine], project: str, today: date) -> list[dict]:
+    """Every open line of one project with its stage and the board field it sits in (None — not on the board)."""
+    lines = [line for line in lines if (line.project_reference or NO_PROJECT) == project]
+    field_of = {item["id"]: section["title"] for section in build_today(lines, today) for item in section["items"]}
     closed = {ProcurementStatus.DONE, ProcurementStatus.CANCELLED}
-    projects: dict[str, list[dict]] = {}
-    for line in lines:
-        project = line.project_reference or NO_PROJECT
-        if project not in on_board or line.status in closed:
-            continue
-        projects.setdefault(project, []).append({
+    rows = [
+        {
             "id": str(line.id),
             "name": line.invoice_item_name or line.calculated_name,
             "article": line.design_article or line.designation,
@@ -156,7 +154,9 @@ def build_board(lines: Iterable[ProcurementLine], today: date, available_count: 
             "quantity": str(line.actual_quantity) if line.actual_quantity is not None else None,
             "unit": line.actual_unit,
             "field": field_of.get(str(line.id)),
-        })
-    for rows in projects.values():
-        rows.sort(key=lambda row: (row["field"] is None, row["field"] or "", row["name"] or ""))
-    return {"sections": sections, "projects": projects}
+        }
+        for line in lines
+        if line.status not in closed
+    ]
+    rows.sort(key=lambda row: (row["field"] is None, row["field"] or "", row["name"] or ""))
+    return rows

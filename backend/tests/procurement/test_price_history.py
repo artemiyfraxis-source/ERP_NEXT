@@ -108,6 +108,7 @@ def test_api_404_when_off_and_history_when_on(procurement_api, monkeypatch, tmp_
     assert one.json()["purchases"][0]["supplier"] == "ООО Х"
     batch = client.post("/api/procurement/price-history", json={"line_ids": [str(second.id), str(uuid4())]})
     assert list(batch.json()) == [str(second.id)]
+    assert batch.json()[str(second.id)] == one.json()  # the indexed batch answers exactly like the single query
     too_many = client.post("/api/procurement/price-history", json={"line_ids": [str(uuid4()) for _ in range(201)]})
     assert too_many.status_code == 422
     assert client.get(f"/api/procurement/{uuid4()}/price-history").status_code == 404

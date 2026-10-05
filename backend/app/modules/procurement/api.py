@@ -3,7 +3,7 @@
 import base64
 import binascii
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 from urllib.parse import quote
@@ -21,8 +21,8 @@ from app.shared.stored_files import decode_upload, file_response
 
 from sqlalchemy import select
 
-from .infrastructure import ProcurementLineRow
-from .price_history import history_for_row
+from .infrastructure import ProcurementLineRow, _line_domain
+from .price_history import history_for_row, history_for_rows
 from .application import (
     CancelBackorderCommand,
     KpRow,
@@ -125,7 +125,7 @@ from app.modules.warehouse.domain import StockLot
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
 from .kpi import build_kpi
-from .today import build_board
+from .today import build_board, project_lines
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
@@ -675,7 +675,7 @@ def price_history_batch(
                 ProcurementLineRow.buyer_id == principal.actor.id,
             )
         ).all()
-        return {str(row.id): history_for_row(uow.session, row) for row in rows}
+        return history_for_rows(uow.session, rows)
 
 
 @router.get("/{line_id}/price-history")
@@ -711,6 +711,19 @@ def today_lines(
     return build_board(lines, now.date(), len(available))
 
 
+@router.get("/today/project")
+def today_project(
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    project: Annotated[str, Query(min_length=1, max_length=128)],
+) -> dict:
+    """A board card opened: the buyer's open lines of that project, with stage and field."""
+    _require_option("procurement.today")
+    lines = buyer_procurement(principal.actor, uow_factory(), limit=5000)
+    return {"lines": project_lines(lines, project, now.date())}
+
+
 @router.get("/kpi")
 def buyer_kpi(
     _principal: Annotated[Principal, Depends(procurement_view_principal)],
@@ -725,7 +738,13 @@ def buyer_kpi(
         raise HTTPException(status_code=422, detail="Конец периода раньше начала")
     uow = uow_factory()
     with uow:
-        lines = list(uow.procurement.list())
+        # Only lines paid around the period (±1 day for the Moscow date of a UTC timestamp) leave the database.
+        low = datetime.combine(date_from - timedelta(days=1), time.min)
+        high = datetime.combine(date_to + timedelta(days=2), time.min)
+        rows = uow.session.scalars(
+            select(ProcurementLineRow).where(ProcurementLineRow.paid_at >= low, ProcurementLineRow.paid_at < high)
+        )
+        lines = [_line_domain(row) for row in rows]
         buyers = sorted(set(uow.procurement.buyer_names()), key=str.casefold)
     return {**build_kpi(lines, date_from, date_to, buyer or None), "buyers": buyers}
 

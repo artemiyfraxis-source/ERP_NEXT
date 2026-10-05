@@ -13,7 +13,10 @@ function mockServer(enabled: boolean, sections: unknown[], projects: Record<stri
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/stage-options") return json({ available: true, options: [{ ...OPTION, enabled }] });
-    if (path === "/api/procurement/today") return json({ sections, projects });
+    if (path === "/api/procurement/today") return json({ sections });
+    if (path.startsWith("/api/procurement/today/project?project=")) {
+      return json({ lines: projects[decodeURIComponent(path.split("=")[1])] ?? [] });
+    }
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     return json({ lines: [], buyers: [], stages: [], next_cursor: null });
   });
@@ -42,12 +45,12 @@ it("shows «Сегодня» first as a board of project cards; one project sits
     {
       key: "overdue", title: "Просрочена поставка", count: 2,
       items: [],
-      projects: [{ project: "591К.3", count: 2, days: 4, date: "2026-10-01", suppliers: ["Рос"], line_ids: ["1", "2"] }],
+      projects: [{ project: "591К.3", count: 2, days: 4, date: "2026-10-01", suppliers: ["Рос"] }],
     },
     {
       key: "to_pay", title: "Ждёт оплаты", count: 1,
       items: [],
-      projects: [{ project: "591К.3", count: 1, days: 2, date: "2026-10-03", suppliers: ["Рос"], line_ids: ["3"] }],
+      projects: [{ project: "591К.3", count: 1, days: 2, date: "2026-10-03", suppliers: ["Рос"] }],
     },
   ], { "591К.3": [line("1", "В пути", "Просрочена поставка"), line("2", "В пути", "Просрочена поставка"), line("3", "В оплату", "Ждёт оплаты"), line("4", "В работе", null)] });
   render(<ProcurementPage />);
