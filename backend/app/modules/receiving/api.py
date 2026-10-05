@@ -157,8 +157,9 @@ class DeliveryLinePayload(BaseModel):
 class DeliveryPayload(BaseModel):
     lines: list[DeliveryLinePayload] = Field(min_length=1, max_length=200)
     shipping_document_url: str | None = Field(default=None, max_length=4096)
-    document_number: str = Field(min_length=1, max_length=128)
-    document_date: date
+    # The УПД is optional: it often comes by ЭДО later («Внести УПД»).
+    document_number: str = Field(default="", max_length=128)
+    document_date: date | None = None
     warehouse: Literal["ЦАР", "ЖУК"] | None = None
 
     @field_validator("shipping_document_url")

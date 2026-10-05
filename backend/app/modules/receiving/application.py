@@ -1005,6 +1005,7 @@ def _delivery_inspection(
     nature = DELIVERY_DEVIATIONS.get(str(item.deviation or "none"))
     if nature is None:
         raise ReceivingValidationError("Неизвестный вид отклонения")
+    has_upd = bool(command.document_number or command.document_date or command.shipping_document_url or current.shipping_document_url or current.document_number)
     document = item.document_quantity if item.document_quantity is not None else current.ordered_quantity
     fact = item.fact_quantity if item.fact_quantity is not None else document
     today = command.now.date()
@@ -1022,8 +1023,9 @@ def _delivery_inspection(
         fact_quantity=fact,
         document_quantity=document,
         ordered_quantity=current.ordered_quantity,
-        # The УПД of a delivery is its № and date (required); the scan is optional and may come later.
-        has_shipping_document=True,
+        # Optional, as in a single ВК: without a УПД the line is «Принято» with SHIPPING_DOCUMENT_PENDING_NOTE
+        # (ReceivingLine.shipping_document_pending) until «Внести УПД» adds it.
+        has_shipping_document=has_upd,
         quality_document_required=current.quality_document_required,
         # The receiver marks a missing certificate; otherwise it came with the goods.
         quality_document_present=nature != MISSING_QUALITY_DOCUMENT,
@@ -1053,10 +1055,7 @@ def accept_delivery(command: AcceptDeliveryCommand, uow: UnitOfWork) -> Delivery
         raise ReceivingValidationError(f"В одной поставке не более {MAX_DELIVERY_LINES} позиций")
     if len({item.line_id for item in command.lines}) != len(command.lines):
         raise ReceivingValidationError("Позиция указана в поставке дважды")
-    number = str(command.document_number or "").strip()
-    if not number or command.document_date is None:
-        raise ReceivingValidationError("Укажите № и дату УПД/М-15")
-    command = replace(command, document_number=number)
+    command = replace(command, document_number=str(command.document_number or "").strip())
     with uow:
         loaded: list[ReceivingLine] = []
         for item in command.lines:

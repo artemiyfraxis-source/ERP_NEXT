@@ -193,6 +193,51 @@ def test_backordered_remainder_cannot_be_accepted_again_on_the_line(api):
     assert "«Принято»" in again.json()["detail"]
 
 
+def test_delivery_without_upd_is_accepted_with_a_note_and_no_nonconformity_act(erp):
+    from app.modules.receiving.application import build_act_print_sheet
+    from app.modules.receiving.domain import SHIPPING_DOCUMENT_PENDING_NOTE
+
+    receiving, _, _ = erp
+    lines = expect(receiving, 1, 2)
+
+    result = accept_delivery(
+        AcceptDeliveryCommand(
+            lines=tuple(item(line, storage_location="1F4") for line in lines),
+            document_number="",
+            document_date=None,
+            actor=RECEIVER,
+            now=NOW,
+        ),
+        receiving(),
+    )
+
+    for line in result.lines:
+        assert line.status is ReceivingStatus.ACCEPTED
+        assert line.grn and line.warehouse_event_emitted and line.vk_act_number
+        # One representation with a single-line ВК without УПД (hotfix #213): a computed note, no nonconformity.
+        assert line.nonconformities == ()
+        assert line.shipping_document_pending is True
+        assert not line.nc_act_number
+        assert not line.document_number and line.document_date is None
+    assert SHIPPING_DOCUMENT_PENDING_NOTE in str(build_act_print_sheet(result.lines[0], "incoming").to_dict())
+
+
+def test_delivery_without_upd_over_http(api):
+    client, receiving, _ = api
+    (line,) = expect(receiving, 1)
+
+    response = client.post(
+        "/api/receiving/deliveries",
+        json={"lines": [{"id": str(line.id), "version": line.version}]},
+    )
+
+    assert response.status_code == 200, response.text
+    (accepted,) = response.json()["lines"]
+    assert accepted["status"] == "Принято" and accepted["grn"]
+    assert accepted["nonconformities"] == []
+    assert accepted["shipping_document_note"] == "УПД не приложен — придёт по ЭДО"
+
+
 def test_one_bad_line_rolls_back_the_whole_delivery(erp):
     receiving, _, _ = erp
     lines = expect(receiving, 1, 2, 3)
@@ -285,14 +330,12 @@ def test_waiting_line_is_released_by_a_delivery(erp):
     assert released.grn == waiting.grn and released.vk_act_number == waiting.vk_act_number
 
 
-def test_api_delivery_needs_upd_requisites_and_returns_the_lines(api):
+def test_api_delivery_returns_the_lines(api):
     client, receiving, _ = api
     (line,) = expect(receiving, 1)
 
-    missing = client.post(
-        "/api/receiving/deliveries", json={"lines": [{"id": str(line.id), "version": line.version}]}
-    )
-    assert missing.status_code == 422
+    # The УПД is optional (it comes by ЭДО later); a delivery without lines is not.
+    assert client.post("/api/receiving/deliveries", json={"lines": []}).status_code == 422
 
     response = client.post(
         "/api/receiving/deliveries",
