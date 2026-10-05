@@ -206,6 +206,8 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-lines select { min-width: 260px; }
 .fulfillment-actions { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .fulfillment-actions label { min-width: min(300px, 100%); margin-right: auto; }
+.fulfillment-actions .handout-offer { align-self: center; color: var(--muted-foreground); }
+.fulfillment-actions .handout-offer b { color: var(--foreground); }
 .fulfillment-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; font-size: 12px; }
 .fulfillment-meta dt { color: var(--muted-foreground); }
 .fulfillment-meta dd { margin: 0; font-weight: 500; }

@@ -24,8 +24,10 @@ from app.shared.notifications import NotificationOutbox, notification_requested,
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
+    DEFAULT_HANDOUT_PLACE,
     FulfillmentLine,
     FulfillmentRequest,
+    FulfillmentStatus,
     FulfillmentValidationError,
     KitReserve,
     LotSnapshot,
@@ -79,6 +81,15 @@ class KitReserveRepository(Protocol):
 
     def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[KitReserve]: ...
     def add(self, reserve: KitReserve) -> None: ...
+
+
+class KitSites(Protocol):
+    """Where a kit goes on the shop floor; optional on the unit of work (`kit_sites`), see `handout_place` and
+    `mark_ready`. Without it a kit is announced to its requester only and offered «Зона выдачи»."""
+
+    def site_of(self, request: FulfillmentRequest) -> str: ...
+    def masters(self, site: str) -> Sequence[UUID]: ...
+    def last_handout(self, site: str) -> str | None: ...
 
 
 class UnitOfWork(Protocol):
@@ -417,6 +428,31 @@ def _audit(
     )
 
 
+def _audit_auto_complete(
+    before: FulfillmentRequest,
+    after: FulfillmentRequest,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+) -> None:
+    """The pick closed the last open line: «Укомплектован» set by itself gets the same journal entry as the button."""
+    if before.status is not FulfillmentStatus.COMPLETE and after.status is FulfillmentStatus.COMPLETE:
+        _audit(after, "fulfillment.completed", actor, now, {"auto": True}, uow)
+
+
+def _kit_sites(uow: UnitOfWork) -> KitSites | None:
+    return getattr(uow, "kit_sites", None)
+
+
+def handout_place(request: FulfillmentRequest, uow: UnitOfWork) -> str:
+    """The place «Отправить на выдачу» offers (owner, G1-T3 05.10.2026): the last one used for a kit of the same
+    site, otherwise «Зона выдачи». The storekeeper may change it before sending."""
+    sites = _kit_sites(uow)
+    if sites is None:
+        return DEFAULT_HANDOUT_PLACE
+    return sites.last_handout(sites.site_of(request)) or DEFAULT_HANDOUT_PLACE
+
+
 def create_fulfillment(
     command: CreateFulfillmentCommand,
     uow: UnitOfWork,
@@ -508,6 +544,7 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
         uow.warehouse.add(reserved_lot)
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity)}, uow)
+        _audit_auto_complete(request, updated, command.actor, command.now, uow)
         uow.commit()
         return updated
 
@@ -552,6 +589,7 @@ def set_off_book(command: OffBookCommand, uow: UnitOfWork) -> FulfillmentRequest
             event = "fulfillment.off_book_cleared"
         uow.fulfillment.add(updated)
         _audit(updated, event, command.actor, command.now, _off_book_details(line), uow)
+        _audit_auto_complete(request, updated, command.actor, command.now, uow)
         uow.commit()
         return updated
 
@@ -709,6 +747,7 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
             if request is not original:
                 # Every bind bumped the version; the request changed once — one version step, as the screen expects.
                 request = replace(request, version=original.version + 1).stamped(command.now)
+                _audit_auto_complete(original, request, command.actor, command.now, uow)
                 uow.fulfillment.add(request)
                 saved.append(request)
         if not bound:
@@ -828,8 +867,16 @@ def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest
         request = _versioned(command.request_id, command.expected_version, uow)
         updated = request.mark_ready(command.handout_location).stamped(command.now)
         uow.fulfillment.add(updated)
-        _audit(updated, "fulfillment.ready", command.actor, command.now, {"handout_location": updated.handout_location}, uow)
-        # Issue.gs:459-474: the requester learns the kit is ready and where to pick it up.
+        sites = _kit_sites(uow)
+        site = sites.site_of(updated) if sites is not None else ""
+        masters = tuple(sites.masters(site)) if sites is not None else ()
+        details: dict = {"handout_location": updated.handout_location}
+        if site:  # `last_handout` of the site reads it back for the next kit
+            details["site"] = site
+        _audit(updated, "fulfillment.ready", command.actor, command.now, details, uow)
+        # Issue.gs:459-474: the requester learns the kit is ready and where to pick it up; the masters of the kit's
+        # site learn it too (owner, G1-T3 05.10.2026). One message, recipients de-duplicated: a master who requested
+        # the kit himself gets it once.
         publish_notification(uow.outbox, notification_requested(
             key=f"fulfillment:{updated.id}:ready:v{updated.version}",
             now=command.now,
@@ -840,7 +887,7 @@ def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest
             ),
             kind="ready",
             reference=updated.number,
-            user_ids=(updated.requester_id,),
+            user_ids=(updated.requester_id, *masters),
         ))
         uow.commit()
         return updated
@@ -977,7 +1024,10 @@ def complete_kit(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> Fulfi
     """FF-3: «Укомплектован» is pressed by the picker (PortalApp ISS_ACT_LABEL_ «✅ Укомплектован»)."""
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_complete().stamped(command.now)
+        completed = request.mark_complete()
+        if completed is request:  # the last pick completed it already: nothing to write
+            return request
+        updated = completed.stamped(command.now)
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.completed", command.actor, command.now, {}, uow)
         uow.commit()
