@@ -129,6 +129,22 @@ class LineItemRow(Base):
     linked_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
 
 
+
+class LotItemRow(Base):
+    """Explicit lot → item link (migration 0090): lots without the receiving chain, or a choice that overrides it."""
+
+    __tablename__ = "purchasing_lot_items"
+    __table_args__ = (
+        CheckConstraint("source IN ('match', 'manual')", name="ck_purchasing_lot_items_source"),
+        Index("ix_purchasing_lot_items_item", "item_id"),
+    )
+
+    lot_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    item_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_items.id", ondelete="CASCADE"), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    linked_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+
 class RfqRow(_Who, Base):
     __tablename__ = "purchasing_rfqs"
     __table_args__ = (UniqueConstraint("number", name="uq_purchasing_rfqs_number"),)
