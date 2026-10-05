@@ -45,3 +45,81 @@ jobs:
         run: npm run test:backend
       - name: Frontend tests and build
         run: npm run test:frontend
+
+  # Migrations on the production engine (PostgreSQL 16), which the SQLite tests above never touch: an empty database
+  # up to head; the last migration over rows seeded at head-1, with an integrity snapshot before and after
+  # (app.db_integrity: no table loses rows unless every migration in the range says DESTRUCTIVE = True, stock and
+  # reserves add up, the revision is head); then that migration's downgrade and upgrade again.
+  migrations-pg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: erp
+          POSTGRES_PASSWORD: erp
+          POSTGRES_DB: erp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U erp -d erp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PG_ROOT: postgresql+psycopg://erp:erp@localhost:5432
+      SNAPSHOTS: ${{ github.workspace }}/db-snapshots
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.lock.txt
+      - run: pip install -r requirements.lock.txt
+      - name: Create the databases
+        run: |
+          mkdir -p "$SNAPSHOTS"
+          python -c "
+          import os
+          from sqlalchemy import create_engine, text
+          engine = create_engine(os.environ['PG_ROOT'] + '/erp', isolation_level='AUTOCOMMIT')
+          with engine.connect() as connection:
+              for name in ('erp_fresh', 'erp_seeded'):
+                  connection.execute(text(f'CREATE DATABASE {name}'))
+          "
+      - name: Empty database up to head
+        run: |
+          export ERP_DATABASE_URL="$PG_ROOT/erp_fresh"
+          python -m alembic upgrade head
+          python -m app.db_integrity snapshot --out "$SNAPSHOTS/fresh.json"
+          python -m app.db_integrity compare "$SNAPSHOTS/fresh.json" "$SNAPSHOTS/fresh.json"
+      - name: Last migration over rows seeded at head-1
+        run: |
+          export ERP_DATABASE_URL="$PG_ROOT/erp_seeded"
+          previous=$(python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; print(ScriptDirectory.from_config(Config('alembic.ini')).get_revision('head').down_revision)")
+          echo "head-1 = $previous"
+          python -m alembic upgrade "$previous"
+          python -m tests.migrations.seed_any_revision
+          python -m app.db_integrity snapshot --out "$SNAPSHOTS/before.json"
+          python -m alembic upgrade head
+          python -m app.db_integrity snapshot --out "$SNAPSHOTS/after.json"
+          python -m app.db_integrity compare "$SNAPSHOTS/before.json" "$SNAPSHOTS/after.json"
+      - name: Downgrade the last migration and upgrade again
+        run: |
+          export ERP_DATABASE_URL="$PG_ROOT/erp_seeded"
+          python -m alembic downgrade -1
+          python -m alembic upgrade head
+          python -m app.db_integrity snapshot --out "$SNAPSHOTS/again.json"
+          python -m app.db_integrity compare "$SNAPSHOTS/after.json" "$SNAPSHOTS/again.json"
+      - name: Keep the snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-snapshots
+          path: db-snapshots
+          if-no-files-found: ignore
