@@ -346,11 +346,12 @@ export function ProcurementInWorkTable({
       const price = calculatedPriceOf(line);
       return <span className="cell-ro" title={price}>{price}</span>;
     }
-    const value = draftOf(line)[field.key];
+    const key = field.key;
+    const value = draftOf(line)[key];
     const label = `${field.title} ${line.legacy_id}`;
     const off = disabled || saving;
-    const bad = invalid.has(line.id) && fieldsOf(line).includes(field.key) && invalidField(field.key, value);
-    const set = (next: string) => patch([{ line, key: field.key, value: next }]);
+    const bad = invalid.has(line.id) && fieldsOf(line).includes(key) && invalidField(key, value);
+    const set = (next: string) => patch([{ line, key, value: next }]);
     if (field.key === "actual_unit") {
       return (
         <select className="cell-select" aria-label={label} aria-invalid={bad || undefined} disabled={off} value={value} onChange={(event) => set(event.target.value)} onPaste={(event) => paste(event, rowIndex, colIndex)}>
