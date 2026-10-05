@@ -23,7 +23,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.clock import moscow_now
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import (
-    Principal, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
+    Principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
     tctemplates_edit_principal, tctemplates_view_principal,
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
@@ -545,7 +545,12 @@ def rebuild_project_etk(
     return _card_result(card, identify)
 
 
-@router.post("/techcards/projects/{card_id}/build")
+# A `tcgen` API token reads and routes, it never writes a project techcard (an issued card would get a new revision):
+# the agent flow writes assembly drafts only. Refused before the body is read.
+@router.post(
+    "/techcards/projects/{card_id}/build",
+    dependencies=[Depends(refuse_api_tokens("Токен API не собирает техкарты проектов."))],
+)
 def auto_build_project_etk(
     card_id: UUID,
     payload: AutoBuildTechcardPayload,

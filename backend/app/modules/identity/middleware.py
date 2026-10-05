@@ -10,7 +10,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.shared.clock import moscow_now
 
-from .application import API_TOKEN_MAX_LENGTH, UnitOfWork, csrf_matches, resolve_api_token, resolve_session
+from .application import UnitOfWork, csrf_matches, is_api_token, resolve_api_token, resolve_session
 
 
 SESSION_COOKIE = "erp_session"
@@ -58,7 +58,7 @@ class IdentitySessionMiddleware:
             # expired or revoked token is refused here; the token itself is never logged or echoed.
             credential = credential.strip()
             principal = None
-            if callable(factory) and 1 <= len(credential) <= API_TOKEN_MAX_LENGTH:
+            if callable(factory) and is_api_token(credential):
                 principal = await run_in_threadpool(resolve_api_token, credential, clock(), factory())
             if principal is None:
                 response = JSONResponse(

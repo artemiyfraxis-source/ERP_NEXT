@@ -1,7 +1,14 @@
-"""Identity use cases for login, session resolution, and revocation."""
+"""Identity use cases for login, session resolution, and revocation; API tokens (service principals).
+
+Токены API: a token acts as its own service principal with its scopes only — it never inherits the rights of the
+administrator who issued it. So it stops when the issuer is deactivated or deleted (the person is gone, the
+credential they handed out goes with them), but it stays valid when the issuer is merely moved to a lower level:
+a demotion takes away the person's own rights, and the token never had them. An administrator revokes a token
+explicitly when it should stop."""
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -650,7 +657,8 @@ def change_own_password(
 # level, no section rights — and the gates admit it only where they name one of its scopes (shared/http_auth.py).
 
 API_TOKEN_PREFIX = "erp_"
-API_TOKEN_MAX_LENGTH = 128
+# `erp_` + secrets.token_urlsafe(32): 43 base64url characters. Anything else is refused before a unit of work opens.
+API_TOKEN_PATTERN = re.compile(r"erp_[A-Za-z0-9_-]{43}")
 API_TOKEN_SCOPES: dict[str, str] = {
     "tcgen": "Генератор техкарт",
     "assembly": "Схемы сборки",
@@ -771,9 +779,10 @@ def revoke_api_token(token_id: UUID, actor: Actor, now: datetime, uow: UnitOfWor
 
 
 def service_principal(token: ApiToken) -> Principal:
-    """The token acts under its own name (audit rows show it) with its scopes only — never the creator's rights."""
+    """The token acts as «API: <name>» (audit rows show it, it cannot pass for a person) with its scopes only —
+    never the creator's rights."""
     return Principal(
-        actor=Actor(id=token.id, name=token.name, department=API_TOKEN_DEPARTMENT),
+        actor=Actor(id=token.id, name=f"API: {token.name}", department=API_TOKEN_DEPARTMENT),
         email="",
         roles=frozenset(),
         permissions={},
@@ -782,9 +791,13 @@ def service_principal(token: ApiToken) -> Principal:
     )
 
 
+def is_api_token(value: str) -> bool:
+    return API_TOKEN_PATTERN.fullmatch(value) is not None
+
+
 def resolve_api_token(secret: str, now: datetime, uow: UnitOfWork) -> Principal | None:
     """The service principal of a live token, or None: unknown, revoked, expired, or its creator no longer active."""
-    if not secret.startswith(API_TOKEN_PREFIX) or len(secret) > API_TOKEN_MAX_LENGTH:
+    if not is_api_token(secret):
         return None
     digest = secret_hash(secret)
     now = as_utc(now)

@@ -2,6 +2,7 @@
 acts as a service principal with the token's scopes only, needs no CSRF, and is refused everywhere else."""
 
 import hashlib
+import re
 from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -22,19 +23,21 @@ from app.modules.identity.infrastructure import (
     seed_level_matrix,
 )
 from app.modules.identity.middleware import IdentitySessionMiddleware
+from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
 from app.shared import http_auth
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.http_auth import Principal, require_full_access, require_section
 from app.shared.identity import Actor
 from app.shared.persistence import AuditEventRow, create_schema
+from tests.identity.test_level_gates import _api_routes, _walk
 
 
 NOW = datetime(2026, 10, 5, 10, 0, tzinfo=MOSCOW)
 ADMIN_ID = UUID("40000000-0000-0000-0000-000000000001")
 OPERATOR_ID = UUID("40000000-0000-0000-0000-000000000002")
 HARNESS = {"wires": [{"name": "МК 26-13", "length_mm": 150, "qty": 2}], "side_a": {"name": "ZHR-5", "contacts": 3}}
-STATE = ("identity_uow_factory", "warehouse_uow_factory", "cookie_secure", "identity_clock")
+STATE = ("identity_uow_factory", "warehouse_uow_factory", "techcards_uow_factory", "cookie_secure", "identity_clock")
 
 
 class Clock:
@@ -67,6 +70,7 @@ def tokens_api():
     clock = Clock()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
     app.state.warehouse_uow_factory = lambda: SqlAlchemyWarehouseUnitOfWork(sessions)
+    app.state.techcards_uow_factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)
     app.state.cookie_secure = False
     app.state.identity_clock = clock
     app.dependency_overrides[moscow_now] = clock
@@ -200,7 +204,9 @@ def test_assembly_token_does_not_open_the_generator(tokens_api):
     assert TestClient(app).post("/api/route/harness", json=HARNESS, headers=_bearer(secret)).status_code == 403
 
 
-@pytest.mark.parametrize("secret", ["erp_unknown", "not-an-erp-token", "erp_" + "x" * 200, ""])
+@pytest.mark.parametrize(
+    "secret", ["erp_unknown", "not-an-erp-token", "erp_" + "x" * 200, "erp_" + "x" * 42 + "!", "erp_" + "x" * 44, "erp_" + "A" * 43, ""],
+)
 def test_unknown_or_malformed_token_is_401(tokens_api, secret):
     response = TestClient(app).post("/api/route/harness", json=HARNESS, headers=_bearer(secret))
     assert response.status_code == 401
@@ -300,8 +306,100 @@ def test_a_route_accepting_a_scope_admits_the_token_and_a_plain_route_does_not(t
     def plain(principal: Annotated[Principal, Depends(http_auth.authenticated_principal)]) -> dict:
         return {"name": principal.actor.name}
 
+    @probe.post("/both")
+    def both(
+        _gate: Annotated[Principal, Depends(assembly)],
+        principal: Annotated[Principal, Depends(http_auth.authenticated_principal)],
+    ) -> dict:
+        return {"name": principal.actor.name}
+
     client = TestClient(probe)
     accepted = client.post("/assembly", headers=_bearer(secret))
     assert accepted.status_code == 200
-    assert accepted.json() == {"name": "Claude Code", "scopes": ["assembly"], "service": True}
+    assert accepted.json() == {"name": "API: Claude Code", "scopes": ["assembly"], "service": True}
     assert client.post("/plain", headers=_bearer(secret)).status_code == 403
+    # The acceptance belongs to the scoped gate: a direct `authenticated_principal` on the same route still refuses.
+    assert client.post("/both", headers=_bearer(secret)).status_code == 403
+
+
+def test_malformed_bearer_is_refused_before_a_unit_of_work_opens(tokens_api):
+    opened = []
+    factory = app.state.identity_uow_factory
+    app.state.identity_uow_factory = lambda: opened.append(1) or factory()
+    for secret in ("erp_short", "erp_" + "x" * 44, "erp_" + "x" * 42 + "=", "Erp_" + "x" * 43):
+        assert TestClient(app).post("/api/route/harness", json=HARNESS, headers=_bearer(secret)).status_code == 401
+    assert opened == []
+    assert TestClient(app).post("/api/route/harness", json=HARNESS, headers=_bearer("erp_" + "x" * 43)).status_code == 401
+    assert opened == [1]
+
+
+def test_a_tcgen_token_never_builds_a_project_techcard(tokens_api):
+    """The generator scope reads and routes; an issued card keeps its revision and document."""
+    admin = _login("admin")
+    secret = _issue(admin)["token"]
+    card = admin.post("/api/techcards/projects", headers=_csrf(admin), json={
+        "project": "P-700", "item_index": "01", "product_name": "Жгут", "source_calculation": "",
+    }).json()
+    document = {"operations": [{"position": 1, "code": "10", "connector": "XS1", "name": "Сборка"}]}
+    built = admin.put(
+        f"/api/techcards/projects/{card['id']}/etk", headers=_csrf(admin),
+        json={"version": card["version"], "document": document},
+    ).json()
+    issued = admin.post(
+        f"/api/techcards/projects/{card['id']}/issue", headers=_csrf(admin), json={"version": built["version"]},
+    )
+    assert issued.status_code == 200, issued.text
+    before = admin.get(f"/api/techcards/projects/{card['id']}").json()
+    assert before["status"] == issued.json()["status"] != built["status"] and before["revision"] == 1
+
+    response = TestClient(app).post(
+        f"/api/techcards/projects/{card['id']}/build", headers=_bearer(secret),
+        json={"version": before["version"], "config": {"ops": []}},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Токен API не собирает техкарты проектов."
+    after = admin.get(f"/api/techcards/projects/{card['id']}").json()
+    assert (after["version"], after["revision"], after["document"]) == (
+        before["version"], before["revision"], before["document"],
+    )
+
+
+# ── Contract: over every API route a token passes only the routes whose own gate names its scope ───────
+
+PATH_PARAM = re.compile(r"{([^}:]+)(:[^}]+)?}")
+# Routes whose gate names `tcgen` but which refuse a token anyway (`refuse_api_tokens`: a project techcard write).
+TOKEN_REFUSED_IN_ENDPOINT = {("POST", "/api/techcards/projects/{card_id}/build")}
+
+
+def _route_calls(route, inherited) -> list:
+    return [*inherited, *_walk(route.dependant)]
+
+
+def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
+    admin = _login("admin")
+    tcgen = _bearer(_issue(admin, scopes=("tcgen",))["token"])
+    assembly = _bearer(_issue(admin, scopes=("assembly",))["token"])
+    service = TestClient(app, raise_server_exceptions=False)
+    accepting, checked = [], 0
+    for route, inherited in _api_routes(app.routes):
+        calls = _route_calls(route, inherited)
+        if http_auth.authenticated_principal not in calls:
+            continue  # public: login, PIN login, health
+        named = set().union(*(getattr(call, "token_scopes", frozenset()) for call in calls))
+        method = sorted(route.methods - {"HEAD"})[0]
+        url = PATH_PARAM.sub("00000000-0000-0000-0000-000000000001", route.path)
+        for headers, scope in ((tcgen, "tcgen"), (assembly, "assembly")):
+            status = service.request(method, url, headers=headers).status_code
+            if scope in named and (method, route.path) not in TOKEN_REFUSED_IN_ENDPOINT:
+                assert status not in (401, 403), (method, route.path, scope, status)
+                accepting.append((method, route.path, scope))
+            else:
+                assert status in (401, 403), (method, route.path, scope, status)
+            checked += 1
+    assert checked > 200
+    # Only the generator's own routes take a tcgen token; nothing takes `assembly` yet.
+    assert sorted(accepting) == [
+        ("POST", "/api/route/coax", "tcgen"),
+        ("POST", "/api/route/harness", "tcgen"),
+        ("POST", "/api/techcards/grapher/import", "tcgen"),
+    ]

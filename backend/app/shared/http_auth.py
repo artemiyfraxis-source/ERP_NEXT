@@ -7,14 +7,18 @@ section and minimum each dependency takes is the contract `app.modules.identity.
 
 Токены API (owner 05.10.2026): a request with `Authorization: Bearer erp_…` carries a service principal — the token's
 name and its scopes, no level and no section rights. Default deny: `authenticated_principal` refuses it, and so does
-every gate below, unless the gate names one of the token's scopes (`require_section(..., scopes=(...))`). Such a gate
-resolves `accept_service_scopes` before `authenticated_principal`, which is how the latter learns the route accepts
-the token. The administrator's tools (`require_full_access`) never accept a token."""
+every gate below, unless the gate names one of the token's scopes (`require_section(..., scopes=(...))`). The gate
+says so through FastAPI security scopes (`Security(authenticated_principal, scopes=["token:<scope>"])`): they are part
+of the dependency cache key, so the acceptance belongs to that gate alone — a `Depends(authenticated_principal)`
+elsewhere on the same route is resolved on its own and still refuses the token. A router-level gate built with
+`defer_tokens=True` lets a token through to the route's own gate without accepting it. The administrator's tools
+(`require_full_access`) never accept a token."""
 
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Security
+from fastapi.security import SecurityScopes
 
 from app.modules.identity.domain import FULL_ACCESS_LEVELS, LEVEL_SECTION_LABELS
 
@@ -46,32 +50,32 @@ class Principal:
 
 
 SERVICE_DENIED = "Токен API не открывает этот раздел."
-_SERVICE_ACCEPTED = "service_scope_accepted"
+TOKEN_SCOPE_PREFIX = "token:"
+TOKEN_DEFER = TOKEN_SCOPE_PREFIX + "*"  # a router-level gate: the route's own gate decides
 
 
-def accept_service_scopes(scopes: frozenset[str]):
-    """Marks the request as accepted for a service principal holding one of `scopes`. Resolved before
-    `authenticated_principal` by the gates that name scopes; it never admits anything by itself."""
-
-    def mark(request: Request) -> None:
-        principal = getattr(request.state, "principal", None)
-        if isinstance(principal, Principal) and principal.service and principal.scopes & scopes:
-            setattr(request.state, _SERVICE_ACCEPTED, True)
-
-    return mark
-
-
-def authenticated_principal(request: Request) -> Principal:
+def authenticated_principal(request: Request, security_scopes: SecurityScopes = SecurityScopes()) -> Principal:
     principal = getattr(request.state, "principal", None)
     if not isinstance(principal, Principal):
         raise HTTPException(status_code=401, detail="Требуется вход в ERP")
-    if principal.service and not getattr(request.state, _SERVICE_ACCEPTED, False):
-        raise HTTPException(status_code=403, detail=SERVICE_DENIED)
+    if principal.service:
+        named = {scope for scope in security_scopes.scopes if scope.startswith(TOKEN_SCOPE_PREFIX)}
+        accepted = {scope.removeprefix(TOKEN_SCOPE_PREFIX) for scope in named}
+        if TOKEN_DEFER not in named and not principal.scopes & accepted:
+            raise HTTPException(status_code=403, detail=SERVICE_DENIED)
     return principal
 
 
-def _service_allowed(principal: Principal, scopes: frozenset[str]) -> bool:
-    return bool(principal.scopes & scopes)
+def refuse_api_tokens(detail: str = SERVICE_DENIED):
+    """A route no token reaches even when its gate names the token's scope (a write the scope must not cover). Listed
+    in the route's `dependencies`, so it runs before the body is read."""
+
+    def refuse(request: Request) -> None:
+        principal = getattr(request.state, "principal", None)
+        if isinstance(principal, Principal) and principal.service:
+            raise HTTPException(status_code=403, detail=detail)
+
+    return refuse
 
 
 def section_allowed(principal: Principal, sections: tuple[str, ...], minimum: Literal["view", "edit"]) -> bool:
@@ -90,34 +94,30 @@ def require_section(
     *,
     detail: str = "Недостаточно прав для раздела",
     scopes: tuple[str, ...] = (),
+    defer_tokens: bool = False,
 ):
-    """A tuple of sections passes when ANY of them grants `minimum`. `scopes` — the API-token scopes this gate also
-    admits (a token never passes a gate without them)."""
+    """A tuple of sections passes when ANY of them grants `minimum`. `scopes` — the API-token scopes this gate admits
+    (a token never passes a gate without them). `defer_tokens` — a router-level gate: a token passes it untouched and
+    the route's own gate decides."""
     sections = (section,) if isinstance(section, str) else section
     accepted = frozenset(scopes)
-    base = authenticated_principal
-    if accepted:
-        mark = accept_service_scopes(accepted)
-
-        def scoped_principal(
-            _accepted: Annotated[None, Depends(mark)],
-            principal: Annotated[Principal, Depends(authenticated_principal)],
-        ) -> Principal:
-            return principal
-
-        base = scoped_principal
+    if accepted and defer_tokens:
+        raise ValueError("A gate either names token scopes or defers tokens, not both.")
+    token_scopes = [TOKEN_DEFER] if defer_tokens else [TOKEN_SCOPE_PREFIX + scope for scope in sorted(accepted)]
+    base = Security(authenticated_principal, scopes=token_scopes) if token_scopes else Depends(authenticated_principal)
 
     def dependency(
-        principal: Annotated[Principal, Depends(base)],
+        principal: Annotated[Principal, base],
     ) -> Principal:
         if principal.service:
-            if not _service_allowed(principal, accepted):
-                raise HTTPException(status_code=403, detail=SERVICE_DENIED)
-            return principal
+            if defer_tokens or principal.scopes & accepted:
+                return principal
+            raise HTTPException(status_code=403, detail=SERVICE_DENIED)
         if not section_allowed(principal, sections, minimum):
             raise HTTPException(status_code=403, detail=detail)
         return principal
 
+    dependency.token_scopes = accepted  # type: ignore[attr-defined]  (the contract test reads it)
     return dependency
 
 
@@ -151,8 +151,8 @@ myrequests_principal = require_section(
 )
 # ID-3 (SUPPLYMAP PORTAL_SECTIONS_, Portal.gs:661-664): templates (`erptctpl`) and the generator (`tcgen`) have keys of
 # their own; the techcards router admits any of the three and each route narrows it down.
-# A `tcgen` token passes the router gate; each route's own gate decides (only tcgen_principal admits it).
-techcards_router_principal = require_section(("techcards", "erptctpl", "tcgen"), "view", scopes=("tcgen",))
+# A token passes the router gate untouched; each route's own gate decides (only tcgen_principal admits `tcgen`).
+techcards_router_principal = require_section(("techcards", "erptctpl", "tcgen"), "view", defer_tokens=True)
 techcards_view_principal = require_section("techcards", "view", detail="Раздел «Техкарты проектов» вам не открыт.")
 # «Проекты» — карточки наборов (SUPPLYMAP erptechmap): просмотр читает, запись (загрузка, правка, удаление,
 # отправка на комплектацию, КД) — только с правом правки раздела (portalSectionEditGuard_).
