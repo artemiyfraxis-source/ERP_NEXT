@@ -493,10 +493,10 @@ export function ProcurementInWorkTable({
                 const covered = coveredOf(line);
                 const dirty = new Set(dirtyFields(line));
                 const ready = line.status === READY;
-                const menuItems: { label: string; disabled?: boolean; title?: string; run: () => void }[] = [
+                const menuItems: { label: string; short?: string; disabled?: boolean; title?: string; run: () => void }[] = [
                   { label: "Со склада", run: () => stockToggle(line.id) },
                   ...(covered > 0 ? [{ label: "Снять «Со склада»", run: () => void releaseStock(line) }] : []),
-                  { label: "Прослеживаемость, раздробить…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
+                  { label: "Прослеживаемость, раздробить…", short: "Прослеж.…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
                   { label: "Отменить строку", run: () => onCancel(line) },
                 ];
                 const rowClass = [dirty.size ? "edited" : "", selected.has(line.id) ? "selected" : "", ready ? "ready" : ""].join(" ").trim();

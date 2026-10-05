@@ -161,7 +161,7 @@ async function pickRowAction(id: string, item: string | RegExp) {
 }
 
 /** Названия действий строки, видимых на ней. */
-const rowActionNames = (id: string) => within(screen.getByRole("group", { name: `Действия ${id}` })).getAllByRole("button").map((item) => item.textContent ?? "");
+const rowActionNames = (id: string) => within(screen.getByRole("group", { name: `Действия ${id}` })).getAllByRole("button").map((item) => item.getAttribute("aria-label") ?? item.textContent ?? "");
 
 async function clickWhenEnabled(name: string | RegExp) {
   await waitFor(() => expect(screen.getByRole("button", { name })).toBeEnabled());

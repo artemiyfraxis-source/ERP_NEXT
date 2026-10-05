@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 
-export type MenuItem = { label: string; title?: string; disabled?: boolean; run: () => void };
+export type MenuItem = { label: string; /** Короткая надпись на кнопке (узкая колонка действий); полное название — в подсказке и имени кнопки. */ short?: string; title?: string; disabled?: boolean; run: () => void };
 
 const MENU_ITEM_HEIGHT = 30;
 
@@ -62,7 +62,8 @@ const PRIMARY_ACTIONS = 2;
 
 /** Действия строки — всё на виду, без меню «⋯» (владелец, 05.10: «не нужно вот эти скрытые кнопки»).
  *  Первые два — кнопки, остальные — текстовые ссылки под ними: на десктопе раскрываются при наведении или фокусе
- *  на строке, на планшете (pointer: coarse) видны всегда. Все лежат в DOM и доступны с клавиатуры. */
+ *  на строке, на планшете (pointer: coarse) видны всегда. Колонка узкая (~150 px): две кнопки в одну строку, у длинных
+ *  действий есть `short` (полное название — в подсказке и имени кнопки). Все лежат в DOM и доступны с клавиатуры. */
 export function RowActions({ label, items, disabled }: { label: string; items: MenuItem[]; disabled?: boolean }) {
   const primary = items.slice(0, PRIMARY_ACTIONS);
   const rest = items.slice(PRIMARY_ACTIONS);
@@ -70,7 +71,7 @@ export function RowActions({ label, items, disabled }: { label: string; items: M
     <span className="row-actions" role="group" aria-label={label} onClick={(event) => event.stopPropagation()}>
       <span className="row-actions-main">
         {primary.map((item) => (
-          <button key={item.label} type="button" className="secondary small" disabled={disabled || item.disabled} title={item.title} onClick={() => item.run()}>{item.label}</button>
+          <button key={item.label} type="button" className="secondary small" disabled={disabled || item.disabled} aria-label={item.short ? item.label : undefined} title={item.title ?? (item.short ? item.label : undefined)} onClick={() => item.run()}>{item.short ?? item.label}</button>
         ))}
       </span>
       {rest.length > 0 && (

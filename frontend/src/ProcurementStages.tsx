@@ -21,7 +21,7 @@ import { formatAmount } from "./ProcurementSheetColumns";
    проставить или поправить её сам — необязательно. */
 
 /** Действие строки: выполняется сразу (`run`) или открывает форму под таблицей (`panel`). */
-export type RowAction = { label: string; title?: string; disabled?: boolean; run?: () => void; panel?: () => ReactNode };
+export type RowAction = { label: string; short?: string; title?: string; disabled?: boolean; run?: () => void; panel?: () => ReactNode };
 
 /** До стольких строк таблица блока — без строки поиска и «Показано N из N»: искать в трёх строках нечего. */
 export const COMPACT_BELOW = 8;
@@ -48,6 +48,7 @@ function useLinePanel(
       disabled={disabled || busyId === row.id}
       items={actionsOf(row).map((item): MenuItem => ({
         label: item.label,
+        short: item.short,
         title: item.title,
         disabled: item.disabled,
         run: () => {
@@ -192,7 +193,7 @@ function expectedColumn(editing: LineEditing | undefined, disabled: boolean): Da
 const actualArrivalColumn: DataColumn<ProcurementLine> = { key: "actual_arrival", title: "Факт. дата", value: (line) => line.actual_arrival ?? "", render: (line) => formatDay(line.actual_arrival) };
 
 function menuColumn(menu: (line: ProcurementLine) => ReactNode): DataColumn<ProcurementLine> {
-  return { key: "actions", title: "", value: () => "", render: menu, width: 230 };
+  return { key: "actions", title: "", value: () => "", render: menu, width: 150 };
 }
 
 // ── «Жду счёт», «Ждёт оплаты», «Оплачено»: таблицы по заказам ──────────────────────────────────

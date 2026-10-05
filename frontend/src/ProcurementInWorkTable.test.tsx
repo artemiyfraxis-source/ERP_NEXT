@@ -280,8 +280,10 @@ it("keeps every row action visible on the row (no «⋯» menu), without approva
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   const actions = within(screen.getByRole("group", { name: "Действия SM-1" }));
   expect(actions.getAllByRole("button").map((item) => item.textContent)).toEqual([
-    "Со склада", "Прослеживаемость, раздробить…", "Отменить строку",
+    "Со склада", "Прослеж.…", "Отменить строку",
   ]);
+  // Полное название — в имени и подсказке кнопки: колонка действий узкая.
+  expect(actions.getByRole("button", { name: "Прослеживаемость, раздробить…" })).toHaveAttribute("title", "Прослеживаемость, раздробить…");
   fireEvent.click(actions.getByRole("button", { name: "Прослеживаемость, раздробить…" }));
   expect(screen.getByText("детали")).toBeInTheDocument();
 });
@@ -464,4 +466,16 @@ it("still saves an edit made in a group that was folded afterwards", async () =>
   fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
   await waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0].rows).toEqual([expect.objectContaining({ line_id: "row-201", design_article: "A-201" })]);
+});
+
+it("shows the editable comment cell of «В работе» like the order blocks: a bordered field with «добавить»", () => {
+  const editing = { onSaved: vi.fn(), onConflict: vi.fn() };
+  renderTable([line(1), line(2, { note: "Ждём ответа" })], { editing });
+  const empty = screen.getByRole("button", { name: "Комментарий SM-1" });
+  expect(empty).toHaveClass("cell-edit");
+  expect(empty).toHaveTextContent("добавить");
+  expect(empty.querySelector(".cell-edit-empty")).not.toBeNull();
+  const filled = screen.getByRole("button", { name: "Комментарий SM-2" });
+  expect(filled).toHaveClass("cell-edit");
+  expect(filled).toHaveTextContent("Ждём ответа");
 });

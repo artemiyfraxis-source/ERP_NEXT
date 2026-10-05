@@ -52,7 +52,7 @@ async function pickRowAction(id: string, item: string | RegExp) {
   fireEvent.click(within(group).getByRole("button", { name: item }));
 }
 
-const rowActionNames = (id: string) => within(screen.getByRole("group", { name: `Действия ${id}` })).getAllByRole("button").map((item) => item.textContent ?? "");
+const rowActionNames = (id: string) => within(screen.getByRole("group", { name: `Действия ${id}` })).getAllByRole("button").map((item) => item.getAttribute("aria-label") ?? item.textContent ?? "");
 
 it("shows «Счёт» and «Запрос» in the order header, has no «⋯» menu and reaches every line action without opening anything", async () => {
   const shared = { invoice_url: "https://files.test/i.pdf", invoice_number: "17", order_url: "/api/procurement/supplier-requests/PO-009/document", order_number: "PO-009", order_date: "2026-10-05" };

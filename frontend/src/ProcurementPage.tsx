@@ -468,16 +468,17 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
 
   // Действия строки видны на ней (без меню «⋯»); формы раскрываются под таблицей стадии.
   const form = (line: ProcurementLine) => ({ line, busy: busyId === line.id, disabled: interactionLocked, onAdvance: advance });
-  const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", panel: () => <TraceabilityForm {...form(line)} /> });
+  const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", short: "Прослеж.…", panel: () => <TraceabilityForm {...form(line)} /> });
   const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", panel: () => <SplitAction {...form(line)} /> });
   const cancel = (line: ProcurementLine): RowAction => ({ label: "Отменить строку", run: () => cancelLine(line) });
   const replaceInvoice = (line: ProcurementLine): RowAction[] => (
-    line.invoice_url ? [{ label: "Заменить счёт…", panel: () => <InvoiceReplaceForm {...form(line)} /> }] : []
+    line.invoice_url ? [{ label: "Заменить счёт…", short: "Заменить…", panel: () => <InvoiceReplaceForm {...form(line)} /> }] : []
   );
 
   const awaitingActions = (line: ProcurementLine): RowAction[] => [
     {
       label: "Суммы и счёт строки…",
+      short: "Суммы…",
       panel: () => (
         <>
           <MoneyForm {...form(line)} />
@@ -491,12 +492,14 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const toPayActions = (line: ProcurementLine): RowAction[] => [
     {
       label: "Суммы по счёту…",
+      short: "Суммы…",
       panel: () => line.pay_missing.length > 0
         ? <><MoneyForm {...form(line)} /><small className="hint">Оплата закрыта, пока не заполнено: {line.pay_missing.join(", ")}</small></>
         : <MoneySummary line={line} />,
     },
     {
       label: "Оплатить одну строку…",
+      short: "Оплатить…",
       title: "Если ЦБ не отдал курс, его можно ввести вручную",
       panel: () => <PaymentAction {...form(line)} disabled={interactionLocked || line.pay_missing.length > 0} />,
     },
@@ -505,6 +508,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const backorderActions = (line: ProcurementLine): RowAction[] => [
     {
       label: "Отменить дозавоз",
+      short: "Отменить",
       title: "Поставщик вернул деньги — остаток уйдёт новой заявкой",
       run: () => run(line, () => procurementApi.cancelBackorder(line.id, line.version), `${line.legacy_id}: дозавоз отменён, остаток ушёл новой заявкой`),
     },
@@ -513,6 +517,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const paidActions = (line: ProcurementLine): RowAction[] => [
     ...(line.exchange_rate_manual ? [{
       label: "Сверить курс с ЦБ",
+      short: "Курс с ЦБ",
       title: "Курс введён вручную — сверьте с ЦБ, когда он ответит",
       run: () => run(line, () => procurementApi.reconcileRate(line.id, line.version), `${line.legacy_id}: курс сверен с ЦБ`),
     }] : []),
@@ -524,7 +529,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   // Строка, поставленная на согласование до отключения этапа (владелец, 04.10), продолжает закупку отсюда.
   const otherActions = (line: ProcurementLine): RowAction[] => line.status === APPROVAL
     ? [
-      { label: "Продолжить закупку", run: () => run(line, () => procurementApi.resumeFromApproval(line.id, line.version), `${line.legacy_id}: строка вернулась в работу`) },
+      { label: "Продолжить закупку", short: "Продолжить", run: () => run(line, () => procurementApi.resumeFromApproval(line.id, line.version), `${line.legacy_id}: строка вернулась в работу`) },
       cancel(line), split(line),
     ]
     : [split(line)];
