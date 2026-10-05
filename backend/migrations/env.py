@@ -17,6 +17,7 @@ from app.modules.shipping import infrastructure as _shipping  # noqa: F401
 from app.modules.references import infrastructure as _references  # noqa: F401
 from app.modules.operations import infrastructure as _operations  # noqa: F401
 from app.modules.techcards import infrastructure as _techcards  # noqa: F401
+from app.modules.techcards import assembly_drafts_infrastructure as _assembly_drafts  # noqa: F401
 from app.shared.persistence import Base
 
 

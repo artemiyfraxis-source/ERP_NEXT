@@ -397,9 +397,18 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
                 assert status in (401, 403), (method, route.path, scope, status)
             checked += 1
     assert checked > 200
-    # Only the generator's own routes take a tcgen token; nothing takes `assembly` yet.
+    # Only the generator's own routes take a tcgen token; an `assembly` token — only the assembly drafts API. Both take
+    # the generator → «Ручная сборка» conversion (pure computation, nothing stored).
     assert sorted(accepting) == [
+        ("GET", "/api/techcards/assembly/corpus", "assembly"),
+        ("GET", "/api/techcards/assembly/drafts", "assembly"),
+        ("GET", "/api/techcards/assembly/drafts/{draft_id}", "assembly"),
         ("POST", "/api/route/coax", "tcgen"),
         ("POST", "/api/route/harness", "tcgen"),
+        ("POST", "/api/techcards/assembly/drafts", "assembly"),
+        ("POST", "/api/techcards/assembly/drawings", "assembly"),
+        ("POST", "/api/techcards/assembly/from-generator", "assembly"),
+        ("POST", "/api/techcards/assembly/from-generator", "tcgen"),
         ("POST", "/api/techcards/grapher/import", "tcgen"),
+        ("PUT", "/api/techcards/assembly/drafts/{draft_id}/lesson", "assembly"),
     ]
