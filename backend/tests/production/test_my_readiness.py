@@ -1,6 +1,7 @@
 """«Мои задания» монтажника: готовность входов, коробки только своего ПЗ, лёгкое чтение."""
 
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 
@@ -155,3 +156,53 @@ def test_start_work_refuses_a_box_of_another_task_with_the_same_item(production_
         task_id=second.id, operation_id=operation.id, box_numbers=(own.number,), actor=actor, now=NOW,
     ), factory())
     assert session.task_id == second.id
+
+
+def _etk_url(task, position=2):
+    operation = next(item for item in task.operations if item.position == position)
+    return f"/api/production/my/tasks/{task.id}/operations/{operation.id}/etk"
+
+
+def test_operation_etk_for_assigned_fitter_and_master_but_not_a_stranger(production_api):  # noqa: F811
+    from tests.production.test_api import issue_card
+
+    client, operator_id = production_api
+    factory = app.state.production_uow_factory
+    task = _launch(factory, operator_id, "etk-1", link_inputs((_op(1, "Нарезка"), _op(2, "Сборка")), {2: ((1, Decimal(1)),)}))
+    card = issue_card("591K.3", "КБ1", [("OP-01", "Нарезка", "10", "0"), ("OP-02", "Сборка", "10", "0")])
+    url = _etk_url(task)
+
+    master = client.get(url)  # фикстура входит мастером с правом production
+    _as_operator(operator_id)
+    fitter = client.get(url)
+    _as_operator(uuid4())
+    stranger = client.get(url)
+
+    assert master.status_code == 200, master.text
+    assert fitter.status_code == 200, fitter.text
+    body = fitter.json()
+    assert body["card"]["id"] == str(card.id) and body["card"]["status"] == "Выдана"
+    assert body["focus"]["position"] == 2
+    assert [item["code"] for item in body["card"]["document"]["operations"]] == ["OP-01", "OP-02"]
+    assert stranger.status_code == 403
+
+
+def test_operation_etk_without_an_issued_card_is_a_russian_404(production_api):  # noqa: F811
+    from datetime import datetime
+
+    from app.modules.techcards.project_cards import ProjectTechcard
+
+    client, operator_id = production_api
+    factory = app.state.production_uow_factory
+    task = _launch(factory, operator_id, "etk-2", link_inputs((_op(1, "Нарезка"), _op(2, "Сборка")), {2: ((1, Decimal(1)),)}))
+    _as_operator(operator_id)
+
+    missing = client.get(_etk_url(task))
+    draft = ProjectTechcard.create(project="591K.3", item_index="КБ1", product_name="Жгут", source_calculation="", deadline=None, now=datetime(2026, 9, 22, 9, 0))
+    with app.state.techcards_uow_factory() as uow:
+        uow.techcards.save(draft)
+        uow.commit()
+    not_issued = client.get(_etk_url(task))
+
+    assert missing.status_code == 404 and missing.json()["detail"] == "Нет выданной ЭТК по этой позиции"
+    assert not_issued.status_code == 404 and not_issued.json()["detail"] == "Нет выданной ЭТК по этой позиции"

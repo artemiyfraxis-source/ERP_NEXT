@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
+from app.modules.techcards.etk_read import card_view, issued_card_for_item
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, production_view_work_principal, section_allowed, shipping_warehouse_principal
@@ -622,6 +623,36 @@ def available_inputs(
             "reserved": _number(item.reserved), "available": _number(item.available),
         } for item in materials],
     }
+
+
+@router.get("/my/tasks/{task_id}/operations/{operation_id}/etk")
+def operation_etk(
+    task_id: UUID,
+    operation_id: UUID,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    """ЭТК операции для монтажника без доступа к разделу техкарт: только выданная карта проекта и КБ этого ПЗ
+    и операция, на которой её открыть. Монтажнику — своя операция, планировщику — любая."""
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+        try:
+            operation = task.operation(operation_id)
+        except ProductionValidationError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if principal.actor.id not in operation.operator_ids and not section_allowed(principal, ("production",), "view"):
+            raise HTTPException(status_code=403, detail="Операция не назначена сотруднику")
+    if techcards_factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    with techcards_factory() as techcards:
+        card = issued_card_for_item(techcards, task.project, task.item)
+        result = card_view(card) if card is not None else None
+    if result is None:
+        raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
+    return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}
 
 
 @router.get("/my/execution")

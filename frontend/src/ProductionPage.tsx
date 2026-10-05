@@ -3,7 +3,6 @@ import {
   ApiError,
   fulfillmentApi,
   productionApi,
-  techcardsApi,
   type FulfillmentRequest,
   type Principal,
   type ProductionAbsence,
@@ -732,26 +731,21 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false }: 
 
 // ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции.
 function OperationEtk({ principal, task, operation }: { principal: Principal; task: ProductionTask; operation: ProductionOperation }) {
-  const [card, setCard] = useState<ProjectTechcard | null | undefined>(undefined);
+  const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string } } | undefined>(undefined);
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
-    techcardsApi.list()
-      .then((result) => {
-        if (!live) return;
-        const mine = result.items.filter((item) => item.project === task.project && (task.item === `${item.project}.${item.item_index}` || task.item.endsWith(item.item_index)));
-        setCard(mine.find((item) => item.status === "Выдана") ?? mine[0] ?? null);
-      })
+    productionApi.operationEtk(task.id, operation.id)
+      .then((result) => { if (live) setView(result); })
       .catch((reason) => { if (live) setError(reason instanceof Error ? reason.message : "ЭТК не открылась"); });
     return () => { live = false; };
-  }, [task.project, task.item]);
+  }, [task.id, operation.id]);
   // Только чтение: правка и пересборка ЭТК — у технолога.
   const viewer: Principal = { ...principal, permissions: { myops: "view" } };
   return <div className="panel mo-etk">
     {error && <div className="error-banner" role="alert">{error}</div>}
-    {!error && card === undefined && <div className="empty">Загрузка…</div>}
-    {card === null && <div className="empty">ЭТК для {itemId(task)} ещё не собрана.</div>}
-    {card && <EtkSheet card={card} principal={viewer} onChange={() => undefined} focus={{ code: operation.code, position: operation.position }} />}
+    {!error && !view && <div className="empty">Загрузка…</div>}
+    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} />}
   </div>;
 }
 

@@ -835,7 +835,7 @@ it("prefills «Годные» with the remainder of the fitter's share when work
   expect(await screen.findByLabelText("Годные изделия")).toHaveValue(7);
 });
 
-it("opens the operation's ETK read-only on that operation", async () => {
+it("opens the operation's ETK read-only on that operation through the production endpoint", async () => {
   const etk = {
     id: "80000000-0000-0000-0000-000000000001", version: 1, project: "591K.3", item_index: "КБ1", product_name: "Жгут",
     source_calculation: "", deadline: null, status: "Выдана", revision: 1, manual_operation_keys: [],
@@ -846,7 +846,7 @@ it("opens the operation's ETK read-only on that operation", async () => {
     ] },
   };
   fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: [] }, { code: "OP-02" }), (path) => {
-    if (path === "/api/techcards/projects") return json({ items: [etk] });
+    if (path.endsWith("/etk")) return json({ card: etk, focus: { position: 2, code: "OP-02" } });
     if (path.includes("/api/techcards/projects/")) return json({ items: [] });
     return null;
   });
