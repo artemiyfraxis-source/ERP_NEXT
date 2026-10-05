@@ -863,6 +863,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table tr.detail > td > .detail-body { position: sticky; left: 0; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 24px); }
 .data-table tr.group-row td { background: var(--accent); font-size: 12px; }
 .data-table tr.group-row strong { display: inline; }
+.data-table tr.group-row input[type="checkbox"] { width: auto; display: inline-block; margin: 0 8px 0 2px; padding: 0; vertical-align: middle; }
+.data-table tr.group-row .group-picked { color: var(--primary); font-weight: 600; }
 .data-table .calendar-chips { margin-bottom: 0; }
 /* Dense, spreadsheet-like reading (the owner is used to Google Sheets): compact rows, zebra, dark text, the header
    pinned while the rows scroll inside the card, columns as wide as their content, the first column as the row key. */
@@ -2374,4 +2376,21 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 @media (pointer: coarse) {
   .group-toggle { min-height: 40px; }
   .order-doc-dialog .doc-price input { height: 40px; }
+}
+/* «Внести УПД»: одна компактная панель — подпись, три поля и кнопки в одну строку на ноутбуке и мониторе. */
+.upd-panel { padding: 10px 14px 12px; }
+.upd-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; min-width: 0; }
+.upd-panel .upd-head h2 { padding: 0; font-size: 14px; white-space: nowrap; }
+.upd-ids { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.upd-row { display: grid; grid-template-columns: 1fr; gap: 8px 12px; align-items: end; }
+.upd-row input:not([type="file"]) { padding: 6px 9px; font-size: 13px; }
+.upd-actions { display: flex; gap: 8px; }
+.document-field.inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: end; }
+.document-field.inline > label { grid-column: 1; }
+.document-field.inline > .document-actions { grid-column: 2; display: flex; align-items: center; gap: 8px; font-size: 12.5px; white-space: nowrap; }
+.document-field.inline .file-button { display: inline-flex; align-items: center; cursor: pointer; padding: 6px 10px; }
+.document-field.inline .hint, .document-field.inline .danger-text { grid-column: 1 / -1; }
+.document-field.inline .document-actions .hint { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+@media (min-width: 1100px) {
+  .upd-row { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { receivingApi, type ReceivingLine } from "./api";
 import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
+import { formatDate } from "./format";
 import { openPrintSheet } from "./print";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
@@ -12,18 +13,18 @@ const MANUAL_CHECKS = [
 
 const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id },
-  { key: "name", title: "Наименование", value: (line) => itemTitle(line), wrap: true },
+  { key: "name", title: "Наименование", value: (line) => itemTitle(line), wrap: true, width: 210 },
   { key: "supplier", title: "Поставщик", value: (line) => line.supplier, filter: true },
   { key: "order", title: "№ заказа", value: (line) => line.order_number ?? "" },
   { key: "expected", title: "Ожид. дата", value: (line) => line.expected_arrival ?? "" },
-  { key: "purpose", title: "Назначение", value: (line) => line.purpose, filter: true },
+  { key: "purpose", title: "Назначение", value: (line) => line.purpose, filter: true, wrap: true, width: 140 },
   { key: "ordered", title: "Заказано", value: (line) => line.ordered_quantity, numeric: true, render: (line) => `${line.ordered_quantity} ${line.unit}` },
   { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <span className="status">{line.status}</span> },
+  { key: "document", title: "УПД", value: (line) => [line.document_number, formatDate(line.document_date)].filter(Boolean).join(" от "), wrap: true, width: 100 },
   { key: "grn", title: "ГРН", value: (line) => line.grn ? `${line.grn}${line.package ? ` / ${line.package}` : ""}` : "" },
-  { key: "location", title: "Место", value: (line) => line.storage_location ?? "" },
+  { key: "location", title: "Место", value: (line) => line.storage_location ?? "", hidden: true },
   { key: "warehouse", title: "Склад", value: (line) => line.warehouse, filter: true, hidden: true },
   { key: "series", title: "Серия", value: (line) => line.series, hidden: true },
-  { key: "document", title: "УПД", value: (line) => [line.document_number, line.document_date].filter(Boolean).join(" от "), hidden: true },
   { key: "fact", title: "Факт", value: (line) => line.fact_quantity ?? "", numeric: true, hidden: true },
   { key: "verdict", title: "Вердикт", value: (line) => line.verdict ?? "", filter: true, hidden: true },
 ];
@@ -44,7 +45,7 @@ function readBase64(file: File): Promise<string> {
 
 /** SUPPLYMAP «Документ УПД/М-15 (файл)»: the scan goes to the ERP storage, its link fills the field.
  *  A link to a document kept elsewhere can still be typed by hand. */
-function DocumentField({ lineId, kind, label, value, required, disabled, hint, onChange }: {
+function DocumentField({ lineId, kind, label, value, required, disabled, hint, inline, onChange }: {
   lineId: string;
   kind: "upd" | "quality";
   label: string;
@@ -52,6 +53,8 @@ function DocumentField({ lineId, kind, label, value, required, disabled, hint, o
   required?: boolean;
   disabled: boolean;
   hint?: string;
+  /** Кнопка «Файл» в одну строку с полем (панель «Внести УПД»). */
+  inline?: boolean;
   onChange: (value: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -76,7 +79,7 @@ function DocumentField({ lineId, kind, label, value, required, disabled, hint, o
   }
 
   return (
-    <div className="document-field">
+    <div className={inline ? "document-field inline" : "document-field"}>
       <label>{label}{required ? " *" : ""}
         <input type="text" inputMode="url" placeholder="Файл или ссылка" required={required} value={value} onChange={(event) => { setNote(""); onChange(event.target.value); }} />
       </label>
@@ -109,6 +112,54 @@ const GROUPS: Record<string, ((line: ReceivingLine) => string) | undefined> = {
   order: (line) => line.order_number ? `Заказ ${line.order_number}` : "Без номера заказа",
 };
 
+const pluralLines = (count: number) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? "позиция" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? "позиции" : "позиций"}`;
+
+/** Заголовок группы «по заказу»: заказ · поставщик первой строки. */
+function orderGroupLabel(name: string, rows: ReceivingLine[]) {
+  const supplier = rows[0]?.supplier;
+  return supplier ? `${name} · ${supplier}` : name;
+}
+
+/** «УПД № 771 от 04.10.2026 внесён: 6 позиций»; без номера и даты — «Файл УПД внесён…». */
+export function updDoneText(payload: { url: string; number: string; date: string }, count: number) {
+  const number = payload.number.trim();
+  const named = number || payload.date;
+  const head = named
+    ? `УПД${number ? ` № ${number}` : ""}${payload.date ? ` от ${formatDate(payload.date)}` : ""}`
+    : "Файл УПД";
+  return `${head} внесён: ${pluralLines(count)}`;
+}
+
+/** «Внести УПД»: один документ на выбранные позиции заказа (остальные можно отметить другим УПД). */
+function UpdPanel({ rows, busy, onSubmit, onClose }: {
+  rows: ReceivingLine[];
+  busy: boolean;
+  onSubmit: (payload: { url: string; number: string; date: string }) => void;
+  onClose: () => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [number, setNumber] = useState("");
+  const [date, setDate] = useState("");
+  const ids = rows.slice(0, 8).map((line) => line.legacy_id).join(", ");
+  return (
+    <form className="panel upd-panel" onSubmit={(event) => { event.preventDefault(); onSubmit({ url, number, date }); }}>
+      <div className="upd-head">
+        <h2>УПД для {rows.length} позиций</h2>
+        <span className="upd-ids">{ids}{rows.length > 8 ? ` и ещё ${rows.length - 8}` : ""}</span>
+      </div>
+      <div className="upd-row">
+        <DocumentField lineId={rows[0].id} kind="upd" label="Документ УПД/М-15" value={url} disabled={busy} inline onChange={setUrl} />
+        <label>№ УПД/М-15<input value={number} disabled={busy} onChange={(event) => setNumber(event.target.value)} /></label>
+        <label>Дата УПД/М-15<input type="date" value={date} disabled={busy} onChange={(event) => setDate(event.target.value)} /></label>
+        <div className="upd-actions">
+          <button type="submit" className="primary small" disabled={busy || !(url.trim() || number.trim() || date)}>Внести УПД в {pluralLines(rows.length)}</button>
+          <button type="button" className="secondary small" disabled={busy} onClick={onClose}>Отмена</button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
 /** `readOnly` — «режим просмотра» (ID-6): the queue is read; no inspection, placement or new ВК
  *  (SUPPLYMAP: «Приёмка — просмотр» has no canReceive). */
 export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {}) {
@@ -118,7 +169,8 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [returning, setReturning] = useState(false);
-  const [group, setGroup] = useState("");
+  const [group, setGroup] = useState("order");
+  const [updRows, setUpdRows] = useState<ReceivingLine[] | null>(null);
   const [notice, setNotice] = useState("");
 
   async function reload(after?: string) {
@@ -206,6 +258,27 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     }
   }
 
+  async function attachDocuments(selected: ReceivingLine[], payload: { url: string; number: string; date: string }) {
+    setBusy("upd");
+    setError("");
+    try {
+      await receivingApi.attachDocuments(
+        selected.map((line) => ({ id: line.id, version: line.version })),
+        { shipping_document_url: payload.url.trim() || null, document_number: payload.number.trim(), document_date: payload.date || null },
+      );
+      setBusy("");
+      setNotice(updDoneText(payload, selected.length));
+      setUpdRows(null);
+      const result = await receivingApi.list();
+      setLines(result.lines);
+      setNextCursor(result.next_cursor);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "УПД не внесён");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function openVkRevision(line: ReceivingLine) {
     if (busy || loading) return;
     if (!window.confirm(`Строка ${line.legacy_id} уйдёт в «Архив ВК» (акты сохранятся как история). Появится ревизия с контекстом заказа и УПД — по ней проведёте приёмку заново. Продолжить?`)) return;
@@ -235,18 +308,27 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       {readOnly && <p className="page-sub">Приёмка открыта вам только на просмотр.</p>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {returning && <SupplierReturnPanel onDone={() => void reload()} onClose={() => setReturning(false)} />}
+      {updRows && <UpdPanel rows={updRows} busy={Boolean(busy)} onSubmit={(payload) => void attachDocuments(updRows, payload)} onClose={() => setUpdRows(null)} />}
       {notice && <div className="success-banner" role="status">{notice}</div>}
       <DataTable
         rows={lines}
         columns={COLUMNS}
         rowKey={(line) => line.id}
-        storageKey="receiving"
+        storageKey="receiving-v2"
         label="Очередь приёмки"
         presets={PRESETS}
         groupBy={GROUPS[group]}
+        groupLabel={group === "order" ? orderGroupLabel : undefined}
         exportName="Приёмка"
         emptyText={loading ? "Загружаем…" : "Поставок для приёмки пока нет."}
-        bulkActions={[{ label: "Скопировать ГРН", run: copyGrns, disabled: (rows) => !rows.some((line) => line.grn) }]}
+        bulkActions={[
+          ...(readOnly ? [] : [{
+            label: "Внести УПД",
+            run: async (rows: ReceivingLine[]) => { setNotice(""); setUpdRows(rows); },
+            disabled: (rows: ReceivingLine[]) => rows.some((line) => line.status !== "В пути" && line.status !== "Ожидание"),
+          }]),
+          { label: "Скопировать ГРН", run: copyGrns, hidden: (rows) => !rows.some((line) => line.grn) },
+        ]}
         toolbar={(
           <label className="inline-select">Группировать<select value={group} onChange={(event) => setGroup(event.target.value)}><option value="">нет</option><option value="supplier">по поставщику</option><option value="order">по заказу</option></select></label>
         )}

@@ -18,6 +18,7 @@ from app.shared.unit_mass import mass_fields_from
 
 from .application import (
     AttachReceivingFileCommand,
+    AttachShippingDocumentsCommand,
     ConcurrentReceivingUpdate,
     InspectBatchesCommand,
     InspectReceivingCommand,
@@ -29,6 +30,7 @@ from .application import (
     UnitOfWork,
     UnpackCommand,
     attach_receiving_file,
+    attach_shipping_documents,
     inspect_receiving,
     inspect_receiving_batches,
     build_putaway_print_sheet,
@@ -112,6 +114,23 @@ class InspectionPayload(BaseModel):
     batches: list[BatchPayload] = Field(default_factory=list, max_length=20)
 
     @field_validator("shipping_document_url", "quality_document_url")
+    @classmethod
+    def validate_document_url(cls, value: str | None) -> str | None:
+        return normalize_document_url(value)
+
+
+class DocumentLinePayload(BaseModel):
+    id: UUID
+    version: int
+
+
+class DocumentsPayload(BaseModel):
+    lines: list[DocumentLinePayload] = Field(min_length=1, max_length=500)
+    shipping_document_url: str | None = Field(default=None, max_length=4096)
+    document_number: str = Field(default="", max_length=128)
+    document_date: date | None = None
+
+    @field_validator("shipping_document_url")
     @classmethod
     def validate_document_url(cls, value: str | None) -> str | None:
         return normalize_document_url(value)
@@ -427,6 +446,29 @@ def inspect(
         )
     )
     return {"line": _result(line)}
+
+
+@router.post("/documents")
+def attach_documents(
+    payload: DocumentsPayload,
+    principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> dict:
+    lines = _run(
+        lambda: attach_shipping_documents(
+            AttachShippingDocumentsCommand(
+                lines=tuple((item.id, item.version) for item in payload.lines),
+                url=payload.shipping_document_url,
+                number=payload.document_number,
+                document_date=payload.document_date,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
+    return {"lines": [_result(line) for line in lines]}
 
 
 @router.post("/{line_id}/unpack")

@@ -40,6 +40,8 @@ export interface DataBulkAction<T> {
   label: string;
   run: (rows: T[]) => void | Promise<unknown>;
   disabled?: (rows: T[]) => boolean;
+  /** Действие не относится к выбранным строкам — кнопки нет вовсе (а не серой). */
+  hidden?: (rows: T[]) => boolean;
 }
 
 export interface DataTableProps<T> {
@@ -56,6 +58,8 @@ export interface DataTableProps<T> {
       SUPPLYMAP. По умолчанию — по всем строкам. */
   presetCountsFollowSearch?: boolean;
   groupBy?: (row: T) => string;
+  /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
+  groupLabel?: (name: string, rows: T[]) => string;
   bulkActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
   renderDetail?: (row: T) => ReactNode;
@@ -158,6 +162,7 @@ export function DataTable<T>({
   defaultPreset = "",
   presetCountsFollowSearch = false,
   groupBy,
+  groupLabel,
   bulkActions = [],
   renderDetail,
   rowClassName,
@@ -259,6 +264,16 @@ export function DataTable<T>({
     setSelected((current) => {
       const next = new Set(current);
       for (const row of shown) {
+        if (checked) next.add(rowKey(row)); else next.delete(rowKey(row));
+      }
+      return next;
+    });
+  }
+
+  function toggleGroup(groupRows: T[], checked: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const row of groupRows) {
         if (checked) next.add(rowKey(row)); else next.delete(rowKey(row));
       }
       return next;
@@ -394,7 +409,7 @@ export function DataTable<T>({
       {selectable && selectedRows.length > 0 && (
         <div className="bulk-bar" role="toolbar" aria-label="Действия с выбранными">
           <span>Выбрано: {selectedRows.length}</span>
-          {bulkActions.map((action) => (
+          {bulkActions.filter((action) => !action.hidden?.(selectedRows)).map((action) => (
             <button type="button" key={action.label} className="primary small" disabled={Boolean(running) || action.disabled?.(selectedRows)} onClick={() => void runBulk(action)}>
               {running === action.label ? "Выполняем…" : action.label}
             </button>
@@ -422,7 +437,29 @@ export function DataTable<T>({
           <tbody>
             {groups.map(([name, groupRows]) => (
               <Fragment key={`group:${name}`}>
-                {groupBy && <tr className="group-row"><td colSpan={span}><strong>{name || "—"}</strong> · {groupRows.length}</td></tr>}
+                {groupBy && (
+                  <tr className="group-row">
+                    <td colSpan={span}>
+                      {selectable && (() => {
+                        const picked = groupRows.filter((row) => selected.has(rowKey(row))).length;
+                        return (
+                          <input
+                            type="checkbox"
+                            aria-label="Выбрать группу"
+                            title="Выбрать группу"
+                            checked={picked === groupRows.length}
+                            ref={(input) => { if (input) input.indeterminate = picked > 0 && picked < groupRows.length; }}
+                            onChange={(event) => toggleGroup(groupRows, event.currentTarget.checked)}
+                          />
+                        );
+                      })()}
+                      {(() => {
+                        const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
+                        return <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
+                      })()}
+                    </td>
+                  </tr>
+                )}
                 {groupRows.map(renderRow)}
               </Fragment>
             ))}

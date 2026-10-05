@@ -779,6 +779,61 @@ def open_vk_revision(command: OpenVkRevisionCommand, uow: UnitOfWork) -> tuple[R
         return archived, revision
 
 
+MAX_DOCUMENT_LINES = 500
+
+
+@dataclass(frozen=True)
+class AttachShippingDocumentsCommand:
+    lines: tuple[tuple[UUID, int], ...]
+    url: str | None
+    number: str
+    document_date: date | None
+    actor: Actor
+    now: datetime
+
+
+def attach_shipping_documents(command: AttachShippingDocumentsCommand, uow: UnitOfWork) -> list[ReceivingLine]:
+    """Один УПД на несколько позиций заказа: всё или ничего, одна транзакция."""
+    if not command.lines:
+        raise ReceivingValidationError("Выберите позиции для УПД")
+    if len(command.lines) > MAX_DOCUMENT_LINES:
+        raise ReceivingValidationError(f"За раз можно внести УПД не более чем в {MAX_DOCUMENT_LINES} позиций")
+    with uow:
+        results: list[ReceivingLine] = []
+        changed = False
+        for line_id, expected_version in command.lines:
+            current = uow.receiving.get(line_id)
+            if current is None:
+                raise KeyError(f"Receiving line not found: {line_id}")
+            if current.version != expected_version:
+                raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
+            updated = current.attach_shipping_document(
+                url=command.url, number=command.number, document_date=command.document_date
+            )
+            if updated != current:
+                changed = True
+                uow.receiving.add(updated)
+                uow.audit.add(
+                    AuditEvent(
+                        id=uuid4(),
+                        aggregate_id=updated.id,
+                        event_type="receiving.document_attached",
+                        actor=command.actor,
+                        occurred_at=command.now,
+                        details={
+                            "legacy_id": updated.legacy_id,
+                            "document_number": updated.document_number,
+                            "document_date": updated.document_date.isoformat() if updated.document_date else None,
+                            "shipping_document_url": updated.shipping_document_url,
+                        },
+                    )
+                )
+            results.append(updated)
+        if changed:
+            uow.commit()
+        return results
+
+
 def place_receiving(command: PlaceReceivingCommand, uow: UnitOfWork) -> ReceivingLine:
     with uow:
         current = uow.receiving.get(command.line_id)

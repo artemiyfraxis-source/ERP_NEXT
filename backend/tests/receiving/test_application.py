@@ -5,12 +5,14 @@ from decimal import Decimal
 import pytest
 
 from app.modules.receiving.application import (
+    AttachShippingDocumentsCommand,
     ConcurrentReceivingUpdate,
     InspectReceivingCommand,
     OpenVkRevisionCommand,
     PlaceReceivingCommand,
     PoisonReceivingMessage,
     build_putaway_print_sheet,
+    attach_shipping_documents,
     consume_receiving_expected,
     dispatch_next_receiving_expected,
     inspect_receiving,
@@ -471,3 +473,32 @@ def test_accepted_inspection_notifies_nobody(change):
     )
     assert inspected.status is ReceivingStatus.ACCEPTED
     assert _notifications(uow) == []
+
+
+def test_bulk_upd_audits_each_changed_line_in_one_commit():
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+    commits = uow.commits
+
+    result = attach_shipping_documents(
+        AttachShippingDocumentsCommand(
+            lines=((line.id, line.version),),
+            url=None,
+            number="УПД-5",
+            document_date=date(2026, 9, 20),
+            actor=Actor(name="Приёмщик", department="ОТК"),
+            now=datetime(2026, 9, 21, 11, 0),
+        ),
+        uow,
+    )
+
+    assert result[0].version == line.version + 1 and result[0].status is line.status
+    event = uow.audit.items[-1]
+    assert event.event_type == "receiving.document_attached"
+    assert event.details == {
+        "legacy_id": line.legacy_id,
+        "document_number": "УПД-5",
+        "document_date": "2026-09-20",
+        "shipping_document_url": None,
+    }
+    assert uow.commits == commits + 1
