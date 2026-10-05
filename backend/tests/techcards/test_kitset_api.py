@@ -191,7 +191,7 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
     card = client.get("/api/techcards/kitsets/708К.4").json()
     assert card["assemblies"][0]["kd"] == [{
         "id": document["id"], "index": "КБ1", "name": "708К.4КБ1 — Чертёж.pdf", "size": 13, "stored": True,
-        "url": None, "uploaded_at": "2026-09-29T10:00:00", "who": "Технолог",
+        "url": None, "uploaded_at": "2026-09-29T10:00:00", "who": "Технолог", "kind": "file",
     }]
     # Файл — в базе ERP: карточка ведёт на выдачу байтов, открывается во вкладке под своим именем.
     downloaded = client.get(f"/api/techcards/kitsets/708К.4/documents/{document['id']}")
@@ -290,7 +290,7 @@ def test_kd_historical_drive_row_is_a_read_only_link(kitset_api):
     assert card["assemblies"][0]["kd"] == [{
         "id": str(row_id), "index": "КБ1", "name": "708К.4КБ1 — Старый.pdf", "size": None, "stored": False,
         "url": "https://drive.google.com/file/d/drive-old/view?usp=drivesdk",
-        "uploaded_at": "2026-09-29T09:00:00", "who": "Технолог",
+        "uploaded_at": "2026-09-29T09:00:00", "who": "Технолог", "kind": "file",
     }]
     assert client.get(f"/api/techcards/kitsets/708К.4/documents/{row_id}").status_code == 404
     removed = client.delete(f"/api/techcards/kitsets/708К.4/documents/{row_id}")

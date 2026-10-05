@@ -181,6 +181,27 @@ class SqlAlchemyKitsetRepository:
         )
         return result.rowcount or 0
 
+    def replace_content(
+        self, project: str, document_id: UUID, *, file_name: str, content_type: str, content: bytes,
+        uploaded_at: datetime, uploaded_by: str, expected_uploaded_at: datetime,
+    ) -> int:
+        """A document edited inside ERP (the harness drawing) saved over itself — one register row per document, not
+        a row per save. 0 when the row is gone or someone saved it after `expected_uploaded_at` (read from this row
+        in the same transaction): the caller reports a conflict instead of overwriting their save."""
+        result = self.session.execute(
+            update(KitDocumentRow)
+            .where(
+                KitDocumentRow.id == document_id, KitDocumentRow.project == project,
+                KitDocumentRow.uploaded_at == expected_uploaded_at,
+            )
+            .values(
+                file_name=file_name, content_type=content_type, content=content, size=len(content),
+                uploaded_at=uploaded_at, uploaded_by=uploaded_by,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount or 0
+
     def delete_document(self, project: str, document_id: UUID) -> int:
         result = self.session.execute(
             delete(KitDocumentRow).where(KitDocumentRow.project == project, KitDocumentRow.id == document_id)
