@@ -30,6 +30,7 @@ function mockApi() {
         ? [{ id: "o1", tab: "op", display_text: "", source_sheet: "", fields: { opNumber: "CUT_WIRE_hand", opName: "Резка", tPrep: "120", tOp: "6" } }] : [] });
     }
     if (path === "/api/references/technology/resolve-terminal") return json({ applicator: "", crimp_height: "", pull_force: "", by_section: [] });
+    if (path.startsWith("/api/techcards/assembly/drafts?")) return json({ items: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 }
