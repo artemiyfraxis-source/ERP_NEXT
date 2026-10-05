@@ -1,5 +1,6 @@
 """Дозавоз end to end on SQLite: paid line → short first inspection → `-Д` → resend or new request."""
 
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -130,12 +131,12 @@ def paid_procurement_line(db):
     return request, line
 
 
-def inspect(db, line, document_quantity: str):
+def inspect(db, line, document_quantity: str, **overrides):
     return inspect_receiving(
         InspectReceivingCommand(
             line_id=line.id,
             expected_version=line.version,
-            inspection=InspectionInput(
+            inspection=replace(InspectionInput(
                 fact_quantity=Decimal(document_quantity),
                 document_quantity=Decimal(document_quantity),
                 ordered_quantity=Decimal("0"),
@@ -145,7 +146,7 @@ def inspect(db, line, document_quantity: str):
                 shipping_document_url="https://files.test/upd.pdf",
                 expiry_date=date(2027, 1, 1),
                 inspection_date=date(2026, 9, 24),
-            ),
+            ), **overrides),
             actor=RECEIVER,
             now=datetime(2026, 9, 24, 12, 0),
         ),
@@ -166,9 +167,11 @@ def short_delivery(db):
     request, line = paid_procurement_line(db)
     expected = dispatch_next_receiving_expected(NOW, db.receiving())
     inspected = inspect(db, expected, "7.5")
-    assert inspected.status is ReceivingStatus.WAITING
+    # Owner, 05.10.2026: a недовоз no longer holds the delivered 7.5 back — accepted, the rest goes to `-Д`.
+    assert inspected.status is ReceivingStatus.ACCEPTED
+    assert inspected.accepted_quantity == Decimal("7.5")
     assert inspected.backorder_quantity == Decimal("2.5")
-    inspect(db, inspected, "7.5")  # re-inspection of «Ожидание» never records a second backorder
+    inspect(db, inspected, "7.5")  # a re-inspection never records a second backorder
     assert backorder_messages(db) == 1
     backorder = dispatch_next_backorder_requested(datetime(2026, 9, 24, 12, 1), db.procurement())
     return request, line, backorder
@@ -200,6 +203,41 @@ def test_short_paid_delivery_becomes_backorder_and_is_expected_again_after_resen
     assert short_again.backorder_quantity == Decimal("0.5")
     backorder_of_backorder = dispatch_next_backorder_requested(datetime(2026, 10, 2, 12, 0), db.procurement())
     assert backorder_of_backorder.legacy_id == f"{line.legacy_id}-Д-Д"
+
+
+def test_backordered_remainder_is_never_accepted_twice_and_the_order_shows_done(db):
+    from app.modules.procurement.application import sync_receipt_stages
+    from app.modules.receiving.domain import ReceivingValidationError
+    from app.workflows.receipt_stage import ReceivingStatusLookup
+
+    _, line, backorder = short_delivery(db)
+    with db.receiving() as uow:
+        (accepted,) = [item for item in uow.receiving.by_status(ReceivingStatus.ACCEPTED)]
+
+    # «Довезли» on the original line would take the 2.5 that the `-Д` line is to receive.
+    with pytest.raises(ReceivingValidationError, match=f"{line.legacy_id}-Д"):
+        inspect(db, accepted, "10")
+    with pytest.raises(ReceivingValidationError, match="дозавозом"):
+        inspect(db, accepted, "7.5", fact_quantity=Decimal("10"))
+    # A recount up to the same УПД is still a correction of this line.
+    recount = inspect(db, accepted, "7.5", fact_quantity=Decimal("7"))
+    assert recount.accepted_quantity == Decimal("7")
+
+    # Partly delivered: the original order line is «Готово», the remainder waits as `-Д` for the buyer.
+    sync_receipt_stages(datetime(2026, 9, 24, 12, 5), db.procurement(), ReceivingStatusLookup(db.receiving))
+    with db.procurement() as uow:
+        assert uow.procurement.get(line.id).status is ProcurementStatus.DONE
+        assert uow.procurement.get(backorder.id).status is ProcurementStatus.APPROVAL
+
+    confirm_procurement_backorder(
+        ConfirmBackorderCommand(backorder.id, backorder.version, date(2026, 10, 2), BUYER, NOW), db.procurement(),
+    )
+    resend = dispatch_next_receiving_expected(datetime(2026, 9, 25, 9, 0), db.receiving())
+    with db.receiving() as uow:
+        current = uow.receiving.get(recount.id)
+    with pytest.raises(ReceivingValidationError, match=f"«{resend.legacy_id}»"):
+        inspect(db, current, "10")
+    assert inspect(db, resend, "2.5").status is ReceivingStatus.ACCEPTED
 
 
 def test_cancelled_backorder_becomes_new_request_already_in_procurement(db):
