@@ -869,7 +869,7 @@ it("groups «Жду счёт» by order with its header and opens «Внести
   const table = await screen.findByRole("region", { name: "Жду счёт" });
   const one = within(table).getByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
   const two = within(table).getByRole("rowgroup", { name: "PO-002 от 01.10 · ООО Б" });
-  expect(within(one).getByText("2 поз. · факт 0,00 ₽ / расчёт 0,00 ₽")).toBeInTheDocument();
+  expect(within(one).getByText("2 поз. · факт — / расчёт 0,00 ₽")).toBeInTheDocument();
   expect(within(two).getByText("1 поз. · факт 120,00 ₽ / расчёт 0,00 ₽")).toBeInTheDocument();
   // Строки заказов видны сразу, без раскрытия.
   expect(within(one).getByText("Кабель")).toBeInTheDocument();

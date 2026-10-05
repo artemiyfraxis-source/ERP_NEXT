@@ -2264,3 +2264,7 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .ec-now { margin-left: 8px; border-radius: 999px; padding: 1px 8px; background: #fdf3d8; color: #8a5a00; font-size: 11px; font-weight: 600; }
 .ec-body .link-button { padding: 0; font-size: 13px; font-weight: 600; }
 .ec-body > .link-button { justify-self: start; margin-top: 4px; }
+/* «Цена факт» в строках заказа — правка прямо в ячейке, плотно, как в листе «В работе». */
+.procurement-stage td.cell-edit { padding: 0; }
+.procurement-stage td.cell-edit .cell-input { height: 29px; text-align: right; font-variant-numeric: tabular-nums; box-shadow: inset 0 -1px 0 var(--sheet-hover); }
+.procurement-stage td.cell-edit .cell-input:focus { box-shadow: inset 0 0 0 2px var(--primary); background: var(--card); }

@@ -507,7 +507,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
         <div>
           <span className="eyebrow">{readOnly ? "Просмотр" : "Рабочая очередь"}</span>
           <h1>Закупка</h1>
-          <p>{readOnly ? "Лист закупки открыт вам только на просмотр: что свободно и что едет." : "Разберите новые позиции и заполните фактические данные поставки."}</p>
+          <p>{readOnly ? "Лист закупки открыт вам только на просмотр: что свободно и что едет." : "Позиции в работе по поставщикам, запросы поставщикам, счета и оплата по заказам."}</p>
         </div>
         <button className="secondary" onClick={() => void reload()} disabled={interactionLocked}>
           {refreshing ? "Обновляем…" : "Обновить"}
@@ -524,7 +524,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
       )}
 
       <div className="queue-summary">
-        <span><strong>{available.length}</strong> доступно</span>
+        {(readOnly || available.length > 0) && <span><strong>{available.length}</strong> доступно</span>}
         <span><strong>{mine.length}</strong> {readOnly ? "в работе" : "у меня"}</span>
       </div>
 

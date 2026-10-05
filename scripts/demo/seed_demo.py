@@ -205,14 +205,14 @@ def procurement():
     bump("taken", len(take))
     ver = {lines[k]["id"]: lines[k]["version"] for k in take}
     S["pline"] = {k: lines[k]["id"] for k in take}
-    for k in take[:7]:  # «Стяжки» stay «В работе» (no facts yet)
+    for k in take:  # «Стяжки» get a supplier but no request: «В работе», group «ООО «Электро-Сервис»»
         l = lines[k]
         r = buyer.ok("PATCH", f"/api/procurement/{l['id']}/facts", "facts", json={
             "version": ver[l["id"]], "supplier": SUPPLIER[k][0],
             "actual_quantity": l["calculated_quantity"], "actual_unit": l["calculated_unit"]})
         if r:
             ver[l["id"]] = r["line"]["version"]
-    buyer.ok("POST", "/api/procurement/supplier-requests", "supplier_order_batches")
+    buyer.ok("POST", "/api/procurement/supplier-requests", "supplier_order_batches", json={"line_ids": [S["pline"][k] for k in take[:7]]})
     mine = {l["id"]: l for l in buyer.ok("GET", "/api/procurement/mine")["lines"]}
 
     def money(k, invoice_day):

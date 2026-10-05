@@ -190,11 +190,17 @@ const total = (lines: ProcurementLine[], pick: (line: ProcurementLine) => string
 function groupHeading(group: OrderGroup) {
   return {
     title: `${group.number || "Без № заказа"}${group.date ? ` от ${formatShortDay(group.date)}` : ""}${group.supplier ? ` · ${group.supplier}` : ""}`,
-    meta: `${group.lines.length} поз. · факт ${formatAmount(total(group.lines, (line) => line.actual_sum))} ₽ / расчёт ${formatAmount(total(group.lines, (line) => line.calculated_sum))} ₽`,
+    meta: `${group.lines.length} поз. · факт ${group.lines.some((line) => line.actual_sum) ? `${formatAmount(total(group.lines, (line) => line.actual_sum))} ₽` : "—"} / расчёт ${formatAmount(total(group.lines, (line) => line.calculated_sum))} ₽`,
   };
 }
 
-const missingForInvoice = (line: ProcurementLine) => line.pay_missing.filter((name) => name !== "ОЖИД. ДАТА");
+// Что закупщик вводит сам до счёта: валюту, цену, цену с НДС и сумму выводит «Цена факт», наименование в счёт
+// подставляется при «Вставить счёт», ожидаемая дата вводится в форме счёта.
+const PRICE_FIELDS = new Set(["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)"]);
+const missingForInvoice = (line: ProcurementLine) => {
+  const rest = line.pay_missing.filter((name) => !PRICE_FIELDS.has(name) && name !== "ОЖИД. ДАТА" && name !== "НАИМЕНОВАНИЕ (Счет)");
+  return line.pay_missing.some((name) => PRICE_FIELDS.has(name)) ? ["Цена факт", ...rest] : rest;
+};
 
 /** Ближайший рабочий день (сегодня, если будни; иначе понедельник) — ISO, по местному времени. */
 export function nearestWorkingDay(from = new Date()): string {
@@ -204,7 +210,7 @@ export function nearestWorkingDay(from = new Date()): string {
   return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
 }
 
-type GroupColumn = { key: string; title: string; numeric?: boolean; render: (line: ProcurementLine) => ReactNode };
+type GroupColumn = { key: string; title: string; numeric?: boolean; cell?: string; render: (line: ProcurementLine) => ReactNode };
 
 /** Правка «Цена факт» (с НДС) в ячейке: черновики по строкам, «Сохранить всё» — одним вызовом. */
 type PriceEdit = { valueOf: (line: ProcurementLine) => string; set: (line: ProcurementLine, value: string) => void; disabled: boolean };
@@ -236,16 +242,18 @@ function OrderGroupTable({ label, groups, columns, headerActions, groupExtra, me
             return (
               <tbody key={group.key} aria-label={heading.title}>
                 <tr className="group-row">
-                  <td colSpan={span}>
-                    <span className="group-title">{heading.title}</span>
-                    {" "}<span className="group-meta">{heading.meta}</span>
-                    <span className="group-actions">{headerActions(group)}</span>
+                  <td className="group-cell" colSpan={span}>
+                    <div className="group-line">
+                      <span className="group-title">{heading.title}</span>
+                      <span className="group-meta">{heading.meta}</span>
+                      <span className="group-actions">{headerActions(group)}</span>
+                    </div>
                   </td>
                 </tr>
                 {extra && <tr className="group-form"><td colSpan={span}>{extra}</td></tr>}
                 {group.lines.map((line) => (
                   <tr key={line.id}>
-                    {columns.map((column) => <td key={column.key} className={column.numeric ? "num" : undefined}>{column.render(line)}</td>)}
+                    {columns.map((column) => <td key={column.key} className={[column.numeric && "num", column.cell].filter(Boolean).join(" ") || undefined}>{column.render(line)}</td>)}
                     {menu && <td className="menu">{menu(line)}</td>}
                   </tr>
                 ))}
@@ -269,11 +277,11 @@ const documentItems = (group: OrderGroup, onPrint: (url: string) => void): MenuI
 
 function priceColumn(price: PriceEdit): GroupColumn {
   return {
-    key: "price", title: "Цена факт, ₽", numeric: true,
+    key: "price", title: "Цена факт, ₽", numeric: true, cell: "cell-edit",
     render: (line) => (
       <input
-        aria-label={`Цена факт ${line.legacy_id}`} inputMode="decimal" disabled={price.disabled}
-        style={{ width: 96, textAlign: "right" }} value={price.valueOf(line)} onChange={(event) => price.set(line, event.target.value)}
+        className="cell-input" aria-label={`Цена факт ${line.legacy_id}`} inputMode="decimal" disabled={price.disabled}
+        value={price.valueOf(line)} onChange={(event) => price.set(line, event.target.value)}
       />
     ),
   };
