@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { identityApi, type OwnProfile } from "./api";
+import { accessLevelLabel, identityApi, type OwnProfile } from "./api";
 
 /** The employee's own profile in the sidebar footer (SUPPLYMAP portalState_: role, department, site) and the change of
  *  their own password (current + new). Passwords are still issued by the administrator; there is no «узнать пароль
@@ -56,7 +56,8 @@ export function ProfilePanel({ openCard }: { openCard?: () => void } = {}) {
     <button className="link-button" aria-expanded={open} onClick={() => void toggle()}>Профиль</button>
     {open && <div className="profile-card">
       {profile && <dl>
-        <dt>Роль</dt><dd>{profile.role_label}</dd>
+        <dt>Уровень доступа</dt><dd>{profile.access_level_label || (profile.access_level ? accessLevelLabel(profile.access_level) : profile.role_label)}</dd>
+        {profile.job_title && <><dt>Должность</dt><dd>{profile.job_title}</dd></>}
         <dt>Отдел</dt><dd>{profile.department || "—"}</dd>
         <dt>Площадка</dt><dd>{profile.site ? `${profile.site} · ${profile.site_label}` : profile.site_label}</dd>
         <dt>Логин</dt><dd>{profile.login}</dd>

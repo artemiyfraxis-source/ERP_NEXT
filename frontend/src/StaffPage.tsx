@@ -1,23 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
-import { staffApi, type Employee, type EmployeeCreate, type StaffDirectory } from "./api";
+import { identityApi, staffApi, type Employee, type EmployeeCreate, type StaffDirectory } from "./api";
 import { SuggestInput } from "./SuggestInput";
 
 /** ID-8 «Сотрудники» (SUPPLYMAP Staff.gs portalStaffGet/portalStaffSave): the administrator creates and
  *  edits employees and keeps the department list. The PIN (6–8 digits) and the optional password are set here and
  *  never shown again; the list says whether a PIN is assigned (`pinSet`). Кадровые поля «Личной карточки»
- *  (табельный номер, должность, квалификация, «в должности с», руководитель) and the department heads live here too. */
+ *  (табельный номер, должность, квалификация, «в должности с», руководитель) and the department heads live here too.
+ *  Доступ — уровень (owner 04.10.2026) плюс два флага человека, «Монтажник» и «Мастер площадки»; the levels
+ *  «Суперадминистратор» и «Администратор» are given and taken only by a superadministrator. */
 
 /** `managerText` is what the manager field shows; `manager_id` is set only when it names someone from the list. */
 type Draft = EmployeeCreate & { active: boolean; managerText: string };
 
 const EMPTY_DRAFT: Draft = {
-  login: "", email: "", name: "", department: "", role: "staff", site: "", password: "", pin: "",
+  login: "", email: "", name: "", department: "", access_level: "operator", site: "", password: "", pin: "",
+  shop_worker: false, site_master: false,
   personnel_number: "", job_title: "", qualification: "", job_since: null, manager_id: null, active: true, managerText: "",
 };
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
-/** Tooltips that keep the two things apart: the access role drives permissions, the position is a personnel fact. */
-const ROLE_HINT = "что сотрудник может открывать и править в ERP; должность — в блоке «Кадры»";
-const SITE_HINT = "ЦАР / ЖУК — сотрудник цеха с площадкой считается монтажником";
+/** Tooltips that keep the two things apart: the access level drives permissions, the position is a personnel fact. */
+const LEVEL_HINT = "что сотрудник может открывать и править в ERP; должность — в блоке «Кадры»";
+const LEVEL_LOCKED_HINT = "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор";
+const SITE_HINT = "ЦАР / ЖУК — площадка, на которой работает сотрудник; пусто — все площадки";
+const SHOP_WORKER_HINT = "Исполнитель операций в цеху: ему назначают задания производства";
+const SITE_MASTER_HINT = "Руководит монтажниками площадки: они видны в его личной карточке";
 
 /** «ФИО · отдел» for every employee; equal labels get the login, so a label always names one person. */
 function personLabels(users: Employee[]): Map<string, string> {
@@ -64,6 +70,8 @@ export function StaffPage({ openCard, openUserId }: {
   const [showOff, setShowOff] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Whose level the session holds: only a superadministrator may give or take the two full levels. Unknown = not.
+  const [actorLevel, setActorLevel] = useState("");
 
   const labels = useMemo(() => personLabels(data?.users ?? []), [data]);
   const heads = data?.department_heads ?? {};
@@ -76,6 +84,7 @@ export function StaffPage({ openCard, openUserId }: {
   }
 
   useEffect(() => {
+    identityApi.me().then((principal) => setActorLevel(principal.access_level ?? "")).catch(() => setActorLevel(""));
     load()
       .then((loaded) => {
         const user = openUserId ? loaded.users.find((item) => item.id === openUserId) : undefined;
@@ -112,16 +121,24 @@ export function StaffPage({ openCard, openUserId }: {
     };
     if (id === null) {
       const { user, pin } = await staffApi.create({
-        login: draft.login, email: draft.email, name: draft.name, department: draft.department, role: draft.role,
-        site: draft.site, password: draft.password, pin: draft.pin, ...personnel,
+        login: draft.login, email: draft.email, name: draft.name, department: draft.department,
+        access_level: draft.access_level, site: draft.site, password: draft.password, pin: draft.pin,
+        shop_worker: draft.shop_worker, site_master: draft.site_master, ...personnel,
       });
       setEditing(null);
       await load();
       return `Сотрудник ${user.name} заведён, вход — ${user.login}, PIN — ${pin} (запишите, больше не покажем)`;
     }
+    // A switch the owner did not touch is not sent: the server keeps the stored flag (KEEP), so one that still follows
+    // the old role rule moves with a new site or department.
+    const stored = data?.users.find((item) => item.id === id);
+    const flags = {
+      ...(draft.shop_worker !== stored?.shop_worker ? { shop_worker: draft.shop_worker } : {}),
+      ...(draft.site_master !== stored?.site_master ? { site_master: draft.site_master } : {}),
+    };
     const { user } = await staffApi.update(id, {
-      name: draft.name, department: draft.department, role: draft.role, site: draft.site, active: draft.active,
-      password: draft.password || null, pin: draft.pin.trim() || null, ...personnel,
+      name: draft.name, department: draft.department, access_level: draft.access_level, site: draft.site,
+      active: draft.active, password: draft.password || null, pin: draft.pin.trim() || null, ...flags, ...personnel,
     });
     setEditing(null);
     await load();
@@ -178,13 +195,13 @@ export function StaffPage({ openCard, openUserId }: {
 
   /** `users` — the list just loaded, when the form opens before `data` reaches the render (sent from the card). */
   function startEdit(user: Employee, users?: Employee[]) {
-    const { pin_set: _pinSet, ...fields } = user;
+    const { pin_set: _pinSet, role: _role, access_level_label: _levelLabel, ...fields } = user;
     const names = users ? personLabels(users) : labels;
     const managerText = user.manager_id ? names.get(user.manager_id) ?? "" : "";
     setEditing({ id: user.id, draft: { ...fields, password: "", pin: "", managerText } });
   }
 
-  const roleLabel = (key: string) => data?.roles.find((role) => role.key === key)?.label ?? key;
+  const levelLabel = (user: Employee) => data?.levels.find((level) => level.key === user.access_level)?.label ?? user.access_level_label ?? user.access_level;
   const nameOf = (id: string | undefined) => data?.users.find((user) => user.id === id)?.name ?? "";
   const offCount = data?.users.filter((user) => !user.active).length ?? 0;
   const shown = data?.users.filter((user) => showOff || user.active) ?? [];
@@ -198,7 +215,7 @@ export function StaffPage({ openCard, openUserId }: {
     {notice && <div className="success-banner">{notice}</div>}
     {data && <>
       <div className="table-wrap"><table aria-label="Сотрудники">
-        <thead><tr><th>ФИО</th><th>Таб. №</th><th>Должность</th><th>Логин / e-mail</th><th>Отдел</th><th>Площадка</th><th title={ROLE_HINT}>Доступ</th><th>Вход</th><th /></tr></thead>
+        <thead><tr><th>ФИО</th><th>Таб. №</th><th>Должность</th><th>Логин / e-mail</th><th>Отдел</th><th>Площадка</th><th title={LEVEL_HINT}>Доступ</th><th>Вход</th><th /></tr></thead>
         <tbody>
           {shown.map((user) => <tr key={user.id} className={user.active ? "clickable" : "clickable muted"} onClick={() => startEdit(user)}>
             <td className="text"><strong>{user.name}</strong></td>
@@ -207,7 +224,7 @@ export function StaffPage({ openCard, openUserId }: {
             <td className="text">{user.login}{user.email !== user.login && <><br /><small>{user.email}</small></>}</td>
             <td>{user.department || "—"}</td>
             <td>{user.site || "все"}</td>
-            <td>{roleLabel(user.role)}</td>
+            <td>{levelLabel(user)}</td>
             <td>{user.active ? "активен" : "отключён"}</td>
             <td className="row-action-cell"><span className="row-actions">
               {openCard && <button className="secondary small row-action" aria-label={`Карточка ${user.name}`} onClick={(event) => { event.stopPropagation(); openCard(user.id); }}>Карточка</button>}
@@ -217,7 +234,7 @@ export function StaffPage({ openCard, openUserId }: {
           </tr>)}
         </tbody>
       </table></div>
-      {editing && <EmployeeForm data={data} labels={labels} editing={editing} busy={busy} onChange={(draft) => setEditing({ ...editing, draft })} onSave={() => void saveEmployee()} onCancel={() => setEditing(null)} />}
+      {editing && <EmployeeForm data={data} labels={labels} editing={editing} actorIsSuperadmin={actorLevel === "superadmin"} busy={busy} onChange={(draft) => setEditing({ ...editing, draft })} onSave={() => void saveEmployee()} onCancel={() => setEditing(null)} />}
       <article className="panel staff-departments">
         <h2>Отделы</h2>
         <div className="staff-dep-body">
@@ -259,9 +276,11 @@ export function StaffPage({ openCard, openUserId }: {
   </section>;
 }
 
-function EmployeeForm({ data, labels, editing, busy, onChange, onSave, onCancel }: {
+function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange, onSave, onCancel }: {
   data: StaffDirectory;
   labels: Map<string, string>;
+  /** The session is a superadministrator: the only level that may give or take «Суперадминистратор» / «Администратор». */
+  actorIsSuperadmin: boolean;
   editing: { id: string | null; draft: Draft };
   busy: boolean;
   onChange: (draft: Draft) => void;
@@ -277,6 +296,9 @@ function EmployeeForm({ data, labels, editing, busy, onChange, onSave, onCancel 
     : data.departments;
   const managers = managerCandidates(data.users, id, draft.manager_id);
   const managerIdByLabel = new Map(managers.map((user) => [labels.get(user.id) ?? user.name, user.id]));
+  // A holder of a full level cannot be moved by an administrator; the full options are shut for everyone but a superadmin.
+  const storedLevel = id === null ? undefined : data.users.find((user) => user.id === id)?.access_level;
+  const levelLocked = !actorIsSuperadmin && data.levels.some((level) => level.full && level.key === storedLevel);
   const setManager = (text: string) => onChange({ ...draft, managerText: text, manager_id: managerIdByLabel.get(text.trim()) ?? null });
   return <div className="panel" id="staff-edit-form">
     <h2>{creating ? "Новый сотрудник" : `Правка: ${draft.name}`}</h2>
@@ -302,8 +324,11 @@ function EmployeeForm({ data, labels, editing, busy, onChange, onSave, onCancel 
           <label className="pair">E-mail<input aria-label="E-mail" type="email" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
           <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
         </>}
-        <label title={ROLE_HINT}>Роль доступа<select aria-label="Роль доступа" value={draft.role} onChange={(event) => set("role", event.target.value)}>
-          {data.roles.map((role) => <option key={role.key} value={role.key}>{role.label}</option>)}
+        <label title={levelLocked ? LEVEL_LOCKED_HINT : LEVEL_HINT}>Уровень доступа<select aria-label="Уровень доступа" value={draft.access_level} disabled={levelLocked} onChange={(event) => set("access_level", event.target.value)}>
+          {data.levels.map((level) => {
+            const closed = level.full && !actorIsSuperadmin;
+            return <option key={level.key} value={level.key} disabled={closed} title={closed ? LEVEL_LOCKED_HINT : undefined}>{level.label}</option>;
+          })}
         </select></label>
         <label title={SITE_HINT}>Площадка<select aria-label="Площадка" value={draft.site} onChange={(event) => set("site", event.target.value)}>
           <option value="">все площадки</option>
@@ -311,7 +336,11 @@ function EmployeeForm({ data, labels, editing, busy, onChange, onSave, onCancel 
         </select></label>
         <label>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "необязательно, 8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
         <label className={creating ? "pair" : undefined}>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — сгенерируем и покажем" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
-        {!creating && <label className="check-inline staff-form-check"><input aria-label="Вход разрешён" type="checkbox" checked={draft.active} onChange={(event) => set("active", event.target.checked)} /> Вход разрешён</label>}
+        <div className="staff-flags">
+          <label className="staff-switch" title={SHOP_WORKER_HINT}><input type="checkbox" role="switch" aria-label="Монтажник (работает в цеху)" checked={draft.shop_worker} onChange={(event) => set("shop_worker", event.target.checked)} /><span>Монтажник (работает в цеху)</span></label>
+          <label className="staff-switch" title={SITE_MASTER_HINT}><input type="checkbox" role="switch" aria-label="Мастер площадки" checked={draft.site_master} onChange={(event) => set("site_master", event.target.checked)} /><span>Мастер площадки</span></label>
+          {!creating && <label className="staff-switch"><input aria-label="Вход разрешён" type="checkbox" role="switch" checked={draft.active} onChange={(event) => set("active", event.target.checked)} /><span>Вход разрешён</span></label>}
+        </div>
       </div>
     </section>
     <div className="form-actions">

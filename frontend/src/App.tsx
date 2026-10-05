@@ -2,13 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AUTH_REQUIRED_EVENT,
   ApiError,
+  accessLevelLabel,
   identityApi,
   type Principal,
 } from "./api";
 import {
+  accessLevelOf,
   canAct,
+  hasFullAccess,
   isBlock,
+  isViewOnly,
   isSection,
+  runsTheSystem,
   visibleBlocks,
   visibleNav as visibleNavFor,
   type BlockId,
@@ -156,6 +161,8 @@ export function App() {
   const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
+  // The level's name under the user (the backend adds «· режим» while the admin mode is on).
+  const levelName = principal.role_label || (accessLevelOf(principal) ? accessLevelLabel(accessLevelOf(principal)) : "");
 
   return (
     <div className={navOpen ? "app-shell shell nav-open" : "app-shell shell"}>
@@ -182,7 +189,7 @@ export function App() {
         </nav>
         <div className="profile side-foot">
           <strong>{principal.user.name}</strong>
-          {principal.role_label && <span className="role-label">{principal.role_label}</span>}
+          {levelName && <span className="role-label">{levelName}</span>}
           <span>{principal.user.department}</span>
           {principal.can_admin_mode && (
             <button
@@ -204,7 +211,7 @@ export function App() {
       </aside>
       <main className="workspace main">
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
-        {principal.roles.some((role) => role !== "staff") && <UpdateFailure />}
+        {runsTheSystem(principal) && <UpdateFailure />}
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
         {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
         {activeSection === "projects" && <ProjectsPage principal={principal} />}
@@ -213,9 +220,9 @@ export function App() {
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
-        {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement", ["buyer", "admin"])} buyerName={principal.user.name} />}
-        {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving", ["receiver", "admin"])} />}
-        {activeSection === "stock" && <WarehousePage admin={principal.roles.includes("admin")} readOnly={!canAct(principal, "warehouse", ["receiver", "admin"])} />}
+        {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
+        {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
+        {activeSection === "stock" && <WarehousePage admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
@@ -296,7 +303,7 @@ function Home({
           );
         })}
       </div>
-      {!blocks.length && <div className="empty">Разделов для вашей роли пока нет. Обратитесь к администратору.</div>}
+      {!blocks.length && <div className="empty">Разделов для вашего уровня доступа пока нет. Обратитесь к администратору.</div>}
     </section>
   );
 }
@@ -324,7 +331,7 @@ function BlockPage({
             <span className="tile-body">
               <strong className="t-h">{item.label}</strong>
               {item.sub && <span className="t-sub">{item.sub}</span>}
-              {item.permission && principal.permissions[item.permission] === "view" && <span className="chip">только просмотр</span>}
+              {isViewOnly(principal, item) && <span className="chip">только просмотр</span>}
             </span>
             <span className="tile-arrow" aria-hidden="true">→</span>
           </button>

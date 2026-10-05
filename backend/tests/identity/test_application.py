@@ -25,12 +25,13 @@ from app.modules.identity.domain import (
 from app.modules.identity.infrastructure import (
     IdentityIdentifierRow,
     IdentityLoginThrottleRow,
+    IdentityLevelAccessRow,
     IdentitySessionRow,
-    IdentityUserAccessRow,
+    IdentityUserLevelAccessRow,
     IdentityUserRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
-    seed_role_matrix,
+    seed_level_matrix,
 )
 from app.shared.clock import as_utc
 from app.shared.persistence import create_schema
@@ -60,19 +61,19 @@ def identity_database():
                 email="petrov@example.test",
                 name="Петров",
                 department="Склад",
-                # A non-full-access role, so the matrix and personal exceptions still drive the permissions here
-                # (buyer/prodhead/management/admin are full access and ignore both since 2026-09-29).
+                # receiver → Бригадир: a matrix level, so the level row and personal exceptions drive the
+                # permissions here (superadmin/admin are always full and ignore both).
                 role="receiver",
                 site=None,
                 active=True,
             ),
             hash_password("correct-password"),
-            role_access={
+            level_access={
                 "requests": AccessMode.EDIT,
                 "procurement": AccessMode.EDIT,
             },
         )
-        seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
+        seed_level_matrix(session)  # a migrated database: every matrix level has its explicit cells (0086)
         session.commit()
     yield sessions
     engine.dispose()
@@ -95,18 +96,21 @@ def test_login_resolve_logout_and_server_owned_principal(identity_database):
 
     assert resolved is not None
     assert resolved.principal.actor.id == USER_ID
-    # Stored rows drive a non-full role (NAV-ACCESS): the receiver's seed cells plus this user's own stored grants.
+    # Stored rows drive a matrix level (NAV-ACCESS): the foreman row plus this user's own stored exceptions.
+    assert resolved.principal.roles == frozenset({"foreman"})
     assert resolved.principal.permissions == {
         "newrequest": "edit",
         "myrequests": "edit",
         "requests": "edit",
+        "production": "edit",
+        "myops": "edit",
         "receiving": "edit",
         "warehouse": "edit",
         "fulfillment": "edit",
         "handout": "edit",
-        "shipping": "edit",
+        "shipping_goods": "edit",
         "procurement": "edit",
-        "erpref": "view",
+        "quality": "view",
     }
     assert result.session_token not in resolved.session.token_hash
 
@@ -187,8 +191,8 @@ def test_wrong_password_is_generic_and_rate_limited_by_account(identity_database
 
 def test_user_override_removes_permission_and_deactivation_revokes_session(identity_database):
     with identity_database() as session:
-        session.add(
-            IdentityUserAccessRow(
+        session.merge(
+            IdentityUserLevelAccessRow(
                 user_id=USER_ID,
                 section="procurement",
                 mode=AccessMode.NONE.value,
@@ -203,10 +207,11 @@ def test_user_override_removes_permission_and_deactivation_revokes_session(ident
         uow_factory(),
         client_key="client:test",
     )
-    # The personal «none» on procurement takes it away (receiver is a non-full role, so exceptions still apply).
+    # The personal «none» on procurement takes it away (a matrix level, so exceptions apply).
     assert result.principal.permissions == {
-        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "receiving": "edit", "warehouse": "edit",
-        "fulfillment": "edit", "handout": "edit", "shipping": "edit", "erpref": "view",
+        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "production": "edit", "myops": "edit",
+        "receiving": "edit", "warehouse": "edit", "fulfillment": "edit", "handout": "edit", "shipping_goods": "edit",
+        "quality": "view",
     }
 
     with identity_database() as session:
@@ -348,10 +353,11 @@ def test_login_and_email_share_one_unique_identifier_namespace(identity_database
         }
 
 
-def test_user_override_does_not_mutate_shared_role_policy(identity_database):
+def test_user_override_does_not_mutate_shared_level_policy(identity_database):
     second_id = UUID("10000000-0000-0000-0000-000000000002")
     third_id = UUID("10000000-0000-0000-0000-000000000003")
     with identity_database() as session:
+        session.merge(IdentityLevelAccessRow(level="operator", section="requests", mode=AccessMode.EDIT.value))
         for user_id, login_name, access in (
             (second_id, "staff-edit", None),
             (third_id, "staff-view", {"requests": AccessMode.VIEW}),
@@ -369,8 +375,7 @@ def test_user_override_does_not_mutate_shared_role_policy(identity_database):
                     active=True,
                 ),
                 hash_password("another-password"),
-                role_access={"requests": AccessMode.EDIT},
-                user_access=access,
+                level_access=access,
             )
         session.commit()
 

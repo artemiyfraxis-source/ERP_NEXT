@@ -13,12 +13,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
-from app.modules.identity.domain import ROLE_SEED, AccessMode, IdentityUser, hash_password
+from app.modules.identity.domain import AccessMode, IdentityUser, hash_password
 from app.modules.identity.infrastructure import (
     IdentityUserRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
-    seed_role_matrix,
+    seed_level_matrix,
 )
 from app.modules.operations.domain import ProjectTask
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
@@ -77,8 +77,8 @@ def erp():
     )
     with sessions() as session:
         for user, personal in people:
-            provision_user(session, user, password, role_access=ROLE_SEED.get(user.role, {}), user_access=personal)
-        seed_role_matrix(session)
+            provision_user(session, user, password, user_access=personal)
+        seed_level_matrix(session)
         session.commit()
     yield SimpleNamespace(
         sessions=sessions,
@@ -179,7 +179,8 @@ def test_header_shows_person_roles_site_and_activity(erp):
 
     assert body["header"] == {
         "id": str(MASTER), "name": "Мастер Пётр", "department": "Цех",
-        "roles": [{"key": "master", "label": "Мастер"}], "site": "ЦАР", "site_label": "Москва", "active": True,
+        # The access level (role master → Бригадир); the job title is among the personnel fields.
+        "roles": [{"key": "foreman", "label": "Бригадир"}], "site": "ЦАР", "site_label": "Москва", "active": True,
     }
     assert body["as_of"] == "2026-10-14"
 
@@ -194,7 +195,7 @@ def test_header_without_site_and_department_is_null_not_blank(erp):
 
     assert header["department"] is None
     assert header["site"] is None and header["site_label"] is None
-    assert header["roles"] == [{"key": "estimator", "label": "Сметчик"}]
+    assert header["roles"] == [{"key": "commercial", "label": "Коммерческое руководство"}]
 
 
 def test_personnel_fields_come_from_the_staff_directory(erp):
@@ -500,7 +501,7 @@ def test_tasks_are_the_open_ones_in_sections_the_person_edits(erp):
     project_task(erp, "shipping", title="Оформить отгрузку")
     project_task(erp, "production", title="Уже сделана", status_open=False)
 
-    # Мастер правит «production» (ROLE_SEED), отгрузку только смотрит; технолог правит всё.
+    # Мастер (Бригадир) правит «production» (строка уровня), отгрузку не правит; администратор правит всё.
     master = card(erp, MASTER)["tasks"]
     assert master["count"] == 1
     assert master["items"][0] | {"id": "-"} == {
@@ -514,7 +515,7 @@ def test_tasks_are_the_open_ones_in_sections_the_person_edits(erp):
 def test_a_personal_exception_changes_the_sections_of_the_card(erp):
     project_task(erp, "shipping")
     with erp.identity() as uow:
-        uow.identity.replace_user_access(FITTER, {"shipping": AccessMode.EDIT})
+        uow.identity.replace_user_level_access(FITTER, {"shipping": AccessMode.EDIT})
         uow.commit()
 
     assert card(erp, FITTER)["tasks"]["count"] == 1
@@ -619,13 +620,14 @@ def test_anothers_card_is_refused_without_the_staffdir_section(erp, api):
     assert me.get(f"/api/employee-card/{FITTER}").status_code == 403
 
 
-def test_anothers_card_opens_with_view_on_staffdir_and_for_full_access_roles(erp, api):
+def test_anothers_card_opens_for_superadmin_and_admin_only(erp, api):
+    # Access levels: «Сотрудники» is outside the level matrix — a personal `staffdir` grant no longer opens it.
     launch(erp, PROJECT, [FITTER])
 
-    for login in ("viewer", "admin"):
-        response = api(login).get(f"/api/employee-card/{FITTER}")
-        assert response.status_code == 200, (login, response.text)
-        assert response.json() == card(erp, FITTER)
+    response = api("admin").get(f"/api/employee-card/{FITTER}")
+    assert response.status_code == 200, response.text
+    assert response.json() == card(erp, FITTER)
+    assert api("viewer").get(f"/api/employee-card/{FITTER}").status_code == 403
 
 
 def test_unknown_person_is_404_for_those_who_may_look(erp, api):

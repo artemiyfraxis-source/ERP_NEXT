@@ -5,7 +5,7 @@
 числа и часы `None`, никаких выдуманных нулей). Раздел без записей у модуля, который подключён, — настоящий пустой
 результат: `count: 0`.
 
-Разделы: шапка (ФИО, отдел, роль, площадка), кадровые поля (табельный номер, должность, категория, «в должности с»,
+Разделы: шапка (ФИО, отдел, уровень доступа, площадка), кадровые поля (табельный номер, должность, категория, «в должности с»,
 руководитель), подчинённые мастера площадки (флаги «Мастер площадки» и «Монтажник»), проекты (исполнитель по
 операциям + инициатор заявок, срок из снимка плана), компетенции, отсутствия и ближайший отпуск, часы за текущий месяц, свои открытые заявки,
 открытые задачи арбитра в разделах, которые человек правит.
@@ -20,13 +20,11 @@ from typing import Any
 from uuid import UUID
 
 from app.modules.identity.domain import (
-    FULL_ACCESS_ROLES,
-    ROLE_LABELS,
+    LEVEL_LABELS,
     WORK_SITES,
     AccessMode,
     IdentityUser,
-    effective_permissions,
-    role_permissions,
+    level_permissions,
 )
 from app.modules.operations.domain import task_module_label
 from app.modules.production.domain import ProductionStatus
@@ -74,10 +72,10 @@ def _month_bounds(now: datetime) -> tuple[datetime, datetime]:
 
 
 def _edit_sections(uow, user: IdentityUser) -> frozenset[str]:
-    """Разделы с правкой у человека — как при входе (`_principal` в Identity): роль, затем личные исключения; роли
-    с полным доступом не сужаются ни матрицей, ни исключением."""
-    base = role_permissions(user.role, uow.identity.role_access(user.role))
-    effective = base if user.role in FULL_ACCESS_ROLES else effective_permissions(base, uow.identity.user_access(user.id))
+    """Разделы с правкой у человека — как при входе (`_principal` в Identity): строка его уровня в матрице, затем
+    личные исключения; суперадминистратор и администратор правят всё."""
+    level = user.access_level
+    effective = level_permissions(level, uow.identity.level_access(level), uow.identity.user_level_access(user.id))
     return frozenset(section for section, mode in effective.items() if mode is AccessMode.EDIT)
 
 
@@ -87,7 +85,8 @@ def _header(user: IdentityUser) -> dict[str, Any]:
         "id": str(user.id),
         "name": user.name,
         "department": _text(user.department),
-        "roles": [{"key": user.role, "label": ROLE_LABELS.get(user.role, user.role)}],
+        # Уровень доступа (вместо роли-должности; должность — в кадровых полях). Ключ `roles` — как был, один выпуск.
+        "roles": [{"key": user.access_level, "label": LEVEL_LABELS.get(user.access_level, user.access_level)}],
         "site": site,
         "site_label": WORK_SITES.get(site) if site else None,
         "active": user.active,

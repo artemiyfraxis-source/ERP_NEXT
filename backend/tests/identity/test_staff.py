@@ -3,10 +3,11 @@
 
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -18,8 +19,6 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.identity.domain import (
-    ROLE_DEFAULTS,
-    ROLE_SEED,
     IdentityUser,
     IdentityValidationError,
     check_manager_chain,
@@ -33,11 +32,11 @@ from app.modules.identity.domain import (
 )
 from app.modules.identity.infrastructure import (
     IdentityDepartmentRow,
-    IdentityRoleAccessRow,
+    IdentityLevelAccessRow,
     IdentityUserRow,
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
-    seed_role_matrix,
+    seed_level_matrix,
 )
 from app.modules.production.infrastructure import ProductionOperatorSkillRow
 from app.modules.requests.api import moscow_now
@@ -45,9 +44,10 @@ from app.shared.persistence import AuditEventRow, create_schema
 
 
 NOW = datetime(2026, 9, 29, 10, 0)
-ADMIN_ID = UUID("30000000-0000-0000-0000-000000000001")
-BUYER_ID = UUID("30000000-0000-0000-0000-000000000002")
-RECEIVER_ID = UUID("30000000-0000-0000-0000-000000000003")  # a non-full-access role, for the «refused» cases
+ADMIN_ID = UUID("30000000-0000-0000-0000-000000000001")  # login «admin»: the superadministrator
+BUYER_ID = UUID("30000000-0000-0000-0000-000000000002")  # role buyer → Технический руководитель
+RECEIVER_ID = UUID("30000000-0000-0000-0000-000000000003")  # role receiver → Бригадир, for the «refused» cases
+ADMIN2_ID = UUID("30000000-0000-0000-0000-000000000004")  # an administrator (not super), added where a test needs one
 
 
 # ── Domain ─────────────────────────────────────────────────────────────────────────────────────────
@@ -97,14 +97,13 @@ def staff_api():
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     with sessions() as session:
-        provision_user(session, _user(ADMIN_ID, "admin", "admin", "ИТ"), hash_password("admin-password"),
-                       role_access=ROLE_DEFAULTS["admin"])
-        provision_user(session, _user(BUYER_ID, "buyer", "buyer", "Снабжение"), hash_password("buyer-password"),
-                       role_access=ROLE_SEED["buyer"])
+        # The superadministrator (legacy role admin): only a superadmin gives and takes the full levels.
+        provision_user(session, replace(_user(ADMIN_ID, "admin", "admin", "ИТ"), access_level="superadmin"),
+                       hash_password("admin-password"))
+        provision_user(session, _user(BUYER_ID, "buyer", "buyer", "Снабжение"), hash_password("buyer-password"))
         # No department, so it perturbs no department-list assertion; it exists only for the «refused» cases.
-        provision_user(session, _user(RECEIVER_ID, "receiver", "receiver", ""), hash_password("recv-password"),
-                       role_access=ROLE_SEED["receiver"])
-        seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
+        provision_user(session, _user(RECEIVER_ID, "receiver", "receiver", ""), hash_password("recv-password"))
+        seed_level_matrix(session)  # a migrated database: every matrix level has its explicit cells (0086)
         session.commit()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
     app.state.cookie_secure = False
@@ -136,16 +135,21 @@ NEW = {
 }
 
 
-def test_only_admin_opens_the_directory(staff_api):
-    # A non-full-access role is refused; a full-access role (buyer) may open it (owner 2026-09-29).
+def test_only_superadmin_and_admin_open_the_directory(staff_api):
+    # Access levels: «Сотрудники» is superadmin/admin only; the former full-access buyer (now a matrix level) is refused.
     assert _client("receiver", "recv-password").get("/api/auth/staff").status_code == 403
-    assert _client("buyer", "buyer-password").get("/api/auth/staff").status_code == 200
+    assert _client("buyer", "buyer-password").get("/api/auth/staff").status_code == 403
     assert TestClient(app).get("/api/auth/staff").status_code == 401
 
     body = _client("admin", "admin-password").get("/api/auth/staff").json()
     assert [user["login"] for user in body["users"]] == ["admin", "buyer", "receiver"]
+    assert [(user["access_level"], user["access_level_label"], user["role"]) for user in body["users"]] == [
+        ("superadmin", "Суперадминистратор", "admin"), ("tech_lead", "Технический руководитель", "buyer"),
+        ("foreman", "Бригадир", "receiver"),
+    ]
     assert body["departments"] == ["ИТ", "Снабжение"]
-    assert {"key": "admin", "label": "Технолог"} in body["roles"]
+    assert {"key": "operator", "label": "Оператор", "full": False} in body["levels"]
+    assert {"key": "admin", "label": "Технолог"} in body["roles"]  # legacy, one release
     assert [site["code"] for site in body["sites"]] == ["ЦАР", "ЖУК", "АДМ"]
     assert all("password" not in json.dumps(user) for user in body["users"])
 
@@ -160,15 +164,19 @@ def test_admin_creates_an_employee_who_can_log_in(staff_api):
     assert (user["name"], user["department"], user["role"], user["site"], user["active"]) == (
         "Сидоров С. С.", "Цех", "master", "ЖУК", True,
     )
+    assert user["access_level"] == "foreman"  # an old screen sends the role: the level follows it
     assert "first-password" not in response.text
     worker = _client("sidorov@example.test", "first-password")
     assert worker.get("/api/auth/me").json()["permissions"]["production"] == "edit"
     [event] = _events(staff_api, "identity.user_created")
     assert event.actor_id == ADMIN_ID and event.details["role"] == "master"
+    assert event.details["access_level"] == "foreman"
     assert "first-password" not in json.dumps(event.details)
     with staff_api() as session:
-        # The role's sections come from its matrix row; creating a person writes nothing into it.
-        assert session.get(IdentityRoleAccessRow, ("master", "production")).mode == "edit"
+        # The level's sections come from its matrix row; creating a person writes nothing into it.
+        assert session.get(IdentityLevelAccessRow, ("foreman", "production")).mode == "edit"
+        stored = session.get(IdentityUserRow, UUID(user["id"]))
+        assert (stored.site_master, stored.shop_worker) == (True, False)
 
 
 def test_create_issues_and_returns_a_pin_when_the_field_is_blank(staff_api):
@@ -203,6 +211,8 @@ def test_create_returns_the_pin_the_admin_typed(staff_api):
         ({"login": "buyer"}, 409),
         ({"login": "admin@example.test"}, 409),  # login and e-mail share one namespace
         ({"role": "boss"}, 422),
+        ({"access_level": "boss"}, 422),
+        ({"access_level": "", "role": ""}, 422),
         ({"site": "МСК"}, 422),
         ({"email": "без-почты"}, 422),
         ({"password": "short"}, 422),
@@ -216,8 +226,8 @@ def test_create_refuses_bad_or_duplicate_rows(staff_api, change, status):
 
 
 def test_create_is_refused_to_non_admin_and_without_csrf(staff_api):
-    # A full-access role (buyer) may create; a non-full-access role is refused (owner 2026-09-29).
-    assert _client("buyer", "buyer-password").post("/api/auth/staff", json=NEW).status_code == 201
+    # Access levels: only superadmin/admin create; the former full-access buyer (a matrix level now) is refused.
+    assert _client("buyer", "buyer-password").post("/api/auth/staff", json=NEW).status_code == 403
     assert _client("receiver", "recv-password").post("/api/auth/staff", json=NEW).status_code == 403
     admin = _client("admin", "admin-password")
     del admin.headers["X-CSRF-Token"]
@@ -238,7 +248,8 @@ def test_admin_edits_role_department_and_site(staff_api):
     assert buyer.get("/api/auth/me").json()["permissions"].get("warehouse") == "edit"
     [event] = _events(staff_api, "identity.user_updated")
     assert json.loads(event.details["changes"]) == {
-        "department": ["Снабжение", "Склад"], "role": ["buyer", "receiver"], "site": ["", "ЦАР"],
+        "department": ["Снабжение", "Склад"], "role": ["buyer", "receiver"], "access_level": ["tech_lead", "foreman"],
+        "site": ["", "ЦАР"],
     }
     assert "password" not in event.details
 
@@ -273,13 +284,14 @@ def test_deactivation_blocks_login_and_reactivation_restores_it(staff_api):
     _client("buyer", "buyer-password")
 
 
-@pytest.mark.parametrize("change", [{"role": "buyer"}, {"active": False}])
-def test_last_admin_cannot_lose_the_role_or_the_login(staff_api, change):
+@pytest.mark.parametrize("change", [{"role": "buyer"}, {"access_level": "tech_lead"}, {"active": False}])
+def test_last_admin_cannot_lose_the_level_or_the_login(staff_api, change):
+    # The only superadmin/admin (here: the superadministrator) keeps the level and the login.
     admin = _client("admin", "admin-password")
     body = {"name": "Admin", "department": "ИТ", "role": "admin", "site": "", "active": True, **change}
     response = admin.put(f"/api/auth/staff/{ADMIN_ID}", json=body)
     assert response.status_code == 409
-    assert "хотя бы один администратор" in response.json()["detail"]
+    assert "хотя бы один активный суперадминистратор или администратор" in response.json()["detail"]
     assert admin.post(f"/api/auth/users/{ADMIN_ID}/deactivate").status_code == 409
 
     # With a second admin the first one may step down.
@@ -296,6 +308,49 @@ def test_edit_of_unknown_employee_is_404(staff_api):
 def _user_row(sessions, user_id: UUID):
     with sessions() as session:
         return session.get(IdentityUserRow, user_id)
+
+
+def _add_admin(sessions) -> None:
+    """A second full-level person: an administrator, not a superadministrator."""
+    with sessions() as session:
+        provision_user(session, _user(ADMIN2_ID, "admin2", "admin", ""), hash_password("admin2-password"))
+        session.commit()
+
+
+def test_only_a_superadmin_gives_and_takes_the_full_levels(staff_api):
+    _add_admin(staff_api)
+    admin2 = _client("admin2", "admin2-password")
+    boss = _client("admin", "admin-password")
+
+    # The administrator manages the matrix levels…
+    created = admin2.post("/api/auth/staff", json={**NEW, "role": "", "access_level": "commercial"})
+    assert created.status_code == 201, created.text
+    assert (created.json()["user"]["access_level"], created.json()["user"]["role"]) == ("commercial", "")
+    assert admin2.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level="foreman")).status_code == 200
+    # …but neither gives a full level, nor takes one, nor switches a full-level holder off or deletes them.
+    for level in ("admin", "superadmin"):
+        body = {"email": f"{level}-new@example.test", "name": "Новый", "access_level": level}
+        refused = admin2.post("/api/auth/staff", json=body)
+        assert refused.status_code == 403 and "только суперадминистратор" in refused.json()["detail"]
+        assert admin2.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level=level)).status_code == 403
+    boss_row = {"name": "Admin", "department": "ИТ", "role": "admin", "site": "", "active": True}
+    assert admin2.put(f"/api/auth/staff/{ADMIN_ID}", json={**boss_row, "access_level": "tech_lead"}).status_code == 403
+    assert admin2.put(f"/api/auth/staff/{ADMIN_ID}", json={**boss_row, "active": False}).status_code == 403
+    assert admin2.post(f"/api/auth/users/{ADMIN_ID}/deactivate").status_code == 403
+    assert admin2.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(role="admin")).status_code == 403  # via the role
+    assert _user_row(staff_api, BUYER_ID).access_level == "foreman"
+
+    # The superadministrator does all of it.
+    assert boss.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level="admin")).status_code == 200
+    assert _client("buyer", "buyer-password").get("/api/auth/staff").status_code == 200
+    assert boss.put(f"/api/auth/staff/{ADMIN2_ID}", json={
+        "name": "Admin2", "department": "", "access_level": "operator", "active": True,
+    }).status_code == 200
+    assert admin2.get("/api/auth/staff").status_code == 403
+    row = _user_row(staff_api, ADMIN2_ID)
+    assert (row.access_level, row.role) == ("operator", "admin")  # the legacy role stays as stored
+    [event] = [e for e in _events(staff_api, "identity.user_updated") if e.aggregate_id == ADMIN2_ID]
+    assert json.loads(event.details["changes"]) == {"access_level": ["admin", "operator"]}
 
 
 def test_delete_erases_an_employee_without_history_with_their_settings(staff_api):
@@ -321,7 +376,12 @@ def test_delete_erases_an_employee_without_history_with_their_settings(staff_api
 
 def test_delete_of_an_employee_with_history_switches_them_off(staff_api):
     buyer = _client("buyer", "buyer-password")
-    assert buyer.put("/api/auth/departments", json={"departments": ["Цех"]}).status_code == 200  # work done
+    with staff_api() as session:  # work done: the buyer is named in the journal
+        session.add(AuditEventRow(
+            id=uuid4(), aggregate_id=uuid4(), event_type="procurement.line_taken", actor_id=BUYER_ID,
+            actor_name="Buyer", actor_department="Снабжение", occurred_at=NOW, details={},
+        ))
+        session.commit()
     admin = _client("admin", "admin-password")
 
     response = admin.delete(f"/api/auth/staff/{BUYER_ID}")
@@ -334,12 +394,13 @@ def test_delete_of_an_employee_with_history_switches_them_off(staff_api):
     assert again.status_code == 409 and "уже отключён" in again.json()["detail"]
 
 
-def test_delete_refuses_self_last_admin_unknown_and_non_admin(staff_api):
+def test_delete_refuses_self_a_superadmin_unknown_and_non_admin(staff_api):
     admin = _client("admin", "admin-password")
     assert admin.delete(f"/api/auth/staff/{ADMIN_ID}").status_code == 409
-    buyer = _client("buyer", "buyer-password")
-    last = buyer.delete(f"/api/auth/staff/{ADMIN_ID}")
-    assert last.status_code == 409 and "хотя бы один администратор" in last.json()["detail"]
+    _add_admin(staff_api)
+    refused = _client("admin2", "admin2-password").delete(f"/api/auth/staff/{ADMIN_ID}")
+    assert refused.status_code == 403 and "только суперадминистратор" in refused.json()["detail"]
+    assert _user_row(staff_api, ADMIN_ID) is not None
     assert admin.delete("/api/auth/staff/30000000-0000-0000-0000-00000000dead").status_code == 404
     assert _client("receiver", "recv-password").delete(f"/api/auth/staff/{BUYER_ID}").status_code == 403
     assert _user_row(staff_api, BUYER_ID).active is True

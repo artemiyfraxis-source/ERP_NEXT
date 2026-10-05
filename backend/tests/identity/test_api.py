@@ -13,7 +13,7 @@ from app.modules.identity.domain import AccessMode, IdentityUser, hash_password
 from app.modules.identity.infrastructure import (
     SqlAlchemyIdentityUnitOfWork,
     provision_user,
-    seed_role_matrix,
+    seed_level_matrix,
 )
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
 from app.modules.requests.api import moscow_now
@@ -48,12 +48,12 @@ def identity_api():
                 active=True,
             ),
             hash_password("correct-password"),
-            role_access={
+            level_access={
                 "requests": AccessMode.EDIT,
                 "procurement": AccessMode.EDIT,
             },
         )
-        seed_role_matrix(session)  # a migrated database: every role has its explicit cells (0046)
+        seed_level_matrix(session)  # a migrated database: every matrix level has its explicit cells (0086)
         session.commit()
     app.state.identity_uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(sessions)
     app.state.uow_factory = lambda: SqlAlchemyUnitOfWork(sessions)

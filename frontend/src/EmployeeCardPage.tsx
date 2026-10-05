@@ -9,7 +9,7 @@ import {
   type Principal,
 } from "./api";
 import { formatDate, formatDay } from "./format";
-import { canAct, hasAccess } from "./navigation";
+import { hasFullAccess } from "./navigation";
 
 /** «Личная карточка» сотрудника (концепт владельца, 04.10): одна страница про человека из данных всех модулей, только
  *  чтение. Вкладка «Обзор» — карточки в порядке концепта: Основные данные · Подчинённость · Проекты · Отпуска · Рабочее
@@ -63,8 +63,9 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
     return () => { live = false; };
   }, [card]);
 
-  const canEdit = Boolean(openStaffEdit) && canAct(principal, "staffdir", ["admin"]);
-  const canOpenOthers = hasAccess(principal.permissions, "staffdir");
+  // «Сотрудники» — только superadmin / admin (backend staffdir_principal): правка карточки и чужие карточки.
+  const canEdit = Boolean(openStaffEdit) && hasFullAccess(principal);
+  const canOpenOthers = hasFullAccess(principal);
 
   if (error) return <section className="page ec-page"><div className="error-banner" role="alert">{error}</div></section>;
   if (!card) return <section className="page ec-page"><div className="empty">Загрузка…</div></section>;

@@ -16,6 +16,7 @@ cookie сессии и CSRF настоящие. Склад грузится вы
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import os
 import re
@@ -193,6 +194,15 @@ def shop(tmp_path, monkeypatch):
                 pin_hash=hash_pin(FITTER_PIN) if person.key == "fitter" else None,
             )
         session.commit()
+    # At the cutover the people exist before migration 0086: their levels, the level rows and the compensating
+    # exceptions come from their roles (the transfer), not from the plan's defaults of an empty database.
+    spec = importlib.util.spec_from_file_location(
+        "migration_0086", BACKEND / "migrations" / "versions" / "0086_identity_access_levels.py",
+    )
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    with engine.begin() as connection:
+        assert migration.transfer(connection, clock.now) > 0
     # «load-real-data.sh base» кладёт библиотеку операций (seed_library); без неё генератор ЭТК не собирает.
     replace_operation_library(ReplaceOperationLibraryCommand(
         source_commit=LIBRARY["sourceCommit"], templates=tuple(LIBRARY["templates"]),

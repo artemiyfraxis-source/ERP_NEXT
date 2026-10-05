@@ -29,11 +29,14 @@ from .application import (
     role_label,
     toggle_admin_mode,
 )
-from .access import access_overview, save_role_matrix, save_user_access
+from .access import access_overview, save_level_matrix, save_user_access
 from .domain import (
-    ROLE_DEFAULTS,
+    FULL_ACCESS_LEVELS,
+    FULL_LEVEL_SECTIONS,
+    LEVEL_LABELS,
+    LEVEL_SECTION_LABELS,
+    LEVEL_SEED,
     ROLE_LABELS,
-    SECTION_LABELS,
     WORK_SITES,
     AccessMode,
     IdentityUser,
@@ -46,6 +49,7 @@ from .staff import (
     EmployeeChange,
     NewEmployee,
     StaffConflict,
+    StaffForbidden,
     create_employee,
     personnel_profile,
     pin_assigned,
@@ -56,6 +60,7 @@ from .staff import (
     staff_directory,
     update_employee,
 )
+from .level_migration import level_for_role
 from .middleware import cookie_names, security_cookie
 
 
@@ -82,9 +87,11 @@ def _principal_result(principal: Principal) -> dict:
             "name": principal.actor.name,
             "department": principal.actor.department,
         },
+        # `roles` holds the access level key (legacy name, one release); `access_level` is the same key.
         "roles": sorted(principal.roles),
+        "access_level": principal.level,
         "permissions": principal.permissions,
-        # portalState_: roleLabel («· режим» in the admin mode), canAdminMode, adminMode.
+        # portalState_: roleLabel («· режим» in the admin mode) — the level's name now, canAdminMode, adminMode.
         "role_label": role_label(principal),
         "can_admin_mode": principal.can_admin_mode,
         "admin_mode": principal.admin_mode,
@@ -232,7 +239,8 @@ def profile_route(
     principal: Annotated[Principal, Depends(authenticated_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
-    """Шапка / профиль: ФИО, e-mail, роль, отдел, место работы (portalState_) + кадровые поля «Личной карточки»."""
+    """Шапка / профиль: ФИО, e-mail, уровень доступа, отдел, место работы (portalState_) + кадровые поля «Личной
+    карточки». `role` / `role_label` — legacy: the old role key, and the level's name."""
     try:
         profile = personnel_profile(principal.actor.id, uow_factory())
     except KeyError as error:
@@ -240,7 +248,8 @@ def profile_route(
     user = profile.user
     return {
         "name": user.name, "login": user.login, "email": user.email, "department": user.department,
-        "role": user.role, "role_label": ROLE_LABELS.get(user.role, user.role),
+        "role": user.role, "role_label": _level_label(user),
+        "access_level": _level(user), "access_level_label": _level_label(user),
         "site": user.site or "", "site_label": WORK_SITES.get(user.site or "", "все площадки"),
         **_personnel(user),
         "manager": _person_ref(profile.manager),
@@ -291,9 +300,11 @@ def deactivate_user_route(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
     try:
-        user = deactivate_user(user_id, principal.actor, now, uow_factory())
+        user = deactivate_user(user_id, principal.actor, now, uow_factory(), actor_level=principal.level)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except StaffForbidden as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     except StaffConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {"user_id": str(user.id), "active": user.active}
@@ -307,7 +318,9 @@ class EmployeeCreateInput(BaseModel):
     email: str = Field(min_length=1, max_length=255)
     name: str = Field(min_length=1, max_length=255)
     department: str = Field(default="", max_length=255)
-    role: str = Field(min_length=1, max_length=64)
+    # Уровень доступа; the legacy `role` (one release) sets it when the level is not sent.
+    access_level: str = Field(default="", max_length=16)
+    role: str = Field(default="", max_length=64)
     site: str = Field(default="", max_length=8)
     password: str = Field(default="", max_length=128)  # empty → PIN only
     pin: str = Field(default="", max_length=16)  # 6–8 digits; empty → none yet
@@ -325,7 +338,9 @@ class EmployeeCreateInput(BaseModel):
 class EmployeeUpdateInput(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     department: str = Field(default="", max_length=255)
-    role: str = Field(min_length=1, max_length=64)
+    # "" — stays as stored; a changed legacy role without a level moves the level with it.
+    access_level: str = Field(default="", max_length=16)
+    role: str = Field(default="", max_length=64)
     site: str = Field(default="", max_length=8)
     active: bool
     password: str | None = Field(default=None, max_length=128)  # empty → the password stays
@@ -369,6 +384,15 @@ def _person_ref(user: IdentityUser | None) -> dict | None:
     return None if user is None else {"id": str(user.id), "name": user.name}
 
 
+def _level(user: IdentityUser) -> str:
+    return user.access_level or level_for_role(user.role)
+
+
+def _level_label(user: IdentityUser) -> str:
+    level = _level(user)
+    return LEVEL_LABELS.get(level, level)
+
+
 def _employee(user: IdentityUser, pin_set: bool = False) -> dict:
     # No password, PIN or hash ever leaves the server; the screen only sets a new one and sees `pin_set`.
     return {
@@ -377,7 +401,9 @@ def _employee(user: IdentityUser, pin_set: bool = False) -> dict:
         "email": user.email,
         "name": user.name,
         "department": user.department,
-        "role": user.role,
+        "access_level": _level(user),
+        "access_level_label": _level_label(user),
+        "role": user.role,  # legacy, one release
         "site": user.site or "",
         "active": user.active,
         "pin_set": pin_set,
@@ -394,6 +420,8 @@ def _heads(heads: dict[str, UUID]) -> dict[str, str]:
 def _staff_errors(error: Exception) -> HTTPException:
     if isinstance(error, KeyError):
         return HTTPException(status_code=404, detail=str(error.args[0] if error.args else error))
+    if isinstance(error, StaffForbidden):
+        return HTTPException(status_code=403, detail=str(error))
     if isinstance(error, StaffConflict):
         return HTTPException(status_code=409, detail=str(error))
     if isinstance(error, IntegrityError):
@@ -403,7 +431,7 @@ def _staff_errors(error: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=str(error))
 
 
-_STAFF_ERRORS = (KeyError, StaffConflict, IdentityValidationError, IntegrityError)
+_STAFF_ERRORS = (KeyError, StaffForbidden, StaffConflict, IdentityValidationError, IntegrityError)
 
 
 @router.get("/staff")
@@ -417,7 +445,8 @@ def staff_route(
         "users": [_employee(user, user.id in directory.pin_set) for user in directory.users],
         "departments": directory.departments,
         "department_heads": _heads(directory.department_heads),
-        "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()],
+        "levels": _levels(),
+        "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()],  # legacy, one release
         "sites": [{"code": code, "city": city} for code, city in WORK_SITES.items()],
     }
 
@@ -430,7 +459,9 @@ def create_employee_route(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
     try:
-        created = create_employee(NewEmployee(**payload.model_dump()), principal.actor, now, uow_factory())
+        created = create_employee(
+            NewEmployee(**payload.model_dump()), principal.actor, now, uow_factory(), actor_level=principal.level,
+        )
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     # The PIN is shown once so the administrator can hand it over (owner: «все пины мне … заводить новых сам»).
@@ -453,7 +484,9 @@ def update_employee_route(
         and not (key in WORK_FLAGS and value is None)
     }
     try:
-        user = update_employee(user_id, EmployeeChange(**fields), principal.actor, now, uow_factory())
+        user = update_employee(
+            user_id, EmployeeChange(**fields), principal.actor, now, uow_factory(), actor_level=principal.level,
+        )
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     return {"user": _employee(user, pin_assigned(user.id, uow_factory()))}
@@ -467,7 +500,7 @@ def remove_employee_route(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
     try:
-        removed = remove_employee(user_id, principal.actor, now, uow_factory())
+        removed = remove_employee(user_id, principal.actor, now, uow_factory(), actor_level=principal.level)
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     return {"user": _employee(removed.user), "deleted": removed.deleted}
@@ -516,20 +549,24 @@ def set_department_head_route(
     return {"departments": result.departments, "department_heads": _heads(result.heads)}
 
 
-# ── «Доступы» (NAV-ACCESS): role × section matrix + per-person exceptions, administrator only, audited ──────
+# ── «Доступы» (NAV-ACCESS): level × section matrix + per-person exceptions, superadmin/admin only, audited ──
 
 
 def _modes(row: dict[str, AccessMode]) -> dict[str, str]:
     return {section: mode.value for section, mode in row.items()}
 
 
-class RoleMatrixInput(BaseModel):
-    # {role: {section: "none" | "view" | "edit" | ""}}; a role or a cell left out = «как задумано ролью».
+def _levels() -> list[dict]:
+    return [{"key": key, "label": label, "full": key in FULL_ACCESS_LEVELS} for key, label in LEVEL_LABELS.items()]
+
+
+class LevelMatrixInput(BaseModel):
+    # {level: {section: "none" | "view" | "edit" | ""}}; a level or a cell left out = closed.
     matrix: dict[str, dict[str, str]] = Field(max_length=64)
 
 
 class UserAccessInput(BaseModel):
-    access: dict[str, str] = Field(max_length=64)  # {section: mode}; left out / "" = как у роли
+    access: dict[str, str] = Field(max_length=64)  # {section: mode}; left out / "" = как у уровня
 
 
 @router.get("/access")
@@ -539,14 +576,23 @@ def access_route(
 ) -> dict:
     del principal
     overview = access_overview(uow_factory())
+    levels = _levels()
     return {
-        "sections": [{"key": key, "label": label} for key, label in SECTION_LABELS.items()],
-        "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()],
-        "defaults": {role: _modes(ROLE_DEFAULTS.get(role, {})) for role in ROLE_LABELS},
-        "matrix": {role: _modes(row) for role, row in overview.matrix.items()},
+        "sections": [{"key": key, "label": label} for key, label in LEVEL_SECTION_LABELS.items()],
+        "levels": levels,
+        "roles": levels,  # legacy name of the rows, one release
+        # What an empty row means: superadmin/admin — everything on edit, whatever is stored; any other level — closed.
+        "defaults": {
+            level: ({section: "edit" for section in FULL_LEVEL_SECTIONS} if level in FULL_ACCESS_LEVELS else {})
+            for level in LEVEL_LABELS
+        },
+        # The plan's default rows (a level nobody holds starts from them).
+        "seed": {level: _modes(row) for level, row in LEVEL_SEED.items()},
+        "matrix": {level: _modes(row) for level, row in overview.matrix.items()},
         "users": [
             {
-                "id": str(user.id), "login": user.login, "name": user.name, "role": user.role, "active": user.active,
+                "id": str(user.id), "login": user.login, "name": user.name, "role": user.role,
+                "access_level": _level(user), "active": user.active,
                 "access": _modes(overview.exceptions.get(user.id, {})),
             }
             for user in overview.users
@@ -554,18 +600,33 @@ def access_route(
     }
 
 
-@router.put("/access/roles")
-def save_role_matrix_route(
-    payload: RoleMatrixInput,
+def _save_matrix(payload: LevelMatrixInput, principal: Principal, now: datetime, uow_factory) -> dict:
+    try:
+        matrix = save_level_matrix(payload.matrix, principal.actor, now, uow_factory())
+    except _STAFF_ERRORS as error:
+        raise _staff_errors(error) from error
+    return {"matrix": {level: _modes(row) for level, row in matrix.items()}}
+
+
+@router.put("/access/levels")
+def save_level_matrix_route(
+    payload: LevelMatrixInput,
     principal: Annotated[Principal, Depends(access_admin_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
 ) -> dict:
-    try:
-        matrix = save_role_matrix(payload.matrix, principal.actor, now, uow_factory())
-    except _STAFF_ERRORS as error:
-        raise _staff_errors(error) from error
-    return {"matrix": {role: _modes(row) for role, row in matrix.items()}}
+    return _save_matrix(payload, principal, now, uow_factory)
+
+
+@router.put("/access/roles")
+def save_level_matrix_legacy_route(
+    payload: LevelMatrixInput,
+    principal: Annotated[Principal, Depends(access_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """The old path of the same save (the screen calls it until it moves to /access/levels); the rows are levels."""
+    return _save_matrix(payload, principal, now, uow_factory)
 
 
 @router.put("/access/users/{user_id}")

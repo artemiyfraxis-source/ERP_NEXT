@@ -59,15 +59,15 @@ def warehouse_api():
     engine.dispose()
 
 
-def test_warehouse_writes_require_receiver_role(warehouse_api):
-    """ID-6: a master reads the stock (SUPPLYMAP «Склад — просмотр»), but only the storekeeper or admin writes.
-    (buyer/prodhead/management are full-access since 2026-09-29, so a non-full role is used here.)"""
+def test_warehouse_writes_require_warehouse_edit(warehouse_api):
+    """ID-6: a master reads the stock (SUPPLYMAP «Склад — просмотр»), only «Склад» on edit writes; without the
+    section nothing opens (access levels: the matrix decides, no role lists)."""
     client, lot = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Мастер", department="Цех"),
         email="master@example.test",
-        roles=frozenset({"master"}),
-        permissions={"warehouse": "edit"},
+        roles=frozenset({"foreman"}),
+        permissions={"warehouse": "view"},
     )
 
     assert client.get("/api/stock").status_code == 200
@@ -78,8 +78,8 @@ def test_warehouse_writes_require_receiver_role(warehouse_api):
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Инженер", department="РНД"),
         email="engineer@example.test",
-        roles=frozenset({"engineer"}),
-        permissions={"warehouse": "edit"},
+        roles=frozenset({"tech_lead"}),
+        permissions={"fulfillment": "edit"},
     )
     assert client.get("/api/stock").status_code == 403
 
@@ -433,13 +433,13 @@ def test_long_old_address_is_kept_but_regular_move_rejects_it(warehouse_api):
     assert "Место хранения" in moved.json()["detail"]
 
 
-def test_location_correction_needs_the_warehouse_receiver_or_admin(warehouse_api):
+def test_location_correction_needs_warehouse_edit(warehouse_api):
     client, lot = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Сметчик", department="КБ"),
         email="estimator@example.test",
-        roles=frozenset({"estimator"}),
-        permissions={"warehouse": "edit"},
+        roles=frozenset({"commercial"}),
+        permissions={"warehouse": "view"},
     )
 
     response = client.put(f"/api/stock/batches/{lot.id}/location", json={
@@ -498,13 +498,13 @@ def test_writeoff_return_needs_a_positive_quantity_and_where_it_comes_from(wareh
     assert client.get("/api/stock").json()["lots"][0]["written_off"] == "4"
 
 
-def test_writeoff_return_needs_the_warehouse_receiver_or_admin(warehouse_api):
+def test_writeoff_return_needs_warehouse_edit(warehouse_api):
     client, lot = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Мастер", department="Производство"),
         email="master@example.test",
-        roles=frozenset({"master"}),
-        permissions={"warehouse": "edit"},
+        roles=frozenset({"foreman"}),
+        permissions={"warehouse": "view"},
     )
 
     response = client.post(f"/api/stock/batches/{lot.id}/return", json={

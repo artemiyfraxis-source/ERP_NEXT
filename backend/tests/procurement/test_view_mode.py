@@ -64,9 +64,10 @@ def test_buyer_work_queues_stay_closed_in_view_mode(procurement_api, path):  # n
     assert client.get(path).status_code == 403
 
 
-def test_in_work_queue_needs_a_procurement_role(procurement_api):  # noqa: F811
+def test_in_work_queue_needs_the_procurement_section(procurement_api):  # noqa: F811
+    # Access levels: the matrix decides; another section open on edit does not open «Лист закупки».
     client, _, _ = procurement_api
-    as_viewer("staff", "procurement")
+    as_viewer("operator", "requests", "edit")
 
     assert client.get("/api/procurement/in-work").status_code == 403
     assert client.get("/api/procurement/available").status_code == 403

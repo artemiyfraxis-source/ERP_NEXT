@@ -15,22 +15,22 @@ from app.shared.clock import as_utc
 from app.shared.notifications import TECHNOLOGIST_AUDIENCE, notification_requested, publish_notification
 
 from .domain import (
-    ROLE_LABELS,
+    FULL_ACCESS_LEVELS,
+    LEVEL_LABELS,
     AccessMode,
     can_admin_mode,
-    FULL_ACCESS_ROLES,
     hash_pin,
     new_pin,
     IdentityUser,
     IdentityValidationError,
     validate_password,
-    effective_permissions,
     hash_password,
-    role_permissions,
+    level_permissions,
     normalize_login,
     secret_hash,
     verify_password,
 )
+from .level_migration import level_for_role
 
 
 class AuthenticationError(ValueError):
@@ -52,7 +52,7 @@ class IdentitySession:
     expires_at: datetime
     absolute_expires_at: datetime
     revoked_at: datetime | None = None
-    # «Режим админа» (Portal.gs portalToggleAdmin): the role is admin until this moment (CacheService TTL, 6 h).
+    # «Режим админа» (Portal.gs portalToggleAdmin): the level is admin until this moment (CacheService TTL, 6 h).
     admin_mode_until: datetime | None = None
 
 
@@ -89,8 +89,8 @@ class ResolvedSession:
 
 class IdentityRepository(Protocol):
     def credentials_for_login(self, login: str) -> tuple[IdentityUser, str] | None: ...
-    def role_access(self, role: str) -> dict[str, AccessMode]: ...
-    def user_access(self, user_id: UUID) -> dict[str, AccessMode]: ...
+    def level_access(self, level: str) -> dict[str, AccessMode]: ...
+    def user_level_access(self, user_id: UUID) -> dict[str, AccessMode]: ...
     def add_session(self, session: IdentitySession) -> None: ...
     def session_with_user(self, token_hash: str) -> tuple[IdentitySession, IdentityUser] | None: ...
     def update_session(self, session: IdentitySession) -> bool: ...
@@ -125,11 +125,11 @@ class IdentityRepository(Protocol):
     def saved_departments(self) -> list[str]: ...
     def department_heads(self) -> dict[str, UUID]: ...
     def replace_departments(self, departments: list[str], heads: dict[str, UUID] | None = None) -> None: ...
-    # «Доступы» (NAV-ACCESS, access.py): the role matrix holds only changes on top of ROLE_DEFAULTS
-    def all_role_access(self) -> dict[str, dict[str, AccessMode]]: ...
-    def all_user_access(self) -> dict[UUID, dict[str, AccessMode]]: ...
-    def replace_role_access(self, role: str, overrides: dict[str, AccessMode]) -> None: ...
-    def replace_user_access(self, user_id: UUID, overrides: dict[str, AccessMode]) -> None: ...
+    # «Доступы» (NAV-ACCESS, access.py): the level matrix (an empty cell is closed) and the personal level exceptions
+    def all_level_access(self) -> dict[str, dict[str, AccessMode]]: ...
+    def all_user_level_access(self) -> dict[UUID, dict[str, AccessMode]]: ...
+    def replace_level_access(self, level: str, cells: dict[str, AccessMode]) -> None: ...
+    def replace_user_level_access(self, user_id: UUID, overrides: dict[str, AccessMode]) -> None: ...
     # PIN login (Portal.gs portalLogin / portalRevealPin_) and «Режим админа» (portalToggleAdmin)
     def pin_record(self, who: str) -> PinRecord | None: ...
     def set_pin(self, user_id: UUID, pin_hash: str) -> None: ...
@@ -185,24 +185,31 @@ def _audit(
     )
 
 
+def user_level(user: IdentityUser) -> str:
+    """The stored level; a user built in memory without one follows the legacy role."""
+    return user.access_level or level_for_role(user.role)
+
+
+def session_level(user: IdentityUser, *, admin_mode: bool = False) -> str:
+    """portalSession_: «Режим админа» raises the session to the level admin (a superadmin stays superadmin)."""
+    level = user_level(user)
+    return "admin" if admin_mode and level not in FULL_ACCESS_LEVELS else level
+
+
 def _principal(
     user: IdentityUser,
-    role_access: dict[str, AccessMode],  # the stored matrix row of the role, ROLE_DEFAULTS are added here
-    user_access: dict[str, AccessMode],
+    level_access: dict[str, AccessMode],  # the stored matrix row of the session's level
+    user_access: dict[str, AccessMode],  # the person's level exceptions
     *,
     admin_mode: bool = False,
 ) -> Principal:
-    # portalSession_: in «Режим админа» the effective role is admin (its matrix row + the person's own exceptions,
-    # portalAccessFor_('admin', email)); the stored role stays as it is.
-    role = "admin" if admin_mode else user.role
-    base = role_permissions(role, role_access)
-    # A full-access role cannot be reduced: neither the matrix (already ignored in role_permissions) nor a personal
-    # exception lowers it, so its personal overlay is skipped entirely (owner 2026-09-29).
-    effective = base if role in FULL_ACCESS_ROLES else effective_permissions(base, user_access)
+    level = session_level(user, admin_mode=admin_mode)
+    # superadmin/admin are full whatever is stored: level_permissions ignores their row and exceptions.
+    effective = level_permissions(level, level_access, user_access)
     return Principal(
         actor=Actor(id=user.id, name=user.name or user.email, department=user.department),
         email=user.email,
-        roles=frozenset({role}),
+        roles=frozenset({level}),
         permissions={section: mode.value for section, mode in effective.items()},
         admin_mode=admin_mode,
         can_admin_mode=can_admin_mode(user.email),
@@ -210,14 +217,16 @@ def _principal(
 
 
 def _principal_for(uow: UnitOfWork, user: IdentityUser, *, admin_mode: bool = False) -> Principal:
-    role = "admin" if admin_mode else user.role
-    return _principal(user, uow.identity.role_access(role), uow.identity.user_access(user.id), admin_mode=admin_mode)
+    level = session_level(user, admin_mode=admin_mode)
+    return _principal(
+        user, uow.identity.level_access(level), uow.identity.user_level_access(user.id), admin_mode=admin_mode,
+    )
 
 
 def role_label(principal: Principal) -> str:
-    """portalState_ roleLabel: the effective role's label, «· режим» while the admin mode is on."""
-    role = next(iter(principal.roles), "staff")
-    return ROLE_LABELS.get(role, role) + (" · режим" if principal.admin_mode else "")
+    """portalState_ roleLabel: the effective level's name, «· режим» while the admin mode is on."""
+    level = next(iter(principal.roles), "operator")
+    return LEVEL_LABELS.get(level, level) + (" · режим" if principal.admin_mode else "")
 
 
 def _session_admin_mode(session: IdentitySession, user: IdentityUser, now: datetime) -> bool:
@@ -436,7 +445,7 @@ def _reveal_pin(uow: UnitOfWork, record: PinRecord, now: datetime) -> PinReveal:
     # «уже входил» is worded apart, as in SUPPLYMAP; the mode being off and an administrator answer alike.
     if record.seen:
         raise PinRefused("Введи PIN. Пароль ты уже получал — если забыл, обратись к администратору.")
-    if record.user.role == "admin":
+    if user_level(record.user) in FULL_ACCESS_LEVELS:
         raise PinRefused("Введи PIN.")
     pin = new_pin()
     uow.identity.set_pin(record.user.id, hash_pin(pin))
@@ -479,7 +488,7 @@ ADMIN_MODE_TTL = timedelta(hours=6)  # PORTAL_SESSION_TTL_SEC_: the cache flag l
 def toggle_admin_mode(
     session: IdentitySession, principal: Principal, on: bool, now: datetime, uow: UnitOfWork,
 ) -> Principal:
-    """on=True lifts the role of this session to admin, False returns the own one. Only the account
+    """on=True lifts this session to the level admin, False returns the own one. Only the account
     portalCanAdminMode_ allows; every switch goes to the journal."""
     if not principal.can_admin_mode:
         raise PermissionError("Режим админа недоступен для этого аккаунта.")
@@ -566,12 +575,14 @@ def deactivate_user(
     actor: Actor,
     now: datetime,
     uow: UnitOfWork,
+    *,
+    actor_level: str | None = None,
 ) -> IdentityUser:
     from .staff import ensure_admin_remains
 
     now = as_utc(now)
     with uow:
-        ensure_admin_remains(user_id, uow)
+        ensure_admin_remains(user_id, uow, actor, actor_level)
         user = uow.identity.deactivate_user(user_id)
         if user is None:
             raise KeyError(f"Identity user not found: {user_id}")

@@ -18,11 +18,11 @@ import { isFinal } from "./productionGraph";
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
 /* «ОТК» (owner, 04.10.2026): очередь на проверку, брак на решение и реестр средств измерения вынесены из «Ресурсного
-   планирования». Роли и ключ доступа те же, что были у этих блоков: приёмку ОТК и реестр ведёт ОТК (qc), решение по браку
-   принимает мастер; роли с полным доступом проходят оба списка (navigation.hasRole). */
+   планирования». Права — только по разделам: приёмку ОТК и реестр средств измерения ведёт правка «ОТК» (`quality`),
+   решение по браку принимает правка «Ресурсного планирования» (`production`); уровни с полным доступом проходят оба. */
 export function QualityPage({ principal }: { principal: Principal }) {
-  const canEdit = canAct(principal, "production", ["master", "admin"]);
-  const canQuality = canAct(principal, "production", ["qc", "admin"]);
+  const canEdit = canAct(principal, "production");
+  const canQuality = canAct(principal, "quality");
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
   const [boxes, setBoxes] = useState<ProductionBox[]>([]);
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
@@ -91,6 +91,7 @@ export function QualityPage({ principal }: { principal: Principal }) {
       <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />
     </div>}
     {loaded && canQuality && <InstrumentRegistry instruments={instruments} busy={Boolean(busy)} mutate={mutate} />}
+    {loaded && !canQuality && !canEdit && <div className="empty">ОТК открыт вам только на просмотр.</div>}
   </section>;
 }
 

@@ -11,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import build_engine
-from app.modules.identity.domain import (  # noqa: F401 — ROLE_DEFAULTS is re-exported for callers
-    ROLE_DEFAULTS,
+from app.modules.identity.domain import (
+    ACCESS_LEVELS,
+    LEVEL_SECTION_LABELS,
     ROLES,
     AccessMode,
     IdentityUser,
@@ -20,20 +21,34 @@ from app.modules.identity.domain import (  # noqa: F401 — ROLE_DEFAULTS is re-
     normalize_login,
 )
 from app.modules.identity.infrastructure import IdentityIdentifierRow, provision_user
+from app.modules.identity.level_migration import level_for_role, shop_worker_rule, site_master_rule
 
 
-def requested_access(values: list[str], role: str) -> dict[str, AccessMode]:
-    del role
+def requested_access(values: list[str]) -> dict[str, AccessMode]:
+    """--permission SECTION=none|view|edit: the person's exceptions on top of their level row."""
     result: dict[str, AccessMode] = {}
     for value in values:
         try:
             section, raw_mode = value.split("=", 1)
-            result[section.strip()] = AccessMode(raw_mode.strip())
+            section = section.strip()
+            if section not in LEVEL_SECTION_LABELS:
+                raise KeyError(section)
+            result[section] = AccessMode(raw_mode.strip())
         except (ValueError, KeyError) as error:
             raise SystemExit(
-                f"Invalid permission {value!r}; expected SECTION=view|edit"
+                f"Invalid permission {value!r}; expected SECTION=none|view|edit, SECTION one of "
+                f"{', '.join(LEVEL_SECTION_LABELS)}"
             ) from error
     return result
+
+
+def requested_level(args: argparse.Namespace) -> str:
+    """--level; the legacy --role (kept for old scripts) gives the level its role maps to."""
+    if args.level:
+        return args.level
+    if args.role:
+        return level_for_role(args.role)
+    raise SystemExit("Pass --level (" + ", ".join(ACCESS_LEVELS) + ")")
 
 
 def create_user(args: argparse.Namespace, sessions: sessionmaker[Session]) -> None:
@@ -44,7 +59,9 @@ def create_user(args: argparse.Namespace, sessions: sessionmaker[Session]) -> No
         confirmation = getpass.getpass("Repeat password: ")
         if password != confirmation:
             raise SystemExit("Passwords do not match")
-    user_access = requested_access(args.permission, args.role)
+    level = requested_level(args)
+    role = args.role or ""
+    level_access = requested_access(args.permission)
     identifiers = {
         normalize_login(args.login),
         normalize_login(args.email),
@@ -64,19 +81,22 @@ def create_user(args: argparse.Namespace, sessions: sessionmaker[Session]) -> No
             email=args.email,
             name=args.name,
             department=args.department,
-            role=args.role,
+            role=role,
             site=args.site,
             active=True,
+            access_level=level,
+            shop_worker=shop_worker_rule(role, args.site, args.department),
+            site_master=site_master_rule(role),
         )
         provision_user(
             session,
             user,
             hash_password(password),
-            # The role's sections = its «Доступы» matrix row (empty = closed, admin = edit everywhere).
-            user_access=user_access,
+            # The level's sections = its «Доступы» matrix row (empty = closed; superadmin/admin = edit everywhere).
+            level_access=level_access,
         )
         session.commit()
-        print(f"Created {user.login} ({user.id})")
+        print(f"Created {user.login} ({user.id}), level {level}")
 
 
 def pin_reveal(args: argparse.Namespace, sessions: sessionmaker[Session]) -> None:
@@ -105,13 +125,14 @@ def main() -> None:
     create.add_argument("--email", required=True)
     create.add_argument("--name", required=True)
     create.add_argument("--department", required=True)
-    create.add_argument("--role", choices=sorted(ROLES), required=True)
+    create.add_argument("--level", choices=ACCESS_LEVELS, help="access level: " + ", ".join(ACCESS_LEVELS))
+    create.add_argument("--role", choices=sorted(ROLES), help="legacy role; without --level the level follows it")
     create.add_argument("--site")
     create.add_argument(
         "--permission",
         action="append",
         default=[],
-        help="User permission override, for example procurement=edit",
+        help="Personal exception on top of the level row, for example procurement=edit",
     )
     reveal = subparsers.add_parser("pin-reveal", help="«узнать PIN при первом входе» (pinRevealOn/Off)")
     reveal.add_argument("state", choices=("on", "off"))

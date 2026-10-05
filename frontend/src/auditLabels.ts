@@ -180,6 +180,9 @@ const EVENT_NAMES: Record<string, string> = {
   "identity.department_renamed": "Отдел переименован",
   "identity.department_head_set": "Руководитель отдела назначен",
   "identity.role_access_saved": "Доступы ролей сохранены",
+  "identity.level_access_saved": "Доступы уровней сохранены",
+  "identity.access_levels_migrated": "Роли переведены в уровни доступа",
+  "identity.dormant_access_archived": "Исключения прежней роли с полным доступом убраны в архив",
   "identity.user_access_saved": "Исключения доступа сохранены",
   "identity.admin_mode_on": "Режим администратора включён",
   "identity.admin_mode_off": "Режим администратора выключен",
@@ -200,7 +203,17 @@ const DETAIL_LABELS: Record<string, string> = {
   first_ready: "первая готовность", finish: "окончание", idle_seconds: "простой, с", fields: "поля", pl: "PL", dn: "DN",
   moves: "перемещений", materials: "материалов", inputs: "входов", projects: "проектов", replan: "перепланировать",
   events: "записей",
+  level: "уровень", access_level: "уровень доступа", shop_worker: "монтажник", site_master: "мастер площадки",
+  login: "логин", role: "прежняя роль", changes: "изменения", exceptions: "исключения", levels: "уровни", people: "люди",
+  note: "примечание",
 };
+
+/* Уровни доступа по ключу: `level` и `access_level` в деталях событий хранят ключ, а не подпись. */
+const LEVEL_NAMES: Record<string, string> = {
+  superadmin: "Суперадминистратор", admin: "Администратор", commercial: "Коммерческое руководство",
+  tech_lead: "Технический руководитель", foreman: "Бригадир", operator: "Оператор",
+};
+const LEVEL_KEYS = new Set(["level", "access_level"]);
 
 /* Имена полей, которые события пишут списком («fields», «inherited»). */
 const FIELD_LABELS: Record<string, string> = {
@@ -247,7 +260,10 @@ export function auditDetails(details: Record<string, unknown>): string {
   const keyed = entries.filter(([key]) => UUID.test(key)).length;
   const parts = entries
     .filter(([key]) => !HIDDEN_KEY.test(key) && !UUID.test(key))
-    .map(([key, value]) => [DETAIL_LABELS[key] ?? key.replace(/_/g, " "), shown(value)] as const)
+    .map(([key, value]) => [
+      DETAIL_LABELS[key] ?? key.replace(/_/g, " "),
+      LEVEL_KEYS.has(key) && typeof value === "string" ? LEVEL_NAMES[value] ?? shown(value) : shown(value),
+    ] as const)
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`);
   if (keyed) parts.push(`строк: ${keyed}`);

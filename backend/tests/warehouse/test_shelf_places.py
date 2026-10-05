@@ -108,7 +108,7 @@ def test_api_needs_warehouse_rights(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Инженер", department="РНД"), email="engineer@example.test",
-        roles=frozenset({"engineer"}), permissions={"warehouse": "edit"},
+        roles=frozenset({"tech_lead"}), permissions={"fulfillment": "edit"},
     )
 
     assert client.get("/api/stock/places", params={"warehouse": "ЦАР", "shelf": "1F"}).status_code == 403

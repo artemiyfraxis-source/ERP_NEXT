@@ -5,7 +5,8 @@ import type { Principal } from "./api";
 
 const PRINCIPAL: Principal = {
   user: { id: "u2", email: "petrov@example.test", name: "Петров Пётр", department: "Снабжение" },
-  roles: ["buyer"],
+  roles: ["tech_lead"],
+  access_level: "tech_lead",
   permissions: {},
 };
 

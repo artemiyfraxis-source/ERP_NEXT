@@ -10,7 +10,8 @@ const principal: Principal = {
     name: "Закупщик",
     department: "Закупки",
   },
-  roles: ["buyer"],
+  roles: ["tech_lead"],
+  access_level: "tech_lead",
   permissions: { newrequest: "edit", myrequests: "edit", requests: "edit", procurement: "edit" },
 };
 
@@ -144,7 +145,7 @@ describe("RequestsPage", () => {
     expect(await screen.findByText("Заявка перенесена повторно: в закупке новая ревизия")).toBeInTheDocument();
   });
 
-  it("keeps view-only users read-only and hides buyer actions", async () => {
+  it("keeps view-only users read-only and hides the hand-off to procurement", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input) === "/api/requests/schema") return json(schema);
       return json({ requests: [row] });
@@ -154,8 +155,9 @@ describe("RequestsPage", () => {
       <RequestsPage
         principal={{
           ...principal,
-          roles: ["staff"],
-          permissions: { requests: "view", procurement: "edit" },
+          roles: ["operator"],
+          access_level: "operator",
+          permissions: { requests: "view", procurement: "view" },
         }}
       />,
     );
@@ -163,6 +165,17 @@ describe("RequestsPage", () => {
     expect(await screen.findByText("Последние заявки")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Оформить" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "В закупку" })).not.toBeInTheDocument();
+  });
+
+  it("offers «В закупку» by the edit grant on procurement, whatever the level is called", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/requests/schema") return json(schema);
+      return json({ requests: [row] });
+    });
+
+    render(<RequestsPage principal={{ ...principal, roles: ["operator"], access_level: "operator", permissions: { requests: "view", procurement: "edit" } }} />);
+
+    expect(await screen.findByRole("button", { name: "В закупку" })).toBeInTheDocument();
   });
 
   it("RQ-MINE: «Мои заявки» loads the server-side mine endpoint, not the shared list, and shows the stage", async () => {
@@ -217,7 +230,7 @@ describe("RequestsPage", () => {
     });
 
     // NAV-SECTIONS: `newrequest` alone opens the form; the shared list (`requests`) is not even asked for.
-    render(<RequestsPage principal={{ ...principal, roles: ["staff"], permissions: { newrequest: "edit" } }} view="create" />);
+    render(<RequestsPage principal={{ ...principal, roles: ["operator"], access_level: "operator", permissions: { newrequest: "edit" } }} view="create" />);
 
     expect(await screen.findByRole("button", { name: "Оформить" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Оформить заявку", level: 1 })).toBeInTheDocument();
@@ -233,7 +246,7 @@ describe("RequestsPage", () => {
       throw new Error(`Unexpected request: ${path}`);
     });
 
-    render(<RequestsPage principal={{ ...principal, roles: ["buyer"], permissions: { requests: "edit" } }} />);
+    render(<RequestsPage principal={{ ...principal, roles: ["tech_lead"], access_level: "tech_lead", permissions: { requests: "edit" } }} />);
 
     expect(await screen.findByText("Последние заявки")).toBeInTheDocument();
     expect(screen.queryByText("Новая заявка")).not.toBeInTheDocument();

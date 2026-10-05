@@ -44,7 +44,15 @@ FAMILIES: tuple[dict[str, Any], ...] = (
          note="по чертежу JST eSH: метка ▽ у контакта 1", src="JST eSH, Housing",
          body={"extra": 2.0, "h": 2.8, "rear_h": 2.1, "len": 5.0, "front_len": 1.8, "ear_len": 1.0, "win": (0.6, 1.3)},
          body_by=((r"V-S-B", {"ears": 1.0}),)),
-    _jst("jst-nsh", "NSH", r"^NSHR-0*(\d+)V-S", 1.0, "ramp"),
+    # NSH — JST eNSH «Housing» (jst-mfg.com/product/pdf/eng/eNSH.pdf, p. 2): front view = lock face, wire end up; the
+    # «Circuit No.1 mark» is a groove on the end wall seen in the right side view (third-angle) -> circuit 1 at the right
+    # of the front view; from the wire side, lock up, contact 1 is on the LEFT (as GH). B = A + 3.0; 4.2 thick with the
+    # lock, 3.6 without; 6.2 long; lock 4.4 wide (measured off the 4–9 circuit view). NSHR-02V-S is the 3-circuit housing
+    # with the middle cavity plugged (contacts 2.0 apart), so its B is 5.0.
+    _jst("jst-nsh", "NSH", r"^NSHR-0*(\d+)V-S", 1.0, "ramp", conf="high", src="JST eNSH, Housing",
+         note="по чертежу JST eNSH: защёлка сверху, контакт 1 слева (метка на торце корпуса)",
+         body={"extra": 3.0, "h": 3.6, "len": 6.2, "lock_w": 4.4, "lock_h": 0.6, "win": (0.6, 1.1)},
+         body_by=((r"^NSHR-0*2V", {"extra": 4.0}),)),
     _jst("jst-xh", "XH", r"^XHP-(\d+)", 2.5, "ramp", conf="high", src="JST eXH, Housing",
          note="по чертежу JST eXH: защёлка сверху, контакт 1 слева",
          body={"extra": 4.8, "h": 4.1, "len": 7.75, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}),
@@ -57,10 +65,34 @@ FAMILIES: tuple[dict[str, Any], ...] = (
          body={"extra": 3.0, "h": 3.4, "len": 4.8, "win": (0.8, 1.3)}),
     _jst("jst-vh", "VH", r"^VHR-(\d+)", 3.96, "lever"),
     _jst("jst-pa", "PA", r"^PAP-0*(\d+)V", 2.0, "lever"),
-    _jst("jst-ze", "ZE", r"^ZER-0*(\d+)V", 1.5, "lever"),
-    _jst("jst-cz", "CZ", r"^CZHR-0*(\d+)V", 1.5, "ramp"),
-    _jst("jst-pni", "PNI", r"^PNIRP-0*(\d+)V", 2.0, "lever"),
-    _jst("jst-rcy", "RCY (SY)", r"^SY[RP]-0*(\d+)T", 2.5, "ramp", color="#c8322d"),
+    # ZE — JST eZE «Socket housing» (p. 3): front view = the face with the big outer lock lever, wire end up; «Mark of
+    # No. 1 circuit» is a groove on the end wall in the right side view -> circuit 1 at the right of the front view. The
+    # header sheet agrees (▽ at the right, lock window on the same face). From the wire side, lever up: contact 1 LEFT.
+    _jst("jst-ze", "ZE", r"^ZER-0*(\d+)V", 1.5, "lever", conf="high", src="JST eZE, Socket housing",
+         note="по чертежу JST eZE: рычаг замка сверху, контакт 1 слева (метка на торце корпуса)"),
+    # CZ — JST eCZ-F p. 4 draws the CZH crimp housing (CZHR) WITHOUT a circuit-1 mark (only the IDC socket CZ and the
+    # B-CZHK header carry «No.1 circuit»). Matching the CZH profile in the «When mating with CZH» side view (p. 2) to the
+    # header (p. 5) hints at contact 1 on the RIGHT with the lock up, but the IDC socket's own views don't confirm it —
+    # left as is until checked on a part.
+    _jst("jst-cz", "CZ", r"^CZHR-0*(\d+)V", 1.5, "ramp",
+         note="на чертеже JST eCZ-F у корпуса CZHR метки контакта 1 нет — сверить по детали"),
+    # PNI — JST ePNI-WB «Socket housing» (p. 2): front view = lock-lever face, wire end up, «No. 1 circuit» points at the
+    # rightmost cavity -> from the wire side, lever up, contact 1 on the LEFT. B = A + 3.7; 6.45 thick without the
+    # lever's release tab (0.8 more), 10.05 long; the tab is 3.0 wide.
+    _jst("jst-pni", "PNI", r"^PNIRP-0*(\d+)V", 2.0, "lever", conf="high", src="JST ePNI-WB, Socket housing",
+         note="по чертежу JST ePNI-WB: рычаг замка сверху, контакт 1 слева",
+         body={"extra": 3.7, "h": 6.45, "len": 10.05, "lock_w": 3.0, "lock_h": 0.8, "win": (1.0, 1.6)}),
+    # RCY — JST eRCY «Housing» (p. 2): the top views show «1 2» moulded on the flat face, wire end on the right. SYR
+    # (receptacle, pin contacts): 1 at the top of the view; SYP (plug, socket contacts): 1 at the bottom. From the wire
+    # side with the numbered face up that is 1 on the RIGHT for SYR and on the LEFT for SYP — mirrored, as a mated pair
+    # with both numbered faces on one side must be. The drawing shows no latch, so the marker is the numbered face.
+    # SY?-02TV — white (natural) V-0 version. Titles keep «(…)» so the warehouse name stays «RCY Npin» (Stock05 parity).
+    _jst("jst-rcy", "RCY (SYR, штыри)", r"^SYR-0*(\d+)T", 2.5, "mark", start="TR", color="#c8322d",
+         color_by=((r"\dTV", IVORY),), conf="high", src="JST eRCY, Housing",
+         note="по чертежу JST eRCY: грань с цифрами 1, 2 сверху — контакт 1 справа"),
+    _jst("jst-rcy-p", "RCY (SYP, гнёзда)", r"^SYP-0*(\d+)T", 2.5, "mark", color="#c8322d",
+         color_by=((r"\dTV", IVORY),), conf="high", src="JST eRCY, Housing",
+         note="по чертежу JST eRCY: грань с цифрами 1, 2 сверху — контакт 1 слева"),
     _jst("jst-sm-r", "SM (розетка)", r"^SMR-0*(\d+)V", 2.5, "lever", max=12, start="TL", conf="high", color_by=((r"V-B", BLACK),)),
     _jst("jst-sm-p", "SM (вилка)", r"^SMP-0*(\d+)V", 2.5, "lever", max=12, start="TR", conf="high", color_by=((r"V-B", BLACK),)),
     {"id": "molex-picoblade", "title": "Molex PicoBlade", "pattern": r"^51021-?0?(\d{1,2})00$|^51047-?0?(\d{1,2})00$", "count_groups": (1, 2), "pitch": 1.25, "rows": 1, "order": "row", "start": "TR", "latch": "friction", "color": IVORY, "conf": "medium"},
@@ -74,8 +106,17 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "molex-microfit-1r", "title": "Molex Micro-Fit 3.0 (1 ряд)", "pattern": r"^43645-?0?(\d{1,2})00$", "pitch": 3.0, "rows": 1, "order": "row", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
     {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "pattern": r"^22-?55-?2(\d{2})1$", "pitch": 2.54, "rows": 2, "order": "col", "start": "TR", "latch": "friction", "color": BLACK, "conf": "low"},
     {"id": "te-multilock-040", "title": "TE Multilock 040", "pattern": r"^1740(?:47|45|46|44)-\d$", "fixed": 20, "pitch": 2.5, "rows": 2, "order": "col", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
-    {"id": "connfly-ds1071", "title": "Connfly DS1071 (Dupont 2,54)", "pattern": r"^I-DS1071-SC[BW]0?(\d)X0?(\d{1,2})", "grid": True, "pitch": 2.54, "order": "col", "start": "TR", "latch": "none", "color": BLACK, "conf": "low"},
-    {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST XH)", "pattern": r"^I-DS1069-SC[BW]0*(\d+)", "pitch": 2.5, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "conf": "low"},
+    # DS1071 — Connfly C-DS1071-XXXXX-B (connfly.com/static/upload/file/pdf/DS1071.pdf): the female housing is drawn
+    # symmetric with no circuit-1 mark (Dupont has no maker drawing of its own), so the numbering stays unchecked.
+    {"id": "connfly-ds1071", "title": "Connfly DS1071 (Dupont 2,54)", "pattern": r"^I-DS1071-SC[BW]0?(\d)X0?(\d{1,2})", "grid": True, "pitch": 2.54, "order": "col", "start": "TR", "latch": "none", "color": BLACK, "conf": "low",
+     "note": "на чертеже Connfly DS1071 корпус без метки контакта 1 — контакт 1 по ответной вилке"},
+    # DS1069 — Connfly C-DS1069-XXXXX-E p. 2 «Female Housing» (connfly.com/static/upload/file//DS1069.pdf): front view =
+    # face with the lock, wire end up; the bottom (mating) view puts «Circuit No.1 Mark» at the right end -> from the
+    # wire side, lock up, contact 1 on the LEFT, exactly as JST eXH. Same sizes as XH: B = N·2.5 + 2.3, 4.1 thick
+    # (5.7 with the lock), 7.8 long.
+    {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST XH)", "pattern": r"^I-DS1069-SC[BW]0*(\d+)", "pitch": 2.5, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "conf": "high",
+     "src": "Connfly DS1069 + JST eXH", "note": "по чертежу Connfly DS1069 (метка Circuit No.1) и JST eXH: защёлка сверху, контакт 1 слева",
+     "body": {"extra": 4.8, "h": 4.1, "len": 7.8, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}, "color_by": ((r"-SCB", BLACK),)},
     {"id": "amass-xt", "title": "Amass XT", "pattern": r"^XT-?(30|60|90)", "fixed": 2, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": "#f2c200", "cavity": "round", "labels": ("", ""), "conf": "low"},
     {"id": "amass-qs8", "title": "Amass QS8", "pattern": r"^QS8", "fixed": 2, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": "#d7322d", "cavity": "round", "labels": ("", ""), "conf": "low"},
     {"id": "rj45", "title": "RJ45 8P8C", "pattern": r"^8P8C|^RJ-?45", "fixed": 8, "pitch": 1.02, "rows": 1, "order": "row", "start": "TR", "latch": "lever", "color": "#dfe8ea", "conf": "high"},
@@ -92,10 +133,28 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "molex-picoclasp", "title": "Molex Pico-Clasp (2 ряда)", "pattern": r"^501189-?(\d{2})10$", "pitch": 1.0, "rows": 2, "order": "col", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
     {"id": "molex-picoclasp-1r", "title": "Molex Pico-Clasp", "pattern": r"^501330-?0?(\d{1,2})00$", "pitch": 1.0, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
     {"id": "molex-milligrid", "title": "Molex Milli-Grid 2,0", "pattern": r"^51110-?(\d{2})\d1$", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "friction", "color": BLACK, "erp_only": True, "conf": "low"},
-    {"id": "hirose-df13", "title": "Hirose DF13", "pattern": r"^DF13-(\d+)S-1[.,]25C", "pitch": 1.25, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
-    {"id": "hirose-df14", "title": "Hirose DF14", "pattern": r"^DF14-(\d+)S-1[.,]25C", "pitch": 1.25, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
-    {"id": "hirose-df11", "title": "Hirose DF11 (2 ряда)", "pattern": r"^DF11-(\d+)DS", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
-    {"id": "jae-fix", "title": "JAE FI-X", "pattern": r"^FI-X(\d+)H", "pitch": 1.0, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": "#b9c0c6", "erp_only": True, "conf": "low"},
+    # Hirose drawings (third-angle; copies of the HRS PDFs from datasheet.lcsc.com — hirose.com blocks downloads): the
+    # top view shows the mating face (square pin entries), the front view has the wire end DOWN, the view under it is the
+    # wire end, the lowest view is the back face turned over. «CAVITY No.» there is the mould cavity mark, not a contact.
+    # DF13 — EDC3-083675: «POLARIZATION MARKING» ▽ and «MARKING ON EVERY FIVE CONTACTS» on the front face count
+    # contacts from the left; the locks (flag 1) sit on the BACK face -> from the wire side, locks up, contact 1 RIGHT.
+    {"id": "hirose-df13", "title": "Hirose DF13", "pattern": r"^DF13-(\d+)S-1[.,]25C", "pitch": 1.25, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "high",
+     "src": "Hirose EDC3-083675 (DF13-*S-1.25C)", "note": "по чертежу Hirose DF13: защёлки сверху, метка ▽ снизу — контакт 1 справа"},
+    # DF14 — EDC3-160306-01: «CONTACT NO. 1» ▽ at the left of the front face, and the lock (flag 2) is on that same front
+    # face -> from the wire side, lock up, contact 1 LEFT.
+    {"id": "hirose-df14", "title": "Hirose DF14", "pattern": r"^DF14-(\d+)S-1[.,]25C", "pitch": 1.25, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "high",
+     "src": "Hirose EDC3-160306-01 (DF14-*S-1.25C)", "note": "по чертежу Hirose DF14: защёлка и метка ▽ сверху — контакт 1 слева"},
+    # DF11 — EDC-162389-00-01: top view «Contact No.1» in the front row, «Contact No.2» behind it; the front face carries
+    # the polarizing ▽, a moulded «1» and «number of contacts minus 1», the back face «2» and «number of contacts». No
+    # latch. From the wire side with the ▽ face up: 1 top-left, 2 under it, odd numbers along the top row.
+    # A = B + 4.0 (B = (columns − 1)·2), 5.0 thick, 7.3 long.
+    {"id": "hirose-df11", "title": "Hirose DF11 (2 ряда)", "pattern": r"^DF11-(\d+)DS", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "mark", "color": IVORY, "erp_only": True, "conf": "high",
+     "src": "Hirose EDC-162389-00-01 (DF11-*DS-2C)", "note": "по чертежу Hirose DF11: метка ▽ и цифра 1 сверху — контакт 1 вверху слева, чётные снизу",
+     "body": {"extra": 4.0, "h": 5.0, "len": 7.3, "win": (1.2, 1.2)}},
+    # FI-X — the only maker drawing reachable is JAE SJ111287 (FI-X30HL-B, via datasheet.lcsc.com; jae.com 404s): it
+    # shows the housing and lock levers but no contact numbers, so the numbering stays unchecked.
+    {"id": "jae-fix", "title": "JAE FI-X", "pattern": r"^FI-X(\d+)H", "pitch": 1.0, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": "#b9c0c6", "erp_only": True, "conf": "low",
+     "note": "на чертеже JAE SJ111287 (FI-X30HL-B) номеров контактов нет — сверить по детали"},
     # D-Sub: two staggered rows; the standard numbering is mirrored between the socket and the pin side.
     {"id": "dsub", "title": "D-Sub", "pattern": r"^I?-?DS1033-0?(\d+)([FM])|^D-?SUB-?0?(\d+)([FM])|^D[BE]-?0?(9|15|25)([FMPS])", "kind": "dsub", "count_groups": (1, 3, 5), "gender_groups": (2, 4, 6), "pitch": 2.77, "color": "#c9ccd0", "erp_only": True, "conf": "low", "note": "по стандарту D-Sub, чертёж производителя не сверен"},
     {"id": "deutsch-dt", "title": "Deutsch DT", "pattern": r"^DT0([46])-(\d+)([PS])", "kind": "dt", "count_group": 2, "pitch": 4.0, "rows": 2, "order": "row", "start": "TL", "snake": True, "latch": "lever", "color": "#8d9297", "cavity": "round", "erp_only": True, "conf": "low", "note": "нумерация по кругу; сверить с цифрами на корпусе"},
@@ -265,7 +324,7 @@ def dsub_grid(count: int, male: bool) -> list[list[int]]:
 CATALOG_SAMPLES: dict[str, str] = {
     "jst-gh": "GHR-04V-S", "jst-sh": "SHR-04V-S-B", "jst-nsh": "NSHR-04V-S", "jst-xh": "XHP-4", "jst-ph": "PHR-4",
     "jst-eh": "EHR-4", "jst-zh": "ZHR-4", "jst-vh": "VHR-4N", "jst-pa": "PAP-04V-S", "jst-ze": "ZER-04V-S",
-    "jst-cz": "CZHR-04V-S", "jst-pni": "PNIRP-04V-S", "jst-rcy": "SYR-02T", "jst-sm-r": "SMR-04V-B",
+    "jst-cz": "CZHR-04V-S", "jst-pni": "PNIRP-04V-S", "jst-rcy": "SYR-02T", "jst-rcy-p": "SYP-02T-1", "jst-sm-r": "SMR-04V-B",
     "jst-sm-p": "SMP-04V-BC", "molex-picoblade": "51021-0400", "molex-minifit-jr": "39012080",
     "molex-microfit": "43025-0400", "molex-microfit-1r": "43645-0400", "molex-sl-2r": "22-55-2081",
     "te-multilock-040": "174047-2", "connfly-ds1071": "I-DS1071-SCB02X5", "connfly-ds1069": "I-DS1069-SCW004",

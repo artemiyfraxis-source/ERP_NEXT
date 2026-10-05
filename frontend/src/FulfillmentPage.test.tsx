@@ -10,7 +10,8 @@ const principal: Principal = {
     name: "Кладовщик",
     department: "Склад",
   },
-  roles: ["receiver"],
+  roles: ["foreman"],
+  access_level: "foreman",
   permissions: { fulfillment: "edit", handout: "edit" },
 };
 
@@ -103,7 +104,7 @@ it("opens the lot search already filtered by the position name and binds the pic
   }));
 });
 
-it("does not load lots or show editing actions to a view-only production role", async () => {
+it("does not load lots or show editing actions to a view-only grant", async () => {
   const paths: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     paths.push(String(input));
@@ -112,7 +113,8 @@ it("does not load lots or show editing actions to a view-only production role", 
 
   render(<FulfillmentPage principal={{
     ...principal,
-    roles: ["master"],
+    roles: ["foreman"],
+    access_level: "foreman",
     permissions: { fulfillment: "view" },
   }} />);
 
@@ -125,11 +127,11 @@ it("does not load lots or show editing actions to a view-only production role", 
   expect(screen.queryByRole("button", { name: "Удалить заявку" })).not.toBeInTheDocument();
 });
 
-// Owner 02.10.2026: the production director could not pick a kit for the storekeeper — the server gives a full-access
-// role every section on edit and lets it past the route role lists (require_section), the screen hid the buttons.
-const director: Principal = { ...principal, roles: ["prodhead"], permissions: { fulfillment: "edit", handout: "edit" } };
+// Owner 02.10.2026: the production director could not pick a kit for the storekeeper. Access levels (04.10.2026): the
+// grant on the section decides, whoever holds it — here a technical lead with edit on picking and handout.
+const director: Principal = { ...principal, roles: ["tech_lead"], access_level: "tech_lead", permissions: { fulfillment: "edit", handout: "edit" } };
 
-it("lets the production director pick a kit for the storekeeper (full-access role)", async () => {
+it("lets a technical lead with edit on picking pick a kit for the storekeeper", async () => {
   const posts: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -150,7 +152,7 @@ it("lets the production director pick a kit for the storekeeper (full-access rol
   expect(screen.queryByRole("button", { name: "Удалить заявку" })).not.toBeInTheDocument();
 });
 
-it("lets the production director hand a kit out (full-access role)", async () => {
+it("lets a technical lead with edit on handout hand a kit out", async () => {
   const posts: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -389,7 +391,7 @@ it("marks the kit complete once every line is closed and sends it to handout wit
   });
 
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  render(<FulfillmentPage principal={{ ...principal, roles: ["engineer"], permissions: { fulfillment: "edit" } }} />);
+  render(<FulfillmentPage principal={{ ...principal, roles: ["tech_lead"], access_level: "tech_lead", permissions: { fulfillment: "edit" } }} />);
   await expand("FRX-ISS-26-0001");
   expect(await screen.findByText("Взята в работу")).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Укомплектован" }));
@@ -462,12 +464,34 @@ it("lets only the administrator delete a request", async () => {
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<FulfillmentPage principal={{ ...principal, roles: ["admin"] }} mode="pick" />);
+  render(<FulfillmentPage principal={{ ...principal, roles: ["admin"], access_level: "admin" }} mode="pick" />);
   await expand("FRX-ISS-26-0001");
   fireEvent.click(await screen.findByRole("button", { name: "Удалить заявку" }));
 
   await waitFor(() => expect(deleted).toBe(`/api/issues/${request.id}`));
   expect(await screen.findByText("Заявка удалена: позиций 1.")).toBeInTheDocument();
+});
+
+it("offers «Удалить заявку» to superadmin and admin alone, never by a grant on picking", async () => {
+  const mocks = () => vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [request], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  for (const level of ["commercial", "tech_lead", "foreman", "operator"]) {
+    mocks();
+    const view = render(<FulfillmentPage principal={{ ...principal, roles: [level], access_level: level, permissions: { fulfillment: "edit", handout: "edit" } }} mode="pick" />);
+    await expand("FRX-ISS-26-0001");
+    await screen.findByRole("button", { name: "Выбрать ГРН" });
+    expect(screen.queryByRole("button", { name: "Удалить заявку" })).not.toBeInTheDocument();
+    view.unmount();
+    vi.restoreAllMocks();
+  }
+  mocks();
+  render(<FulfillmentPage principal={{ ...principal, roles: ["superadmin"], access_level: "superadmin", permissions: {} }} mode="pick" />);
+  await expand("FRX-ISS-26-0001");
+  expect(await screen.findByRole("button", { name: "Удалить заявку" })).toBeInTheDocument();
 });
 
 it("creates a request from a calculation link: preview by warehouse, picks and «нет на складе» (IssueCalc)", async () => {
@@ -532,7 +556,7 @@ it("walks every page of requests, not only the first hundred", async () => {
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<FulfillmentPage principal={{ ...principal, roles: ["master"], permissions: { fulfillment: "view" } }} />);
+  render(<FulfillmentPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { fulfillment: "view" } }} />);
 
   expect(await screen.findByRole("button", { name: /^900К\.1/ })).toBeInTheDocument();
   expect(screen.getByText("FRX-ISS-26-0001")).toBeInTheDocument();

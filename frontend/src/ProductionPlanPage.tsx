@@ -126,7 +126,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const canEdit = canAct(principal, "production", ["master", "admin"]);
+  const canEdit = canAct(principal, "production");
 
   async function reload() {
     setError("");

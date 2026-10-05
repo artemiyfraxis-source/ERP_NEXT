@@ -33,9 +33,11 @@ const STAGE_WORD: Record<string, string> = {
 };
 
 export function ShippingPage({ principal }: { principal: Principal }) {
-  const role = principal.roles.includes("admin") ? "admin" : principal.roles.includes("pm") ? "pm" : principal.roles.includes("receiver") ? "receiver" : "";
-  // SHIP_ROLE_VIEWS_: у кладовщика первой идёт «Готовая продукция», у остальных — «Проекты».
-  const [tab, setTab] = useState<Tab>(role === "receiver" ? "goods" : "projects");
+  // Два ключа матрицы: «Отгрузка» (`shipping`) — менеджер проекта, «Отгрузка — склад» (`shipping_goods`) — кладовщик.
+  const canManage = canAct(principal, "shipping");
+  const canWarehouse = canAct(principal, "shipping_goods");
+  // SHIP_ROLE_VIEWS_: у кладовщика (правка склада без правки менеджера) первой идёт «Готовая продукция», у остальных — «Проекты».
+  const [tab, setTab] = useState<Tab>(canWarehouse && !canManage ? "goods" : "projects");
   const [goods, setGoods] = useState<FinishedGood[]>([]);
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [addressees, setAddressees] = useState<ProjectAddressee[]>([]);
@@ -44,8 +46,6 @@ export function ShippingPage({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
-  const canManage = canAct(principal, "shipping", ["pm", "admin"]);
-  const canWarehouse = canAct(principal, "shipping", ["receiver", "admin"]);
   const canEdit = canManage || canWarehouse;
 
   async function reload() {
