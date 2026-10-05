@@ -216,6 +216,13 @@ describe("manual assembly: diagram first", () => {
     expect(manualFromConfig({ ops: [] })).toBeNull();
   });
 
+  it("genParams: side Б in Cyrillic, empty values omitted instead of a dash", () => {
+    expect(genParams({ side: "B", strip: { a: true, lenA: "", b: true, lenB: "5" } })).toBe("сторона Б · зачистка Б 5 мм");
+    expect(genParams({ strip: { a: true, lenA: "", b: true, lenB: "" } })).toBe("");
+    expect(genParams({ side: "B" })).not.toMatch(/[BВ]/);
+    expect(genParams({ strip: { a: true, lenA: "4", b: true, lenB: "6" } })).toBe("зачистка А 4, Б 6 мм");
+  });
+
   it("round-trips generator operations: their fields and the assembly data stay, the norm is editable, the name is Russian", () => {
     const wires = [{ name: "МГТФ", art: "МГТФ", qty: 2, length: 160 }];
     const generated = {

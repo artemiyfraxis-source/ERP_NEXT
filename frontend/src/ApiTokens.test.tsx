@@ -116,3 +116,28 @@ it("is a tab of «Доступы» for full access only", async () => {
   expect(visibleNav(as("admin")).some((item) => item.id === "access")).toBe(true);
   expect(visibleNav(as("operator")).some((item) => item.id === "access")).toBe(false);
 });
+
+it("explains why the issue button is disabled and has its own heading", async () => {
+  serve();
+  render(<ApiTokens />);
+  await screen.findByText("Генератор на ноутбуке");
+  expect(screen.getByRole("heading", { name: "Выпустить токен" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Выпустить токен" })).toBeDisabled();
+  expect(screen.getByText("Укажите название и хотя бы одну область")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Название"), { target: { value: "Новый" } });
+  fireEvent.click(screen.getByLabelText("Генератор техкарт"));
+  expect(screen.queryByText("Укажите название и хотя бы одну область")).toBeNull();
+});
+
+it("closes the open one-time secret panel after a revoke", async () => {
+  serve();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<ApiTokens />);
+  await screen.findByText("Генератор на ноутбуке");
+  fireEvent.change(screen.getByLabelText("Название"), { target: { value: "Новый" } });
+  fireEvent.click(screen.getByLabelText("Генератор техкарт"));
+  fireEvent.click(screen.getByRole("button", { name: "Выпустить токен" }));
+  await screen.findByLabelText("Токен");
+  fireEvent.click(screen.getAllByRole("button", { name: "Отозвать" })[0]);
+  await waitFor(() => expect(screen.queryByLabelText("Токен")).toBeNull());
+});

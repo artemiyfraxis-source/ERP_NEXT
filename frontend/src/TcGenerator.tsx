@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   assemblyApi,
   referencesApi,
@@ -137,7 +137,7 @@ async function readRefs(): Promise<Refs> {
  * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
  * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange }: {
   card: ProjectTechcard;
   kit?: KitsetBom | null;
   kitError?: string;
@@ -148,6 +148,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   /** Экспертное (JSON-конфигурация) — под «Ещё», рядом со сводом материалов. */
   more?: ReactNode;
   onConfig?: (config: Record<string, unknown>) => void;
+  /** Собранный по черновику, но ещё без урока: живёт у владельца вкладок, чтобы переживать переход на «ТК КБn». */
+  builtId?: string;
+  onBuiltChange?: (draftId: string) => void;
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
   const [S, setS] = useState<GenState>(emptyState);
@@ -194,14 +197,18 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // (draftId) уходит в сборку, собранный (builtId) ждёт «Что поправили и почему».
   const [drafts, setDrafts] = useState<{ items: AssemblyDraft[]; error: string }>({ items: [], error: "" });
   const [draftId, setDraftId] = useState("");
-  const [builtId, setBuiltId] = useState("");
+  const errorBanner = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (status.error && status.text) errorBanner.current?.scrollIntoView?.({ block: "nearest" }); }, [status]);
+  const [builtOwn, setBuiltOwn] = useState("");
+  const builtId = builtProp ?? builtOwn;
+  const setBuiltId = (id: string) => { setBuiltOwn(id); onBuiltChange?.(id); };
   const reloadDrafts = (live: () => boolean = () => true) =>
     assemblyApi.drafts(card.project, card.item_index)
       .then((result) => { if (live()) setDrafts({ items: result?.items ?? [], error: "" }); })
       .catch((reason) => { if (live()) setDrafts({ items: [], error: reason instanceof Error ? reason.message : "Черновики не прочитаны" }); });
   useEffect(() => {
     let alive = true;
-    setDraftId(""); setBuiltId(""); setDrafts({ items: [], error: "" });
+    setDraftId(""); setDrafts({ items: [], error: "" });
     void reloadDrafts(() => alive);
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -863,6 +870,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "on" : ""}
         onClick={() => { setRouteError(""); update((current) => switchGenTab(current, tab)); }}>{label}</button>)}</div>
 
+    {status.text && status.error && <div className="error-banner gen-error" role="alert" ref={errorBanner}>{status.text}</div>}
+
     <div className="gen-layout">
       <div className="gen-main"><div className="gen-grid">
         {sheet}
@@ -903,7 +912,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         </div>
         {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». */}
         <div className="gen-foot">
-          {status.text ? <div className={status.error ? "error-banner" : "gen-status"} role={status.error ? "alert" : undefined}>{status.text}</div>
+          {status.text && !status.error ? <div className="gen-status">{status.text}</div>
             : <span className="gen-foot-sum">{summary}</span>}
           {!manualTab && <button className="secondary" disabled={busy || !ops.length} onClick={() => void editByHand()}>Поправить вручную</button>}
           <button className="primary" disabled={busy} onClick={() => void generate()}>{busy ? "Собираю…" : card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>

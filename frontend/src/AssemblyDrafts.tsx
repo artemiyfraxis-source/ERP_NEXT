@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { assemblyApi, type AssemblyDraft } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { pluralBlocks } from "./etkRoute";
-import { formatDate } from "./format";
+import { formatDate, formatDay } from "./format";
 
 /* «Черновики с чертежей» (владелец 05.10): схему по чертежу позиции набрал Claude или агент на сервере; мастер открывает
    черновик в «Ручной сборке», правит и собирает — сборка завершает черновик, и пара «черновик → итог» с уроком
    («что поправили и почему») становится образцом корпуса. */
 
-const SOURCES: Record<string, string> = { "claude-code": "Claude", "server-agent": "агент на сервере", manual: "вручную" };
+const SOURCES: Record<string, string> = { "claude-code": "Claude", "server-agent": "агент", manual: "вручную" };
 const DRAWING_TYPES = /\.(pdf|jpe?g|png)$/i;
 
 export const draftSource = (source: string) => SOURCES[source] || source;
@@ -73,6 +73,22 @@ function DraftDetail({ draft, onSaved }: { draft: AssemblyDraft; onSaved: (draft
   </div>;
 }
 
+/** Полоса «Собрано по черновику…» с полем урока: на вкладке «ТК КБn», пока урок не записан (черновик читается по id). */
+export function PendingLesson({ draftId }: { draftId: string }) {
+  const [draft, setDraft] = useState<AssemblyDraft | null>(null);
+  useEffect(() => {
+    let live = true;
+    setDraft(null);
+    void assemblyApi.draft(draftId).then((result) => { if (live) setDraft(result); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [draftId]);
+  if (!draft) return null;
+  return <div className="draft-built draft-strip" role="group" aria-label="Собрано по черновику">
+    <strong>Собрано по черновику от {formatDay(draft.created_at)} — запишите, что поправили</strong>
+    <LessonEditor draft={draft} onSaved={setDraft} />
+  </div>;
+}
+
 export function AssemblyDrafts({ project, itemIndex, items, error, openId, builtId, onOpen, onChanged, onUploaded }: {
   project: string;
   itemIndex: string;
@@ -119,17 +135,17 @@ export function AssemblyDrafts({ project, itemIndex, items, error, openId, built
   }
 
   const columns: DataColumn<AssemblyDraft>[] = [
-    { key: "date", title: "Дата", value: (draft) => draft.created_at, render: (draft) => formatDate(draft.created_at), width: 130 },
-    { key: "source", title: "Источник", value: (draft) => draftSource(draft.source), width: 130 },
-    { key: "drawing", title: "Чертёж", value: (draft) => (draft.drawing_url ? "есть" : ""), width: 80,
+    { key: "date", title: "Дата", value: (draft) => draft.created_at, render: (draft) => formatDay(draft.created_at) },
+    { key: "source", title: "Источник", value: (draft) => draftSource(draft.source) },
+    { key: "drawing", title: "Чертёж", value: (draft) => (draft.drawing_url ? "есть" : ""),
       render: (draft) => (draft.drawing_url
         ? <a href={draft.drawing_url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>Чертёж</a> : "—") },
-    { key: "status", title: "Статус", value: (draft) => draftStatus(draft.status), width: 90,
+    { key: "status", title: "Статус", value: (draft) => draftStatus(draft.status),
       render: (draft) => <span className={draft.status === "final" ? "tone-ok" : "tone-info"}>{draftStatus(draft.status)}</span> },
-    { key: "note", title: "Заметка", value: (draft) => draft.note, wrap: true, width: "40%",
+    { key: "note", title: "Заметка", value: (draft) => draft.note, wrap: true,
       render: (draft) => <span className="draft-note-cell" title={draft.note || undefined}>{draft.note}</span> },
-    { key: "open", title: "", value: () => "", width: 110,
-      render: (draft) => <button type="button" className="secondary small" disabled={busyId === draft.id || openId === draft.id}
+    { key: "open", title: "", value: () => "",
+      render: (draft) => <button type="button" className="secondary small draft-open" disabled={busyId === draft.id || openId === draft.id}
         aria-label={`Открыть черновик от ${formatDate(draft.created_at)}`}
         onClick={(event) => { event.stopPropagation(); void open(draft); }}>{openId === draft.id ? "Открыт" : "Открыть"}</button> },
   ];

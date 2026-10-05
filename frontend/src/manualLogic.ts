@@ -163,7 +163,7 @@ export function opMinutes(op: ManualOp, partQty: number): number {
 /** Параметры операции генератора одной строкой для экрана: длины, зачистка, терминал, разъём, ТУТ, коакс — только то, что задано. */
 export function genParams(gen: Record<string, unknown>): string {
   const parts: string[] = [];
-  const side = str(gen.side) === "A" ? "А" : str(gen.side) === "B" ? "В" : "";
+  const side = str(gen.side) === "A" ? "А" : str(gen.side) === "B" ? "Б" : "";
   if (side) parts.push(`сторона ${side}`);
   const wires = list(gen.wires);
   if (wires.length) {
@@ -172,7 +172,9 @@ export function genParams(gen: Record<string, unknown>): string {
   }
   const strip = gen.strip && typeof gen.strip === "object" ? gen.strip as Record<string, unknown> : null;
   if (strip) {
-    const ends = [strip.a ? `А ${str(strip.lenA) || "—"}` : "", strip.b ? `В ${str(strip.lenB) || "—"}` : ""].filter(Boolean);
+    // Пустая длина не показывается.
+    const a = strip.a ? str(strip.lenA) : "", b = strip.b ? str(strip.lenB) : "";
+    const ends = [a && `А ${a}`, b && `Б ${b}`].filter(Boolean);
     if (ends.length) parts.push(`зачистка ${ends.join(", ")} мм`);
   }
   const ep = gen.ep && typeof gen.ep === "object" ? gen.ep as Record<string, unknown> : null;

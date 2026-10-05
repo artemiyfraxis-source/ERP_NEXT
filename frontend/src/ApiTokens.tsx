@@ -56,6 +56,7 @@ export function ApiTokens() {
     setError("");
     try {
       await apiTokensApi.revoke(token.id);
+      setSecret(null);
       await load();
     } catch (reason) {
       setError(failureText(reason, "Не удалось отозвать токен"));
@@ -89,7 +90,7 @@ export function ApiTokens() {
     {
       key: "actions", title: "", value: () => "",
       render: (token) => token.status === "revoked" ? null
-        : <button className="secondary small" disabled={busy} onClick={() => void revoke(token)}>Отозвать</button>,
+        : <button className="secondary small token-revoke" disabled={busy} onClick={() => void revoke(token)}>Отозвать</button>,
     },
   ];
 
@@ -106,6 +107,8 @@ export function ApiTokens() {
         <button className="secondary small" onClick={() => setSecret(null)}>Закрыть</button>
       </div>
     </div>}
+    <section className="panel token-issue" aria-label="Выпустить токен">
+    <h3>Выпустить токен</h3>
     <form className="token-form" onSubmit={(event) => { event.preventDefault(); void issue(); }}>
       <label>Название
         <input value={name} maxLength={120} onChange={(event) => setName(event.target.value)} />
@@ -120,8 +123,11 @@ export function ApiTokens() {
       <label>Срок, дней
         <input type="number" min={1} max={365} value={days} onChange={(event) => setDays(event.target.value)} />
       </label>
-      <button className="primary small" type="submit" disabled={busy || !canIssue}>Выпустить токен</button>
+      <button className="primary small token-submit" type="submit" disabled={busy || !canIssue}>Выпустить токен</button>
     </form>
+    {!canIssue && !busy && <p className="token-hint">{name.trim() === "" || scopes.length === 0 ? "Укажите название и хотя бы одну область" : "Срок — целое число дней от 1 до 365"}</p>}
+    </section>
+    <h3 className="token-list-title">Выданные токены</h3>
     {tokens === null && !error ? <p className="empty">Загрузка…</p>
       : <DataTable label="Токены API" rows={tokens ?? []} rowKey={(token) => token.id} columns={columns}
         emptyText="Токенов нет — выпустите первый" />}

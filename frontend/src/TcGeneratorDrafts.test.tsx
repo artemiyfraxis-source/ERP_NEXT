@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { TcGenerator } from "./TcGenerator";
+import { PendingLesson } from "./AssemblyDrafts";
 import type { AssemblyDraft, KitsetBom, ProjectTechcard } from "./api";
 
 /* «Чертёж → схема» (владелец 05.10): «Поправить вручную» из «Типовой» и «Черновики с чертежей» в ручной сборке. */
@@ -99,7 +101,7 @@ it("«Поправить вручную» opens the typical assembly in the manu
   expect(screen.getByRole("region", { name: "Блок «Жгут XHP 150мм»" })).toBeInTheDocument();
   const first = screen.getByLabelText("Операция 1: Резка с разделкой");
   expect(within(first).getByLabelText("Название операции 1").tagName).toBe("B");
-  expect(first).toHaveTextContent("1 пров. · L 160 мм · зачистка А 5, В 5 мм");
+  expect(first).toHaveTextContent("1 пров. · L 160 мм · зачистка А 5, Б 5 мм");
   expect(first).not.toHaveTextContent("cutWireStrip");
   expect(screen.getByLabelText("Операция 2: Опрессовка терминалов")).toHaveTextContent("сторона А · 1 пров. · L 160 мм · терминал SXH-001T-P0.6 · разъём XHP-2");
 
@@ -138,9 +140,9 @@ it("lists the drafts of the position, opens one into the manual assembly and bui
 
   const section = await screen.findByRole("region", { name: "Черновики с чертежей" });
   expect(await within(section).findByText("Схема по чертежу КБ1, лист 2")).toBeInTheDocument();
-  expect(within(section).getByText("05.10.2026 10:30")).toBeInTheDocument();
+  expect(within(section).getByText("05.10.2026")).toBeInTheDocument();
   expect(within(section).getByText("Claude")).toBeInTheDocument();
-  expect(within(section).getByText("агент на сервере")).toBeInTheDocument();
+  expect(within(section).getByText("агент")).toBeInTheDocument();
   expect(within(section).getByText("черновик")).toBeInTheDocument();
   expect(within(section).getByText("образец")).toBeInTheDocument();
   expect(within(section).getByRole("link", { name: "Чертёж" })).toHaveAttribute("href", "/api/techcards/kitsets/P-100/documents/doc1");
@@ -218,4 +220,59 @@ it("uploads a drawing of the position into its КД", async () => {
   fireEvent.change(screen.getByLabelText("Файл чертежа"), { target: { files: [new File(["x"], "KB1.dwg")] } });
   expect(await screen.findByRole("alert")).toHaveTextContent("Чертёж принимается в PDF, JPG или PNG.");
   expect(calls.filter((call) => call.path === "/api/techcards/assembly/drawings")).toHaveLength(1);
+});
+
+it("keeps the drafts table compact: no percent widths, the open action stays a row button", async () => {
+  mockApi([draftRow({ note: "Длинная заметка ".repeat(20) })]);
+  mount();
+  await openManual();
+  const section = await screen.findByRole("region", { name: "Черновики с чертежей" });
+  await within(section).findByRole("button", { name: /^Открыть черновик/ });
+  const styled = [...section.querySelectorAll<HTMLElement>("th, td, col")].filter((node) => /%/.test(node.style.width));
+  expect(styled).toHaveLength(0);
+  expect(within(section).getByRole("button", { name: /^Открыть черновик/ })).toHaveTextContent("Открыть");
+  expect(section.querySelector(".draft-note-cell")).toHaveAttribute("title", expect.stringContaining("Длинная заметка"));
+});
+
+it("keeps the pending lesson across the tab switch and saves it on the ТК tab", async () => {
+  const lessons: unknown[] = [];
+  mockApi([draftRow()], (path, init) => {
+    if (path === "/api/techcards/assembly/drafts/d1" && !init?.method) return json({ ...draftRow(), draft_config: draftConfig() });
+    if (path === "/api/techcards/assembly/drafts/d1/lesson" && init?.method === "PUT") {
+      lessons.push(JSON.parse(String(init.body)));
+      return json(draftRow({ status: "final", lesson: "Поменяли порядок" }));
+    }
+    return undefined;
+  });
+  // The position owns the tabs: the generator unmounts on build, the id lives above it.
+  function Position() {
+    const [tab, setTab] = useState<"gen" | "tc">("gen");
+    const [built, setBuilt] = useState("");
+    const onBuild = async () => { setTab("tc"); return true; };
+    return tab === "gen"
+      ? <TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kit()} builtId={built} onBuiltChange={setBuilt} />
+      : <div>{built && <PendingLesson draftId={built} />}</div>;
+  }
+  render(<Position />);
+  await openManual();
+  fireEvent.click(await screen.findByRole("button", { name: /^Открыть черновик/ }));
+  await screen.findByLabelText("Название операции 2");
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+
+  const strip = await screen.findByRole("group", { name: "Собрано по черновику" });
+  expect(strip).toHaveTextContent("Собрано по черновику от 05.10.2026 — запишите, что поправили");
+  fireEvent.change(within(strip).getByLabelText("Что поправили и почему"), { target: { value: "Поменяли порядок" } });
+  fireEvent.click(within(strip).getByRole("button", { name: "Сохранить урок" }));
+  await waitFor(() => expect(lessons).toEqual([{ lesson: "Поменяли порядок" }]));
+});
+
+it("shows the manual-assembly validation error as a banner above the footer, not inside it", async () => {
+  mockApi([], (path, init) => (path === "/api/techcards/assembly/from-generator" && init?.method === "POST" ? json(fromGenerator()) : undefined));
+  const onBuild = vi.fn().mockRejectedValue(new Error("Не заполнено: название блока"));
+  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kit()} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
+  fireEvent.click(await screen.findByRole("button", { name: "Создать" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Ручная сборка: добавьте хотя бы одну операцию");
+  expect(alert.closest(".gen-foot")).toBeNull();
 });
