@@ -19,6 +19,7 @@ from .modules.warehouse import api as warehouse_api
 from .modules.fulfillment import api as fulfillment_api
 from .modules.production import api as production_api
 from .modules.production import plan_api as production_plan_api
+from .modules.production import autoplan_api as production_autoplan_api
 from .modules.shipping import api as shipping_api
 from .modules.references import api as references_api
 from .modules.operations import api as operations_api
@@ -60,6 +61,7 @@ app.include_router(warehouse_api.router)
 app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
 app.include_router(production_plan_api.router)
+app.include_router(production_autoplan_api.router)
 app.include_router(kitsets_api.router)
 app.include_router(shipping_api.router)
 app.include_router(references_api.router)
