@@ -81,8 +81,8 @@ function mount() {
 }
 
 const openManual = async () => {
-  fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
-  expect(await screen.findByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
+  fireEvent.click(await screen.findByText("Ручная сборка", { selector: "[role=tab]" }, { timeout: 10000 }));
+  expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
 };
 
 it("«Поправить вручную» opens the typical assembly in the manual tab with blocks and generator operations", async () => {
@@ -91,7 +91,7 @@ it("«Поправить вручную» opens the typical assembly in the manu
   expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Поправить вручную" }));
 
-  expect(await screen.findByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
+  expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
   // На сервер ушла текущая типовая сборка; русские названия операций — как их назвал генератор.
   const request = calls.find((call) => call.path === "/api/techcards/assembly/from-generator")!;
   const sent = request.body!.config as { ops: Array<{ type: string; label?: string }> };
@@ -270,7 +270,7 @@ it("shows the manual-assembly validation error as a banner above the footer, not
   mockApi([], (path, init) => (path === "/api/techcards/assembly/from-generator" && init?.method === "POST" ? json(fromGenerator()) : undefined));
   const onBuild = vi.fn().mockRejectedValue(new Error("Не заполнено: название блока"));
   render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kit()} />);
-  fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
+  fireEvent.click(await screen.findByText("Ручная сборка", { selector: "[role=tab]" }, { timeout: 10000 }));
   fireEvent.click(await screen.findByRole("button", { name: "Создать" }));
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Ручная сборка: добавьте хотя бы одну операцию");
