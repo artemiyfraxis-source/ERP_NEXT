@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Sequence
 from uuid import UUID
@@ -411,16 +412,34 @@ class SqlAlchemyProcurementRepository:
         return [_line_domain(row) for row in self.session.scalars(statement)]
 
     def by_buyer(
-        self, actor: Actor, limit: int, after_id: UUID | None = None
+        self,
+        actor: Actor,
+        limit: int,
+        after_id: UUID | None = None,
+        accepted_since: date | None = None,
     ) -> list[ProcurementLine]:
-        statement = (
-            select(ProcurementLineRow)
-            .where(
-                ProcurementLineRow.buyer_id == actor.id,
-                ProcurementLineRow.status.not_in(
-                    [ProcurementStatus.DONE.value, ProcurementStatus.CANCELLED.value]
+        wanted = ProcurementLineRow.status.not_in(
+            [ProcurementStatus.DONE.value, ProcurementStatus.CANCELLED.value]
+        )
+        if accepted_since is not None:
+            # «Готово», принятые не раньше `accepted_since` (ФАКТ. ДАТА; без неё — день создания строки).
+            since = datetime.combine(accepted_since, datetime.min.time()).replace(tzinfo=timezone.utc)
+            wanted = or_(
+                wanted,
+                and_(
+                    ProcurementLineRow.status == ProcurementStatus.DONE.value,
+                    or_(
+                        ProcurementLineRow.actual_arrival >= accepted_since,
+                        and_(
+                            ProcurementLineRow.actual_arrival.is_(None),
+                            ProcurementLineRow.created_at >= since,
+                        ),
+                    ),
                 ),
             )
+        statement = (
+            select(ProcurementLineRow)
+            .where(ProcurementLineRow.buyer_id == actor.id, wanted)
             .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
             .limit(limit)
         )
