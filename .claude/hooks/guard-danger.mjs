@@ -5,7 +5,12 @@
 //   - force-push / hard reset / clean / discard  -> ask  (destroys work no tree can restore)
 //   - live stock import without --dry-run        -> ask  (writes the warehouse into a real DB)
 //   - alembic downgrade                          -> ask  (drops columns/tables with their data)
+//   - not the owner's git identity: push to main, gh pr merge, server update/deploy/ssh -> deny
+//     (main auto-deploys to production; Витя's sessions stop at a PR — .claude/team/RULES.md)
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+
+const OWNER_EMAIL = "artemiyfraxis@gmail.com";
 
 let input;
 try {
@@ -34,4 +39,21 @@ if (/import_stock(?![^|;&]*--dry-run)/.test(cmd)) {
 }
 if (/alembic(\.exe)?\s+downgrade/.test(cmd)) {
   decide("ask", "alembic downgrade drops columns/tables together with their data. Confirm the target DB is a throwaway one.");
+}
+
+const git = (args) => {
+  for (const cwd of [input.cwd, process.cwd()].filter(Boolean)) {
+    try {
+      return execSync(`git ${args}`, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {}
+  }
+  return "";
+};
+const touchesMain =
+  /git\s+push\b[^|;&]*[\s:+](refs\/heads\/)?main(\s|$)/.test(cmd) ||
+  (/git\s+push\b(?![^|;&]*\s[\w./-]+\s+[\w./:+-]+)/.test(cmd) && git("rev-parse --abbrev-ref HEAD") === "main");
+const releases =
+  /gh\s+pr\s+merge|gh\s+workflow\s+run\s+[^|;&]*update-server|push\.ps1|erp@|100\.96\.49\.68/.test(cmd);
+if ((touchesMain || releases) && git("config user.email").toLowerCase() !== OWNER_EMAIL) {
+  decide("deny", "Blocked by .claude/hooks/guard-danger.mjs: this session is not the owner's (git user.email). main auto-deploys to production, so only the owner merges, pushes main and updates the server. Push your branch vitya/<topic>, mark the PR ready and stop — see .claude/team/RULES.md.");
 }

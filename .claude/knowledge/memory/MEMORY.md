@@ -19,3 +19,4 @@
 - [Techcards per project](techcards-bulk.md) — projects wiped 30.09 (migration 0078); owner creates them, one project from Google only on request
 - [Parallel sessions and worktrees](parallel-sessions-worktrees.md) — never remove a worktree or commit on a branch another session owns
 - [Resume at limit reset](resume-at-limit-reset.md) — on «session limit» schedule a cron at the reset time and resume workers
+- [Two developers](team-two-devs.md) — Витя (h4styq) since 05.10: own rules, shared .claude/team/RULES.md, only owner touches main
