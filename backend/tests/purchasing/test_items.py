@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.modules.procurement.application import consume_procurement_requested
 from app.modules.procurement.infrastructure import ProcurementLineRow, SqlAlchemyProcurementUnitOfWork
+from app.modules.purchasing.suppliers import supplier_key
 from app.modules.purchasing import items as repo
 from app.modules.purchasing.infrastructure import (
     ItemAliasRow,
@@ -256,7 +257,7 @@ def test_import_apply_is_idempotent_and_links_collisions(env):
     with sessions() as s:
         s.add(SupplierRow(id=supplier_id, name="ООО Ромашка", name_key="ооо ромашка", categories=[], is_key=False, domains=[], version=1, created_at=NOW))
         s.flush()
-        s.add(SupplierNameRow(name_key="ооо ромашка", supplier_id=supplier_id, created_at=NOW))
+        s.add(SupplierNameRow(name_key=supplier_key("ООО Ромашка"), supplier_id=supplier_id, created_at=NOW))
         s.commit()
     l1 = add_line(sessions, "Разъём SMA штекер", article="sma-f 01", invoice_name="SMA-F plug", supplier="ООО  Ромашка")
     l2 = add_line(sessions, "Кабель МГТФ 0.35", unit="м", invoice_name="МГТФ 0,35 бухта", supplier="ИП Неизвестный")

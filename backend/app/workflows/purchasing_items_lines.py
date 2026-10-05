@@ -20,6 +20,7 @@ from app.modules.procurement.infrastructure import ProcurementLineRow as R
 from app.modules.procurement.price_history import article_key, name_key, unit_price_with_vat
 from app.modules.purchasing import items as items_repo
 from app.modules.purchasing.infrastructure import ItemRow, LineItemRow, SupplierNameRow
+from app.modules.purchasing.suppliers import supplier_key
 from app.shared.identity import Actor
 
 CLOSED_STATUSES = (ProcurementStatus.DONE.value, ProcurementStatus.CANCELLED.value)
@@ -227,7 +228,7 @@ def run_import(uow, procurement_uow_factory: Callable, actor: Actor, now: dateti
                 key = items_repo.alias_key(text)
                 if not key or key == own:
                     continue
-                supplier_id = supplier_ids.get(name_key(supplier_text)) if supplier_text else None
+                supplier_id = supplier_ids.get(supplier_key(supplier_text)) if supplier_text else None
                 if supplier_id is None and index.by_name.get(key, target_id) != target_id:
                     continue  # a generic name that already belongs to another item is not stolen
                 try:
