@@ -735,6 +735,26 @@ it("lets a planner view a fitter's queue read-only", async () => {
   expect(screen.getByText("000009-6")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "▶ Начать" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Исправить" })).not.toBeInTheDocument();
+  // Заголовки не говорят «Мои», пока смотрим чужое; кнопка возвращает к своим заданиям.
+  expect(screen.getByRole("heading", { level: 1, name: "Задания" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Коробки: Оператор" })).toBeInTheDocument();
+  expect(screen.queryByText("Мои коробки")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Вернуться к моим заданиям" }));
+  await waitFor(() => expect(screen.queryByText("Вид сотрудника Оператор — только просмотр")).not.toBeInTheDocument());
+  expect(select).toHaveValue("");
+  expect(screen.getByRole("heading", { level: 1, name: "Мои задания" })).toBeInTheDocument();
+});
+
+it("tells a planner with the selector to pick an employee when their own view is empty", async () => {
+  viewAsFetch([]);
+  render(<ProductionPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { production: "view", myops: "view" } }} mine />);
+  expect(await screen.findByText("Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания.")).toBeInTheDocument();
+});
+
+it("keeps the old empty text for staff without the selector", async () => {
+  viewAsFetch([]);
+  render(<ProductionPage principal={{ ...principal, roles: ["operator"], access_level: "operator", permissions: { myops: "edit" } }} mine />);
+  expect(await screen.findByText(/Операции вам пока не назначены/)).toBeInTheDocument();
 });
 
 it("shows no employee selector to ordinary staff", async () => {

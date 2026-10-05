@@ -2439,3 +2439,8 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-actions { position: sticky; bottom: 0; background: var(--background, #f6f8f8); padding: 8px 0; }
 @media (max-width: 700px) { .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
 @media (pointer: coarse) { .autoplan-check, .autoplan-row { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
+
+/* Вид сотрудника: выбор рядом с заголовком, заметная полоса «только просмотр» */
+.view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.view-strip { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; padding: 10px 14px; border: 1px solid var(--warn-border); border-radius: 8px; background: var(--warn-soft); font-size: 14px; font-weight: 600; }
+@media (pointer: coarse) { .view-strip button { min-height: 40px; } }

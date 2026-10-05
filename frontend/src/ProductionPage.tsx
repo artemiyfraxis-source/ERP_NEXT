@@ -99,6 +99,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const viewable = staff.filter((item) => hasFullAccess(principal) || !staffSite || item.site === staffSite);
   const viewedName = viewable.find((item) => item.id === viewAs)?.name ?? "";
   const readOnly = mine && Boolean(viewAs);
+  const canPick = mine && canOverview && viewable.length > 0;
 
   async function mutate(key: string, operation: () => Promise<unknown>) {
     if (busy) return;
@@ -123,9 +124,9 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
 
   return <section className="page production-page">
     <header className="page-head">
-      <h1>{mine ? "Мои задания" : "Ресурсное планирование"}</h1>
+      <h1>{readOnly ? "Задания" : mine ? "Мои задания" : "Ресурсное планирование"}</h1>
       <span className="page-count">{tasks.length}</span>
-      {mine && canOverview && viewable.length > 0 && <label className="page-actions">Сотрудник
+      {canPick && <label className="view-as">Сотрудник
         <select aria-label="Сотрудник" style={{ width: "auto" }} value={viewAs} onChange={(event) => setViewAs(event.target.value)}>
           <option value="">Мои задания</option>
           {viewable.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -135,13 +136,13 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
-    {readOnly && <div className="warning-inline" role="status">Вид сотрудника {viewedName} — только просмотр</div>}
+    {readOnly && <div className="view-strip" role="status"><span>Вид сотрудника {viewedName} — только просмотр</span><button type="button" className="secondary" onClick={() => setViewAs("")}>Вернуться к моим заданиям</button></div>}
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
     {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
     {showAutoplan && canEdit && <AutoplanPanel tasks={tasks} close={() => setShowAutoplan(false)} onApplied={(count) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций`); void reload(); }} />}
     {showLaunch && canEdit && <LaunchForm tasks={tasks} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
-    {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} />}
+    {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={readOnly ? viewedName : ""} />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
     {mine && <MyQueue tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} />}
     {!mine && selectedTask && <TaskDetail
@@ -165,7 +166,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       canEdit={canEdit} busy={busy} mutate={mutate}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
-    {mine && loaded && !tasks.length && <div className="empty">{readOnly ? "Операции сотруднику не назначены." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
+    {mine && loaded && !tasks.length && <div className="empty">{readOnly ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
   </section>;
 }
 
@@ -721,11 +722,12 @@ function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
   </div>;
 }
 
-function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false }: {
+function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, ownerName = "" }: {
   execution: { session: ProductionWorkSession | null; boxes: ProductionBox[] };
   tasks: ProductionTask[];
   busy: boolean;
   readOnly?: boolean;
+  ownerName?: string;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [good, setGood] = useState("");
@@ -756,7 +758,7 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false }:
       </div>}
     </div>}
     {execution.boxes.length > 0 && <div className="panel execution-boxes">
-      <h2>Мои коробки</h2>
+      <h2>{ownerName ? `Коробки: ${ownerName}` : "Мои коробки"}</h2>
       <div className="box-grid">{execution.boxes.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
         <strong>{box.number ?? "Номер после закрытия"}</strong>
         <span>{box.item} · этап {box.operation_position}</span>
