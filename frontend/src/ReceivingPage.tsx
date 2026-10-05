@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ApiError, failureText, receivingApi, type DeliveryDeviation, type DeliveryLinePayload, type ReceivingLine, type ReceivingQuery } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { openPrintSheet } from "./print";
+import { useStageOption } from "./StageOptions";
+import { VIA_LABELS, purchasingItemsApi, type ItemBrief } from "./purchasingItemsApi";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 
@@ -390,6 +392,8 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [returning, setReturning] = useState(false);
+  const itemsOn = useStageOption("references.items");
+  const [lineItems, setLineItems] = useState<Record<string, ItemBrief>>({});
   const [group, setGroup] = useState("order");
   const [updRows, setUpdRows] = useState<ReceivingLine[] | null>(null);
   const [notice, setNotice] = useState("");
@@ -398,6 +402,26 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [delivery, setDelivery] = useState<ExpectedGroup | null>(null);
   const chipRef = useRef("");
   chipRef.current = chip;
+
+  useEffect(() => {
+    // Option off: no request. A failed read just leaves the lines without the item name.
+    if (!itemsOn || lines.length === 0) { setLineItems({}); return; }
+    let live = true;
+    const ids = lines.map((line) => line.id);
+    const parts: string[][] = [];
+    for (let start = 0; start < ids.length; start += 500) parts.push(ids.slice(start, start + 500));
+    Promise.all(parts.map((part) => purchasingItemsApi.forReceiving(part)))
+      .then((answers) => { if (live) setLineItems(Object.assign({}, ...answers)); })
+      .catch(() => { if (live) setLineItems({}); });
+    return () => { live = false; };
+  }, [itemsOn, lines]);
+  const columns = useMemo(() => (itemsOn ? COLUMNS.map((column) => column.key !== "name" ? column : {
+    ...column,
+    render: (line: ReceivingLine) => {
+      const brief = lineItems[line.id];
+      return <>{itemTitle(line)}{brief && <small className="muted lot-item-chip" title={`Позиция номенклатуры, связь: ${VIA_LABELS[brief.via]}`}>{brief.name}</small>}</>;
+    },
+  }) : COLUMNS), [itemsOn, lineItems]);
   const requestSeq = useRef(0);
 
   function queueQuery(after?: string): ReceivingQuery {
@@ -570,7 +594,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       </div>
       <DataTable
         rows={lines}
-        columns={COLUMNS}
+        columns={columns}
         rowKey={(line) => line.id}
         storageKey="receiving-v3"
         label="Очередь приёмки"

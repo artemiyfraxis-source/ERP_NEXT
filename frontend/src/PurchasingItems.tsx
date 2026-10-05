@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, failureText } from "./api";
 import {
   ITEM_CATEGORIES, categoryLabel, purchasingItemsApi as itemsApi,
-  type ImportResult, type ItemCard, type ItemCategory, type ItemInput, type ItemList, type ItemRow,
+  VIA_LABELS, type ImportResult, type StockImportResult, type ItemCard, type ItemCategory, type ItemInput, type ItemList, type ItemRow,
 } from "./purchasingItemsApi";
 
 /** «Номенклатура» (option references.items): the item master — search, card with aliases and price history, merge,
@@ -24,6 +24,7 @@ export function PurchasingItems({ readOnly = false }: { readOnly?: boolean } = {
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importingStock, setImportingStock] = useState(false);
   const [reload, setReload] = useState(0);
   const refresh = useCallback(() => setReload((n) => n + 1), []);
 
@@ -48,6 +49,7 @@ export function PurchasingItems({ readOnly = false }: { readOnly?: boolean } = {
         <label><input type="checkbox" checked={hasPrice} onChange={(event) => setHasPrice(event.target.checked)} /> Только с ценой</label>
         {!readOnly && <button type="button" className="primary" onClick={() => setCreating(true)}>+ Позиция</button>}
         {!readOnly && <button type="button" className="secondary" onClick={() => setImporting(true)}>Собрать из закупок</button>}
+        {!readOnly && <button type="button" className="secondary" onClick={() => setImportingStock(true)}>Собрать со склада</button>}
       </div>
       <div className="calendar-chips" role="group" aria-label="Категория">
         <button type="button" className={`secondary small${category === "" ? " active" : ""}`} aria-pressed={category === ""} onClick={() => setCategory("")}>Все {list ? total : ""}</button>
@@ -65,7 +67,7 @@ export function PurchasingItems({ readOnly = false }: { readOnly?: boolean } = {
             <thead>
               <tr>
                 <th>Наименование</th><th>Артикул</th><th>Изготовитель</th><th>Категория</th><th>Ед.</th>
-                <th className="num">Последняя цена</th><th className="num">Закупок</th><th>Спрос</th>
+                <th className="num">Последняя цена</th><th className="num">Закупок</th><th>Спрос</th><th className="num">На складе</th>
               </tr>
             </thead>
             <tbody>
@@ -83,6 +85,7 @@ export function PurchasingItems({ readOnly = false }: { readOnly?: boolean } = {
       )}
       {openId && <ItemCardDialog id={openId} readOnly={readOnly} onClose={() => setOpenId(null)} onChanged={refresh} />}
       {creating && <CreateDialog onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); refresh(); setOpenId(id); }} />}
+      {importingStock && <StockImportDialog onClose={() => setImportingStock(false)} onApplied={refresh} />}
       {importing && <ImportDialog onClose={() => setImporting(false)} onApplied={refresh} />}
     </section>
   );
@@ -99,6 +102,7 @@ function ItemTableRow({ row, onOpen }: { row: ItemRow; onOpen: () => void }) {
       <td className="num">{money(row.last_price)}</td>
       <td className="num">{row.purchases}</td>
       <td>{demandText(row.demand)}</td>
+      <td className="num">{!row.stock_lots ? "—" : row.available === null ? "разные ед." : `${row.available.replace(".", ",")} ${row.available_unit}`}</td>
     </tr>
   );
 }
@@ -221,6 +225,94 @@ function ImportDialog({ onClose, onApplied }: { onClose: () => void; onApplied: 
         <div className="move-actions">
           <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
           {!done && <button type="button" className="primary" disabled={busy || !preview || preview.groups.length === 0} onClick={apply}>Применить</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StockImportDialog({ onClose, onApplied }: { onClose: () => void; onApplied: () => void }) {
+  const [preview, setPreview] = useState<StockImportResult | null>(null);
+  const [done, setDone] = useState<StockImportResult | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    itemsApi.importFromStock(true)
+      .then((next) => { if (live) setPreview(next); })
+      .catch((reason) => { if (live) setError(failureText(reason, "Не удалось разобрать склад")); });
+    return () => { live = false; };
+  }, []);
+  const apply = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      setDone(await itemsApi.importFromStock(false));
+      onApplied();
+    } catch (reason) {
+      setError(failureText(reason, "Не удалось собрать номенклатуру со склада"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const shown = done ?? preview;
+  const createdLots = shown ? shown.create.reduce((sum, group) => sum + group.lots.length, 0) : 0;
+  const nothing = !shown || (shown.linked.length === 0 && shown.create.length === 0);
+  return (
+    <div className="dialog-overlay" role="presentation">
+      <div className="panel move-dialog wide" role="dialog" aria-label="Собрать со склада">
+        <h2>Собрать со склада</h2>
+        {error && <div className="error-banner" role="alert">{error}</div>}
+        {!shown && !error && <div className="empty">Разбираю партии склада…</div>}
+        {shown && (
+          <>
+            <p className="page-sub" role="status">
+              {done ? "Готово: " : "Будет: "}
+              связано с существующими — {shown.linked.length}, создано позиций — {shown.create.length} (партий {createdLots}), неоднозначных — {shown.ambiguous.length}.
+            </p>
+            {shown.linked.length > 0 && (
+              <div className="table-wrap history-table">
+                <table className="grid" aria-label="Связать с существующими">
+                  <thead><tr><th>ГРН</th><th>Партия</th><th>Позиция</th><th>Как найдена</th></tr></thead>
+                  <tbody>
+                    {shown.linked.map((row) => (
+                      <tr key={row.lot_id}><td>{row.grn}</td><td className="text">{row.name}</td><td className="text">{row.item_name}</td><td>{row.reason === "part_key" ? "по артикулу" : "по названию"}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {shown.create.length > 0 && (
+              <div className="table-wrap history-table">
+                <table className="grid" aria-label="Создать позиции">
+                  <thead><tr><th>Группа</th><th>Наименование</th><th>Артикул</th><th>Категория</th><th>Ед.</th><th className="num">Партий</th></tr></thead>
+                  <tbody>
+                    {shown.create.map((group) => (
+                      <tr key={`${group.kind}:${group.key}`}>
+                        <td>{group.kind === "article" ? "по артикулу" : "по названию"}</td><td className="text">{group.name}</td>
+                        <td>{group.part_number ?? "—"}</td><td>{categoryLabel(group.category)}</td><td>{group.unit}</td><td className="num">{group.lots.length}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {shown.ambiguous.length > 0 && (
+              <>
+                <h3>Неоднозначные (не связываются, выберите вручную на складе)</h3>
+                <ul aria-label="Неоднозначные партии">
+                  {shown.ambiguous.map((row) => (
+                    <li key={row.lot_id}>{row.grn} · {row.name} <span className="muted">— {row.candidates.map((c) => c.name).join("; ")}</span></li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {nothing && shown.ambiguous.length === 0 && <div className="empty">Партий без позиции нет.</div>}
+          </>
+        )}
+        <div className="move-actions">
+          <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
+          {!done && <button type="button" className="primary" disabled={busy || !preview || nothing} onClick={apply}>Применить</button>}
         </div>
       </div>
     </div>
@@ -364,6 +456,52 @@ function ItemCardDialog({ id, readOnly, onClose, onChanged }: { id: string; read
                     </tbody>
                   </table>
                 </div>
+              </>
+            )}
+
+            {card.stock && (
+              <>
+                <h3>Склад</h3>
+                {card.stock.lots.length === 0 ? <p className="muted">Партий этой позиции на складе нет.</p> : (
+                  <>
+                    <p>Итого: {card.stock.totals.map((t) => `остаток ${t.balance.replace(".", ",")} ${t.unit}, в резерве ${t.reserved.replace(".", ",")}, доступно ${t.available.replace(".", ",")}`).join("; ")}.</p>
+                    <div className="table-wrap history-table">
+                      <table className="grid" aria-label="Склад по позиции">
+                        <thead><tr><th>Склад</th><th>ГРН</th><th>Пакет</th><th>Место</th><th className="num">Остаток</th><th className="num">Резерв</th><th className="num">Доступно</th><th>Связь</th></tr></thead>
+                        <tbody>
+                          {card.stock.lots.map((lot) => (
+                            <tr key={lot.lot_id}>
+                              <td>{lot.warehouse}</td><td>{lot.grn}</td><td>{lot.package || "—"}</td><td>{lot.storage_location || "—"}</td>
+                              <td className="num">{lot.balance.replace(".", ",")} {lot.unit}</td><td className="num">{lot.reserved.replace(".", ",")}</td>
+                              <td className="num">{lot.available.replace(".", ",")}</td><td>{VIA_LABELS[lot.via]}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+            {card.receipts && (
+              <>
+                <h3>Приёмка</h3>
+                {card.receipts.length === 0 ? <p className="muted">Приёмок по этой позиции нет.</p> : (
+                  <div className="table-wrap history-table">
+                    <table className="grid" aria-label="Приёмка по позиции">
+                      <thead><tr><th>Дата</th><th>Документ</th><th>Поставщик</th><th className="num">Заказано</th><th className="num">Факт</th><th>Статус</th><th>Вердикт</th><th>ГРН</th></tr></thead>
+                      <tbody>
+                        {card.receipts.map((r) => (
+                          <tr key={r.receiving_id}>
+                            <td>{dayText(r.date)}</td><td>{r.document_number ?? "—"}</td><td className="text">{r.supplier || "—"}</td>
+                            <td className="num">{r.ordered.replace(".", ",")} {r.unit}</td><td className="num">{r.fact === null ? "—" : r.fact.replace(".", ",")}</td>
+                            <td>{r.status}</td><td>{r.verdict ?? "—"}</td><td>{r.grn ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </>
             )}
 

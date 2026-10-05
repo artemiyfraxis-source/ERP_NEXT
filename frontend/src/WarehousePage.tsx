@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { SuggestInput } from "./SuggestInput";
 import { useStageOption } from "./StageOptions";
+import { VIA_LABELS, purchasingItemsApi, type ItemBrief, type ItemRow } from "./purchasingItemsApi";
 import {
   receivingApi,
   requestsApi,
@@ -22,6 +23,9 @@ import {
   chooserColumns, ColumnChooser, columnTitle, defaultLayout, moveColumn, readLayouts, shownColumns as visibleColumns, writeLayouts,
   type ColumnKey, type ColumnLayout, type TableKind,
 } from "./WarehouseColumns";
+
+/** Номенклатура на партиях (option references.items): off = no request, no chip, no action. */
+const LotItems = createContext<{ on: boolean; items: Record<string, ItemBrief>; reload: () => void }>({ on: false, items: {}, reload: () => undefined });
 
 const EMPTY_PASSPORT: WarehouseLotPassport = {
   mass_1: "", mass_10: "", mass_100: "", expiry_date: null,
@@ -63,6 +67,9 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const wordSearch = useStageOption("warehouse.word_search");
+  const itemsOn = useStageOption("references.items");
+  const [lotItems, setLotItems] = useState<Record<string, ItemBrief>>({});
+  const [itemsTick, setItemsTick] = useState(0);
   const [warehouse, setWarehouse] = useState("");
   const [includeZero, setIncludeZero] = useState(false);
   const [total, setTotal] = useState(0);
@@ -151,6 +158,19 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
     return () => window.clearTimeout(timer);
   }, [query, warehouse, includeZero]);
 
+  useEffect(() => {
+    if (!itemsOn || lots.length === 0) { setLotItems({}); return; }
+    let live = true;
+    const ids = lots.map((lot) => lot.id);
+    const parts: string[][] = [];
+    for (let start = 0; start < ids.length; start += 500) parts.push(ids.slice(start, start + 500));
+    // One batch per 500 visible lots; a failed read just leaves the lots without a chip.
+    Promise.all(parts.map((part) => purchasingItemsApi.forLots(part)))
+      .then((answers) => { if (live) setLotItems(Object.assign({}, ...answers)); })
+      .catch(() => { if (live) setLotItems({}); });
+    return () => { live = false; };
+  }, [itemsOn, lots, itemsTick]);
+
   async function openPutawaySheet() {
     setPutawayError("");
     setPutawayBusy(true);
@@ -183,6 +203,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   }
 
   return (
+    <LotItems.Provider value={{ on: itemsOn, items: lotItems, reload: () => setItemsTick((n) => n + 1) }}>
     <section className="page stock-page">
       <header className="page-head">
         <h1>Склад</h1>
@@ -290,7 +311,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         <table className="grid wide compact stock-table" aria-label="Таблица склада">
           <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`} />)}</colgroup>
           <thead><tr>{shownColumns.map((key) => <th key={key} className={classes(columnClass(key), key === pinned && "stock-pin")}>{columnTitle(key, true)}</th>)}</tr></thead>
-          <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot, key === pinned))}</tr>)}</tbody>
+          <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot, key === pinned, lotItems[lot.id]))}</tr>)}</tbody>
         </table>
       </div> : <div className="table-wrap" ref={wrapRef}>
         <table className="grid wide compact stock-table">
@@ -320,6 +341,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       </div>}
       {!lots.length && !loading && <div className="empty">{includeZero ? "Склад пуст." : "Позиций с остатком нет. Включите «показывать нулевые», чтобы увидеть израсходованные партии."}</div>}
     </section>
+    </LotItems.Provider>
   );
 }
 
@@ -466,9 +488,9 @@ function cutCell(key: ColumnKey, text: string, pinned: boolean, className = "") 
 }
 
 /** One lot of «Таблица склада», cell by cell in the order of the visible columns. */
-function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean) {
+function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: ItemBrief) {
   switch (key) {
-    case "name": return <td key={key} className={classes("stock-name", pinned && "stock-pin")} title={lot.name || undefined}>{lot.name || "—"}</td>;
+    case "name": return <td key={key} className={classes("stock-name", pinned && "stock-pin")} title={lot.name || undefined}>{lot.name || "—"}{brief && <small className="muted lot-item-chip" title={`Позиция номенклатуры, связь: ${VIA_LABELS[brief.via]}`}>{brief.name}</small>}</td>;
     case "article": return cutCell(key, lot.article || "—", pinned);
     case "grn": return cutCell(key, `${lot.grn}${lot.package ? ` · ${lot.package}` : ""}`, pinned, "stock-grn");
     case "balance": return <td key={key} className={classes("num", pinned && "stock-pin")}><strong>{lot.balance} {lot.unit}</strong></td>;
@@ -1055,6 +1077,47 @@ function LotDialog({ title, lot, wide, onClose, children }: {
   </div>, document.body);
 }
 
+/** «Позиция номенклатуры…»: search the item master and link the lot by hand (overrides the receiving chain), or unlink. */
+function LotItemDialog({ lot, brief, onClose, onChanged }: { lot: WarehouseLot; brief?: ItemBrief; onClose: () => void; onChanged: () => void }) {
+  const [query, setQuery] = useState("");
+  const [found, setFound] = useState<ItemRow[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!query.trim()) { setFound([]); return; }
+    let live = true;
+    const timer = window.setTimeout(() => {
+      purchasingItemsApi.list({ q: query, category: "", hasPrice: false, page: 1 })
+        .then((next) => { if (live) setFound(next.items); })
+        .catch(() => { if (live) setFound([]); });
+    }, 200);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [query]);
+  async function run(action: () => Promise<unknown>) {
+    setError("");
+    try {
+      await action();
+      onChanged();
+      onClose();
+    } catch (reason) {
+      setError(dialogError(reason, "Не удалось сохранить связь"));
+    }
+  }
+  return <LotDialog title="Позиция номенклатуры" lot={lot} onClose={onClose}>
+    <p className="muted">{brief ? `Сейчас: ${brief.name} (${VIA_LABELS[brief.via]})` : "Позиция не назначена."}</p>
+    <input aria-label="Найти позицию номенклатуры" placeholder="Название, артикул" value={query} onChange={(event) => setQuery(event.target.value)} />
+    {found.map((row) => <div key={row.id} className="move-lot">
+      <strong>{row.name}</strong>
+      <span>{row.part_number ?? "без артикула"} · {row.unit}</span>
+      <button type="button" className="secondary small" onClick={() => void run(() => purchasingItemsApi.linkLot(lot.id, row.id))}>Связать</button>
+    </div>)}
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    <div className="move-actions">
+      {brief && brief.via !== "chain" && <button type="button" className="link-button danger-text" onClick={() => void run(() => purchasingItemsApi.unlinkLot(lot.id))}>Снять связь</button>}
+      <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
+    </div>
+  </LotDialog>;
+}
+
 function dialogError(reason: unknown, fallback: string) {
   return reason instanceof Error ? reason.message : fallback;
 }
@@ -1241,10 +1304,12 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
   readOnly: boolean;
 }) {
   // Every action is a window over the stock, as the buttons on a SUPPLYMAP partition card (− / + / ✎ / История).
-  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history">("");
+  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "item">("");
   const close = () => setDialog("");
   const writtenOff = Number(lot.written_off) > 0;
   const passport = passportLine(lot);
+  const itemsCtx = useContext(LotItems);
+  const brief = itemsCtx.items[lot.id];
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -1258,6 +1323,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
         {writtenOff && <span>списано {lot.written_off}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
+      {itemsCtx.on && brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
       {(!readOnly || history) && <div className="lot-card-actions">
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
@@ -1265,12 +1331,14 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
           <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
           <button className="secondary small" disabled={disabled} onClick={() => setDialog("edit")}>✎ Правка</button>
         </>}
+        {!readOnly && itemsCtx.on && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
       </div>}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {history && dialog === "history" && <LotHistoryDialog lot={lot} onClose={close} />}
+      {!readOnly && itemsCtx.on && dialog === "item" && <LotItemDialog lot={lot} brief={brief} onClose={close} onChanged={itemsCtx.reload} />}
     </article>
   );
 }

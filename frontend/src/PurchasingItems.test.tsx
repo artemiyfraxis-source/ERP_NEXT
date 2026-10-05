@@ -111,3 +111,62 @@ it("read-only has no editing buttons", async () => {
   expect(screen.queryByRole("button", { name: "+ Позиция" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Собрать из закупок" })).not.toBeInTheDocument();
 });
+
+it("shows the stock column, the «Склад» and «Приёмка» sections of the card", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/purchasing/items/i1") {
+      return json({
+        ...card,
+        stock: {
+          lots: [{ lot_id: "L1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", name: "Разъём", storage_location: "1F4", unit: "шт", balance: "10", reserved: "2", available: "8", via: "chain" }],
+          totals: [{ unit: "шт", balance: "10", reserved: "2", available: "8" }],
+        },
+        receipts: [{ receiving_id: "R1", date: "2026-10-02", document_number: "УПД-7", supplier: "ООО Ромашка", unit: "шт", ordered: "5", fact: "4", status: "Принято", verdict: "Годно", grn: "FRX.26.0000001", package: "" }],
+      });
+    }
+    if (path === "/api/purchasing/suppliers") return json([]);
+    return json({ items: [row({ available: "8", available_unit: "шт", stock_lots: 1 })], counts, total: 1, page: 1, page_size: 100 });
+  });
+  render(<PurchasingItems />);
+  const table = await screen.findByRole("table", { name: "Номенклатура" });
+  expect(within(within(table).getAllByRole("row")[1]).getByText("8 шт")).toBeInTheDocument();
+  fireEvent.click(within(table).getByRole("button", { name: "Разъём SMA" }));
+  const stock = await screen.findByRole("table", { name: "Склад по позиции" });
+  expect(stock.textContent).toContain("FRX.26.0000001");
+  expect(stock.textContent).toContain("по приёмке");
+  expect(screen.getByText(/доступно 8/)).toBeInTheDocument();
+  const receipts = screen.getByRole("table", { name: "Приёмка по позиции" });
+  expect(receipts.textContent).toContain("УПД-7");
+  expect(receipts.textContent).toContain("02.10.2026");
+  expect(receipts.textContent).toContain("Годно");
+});
+
+it("previews «Собрать со склада» (linked, to create, ambiguous) and applies it", async () => {
+  const calls: { path: string; body?: string }[] = [];
+  const lot = { lot_id: "L1", warehouse: "ЦАР", grn: "FRX.26.1", package: "", name: "Разъём SMA", article: "" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    calls.push({ path, body: init?.body as string | undefined });
+    if (path === "/api/purchasing/items/import-from-stock") {
+      return json({
+        linked: [{ ...lot, item_id: "i1", item_name: "Разъём SMA", reason: "part_key" }],
+        create: [{ kind: "name", key: "k", item_id: "n", name: "Болт М4", part_number: null, unit: "шт", category: "other", lots: [{ ...lot, lot_id: "L2", name: "Болт М4" }] }],
+        ambiguous: [{ ...lot, lot_id: "L3", name: "Реле общее", candidates: [{ item_id: "a", name: "Реле А" }, { item_id: "b", name: "Реле Б" }] }],
+        lots: 3, dry_run: JSON.parse(String(init?.body)).dry_run,
+      });
+    }
+    return json({ items: [row()], counts, total: 1, page: 1, page_size: 100 });
+  });
+  render(<PurchasingItems />);
+  await screen.findByRole("table", { name: "Номенклатура" });
+  fireEvent.click(screen.getByRole("button", { name: "Собрать со склада" }));
+  const dialog = await screen.findByRole("dialog", { name: "Собрать со склада" });
+  await within(dialog).findByText(/связано с существующими — 1, создано позиций — 1 \(партий 1\), неоднозначных — 1/);
+  expect(within(dialog).getByText("Болт М4")).toBeInTheDocument();
+  expect(within(dialog).getByText(/Реле общее/)).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Применить" }));
+  await within(dialog).findByText(/Готово:/);
+  const posts = calls.filter((c) => c.path === "/api/purchasing/items/import-from-stock").map((c) => c.body);
+  expect(posts).toEqual([JSON.stringify({ dry_run: true }), JSON.stringify({ dry_run: false })]);
+});

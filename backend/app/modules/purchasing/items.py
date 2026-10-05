@@ -24,6 +24,7 @@ from .infrastructure import (
     ItemAliasRow,
     ItemRow,
     LineItemRow,
+    LotItemRow,
     QuoteLineRow,
     QuoteRow,
     RfqLineRow,
@@ -288,6 +289,7 @@ def merge_items(uow, keep_id: UUID, drop_id: UUID, actor: Actor, now: datetime) 
             keep_aliases.add((None, key))
     links = session.execute(update(LineItemRow).where(LineItemRow.item_id == drop.id).values(item_id=keep.id)).rowcount
     session.execute(update(RfqLineRow).where(RfqLineRow.item_id == drop.id).values(item_id=keep.id))
+    session.execute(update(LotItemRow).where(LotItemRow.item_id == drop.id).values(item_id=keep.id))
     for row in (keep, drop):
         row.version += 1
         row.updated_at, row.updated_by = now, actor.id
@@ -315,6 +317,38 @@ def link_line(uow, procurement_line_id: UUID, item_id: UUID, actor: Actor, now: 
     session.flush()
     _audit(uow, item.id, "line_linked", actor, now, procurement_line_id=procurement_line_id)
     return row
+
+
+def link_lot(uow, lot_id: UUID, item_id: UUID, source: str, actor: Actor, now: datetime) -> LotItemRow:
+    """Explicit lot → item link; the caller has checked that the lot exists (workflows layer). `manual` overrides
+    whatever is there; `match` never replaces a manual choice."""
+    session = uow.session
+    item = get_item(session, item_id)
+    if item.archived_at is not None:
+        raise ItemInvalid("Позиция в архиве")
+    row = session.get(LotItemRow, lot_id)
+    if row is None:
+        row = LotItemRow(lot_id=lot_id, item_id=item.id, source=source, linked_at=now, linked_by=actor.id)
+        session.add(row)
+    elif row.item_id == item.id and (row.source == source or source == "match"):
+        return row
+    elif row.source == "manual" and source == "match":
+        return row
+    else:
+        row.item_id, row.source, row.linked_at, row.linked_by = item.id, source, now, actor.id
+    session.flush()
+    _audit(uow, item.id, "lot_linked", actor, now, lot_id=lot_id, source=source)
+    return row
+
+
+def unlink_lot(uow, lot_id: UUID, actor: Actor, now: datetime) -> None:
+    row = uow.session.get(LotItemRow, lot_id)
+    if row is None:
+        raise ItemNotFound("Явной связи партии с позицией нет")
+    item_id = row.item_id
+    uow.session.delete(row)
+    uow.session.flush()
+    _audit(uow, item_id, "lot_unlinked", actor, now, lot_id=lot_id)
 
 
 # ---- reads -----------------------------------------------------------------------------------------------------

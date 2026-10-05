@@ -12,12 +12,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.shared import stage_options
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
+from app.shared.http_auth import (
+    Principal,
+    procurement_edit_principal,
+    procurement_view_principal,
+    receiving_view_principal,
+    warehouse_edit_principal,
+    warehouse_view_principal,
+)
 from app.workflows import purchasing_items_lines as lines_flow
+from app.workflows import purchasing_items_stock as stock_flow
 
 from . import items as repo
-from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
+from .deps import procurement_uow_factory, purchasing_uow_factory, receiving_uow_factory, require_option, warehouse_uow_factory
 from .infrastructure import ItemRow, LineItemRow
 
 router = APIRouter(prefix="/api/purchasing/items", tags=["purchasing"])
@@ -28,6 +37,11 @@ ProcurementUow = Annotated[Callable, Depends(procurement_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 Viewer = Annotated[Principal, Depends(procurement_view_principal)]
 Editor = Annotated[Principal, Depends(procurement_edit_principal)]
+WarehouseViewer = Annotated[Principal, Depends(warehouse_view_principal)]
+WarehouseEditor = Annotated[Principal, Depends(warehouse_edit_principal)]
+ReceivingViewer = Annotated[Principal, Depends(receiving_view_principal)]
+WarehouseUow = Annotated[Callable | None, Depends(warehouse_uow_factory)]
+ReceivingUow = Annotated[Callable | None, Depends(receiving_uow_factory)]
 
 
 @contextmanager
@@ -82,9 +96,24 @@ class ImportIn(BaseModel):
     dry_run: bool = True
 
 
-def _list_row(row: ItemRow, stats: dict) -> dict:
+class LotLinkIn(BaseModel):
+    lot_id: UUID
+    item_id: UUID
+
+
+def _ids(text: str, what: str) -> list[UUID]:
+    try:
+        wanted = list(dict.fromkeys(UUID(part) for part in text.split(",") if part.strip()))
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Неверный список: {what}") from None
+    if len(wanted) > 500:
+        raise HTTPException(status_code=422, detail="Не больше 500 за раз")
+    return wanted
+
+
+def _list_row(row: ItemRow, stats: dict, stock: dict | None = None) -> dict:
     return {
-        **repo.item_json(row),
+        **repo.item_json(row), **(stock or {"available": None, "available_unit": None, "stock_lots": 0}),
         "last_price": stats["price"]["last"], "purchases": len(stats["history"]),
         "linked_lines": stats["linked_lines"], "demand": stats["demand"],
     }
@@ -92,7 +121,7 @@ def _list_row(row: ItemRow, stats: dict) -> dict:
 
 @router.get("")
 def search_items(
-    _: Viewer, make_uow: Uow, make_procurement: ProcurementUow,
+    _: Viewer, make_uow: Uow, make_procurement: ProcurementUow, make_warehouse: WarehouseUow, make_receiving: ReceivingUow,
     q: str = "", category: str | None = None, has_price: bool = False, page: Annotated[int, Query(ge=1)] = 1,
 ) -> dict:
     require_option(OPTION, "procurement.rfq")
@@ -111,8 +140,12 @@ def search_items(
         chunk = rows[(page - 1) * repo.PAGE_SIZE:page * repo.PAGE_SIZE]
         if not has_price:
             stats = lines_flow.stats_by_item(session, make_procurement, [row.id for row in chunk])
+        stock = (
+            stock_flow.available_by_item(session, make_warehouse, make_receiving, [row.id for row in chunk])
+            if chunk and stage_options.enabled(OPTION) else {}
+        )
         return {
-            "items": [_list_row(row, stats[row.id]) for row in chunk],
+            "items": [_list_row(row, stats[row.id], stock.get(row.id)) for row in chunk],
             "counts": counts, "total": total, "page": page, "page_size": repo.PAGE_SIZE,
         }
 
@@ -138,6 +171,65 @@ def items_for_lines(_: Viewer, make_uow: Uow, ids: str = "") -> dict:
             str(line_id): {"item_id": str(item.id), "name": item.name, "part_number": item.part_number, "unit": item.unit}
             for line_id, item in found
         }
+
+
+@router.get("/for-lots")
+def items_for_lots(_: WarehouseViewer, make_uow: Uow, make_warehouse: WarehouseUow, make_receiving: ReceivingUow, ids: str = "") -> dict:
+    """Batch for «Склад»: lot id → its item and how it is known (manual / match / chain); lots without one are absent."""
+    require_option(OPTION)
+    wanted = _ids(ids, "партии")
+    uow = make_uow()
+    with uow:
+        return stock_flow.items_for_lots(uow.session, make_warehouse, make_receiving, wanted)
+
+
+@router.get("/for-receiving")
+def items_for_receiving(_: ReceivingViewer, make_uow: Uow, make_receiving: ReceivingUow, ids: str = "") -> dict:
+    """Batch for «Приёмка»: receiving line id → the item of its procurement line."""
+    require_option(OPTION)
+    wanted = _ids(ids, "строки приёмки")
+    uow = make_uow()
+    with uow:
+        return stock_flow.items_for_receiving(uow.session, make_receiving, wanted)
+
+
+@router.post("/link-lot")
+def link_lot(payload: LotLinkIn, principal: WarehouseEditor, make_uow: Uow, make_warehouse: WarehouseUow, now: Now) -> dict:
+    require_option(OPTION)
+    if not stock_flow.lot_exists(make_warehouse, payload.lot_id):
+        raise HTTPException(status_code=404, detail="Партия не найдена")
+    uow = make_uow()
+    with uow, _errors():
+        repo.link_lot(uow, payload.lot_id, payload.item_id, "manual", principal.actor, now)
+        uow.commit()
+    return {"lot_id": str(payload.lot_id), "item_id": str(payload.item_id), "via": "manual"}
+
+
+@router.delete("/link-lot/{lot_id}")
+def unlink_lot(lot_id: UUID, principal: WarehouseEditor, make_uow: Uow, now: Now) -> dict:
+    require_option(OPTION)
+    uow = make_uow()
+    with uow, _errors():
+        repo.unlink_lot(uow, lot_id, principal.actor, now)
+        uow.commit()
+    return {"lot_id": str(lot_id)}
+
+
+@router.post("/import-from-stock")
+def import_from_stock(
+    payload: ImportIn, principal: WarehouseEditor, make_uow: Uow, make_warehouse: WarehouseUow,
+    make_receiving: ReceivingUow, now: Now,
+) -> dict:
+    """«Собрать со склада»: the dry run reports what apply would do and writes nothing."""
+    require_option(OPTION)
+    uow = make_uow()
+    with uow, _errors():
+        result = stock_flow.run_import(uow, make_warehouse, make_receiving, principal.actor, now)
+        if payload.dry_run:
+            uow.session.rollback()
+        else:
+            uow.commit()
+        return {**result, "dry_run": payload.dry_run}
 
 
 @router.post("/import-from-procurement")
@@ -189,7 +281,10 @@ def create_item(payload: ItemFields, principal: Editor, make_uow: Uow, now: Now)
 
 
 @router.get("/{item_id}")
-def item_card(item_id: UUID, _: Viewer, make_uow: Uow, make_procurement: ProcurementUow) -> dict:
+def item_card(
+    item_id: UUID, _: Viewer, make_uow: Uow, make_procurement: ProcurementUow, make_warehouse: WarehouseUow,
+    make_receiving: ReceivingUow,
+) -> dict:
     require_option(OPTION)
     uow = make_uow()
     with uow, _errors():
@@ -199,6 +294,8 @@ def item_card(item_id: UUID, _: Viewer, make_uow: Uow, make_procurement: Procure
             **repo.item_json(row), "aliases": repo.aliases_of(uow.session, row.id),
             "linked_lines": stats["linked_lines"], "demand": stats["demand"], "history": stats["history"],
             "price": stats["price"], "quotes": repo.quotes_of(uow.session, row.id),
+            "stock": stock_flow.stock_of_item(uow.session, make_warehouse, make_receiving, row.id),
+            "receipts": stock_flow.receipts_of_item(uow.session, make_receiving, row.id),
         }
 
 

@@ -3134,3 +3134,6 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .purchasing-setting-default { font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
 .table-panel > .purchasing-toolbar, .purchasing-toolbar + .calendar-chips { padding-left: 20px; padding-right: 20px; }
 .today-more { color: var(--muted-foreground); font-size: 11.5px; padding: 2px 4px; }
+
+/* Номенклатура под наименованием партии / строки приёмки (option references.items). */
+.lot-item-chip { display: block; font-size: 12px; white-space: normal; }

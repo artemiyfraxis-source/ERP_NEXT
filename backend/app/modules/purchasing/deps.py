@@ -23,6 +23,20 @@ def procurement_uow_factory(request: Request) -> Callable:
     return factory
 
 
+def optional_factory(request: Request, name: str) -> Callable | None:
+    """A cross-module unit-of-work factory that may be absent (stand without the module): None then."""
+    factory = getattr(request.app.state, name, None)
+    return factory if callable(factory) else None
+
+
+def warehouse_uow_factory(request: Request) -> Callable | None:
+    return optional_factory(request, "warehouse_uow_factory")
+
+
+def receiving_uow_factory(request: Request) -> Callable | None:
+    return optional_factory(request, "receiving_uow_factory")
+
+
 def require_option(*keys: str) -> None:
     """404 unless at least one of the stage options is on — off means the feature does not exist."""
     if not any(stage_options.enabled(key) for key in keys):

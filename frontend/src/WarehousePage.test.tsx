@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
 import type { WarehouseLot } from "./api";
@@ -36,7 +36,7 @@ function added(entered: WarehouseLot[], errors: Array<{ i: number; error: string
   return json({ added: entered.length, lots: entered, assigned: [], errors });
 }
 
-afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); resetStageOptions(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); resetStageOptions(); });
 
 /** The reference tools of the page sit behind «Ещё ▾». */
 async function openMore() {
@@ -1251,4 +1251,48 @@ it("keeps the quantity inputs editable and the old search hint when the stage op
   const form = within(screen.getByRole("form", { name: "Правка строки" }));
   expect(form.getByLabelText("Приход")).not.toHaveAttribute("readonly");
   expect(form.queryByText(/меняются только движениями/)).toBeNull();
+});
+
+function itemsFetch(on: boolean, calls: string[], posted: string[] = []) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    calls.push(path);
+    if (path === "/api/stage-options") {
+      return json({ available: true, options: [{ key: "references.items", block: "Номенклатура", title: "t", before: "", after: "", enabled: on }] });
+    }
+    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.startsWith("/api/purchasing/items/for-lots")) {
+      return json({ [lot.id]: { item_id: "i1", name: "Разъём SMA (номенклатура)", category: "connector", via: "chain" } });
+    }
+    if (path.startsWith("/api/purchasing/items?")) {
+      return json({ items: [{ id: "i2", name: "Другая позиция", part_number: null, unit: "шт" }], counts: {}, total: 1, page: 1, page_size: 100 });
+    }
+    if (path === "/api/purchasing/items/link-lot") { posted.push(String(init?.body)); return json({}); }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("shows the nomenclature item under the lot and links a lot by hand when references.items is on", async () => {
+  const calls: string[] = [];
+  const posted: string[] = [];
+  itemsFetch(true, calls, posted);
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  expect(await screen.findByText(/Позиция: Разъём SMA \(номенклатура\)/)).toBeInTheDocument();
+  expect(calls.filter((path) => path.startsWith("/api/purchasing/items/for-lots"))).toEqual([`/api/purchasing/items/for-lots?ids=${lot.id}`]);
+  fireEvent.click(screen.getByRole("button", { name: "Позиция номенклатуры…" }));
+  fireEvent.change(screen.getByLabelText("Найти позицию номенклатуры"), { target: { value: "друг" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Связать" }));
+  await waitFor(() => expect(posted).toEqual([JSON.stringify({ lot_id: lot.id, item_id: "i2" })]));
+});
+
+it("shows no item chip, no action and sends no nomenclature request when references.items is off", async () => {
+  const calls: string[] = [];
+  itemsFetch(false, calls);
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  await screen.findByRole("button", { name: "✎ Правка" });
+  expect(screen.queryByText(/Позиция:/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Позиция номенклатуры…" })).toBeNull();
+  expect(calls.some((path) => path.startsWith("/api/purchasing"))).toBe(false);
 });
