@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, failureText, productionApi, type AutoplanPreview, type AutoplanProposal, type AutoplanRequest, type ProductionTask } from "./api";
 import { formatDay } from "./format";
 
@@ -34,6 +34,28 @@ const shortDay = (iso: string) => formatDay(iso).slice(0, 5);
 function minutesText(seconds: number) {
   const minutes = Math.max(1, Math.round(seconds / 60));
   return minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} ч` : `${minutes} мин`;
+}
+
+/** «06.10 15:18–16:40»; a slot that ends on another day shows that day too. */
+function slotText(start: string, finish: string) {
+  const from = parts(start);
+  const to = parts(finish);
+  return `${from.short} ${from.time}–${to.day === from.day ? "" : `${to.short} `}${to.time}`;
+}
+
+/** Group checkbox: ticked when all are chosen, a dash when only some are. */
+function GroupCheck({ label, items, chosen, onToggle }: {
+  label: string;
+  items: AutoplanProposal[];
+  chosen: Set<string>;
+  onToggle: (on: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const count = items.filter((item) => chosen.has(key(item))).length;
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = count > 0 && count < items.length;
+  }, [count, items.length]);
+  return <input ref={ref} type="checkbox" aria-label={label} checked={count === items.length} onChange={(event) => onToggle(event.target.checked)} />;
 }
 
 const key = (item: AutoplanProposal) => `${item.task_id}:${item.operation_id}`;
@@ -139,7 +161,6 @@ export function AutoplanPanel({ tasks, close, onApplied }: {
       return next;
     });
   }
-  const allOn = (items: AutoplanProposal[]) => items.every((item) => selected.has(key(item)));
   const toggleTask = (id: string) => setTaskIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
   const stats = result?.preview.stats;
 
@@ -171,18 +192,18 @@ export function AutoplanPanel({ tasks, close, onApplied }: {
         {result.preview.warnings.map((warning) => <div key={warning} className="warning-inline">{warning}</div>)}
         {!groups.length && <div className="empty">На {periodText} нечего планировать.</div>}
         {groups.map((fitter) => <section key={fitter.id} className="autoplan-fitter" aria-label={`Монтажник ${fitter.name}`}>
-          <h3><label className="autoplan-check"><input type="checkbox" aria-label={`Весь план: ${fitter.name}`} checked={allOn(fitter.items)} onChange={(event) => toggle(fitter.items, event.target.checked)} /><span>{fitter.name}</span></label><small>{fitter.items.length} {plural(fitter.items.length, "операция", "операции", "операций")}</small></h3>
+          <h3><label className="autoplan-check"><GroupCheck label={`Весь план: ${fitter.name}`} items={fitter.items} chosen={selected} onToggle={(on) => toggle(fitter.items, on)} /><span>{fitter.name}</span></label><small>{fitter.items.length} {plural(fitter.items.length, "операция", "операции", "операций")}</small></h3>
           {fitter.days.map((day) => <div key={day.day} className="autoplan-day">
             <div className="autoplan-day-title">{formatDay(day.day)}</div>
             {day.batches.map((batch) => {
               const taskCount = new Set(batch.items.map((item) => item.task_id)).size;
               return <div key={batch.id} className="autoplan-batch">
-                <div className="autoplan-batch-head"><label className="autoplan-check"><input type="checkbox" aria-label={`Наладка: ${batch.label}`} checked={allOn(batch.items)} onChange={(event) => toggle(batch.items, event.target.checked)} /><span>Наладка: {batch.label || "без наладки"} — {batch.items.length} {plural(batch.items.length, "операция", "операции", "операций")} из {taskCount} ПЗ</span></label>{batch.machine && <small>{batch.machine}</small>}</div>
+                <div className="autoplan-batch-head"><label className="autoplan-check"><GroupCheck label={`Наладка: ${batch.label}`} items={batch.items} chosen={selected} onToggle={(on) => toggle(batch.items, on)} /><span>Наладка: {batch.label || "без наладки"} — {batch.items.length} {plural(batch.items.length, "операция", "операции", "операций")} из {taskCount} ПЗ</span></label>{batch.machine && <small>{batch.machine}</small>}</div>
                 {batch.items.map((item) => <div key={key(item)} className="autoplan-row">
                   <input type="checkbox" aria-label={`${item.task_number}, ${item.stage}`} checked={selected.has(key(item))} onChange={(event) => toggle([item], event.target.checked)} />
                   <span className="autoplan-task">{item.task_number}</span>
                   <span className="autoplan-op">{item.stage}{item.code && <small>{item.code}</small>}</span>
-                  <span className="autoplan-slot">{parts(item.start).short} {parts(item.start).time}–{parts(item.finish).time}</span>
+                  <span className="autoplan-slot">{slotText(item.start, item.finish)}</span>
                   <span className="autoplan-change">{item.changeover_seconds > 0 ? `переналадка ${minutesText(item.changeover_seconds)}` : "без переналадки"}</span>
                 </div>)}
               </div>;
