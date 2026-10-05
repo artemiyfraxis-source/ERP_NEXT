@@ -24,6 +24,7 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from . import settings as purchasing_settings
+from .suppliers import supplier_key
 from .infrastructure import (
     ITEM_CATEGORIES,
     RFQ_SUPPLIER_REASONS,
@@ -140,7 +141,8 @@ def num(value: Decimal | None) -> str | None:
 
 
 def name_key(name: str) -> str:
-    return name.strip().casefold()
+    """The supplier directory's key (legal form, quotes and case folded away), so every module finds the same entry."""
+    return supplier_key(name)
 
 
 def _session(uow: UnitOfWork) -> Session:
