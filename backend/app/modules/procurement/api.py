@@ -36,6 +36,8 @@ from .application import (
     SetTraceabilityCommand,
     SetNoteCommand,
     SetExpectedArrivalCommand,
+    SetActualArrivalCommand,
+    set_procurement_actual_arrival,
     ExpectedArrivalCopier,
     RecordInvoiceCommand,
     UploadInvoiceFileCommand,
@@ -322,6 +324,10 @@ class NoteInput(VersionInput):
 
 class ExpectedArrivalInput(VersionInput):
     expected_arrival: date
+
+
+class ActualArrivalInput(VersionInput):
+    actual_arrival: date | None = None
 
 
 class MoneyPayload(BaseModel):
@@ -1243,6 +1249,29 @@ def expected_arrival(
             ),
             uow_factory(),
             receiving,
+        )
+    )
+
+
+@router.patch("/{line_id}/actual-arrival")
+def actual_arrival(
+    line_id: UUID,
+    payload: ActualArrivalInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """ФАКТ. ДАТА by hand (optional), from «В пути» on; empty clears. Receiving still fills it on acceptance."""
+    return _transition(
+        lambda: set_procurement_actual_arrival(
+            SetActualArrivalCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                actual_arrival=payload.actual_arrival,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
         )
     )
 

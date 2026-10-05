@@ -10,9 +10,14 @@ from app.modules.fulfillment.application import (
     CreateFulfillmentCommand,
     MarkReadyCommand,
     MarkReturnedCommand,
+    OffBookCommand,
     ReturnDisposition,
+    UnbindLotCommand,
     VersionedFulfillmentCommand,
     bind_lot,
+    handout_place,
+    set_off_book,
+    unbind_lot,
     build_issue_print_sheet,
     build_issue_return_sheet,
     cancel_fulfillment,
@@ -174,7 +179,7 @@ def test_human_lot_binding_and_whole_kit_issue_are_one_stock_transaction():
         ),
         uow,
     )
-    assert bound_all.status is FulfillmentStatus.UNDERFILLED
+    assert bound_all.status is FulfillmentStatus.COMPLETE  # the last open line closed: «Укомплектован» by itself
     complete = complete_kit(VersionedFulfillmentCommand(bound_all.id, bound_all.version, actor, now), uow)
     ready = mark_ready(
         MarkReadyCommand(
@@ -389,3 +394,103 @@ def test_print_sheet_marks_shortage_and_return_sheet_lists_only_issued_lines():
     assert return_sheet.rows[0][1] == "Разъём"
     assert return_sheet.rows[0][4] == "6"
     assert return_sheet.title == f"ЛИСТ ВОЗВРАТА ПО ЗАЯВКЕ {manually_issued.number}"
+
+
+class Sites:
+    """The kit's shop site (G1-T3): which site a request goes to, its masters and the last handout place there."""
+
+    def __init__(self, site, masters, last=None):
+        self.site, self.master_ids, self.last = site, masters, last
+
+    def site_of(self, request):
+        return self.site
+
+    def masters(self, site):
+        return self.master_ids if site == self.site else []
+
+    def last_handout(self, site):
+        return self.last if site == self.site else None
+
+
+def _two_line_kit(uow, actor, now):
+    return create_fulfillment(CreateFulfillmentCommand(
+        idempotency_key="kitset:728K.2:KB-1:v1", purpose="728К.2 · КБ1 · Жгут", deadline=date(2026, 10, 10),
+        lines=(
+            FulfillmentLine.create(article="КД-1", name="Разъём", unit="шт", requirement=Decimal("4")),
+            FulfillmentLine.create(article="КД-2", name="Провод", unit="м", requirement=Decimal("2")),
+        ),
+        actor=actor, now=now,
+    ), uow)
+
+
+def _completed(uow, request, actor, now):
+    for line in request.lines:
+        request = set_off_book(OffBookCommand(request.id, request.version, actor, now, line.id), uow)
+    return request
+
+
+def test_picking_the_last_line_completes_the_kit_by_itself_and_journals_it_once():
+    lot = stock("10", "0000001")
+    uow = Uow(lot)
+    actor = Actor(name="Кладовщик", department="Склад")
+    now = datetime(2026, 10, 5, 9, 0)
+    created = _two_line_kit(uow, actor, now)
+
+    partial = bind_lot(BindLotCommand(created.id, created.version, actor, now, created.lines[0].id, lot.id), uow)
+    assert partial.status is FulfillmentStatus.UNDERFILLED
+    complete = set_off_book(OffBookCommand(partial.id, partial.version, actor, now, partial.lines[1].id), uow)
+    assert complete.status is FulfillmentStatus.COMPLETE
+    completed = [event for event in uow.audit.items if event.event_type == "fulfillment.completed"]
+    assert [event.details for event in completed] == [{"auto": True}]
+
+    # A late press of «Укомплектован» writes nothing; removing the lot rolls the kit back.
+    assert complete_kit(VersionedFulfillmentCommand(complete.id, complete.version, actor, now), uow) == complete
+    assert len([event for event in uow.audit.items if event.event_type == "fulfillment.completed"]) == 1
+    rolled = unbind_lot(UnbindLotCommand(complete.id, complete.version, actor, now, complete.lines[0].id), uow)
+    assert rolled.status is FulfillmentStatus.UNDERFILLED
+    assert uow.warehouse.get(lot.id).reserved == 0
+
+
+def test_ready_notifies_the_requester_and_the_masters_of_the_kit_site_once_each():
+    uow = Uow()
+    requester = Actor(name="Технолог", department="КБ")
+    storekeeper = Actor(name="Кладовщик", department="Склад")
+    master = Actor(name="Степан", department="Монтаж")
+    second_master = Actor(name="Мастер 2", department="Монтаж")
+    uow.kit_sites = Sites("ЖУК", [master.id, requester.id, second_master.id])
+    now = datetime(2026, 10, 5, 9, 0)
+    request = _completed(uow, _two_line_kit(uow, requester, now), storekeeper, now)
+    assert request.status is FulfillmentStatus.COMPLETE
+
+    ready = mark_ready(MarkReadyCommand(request.id, request.version, storekeeper, now, "3B2"), uow)
+
+    (note,) = uow.outbox.items  # one message; the requester who is also listed as a master is addressed once
+    assert note.payload["recipient_user_ids"].split(",") == [str(requester.id), str(master.id), str(second_master.id)]
+    assert "место: 3B2" in note.payload["body"]
+    (event,) = [item for item in uow.audit.items if item.event_type == "fulfillment.ready"]
+    assert event.details == {"handout_location": "3B2", "site": "ЖУК"}
+    assert ready.status is FulfillmentStatus.READY
+
+
+def test_ready_without_a_site_directory_still_reaches_the_requester():
+    uow = Uow()
+    requester = Actor(name="Технолог", department="КБ")
+    now = datetime(2026, 10, 5, 9, 0)
+    request = _completed(uow, _two_line_kit(uow, requester, now), requester, now)
+
+    mark_ready(MarkReadyCommand(request.id, request.version, requester, now, "Зона выдачи"), uow)
+
+    (note,) = uow.outbox.items
+    assert note.payload["recipient_user_ids"] == str(requester.id)
+
+
+def test_handout_place_offers_the_last_place_of_the_site_or_the_handout_zone():
+    uow = Uow()
+    actor = Actor(name="Кладовщик", department="Склад")
+    request = _two_line_kit(uow, actor, datetime(2026, 10, 5, 9, 0))
+
+    assert handout_place(request, uow) == "Зона выдачи"  # no site directory
+    uow.kit_sites = Sites("ЦАР", [])
+    assert handout_place(request, uow) == "Зона выдачи"
+    uow.kit_sites = Sites("ЦАР", [], last="12C7")
+    assert handout_place(request, uow) == "12C7"

@@ -83,6 +83,7 @@ const EVENT_NAMES: Record<string, string> = {
 
   "fulfillment.created": "Заявка на комплектацию",
   "fulfillment.lot_bound": "ГРН привязан",
+  "fulfillment.lot_arrived": "Приход встал в комплект",
   "fulfillment.lot_unbound": "ГРН отвязан",
   "fulfillment.completed": "Укомплектовано",
   "fulfillment.ready": "Отправлено на выдачу",

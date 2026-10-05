@@ -93,10 +93,8 @@ def test_unbinding_merges_rows_created_by_partial_lot():
 def test_complete_kit_requires_handout_place_and_is_issued_whole():
     original = request(line("3"), line("2"))
     first = original.bind_line(original.lines[0].id, lot(1), Decimal("3"))
-    bound = first.bind_line(first.lines[1].id, lot(2), Decimal("2"))
+    complete = first.bind_line(first.lines[1].id, lot(2), Decimal("2"))
 
-    assert bound.status is FulfillmentStatus.UNDERFILLED
-    complete = bound.mark_complete()
     assert complete.status is FulfillmentStatus.COMPLETE
     with pytest.raises(FulfillmentValidationError, match="место выдачи"):
         complete.mark_ready("")
@@ -148,23 +146,60 @@ def test_deadline_is_required():
         )
 
 
-def test_first_bind_moves_new_to_underfilled_even_when_the_only_line_is_closed():
+def test_first_bind_closing_the_only_line_completes_the_kit_by_itself():
     original = request(line("3"))
     bound = original.bind_line(original.lines[0].id, lot(), Decimal("3"))
 
-    assert bound.status is FulfillmentStatus.UNDERFILLED
+    assert bound.status is FulfillmentStatus.COMPLETE
     assert bound.fully_reserved
+    assert bound.version == original.version + 1
 
 
-def test_complete_is_manual_and_gated_by_every_line_closed():
+def test_partial_pick_stays_underfilled_and_the_last_line_completes_the_kit():
     original = request(line("3"), replace(line("2"), name="Провод"))
     first = original.bind_line(original.lines[0].id, lot(1), Decimal("3"))
+    assert first.status is FulfillmentStatus.UNDERFILLED
+    # A lot that falls short splits the line: the remainder still waits, so no «Укомплектован».
+    short = first.bind_line(first.lines[1].id, lot(2), Decimal("1"))
+    assert short.status is FulfillmentStatus.UNDERFILLED
+    assert [item.covered for item in short.lines] == [True, True, False]
     with pytest.raises(FulfillmentValidationError, match="не закрыто позиций — 1 \\(Провод\\)"):
-        first.mark_complete()
-    complete = first.bind_line(first.lines[1].id, lot(2), Decimal("2")).mark_complete()
+        short.mark_complete()
+    complete = short.bind_line(short.lines[2].id, lot(3), Decimal("1"))
     assert complete.status is FulfillmentStatus.COMPLETE
+
+
+def test_off_book_mark_on_the_last_open_line_completes_the_kit():
+    original = request(line("3"), replace(line("2"), name="Провод"))
+    first = original.bind_line(original.lines[0].id, lot(1), Decimal("3"))
+    complete = first.mark_off_book(first.lines[1].id)
+
+    assert complete.status is FulfillmentStatus.COMPLETE
+    assert complete.clear_off_book(complete.lines[1].id).status is FulfillmentStatus.UNDERFILLED
+
+
+def test_unbinding_rolls_an_automatically_complete_kit_back_and_forgets_nothing_else():
+    original = request(line("3"), replace(line("2"), name="Провод"))
+    first = original.bind_line(original.lines[0].id, lot(1), Decimal("3"))
+    complete = first.bind_line(first.lines[1].id, lot(2), Decimal("2"))
     released = complete.unbind_line(complete.lines[0].id)
+
     assert released.status is FulfillmentStatus.UNDERFILLED
+    assert released.handout_location is None
+    assert [item.covered for item in released.lines] == [False, True]
+    # Binding it again completes it again.
+    assert released.bind_line(released.lines[0].id, lot(3), Decimal("3")).status is FulfillmentStatus.COMPLETE
+
+
+def test_reserve_at_creation_keeps_the_request_new_and_the_manual_button_completes_it():
+    original = request(line("3"))
+    reserved = original.bind_line(original.lines[0].id, lot(), Decimal("3"), touch=False)
+
+    assert reserved.status is FulfillmentStatus.NEW and reserved.fully_reserved
+    complete = reserved.mark_complete()
+    assert complete.status is FulfillmentStatus.COMPLETE
+    # A late press on a kit already complete changes nothing.
+    assert complete.mark_complete() is complete
 
 
 def test_stage_dates_are_set_once_on_the_first_hit():
@@ -173,6 +208,7 @@ def test_stage_dates_are_set_once_on_the_first_hit():
     assert original.stamped(t1).at_work is None
     bound = original.bind_line(original.lines[0].id, lot(), Decimal("3")).stamped(t1)
     complete = bound.mark_complete().stamped(t2)
+    assert complete.at_work == t1  # «Укомплектован» by the bind at t1; the stamp is not moved
     ready = complete.mark_ready("1A1").stamped(t3)
     issued = ready.mark_issued().stamped(t4)
     closed = issued.close_issued().stamped(t4)

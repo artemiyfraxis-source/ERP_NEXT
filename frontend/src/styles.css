@@ -206,6 +206,8 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-lines select { min-width: 260px; }
 .fulfillment-actions { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .fulfillment-actions label { min-width: min(300px, 100%); margin-right: auto; }
+.fulfillment-actions .handout-offer { align-self: center; color: var(--muted-foreground); }
+.fulfillment-actions .handout-offer b { color: var(--foreground); }
 .fulfillment-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; font-size: 12px; }
 .fulfillment-meta dt { color: var(--muted-foreground); }
 .fulfillment-meta dd { margin: 0; font-weight: 500; }
@@ -309,16 +311,67 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 @media (pointer: coarse) { .weekday-toggles button, .holiday-chip button { min-height: 40px; min-width: 40px; } }
 .shipping-tabs { display: flex; gap: 8px; margin: 18px 0; }
 .shipping-tabs .active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, white); }
-.shipping-add { justify-content: flex-end; margin: -54px 0 18px; }
-.shipping-form { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; padding: 18px; align-items: end; }
-.shipping-request { grid-template-columns: repeat(5, minmax(130px, 1fr)); }
-.shipping-lines { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 9px; border-top: 1px solid var(--border); padding-top: 14px; }
-.shipping-lines > strong { grid-column: 1 / -1; font-size: 13px; }
-.inline-qty { display: flex; gap: 7px; align-items: center; }
-.inline-qty input { width: 110px; }
-.shipping-list { margin-top: 0; }
-.shipping-card { padding: 18px 20px; }
-.shipping-card.cancelled { opacity: .68; }
+/* Отгрузка: «К отгрузке» (проект → строки КБ, куда, документы, одна кнопка), «Отправки», «Готовая продукция». */
+.ship-tabs { margin: 0 0 14px; }
+.ship-tab-count { margin-left: 7px; padding: 0 7px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 11.5px; font-weight: 700; }
+.seg-tabs button.on .ship-tab-count { background: color-mix(in srgb, var(--primary) 14%, white); color: var(--primary); }
+.ship-panel { display: grid; gap: 12px; padding: 4px 4px 8px; white-space: normal; }
+.ship-panel .table-scroll, .ship-card .table-scroll, .ship-request .table-scroll, .ship-boxes .table-scroll { border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+table.ship-lines { width: 100%; }
+.data-table table.ship-lines thead th, table.ship-lines thead th { position: static; padding: 6px 10px; box-shadow: none; }
+.data-table table.ship-lines td, table.ship-lines td { padding: 4px 10px; height: 32px; }
+table.ship-lines tbody tr:last-child td { border-bottom: 0; }
+table.ship-lines td.ship-name { width: 40%; white-space: normal; }
+table.ship-lines td:first-child { width: 1%; }
+.ship-line-off td { color: var(--muted-foreground) !important; }
+.ship-qty { width: 96px; padding: 5px 8px; text-align: right; }
+.ship-qty.invalid { border-color: var(--tone-danger); box-shadow: 0 0 0 1px var(--tone-danger); }
+.ship-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; align-items: start; }
+@media (min-width: 1200px) { .ship-form { grid-template-columns: repeat(4, minmax(0, 1fr)); } .ship-form > .ship-span2 { grid-column: span 2; } }
+.ship-form label { gap: 4px; }
+.ship-form label > span { display: flex; gap: 8px; align-items: baseline; }
+.ship-form input, .ship-form select { padding: 7px 10px; }
+.ship-form input[type="file"] { padding: 5px 8px; font-size: 13px; }
+.ship-inherited { color: var(--muted-foreground); font-size: 11.5px; font-weight: 400; }
+.ship-more > summary { cursor: pointer; padding: 4px 0; color: var(--foreground); font-size: 13px; font-weight: 600; }
+.ship-more > .ship-form { margin-top: 8px; }
+.ship-actions { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.ship-actions-end { display: inline-flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.ship-actions .file-button { display: inline-flex; align-items: center; cursor: pointer; }
+.ship-actions .link-button { padding: 8px 4px; }
+.data-table td .ship-actions .primary, .data-table td .ship-actions .secondary, .data-table td .ship-docs .secondary { padding: 7px 14px; border-radius: 8px; font-size: 13px; line-height: 1.4; }
+.ship-total { font-size: 13px; color: var(--muted-foreground); }
+.ship-total strong, td .ship-total strong { display: inline; color: var(--foreground); }
+.ship-file { display: flex; gap: 8px; align-items: center; min-width: 0; min-height: 36px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); cursor: pointer; }
+.ship-file > span:last-child { overflow: hidden; color: var(--muted-foreground); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.ship-file .secondary { flex: none; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.ship-panel > .empty { padding: 10px !important; text-align: left; }
+.ship-project-shipments { display: grid; gap: 10px; }
+.ship-project-shipments > h3 { margin: 6px 0 0; font-size: 14px; }
+.ship-card { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); white-space: normal; }
+.ship-card.cancelled { opacity: .68; }
+.ship-card-head { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; }
+.ship-card-head > strong { font-size: 14px; }
+.ship-docs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 10px; align-items: end; padding-top: 10px; border-top: 1px solid var(--border); }
+.ship-docs input, .ship-docs select { padding: 7px 10px; }
+.ship-boxes { display: grid; gap: 10px; padding: 12px; border-radius: 8px; background: var(--panel-soft); }
+.ship-boxes-head { display: flex; gap: 16px; align-items: center; }
+.ship-inline { display: inline-flex; align-items: center; gap: 8px; }
+.ship-inline input { width: 80px; }
+.ship-request { display: grid; gap: 12px; margin-bottom: 14px; padding: 16px 18px; }
+.ship-request > h2 { margin: 0; font-size: 16px; }
+.ship-accept { display: grid; grid-template-columns: auto minmax(260px, 2fr) minmax(110px, .6fr) minmax(150px, .7fr) auto; gap: 12px; align-items: end; margin-bottom: 14px; padding: 12px 16px; }
+.ship-accept > strong { align-self: center; font-size: 14px; }
+.ship-accept label { gap: 4px; }
+.ship-accept input, .ship-accept select { padding: 7px 10px; }
+.ship-handoff { margin-bottom: 16px; }
+.ship-handoff > h2 { display: flex; gap: 8px; align-items: center; margin: 0 0 8px; font-size: 16px; }
+@media (max-width: 1100px) { .ship-docs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ship-accept { grid-template-columns: 1fr 1fr; } .ship-accept > strong { grid-column: 1 / -1; } }
+@media (pointer: coarse) {
+  .shipping-page .small, .shipping-page .ship-actions button, .shipping-page .ship-actions .link-button, .shipping-page .ship-docs button, .shipping-page .ship-actions .file-button, .shipping-page .ship-file .secondary, .shipping-page table.ship-lines td .link-button, .shipping-page .ship-qty, .shipping-page .ship-form input, .shipping-page .ship-form select, .shipping-page .ship-docs input, .shipping-page .ship-docs select, .shipping-page .ship-accept input, .shipping-page .ship-accept select, .shipping-page .ship-accept button { min-height: 40px; }
+  .data-table table.ship-lines td, table.ship-lines td { height: 44px; }
+  .ship-more > summary { padding: 10px 0; }
+}
 .reference-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .reference-map { padding: 18px; }
 .reference-map-head, .reference-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 9px; align-items: center; }
@@ -384,8 +437,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .operations-failures { margin-bottom: 18px; padding: 18px; }
 .operations-failures h2 { margin: 0 0 10px; font-size: 16px; }
 .operations-failures > div { display: grid; grid-template-columns: 180px 1fr auto; gap: 10px; border-top: 1px solid var(--border); padding: 9px 0; font-size: 12px; }
-.shipping-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0; color: var(--muted-foreground); font-size: 12px; }
-.shipment-docs { display: grid; grid-template-columns: 130px 160px minmax(260px, 1fr) 180px auto; gap: 9px; align-items: end; border-top: 1px solid var(--border); padding-top: 14px; margin-top: 12px; }
 .facts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 18px 0; }
 .facts-grid .wide { grid-column: span 2; }
 .card-footer { border-top: 1px solid #e5e9e3; padding-top: 14px; color: #77827b; }
@@ -755,10 +806,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .fulfillment-actions { align-items: stretch; flex-direction: column; }
   .fulfillment-actions label { width: 100%; }
   .return-line { grid-template-columns: 1fr; }
-  .production-launch-grid, .route-draft, .production-operation, .operation-assign, .shipping-form, .shipping-request, .shipment-docs, .reference-columns, .reference-map-head, .reference-row, .box-grid { grid-template-columns: 1fr; }
+  .production-launch-grid, .route-draft, .production-operation, .operation-assign, .ship-form, .ship-docs, .ship-accept, .reference-columns, .reference-map-head, .reference-row, .box-grid { grid-template-columns: 1fr; }
   .genealogy-edges > div { grid-template-columns: 1fr; }
-  .shipping-lines { grid-column: auto; grid-template-columns: 1fr; }
-  .shipping-add { margin: 0 0 14px; }
+  .ship-form > .ship-span2, .ship-accept > strong { grid-column: auto; }
   .operation-assign { grid-column: auto; }
   .operations-metrics, .operations-failures > div { grid-template-columns: 1fr; }
   .etk-flow { grid-template-columns: 1fr; }
@@ -2013,15 +2063,18 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .buy-grid col.c-price { width: 92px; }
 .buy-grid col.c-link { width: 108px; }
 .buy-grid col.c-note { width: 9%; }
-.buy-grid col.c-menu { width: 40px; }
-/* Планшет и узкий ноутбук с боковым меню (~1050 px таблицы). */
-@media (max-width: 1500px) {
-  .buy-grid col.c-pos { width: 23%; }
-  .buy-grid col.c-supplier { width: 110px; }
-  .buy-grid col.c-site { width: 10%; }
-  .buy-grid col.c-article { width: 84px; }
-  .buy-grid col.c-price { width: 84px; }
-  .buy-grid col.c-link { width: 96px; }
+.buy-grid col.c-menu { width: 170px; }
+/* Ноутбук 16" (~1190 px таблицы) и планшет: колонки сумма ≈ 1155 px, действия — 150 px, без боковой прокрутки. */
+@media (max-width: 1700px) {
+  .buy-grid col.c-pos { width: 20%; }
+  .buy-grid col.c-supplier { width: 100px; }
+  .buy-grid col.c-site { width: 9%; }
+  .buy-grid col.c-qty { width: 64px; }
+  .buy-grid col.c-unit { width: 50px; }
+  .buy-grid col.c-article { width: 76px; }
+  .buy-grid col.c-price { width: 76px; }
+  .buy-grid col.c-link { width: 88px; }
+  .buy-grid col.c-menu { width: 150px; }
 }
 @media (min-width: 1900px) {
   .buy-grid col.c-pos { width: 24%; }
@@ -2032,7 +2085,7 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
   .buy-grid col.c-article { width: 130px; }
   .buy-grid col.c-price { width: 110px; }
   .buy-grid col.c-link { width: 150px; }
-  .buy-grid col.c-note { width: 16%; }
+  .buy-grid col.c-note { width: 14%; }
 }
 .buy-grid th { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 8px; background: var(--sheet-head); color: #3d4a5c; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--border); border-right: 1px solid var(--sheet-line); }
 .buy-grid th.required::after { content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 5px; border-radius: 50%; background: var(--primary); vertical-align: middle; }
@@ -2053,8 +2106,8 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .pos-sub .chip.tone-danger { background: #fde8e8; }
 .pos-sub .filling { margin-right: 5px; font-style: italic; }
 .buy-grid td.edit { background: var(--sheet-edit); }
-.buy-grid td.edit:hover, .buy-grid td.note:hover { box-shadow: inset 0 0 0 1px var(--sheet-hover); }
-.buy-grid td.edit:focus-within, .buy-grid td.note:focus-within { box-shadow: inset 0 0 0 2px var(--primary); background: var(--card); }
+.buy-grid td.edit:hover { box-shadow: inset 0 0 0 1px var(--sheet-hover); }
+.buy-grid td.edit:focus-within { box-shadow: inset 0 0 0 2px var(--primary); background: var(--card); }
 .buy-grid td.dirty { background: var(--sheet-dirty); }
 .buy-grid td.invalid { box-shadow: inset 0 0 0 1.5px var(--sheet-invalid); background: var(--sheet-invalid-bg); }
 .buy-grid tbody tr:hover > td:not(.edit):not(.dirty) { background: #f6fafa; }
@@ -2062,12 +2115,12 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .buy-grid tr.edited > td.sel { box-shadow: inset 3px 0 0 var(--primary); }
 /* Строка группы (поставщик, заказ): заголовок, мета, действия справа. Общие классы для «В работе» и заказов. */
 td.group-cell { height: 32px; padding: 0 10px; background: var(--accent); color: var(--foreground); border-bottom: 1px solid var(--border); }
-.group-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.group-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
 .group-title { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .group-meta { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
 .buy-grid tr.fold-head { cursor: pointer; }
 .buy-grid tr.fold-head:hover > td.group-cell { background: color-mix(in srgb, var(--primary) 8%, var(--accent)); }
-.group-actions { margin-left: auto; display: inline-flex; gap: 6px; flex: none; }
+.group-actions { margin-left: auto; display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .buy-grid tbody tr.group-row:hover > td.group-cell:not(.edit):not(.dirty) { background: var(--accent); }
 .buy-grid td.num.ro { text-align: right; font-variant-numeric: tabular-nums; }
 .cell-input, .cell-select { display: block; width: 100%; height: calc(var(--sheet-row) - 1px); margin: 0; padding: 0 8px; border: 0; border-radius: 0; background: transparent; color: var(--foreground); font-size: 13px; text-overflow: ellipsis; }
@@ -2081,9 +2134,9 @@ td.group-cell { height: 32px; padding: 0 10px; background: var(--accent); color:
 .link-cell .cell-text.soft-warn { color: #a16207; }
 .link-host { position: relative; z-index: 1; display: inline-block; max-width: calc(100% - 16px); margin: 0 8px; color: var(--primary); line-height: calc(var(--sheet-row) - 1px); text-decoration: none; vertical-align: top; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-host:hover { text-decoration: underline; }
-.buy-grid td.note .cell-edit { height: calc(var(--sheet-row) - 1px); padding: 0 8px; border: 0; border-radius: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.buy-grid td.note .cell-edit:hover, .buy-grid td.note .cell-edit:focus-visible { background: transparent; }
-.buy-grid td.note .cell-edit-input { min-width: 0; border-radius: 0; }
+.buy-grid td.note { padding: 2px 4px; }
+.buy-grid td.note .cell-edit { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.buy-grid td.note .cell-edit-input { min-width: 0; }
 .buy-grid td.note .cell-edit-empty { visibility: hidden; }
 .buy-grid td.menu { text-align: center; }
 .procurement-stage td .row-menu > button { padding: 0 8px; height: 24px; border: 0; background: transparent; color: var(--muted-foreground); font-size: 15px; line-height: 1; }
@@ -2156,8 +2209,8 @@ td.group-cell { height: 32px; padding: 0 10px; background: var(--accent); color:
 input.cell-edit-input[type="date"] { width: 130px; min-width: 0; }
 textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .data-table td small.cell-edit-error, .cell-edit-error { display: block; margin-top: 2px; color: #852a24; font-size: 11.5px; white-space: normal; }
-.order-lines td.note-cell { min-width: 180px; max-width: 220px; white-space: normal; }
-.order-lines td.missing-cell { min-width: 150px; max-width: 220px; white-space: normal; }
+.order-lines td.note-cell { min-width: 120px; max-width: 220px; white-space: normal; }
+.order-lines td.missing-cell { min-width: 120px; max-width: 220px; white-space: normal; }
 .procurement-sheet td.num { font-variant-numeric: tabular-nums; }
 /* Весь лист и стадии: ключевые колонки вместе с «Комментарием» должны влезать в 16" без прокрутки вбок —
    отступы у́же, длинный текст (наименование, комментарий) переносится раньше; на 27" — как в других таблицах. */
@@ -2430,8 +2483,8 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .order-chip.tone-neutral { background: var(--chip-neutral-bg); }
 .order-lines td small { display: block; color: var(--muted-foreground); font-size: 11.5px; line-height: 1.3; }
 .order-lines td small.tone-warn { color: #a16207; }
-.order-lines td.name-cell { min-width: 180px; max-width: 320px; white-space: normal; }
-.order-lines td.status-cell { min-width: 110px; max-width: 200px; white-space: normal; }
+.order-lines td.name-cell { min-width: 120px; max-width: 260px; white-space: normal; }
+.order-lines td.status-cell { min-width: 90px; max-width: 160px; white-space: normal; }
 /* Окно «Вставить счёт» / «Вставить КП»: файл, № и даты сверху, строки заказа с распознанной ценой — плотно. */
 .order-doc-dialog .doc-file { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; min-width: 0; }
 .order-doc-dialog .doc-file-chip { display: flex; min-width: 0; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); font-weight: 500; font-size: 14px; }
@@ -2624,3 +2677,40 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
   .execution-current .execution-actions .link-button { padding: 6px 4px; }
   .mb-today .mb-today-chip { min-height: 40px; }
 }
+/* ── «Мои позиции»: действия на виду, без меню «⋯» (владелец, 05.10) ── */
+.row-actions { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%; max-width: 150px; }
+.row-actions-main { display: flex; flex-wrap: nowrap; gap: 4px; max-width: 100%; }
+td .row-actions .row-actions-main button { flex: 0 1 auto; min-width: 0; height: 24px; padding: 0 7px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; line-height: 22px; white-space: nowrap; }
+.row-actions-more { display: flex; flex-wrap: wrap; gap: 0 10px; max-height: 0; overflow: hidden; }
+td .row-actions .row-actions-more .link-button { padding: 0; font-size: 12px; color: var(--primary); white-space: normal; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
+tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px; margin-top: 3px; }
+.buy-grid td.menu, .procurement-stage td.menu { text-align: left; }
+.order-doc-links { gap: 12px; margin-right: 4px; font-size: 13px; }
+.order-doc-links .doc-link { color: var(--primary); text-decoration: none; }
+.order-doc-links a.doc-link:hover { text-decoration: underline; }
+.order-doc-links .doc-link.off { color: var(--muted-foreground); cursor: not-allowed; }
+.invoice-pop { position: relative; }
+.invoice-pop summary { cursor: pointer; color: var(--primary); list-style: none; }
+.invoice-pop summary::-webkit-details-marker { display: none; }
+.invoice-pop-list { position: absolute; z-index: 20; top: 100%; right: 0; display: grid; gap: 4px; min-width: 200px; padding: 8px 10px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.15); white-space: nowrap; }
+.order-lines small.invoice-name { display: block; color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+/* Правка в ячейке выглядит правкой: светлое поле со сплошной рамкой, пустая — подсказка «добавить» / «дд.мм.гггг». */
+.cell-edit { border: 1px solid var(--border); border-bottom-style: solid; background: var(--card); min-height: 26px; }
+.cell-edit-empty { color: var(--muted-foreground); font-style: italic; }
+.cell-edit:hover, .cell-edit:focus-visible { border-style: solid; }
+@media (pointer: coarse) {
+  .row-actions-more { max-height: none; margin-top: 4px; }
+  td .row-actions .row-actions-main button, td .row-actions .row-actions-more .link-button { min-height: 40px; }
+  .cell-edit { min-height: 40px; }
+  .order-doc-links a, .invoice-pop summary, .order-doc-links .doc-link { display: inline-flex; align-items: center; min-height: 40px; }
+  .group-actions .small { min-height: 40px; }
+}
+
+/* ── Таблицы стадий «Мои позиции» по ширине блока (ноутбук 16": ~1190 px, без боковой прокрутки) ──
+   Ширину держат нестрочные колонки (даты, суммы, действия 150 px), а «Наименование», «Статус» и «Комментарий» переносятся. */
+.procurement-stage .data-table table.grid.wide { width: 100%; min-width: 0; }
+.procurement-stage .data-table th, .procurement-stage .data-table td { padding-left: 8px; padding-right: 8px; }
+.procurement-stage .data-table td.text { min-width: 140px; max-width: 240px; }
+.procurement-stage .data-table th.num, .procurement-stage .data-table td.num { min-width: 0; }
+.order-lines th { white-space: normal; vertical-align: bottom; }
+.procurement-stage .data-table td.menu { min-width: 150px; }

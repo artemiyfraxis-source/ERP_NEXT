@@ -198,3 +198,70 @@ def test_batch_error_names_the_position():
             existing_legacy_ids=[],
             existing_designations=[],
         )
+
+
+def minimal_draft(**overrides) -> RequestDraft:
+    values = {
+        "purpose": "RND",
+        "delivery_point": None,
+        "name": "Болт М3",
+        "item_type": None,
+        "quantity": Decimal("10"),
+        "unit": "шт",
+        "quality_document": None,
+        "procurement_deadline": None,
+        "planned_date": None,
+    }
+    values.update(overrides)
+    return RequestDraft(**values)
+
+
+def create_one(item: RequestDraft):
+    (request,) = create_request_batch(
+        [item],
+        actor=Actor(name="Иванов", department="РНД"),
+        now=datetime(2026, 9, 15, 10, 30),
+        existing_legacy_ids=[],
+        existing_designations=[],
+    )
+    return request
+
+
+def test_minimal_draft_gets_defaults():
+    request = create_one(minimal_draft())
+
+    assert request.quality_document == "Нет"
+    assert request.delivery_point == "г. Москва, ул. 6-я Радиальная, д. 17"
+    assert request.item_type == "Комплектующие"
+    assert request.procurement_deadline == date(2026, 9, 22)
+    assert request.planned_date == date(2026, 9, 29)
+    assert request.priority == "Срочно"
+
+
+def test_typed_values_beat_defaults():
+    request = create_one(
+        minimal_draft(
+            delivery_point="г. Раменское, ул. 100-й Свирской Дивизии, д. 52",
+            item_type="Инструмент",
+            procurement_deadline=date(2026, 9, 16),
+            planned_date=date(2026, 10, 1),
+            quality_document="Да",
+        )
+    )
+
+    assert request.quality_document == "Да"
+    assert request.delivery_point.startswith("г. Раменское")
+    assert request.item_type == "Инструмент"
+    assert request.procurement_deadline == date(2026, 9, 16)
+    assert request.planned_date == date(2026, 10, 1)
+
+
+def test_quality_default_follows_category_rule():
+    assert create_one(minimal_draft(category="ОП")).quality_document == "Да"
+    assert create_one(minimal_draft(category="ИП")).quality_document == "Да"
+
+
+@pytest.mark.parametrize("field", ["name", "unit"])
+def test_name_and_unit_stay_required(field):
+    with pytest.raises(ValidationError, match="Позиция 1:"):
+        create_one(minimal_draft(**{field: " "}))

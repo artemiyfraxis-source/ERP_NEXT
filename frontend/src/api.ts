@@ -540,6 +540,8 @@ export interface FulfillmentRequest {
   deadline: string | null;
   status: string;
   handout_location: string | null;
+  /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
+  handout_place?: string;
   return_location: string | null;
   fully_reserved: boolean;
   /** НЕДОБОР (issueShortText_): what a lot does not close yet. */
@@ -1744,7 +1746,8 @@ export interface ApplyOrderDocumentInput {
   invoice_number?: string | null;
   invoice_date?: string | null;
   expected_arrival?: string | null;
-  lines: (OrderLineRef & { price_with_vat: string | null })[];
+  /** `invoice_item_name` — «Наименование в счёте»; пусто — сервер берёт название с сайта поставщика. */
+  lines: (OrderLineRef & { price_with_vat: string | null; invoice_item_name?: string | null })[];
 }
 
 export interface InvoiceUpload {
@@ -1884,6 +1887,12 @@ export const procurementApi = {
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/expected-arrival`, {
       method: "PATCH",
       body: JSON.stringify({ version, expected_arrival: expectedArrival }),
+    }),
+  /** ФАКТ. ДАТА руками (необязательно): пустая строка стирает дату. */
+  setActualArrival: (lineId: string, version: number, actualArrival: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/actual-arrival`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, actual_arrival: actualArrival || null }),
     }),
   replacementPermissionSheet: (lineId: string) =>
     api<{ sheet: PrintSheet }>(`/api/procurement/${lineId}/replacement-permission`),
