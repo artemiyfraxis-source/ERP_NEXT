@@ -75,15 +75,15 @@ it("saves every edited row in one call and refuses a row without quantity", asyn
 
   fireEvent.click(screen.getByRole("button", { name: "Ссылка SM-1" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Ссылка SM-1" }), { target: { value: "Склад" } });
-  fireEvent.change(screen.getByLabelText("Факт. кол-во SM-1"), { target: { value: "0" } });
+  fireEvent.change(screen.getByLabelText("Кол-во факт SM-1"), { target: { value: "0" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
   expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("SM-1"));
-  expect(screen.getByLabelText("Факт. кол-во SM-1")).toHaveAttribute("aria-invalid", "true");
-  expect(screen.getByLabelText("Факт. кол-во SM-1").closest("td")).toHaveClass("invalid");
+  expect(screen.getByLabelText("Кол-во факт SM-1")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Кол-во факт SM-1").closest("td")).toHaveClass("invalid");
   expect(screen.getByLabelText("Поставщик SM-1")).not.toHaveAttribute("aria-invalid");
   expect(sent).toEqual([]);
 
-  fireEvent.change(screen.getByLabelText("Факт. кол-во SM-1"), { target: { value: "2" } });
+  fireEvent.change(screen.getByLabelText("Кол-во факт SM-1"), { target: { value: "2" } });
 
   fireEvent.change(screen.getByLabelText("Поставщик SM-1"), { target: { value: "Фраксис" } });
   fireEvent.change(screen.getByLabelText("Поставщик SM-2"), { target: { value: "ЧипДип" } });
@@ -123,11 +123,11 @@ it("spreads a block pasted from Excel in the column order, skips the read-only p
   renderTable([line(1), line(2, { status: "Готов к запросу", supplier: "Было" }), line(3)]);
   // На экране «Было» (SM-2) стоит первой группой, затем «Без поставщика»: SM-1, SM-3.
   fireEvent.paste(screen.getByLabelText("Поставщик SM-1"), {
-    clipboardData: { getData: () => "ЧипДип\tЦАР\t5\tкг\tA-1\t99,50\twww.a.ru\nЭлитан\tЖУК\t7\tшт\tA-2\t10\tСклад\n" },
+    clipboardData: { getData: () => "ЧипДип\tЦАР\t999\t5\tкг\tA-1\t99,50\twww.a.ru\nЭлитан\tЖУК\t999\t7\tшт\tA-2\t10\tСклад\n" },
   });
   expect(value("Поставщик SM-1")).toBe("ЧипДип");
   expect(value("Наименование на сайте SM-1")).toBe("ЦАР");
-  expect(value("Факт. кол-во SM-1")).toBe("5");
+  expect(value("Кол-во факт SM-1")).toBe("5");
   expect((screen.getByLabelText("Ед. SM-1") as HTMLSelectElement).value).toBe("кг");
   expect(value("Артикул SM-1")).toBe("A-1");
   expect(screen.getByRole("button", { name: "Ссылка SM-1" }).closest("tr")).toHaveTextContent("a.ru ↗");
@@ -170,12 +170,12 @@ it("folds the request context into the position cell and marks ready rows", () =
   ]);
   const head = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
   expect(head).toEqual([
-    "", "Позиция", "Поставщик", "Наим. на сайте", "Кол-во", "Ед.", "Артикул", "Цена расч.", "Ссылка", "Комментарий", "",
+    "", "Позиция", "Поставщик", "Наим. на сайте", "Кол-во расч.", "Кол-во факт", "Ед.", "Артикул", "Цена расч.", "Ссылка", "Комментарий", "",
   ]);
   // Обязательные колонки — точкой (класс), а не «*» в тексте; полное название — в подсказке.
   const required = screen.getAllByRole("columnheader").filter((cell) => cell.classList.contains("required")).map((cell) => cell.textContent);
-  expect(required).toEqual(["Поставщик", "Кол-во", "Ед."]);
-  expect(screen.getByRole("columnheader", { name: "Кол-во" }).getAttribute("title")).toContain("Факт. кол-во");
+  expect(required).toEqual(["Поставщик", "Кол-во факт", "Ед."]);
+  expect(screen.getByRole("columnheader", { name: "Кол-во расч." }).getAttribute("title")).toContain("Кол-во по расчёту");
 
   const first = screen.getByText("SM-1").closest("td")!;
   expect(first).toHaveTextContent("Позиция 1");

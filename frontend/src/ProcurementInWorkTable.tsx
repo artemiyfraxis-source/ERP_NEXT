@@ -48,14 +48,17 @@ export type InWorkDraft = {
 };
 
 type Field = keyof InWorkDraft;
-type Column = { key: Field | "price"; title: string; head?: string; required?: boolean };
+type ReadOnlyKey = "calc_quantity" | "price";
+type Column = { key: Field | ReadOnlyKey; title: string; head?: string; required?: boolean };
+const isReadOnly = (key: Column["key"]): key is ReadOnlyKey => key === "calc_quantity" || key === "price";
 // Порядок колонок — он же порядок вставки из Excel. `head` — короткий заголовок, чтобы колонка влезла на 16";
-// полное название — в подсказке заголовка и в имени поля. «Цена расч.» только читается: при вставке её место
-// пропускается, чтобы блок, скопированный с этого листа, ложился обратно как был.
+// полное название — в подсказке заголовка и в имени поля. «Кол-во расч.» и «Цена расч.» только читаются: при вставке
+// их места пропускаются, чтобы блок, скопированный с этого листа, ложился обратно как был. В запрос идёт «Кол-во факт».
 const FIELDS: Column[] = [
   { key: "supplier", title: "Поставщик", required: true },
   { key: "site_name", title: "Наименование на сайте", head: "Наим. на сайте" },
-  { key: "actual_quantity", title: "Факт. кол-во", head: "Кол-во", required: true },
+  { key: "calc_quantity", title: "Кол-во по расчёту", head: "Кол-во расч." },
+  { key: "actual_quantity", title: "Кол-во факт", head: "Кол-во факт", required: true },
   { key: "actual_unit", title: "Ед.", required: true },
   { key: "design_article", title: "Артикул" },
   { key: "price", title: "Цена расчётная, с НДС", head: "Цена расч." },
@@ -226,7 +229,7 @@ export function ProcurementInWorkTable({
   const edited = lines.filter((line) => dirtyFields(line).length > 0);
   // Пустой поставщик, который не трогали, не проверяем и не отправляем: сервер оставит поле как есть.
   const fieldsOf = (line: ProcurementLine): Field[] => {
-    const keys = FIELDS.map((field) => field.key).filter((key): key is Field => key !== "price");
+    const keys = FIELDS.map((field) => field.key).filter((key): key is Field => !isReadOnly(key));
     return keys.filter((key) => key !== "supplier" || dirtyFields(line).includes("supplier") || draftOf(line).supplier.trim() !== "");
   };
 
@@ -250,7 +253,7 @@ export function ProcurementInWorkTable({
       if (!line) return;
       rowText.split("\t").forEach((value, j) => {
         const field = FIELDS[colIndex + j];
-        if (field && field.key !== "price") updates.push({ line, key: field.key, value: value.trim() });
+        if (field && !isReadOnly(field.key)) updates.push({ line, key: field.key, value: value.trim() });
       });
     });
     patch(updates);
@@ -342,6 +345,10 @@ export function ProcurementInWorkTable({
 
   function cell(line: ProcurementLine, rowIndex: number, colIndex: number) {
     const field = FIELDS[colIndex];
+    if (field.key === "calc_quantity") {
+      const quantity = `${line.calculated_quantity} ${line.calculated_unit}`.trim();
+      return <span className="cell-ro" title={quantity}>{line.calculated_quantity}</span>;
+    }
     if (field.key === "price") {
       const price = calculatedPriceOf(line);
       return <span className="cell-ro" title={price}>{price}</span>;
@@ -409,7 +416,7 @@ export function ProcurementInWorkTable({
           <table className="buy-grid">
             <colgroup>
               <col className="c-sel" /><col className="c-pos" /><col className="c-supplier" /><col className="c-site" />
-              <col className="c-qty" /><col className="c-unit" /><col className="c-article" /><col className="c-price" />
+              <col className="c-qty" /><col className="c-qty" /><col className="c-unit" /><col className="c-article" /><col className="c-price" />
               <col className="c-link" /><col className="c-note" /><col className="c-menu" />
             </colgroup>
             <thead>
@@ -487,12 +494,12 @@ export function ProcurementInWorkTable({
                         </span>
                       </td>
                       {FIELDS.map((field, colIndex) => {
-                        const value = field.key === "price" ? "" : draftOf(line)[field.key];
+                        const value = isReadOnly(field.key) ? "" : draftOf(line)[field.key];
                         const cls = [
-                          field.key === "price" ? "ro" : "edit",
+                          isReadOnly(field.key) ? "ro" : "edit",
                           dirty.has(field.key as Field) ? "dirty" : "",
-                          field.key !== "price" && invalid.has(line.id) && fieldsOf(line).includes(field.key) && invalidField(field.key, value) ? "invalid" : "",
-                          field.key === "actual_quantity" || field.key === "price" ? "num" : "",
+                          !isReadOnly(field.key) && invalid.has(line.id) && fieldsOf(line).includes(field.key) && invalidField(field.key, value) ? "invalid" : "",
+                          field.key === "actual_quantity" || isReadOnly(field.key) ? "num" : "",
                         ].join(" ").trim();
                         return <td key={field.key} className={cls}>{cell(line, rowIndex, colIndex)}</td>;
                       })}
