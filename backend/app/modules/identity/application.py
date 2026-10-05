@@ -138,6 +138,13 @@ class IdentityRepository(Protocol):
     def setting(self, key: str) -> str | None: ...
     def set_setting(self, key: str, value: str | None) -> None: ...
     def set_admin_mode(self, session_id: UUID, until: datetime | None) -> bool: ...
+    # Токены API (service principals)
+    def add_api_token(self, token: ApiToken) -> None: ...
+    def api_tokens(self) -> list[ApiToken]: ...
+    def api_token_for_update(self, token_id: UUID) -> ApiToken | None: ...
+    def revoke_api_token(self, token_id: UUID, revoked_by: UUID, revoked_at: datetime) -> bool: ...
+    def api_token_by_hash(self, token_hash: str) -> tuple[ApiToken, bool] | None: ...
+    def touch_api_token(self, token_id: UUID, now: datetime) -> None: ...
 
 
 class UnitOfWork(Protocol):
@@ -634,3 +641,166 @@ def change_own_password(
             details={},
         )
         uow.commit()
+
+
+# ── Токены API (owner 05.10.2026): Claude Code and a server agent call the API without a browser session ────────
+#
+# The administrator issues a named token with scopes; the plaintext `erp_<random>` is shown once, only its sha256 is
+# stored. A request with `Authorization: Bearer erp_…` acts as a service principal: the token's name and scopes, no
+# level, no section rights — and the gates admit it only where they name one of its scopes (shared/http_auth.py).
+
+API_TOKEN_PREFIX = "erp_"
+API_TOKEN_MAX_LENGTH = 128
+API_TOKEN_SCOPES: dict[str, str] = {
+    "tcgen": "Генератор техкарт",
+    "assembly": "Схемы сборки",
+}
+API_TOKEN_MAX_DAYS = 365
+API_TOKEN_NAME_MAX = 128
+API_TOKEN_TOUCH = timedelta(minutes=1)  # last_used_at is written at most once a minute per token
+API_TOKEN_DEPARTMENT = "Токен API"
+
+
+@dataclass(frozen=True)
+class ApiToken:
+    id: UUID
+    name: str
+    token_hash: str
+    scopes: frozenset[str]
+    created_by: UUID | None
+    created_at: datetime
+    expires_at: datetime
+    last_used_at: datetime | None = None
+    revoked_by: UUID | None = None
+    revoked_at: datetime | None = None
+    created_by_name: str = ""
+    revoked_by_name: str = ""
+
+    def status(self, now: datetime) -> str:
+        if self.revoked_at is not None:
+            return "revoked"
+        return "expired" if self.expires_at <= as_utc(now) else "active"
+
+
+@dataclass(frozen=True)
+class IssuedApiToken:
+    token: ApiToken
+    secret: str  # the plaintext, returned once and never stored
+
+
+def _token_scopes(scopes) -> frozenset[str]:
+    chosen = frozenset(str(scope).strip() for scope in scopes or ())
+    unknown = sorted(chosen - API_TOKEN_SCOPES.keys())
+    if unknown:
+        raise IdentityValidationError(f"Неизвестная область токена: {', '.join(unknown)}.")
+    if not chosen:
+        raise IdentityValidationError("Выберите хотя бы одну область токена.")
+    return chosen
+
+
+def issue_api_token(
+    name: str,
+    scopes,
+    days: int,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+) -> IssuedApiToken:
+    name = " ".join(str(name or "").split())
+    if not name or len(name) > API_TOKEN_NAME_MAX:
+        raise IdentityValidationError(f"Название токена — от 1 до {API_TOKEN_NAME_MAX} символов.")
+    chosen = _token_scopes(scopes)
+    if not 1 <= int(days) <= API_TOKEN_MAX_DAYS:
+        raise IdentityValidationError(f"Срок токена — от 1 до {API_TOKEN_MAX_DAYS} дней.")
+    now = as_utc(now)
+    secret = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    token = ApiToken(
+        id=uuid4(),
+        name=name,
+        token_hash=secret_hash(secret),
+        scopes=chosen,
+        created_by=actor.id,
+        created_at=now,
+        expires_at=now + timedelta(days=int(days)),
+        created_by_name=actor.name,
+    )
+    with uow:
+        uow.identity.add_api_token(token)
+        _audit(
+            uow,
+            aggregate_id=token.id,
+            event_type="identity.api_token_created",  # «Выпущен токен API»
+            actor=actor,
+            now=now,
+            details={
+                "name": token.name,
+                "scopes": ",".join(sorted(token.scopes)),
+                "expires_at": token.expires_at.isoformat(),
+            },
+        )
+        uow.commit()
+    return IssuedApiToken(token=token, secret=secret)
+
+
+def list_api_tokens(uow: UnitOfWork) -> list[ApiToken]:
+    with uow:
+        tokens = uow.identity.api_tokens()
+    return sorted(tokens, key=lambda token: token.created_at, reverse=True)
+
+
+def revoke_api_token(token_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> ApiToken:
+    """Revoking twice keeps the first revocation and writes nothing."""
+    now = as_utc(now)
+    with uow:
+        token = uow.identity.api_token_for_update(token_id)
+        if token is None:
+            raise KeyError("Токен не найден.")
+        if token.revoked_at is not None:
+            return token
+        uow.identity.revoke_api_token(token_id, actor.id, now)
+        _audit(
+            uow,
+            aggregate_id=token_id,
+            event_type="identity.api_token_revoked",  # «Отозван токен API»
+            actor=actor,
+            now=now,
+            details={"name": token.name},
+        )
+        uow.commit()
+        return replace(token, revoked_by=actor.id, revoked_at=now, revoked_by_name=actor.name)
+
+
+def service_principal(token: ApiToken) -> Principal:
+    """The token acts under its own name (audit rows show it) with its scopes only — never the creator's rights."""
+    return Principal(
+        actor=Actor(id=token.id, name=token.name, department=API_TOKEN_DEPARTMENT),
+        email="",
+        roles=frozenset(),
+        permissions={},
+        service=True,
+        scopes=token.scopes & API_TOKEN_SCOPES.keys(),
+    )
+
+
+def resolve_api_token(secret: str, now: datetime, uow: UnitOfWork) -> Principal | None:
+    """The service principal of a live token, or None: unknown, revoked, expired, or its creator no longer active."""
+    if not secret.startswith(API_TOKEN_PREFIX) or len(secret) > API_TOKEN_MAX_LENGTH:
+        return None
+    digest = secret_hash(secret)
+    now = as_utc(now)
+    with uow:
+        record = uow.identity.api_token_by_hash(digest)
+        if record is None:
+            return None
+        token, creator_active = record
+        if (
+            not secrets.compare_digest(token.token_hash, digest)
+            or token.revoked_at is not None
+            or token.expires_at <= now
+            or not creator_active
+        ):
+            return None
+        if token.last_used_at is None or token.last_used_at <= now - API_TOKEN_TOUCH:
+            uow.identity.touch_api_token(token.id, now)
+            uow.commit()
+        return service_principal(token)

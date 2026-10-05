@@ -1,4 +1,5 @@
-"""Resolve opaque server sessions and enforce CSRF on cookie-authenticated writes."""
+"""Resolve opaque server sessions and enforce CSRF on cookie-authenticated writes; resolve `Bearer erp_…` API tokens
+into service principals (no cookies, no CSRF)."""
 
 from collections.abc import Callable
 
@@ -9,7 +10,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.shared.clock import moscow_now
 
-from .application import UnitOfWork, csrf_matches, resolve_session
+from .application import API_TOKEN_MAX_LENGTH, UnitOfWork, csrf_matches, resolve_api_token, resolve_session
 
 
 SESSION_COOKIE = "erp_session"
@@ -50,11 +51,31 @@ class IdentitySessionMiddleware:
             "identity_uow_factory",
             None,
         )
+        clock = getattr(request.app.state, "identity_clock", moscow_now)
+        scheme, _, credential = request.headers.get("authorization", "").partition(" ")
+        if scheme.casefold() == "bearer":
+            # Токен API: no cookies are read, so there is nothing to forge cross-site and no CSRF check. An unknown,
+            # expired or revoked token is refused here; the token itself is never logged or echoed.
+            credential = credential.strip()
+            principal = None
+            if callable(factory) and 1 <= len(credential) <= API_TOKEN_MAX_LENGTH:
+                principal = await run_in_threadpool(resolve_api_token, credential, clock(), factory())
+            if principal is None:
+                response = JSONResponse(
+                    {"detail": "Токен API недействителен"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+                await response(scope, receive, send)
+                return
+            scope.setdefault("state", {})["principal"] = principal
+            await self.app(scope, receive, send)
+            return
+
         session_cookie, csrf_cookie_name = cookie_names(
             bool(getattr(request.app.state, "cookie_secure", True))
         )
         token = security_cookie(request, session_cookie)
-        clock = getattr(request.app.state, "identity_clock", moscow_now)
         resolved = None
         if callable(factory) and 1 <= len(token) <= 128:
             resolved = await run_in_threadpool(resolve_session, token, clock(), factory())
