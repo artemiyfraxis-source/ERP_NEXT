@@ -214,9 +214,9 @@ it("opens native finished-goods and shipping at the shipping route", async () =>
 
   render(<App />);
 
-  expect(await screen.findByRole("heading", { name: "Готовая продукция и отгрузка", level: 1 })).toBeInTheDocument();
-  // Кладовщику (правка «Отгрузка — склад» без правки «Отгрузки») первой открывается «Готовая продукция» (SUPPLYMAP SHIP_ROLE_VIEWS_).
-  expect(await screen.findByText("Строк готовой продукции пока нет.")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Отгрузка", level: 1 })).toBeInTheDocument();
+  // Кладовщик тоже отгружает: первой открывается «К отгрузке».
+  expect(await screen.findByText("Готовой продукции пока нет — КБ встают сюда при заведении проекта.")).toBeInTheDocument();
 });
 
 it("opens native references at the references route", async () => {
