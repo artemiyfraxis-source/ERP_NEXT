@@ -69,6 +69,8 @@ def database(tmp_path, monkeypatch):
             "ALTER TABLE production_plan_events ADD COLUMN field VARCHAR(32) NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE production_operations ADD COLUMN stage_key VARCHAR(128)"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
+        connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
+        Base.metadata.tables["fulfillment_kit_reserves"].create(connection)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)
     app.state.techcards_uow_factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)

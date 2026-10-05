@@ -7,10 +7,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
 import json
+import re
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
-from app.modules.procurement.domain import StockCover
+from app.modules.procurement.domain import StockCover, project_key
 from app.modules.warehouse.domain import (
     ISSUE_WRITEOFF_AUTHOR,
     StockLot,
@@ -26,7 +27,11 @@ from .domain import (
     FulfillmentLine,
     FulfillmentRequest,
     FulfillmentValidationError,
+    KitReserve,
     LotSnapshot,
+    item_index_key,
+    kb_number,
+    kb_of,
     project_of,
 )
 
@@ -42,6 +47,7 @@ class FulfillmentRepository(Protocol):
     def list(self, limit: int = 200, after_id: UUID | None = None) -> Sequence[FulfillmentRequest]: ...
     def add(self, request: FulfillmentRequest) -> None: ...
     def delete(self, request_id: UUID) -> None: ...
+    def open_requests(self) -> Sequence[FulfillmentRequest]: ...
 
 
 class WarehouseRepository(Protocol):
@@ -66,6 +72,13 @@ class StockCoverRepository(Protocol):
 
     def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[StockCover]: ...
     def add(self, cover: StockCover) -> None: ...
+
+
+class KitReserveRepository(Protocol):
+    """Techcard reserves of a project КБ; optional on the unit of work (`kit_reserves`), see `_kit_reserves`."""
+
+    def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[KitReserve]: ...
+    def add(self, reserve: KitReserve) -> None: ...
 
 
 class UnitOfWork(Protocol):
@@ -138,6 +151,49 @@ class CompleteReturnCommand(VersionedFulfillmentCommand):
     lines: tuple[ReturnDisposition, ...]
 
 
+@dataclass(frozen=True)
+class OffBookCommand(VersionedFulfillmentCommand):
+    """«есть, но не заведено» on one waiting line (`off_book=True`) or the mark removed (`off_book=False`)."""
+
+    line_id: UUID
+    off_book: bool = True
+
+
+@dataclass(frozen=True)
+class BindProjectLotsCommand:
+    """«Запросы на комплектацию»: one item (article + name) gets one or several lots for every КБ of the project at
+    once, or «есть, но не заведено» on all its waiting lines. `versions` — the request versions the screen showed."""
+
+    project: str
+    article: str
+    name: str
+    lot_ids: tuple[UUID, ...]
+    off_book: bool
+    versions: dict[UUID, int]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class ProjectBinding:
+    request_id: UUID
+    number: str
+    kb: str
+    line_id: UUID
+    quantity: Decimal
+    lot_id: UUID | None = None
+    grn: str | None = None
+    off_book: bool = False
+
+
+@dataclass(frozen=True)
+class ProjectBindResult:
+    bound: tuple[ProjectBinding, ...]
+    short: Decimal  # the item's need the chosen lots did not cover: those lines keep waiting
+    unit: str
+    requests: tuple[FulfillmentRequest, ...]
+
+
 def next_request_number(year: int, existing: Sequence[str]) -> str:
     prefix = f"REQ.{year % 100:02d}."
     used = [
@@ -198,19 +254,45 @@ def _project_covers(uow: UnitOfWork, lot: StockLot, purpose: str) -> list[StockC
     return [cover for cover in covers.active_on_lots([lot.id]) if cover.serves_project(project)]
 
 
-def project_reserve_by_lot(uow, lots: Sequence[StockLot], project: str) -> dict[UUID, Decimal]:
-    """How much of each lot the project's own «Со склада» reserves hold — the part the project's kit takes first
-    (`_reserve_for_kit`). Every preview and picker that shows what a kit can get from a lot adds it to ДОСТУПНО
-    (other projects see plain ДОСТУПНО = БАЛАНС − РЕЗЕРВ, which already leaves the reserve out). Without a project or
-    the procurement covers port → {}."""
-    covers = getattr(uow, "stock_covers", None)
+def _serves_kit(reserve: KitReserve, project: str, kb: str | None) -> bool:
+    """A techcard reserve serves the project (any КБ when `kb` is None, else only that КБ)."""
+    key = project_key(project)
+    if not key or key != project_key(reserve.project):
+        return False
+    return kb is None or (bool(item_index_key(kb)) and item_index_key(kb) == item_index_key(reserve.item_index))
+
+
+def _kit_reserves(uow: UnitOfWork, lot: StockLot, purpose: str) -> list[KitReserve]:
+    """Techcard reserves the kit's own project + КБ hold on the lot: taken over right after the project's covers.
+    A request without a project or a КБ, or a unit of work without the port (test fakes), takes none."""
+    reserves = getattr(uow, "kit_reserves", None)
+    project, kb = project_of(purpose), kb_of(purpose)
+    if reserves is None or not project or not kb or lot.reserved <= 0:
+        return []
+    return [reserve for reserve in reserves.active_on_lots([lot.id]) if _serves_kit(reserve, project, kb)]
+
+
+def project_reserve_by_lot(
+    uow, lots: Sequence[StockLot], project: str, kb: str | None = None,
+) -> dict[UUID, Decimal]:
+    """How much of each lot the project's own reserves hold — «Со склада» covers and techcard reserves (only those of
+    `kb` when given, else of every КБ) — the part the project's kit takes first (`_reserve_for_kit`). Every preview and
+    picker that shows what a kit can get from a lot adds it to ДОСТУПНО (other projects see plain ДОСТУПНО = БАЛАНС −
+    РЕЗЕРВ, which already leaves the reserve out). Without a project or the ports → {}."""
     ids = [lot.id for lot in lots if lot.reserved > 0]
-    if covers is None or not project or not ids:
+    if not project or not ids:
         return {}
     held: dict[UUID, Decimal] = {}
-    for cover in covers.active_on_lots(ids):
-        if cover.serves_project(project):
-            held[cover.lot_id] = held.get(cover.lot_id, Decimal("0")) + cover.quantity
+    covers = getattr(uow, "stock_covers", None)
+    if covers is not None:
+        for cover in covers.active_on_lots(ids):
+            if cover.serves_project(project):
+                held[cover.lot_id] = held.get(cover.lot_id, Decimal("0")) + cover.quantity
+    reserves = getattr(uow, "kit_reserves", None)
+    if reserves is not None:
+        for reserve in reserves.active_on_lots(ids):
+            if _serves_kit(reserve, project, kb):
+                held[reserve.lot_id] = held.get(reserve.lot_id, Decimal("0")) + reserve.quantity
     return held
 
 
@@ -256,6 +338,42 @@ def _take_over_covers(
     return amount - left
 
 
+def _take_over_kit_reserves(
+    reserves: Sequence[KitReserve],
+    amount: Decimal,
+    request: FulfillmentRequest,
+    lot: StockLot,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+) -> Decimal:
+    """Move up to `amount` of the КБ's techcard reserves to the kit line — the lot's РЕЗЕРВ keeps that part, only the
+    holder changes (techcard → kit line), as with `_take_over_covers`."""
+    left = amount
+    for reserve in reserves:
+        if left <= 0:
+            break
+        take = min(reserve.quantity, left)
+        uow.kit_reserves.add(reserve.consume(take, request.number))
+        details = {
+            "quantity": format(take.normalize(), "f"),
+            "unit": reserve.unit,
+            "holder": reserve.label,
+            "kit_reserve_id": str(reserve.id),
+            "request": request.number,
+        }
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=lot.id, event_type="warehouse.kit_reserve_taken_by_kit",
+            actor=actor, occurred_at=now, details=details,
+        ))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=reserve.id, event_type="fulfillment.kit_reserve_taken",
+            actor=actor, occurred_at=now, details=details,
+        ))
+        left -= take
+    return amount - left
+
+
 def _reserve_for_kit(
     request: FulfillmentRequest,
     lot: StockLot,
@@ -264,14 +382,17 @@ def _reserve_for_kit(
     now: datetime,
     uow: UnitOfWork,
 ) -> tuple[Decimal, StockLot]:
-    """How much of `wanted` the kit gets from the lot: the project's «Со склада» reserve first, then ДОСТУПНО.
-    → (given, the lot to save)."""
+    """How much of `wanted` the kit gets from the lot: the project's «Со склада» reserve first, then the techcard
+    reserve of its own project + КБ, then ДОСТУПНО. → (given, the lot to save)."""
     covers = _project_covers(uow, lot, request.purpose)
+    reserves = _kit_reserves(uow, lot, request.purpose)
     held = sum((cover.quantity for cover in covers), Decimal("0"))
+    held += sum((reserve.quantity for reserve in reserves), Decimal("0"))
     give = min(wanted, max(lot.available, Decimal("0")) + held)
     if give <= 0:
         return Decimal("0"), lot
     taken = _take_over_covers(covers, give, request, lot, actor, now, uow)
+    taken += _take_over_kit_reserves(reserves, give - taken, request, lot, actor, now, uow)
     rest = give - taken
     return give, (lot.reserve(rest) if rest > 0 else lot)
 
@@ -408,6 +529,164 @@ def unbind_lot(command: UnbindLotCommand, uow: UnitOfWork) -> FulfillmentRequest
         return updated
 
 
+def _off_book_details(line: FulfillmentLine) -> dict:
+    return {
+        "line_id": str(line.id), "article": line.article, "name": line.name,
+        "quantity": _display_number(line.requirement), "unit": line.unit,
+    }
+
+
+def set_off_book(command: OffBookCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    """«есть, но не заведено» on a waiting line, or the mark removed. Nothing on the warehouse moves; the audit keeps
+    who, when and how much."""
+    with uow:
+        request = _versioned(command.request_id, command.expected_version, uow)
+        line = next((item for item in request.lines if item.id == command.line_id), None)
+        if line is None:
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        if command.off_book:
+            updated = request.mark_off_book(line.id).stamped(command.now)
+            event = "fulfillment.off_book_marked"
+        else:
+            updated = request.clear_off_book(line.id).stamped(command.now)
+            event = "fulfillment.off_book_cleared"
+        uow.fulfillment.add(updated)
+        _audit(updated, event, command.actor, command.now, _off_book_details(line), uow)
+        uow.commit()
+        return updated
+
+
+def _item_key(article: str, name: str) -> tuple[str, str]:
+    """The screen's position key (FulfillmentPage ProjectPanel: «article|name», trimmed, case-insensitive)."""
+    return str(article or "").strip().casefold(), str(name or "").strip().casefold()
+
+
+def _natural_key(value: str) -> tuple:
+    """«FRX.26.0000010» after «FRX.26.0000009»; «КБ10» after «КБ2»."""
+    return tuple(
+        (0, int(part), "") if part.isdigit() else (1, 0, part.casefold())
+        for part in re.split(r"(\d+)", str(value or "")) if part
+    )
+
+
+def _kit_order(request: FulfillmentRequest) -> tuple:
+    """КБ in natural order (КБ1, КБ2 … КБ10), a request without a КБ last; ties by request number."""
+    number = kb_number(request.purpose)
+    return (number is None, number or 0, request.number)
+
+
+def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> ProjectBindResult:
+    """One item of a project gets the chosen lots for every КБ at once, in one transaction (owner 05.10.2026).
+
+    КБ go in natural order, lots FIFO by ГРН number. Each waiting line of the item takes what the current lot gives
+    (`_reserve_for_kit`: the project's covers, then the КБ's techcard reserve, then ДОСТУПНО); a lot that falls short
+    splits the line and the next lot takes the remainder; what no lot covers stays a waiting line. Lines that already
+    have a lot (or «есть, но не заведено») are left alone. `off_book` marks every waiting line of the item instead."""
+    with uow:
+        key = project_key(command.project)
+        wanted_item = _item_key(command.article, command.name)
+        if not key:
+            raise FulfillmentValidationError("Не указан проект")
+        if not any(wanted_item):
+            raise FulfillmentValidationError("Не указана позиция: артикул или наименование")
+        lot_ids = tuple(dict.fromkeys(command.lot_ids))
+        if command.off_book and lot_ids:
+            raise FulfillmentValidationError("Либо партии, либо «есть, но не заведено» — не вместе")
+        if not command.off_book and not lot_ids:
+            raise FulfillmentValidationError("Выбери хотя бы одну партию")
+
+        for request_id, version in command.versions.items():
+            current = uow.fulfillment.get(request_id)
+            if current is None or current.version != version:
+                raise ConcurrentFulfillmentUpdate("Заявки проекта изменились после загрузки — обнови экран")
+
+        def waiting(line: FulfillmentLine) -> bool:
+            return line.waiting and _item_key(line.article, line.name) == wanted_item
+
+        requests = sorted(
+            (
+                request for request in uow.fulfillment.open_requests()
+                if project_key(project_of(request.purpose)) == key and any(waiting(line) for line in request.lines)
+            ),
+            key=_kit_order,
+        )
+        if not requests:
+            raise FulfillmentValidationError(
+                f"В заявках проекта {command.project} нет позиций «{command.name or command.article}», ждущих партию"
+            )
+        unseen = [request.number for request in requests if request.id not in command.versions]
+        if unseen:
+            raise ConcurrentFulfillmentUpdate(
+                f"В проекте появились заявки, которых нет на экране ({', '.join(unseen)}) — обнови экран"
+            )
+
+        lots: list[StockLot] = []
+        for lot_id in lot_ids:
+            lot = uow.warehouse.get(lot_id)
+            if lot is None:
+                raise KeyError(f"Warehouse lot not found: {lot_id}")
+            lots.append(lot)
+        lots.sort(key=lambda lot: (_natural_key(lot.grn), _natural_key(lot.package), str(lot.id)))
+        current_lots = {lot.id: lot for lot in lots}
+
+        bound: list[ProjectBinding] = []
+        saved: list[FulfillmentRequest] = []
+        short = Decimal("0")
+        unit = ""
+        for request in requests:
+            original = request
+            kb = kb_of(request.purpose)
+            for line_id in [line.id for line in request.lines if waiting(line)]:
+                line = next(row for row in request.lines if row.id == line_id)
+                unit = unit or line.unit
+                if command.off_book:
+                    request = request.mark_off_book(line_id)
+                    bound.append(ProjectBinding(
+                        request_id=request.id, number=request.number, kb=kb, line_id=line_id,
+                        quantity=line.requirement, off_book=True,
+                    ))
+                    _audit(request, "fulfillment.off_book_marked", command.actor, command.now, {
+                        **_off_book_details(line), "project": command.project,
+                    }, uow)
+                    continue
+                need, target = line.requirement, line_id
+                for candidate in lots:
+                    if need <= 0:
+                        break
+                    lot = current_lots[candidate.id]
+                    give, reserved_lot = _reserve_for_kit(request, lot, need, command.actor, command.now, uow)
+                    if give <= 0:
+                        continue
+                    before = {row.id for row in request.lines}
+                    request = request.bind_line(target, LotSnapshot(
+                        lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
+                        storage_location=lot.storage_location,
+                    ), give, lot.unit)
+                    current_lots[lot.id] = reserved_lot
+                    uow.warehouse.add(reserved_lot)
+                    bound.append(ProjectBinding(
+                        request_id=request.id, number=request.number, kb=kb, line_id=target,
+                        quantity=give, lot_id=lot.id, grn=lot.grn,
+                    ))
+                    _audit(request, "fulfillment.lot_bound", command.actor, command.now, {
+                        "line_id": str(target), "lot_id": str(lot.id), "quantity": str(give),
+                        "project": command.project,
+                    }, uow)
+                    need -= give
+                    if need > 0:  # the lot fell short: the split-off remainder waits for the next lot
+                        target = next(row.id for row in request.lines if row.id not in before)
+                short += max(need, Decimal("0"))
+            if request is not original:
+                # Every bind bumped the version; the request changed once — one version step, as the screen expects.
+                request = replace(request, version=original.version + 1).stamped(command.now)
+                uow.fulfillment.add(request)
+                saved.append(request)
+        if not bound:
+            raise FulfillmentValidationError("У выбранных партий нет доступного остатка")
+        uow.commit()
+        return ProjectBindResult(bound=tuple(bound), short=short, unit=unit, requests=tuple(saved))
+
+
 def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
@@ -440,6 +719,8 @@ def issue_fulfillment(
         updated = request.mark_issued().stamped(command.now)
         lots: dict[UUID, StockLot] = {}
         for line in request.lines:
+            if line.off_book:  # «есть, но не заведено»: no lot, no stock movement, no СПИСАНИЕ row
+                continue
             if line.lot is None:
                 raise FulfillmentValidationError("У позиции не выбрана партия")
             lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
@@ -450,7 +731,7 @@ def issue_fulfillment(
         # Issue.gs:475-502: one СПИСАНИЕ row per issued position, ОСТАТОК ПОСЛЕ = the lot balance once the
         # whole request is posted (two positions on one lot both show the final balance).
         for line in request.lines:
-            if line.reserved <= 0:
+            if line.off_book or line.reserved <= 0:
                 continue
             lot = lots[line.lot.lot_id]
             uow.writeoffs.add(WriteOffEntry.for_lot(
@@ -468,7 +749,14 @@ def issue_fulfillment(
                 source_key=f"fulfillment-issue:{line.id}",
             ))
         uow.fulfillment.add(updated)
-        _audit(updated, "fulfillment.issued", command.actor, command.now, {"lines": len(updated.lines)}, uow)
+        off_book = [
+            {"line_id": str(line.id), "article": line.article, "name": line.name,
+             "quantity": _display_number(line.issued), "unit": line.unit}
+            for line in updated.lines if line.off_book
+        ]
+        _audit(updated, "fulfillment.issued", command.actor, command.now, {
+            "lines": len(updated.lines), **({"off_book": off_book} if off_book else {}),
+        }, uow)
         uow.commit()
         return updated
 
@@ -502,6 +790,8 @@ def complete_return(command: CompleteReturnCommand, uow: UnitOfWork) -> Fulfillm
         original_by_id = {line.id: line for line in request.lines}
         for disposition in command.lines:
             original = original_by_id[disposition.line_id]
+            if original.off_book:  # no lot to put anything back on; «годное» > 0 is refused by settle_return
+                continue
             if original.lot is None:
                 raise FulfillmentValidationError("У позиции не сохранена выданная партия")
             if disposition.returned_good <= 0 and not str(disposition.storage_location or "").strip():
@@ -630,15 +920,21 @@ def build_issue_print_sheet(request: FulfillmentRequest, now: datetime) -> Print
     rows: list[tuple[str, ...]] = []
     waiting_names: list[str] = []
     for index, line in enumerate(request.lines, start=1):
-        grn = line.lot.grn if line.lot else "— ждём поставки —"
+        if line.off_book:
+            grn = "есть, не заведено"
+        else:
+            grn = line.lot.grn if line.lot else "— ждём поставки —"
         package = line.lot.package if line.lot else ""
         place = line.lot.storage_location if line.lot else ""
-        picked = line.issued if line.issued > 0 else line.reserved
+        if line.issued > 0:
+            picked = line.issued
+        else:
+            picked = line.requirement if line.off_book else line.reserved
         rows.append((
             str(index), line.article or "", line.name, grn, package,
             _display_number(line.requirement), _display_number(picked), line.unit, place, "",
         ))
-        if line.lot is None:
+        if line.lot is None and not line.off_book:
             waiting_names.append(line.name)
     note = f"НЕДОБОР (на складе не хватило): {', '.join(waiting_names)}" if waiting_names else ""
     subtitle = (
@@ -671,7 +967,7 @@ def build_issue_return_sheet(request: FulfillmentRequest, now: datetime) -> Prin
         if line.issued <= 0:
             continue
         index += 1
-        grn = line.lot.grn if line.lot else ""
+        grn = "есть, не заведено" if line.off_book else (line.lot.grn if line.lot else "")
         package = line.lot.package if line.lot else ""
         place = line.lot.storage_location if line.lot else ""
         rows.append((
