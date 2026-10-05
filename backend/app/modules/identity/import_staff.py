@@ -33,6 +33,7 @@ from app.database import build_engine, build_identity_uow_factory
 
 from .application import UnitOfWork
 from .domain import (
+    LEVEL_LABELS,
     IdentityUser,
     hash_password,
     hash_pin,
@@ -43,8 +44,8 @@ from .domain import (
     normalize_name,
     normalize_role,
     normalize_site,
-    FULL_ACCESS_ROLES,
 )
+from .level_migration import shop_worker_rule, site_master_rule
 
 # ID-4/ID-8: the ERP id of an imported employee is fixed by e-mail, so the import is idempotent.
 STAFF_ID_NAMESPACE = "fraxis-erp:identity:staff:"
@@ -59,17 +60,22 @@ ACCESS_BACKUP_RELATIVE = Path("_local") / "access-backup-2026-09-01.json"
 # deactivates such a row if it is still active, so only the real «Артемий Васильев» (tit1963yt) remains.
 TEST_EMAILS = frozenset({"artemiyfraxis@gmail.com"})
 
-# SUPPLYMAP role keys → ERP role keys. Every current portal role already exists in ROLE_LABELS; the map is here so
-# a renamed or retired SUPPLYMAP role lands on a real ERP role instead of a silent «staff».
+# SUPPLYMAP role keys → ERP access levels (docs/migration/access-levels-plan.md: management → Суперадминистратор,
+# admin → Администратор, prodhead / buyer → Технический руководитель, master / receiver → Бригадир, staff → Оператор).
+# A role missing here lands on «staff» → Оператор, not on a silent wider level. The flags follow the plan: «Мастер
+# площадки» = master, «Монтажник» = staff with a site or a «монтаж» department. The SUPPLYMAP role itself is kept as
+# the legacy role (one release).
 ROLE_MAP = {
     "admin": "admin",
-    "buyer": "buyer",
-    "receiver": "receiver",
-    "prodhead": "prodhead",
-    "master": "master",
-    "management": "management",
-    "staff": "staff",
+    "buyer": "tech_lead",
+    "receiver": "foreman",
+    "prodhead": "tech_lead",
+    "master": "foreman",
+    "management": "superadmin",
+    "staff": "operator",
 }
+# Office roles that span both sites (directors, технолог, снабжение): no participok is read from their department.
+CROSS_SITE_ROLES = frozenset({"admin", "buyer", "prodhead", "management"})
 
 
 class StaffImportError(RuntimeError):
@@ -81,8 +87,20 @@ class SourceEmployee:
     email: str
     name: str
     department: str
-    role: str
-    site: str | None = None  # ЦАР / ЖУК; None — full-access roles (directors, технолог, снабжение) work across sites
+    role: str  # the SUPPLYMAP role (a key of ROLE_MAP), stored as the legacy role
+    site: str | None = None  # ЦАР / ЖУК; None — office roles (directors, технолог, снабжение) work across sites
+
+    @property
+    def access_level(self) -> str:
+        return ROLE_MAP.get(self.role, ROLE_MAP["staff"])
+
+    @property
+    def shop_worker(self) -> bool:
+        return shop_worker_rule(self.role, self.site, self.department)
+
+    @property
+    def site_master(self) -> bool:
+        return site_master_rule(self.role)
 
 
 # Монтажники (installers) and the Жуковский (ЖУК) participok, owner 2026-09-29: they are not in the SUPPLYMAP snapshot
@@ -152,9 +170,9 @@ def _surname_first(name: str) -> str:
 
 
 def _infer_site(role: str, department: str) -> str | None:
-    """Site for a SUPPLYMAP row: full-access roles (directors, технолог, снабжение) span sites (None); otherwise read
+    """Site for a SUPPLYMAP row: office roles (directors, технолог, снабжение) span sites (None); otherwise read
     the participok from the department text — «Жуковский»/ЖУК → ЖУК, «Царицыно»/ЦАР → ЦАР, else None."""
-    if role in FULL_ACCESS_ROLES:
+    if role in CROSS_SITE_ROLES:
         return None
     text = department.casefold()
     if "жук" in text or "жуковск" in text:
@@ -173,7 +191,7 @@ def read_source(source: Path) -> list[SourceEmployee]:
     people: list[SourceEmployee] = []
     for email, info in directory.items():
         raw_role = roles.get(email) or info.get("role") or "staff"  # access backup is fresher than the seed's role
-        role = ROLE_MAP.get(raw_role, "staff")
+        role = raw_role if raw_role in ROLE_MAP else "staff"
         department = info.get("dept", "")
         people.append(SourceEmployee(
             email=email,
@@ -200,9 +218,10 @@ def all_source_staff(source: Path) -> list[SourceEmployee]:
 class ImportedRow:
     name: str
     login: str
-    role: str
+    role: str  # the legacy role
     pin: str | None  # None → skipped (already present, PINs kept)
     action: str  # "создан" / "обновлён" / "пропущен (уже есть)"
+    access_level: str = ""
 
 
 def import_staff(
@@ -225,35 +244,40 @@ def import_staff(
                     if apply:
                         uow.identity.update_user(replace(current, active=False))
                     rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=None,
-                                            action="тестовый — отключён"))
+                                            action="тестовый — отключён", access_level=current.access_level))
                 else:
-                    rows.append(ImportedRow(name=name, login=login, role=role, pin=None, action="тестовый — пропущен"))
+                    rows.append(ImportedRow(name=name, login=login, role=role, pin=None, action="тестовый — пропущен",
+                                            access_level=person.access_level))
             elif current is None:
                 pin = new_pin()
                 if apply:
                     user = IdentityUser(
                         id=staff_id(email), login=login, email=email, name=name,
                         department=department, role=role, site=site, active=True,
+                        access_level=person.access_level,
+                        shop_worker=shop_worker_rule(role, site, department), site_master=site_master_rule(role),
                     )
                     # No password: only the PIN opens the door (SUPPLYMAP had PINs only).
                     uow.identity.add_user(user, hash_password(secrets.token_urlsafe(32)), {}, hash_pin(pin))
-                rows.append(ImportedRow(name=name, login=login, role=role, pin=pin, action="создан"))
+                rows.append(ImportedRow(name=name, login=login, role=role, pin=pin, action="создан",
+                                        access_level=person.access_level))
             elif reset_pins:
                 pin = new_pin()
                 if apply:
                     uow.identity.set_pin(current.id, hash_pin(pin))
                 rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=pin,
-                                        action="PIN перевыдан"))
+                                        action="PIN перевыдан", access_level=current.access_level))
             elif current.name != name or current.department != department or current.site != site:
                 # Already imported, but the source shape moved: name to «Фамилия Имя», the participok/department (ЖУК
-                # added, installers → «Монтаж»). Bring name, department and site to the source; keep the PIN and role.
+                # added, installers → «Монтаж»). Bring name, department and site to the source; keep the PIN, role
+                # and level (the administrator may have changed the level since).
                 if apply:
                     uow.identity.update_user(replace(current, name=name, department=department, site=site))
                 rows.append(ImportedRow(name=name, login=current.login, role=current.role, pin=None,
-                                        action="обновлён (имя/отдел/площадка)"))
+                                        action="обновлён (имя/отдел/площадка)", access_level=current.access_level))
             else:
                 rows.append(ImportedRow(name=current.name, login=current.login, role=current.role, pin=None,
-                                        action="пропущен (уже есть)"))
+                                        action="пропущен (уже есть)", access_level=current.access_level))
         if apply:
             uow.commit()
     return rows
@@ -262,17 +286,18 @@ def import_staff(
 def _print_report(rows: list[ImportedRow], *, apply: bool) -> None:
     head = "ПЕРЕНОС СОТРУДНИКОВ" if apply else "ПЕРЕНОС СОТРУДНИКОВ (dry-run, база не тронута)"
     print(head)
-    print(f"{'ФИО':<24} {'Логин':<32} {'Роль':<12} PIN")
-    print("-" * 84)
+    print(f"{'ФИО':<24} {'Логин':<32} {'Уровень доступа':<26} PIN")
+    print("-" * 98)
     for row in rows:
         pin = row.pin if row.pin is not None else "—"
-        print(f"{row.name:<24} {row.login:<32} {row.role:<12} {pin:<8} {row.action}")
+        level = LEVEL_LABELS.get(row.access_level, row.access_level or row.role)
+        print(f"{row.name:<24} {row.login:<32} {level:<26} {pin:<8} {row.action}")
     created = sum(1 for row in rows if row.action == "создан")
     reissued = sum(1 for row in rows if row.action == "PIN перевыдан")
     updated = sum(1 for row in rows if row.action.startswith("обновлён"))
     deactivated = sum(1 for row in rows if row.action == "тестовый — отключён")
     skipped = sum(1 for row in rows if row.action.startswith("пропущен") or row.action == "тестовый — пропущен")
-    print("-" * 84)
+    print("-" * 98)
     print(f"создано: {created}, PIN перевыдано: {reissued}, обновлено: {updated}, "
           f"тестовых отключено: {deactivated}, пропущено: {skipped}")
     if any(row.pin for row in rows):

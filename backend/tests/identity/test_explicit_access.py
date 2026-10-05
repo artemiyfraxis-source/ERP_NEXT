@@ -1,5 +1,6 @@
 """«Доступы»: an empty cell = closed (SUPPLYMAP Portal.gs portalApplyAccess_, 01.09.2026); migration 0046 writes the
-former role defaults as explicit cells so nobody's access changes; «Оформить заявку» is a matrix cell like any other."""
+former role defaults as explicit cells so nobody's access changes (the legacy role model); «Оформить заявку» is a
+matrix cell like any other (the level matrix since the access levels)."""
 
 import sqlite3
 from pathlib import Path
@@ -8,35 +9,33 @@ from alembic import command
 from alembic.config import Config
 
 from app.modules.identity.domain import (
-    FULL_ACCESS_ROLES,
-    ROLE_DEFAULTS,
+    ACCESS_LEVELS,
+    FULL_ACCESS_LEVELS,
+    FULL_LEVEL_SECTIONS,
     ROLE_SEED,
-    ROLES,
-    SECTION_LABELS,
     AccessMode,
-    role_permissions,
+    level_permissions,
 )
 from tests.identity.test_access import _client, access_api  # noqa: F401  (fixture)
 
 
-def test_only_full_access_roles_have_anything_without_a_cell():
-    # Full-access roles (admin, buyer, prodhead, management) are edit everywhere; every other role's empty cell closes.
-    for role in ROLES - FULL_ACCESS_ROLES:
-        assert role_permissions(role, {}) == {}, role
-    for role in FULL_ACCESS_ROLES:
-        assert role_permissions(role, {}) == {section: AccessMode.EDIT for section in SECTION_LABELS}, role
-    assert set(ROLE_DEFAULTS) == FULL_ACCESS_ROLES
+def test_only_superadmin_and_admin_have_anything_without_a_cell():
+    # The full levels are edit everywhere; every other level's empty cell closes.
+    for level in set(ACCESS_LEVELS) - FULL_ACCESS_LEVELS:
+        assert level_permissions(level, {}, {}) == {}, level
+    for level in FULL_ACCESS_LEVELS:
+        assert level_permissions(level, {}, {}) == {section: AccessMode.EDIT for section in FULL_LEVEL_SECTIONS}, level
 
 
 def test_newrequest_follows_the_matrix(access_api):  # noqa: F811
-    # A non-full-access role (receiver) follows the matrix; a full-access role would keep filing regardless.
+    # A matrix level (receiver → Бригадир) follows the matrix; superadmin/admin would keep filing regardless.
     admin = _client("admin", "admin-password")
     receiver = _client("receiver", "recv-password")
     assert receiver.post("/api/requests", json={}).status_code != 403
 
     matrix = admin.get("/api/auth/access").json()["matrix"]
-    matrix["receiver"].pop("newrequest")  # an emptied cell closes filing
-    assert admin.put("/api/auth/access/roles", json={"matrix": matrix}).status_code == 200
+    matrix["foreman"].pop("newrequest")  # an emptied cell closes filing
+    assert admin.put("/api/auth/access/levels", json={"matrix": matrix}).status_code == 200
 
     assert "newrequest" not in receiver.get("/api/auth/me").json()["permissions"]
     assert receiver.post("/api/requests", json={}).status_code == 403

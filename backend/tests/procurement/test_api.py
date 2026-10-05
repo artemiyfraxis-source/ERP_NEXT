@@ -84,11 +84,12 @@ def test_procurement_routes_require_authenticated_buyer(procurement_api):
     app.dependency_overrides.pop(authenticated_principal)
     assert client.get("/api/procurement/available").status_code == 401
 
+    # Access levels: «Лист закупки» closed in the matrix — refused, whatever else is open.
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Иванов", department="РНД"),
         email="ivanov@example.test",
-        roles=frozenset({"employee"}),
-        permissions={"procurement": "edit"},
+        roles=frozenset({"operator"}),
+        permissions={"requests": "edit", "newrequest": "edit"},
     )
     assert client.get("/api/procurement/available").status_code == 403
 

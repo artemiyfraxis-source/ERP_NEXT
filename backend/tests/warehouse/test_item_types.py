@@ -169,11 +169,11 @@ def test_quick_entry_writes_the_canonical_type(warehouse_api):  # noqa: F811
     ("put", "/api/stock/item-types", {"types": ["Кабель"]}),
     ("post", "/api/stock/item-types/rename", {"source": "Комплектующие", "target": "Кабель"}),
 ])
-def test_the_dictionary_is_for_the_storekeeper_and_the_admin_only(warehouse_api, method, path, body):  # noqa: F811
+def test_the_dictionary_needs_warehouse_edit(warehouse_api, method, path, body):  # noqa: F811
     client, _ = warehouse_api
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Сметчик", department="КБ"), email="estimator@example.test",
-        roles=frozenset({"estimator"}), permissions={"warehouse": "edit"},
+        roles=frozenset({"commercial"}), permissions={"warehouse": "view"},
     )
 
     response = getattr(client, method)(path, **({"json": body} if body is not None else {}))

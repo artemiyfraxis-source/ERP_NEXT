@@ -10,7 +10,8 @@ const engineer: Principal = {
     name: "Инженер",
     department: "Производство",
   },
-  roles: ["engineer"],
+  roles: ["tech_lead"],
+  access_level: "tech_lead",
   permissions: { techcards: "edit", erptctpl: "edit", tcgen: "edit" },
 };
 
@@ -77,7 +78,7 @@ it("automatically builds and issues an electronic techcard", async () => {
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<TechcardsPage principal={{ ...engineer, roles: ["admin"] }} />);
+  render(<TechcardsPage principal={{ ...engineer, roles: ["admin"], access_level: "admin" }} />);
   const editor = await screen.findByLabelText("Конфигурация автоматической сборки");
   fireEvent.change(editor, { target: { value: JSON.stringify({ ops: [{ templateId: "one" }] }) } });
   // Одна кнопка: сборка ЭТК и выдача сразу, отдельного шага «Выдать» нет (как файл техкарты в SUPPLYMAP).
@@ -86,6 +87,28 @@ it("automatically builds and issues an electronic techcard", async () => {
   expect(screen.getByText("Собрать")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).toBeNull();
   expect(screen.getByText(/ревизия 1/)).toBeInTheDocument();
+});
+
+it("keeps the generator's JSON configuration to superadmin and admin, whatever the matrix grants", async () => {
+  const open = async (principal: Parameters<typeof TechcardsPage>[0]["principal"]) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/techcards/projects") return json({ items: [card] });
+      if (path === "/api/techcards/templates") return json({ metadata: null, items: [] });
+      if (path.endsWith("/revisions")) return json({ items: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    return render(<TechcardsPage principal={principal} />);
+  };
+
+  const lead = await open(engineer);
+  expect((await screen.findAllByText("P-100")).length).toBeGreaterThan(0);
+  expect(screen.queryByLabelText("Конфигурация автоматической сборки")).not.toBeInTheDocument();
+  lead.unmount();
+  vi.restoreAllMocks();
+
+  await open({ ...engineer, roles: ["superadmin"], access_level: "superadmin" });
+  expect(await screen.findByLabelText("Конфигурация автоматической сборки")).toBeInTheDocument();
 });
 
 it("shows the imported operation library and opens a structured template", async () => {

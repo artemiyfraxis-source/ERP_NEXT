@@ -11,6 +11,7 @@ const admin: Principal = {
     department: "ERP",
   },
   roles: ["admin"],
+  access_level: "admin",
   permissions: { erpref: "edit", procurement: "edit" },
 };
 
@@ -116,7 +117,7 @@ it("edits a technology row with the old value and hides editing for non-admins",
   expect(await screen.findByText("Запись сохранена")).toBeInTheDocument();
   unmount();
 
-  render(<ReferencesPage principal={{ ...admin, roles: ["receiver"], permissions: { erpref: "view" } }} />);
+  render(<ReferencesPage principal={{ ...admin, roles: ["foreman"], access_level: "foreman", permissions: { erpref: "view" } }} />);
   expect((await screen.findAllByText("МГТФ")).length).toBeGreaterThan(0);
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
 });
@@ -205,7 +206,7 @@ it("opens the templates tab by its own key without the reference book (ID-3)", a
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<ReferencesPage principal={{ ...admin, roles: ["master"], permissions: { erptctpl: "view" } }} />);
+  render(<ReferencesPage principal={{ ...admin, roles: ["foreman"], access_level: "foreman", permissions: { erptctpl: "view" } }} />);
   expect(await screen.findByText("CUT_WIRE_auto")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "База данных", level: 1 })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Терминалы" })).toBeNull();
@@ -224,7 +225,7 @@ it("lets the buyer edit supplier maps and shows no separate ГОСТ→AWG map (
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<ReferencesPage principal={{ ...admin, roles: ["buyer"], permissions: { erpref: "view", procurement: "edit" } }} initialTab="suppliers" />);
+  render(<ReferencesPage principal={{ ...admin, roles: ["tech_lead"], access_level: "tech_lead", permissions: { erpref: "view", procurement: "edit" } }} initialTab="suppliers" />);
   expect(await screen.findByLabelText("Поставщик 1")).toBeEnabled();
   expect(screen.queryByRole("button", { name: "ГОСТ → AWG" })).toBeNull();
   expect(screen.getByRole("button", { name: "Сохранить справочники" })).toBeInTheDocument();

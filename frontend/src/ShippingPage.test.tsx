@@ -4,7 +4,7 @@ import { ShippingPage } from "./ShippingPage";
 
 const principal = {
   user: { id: "u1", email: "admin@example.test", name: "Admin", department: "ERP" },
-  roles: ["admin"], permissions: { shipping: "edit" as const },
+  roles: ["admin"], access_level: "admin", permissions: { shipping: "edit" as const },
 };
 
 const good = {
@@ -225,5 +225,57 @@ describe("ShippingPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Принять коробку" }));
 
     await waitFor(() => expect(payload).toEqual({ version: 3, finished_good_id: "g1" }));
+  });
+
+  // Access levels (owner 04.10.2026): «Отгрузка» (`shipping`) is the manager's side, «Отгрузка — склад» (`shipping_goods`)
+  // the storekeeper's; the screen reads both, whoever holds them.
+  const holder = (level: string, permissions: Record<string, "view" | "edit">) => ({ ...principal, roles: [level], access_level: level, permissions });
+
+  it("opens the storekeeper (edit on shipping_goods, none on shipping) on «Готовая продукция» with the warehouse actions only", async () => {
+    render(<ShippingPage principal={holder("foreman", { shipping_goods: "edit" })} />);
+
+    expect(await screen.findByLabelText("Принять 591К.3 КБ1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Добавить КБ проекта" })).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.map(([target]) => String(target))).toContain("/api/production/finished-goods-ready");
+    fireEvent.click(screen.getByRole("button", { name: "Отправки" }));
+    expect(screen.queryByRole("button", { name: "+ Заявка на отгрузку" })).not.toBeInTheDocument();
+  });
+
+  it("opens the manager (edit on shipping, none on shipping_goods) on «Проекты» with the manager actions only", async () => {
+    render(<ShippingPage principal={holder("commercial", { shipping: "edit" })} />);
+
+    expect(await screen.findByText("591К.3", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Принять 591К.3 КБ1")).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.map(([target]) => String(target))).not.toContain("/api/production/finished-goods-ready");
+    fireEvent.click(screen.getByRole("button", { name: "Готовая продукция" }));
+    expect(await screen.findByRole("button", { name: "+ Добавить КБ проекта" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Принять 591К.3 КБ1")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Отправки" }));
+    expect(await screen.findByRole("button", { name: "+ Заявка на отгрузку" })).toBeInTheDocument();
+  });
+
+  it("keeps «Проекты» first for someone holding both sides, and gives a full-access level both", async () => {
+    render(<ShippingPage principal={holder("tech_lead", { shipping: "edit", shipping_goods: "edit" })} />);
+    expect(await screen.findByText("591К.3", { selector: "strong" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Готовая продукция" }));
+    expect(await screen.findByLabelText("Принять 591К.3 КБ1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ Добавить КБ проекта" })).toBeInTheDocument();
+  });
+
+  it("shows a full-access level every action even when the permissions map is empty", async () => {
+    render(<ShippingPage principal={holder("superadmin", {})} />);
+    expect(await screen.findByText("591К.3", { selector: "strong" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Готовая продукция" }));
+    expect(await screen.findByLabelText("Принять 591К.3 КБ1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ Добавить КБ проекта" })).toBeInTheDocument();
+  });
+
+  it("reads shipping for a view grant but offers no action", async () => {
+    render(<ShippingPage principal={holder("commercial", { shipping: "view" })} />);
+    expect(await screen.findByText("591К.3", { selector: "strong" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Готовая продукция" }));
+    await screen.findByText("ГП.26.0000001");
+    expect(screen.queryByLabelText("Принять 591К.3 КБ1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Добавить КБ проекта" })).not.toBeInTheDocument();
   });
 });

@@ -14,7 +14,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, shipping_warehouse_principal
+from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, production_view_work_principal, shipping_warehouse_principal
 
 from .application import (
     Absence,
@@ -588,7 +588,7 @@ def start_execution(
     task_id: UUID,
     operation_id: UUID,
     payload: StartWorkPayload,
-    principal: Annotated[Principal, Depends(production_view_principal)],
+    principal: Annotated[Principal, Depends(production_view_work_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
 ) -> dict:
@@ -602,25 +602,25 @@ def start_execution(
 
 
 @router.post("/work/{session_id}/pause")
-def pause_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def pause_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
     session = _execution(lambda: pause_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/resume")
-def resume_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def resume_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
     session = _execution(lambda: resume_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/cancel")
-def cancel_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def cancel_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
     session = _execution(lambda: cancel_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/submit")
-def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
     session, box, output, defect = _execution(lambda: submit_work(SubmitWorkCommand(
         session_id=session_id, actor=principal.actor, now=now,
         good_quantity=payload.good_quantity, defect_quantity=payload.defect_quantity,
@@ -645,7 +645,7 @@ def box_outputs(
 
 
 @router.post("/boxes/{box_id}/correct")
-def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
     box, output, defect = _execution(lambda: correct_box(CorrectBoxCommand(
         box_id=box_id, expected_version=payload.version, actor=principal.actor, now=now,
         output_id=payload.output_id, good_quantity=payload.good_quantity,

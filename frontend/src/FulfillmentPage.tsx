@@ -8,7 +8,7 @@ import {
   type FulfillmentRequest,
   type Principal,
 } from "./api";
-import { canAct } from "./navigation";
+import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
 
@@ -198,12 +198,12 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false);
-  // Full-access roles (директор производства, …) pick and hand out for the storekeeper, as the backend allows.
-  const canEdit = canAct(principal, "fulfillment", ["engineer", "receiver", "admin"]);
+  // The matrix alone decides (picking: fulfillment edit); a full-access level passes every section.
+  const canEdit = canAct(principal, "fulfillment");
   // NAV-SECTIONS: handing out writes off stock and has its own key; picking (reserve) stays on `fulfillment`.
-  const canHandout = canAct(principal, "handout", ["receiver", "admin"]);
+  const canHandout = canAct(principal, "handout");
   // FF-5: deleting is the administrator's cleanup (portalIssueDelete + portalRealAdmin_).
-  const isAdmin = canEdit && principal.roles.includes("admin");
+  const isAdmin = hasFullAccess(principal);
 
   const screen = mode ? MODES[mode] : null;
   const stages = screen ? screen.stages.filter((stage) => showReady || !screen.hidden.includes(stage)) : null;

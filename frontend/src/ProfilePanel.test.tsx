@@ -10,10 +10,11 @@ afterEach(() => vi.restoreAllMocks());
 
 const PROFILE = {
   name: "Закупкин", login: "buyer", email: "buyer@example.test", department: "Снабжение",
-  role: "buyer", role_label: "Специалист по снабжению", site: "", site_label: "все площадки",
+  role: "buyer", role_label: "Технический руководитель", access_level: "tech_lead", access_level_label: "Технический руководитель",
+  job_title: "Закупщик", site: "", site_label: "все площадки",
 };
 
-it("shows role, department and site and changes the own password", async () => {
+it("shows access level, position, department and site and changes the own password", async () => {
   const sent: unknown[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -27,7 +28,9 @@ it("shows role, department and site and changes the own password", async () => {
 
   render(<ProfilePanel />);
   fireEvent.click(screen.getByRole("button", { name: "Профиль" }));
-  expect(await screen.findByText("Специалист по снабжению")).toBeInTheDocument();
+  expect(await screen.findByText("Технический руководитель")).toBeInTheDocument();
+  expect(screen.getByText("Уровень доступа")).toBeInTheDocument();
+  expect(screen.getByText("Закупщик", { selector: "dd" })).toBeInTheDocument();
   expect(screen.getByText("Снабжение")).toBeInTheDocument();
   expect(screen.getByText("все площадки")).toBeInTheDocument();
 
@@ -42,6 +45,19 @@ it("shows role, department and site and changes the own password", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Сменить пароль" }));
   await waitFor(() => expect(sent).toEqual([{ current: "old-password", new: "new-password-1" }]));
   expect(await screen.findByText("Пароль изменён.")).toBeInTheDocument();
+});
+
+it("names the level from its key when the payload has no label, and shows no empty position", async () => {
+  const { access_level_label: _label, job_title: _title, ...bare } = PROFILE;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "/api/auth/profile") return json({ ...bare, access_level: "foreman", role_label: "legacy" });
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+
+  render(<ProfilePanel />);
+  fireEvent.click(screen.getByRole("button", { name: "Профиль" }));
+  expect(await screen.findByText("Бригадир")).toBeInTheDocument();
+  expect(screen.queryByText("Должность")).not.toBeInTheDocument();
 });
 
 it("offers «Моя карточка» only where the screen can open it", () => {
