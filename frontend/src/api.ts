@@ -2947,4 +2947,31 @@ export const assemblyApi = {
     api<{ id: string; name: string; url: string | null }>("/api/techcards/assembly/drawings", {
       method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, content_base64: contentBase64 }),
     }),
+
+/* Токены API (генератор техкарт, черновики сборки): выпускает и отзывает только полный доступ. */
+export type ApiTokenStatus = "active" | "expired" | "revoked";
+export interface ApiTokenRow {
+  id: string;
+  name: string;
+  scopes: string[];
+  scope_labels: string[];
+  status: ApiTokenStatus;
+  created_at: string | null;
+  created_by: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  revoked_by: string;
+}
+export interface ApiTokenIssued extends ApiTokenRow {
+  /** Секрет `erp_…` приходит один раз, в ответе на выпуск. */
+  token: string;
+}
+
+export const apiTokensApi = {
+  list: () => api<{ tokens: ApiTokenRow[]; scopes: Record<string, string> }>("/api/auth/api-tokens"),
+  issue: (payload: { name: string; scopes: string[]; days: number }) =>
+    api<ApiTokenIssued>("/api/auth/api-tokens", { method: "POST", body: JSON.stringify(payload) }),
+  revoke: (id: string) =>
+    api<ApiTokenRow>(`/api/auth/api-tokens/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({}) }),
 };
