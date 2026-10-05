@@ -28,6 +28,7 @@ from .money import (
     reconvert,
     rescale_to_quantity,
     round_kopecks,
+    vat_multiplier,
 )
 
 
@@ -624,10 +625,20 @@ class ProcurementLine:
             return self
         return replace(updated, version=self.version + 1)
 
-    def set_fact_price(self, price_with_vat: Decimal | None, actor: Actor) -> ProcurementLine:
+    def set_fact_price(
+        self,
+        price_with_vat: Decimal | None,
+        actor: Actor,
+        *,
+        vat_rate: Decimal | None = None,
+        price: Decimal | None = None,
+    ) -> ProcurementLine:
         """«Цена факт» of one order line (owner, 05.10): the gross unit price in roubles. ЦЕНА (net) is derived with
         НДС 22% unless the line already has a rate, СУММА (факт) = price × КОЛ-ВО (факт). An empty price clears the
-        three amounts. A line invoiced in a foreign currency keeps its amounts in that currency — «Внести КП»."""
+        three amounts. A line invoiced in a foreign currency keeps its amounts in that currency — «Внести КП».
+
+        A price read from the supplier's document («Вставить КП / счёт») brings the document's НДС rate and, when the
+        document states it, the net price — kept as written when it agrees with the gross one to the kopeck."""
         self._require_owner(actor)
         if self.status not in MONEY_EDITABLE:
             raise ProcurementValidationError(
@@ -642,10 +653,19 @@ class ProcurementLine:
         if price_with_vat is None:
             money = replace(self.money, price=None, price_with_vat=None, sum=None, driver=None)
         else:
-            vat_rate = self.money.vat_rate if self.money.vat_rate is not None else FACT_PRICE_VAT
+            if vat_rate is None:
+                vat_rate = self.money.vat_rate if self.money.vat_rate is not None else FACT_PRICE_VAT
+            net = price if price is not None and _net_agrees(price, price_with_vat, vat_rate) else None
             try:
                 money = apply_currency_and_fact(
-                    MoneyInput(currency=RUB, vat_rate=vat_rate, price_with_vat=price_with_vat, driver="gross"),
+                    MoneyInput(
+                        currency=RUB,
+                        vat_rate=vat_rate,
+                        price=net,
+                        price_with_vat=price_with_vat,
+                        # Both prices as written: only СУММА (факт) is derived (the «qty» branch of `computeFact_`).
+                        driver="qty" if net is not None else "gross",
+                    ),
                     self.actual_quantity,
                     None,
                 )
@@ -654,6 +674,32 @@ class ProcurementLine:
         if money == self.money:
             return self
         return replace(self, money=money, version=self.version + 1)
+
+    def apply_document_price(
+        self,
+        actor: Actor,
+        *,
+        price_with_vat: Decimal | None,
+        price: Decimal | None = None,
+        vat_rate: Decimal | None = None,
+        invoice_item_name: str | None = None,
+    ) -> ProcurementLine:
+        """«Вставить КП / счёт» (owner, 05.10): the price the supplier's document gives this order line and the line's
+        name in that document as НАИМЕНОВАНИЕ (Счет). No price — the document does not price this line, the stored
+        one stays. The status does not move here."""
+        self._require_owner(actor)
+        if self.status not in MONEY_EDITABLE:
+            raise ProcurementValidationError(
+                f"Цена из документа вносится на этапах «{ProcurementStatus.AWAITING_INVOICE.value}» и "
+                f"«{ProcurementStatus.TO_PAY.value}»"
+            )
+        updated = self
+        if price_with_vat is not None:
+            updated = self.set_fact_price(price_with_vat, actor, vat_rate=vat_rate, price=price)
+        name = _text(invoice_item_name)[:1024]
+        if name and name != _text(updated.invoice_item_name):
+            updated = replace(updated, invoice_item_name=name, version=self.version + 1)
+        return updated
 
     def apply_kp(self, entry: KpEntry, rate: ExchangeRate | None, actor: Actor) -> ProcurementLine:
         """`submitKp_`: writes the form fields of one order line; the status stays «Жду счет»."""
@@ -988,6 +1034,12 @@ def _stock_quantity(value: Decimal) -> Decimal:
     if not amount.is_finite() or amount <= 0:
         raise ProcurementValidationError("Количество со склада должно быть больше нуля")
     return amount
+
+
+def _net_agrees(price: Decimal, price_with_vat: Decimal, vat_rate: Decimal) -> bool:
+    """A net price the document states next to the gross one is kept when the two agree to the kopeck."""
+    multiplier = vat_multiplier(vat_rate)
+    return multiplier is not None and price >= 0 and abs(price * multiplier - price_with_vat) <= Decimal("0.011")
 
 
 def _unit_key(value: str | None) -> str:
