@@ -737,20 +737,135 @@ it("keeps the blocks separate: «Оплачено» starts collapsed, a heading 
   second.unmount();
 });
 
-it("keeps «В работе» on screen when it is empty: its header with 0 and one grey line, no order blocks", async () => {
+const BLOCK_NAMES = ["В работе", "Жду счёт", "Ждёт оплаты", "Оплачено", "Дозавоз", "Прочие позиции"];
+
+function mockMine(lines: ProcurementLine[]) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
-    if (path === "/api/procurement/mine") return json({ lines: [] });
+    if (path === "/api/procurement/mine") return json({ lines });
     throw new Error(`Unexpected request: ${path}`);
   });
+}
+
+/** Строка заказа: n — номер заказа и строки, status — этап. */
+const orderLine = (n: number, status: string, extra: Partial<ProcurementLine> = {}): ProcurementLine => ({
+  ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт", status,
+  id: `30000000-0000-0000-0000-${String(n).padStart(12, "0")}`, legacy_id: `REQ-${n}`,
+  order_number: `PO-${String(n).padStart(3, "0")}`, order_date: "2026-10-01", calculated_sum: "100", ...extra,
+});
+
+const headingNames = () => screen.getAllByRole("heading", { level: 2 })
+  .map((heading) => BLOCK_NAMES.find((name) => heading.textContent?.replace(/^[▸▾]/, "").startsWith(name))).filter(Boolean);
+
+it("keeps every «Мои позиции» block on screen even with no data: six headings in order, each with 0 and one grey line", async () => {
+  mockMine([]);
+
+  const { container } = render(<ProcurementPage />);
+  await screen.findByText(/Нет строк в работе/);
+  expect(headingNames()).toEqual(BLOCK_NAMES);
+  for (const name of BLOCK_NAMES) expect(screen.getByRole("heading", { name: new RegExp(`^${name}`) })).toHaveTextContent(`${name} 0`);
+  expect(screen.getByText(/Нет строк в работе/)).toHaveClass("stage-empty");
+  expect(container.querySelectorAll(".stage-empty")).toHaveLength(6);
+  expect(screen.queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
+  expect(container.querySelectorAll("table")).toHaveLength(0);
+});
+
+it("«Блоки» hides blocks, the choice survives a remount, and a hidden block with data is named in the summary", async () => {
+  mockMine([orderLine(1, "Жду счет"), orderLine(2, "Готово"), orderLine(3, "Готово")]);
+
+  const first = render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: /^Оплачено/ });
+  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Оплачено" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Прочие позиции" }));
+  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "Дозавоз"]);
+  expect(screen.getByText("скрыто: Оплачено 2")).toBeInTheDocument();
+  first.unmount();
 
   render(<ProcurementPage />);
-  await screen.findByText(/Нет строк в работе/);
-  expect(screen.getByRole("heading", { name: /^В работе/ })).toHaveTextContent("В работе 0");
-  expect(screen.getByText(/Нет строк в работе/)).toHaveClass("stage-empty");
-  expect(screen.queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: /Жду счёт|Ждёт оплаты|Оплачено|Дозавоз|Прочие позиции/ })).not.toBeInTheDocument();
+  await screen.findByRole("heading", { name: /^Жду счёт/ });
+  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "Дозавоз"]);
+  expect(screen.getByText("скрыто: Оплачено 2")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
+  expect(screen.getByRole("checkbox", { name: "Оплачено" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Жду счёт" })).toBeChecked();
+});
+
+it("one search narrows every block and its counts (ID, name, supplier, order number, invoice number)", async () => {
+  mockMine([
+    orderLine(1, "Жду счет", { supplier: "ООО Альфа" }),
+    orderLine(2, "В оплату", { supplier: "ООО Бета", invoice_number: "СЧ-777", invoice_url: "https://files.test/i.pdf", pay_missing: [] }),
+    orderLine(3, "Готово", { supplier: "ООО Альфа" }),
+    { ...line, id: "30000000-0000-0000-0000-000000000099", legacy_id: "REQ-99", status: "В работе", supplier: "ООО Альфа" },
+  ]);
+
+  render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: /^Жду счёт/ });
+  const heading = (name: string) => screen.getByRole("heading", { name: new RegExp(`^${name}`) });
+  const search = screen.getByRole("searchbox", { name: "Поиск по моим позициям" });
+
+  fireEvent.change(search, { target: { value: "альфа" } });
+  expect(heading("В работе")).toHaveTextContent("В работе 1");
+  expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 1");
+  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
+  expect(heading("Оплачено")).toHaveTextContent("Оплачено 1");
+
+  fireEvent.change(search, { target: { value: "сч-777" } });
+  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 1");
+  expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 0");
+  expect(heading("В работе")).toHaveTextContent("В работе 0");
+
+  fireEvent.change(search, { target: { value: "po-003" } });
+  expect(heading("Оплачено")).toHaveTextContent("Оплачено 1");
+  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
+});
+
+it("shows orders · positions · расчёт / факт in a block heading", async () => {
+  mockMine([
+    orderLine(1, "Жду счет", { calculated_sum: "100", actual_sum: "120" }),
+    orderLine(1, "Жду счет", { id: "30000000-0000-0000-0000-0000000000a1", legacy_id: "REQ-1b", calculated_sum: "50", actual_sum: "60" }),
+    orderLine(2, "Жду счет", { calculated_sum: "10", actual_sum: null }),
+  ]);
+
+  render(<ProcurementPage />);
+  const block = await screen.findByRole("region", { name: "Жду счёт" });
+  expect(within(block).getByText(/^2 зак\. · 3 поз\. · расчёт 160,00 ₽ \/ факт 180,00 ₽$/)).toBeInTheDocument();
+});
+
+it("shows 30 orders and «Показать ещё» for the rest", async () => {
+  mockMine(Array.from({ length: 31 }, (_, index) => orderLine(index + 1, "Жду счет")));
+
+  render(<ProcurementPage />);
+  const block = await screen.findByRole("region", { name: "Заказы: Жду счёт" });
+  const orders = () => within(block).getAllByRole("rowgroup").filter((group) => group.getAttribute("aria-label"));
+  expect(orders()).toHaveLength(30);
+  const section = screen.getByRole("region", { name: "Жду счёт" });
+  fireEvent.click(within(section).getByRole("button", { name: /Показать ещё/ }));
+  expect(orders()).toHaveLength(31);
+  expect(within(section).queryByRole("button", { name: /Показать ещё/ })).not.toBeInTheDocument();
+});
+
+it("renders no lines for a closed order and a column hidden in «Колонки» stays hidden after a remount", async () => {
+  mockMine([orderLine(1, "Жду счет")]);
+
+  const first = render(<ProcurementPage />);
+  const block = await screen.findByRole("region", { name: "Заказы: Жду счёт" });
+  expect(within(block).queryByText("REQ-1")).not.toBeInTheDocument();
+  const section = screen.getByRole("region", { name: "Жду счёт" });
+  fireEvent.click(within(section).getByRole("button", { name: "Колонки" }));
+  fireEvent.click(within(section).getByRole("checkbox", { name: "Комментарий" }));
+  expect(within(block).queryByRole("columnheader", { name: "Комментарий" })).not.toBeInTheDocument();
+  expect(within(block).getByRole("columnheader", { name: "Расчёт, ₽" })).toBeInTheDocument();
+  first.unmount();
+
+  render(<ProcurementPage />);
+  const again = await screen.findByRole("region", { name: "Заказы: Жду счёт" });
+  expect(within(again).queryByRole("columnheader", { name: "Комментарий" })).not.toBeInTheDocument();
+  expect(within(again).getByRole("columnheader", { name: "Наименование" })).toBeInTheDocument();
+  // Другой блок свои колонки не потерял.
+  expect(JSON.parse(window.localStorage.getItem("erp-table:procurement-orders-awaiting") ?? "{}").hidden).toEqual(["note"]);
+  expect(window.localStorage.getItem("erp-table:procurement-orders-topay")).toBeNull();
 });
 
 it("takes away the manual approval stage: no «На согласование» anywhere, a line parked before goes on from «Прочие позиции»", async () => {

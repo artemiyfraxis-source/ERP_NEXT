@@ -15,7 +15,7 @@ import {
   type SkippedRequestLine,
   type SupplierOrder,
 } from "./api";
-import { DataTable, type DataColumn } from "./DataTable";
+import { DataTable, readSaved, writeSaved, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import {
@@ -44,6 +44,22 @@ const isBackorderLine = (line: ProcurementLine) => line.status === APPROVAL && l
 const AUTOFILL_REFRESH_MS = [4000, 10000];
 
 type BulkBlock = "inwork" | "orders";
+
+/** Блоки «Моих позиций» в фиксированном порядке; «Блоки» выбирает, какие показывать (помнится в браузере). */
+const BLOCKS = [
+  { key: "inwork", title: "В работе" },
+  { key: "awaiting", title: "Жду счёт" },
+  { key: "topay", title: "Ждёт оплаты" },
+  { key: "paid", title: "Оплачено" },
+  { key: "backorder", title: "Дозавоз" },
+  { key: "other", title: "Прочие позиции" },
+] as const;
+const BLOCKS_KEY = "procurement-blocks";
+
+/** Строка подходит под поиск по секции: ID, наименование, поставщик, № заказа, № счёта. */
+const lineMatches = (line: ProcurementLine, query: string) =>
+  [line.legacy_id, line.calculated_name, line.supplier, line.order_number, line.invoice_number]
+    .some((value) => (value ?? "").toLowerCase().includes(query));
 
 /** Блоки заказов «Моих позиций» по стадии; «Оплачено» сначала свёрнут — он для справки. */
 const ORDER_BLOCKS = [
@@ -133,6 +149,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   // Строки, что в запрос не попали, и почему: остаются на экране, пока их не закроют.
   const [skippedRequests, setSkippedRequests] = useState<{ text: string }[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [sectionQuery, setSectionQuery] = useState("");
+  const [hiddenBlocks, setHiddenBlocks] = useState<string[]>(() => readSaved(BLOCKS_KEY).hidden ?? []);
+  const [choosingBlocks, setChoosingBlocks] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState<"available" | "mine" | "">("");
   const kpReference = kpQueue[0] ?? "";
@@ -400,14 +419,33 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     }
   }
 
-  const stage = (status: string) => mine.filter((line) => line.status === status);
+  // Один поиск по всей секции: фильтрует каждый блок и его счётчики. Заказ целиком остаётся, если подходит
+  // любая его строка — иначе заказ «переехал» бы между стадиями.
+  const needle = sectionQuery.trim().toLowerCase();
+  const found = (line: ProcurementLine) => !needle || lineMatches(line, needle);
+  const stage = (status: string) => mine.filter((line) => line.status === status && found(line));
   // «В работе» — сначала строки в работе, под ними «Готов к запросу» (они ждут запроса поставщику).
   const inWorkBlock = [...stage("В работе"), ...stage("Готов к запросу")];
   // Заказы — раздельными блоками по стадии: «Жду счёт», «Ждёт оплаты», «Оплачено» (свёрнут сначала).
   const orders = useMemo(() => orderGroups(mine.filter((line) => ORDER_STATUSES.has(line.status))), [mine]);
-  const ordersAt = (stage: string) => orders.filter((group) => orderStage(group) === stage);
-  const backorders = mine.filter(isBackorderLine);
-  const other = mine.filter((line) => !IN_WORK_STATUSES.has(line.status) && !ORDER_STATUSES.has(line.status) && !isBackorderLine(line));
+  const shownOrders = useMemo(
+    () => (needle ? orders.filter((group) => group.lines.some((line) => lineMatches(line, needle))) : orders),
+    [orders, needle],
+  );
+  const ordersAt = (stage: string) => shownOrders.filter((group) => orderStage(group) === stage);
+  const backorders = mine.filter((line) => isBackorderLine(line) && found(line));
+  const other = mine.filter((line) => !IN_WORK_STATUSES.has(line.status) && !ORDER_STATUSES.has(line.status) && !isBackorderLine(line) && found(line));
+  const blockCount: Record<string, number> = {
+    inwork: inWorkBlock.length, awaiting: ordersAt("awaiting").length, topay: ordersAt("topay").length, paid: ordersAt("paid").length,
+    backorder: backorders.length, other: other.length,
+  };
+  const hiddenWithData = BLOCKS.filter((block) => hiddenBlocks.includes(block.key) && blockCount[block.key] > 0);
+  const showBlock = (key: string) => !hiddenBlocks.includes(key);
+  const toggleBlock = (key: string, shown: boolean) => setHiddenBlocks((current) => {
+    const next = shown ? current.filter((item) => item !== key) : [...current.filter((item) => item !== key), key];
+    writeSaved(BLOCKS_KEY, { hidden: next });
+    return next;
+  });
 
   const run = (line: ProcurementLine, operation: () => Promise<unknown>, message: string) => {
     void advance(line, operation, message).catch(() => undefined);
@@ -563,7 +601,28 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       {!readOnly && <section className="work-list">
         <h2 className="section-title">Мои позиции</h2>
         {!loaded ? (refreshing ? <p className="empty">Загрузка…</p> : null) : <>
-        <ProcurementInWorkTable
+        <div className="blocks-bar">
+          <input
+            type="search" className="blocks-search" aria-label="Поиск по моим позициям" placeholder="Поиск: ID, наименование, поставщик, № заказа, № счёта"
+            value={sectionQuery} onChange={(event) => setSectionQuery(event.target.value)}
+          />
+          <button type="button" className="secondary small" aria-expanded={choosingBlocks} onClick={() => setChoosingBlocks((current) => !current)}>Блоки</button>
+          {hiddenWithData.length > 0 && (
+            <span className="blocks-hidden">скрыто: {hiddenWithData.map((block) => `${block.title} ${blockCount[block.key]}`).join(", ")}</span>
+          )}
+        </div>
+        {choosingBlocks && (
+          <fieldset className="column-chooser stage-columns">
+            <legend>Показывать блоки</legend>
+            {BLOCKS.map((block) => (
+              <label key={block.key} className="check-inline">
+                <input type="checkbox" checked={showBlock(block.key)} onChange={(event) => toggleBlock(block.key, event.target.checked)} />
+                {block.title}
+              </label>
+            ))}
+          </fieldset>
+        )}
+        {showBlock("inwork") && <ProcurementInWorkTable
           lines={inWorkBlock}
           units={units}
           disabled={interactionLocked}
@@ -582,12 +641,12 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
               <SplitAction {...form(line)} />
             </>
           )}
-        />
+        />}
         {ORDER_BLOCKS.map(({ stage, title, hint, initiallyCollapsed }) => {
           const groups = ordersAt(stage);
-          return groups.length > 0 && (
+          return showBlock(stage) && (
             <OrderStageBlock
-              key={stage}
+              key={stage} stage={stage}
               {...stageProps} {...(stage === "paid" ? bulkOf("orders") : {})}
               title={title} hint={hint} block={`orders-${stage}`} initiallyCollapsed={initiallyCollapsed}
               lines={groups.flatMap((group) => group.lines)}
@@ -615,7 +674,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             }}
           />
         )}
-        {backorders.length > 0 && (
+        {showBlock("backorder") && (
           <BackorderStage
             {...stageProps}
             lines={backorders}
@@ -623,7 +682,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             onConfirmBackorder={(line, date) => run(line, () => procurementApi.confirmBackorder(line.id, line.version, date), `${line.legacy_id}: досыл подтверждён, передано в приёмку`)}
           />
         )}
-        {other.length > 0 && <OtherStage {...stageProps} lines={other} actionsOf={otherActions} />}
+        {showBlock("other") && <OtherStage {...stageProps} lines={other} actionsOf={otherActions} />}
         {mineCursor && (
           <button className="secondary" disabled={interactionLocked} onClick={() => void loadMore("mine", mineCursor)}>
             {loadingMore === "mine" ? "Загружаем…" : "Ещё мои"}

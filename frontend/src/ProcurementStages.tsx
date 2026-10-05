@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { DataTable, type DataBulkAction, type DataColumn } from "./DataTable";
+import { DataTable, readSaved, writeSaved, type DataBulkAction, type DataColumn } from "./DataTable";
 import {
   failureText, type ApplyOrderDocumentInput, type ManualRatePrompt, type OrderDocumentKind, type OrderDocumentRecognition, type ProcurementLine,
 } from "./api";
@@ -94,8 +94,8 @@ export function useCollapsed(block: string, initially = false): [boolean, () => 
 
 /** Одна строка заголовка блока: название и число, подсказка — знаком «?», справа действия. С `onToggle`
  *  название — кнопка «▾ / ▸»: блок сворачивается до заголовка. */
-export function StageHeading({ title, count, hint, collapsed, onToggle, children }: {
-  title: string; count: number; hint?: string; collapsed?: boolean; onToggle?: () => void; children?: ReactNode;
+export function StageHeading({ title, count, hint, summary, collapsed, onToggle, children }: {
+  title: string; count: number; hint?: string; summary?: string; collapsed?: boolean; onToggle?: () => void; children?: ReactNode;
 }) {
   return (
     <div className="panel-heading stage-head">
@@ -107,8 +107,29 @@ export function StageHeading({ title, count, hint, collapsed, onToggle, children
         </h2>
       ) : <h2>{title} <span className="stage-count">{count}</span></h2>}
       {hint && <span className="stage-help" tabIndex={0} role="note" aria-label={hint} title={hint}>?</span>}
+      {summary && <span className="stage-sum">{summary}</span>}
       <div className="heading-actions">{children}</div>
     </div>
+  );
+}
+
+/** Итог блока в заголовке: «3 зак. · 12 поз. · расчёт 1 100,00 ₽ / факт 1 250,00 ₽» (заказы — только у блоков заказов). */
+export function stageSummary(lines: ProcurementLine[], orders?: number): string {
+  const fact = lines.some((line) => line.actual_sum) ? `${formatAmount(total(lines, (line) => line.actual_sum))} ₽` : "—";
+  return [
+    orders === undefined ? "" : `${orders} зак.`,
+    `${lines.length} поз.`,
+    `расчёт ${formatAmount(total(lines, (line) => line.calculated_sum))} ₽ / факт ${fact}`,
+  ].filter(Boolean).join(" · ");
+}
+
+/** Пустой блок «Моих позиций»: заголовок с нулём и одна серая строка, без карточки и таблицы. */
+export function EmptyStage({ title, hint, text }: { title: string; hint?: string; text: string }) {
+  return (
+    <section className="panel table-panel procurement-stage stage-block stage-block-empty" aria-label={title}>
+      <StageHeading title={title} count={0} hint={hint} />
+      <StageEmpty text={text} />
+    </section>
   );
 }
 
@@ -422,6 +443,30 @@ function PaidOrderAction({ group, disabled, onPaidOrder }: {
   );
 }
 
+/** Колонки таблицы заказов: «Колонки» блока выбирает, какие показывать; выбор помнится по стадии. */
+export const ORDER_COLUMNS = [
+  { key: "id", title: "ID" }, { key: "name", title: "Наименование" }, { key: "qty", title: "Кол-во факт" },
+  { key: "price", title: "Цена факт, ₽" }, { key: "sum", title: "Сумма факт, ₽" }, { key: "calc", title: "Расчёт, ₽" },
+  { key: "invoice", title: "Счёт" }, { key: "expected", title: "Ожид. дата" }, { key: "actual_arrival", title: "Факт. дата" },
+  { key: "status", title: "Статус" }, { key: "note", title: "Комментарий" },
+] as const;
+
+/** Заказов в блоке сразу; остальные — по «Показать ещё» (сотни заказов не рисуются разом). */
+export const ORDERS_PAGE = 30;
+
+const orderColumnsKey = (stage: string) => `procurement-orders-${stage}`;
+
+/** Скрытые колонки блока заказов; выбор помнится в браузере (тот же ключ, что у «Колонок» DataTable). */
+export function useOrderColumns(stage: string): [string[], (key: string, shown: boolean) => void] {
+  const [hidden, setHidden] = useState<string[]>(() => readSaved(orderColumnsKey(stage)).hidden ?? []);
+  const toggle = (key: string, shown: boolean) => setHidden((current) => {
+    const next = shown ? current.filter((item) => item !== key) : [...current.filter((item) => item !== key), key];
+    writeSaved(orderColumnsKey(stage), { ...readSaved(orderColumnsKey(stage)), hidden: next });
+    return next;
+  });
+  return [hidden, toggle];
+}
+
 /** Документ по заказу: открытое окно «Вставить счёт» / «Вставить КП» / «Заменить счёт». */
 type OpenDocument = { key: string; kind: OrderDocumentKind; replace: boolean };
 
@@ -436,11 +481,13 @@ export type OrderDocumentHandlers = {
  *  стадии — «Вставить счёт» / «Вставить КП» (окно), «Оплачено», меню «⋯». Строки заказа только показывают цену:
  *  её вносит окно документа. */
 export function OrderList({
-  label = "Заказы", groups, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onOpenKp, onPaidOrder, onReconcile,
+  label = "Заказы", groups, hiddenColumns = [], disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onOpenKp, onPaidOrder, onReconcile,
   onRecognize, onApplyDocument,
 }: StageProps & OrderDocumentHandlers & {
   label?: string;
   groups: OrderGroup[];
+  /** Скрытые колонки (ключи `ORDER_COLUMNS`). */
+  hiddenColumns?: string[];
   /** «Внести КП в валюте» — прежняя форма КП по строкам (курс, НДС, суммы). */
   onOpenKp: (references: string[]) => void;
   /** «Оплачено» по заказу; вернёт вопрос про курс, если ЦБ не ответил. */
@@ -452,6 +499,7 @@ export function OrderList({
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [doc, setDoc] = useState<OpenDocument | null>(null);
+  const [limit, setLimit] = useState(ORDERS_PAGE);
   const docGroup = doc ? groups.find((group) => group.key === doc.key) : undefined;
   const docLines = doc && docGroup ? docGroup.lines.filter((line) => line.status === (doc.replace ? TO_PAY : AWAITING)) : [];
   // Строки заказа ушли дальше (другая вкладка, перечитанная очередь) — окно закрывается.
@@ -463,7 +511,7 @@ export function OrderList({
     return next;
   });
 
-  const columns: GroupColumn[] = [
+  const allColumns: GroupColumn[] = [
     { key: "id", title: "ID", render: (line) => <strong>{line.legacy_id}</strong> },
     { key: "name", title: "Наименование", cell: "name-cell", render: (line) => line.calculated_name },
     { key: "qty", title: "Кол-во факт", render: qtyOf },
@@ -476,6 +524,7 @@ export function OrderList({
     { key: "status", title: "Статус", cell: "status-cell", render: lineStatus },
     { key: "note", title: "Комментарий", cell: "note-cell", render: (line) => <NoteCell line={line} editing={editing} disabled={disabled} /> },
   ];
+  const columns = allColumns.filter((column) => !hiddenColumns.includes(column.key));
 
   const headerActions = (group: OrderGroup) => {
     const stage = orderStage(group);
@@ -518,9 +567,16 @@ export function OrderList({
       <BulkStatus bulk={bulk} onClose={onCloseBulk} />
       {groups.length > 0 && (
         <OrderGroupTable
-          label={label} groups={groups} columns={columns} expanded={expanded} onToggle={toggle}
+          label={label} groups={groups.slice(0, limit)} columns={columns} expanded={expanded} onToggle={toggle}
           headerActions={headerActions} menu={panel.menu}
         />
+      )}
+      {groups.length > limit && (
+        <div className="stage-more">
+          <button type="button" className="secondary small" onClick={() => setLimit((current) => current + ORDERS_PAGE)}>
+            Показать ещё ({Math.min(ORDERS_PAGE, groups.length - limit)} из {groups.length - limit})
+          </button>
+        </div>
       )}
       {panel.node}
       {doc && docGroup && docLines.length > 0 && (
@@ -545,19 +601,38 @@ export type OrderBlockProps = StageProps & OrderDocumentHandlers & {
   onReconcile: (lines: ProcurementLine[]) => Promise<unknown>;
 };
 
-/** Блок заказов одной стадии со своим заголовком; сворачивается, выбор помнится (`useCollapsed`). */
-export function OrderStageBlock({ title, hint, block, initiallyCollapsed = false, groups, ...props }: OrderBlockProps & {
+/** Блок заказов одной стадии со своим заголовком (заказы · позиции · расчёт / факт); сворачивается, выбор помнится
+ *  (`useCollapsed`); «Колонки» выбирает колонки таблицы. Без заказов — заголовок с нулём и одна серая строка. */
+export function OrderStageBlock({ title, hint, block, stage, initiallyCollapsed = false, groups, ...props }: OrderBlockProps & {
   title: string;
   hint?: string;
   block: string;
+  stage: string;
   initiallyCollapsed?: boolean;
   groups: OrderGroup[];
 }) {
   const [collapsed, toggle] = useCollapsed(block, initiallyCollapsed);
+  const [hidden, setColumn] = useOrderColumns(stage);
+  const [choosing, setChoosing] = useState(false);
+  const lines = useMemo(() => groups.flatMap((group) => group.lines), [groups]);
+  if (!groups.length) return <EmptyStage title={title} hint={hint} text="Нет заказов" />;
   return (
     <section className="panel table-panel procurement-stage stage-block" aria-label={title}>
-      <StageHeading title={title} count={groups.length} hint={hint} collapsed={collapsed} onToggle={toggle} />
-      {!collapsed && <OrderList {...props} label={`Заказы: ${title}`} groups={groups} />}
+      <StageHeading title={title} count={groups.length} hint={hint} summary={stageSummary(lines, groups.length)} collapsed={collapsed} onToggle={toggle}>
+        {!collapsed && <button type="button" className="secondary small" aria-expanded={choosing} onClick={() => setChoosing((current) => !current)}>Колонки</button>}
+      </StageHeading>
+      {!collapsed && choosing && (
+        <fieldset className="column-chooser stage-columns">
+          <legend>Показывать колонки</legend>
+          {ORDER_COLUMNS.map((column) => (
+            <label key={column.key} className="check-inline">
+              <input type="checkbox" checked={!hidden.includes(column.key)} onChange={(event) => setColumn(column.key, event.target.checked)} />
+              {column.title}
+            </label>
+          ))}
+        </fieldset>
+      )}
+      {!collapsed && <OrderList {...props} label={`Заказы: ${title}`} groups={groups} hiddenColumns={hidden} />}
     </section>
   );
 }
@@ -812,6 +887,8 @@ const backorderNoteColumn: DataColumn<ProcurementLine> = {
   value: (line) => `Дозавоз по ${backorderBase(line)}: недовоз уже оплачен по счёту ${line.invoice_number ? `№ ${line.invoice_number}` : line.invoice_url ?? ""}`,
 };
 
+const BACKORDER_HINT = "Недовоз уже оплачен: подтвердите досыл с новой датой или отмените дозавоз в меню строки";
+
 /** Дозавоз — недовоз оплаченной строки (приёмка ставит строку `-Д` в «Согласование»): подтвердить досыл
  *  с новой датой или отменить. Блок есть, только когда дозавоз есть. */
 export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, onConfirmBackorder }: StageProps & {
@@ -833,9 +910,10 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
     },
   ];
   const [collapsed, toggle] = useCollapsed("backorder");
+  if (!lines.length) return <EmptyStage title="Дозавоз" hint={BACKORDER_HINT} text="Дозавоза нет" />;
   return (
-    <section className="panel table-panel procurement-stage">
-      <StageHeading title="Дозавоз" count={lines.length} hint="Недовоз уже оплачен: подтвердите досыл с новой датой или отмените дозавоз в меню строки" collapsed={collapsed} onToggle={toggle} />
+    <section className="panel table-panel procurement-stage stage-block">
+      <StageHeading title="Дозавоз" count={lines.length} hint={BACKORDER_HINT} summary={stageSummary(lines)} collapsed={collapsed} onToggle={toggle} />
       {!collapsed && <><DataTable
         label="Дозавоз"
         rows={lines}
@@ -855,9 +933,10 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
 export function OtherStage({ lines, disabled, busyId, actionsOf, editing }: StageProps) {
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
   const [collapsed, toggle] = useCollapsed("other");
+  if (!lines.length) return <EmptyStage title="Прочие позиции" text="Нет позиций" />;
   return (
-    <section className="panel table-panel procurement-stage">
-      <StageHeading title="Прочие позиции" count={lines.length} collapsed={collapsed} onToggle={toggle} />
+    <section className="panel table-panel procurement-stage stage-block">
+      <StageHeading title="Прочие позиции" count={lines.length} summary={stageSummary(lines)} collapsed={collapsed} onToggle={toggle} />
       {!collapsed && <><DataTable
         label="Прочие позиции"
         rows={lines}

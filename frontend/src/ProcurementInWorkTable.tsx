@@ -5,7 +5,7 @@ import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
 import { RowMenu } from "./ProcurementRowMenu";
 import { formatMoney } from "./ProcurementSheetColumns";
-import { BulkStatus, StageHeading, useCollapsed, type BulkState } from "./ProcurementStages";
+import { BulkStatus, StageHeading, stageSummary, useCollapsed, type BulkState } from "./ProcurementStages";
 
 const fmtQty = (value: number) => String(Math.round(value * 1e6) / 1e6).replace(".", ",");
 
@@ -391,7 +391,7 @@ export function ProcurementInWorkTable({
 
   return (
     <section className="panel table-panel procurement-stage stage-block" aria-label="В работе">
-      <StageHeading title="В работе" count={lines.length} hint={IN_WORK_HINT} collapsed={collapsed} onToggle={toggleCollapsed}>
+      <StageHeading title="В работе" count={lines.length} hint={IN_WORK_HINT} summary={lines.length ? stageSummary(lines) : undefined} collapsed={collapsed} onToggle={toggleCollapsed}>
         {edited.length > 0 && <span className="dirty-note">изменено: {edited.length}</span>}
         <button type="button" className={edited.length ? "primary small" : "secondary small"} disabled={disabled || saving || !edited.length} onClick={() => void saveAll()}>
           {saving ? "Сохраняем…" : edited.length ? `Сохранить всё (${edited.length})` : "Сохранить всё"}
