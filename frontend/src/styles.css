@@ -1870,7 +1870,7 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .buy-grid col.c-qty { width: 72px; }
 .buy-grid col.c-unit { width: 56px; }
 .buy-grid col.c-article { width: 96px; }
-.buy-grid col.c-name { width: 11%; }
+.buy-grid col.c-price { width: 92px; }
 .buy-grid col.c-link { width: 108px; }
 .buy-grid col.c-note { width: 9%; }
 .buy-grid col.c-menu { width: 40px; }
@@ -1880,7 +1880,7 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
   .buy-grid col.c-supplier { width: 110px; }
   .buy-grid col.c-site { width: 10%; }
   .buy-grid col.c-article { width: 84px; }
-  .buy-grid col.c-name { width: 10%; }
+  .buy-grid col.c-price { width: 84px; }
   .buy-grid col.c-link { width: 96px; }
 }
 @media (min-width: 1900px) {
@@ -1890,7 +1890,7 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
   .buy-grid col.c-qty { width: 80px; }
   .buy-grid col.c-unit { width: 62px; }
   .buy-grid col.c-article { width: 130px; }
-  .buy-grid col.c-name { width: 16%; }
+  .buy-grid col.c-price { width: 110px; }
   .buy-grid col.c-link { width: 150px; }
   .buy-grid col.c-note { width: 16%; }
 }
@@ -1920,6 +1920,14 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .buy-grid tbody tr:hover > td:not(.edit):not(.dirty) { background: #f6fafa; }
 .buy-grid tr.selected > td, .buy-grid tr.selected:hover > td { background: var(--sheet-selected); }
 .buy-grid tr.edited > td.sel { box-shadow: inset 3px 0 0 var(--primary); }
+/* Строка группы (поставщик, заказ): заголовок, мета, действия справа. Общие классы для «В работе» и заказов. */
+td.group-cell { height: 32px; padding: 0 10px; background: var(--accent); color: var(--foreground); border-bottom: 1px solid var(--border); }
+.group-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.group-title { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.group-meta { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.group-actions { margin-left: auto; display: inline-flex; gap: 6px; flex: none; }
+.buy-grid tbody tr.group-row:hover > td.group-cell:not(.edit):not(.dirty) { background: var(--accent); }
+.buy-grid td.num.ro { text-align: right; font-variant-numeric: tabular-nums; }
 .cell-input, .cell-select { display: block; width: 100%; height: calc(var(--sheet-row) - 1px); margin: 0; padding: 0 8px; border: 0; border-radius: 0; background: transparent; color: var(--foreground); font-size: 13px; text-overflow: ellipsis; }
 .cell-input:focus, .cell-select:focus { border: 0; box-shadow: none; outline: none; }
 .buy-grid td.num .cell-input, .buy-grid td.num .cell-ro { text-align: right; font-variant-numeric: tabular-nums; }
