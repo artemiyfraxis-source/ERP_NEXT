@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProcurementInWorkTable, linkHost, linkHref, LINK_HINT } from "./ProcurementInWorkTable";
+import { ProcurementInWorkTable, linkHost, linkHref, positionsWord, LINK_HINT } from "./ProcurementInWorkTable";
 import type { ProcurementLine } from "./api";
 
 function line(id: number, fields: Partial<ProcurementLine> = {}): ProcurementLine {
@@ -63,7 +63,7 @@ it("keeps free text in the link cell as amber text with the hint, without a clic
   expect(screen.queryByLabelText("Открыть ссылку SM-1")).not.toBeInTheDocument();
 });
 
-it("saves every edited row in one call and refuses a row without supplier", async () => {
+it("saves every edited row in one call and refuses a row without quantity", async () => {
   const sent: Record<string, unknown>[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
     sent.push(JSON.parse(String(init?.body)));
@@ -75,11 +75,15 @@ it("saves every edited row in one call and refuses a row without supplier", asyn
 
   fireEvent.click(screen.getByRole("button", { name: "Ссылка SM-1" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Ссылка SM-1" }), { target: { value: "Склад" } });
+  fireEvent.change(screen.getByLabelText("Факт. кол-во SM-1"), { target: { value: "0" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
   expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("SM-1"));
-  expect(screen.getByLabelText("Поставщик SM-1")).toHaveAttribute("aria-invalid", "true");
-  expect(screen.getByLabelText("Поставщик SM-1").closest("td")).toHaveClass("invalid");
+  expect(screen.getByLabelText("Факт. кол-во SM-1")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Факт. кол-во SM-1").closest("td")).toHaveClass("invalid");
+  expect(screen.getByLabelText("Поставщик SM-1")).not.toHaveAttribute("aria-invalid");
   expect(sent).toEqual([]);
+
+  fireEvent.change(screen.getByLabelText("Факт. кол-во SM-1"), { target: { value: "2" } });
 
   fireEvent.change(screen.getByLabelText("Поставщик SM-1"), { target: { value: "Фраксис" } });
   fireEvent.change(screen.getByLabelText("Поставщик SM-2"), { target: { value: "ЧипДип" } });
@@ -87,7 +91,7 @@ it("saves every edited row in one call and refuses a row without supplier", asyn
   await waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0]).toEqual({ rows: [
     {
-      line_id: line(1).id, legacy_id: "SM-1", version: 2, design_article: null, calculated_name: "Позиция 1",
+      line_id: line(1).id, legacy_id: "SM-1", version: 2, design_article: null,
       site_name: null, link: "Склад", supplier: "Фраксис", actual_quantity: "2", actual_unit: "шт",
     },
     expect.objectContaining({ line_id: line(2).id, supplier: "ЧипДип", link: null }),
@@ -115,20 +119,26 @@ it("counts changed rows in the header, highlights the save button and forgets a 
   expect(screen.getByLabelText("Артикул SM-2").closest("td")).not.toHaveClass("dirty");
 });
 
-it("spreads a block pasted from Excel over columns and rows and skips rows ready for the request", () => {
+it("spreads a block pasted from Excel in the column order, skips the read-only price and fills ready rows too", () => {
   renderTable([line(1), line(2, { status: "Готов к запросу", supplier: "Было" }), line(3)]);
+  // На экране «Было» (SM-2) стоит первой группой, затем «Без поставщика»: SM-1, SM-3.
   fireEvent.paste(screen.getByLabelText("Поставщик SM-1"), {
-    clipboardData: { getData: () => "ЧипДип\tЦАР\t5\tкг\nЭлитан\tЖУК\t7\tшт\nВэлком\tМСК\t9\tшт\n" },
+    clipboardData: { getData: () => "ЧипДип\tЦАР\t5\tкг\tA-1\t99,50\twww.a.ru\nЭлитан\tЖУК\t7\tшт\tA-2\t10\tСклад\n" },
   });
   expect(value("Поставщик SM-1")).toBe("ЧипДип");
   expect(value("Наименование на сайте SM-1")).toBe("ЦАР");
   expect(value("Факт. кол-во SM-1")).toBe("5");
   expect((screen.getByLabelText("Ед. SM-1") as HTMLSelectElement).value).toBe("кг");
-  // «Готов к запросу» сервер не правит: её строка блока пропущена, следующая легла на свою строку.
-  expect(screen.queryByLabelText("Поставщик SM-2")).not.toBeInTheDocument();
-  expect(screen.getByText("Было")).toBeInTheDocument();
-  expect(value("Поставщик SM-3")).toBe("Вэлком");
-  expect(screen.getByRole("button", { name: "Сохранить всё (2)" })).toBeEnabled();
+  expect(value("Артикул SM-1")).toBe("A-1");
+  expect(screen.getByRole("button", { name: "Ссылка SM-1" }).closest("tr")).toHaveTextContent("a.ru ↗");
+  expect(value("Поставщик SM-3")).toBe("Элитан");
+  expect(value("Артикул SM-3")).toBe("A-2");
+  // Строка «Готов к запросу» правится так же, как «В работе».
+  expect(value("Поставщик SM-2")).toBe("Было");
+  fireEvent.paste(screen.getByLabelText("Поставщик SM-2"), { clipboardData: { getData: () => "Вэлком\tМСК\n" } });
+  expect(value("Поставщик SM-2")).toBe("Вэлком");
+  expect(value("Наименование на сайте SM-2")).toBe("МСК");
+  expect(screen.getByRole("button", { name: "Сохранить всё (3)" })).toBeEnabled();
 });
 
 it("keeps typed cells over a fresh copy of the row and fills only the untouched ones", async () => {
@@ -160,7 +170,7 @@ it("folds the request context into the position cell and marks ready rows", () =
   ]);
   const head = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
   expect(head).toEqual([
-    "", "Позиция", "Поставщик", "Наим. на сайте", "Кол-во", "Ед.", "Артикул", "Уточн. наименование", "Ссылка", "Комментарий", "",
+    "", "Позиция", "Поставщик", "Наим. на сайте", "Кол-во", "Ед.", "Артикул", "Цена расч.", "Ссылка", "Комментарий", "",
   ]);
   // Обязательные колонки — точкой (класс), а не «*» в тексте; полное название — в подсказке.
   const required = screen.getAllByRole("columnheader").filter((cell) => cell.classList.contains("required")).map((cell) => cell.textContent);
@@ -174,10 +184,93 @@ it("folds the request context into the position cell and marks ready rows", () =
   expect(value("Наименование на сайте SM-1")).toBe("Разъём SMA на сайте");
 
   const ready = screen.getByText("SM-2").closest("tr")!;
-  expect(within(ready).getByText("готова к запросу")).toBeInTheDocument();
+  expect(within(ready).getByText("Готов к запросу")).toHaveClass("tone-ok");
   expect(within(ready).queryByText("Обычный")).not.toBeInTheDocument();
-  expect(within(ready).queryByRole("textbox")).not.toBeInTheDocument();
-  expect(within(ready).getByText("Кабель.ру")).toBeInTheDocument();
+  expect(within(ready).getByLabelText("Поставщик SM-2")).toBeEnabled();
+  expect(value("Поставщик SM-2")).toBe("Кабель.ру");
+  expect(screen.queryByRole("button", { name: "Заполнить данные" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Уточн. наименование")).not.toBeInTheDocument();
+});
+
+it("shows the calculated price with VAT, else without, as read-only money", () => {
+  renderTable([
+    line(1, { calculated_price: "100", calculated_price_with_vat: "120" }),
+    line(2, { calculated_price: "50" }),
+    line(3),
+  ]);
+  expect(within(screen.getByText("SM-1").closest("tr")!).getByText("120,00 ₽")).toBeInTheDocument();
+  expect(within(screen.getByText("SM-2").closest("tr")!).getByText("50,00 ₽")).toBeInTheDocument();
+  expect(screen.getByText("120,00 ₽").closest("td")).not.toHaveClass("edit");
+});
+
+it("says 1 позиция, 2 позиции, 5 позиций, 11 позиций, 21 позиция", () => {
+  expect([1, 2, 4, 5, 11, 12, 21, 22, 25].map(positionsWord)).toEqual([
+    "1 позиция", "2 позиции", "4 позиции", "5 позиций", "11 позиций", "12 позиций", "21 позиция", "22 позиции", "25 позиций",
+  ]);
+});
+
+const GROUP = "Сформировать запрос";
+
+it("groups rows by saved supplier ignoring case, sums the calculated amount and puts «Без поставщика» last", () => {
+  renderTable([
+    line(1),
+    line(2, { supplier: "ЧипДип", calculated_sum: "100.5" }),
+    line(3, { supplier: " чипдип ", calculated_sum: "200" }),
+    line(4, { supplier: "Аргус", calculated_sum: "10" }),
+  ]);
+  const rows = Array.from(document.querySelectorAll("tr.group-row"));
+  expect(rows).toHaveLength(3);
+  expect(rows[0].querySelector(".group-title")).toHaveTextContent("Аргус");
+  expect(rows[0].querySelector(".group-meta")).toHaveTextContent("1 позиция · 10,00 ₽ по расчёту");
+  expect(rows[1].querySelector(".group-title")).toHaveTextContent("ЧипДип");
+  expect(rows[1].querySelector(".group-meta")).toHaveTextContent("2 позиции · 300,50 ₽ по расчёту");
+  expect(rows[2].querySelector(".group-title")).toHaveTextContent("Без поставщика");
+  expect(rows[2].querySelector(".group-meta")).toHaveTextContent("1 позиция");
+  expect(within(rows[2] as HTMLElement).queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: GROUP })).toHaveLength(2);
+  // Порядок строк — как групп.
+  expect(screen.getAllByText(/^SM-\d$/).map((cell) => cell.textContent)).toEqual(["SM-4", "SM-2", "SM-3", "SM-1"]);
+});
+
+it("builds the request for the group's ready lines and blocks the button while the group has unsaved edits", async () => {
+  const onBuildRequests = vi.fn(async () => undefined);
+  const lines = [
+    line(1, { supplier: "ЧипДип", status: "Готов к запросу" }),
+    line(2, { supplier: "ЧипДип", status: "Готов к запросу" }),
+    line(3, { supplier: "Аргус", status: "Готов к запросу" }),
+  ];
+  renderTable(lines, { onBuildRequests });
+  const [argus, chip] = screen.getAllByRole("button", { name: GROUP });
+  expect(chip).toBeEnabled();
+  fireEvent.click(chip);
+  await waitFor(() => expect(onBuildRequests).toHaveBeenCalledWith([lines[0], lines[1]]));
+
+  fireEvent.change(screen.getByLabelText("Артикул SM-1"), { target: { value: "A-1" } });
+  expect(chip).toBeDisabled();
+  expect(chip.getAttribute("title")).toContain("Сохранить всё");
+  expect(argus).toBeEnabled();
+});
+
+it("keeps the group button off when the group has no ready lines", () => {
+  renderTable([line(1, { supplier: "ЧипДип" })]);
+  const button = screen.getByRole("button", { name: GROUP });
+  expect(button).toBeDisabled();
+  expect(button.getAttribute("title")).toContain("Готов к запросу");
+});
+
+it("does not send an empty supplier that was not touched", async () => {
+  const sent: Record<string, unknown>[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    sent.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify({ lines: [], saved: 1, ready: 0, skipped: [], failed: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  renderTable([line(1)]);
+  fireEvent.change(screen.getByLabelText("Артикул SM-1"), { target: { value: "A-1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+  const row = (sent[0].rows as Record<string, unknown>[])[0];
+  expect(row).not.toHaveProperty("supplier");
+  expect(row).toMatchObject({ design_article: "A-1", actual_quantity: "2", actual_unit: "шт" });
 });
 
 it("keeps rare actions in the row menu, without approval", () => {

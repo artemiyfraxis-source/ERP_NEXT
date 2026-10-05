@@ -17,11 +17,13 @@ from app.shared.identity import Actor
 
 from .money import (
     EMPTY_MONEY,
+    RUB,
     ExchangeRate,
     FactMoney,
     MoneyInput,
     MoneyValidationError,
     apply_currency_and_fact,
+    is_foreign,
     pay_gate_missing,
     reconvert,
     rescale_to_quantity,
@@ -108,6 +110,11 @@ BY_SUPPLIER_CLOSED = frozenset(
 )
 # «Со склада» is set and taken off while the line is with its buyer, before the supplier request is formed.
 STOCK_COVER_STAGES = frozenset({ProcurementStatus.IN_WORK, ProcurementStatus.READY})
+# The buyer's desk before the supplier request (owner, 05.10): the facts are edited inline in both stages and the
+# stage follows them — complete facts are «Готов к запросу», anything missing sends the line back to «В работе».
+FACTS_EDITABLE = frozenset({ProcurementStatus.IN_WORK, ProcurementStatus.READY})
+# «Цена факт» inside an order (owner, 05.10): the gross unit price in roubles; НДС 22% unless the line has a rate.
+FACT_PRICE_VAT = Decimal("22")
 # КОММЕНТАРИЙ (Config.gs:330, free buyer note): `gateNotInWork_` (Guards.gs:575) only locks a «Новый» row; ERP also
 # keeps a cancelled line closed (решено агентом — проверить). «Согласование» is a parked line, still noted.
 NOTE_EDITABLE = frozenset(set(ProcurementStatus) - {ProcurementStatus.NEW, ProcurementStatus.CANCELLED})
@@ -311,19 +318,55 @@ class ProcurementLine:
         )
 
     def take_in_work(self, actor: Actor) -> ProcurementLine:
+        """«Новый» → the buyer's desk. КОЛ-ВО / ЕД.ИЗМ (факт) start from what is to buy (owner, 05.10) when empty,
+        and the stage follows the facts at once: a supplier already known makes the line «Готов к запросу».
+        The buyer's own line on the desk is a read-only retry."""
         _validate_actor(actor)
-        if self.status is ProcurementStatus.IN_WORK:
+        if self.status in FACTS_EDITABLE:
             if _same_actor(self.buyer, actor):
                 return self
             raise ProcurementValidationError("Строка уже взята в работу другим закупщиком")
         if self.status is not ProcurementStatus.NEW:
             raise ProcurementValidationError("В работу можно взять только новую строку")
-        return replace(
+        taken = replace(
             self,
             status=ProcurementStatus.IN_WORK,
             buyer=actor,
             version=self.version + 1,
         )
+        return taken.prefill_facts().with_work_stage()
+
+    def prefill_facts(self) -> ProcurementLine:
+        """КОЛ-ВО (факт) = what is still to buy and ЕД.ИЗМ (факт) = ЕД.ИЗМ (Расчет), each only when empty — the buyer
+        corrects them inline. The version is the caller's business."""
+        quantity = self.actual_quantity
+        if quantity is None and self.to_buy > 0:
+            quantity = self.to_buy
+        unit = _text(self.actual_unit) or _text(self.calculated_unit) or None
+        if quantity == self.actual_quantity and unit == self.actual_unit:
+            return self
+        return replace(self, actual_quantity=quantity, actual_unit=unit)
+
+    def with_work_stage(self) -> ProcurementLine:
+        """On the buyer's desk the stage follows the facts: ПОСТАВЩИК, ТОЧКА ОТГРУЗКИ, КОЛ-ВО and ЕД.ИЗМ (факт)
+        filled → «Готов к запросу», otherwise «В работе». Any other stage stays; the version is the caller's."""
+        if self.status not in FACTS_EDITABLE:
+            return self
+        status = ProcurementStatus.READY if not self.request_missing() else ProcurementStatus.IN_WORK
+        return self if status is self.status else replace(self, status=status)
+
+    def request_missing(self) -> list[str]:
+        """What the line still lacks for the supplier request (`_facts_ready`), in sheet words."""
+        missing = []
+        if not _text(self.supplier):
+            missing.append("ПОСТАВЩИК")
+        if not _text(self.delivery_point):
+            missing.append("ТОЧКА ОТГРУЗКИ")
+        if self.actual_quantity is None or self.actual_quantity <= 0:
+            missing.append("КОЛ-ВО (факт)")
+        if not _text(self.actual_unit):
+            missing.append("ЕД.ИЗМ (факт)")
+        return missing
 
     @property
     def autofill_wanted(self) -> bool:
@@ -378,10 +421,12 @@ class ProcurementLine:
         normalized = _merge_facts(facts, current)
         if normalized == current:
             return self
-        if self.status is not ProcurementStatus.IN_WORK:
-            raise ProcurementValidationError("Данные закупки можно менять только в статусе «В работе»")
-        status = ProcurementStatus.READY if _facts_ready(normalized, self.delivery_point) else self.status
-        return replace(
+        if self.status not in FACTS_EDITABLE:
+            raise ProcurementValidationError(
+                f"Данные закупки меняются только в статусах «{ProcurementStatus.IN_WORK.value}» и "
+                f"«{ProcurementStatus.READY.value}»"
+            )
+        updated = replace(
             self,
             supplier=normalized.supplier,
             site_name=normalized.site_name,
@@ -390,9 +435,9 @@ class ProcurementLine:
             calculated_name=normalized.calculated_name or self.calculated_name,
             actual_quantity=normalized.actual_quantity,
             actual_unit=normalized.actual_unit,
-            status=status,
             version=self.version + 1,
         )
+        return updated.with_work_stage()
 
     def send_supplier_request(
         self,
@@ -510,6 +555,14 @@ class ProcurementLine:
             version=self.version + 1,
         )
 
+    def with_invoice_item_name(self) -> ProcurementLine:
+        """The order-wide invoice (owner, 05.10): an empty НАИМЕНОВАНИЕ (Счет) takes НАИМЕНОВАНИЕ (САЙТ), else
+        НАИМЕНОВАНИЕ (Расчет). The version is the caller's business."""
+        if _text(self.invoice_item_name):
+            return self
+        name = _text(self.site_name) or _text(self.calculated_name)
+        return replace(self, invoice_item_name=name) if name else self
+
     def replace_invoice(
         self,
         invoice_url: str,
@@ -570,6 +623,37 @@ class ProcurementLine:
         if updated == self:
             return self
         return replace(updated, version=self.version + 1)
+
+    def set_fact_price(self, price_with_vat: Decimal | None, actor: Actor) -> ProcurementLine:
+        """«Цена факт» of one order line (owner, 05.10): the gross unit price in roubles. ЦЕНА (net) is derived with
+        НДС 22% unless the line already has a rate, СУММА (факт) = price × КОЛ-ВО (факт). An empty price clears the
+        three amounts. A line invoiced in a foreign currency keeps its amounts in that currency — «Внести КП»."""
+        self._require_owner(actor)
+        if self.status not in MONEY_EDITABLE:
+            raise ProcurementValidationError(
+                f"Цена факт вносится на этапах «{ProcurementStatus.AWAITING_INVOICE.value}» и "
+                f"«{ProcurementStatus.TO_PAY.value}»"
+            )
+        foreign = self.money.source_currency or (
+            self.money.currency if is_foreign(self.money.currency) else None
+        )
+        if foreign:
+            raise ProcurementValidationError(f"Счёт в {foreign}: цену меняйте через «Внести КП»")
+        if price_with_vat is None:
+            money = replace(self.money, price=None, price_with_vat=None, sum=None, driver=None)
+        else:
+            vat_rate = self.money.vat_rate if self.money.vat_rate is not None else FACT_PRICE_VAT
+            try:
+                money = apply_currency_and_fact(
+                    MoneyInput(currency=RUB, vat_rate=vat_rate, price_with_vat=price_with_vat, driver="gross"),
+                    self.actual_quantity,
+                    None,
+                )
+            except MoneyValidationError as error:
+                raise ProcurementValidationError(str(error)) from error
+        if money == self.money:
+            return self
+        return replace(self, money=money, version=self.version + 1)
 
     def apply_kp(self, entry: KpEntry, rate: ExchangeRate | None, actor: Actor) -> ProcurementLine:
         """`submitKp_`: writes the form fields of one order line; the status stays «Жду счет»."""
@@ -936,8 +1020,7 @@ def _merge_text(value: str | None | _Unset, current: str | None) -> str | None:
 
 
 def _merge_facts(facts: ProcurementFacts, current: ProcurementFacts) -> ProcurementFacts:
-    if facts.supplier is not UNSET and not _text(facts.supplier):
-        raise ProcurementValidationError("Поставщик не может быть пустым")
+    # An omitted field stays; an empty ПОСТАВЩИК clears it and the line goes back to «В работе» (owner, 05.10).
     if (
         facts.actual_quantity is not UNSET
         and facts.actual_quantity is not None
@@ -1030,6 +1113,21 @@ def create_line_from_requested(
         if isinstance(error, ProcurementValidationError):
             raise
         raise ProcurementValidationError(f"Invalid procurement.requested payload: {error}") from error
+
+
+def requested_buyer(message: OutboxMessage) -> Actor | None:
+    """Who pressed «В закупку» (owner, 05.10: the line lands on their desk «В работе»). A message without a usable
+    buyer — sent before the switch — gives None, and the line is «Новый» as before."""
+    payload = message.payload
+    name = _text(payload.get("buyer_name"))
+    raw_id = _text(payload.get("buyer_id"))
+    if not name or not raw_id:
+        return None
+    try:
+        buyer_id = UUID(raw_id)
+    except ValueError:
+        return None
+    return Actor(id=buyer_id, name=name, department=_text(payload.get("buyer_department")))
 
 
 def revision_to_number(revision: str) -> int:
@@ -1376,16 +1474,21 @@ def split_line(
     existing_ids: Iterable[str],
     day: date,
     now: datetime,
+    buyer: Actor | None = None,
 ) -> list[ProcurementLine]:
     """`applyPendingSplitsToSheet_` (Pipeline.gs:184-220): «Раздробить по поставщикам».
 
-    N copies (1–30) of the line with NEW System IDs, «Новый», Рев.A. They keep the request data
+    N copies (1–30) of the line with NEW System IDs, Рев.A. They keep the request data
     (`REQUEST_TO_PURCHASE_MAP`: dates, initiator, designation, point, link, article, calculated
     name/quantity/price) and drop everything the buyer filled: buyer, supplier, facts, order, invoice,
     money, payment. The source line stays as it is; any status may be split, as in SUPPLYMAP.
+    Owner, 05.10: the copies land on the splitter's desk (`buyer`) — taken in work, facts prefilled, ПОСТАВЩИК
+    empty (each copy is for another supplier); without a buyer they are «Новый» as in SUPPLYMAP.
     """
     if isinstance(copies, bool) or not isinstance(copies, int) or not 1 <= copies <= SPLIT_MAX_COPIES:
         raise ProcurementValidationError(f"Число копий — 1–{SPLIT_MAX_COPIES}.")
+    if buyer is not None:
+        _validate_actor(buyer)
     taken = list(existing_ids)
     result: list[ProcurementLine] = []
     for number in range(1, copies + 1):
@@ -1425,7 +1528,9 @@ def split_line(
                 initiator_id=source.initiator_id,
             )
         )
-    return result
+    if buyer is None:
+        return result
+    return [copy.take_in_work(buyer) for copy in result]
 
 
 # --- «Со склада» (owner 2026-10-04) ------------------------------------------------------------------

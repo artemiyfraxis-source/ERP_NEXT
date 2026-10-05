@@ -78,6 +78,8 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   // WH-6: печатный «Лист перемещения на склад» для принятых партий без места — тот же механизм,
   // что и FF-8 (frontend/src/print.ts): backend строит PrintSheet, окно печати открывает print.ts.
   const [putawayBusy, setPutawayBusy] = useState(false);
+  // Своё сообщение: загрузка склада (через 250 мс после открытия) сбрасывает общую ошибку и стёрла бы его.
+  const [putawayError, setPutawayError] = useState("");
   const requestVersion = useRef(0);
   const groupedLots = useMemo(() => warehouseGroups(lots, groupBy, sort), [lots, groupBy, sort]);
   // «Колонки»: each table has its own order and set of columns, the viewer changes both (remembered in this browser).
@@ -147,13 +149,13 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   }, [query, warehouse, includeZero]);
 
   async function openPutawaySheet() {
-    setError("");
+    setPutawayError("");
     setPutawayBusy(true);
     try {
       const { sheet } = await receivingApi.putawaySheet();
       openPrintSheet(sheet);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось сформировать лист перемещения");
+      setPutawayError(reason instanceof Error ? reason.message : "Не удалось сформировать лист перемещения");
     } finally {
       setPutawayBusy(false);
     }
@@ -203,6 +205,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         </div>
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
+      {putawayError && <div className="error-banner" role="alert">{putawayError}</div>}
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">

@@ -112,7 +112,7 @@ describe("RequestsPage", () => {
       "/api/requests/handoff",
       expect.objectContaining({ method: "POST" }),
     ));
-    expect(await screen.findByText("Заявка передана в очередь закупки")).toBeInTheDocument();
+    expect(await screen.findByText("Заявка передана в закупку: строка в блоке «В работе» на странице «Закупка»")).toBeInTheDocument();
   });
 
   it("re-transfers a request in work as a new revision after confirmation", async () => {
@@ -622,6 +622,6 @@ describe("RequestsPage", () => {
       "/api/requests/handoff",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ request_ids: [row.id, second.id], retransfer: false }) }),
     ));
-    expect(await screen.findByText("Передано в очередь закупки: 2")).toBeInTheDocument();
+    expect(await screen.findByText("Передано в закупку: 2 — строки в блоке «В работе» на странице «Закупка»")).toBeInTheDocument();
   });
 });

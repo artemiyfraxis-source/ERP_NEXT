@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Mapping, Protocol, Sequence
+from typing import Collection, Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 import logging
@@ -22,7 +22,7 @@ from .invoice_file import (
 )
 from .domain import (
     AUTOFILL_TOPIC,
-    UNSET as UNSET_FACT,
+    FACTS_EDITABLE,
     _PAID_STATUSES,
     KpEntry,
     MoneyEntry,
@@ -37,6 +37,7 @@ from .domain import (
     ReplacementDecision,
     StockCover,
     removal_blocker,
+    requested_buyer,
     create_backorder_line,
     create_line_from_requested,
     group_supplier_requests,
@@ -123,6 +124,10 @@ class AppendOnlyRepository(Protocol):
 
 class ConcurrentProcurementUpdate(RuntimeError):
     pass
+
+
+class OrderLinesMismatch(ConcurrentProcurementUpdate):
+    """The rows sent for an order-wide action are not the order's rows of that stage (the order moved on)."""
 
 
 class DispatchOutboxRepository(Protocol):
@@ -319,15 +324,24 @@ class SupplierOrder:
 class BuildSupplierRequestsCommand:
     actor: Actor
     now: datetime
-    # Only these ready lines (the buyer ticked them on «Мои позиции»); None — every ready line of the buyer.
-    line_ids: frozenset[UUID] | None = None
+    # Only these lines (the buyer ticked them on «Мои позиции»), in this order; None — every ready line of the buyer.
+    line_ids: Collection[UUID] | None = None
+
+
+@dataclass(frozen=True)
+class SkippedLine:
+    """A line left out of the supplier request, and why (in Russian)."""
+
+    line_id: UUID
+    legacy_id: str
+    reason: str
 
 
 @dataclass(frozen=True)
 class SupplierRequestsResult:
     orders: list[SupplierOrder]
     lines: list[ProcurementLine]
-    skipped: list[str]
+    skipped: list[SkippedLine]
     other_buyer: int
 
 
@@ -526,6 +540,37 @@ def _new_line_from_requested(message: OutboxMessage, lines: ProcurementRepositor
     return create_line_from_requested(message, legacy_id=legacy_id, revision=revision)
 
 
+def _add_requested_line(
+    message: OutboxMessage,
+    uow: UnitOfWork,
+    suppliers: SupplierDirectory | None,
+) -> ProcurementLine:
+    """The line of one `procurement.requested`. Owner, 05.10: «В закупку» puts it straight on the desk of whoever
+    pressed it — taken in work as «Взять в работу» would (facts prefilled, the stage from the facts, the page fill
+    queued in this transaction). A message without the buyer (sent before the switch) still lands «Новый»."""
+    line = _line_from_requested(message, uow.procurement, suppliers)
+    buyer = requested_buyer(message)
+    taken = line.take_in_work(buyer) if buyer is not None else line
+    uow.procurement.add(taken)
+    uow.audit.add(
+        AuditEvent(
+            id=uuid4(),
+            aggregate_id=line.id,
+            event_type="procurement.created",
+            actor=SYSTEM_ACTOR,
+            occurred_at=message.created_at,
+            details={
+                "legacy_id": line.legacy_id,
+                "source_event_id": str(message.id),
+            },
+        )
+    )
+    if buyer is not None:
+        uow.audit.add(_taken_event(line, taken, buyer, message.created_at))
+        _queue_autofill(taken, message.created_at, uow)
+    return taken
+
+
 def consume_procurement_requested(
     message: OutboxMessage,
     uow: UnitOfWork,
@@ -540,21 +585,7 @@ def consume_procurement_requested(
                 )
             return existing
 
-        line = _line_from_requested(message, uow.procurement, suppliers)
-        uow.procurement.add(line)
-        uow.audit.add(
-            AuditEvent(
-                id=uuid4(),
-                aggregate_id=line.id,
-                event_type="procurement.created",
-                actor=SYSTEM_ACTOR,
-                occurred_at=message.created_at,
-                details={
-                    "legacy_id": line.legacy_id,
-                    "source_event_id": str(message.id),
-                },
-            )
-        )
+        line = _add_requested_line(message, uow, suppliers)
         uow.commit()
         return line
 
@@ -578,25 +609,11 @@ def dispatch_next_procurement_requested(
             line = existing
         else:
             try:
-                line = _line_from_requested(message, uow.procurement, suppliers)
+                line = _add_requested_line(message, uow, suppliers)
             except ProcurementValidationError as error:
                 uow.outbox.mark_failed(message.id, now, str(error))
                 uow.commit()
                 raise PoisonOutboxMessage(message.id, str(error)) from error
-            uow.procurement.add(line)
-            uow.audit.add(
-                AuditEvent(
-                    id=uuid4(),
-                    aggregate_id=line.id,
-                    event_type="procurement.created",
-                    actor=SYSTEM_ACTOR,
-                    occurred_at=message.created_at,
-                    details={
-                        "legacy_id": line.legacy_id,
-                        "source_event_id": str(message.id),
-                    },
-                )
-            )
         uow.outbox.mark_published(message.id, now)
         uow.commit()
         return line
@@ -788,6 +805,7 @@ def take_procurement_in_work_batch(
                     if supplier_map is None:
                         supplier_map = _supplier_map(suppliers)
                     after, filled = after.fill_empty(supplier=supplier_from_link(after.link, supplier_map))
+                    after = after.with_work_stage()
                 changed.append((before, after, filled))
             taken.append(after)
         if not changed:
@@ -795,38 +813,47 @@ def take_procurement_in_work_batch(
 
         for before, after, filled in changed:
             uow.procurement.add(after)
-            uow.audit.add(
-                AuditEvent(
-                    id=uuid4(),
-                    aggregate_id=after.id,
-                    event_type="procurement.taken_in_work",
-                    actor=command.actor,
-                    occurred_at=command.now,
-                    details={
-                        "legacy_id": after.legacy_id,
-                        "from_status": before.status.value,
-                        "to_status": after.status.value,
-                    },
-                )
-            )
+            uow.audit.add(_taken_event(before, after, command.actor, command.now))
             if filled:
                 uow.audit.add(_autofilled_event(after, filled, command.actor, command.now))
-            if after.autofill_wanted:
-                uow.outbox.add(
-                    OutboxMessage(
-                        id=uuid4(),
-                        topic=AUTOFILL_TOPIC,
-                        idempotency_key=f"autofill:{after.id}:v{after.version}",
-                        created_at=command.now,
-                        payload={
-                            "line_id": str(after.id),
-                            "version": str(after.version),
-                            "legacy_id": after.legacy_id,
-                        },
-                    )
-                )
+            _queue_autofill(after, command.now, uow)
         uow.commit()
         return taken, skipped
+
+
+def _taken_event(before: ProcurementLine, after: ProcurementLine, actor: Actor, now: datetime) -> AuditEvent:
+    return AuditEvent(
+        id=uuid4(),
+        aggregate_id=after.id,
+        event_type="procurement.taken_in_work",
+        actor=actor,
+        occurred_at=now,
+        details={
+            "legacy_id": after.legacy_id,
+            "from_status": before.status.value,
+            "to_status": after.status.value,
+        },
+    )
+
+
+def _queue_autofill(line: ProcurementLine, now: datetime, uow: UnitOfWork) -> None:
+    """НАИМЕНОВАНИЕ (САЙТ), ИЗГОТОВИТЕЛЬ and СТРАНА from the page behind the link: queued in the caller's transaction,
+    filled by `app.workflows.procurement_autofill` while the line keeps this version."""
+    if not line.autofill_wanted:
+        return
+    uow.outbox.add(
+        OutboxMessage(
+            id=uuid4(),
+            topic=AUTOFILL_TOPIC,
+            idempotency_key=f"autofill:{line.id}:v{line.version}",
+            created_at=now,
+            payload={
+                "line_id": str(line.id),
+                "version": str(line.version),
+                "legacy_id": line.legacy_id,
+            },
+        )
+    )
 
 
 def _supplier_map(suppliers: SupplierDirectory) -> dict[str, str]:
@@ -891,7 +918,7 @@ class ApplyAutofillCommand:
 def next_autofill_request(now: datetime, uow: DispatchUnitOfWork) -> AutofillRequest | None:
     """Claim the next queued line that still has something to fill; None — the queue is empty.
 
-    A line that is gone, changed since the take (`version`), no longer «В работе» or already complete needs no
+    A line that is gone, changed since the take (`version`), off the buyer's desk or already complete needs no
     fill: its message is closed here, silently. The live message stays open until `apply_autofill` closes it,
     so the site fetch in between runs outside any transaction."""
     with uow:
@@ -912,7 +939,7 @@ def next_autofill_request(now: datetime, uow: DispatchUnitOfWork) -> AutofillReq
             if (
                 line is None
                 or line.version != version
-                or line.status is not ProcurementStatus.IN_WORK
+                or line.status not in FACTS_EDITABLE
                 or not line.autofill_wanted
             ):
                 uow.outbox.mark_published(message.id, now)
@@ -941,7 +968,7 @@ def apply_autofill(command: ApplyAutofillCommand, uow: DispatchUnitOfWork) -> tu
     with uow:
         line = uow.procurement.get(request.line_id)
         written: tuple[str, ...] = ()
-        if line is not None and line.version == request.version and line.status is ProcurementStatus.IN_WORK:
+        if line is not None and line.version == request.version and line.status in FACTS_EDITABLE:
             filled, written = line.fill_empty(
                 site_name=command.site_name, manufacturer=command.manufacturer, country=command.country
             )
@@ -1064,13 +1091,28 @@ def build_supplier_requests(
 
     № ЗАКАЗА is `<prefix>-NNN`, numbered through the whole procurement table per prefix; ДАТА ЗАКАЗА is
     the Moscow day. Every line of a formed group goes «Жду счет» in the same transaction as its order.
+
+    Ticked lines (owner, 05.10): a ticked line that cannot go — not ready, not the buyer's, in a group that is not
+    formed — is returned in `skipped` with the reason and the rest are formed; nothing to form is not an error then.
     """
     with uow:
         ready = uow.procurement.ready_for_request()
+        skipped: list[SkippedLine] = []
         if command.line_ids is not None:
-            ready = [line for line in ready if line.id in command.line_ids]
+            chosen = list(dict.fromkeys(command.line_ids))
+            chosen_ids = set(chosen)
+            ready = [line for line in ready if line.id in chosen_ids]
+            ready_ids = {line.id for line in ready}
+            for line_id in chosen:
+                if line_id not in ready_ids:
+                    skipped.append(_not_ready_for_request(line_id, uow.procurement.get(line_id), command.actor))
+            skipped.extend(
+                SkippedLine(line.id, line.legacy_id, "строка другого закупщика — запрос формирует тот, кто взял её в работу")
+                for line in ready
+                if line.buyer is None or line.buyer.id != command.actor.id
+            )
         groups, other_buyer = group_supplier_requests(ready, command.actor)
-        if not groups:
+        if not groups and command.line_ids is None:
             message = f"Нет ваших строк «{ProcurementStatus.READY.value}»"
             if other_buyer:
                 message += (
@@ -1082,11 +1124,10 @@ def build_supplier_requests(
         issued: dict[str, list[str]] = {}
         orders: list[SupplierOrder] = []
         lines: list[ProcurementLine] = []
-        skipped: list[str] = []
         for group in groups:
             blocker = supplier_request_blockers(group)
             if blocker:
-                skipped.append(blocker)
+                skipped.extend(SkippedLine(line.id, line.legacy_id, blocker) for line in group.lines)
                 continue
             taken = issued.setdefault(
                 group.prefix, list(uow.procurement.order_numbers_with_prefix(group.prefix))
@@ -1099,6 +1140,24 @@ def build_supplier_requests(
         if orders:
             uow.commit()
         return SupplierRequestsResult(orders=orders, lines=lines, skipped=skipped, other_buyer=other_buyer)
+
+
+def _not_ready_for_request(line_id: UUID, line: ProcurementLine | None, actor: Actor) -> SkippedLine:
+    """Why a ticked line is not among the ready ones."""
+    if line is None:
+        return SkippedLine(line_id, "", "строка не найдена")
+    if line.buyer is not None and line.buyer.id != actor.id:
+        reason = "строка другого закупщика — запрос формирует тот, кто взял её в работу"
+    elif line.status is ProcurementStatus.IN_WORK:
+        missing = line.request_missing()
+        reason = ("не заполнены: " + ", ".join(missing)) if missing else "строка «В работе» — сохраните её данные"
+    elif line.status is ProcurementStatus.NEW:
+        reason = "строка не взята в работу"
+    elif line.order_number:
+        reason = f"запрос уже сформирован ({line.order_number}), статус «{line.status.value}»"
+    else:
+        reason = f"статус «{line.status.value}» — запрос формируется только из «{ProcurementStatus.READY.value}»"
+    return SkippedLine(line.id, line.legacy_id, reason)
 
 
 def _issue_order(
@@ -1698,40 +1757,94 @@ def save_kp(
     if not command.invoice_url:
         return KpResult(saved)
     try:
-        return KpResult(_invoice_order(saved, command.invoice_url, command, uow))
+        with uow:
+            current = [_load_versioned(line.id, line.version, uow) for line in saved]
+            invoiced = _invoice_order(current, command.invoice_url, command.actor, command.now, uow)
+            uow.commit()
+        return KpResult(invoiced)
     except (ProcurementValidationError, ConcurrentProcurementUpdate) as error:
         return KpResult(saved, invoice_error=str(error))
 
 
 def _invoice_order(
-    lines: list[ProcurementLine], invoice_url: str, command: SaveKpCommand, uow: UnitOfWork,
+    lines: Sequence[ProcurementLine],
+    invoice_url: str,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+    *,
+    expected_arrival: date | None = None,
+    invoice_number: str | None = None,
+    invoice_date: date | None = None,
+    order_wide: bool = False,
 ) -> list[ProcurementLine]:
-    """`uploadInvoice` over the order rows: one invoice for all of them, all or none go «В оплату»."""
-    with uow:
-        invoiced = []
-        for line in lines:
-            current = _load_versioned(line.id, line.version, uow)
-            try:
-                if current.expected_arrival is None:
-                    raise ProcurementValidationError(
-                        "Нельзя загрузить счёт — сначала заполните: " + ", ".join(current.pay_missing())
-                    )
-                updated = current.record_invoice(invoice_url, current.expected_arrival, command.actor)
-            except ProcurementValidationError as error:
-                raise ProcurementValidationError(f"{current.legacy_id}: {error}") from error
-            invoiced.append(
-                _save_transition(
-                    current,
-                    updated,
-                    event_type="procurement.invoice_recorded",
-                    actor=command.actor,
-                    now=command.now,
-                    uow=uow,
-                    details={"order_reference": current.order_number or ""},
-                )
+    """`uploadInvoice` over the order rows (already loaded in the caller's transaction): one invoice for all of
+    them, all or none — every row is checked before the first write, the caller commits. «Жду счет» rows go
+    «В оплату». The order-wide invoice (`order_wide`, owner 05.10) also fills an empty НАИМЕНОВАНИЕ (Счет) and
+    replaces the invoice of «В оплату» rows (with ОЖИД. ДАТА, when it moved)."""
+    planned: list[tuple[ProcurementLine, list[tuple[ProcurementLine, str, dict[str, str]]]]] = []
+    for current in lines:
+        try:
+            steps = _invoice_steps(
+                current, invoice_url, actor,
+                expected_arrival=expected_arrival, invoice_number=invoice_number, invoice_date=invoice_date,
+                order_wide=order_wide,
             )
-        uow.commit()
+        except ProcurementValidationError as error:
+            raise ProcurementValidationError(f"{current.legacy_id}: {error}") from error
+        planned.append((current, steps))
+    invoiced = []
+    for current, steps in planned:
+        line = current
+        for updated, event_type, details in steps:
+            line = _save_transition(line, updated, event_type=event_type, actor=actor, now=now, uow=uow, details=details)
+        invoiced.append(line)
     return invoiced
+
+
+def _invoice_steps(
+    current: ProcurementLine,
+    invoice_url: str,
+    actor: Actor,
+    *,
+    expected_arrival: date | None,
+    invoice_number: str | None,
+    invoice_date: date | None,
+    order_wide: bool,
+) -> list[tuple[ProcurementLine, str, dict[str, str]]]:
+    """The audited transitions the invoice makes on one row, each built on the previous one."""
+    named = current.with_invoice_item_name() if order_wide else current
+    order = {"order_reference": current.order_number or ""}
+    if current.status is ProcurementStatus.TO_PAY and order_wide:
+        replaced = named.replace_invoice(invoice_url, actor, invoice_number=invoice_number, invoice_date=invoice_date)
+        if replaced.version == current.version and replaced != current:
+            replaced = replace(replaced, version=current.version + 1)  # only НАИМЕНОВАНИЕ (Счет) was filled
+        steps = []
+        if replaced != current:
+            steps.append((replaced, "procurement.invoice_replaced", {
+                **order,
+                "previous_invoice_url": current.invoice_url or "",
+                "previous_invoice_number": current.invoice_number or "",
+                "previous_invoice_date": current.invoice_date.isoformat() if current.invoice_date else "",
+            }))
+        base = steps[-1][0] if steps else current
+        if expected_arrival is not None and expected_arrival != base.expected_arrival:
+            steps.append((base.set_expected_arrival(expected_arrival, actor), "procurement.expected_arrival_set", {
+                **order,
+                "expected_arrival": expected_arrival.isoformat(),
+                "previous_expected_arrival": base.expected_arrival.isoformat() if base.expected_arrival else "",
+            }))
+        return steps
+    arrival = expected_arrival or current.expected_arrival
+    if arrival is None and current.status is ProcurementStatus.AWAITING_INVOICE:
+        raise ProcurementValidationError(
+            "Нельзя загрузить счёт — сначала заполните: " + ", ".join(current.pay_missing())
+        )
+    updated = named.record_invoice(
+        invoice_url, arrival or current.created_at.date(), actor,
+        invoice_number=invoice_number, invoice_date=invoice_date,
+    )
+    return [(updated, "procurement.invoice_recorded", order)]
 
 
 def _receiving_expected(line: ProcurementLine, now: datetime) -> OutboxMessage:
@@ -1864,10 +1977,12 @@ def set_procurement_offline_status(command: ProcurementOfflineCommand, uow: Unit
 def split_procurement_line(
     command: SplitProcurementLineCommand, uow: UnitOfWork
 ) -> tuple[ProcurementLine, list[ProcurementLine]]:
-    """`portalSplitPurchaseRow` → `applyPendingSplits_`: one request → N suppliers, N new lines «Новый».
+    """`portalSplitPurchaseRow` → `applyPendingSplits_`: one request → N suppliers, N new lines.
 
     Any buyer may split any line (`portalCanWork_`, no ownership check). The source line keeps its data;
     only its version moves, so a repeated click on a stale form gets 409 instead of N more copies.
+    Owner, 05.10: the copies go to the splitter's «В работе» with an empty ПОСТАВЩИК (audited as taken, the page
+    fill queued as on «Взять в работу»).
     """
     _validate_split_actor(command.actor)
     with uow:
@@ -1879,6 +1994,7 @@ def split_procurement_line(
             uow.procurement.legacy_ids_with_prefix(f"SM-{day:%Y%m%d}-"),
             day,
             command.now,
+            buyer=command.actor,
         )
         source = replace(current, version=current.version + 1)
         _save_transition(
@@ -1909,6 +2025,8 @@ def split_procurement_line(
                     },
                 )
             )
+            uow.audit.add(_taken_event(replace(copy, status=ProcurementStatus.NEW), copy, command.actor, command.now))
+            _queue_autofill(copy, command.now, uow)
         uow.commit()
         return source, copies
 
@@ -2298,6 +2416,235 @@ def mark_procurement_paid_batch(
     return MarkPaidBatchResult(lines=done, already=already, no_invoice=no_invoice, failed=failed)
 
 
+# --- Заказ целиком (owner, 05.10): «Цена факт» по строкам, счёт и оплата один раз на заказ ------------------------
+
+
+@dataclass(frozen=True)
+class FactPriceRow:
+    line_id: UUID
+    expected_version: int
+    price_with_vat: Decimal | None
+    legacy_id: str = ""
+
+
+@dataclass(frozen=True)
+class FactPricesResult:
+    lines: list[ProcurementLine]
+    skipped: list[str]
+    failed: list[tuple[str, str]]
+
+
+def _fact_price_details(before: FactMoney, after: FactMoney) -> dict[str, str]:
+    return {
+        **_money_details(before, after),
+        "vat_rate": _plain(after.vat_rate),
+        "previous_currency": _plain(before.currency),
+        "previous_price": _plain(before.price),
+        "previous_price_with_vat": _plain(before.price_with_vat),
+        "previous_sum": _plain(before.sum),
+    }
+
+
+def save_fact_price(row: FactPriceRow, actor: Actor, now: datetime, uow: UnitOfWork) -> ProcurementLine:
+    """«Цена факт» of one order row. A stale version whose edit is already there is a read-only retry."""
+    with uow:
+        current = uow.procurement.get(row.line_id)
+        if current is None:
+            raise KeyError(f"Procurement line not found: {row.line_id}")
+        if current.version != row.expected_version:
+            try:
+                retry = current.set_fact_price(row.price_with_vat, actor)
+            except ProcurementValidationError as error:
+                raise ConcurrentProcurementUpdate("Строка изменилась после загрузки формы") from error
+            if retry == current:
+                return current
+            raise ConcurrentProcurementUpdate("Строка изменилась после загрузки формы")
+        updated = current.set_fact_price(row.price_with_vat, actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.fact_price_saved",
+            actor=actor,
+            now=now,
+            uow=uow,
+            details={"order_reference": current.order_number or "", **_fact_price_details(current.money, updated.money)},
+        )
+        if result != current:
+            uow.commit()
+        return result
+
+
+def save_fact_prices_batch(
+    rows: Sequence[FactPriceRow], actor: Actor, now: datetime, uow_factory,
+) -> FactPricesResult:
+    """«Цена факт» of several order rows, row by row like «Сохранить всё»: a row changed since it was loaded is
+    skipped, a refused row (stage, foreign currency, someone else's) is listed with the reason."""
+    if not rows:
+        raise ProcurementValidationError("Нет изменений для сохранения")
+    saved: list[ProcurementLine] = []
+    skipped: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for row in rows:
+        label = row.legacy_id or str(row.line_id)
+        try:
+            saved.append(save_fact_price(row, actor, now, uow_factory()))
+        except (ConcurrentProcurementUpdate, KeyError):
+            skipped.append(label)
+        except ProcurementValidationError as error:
+            failed.append((label, str(error)))
+    return FactPricesResult(lines=saved, skipped=skipped, failed=failed)
+
+
+@dataclass(frozen=True)
+class OrderLineRef:
+    line_id: UUID
+    expected_version: int
+
+
+@dataclass(frozen=True)
+class InvoiceSupplierOrderCommand:
+    order_number: str
+    invoice_url: str
+    expected_arrival: date
+    lines: Sequence[OrderLineRef]
+    actor: Actor
+    now: datetime
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+
+
+@dataclass(frozen=True)
+class PaySupplierOrderCommand:
+    order_number: str
+    lines: Sequence[OrderLineRef]
+    actor: Actor
+    now: datetime
+    manual_rate: Decimal | None = None
+
+
+def _order_refs(refs: Sequence[OrderLineRef]) -> set[UUID]:
+    ids = [ref.line_id for ref in refs]
+    if not ids:
+        raise ProcurementValidationError("Не выбрано ни одной строки заказа")
+    if len(set(ids)) != len(ids):
+        raise ProcurementValidationError("Строка заказа передана дважды")
+    return set(ids)
+
+
+def _buyer_order_lines(reference: str, actor: Actor, uow: UnitOfWork) -> list[ProcurementLine]:
+    lines = [line for line in uow.procurement.by_buyer(actor, 10_000) if line.order_number == reference]
+    if not lines:
+        raise KeyError(f"Заказ {reference}: нет ваших строк")
+    return lines
+
+
+def _stage_ids(lines: Sequence[ProcurementLine], status: ProcurementStatus) -> set[UUID]:
+    return {line.id for line in lines if line.status is status}
+
+
+def _versioned_rows(
+    lines: Sequence[ProcurementLine], refs: Sequence[OrderLineRef],
+) -> list[ProcurementLine]:
+    by_id = {line.id: line for line in lines}
+    rows = []
+    for ref in refs:
+        line = by_id[ref.line_id]
+        if line.version != ref.expected_version:
+            raise ConcurrentProcurementUpdate(f"{line.legacy_id}: строка изменилась после загрузки формы")
+        rows.append(line)
+    return rows
+
+
+def invoice_supplier_order(command: InvoiceSupplierOrderCommand, uow: UnitOfWork) -> list[ProcurementLine]:
+    """One invoice for the whole supplier order (owner, 05.10), all rows or none.
+
+    The rows sent must be exactly the order's «Жду счет» rows — they go «В оплату» (`_invoice_order`, as «Внести
+    КП» does) — or exactly all its «В оплату» rows, whose invoice is replaced. Any other set means the order moved
+    on since the form was loaded (`OrderLinesMismatch`). An empty НАИМЕНОВАНИЕ (Счет) takes the site name, else
+    the calculated one; a row the pay gate refuses names itself and nothing is written."""
+    reference = _order_reference(command.order_number)
+    requested = _order_refs(command.lines)
+    with uow:
+        order_lines = _buyer_order_lines(reference, command.actor, uow)
+        awaiting = _stage_ids(order_lines, ProcurementStatus.AWAITING_INVOICE)
+        to_pay = _stage_ids(order_lines, ProcurementStatus.TO_PAY)
+        if requested != awaiting and requested != to_pay or not requested:
+            raise OrderLinesMismatch(
+                f"Заказ {reference} изменился: счёт вносится сразу на все его строки "
+                f"«{ProcurementStatus.AWAITING_INVOICE.value}» ({len(awaiting)}) или на все строки "
+                f"«{ProcurementStatus.TO_PAY.value}» ({len(to_pay)}) — обновите данные"
+            )
+        rows = _versioned_rows(order_lines, command.lines)
+        invoiced = _invoice_order(
+            rows, command.invoice_url, command.actor, command.now, uow,
+            expected_arrival=command.expected_arrival,
+            invoice_number=command.invoice_number,
+            invoice_date=command.invoice_date,
+            order_wide=True,
+        )
+        if any(line != row for line, row in zip(invoiced, rows)):
+            uow.commit()
+        return invoiced
+
+
+def pay_supplier_order(
+    command: PaySupplierOrderCommand,
+    uow: UnitOfWork,
+    rates: ExchangeRates | None = None,
+) -> list[ProcurementLine]:
+    """«Оплачено» once for the whole supplier order (owner, 05.10): every «В оплату» row goes «В пути» and is
+    expected by Receiving, all or none. The rows sent must be exactly the order's «В оплату» rows. A foreign
+    invoice is fixed at the payment-day rate as the single-row payment does (`ManualRateRequired` when the CBR is
+    down); one typed rate cannot serve two currencies, so such an order is paid row by row."""
+    reference = _order_reference(command.order_number)
+    requested = _order_refs(command.lines)
+    with uow:
+        peeked = [line for line in _buyer_order_lines(reference, command.actor, uow) if line.id in requested]
+    # The CBR is asked outside the write transaction, so it never holds row locks.
+    foreign = [line for line in peeked if line.status is ProcurementStatus.TO_PAY and line.money.source_currency]
+    currencies = sorted({line.money.source_currency for line in foreign})
+    if command.manual_rate is not None and len(currencies) > 1:
+        raise ProcurementValidationError(
+            f"В заказе {reference} счета в разных валютах ({', '.join(currencies)}) — ручной курс вводится по строкам"
+        )
+    day = _moscow_day(command.now)
+    chosen = {
+        line.id: _choose_rate(line, line.money.source_currency, day, command.manual_rate, rates) for line in foreign
+    }
+    with uow:
+        order_lines = _buyer_order_lines(reference, command.actor, uow)
+        to_pay = _stage_ids(order_lines, ProcurementStatus.TO_PAY)
+        if not to_pay or requested != to_pay:
+            raise OrderLinesMismatch(
+                f"Заказ {reference} изменился: оплата проводится сразу по всем его строкам "
+                f"«{ProcurementStatus.TO_PAY.value}» ({len(to_pay)}) — обновите данные"
+            )
+        planned = []
+        for current in _versioned_rows(order_lines, command.lines):
+            try:
+                updated = current.mark_paid(command.actor, command.now, chosen.get(current.id))
+                expected = _receiving_expected(updated, command.now)
+            except ProcurementValidationError as error:
+                raise ProcurementValidationError(f"{current.legacy_id}: {error}") from error
+            planned.append((current, updated, expected))
+        paid = []
+        for current, updated, expected in planned:
+            paid.append(
+                _save_transition(
+                    current,
+                    updated,
+                    event_type="procurement.paid",
+                    actor=command.actor,
+                    now=command.now,
+                    uow=uow,
+                    details={"order_reference": reference, **_money_details(current.money, updated.money)},
+                )
+            )
+            uow.outbox.add(expected)
+        uow.commit()
+        return paid
+
+
 def buyer_in_work_lines(actor: Actor, uow: UnitOfWork) -> list[ProcurementLine]:
     """`portalPurchaseInWork`: all of the buyer's own «В работе» lines for the «Заполнить данные» form."""
     with uow:
@@ -2334,21 +2681,12 @@ def save_procurement_facts_batch(
     uow_factory,
     suppliers: SupplierDirectory | None = None,
 ) -> FactsBatchResult:
-    """`portalSavePurchaseFacts`: the marked rows of «Заполнить данные», row by row. A marked row with an
-    empty ПОСТАВЩИК refuses the whole batch before the first write (it would silently drop out of the
-    supplier request); a row that changed since the form was loaded is skipped (SUPPLYMAP: «строка
-    сдвинулась»); the rest are saved, reach «Готов к запросу» when complete and teach the map."""
+    """`portalSavePurchaseFacts` / «Сохранить всё»: the edited rows of the buyer's desk, row by row. A row that
+    changed since it was loaded is skipped (SUPPLYMAP: «строка сдвинулась»); the rest are saved and the stage
+    follows their facts — complete ones reach «Готов к запросу», incomplete ones stay (or return) «В работе».
+    Owner, 05.10: a row without ПОСТАВЩИК no longer refuses the batch; an omitted supplier stays as it is."""
     if not rows:
         raise ProcurementValidationError("Нет изменений для сохранения")
-    no_supplier = [
-        row.legacy_id or str(row.line_id)
-        for row in rows
-        if row.facts.supplier is UNSET_FACT or not str(row.facts.supplier or "").strip()
-    ]
-    if no_supplier:
-        raise ProcurementValidationError(
-            "Не заполнен «Поставщик»: " + ", ".join(no_supplier) + ". Без него строка не уйдёт в запрос."
-        )
     saved: list[ProcurementLine] = []
     skipped: list[str] = []
     failed: list[tuple[str, str]] = []

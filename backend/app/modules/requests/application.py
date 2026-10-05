@@ -202,6 +202,7 @@ def _procurement_requested_payload(
     line: ProcurementRequestedSnapshot,
 ) -> dict[str, str | None]:
     """Self-contained integration event; Procurement never reads Requests tables."""
+    buyer = line.buyer if line.buyer is not None and line.buyer.id else None
     return {
         "source_request_id": str(line.source_request_id),
         "legacy_id": line.legacy_id,
@@ -230,6 +231,11 @@ def _procurement_requested_payload(
             else None
         ),
         "calculated_sum": str(line.calculated_sum) if line.calculated_sum is not None else None,
+        # Owner, 05.10: the line lands «В работе» on the desk of whoever pressed «В закупку» (or cancelled the
+        # backorder this reorder replaces). No id — nobody to give it to: the line is «Новый».
+        "buyer_id": str(buyer.id) if buyer else None,
+        "buyer_name": buyer.name if buyer else None,
+        "buyer_department": buyer.department if buyer else None,
     }
 
 
@@ -395,7 +401,8 @@ def dispatch_next_reorder_requested(now: datetime, uow: DispatchUnitOfWork) -> R
     """`applyBackorderCancellations_`: a cancelled backorder becomes a new request already in Procurement.
 
     Same initiator and item, the remaining quantity, a new System ID; SUPPLYMAP puts the row straight into
-    Закупка «Новый», so the request is handed off in the same transaction.
+    Закупка «Новый», so the request is handed off in the same transaction — ERP (owner, 05.10) onto the desk of
+    the buyer who cancelled the backorder, «В работе».
     """
     with uow:
         message = uow.outbox.next_unpublished("requests.reorder_requested", now)

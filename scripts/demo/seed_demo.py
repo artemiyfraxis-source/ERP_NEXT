@@ -189,27 +189,30 @@ def _prefix(name: str):
 @step("3. Procurement")
 def procurement():
     buyer = S["petrov.buyer"]
+    # «В закупку» нажал закупщик — строки уже у него «В работе» (взять их не нужно).
     lines = {}
-    for l in buyer.ok("GET", "/api/procurement/available")["lines"]:
+    for l in buyer.ok("GET", "/api/procurement/mine")["lines"]:
         try:
             lines[_prefix(l["calculated_name"])] = l
         except StopIteration:
             pass
     take = ["Провод МГТФ", "Провод НВ-4", "Клемма JST", "Разъём Molex", "Термоусадочная",
             "Кабель КСПВГ", "Разъём DB-9", "Стяжки"]
-    t = buyer.ok("POST", "/api/procurement/take", "taken", json={"line_ids": [lines[k]["id"] for k in take]})
-    if not t:
+    missing = [k for k in take if k not in lines]
+    if missing:
+        FAILS.append(f"procurement: not in buyer's «В работе» after handoff: {missing}")
         return
-    ver = {l["id"]: l["version"] for l in t["lines"]}
+    bump("taken", len(take))
+    ver = {lines[k]["id"]: lines[k]["version"] for k in take}
     S["pline"] = {k: lines[k]["id"] for k in take}
-    for k in take[:7]:  # «Стяжки» stay «В работе» (no facts yet)
+    for k in take:  # «Стяжки» get a supplier but no request: «В работе», group «ООО «Электро-Сервис»»
         l = lines[k]
         r = buyer.ok("PATCH", f"/api/procurement/{l['id']}/facts", "facts", json={
             "version": ver[l["id"]], "supplier": SUPPLIER[k][0],
             "actual_quantity": l["calculated_quantity"], "actual_unit": l["calculated_unit"]})
         if r:
             ver[l["id"]] = r["line"]["version"]
-    buyer.ok("POST", "/api/procurement/supplier-requests", "supplier_order_batches")
+    buyer.ok("POST", "/api/procurement/supplier-requests", "supplier_order_batches", json={"line_ids": [S["pline"][k] for k in take[:7]]})
     mine = {l["id"]: l for l in buyer.ok("GET", "/api/procurement/mine")["lines"]}
 
     def money(k, invoice_day):

@@ -1,4 +1,5 @@
 import dataclasses
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -20,6 +21,7 @@ from app.modules.procurement.domain import (
     next_system_id,
     number_to_revision,
     removal_blocker,
+    requested_buyer,
     revision_to_number,
 )
 from app.modules.procurement.money import EMPTY_MONEY, ExchangeRate, MoneyInput
@@ -164,19 +166,69 @@ def test_incomplete_facts_remain_in_work_and_wrong_buyer_cannot_edit():
         )
 
 
-def test_explicit_empty_supplier_is_rejected_and_quantity_can_be_cleared():
+def test_clearing_supplier_or_quantity_sends_a_ready_line_back_to_in_work():
+    """Owner, 05.10: the facts stay editable in «Готов к запросу» and the stage follows them both ways."""
     buyer = Actor(name="Петров", department="Закупки")
     line = create_line_from_requested(requested_message()).take_in_work(buyer)
-    line = line.update_facts(
-        ProcurementFacts(actual_quantity=Decimal("2"), actual_unit="шт"),
-        buyer,
+    ready = line.update_facts(ProcurementFacts(supplier="ООО А", actual_quantity=Decimal("2"), actual_unit="шт"), buyer)
+    assert ready.status is ProcurementStatus.READY
+
+    no_supplier = ready.update_facts(ProcurementFacts(supplier=""), buyer)
+    assert (no_supplier.supplier, no_supplier.status, no_supplier.version) == (
+        None, ProcurementStatus.IN_WORK, ready.version + 1,
     )
+    again = no_supplier.update_facts(ProcurementFacts(supplier="ООО Б"), buyer)
+    assert (again.supplier, again.status) == ("ООО Б", ProcurementStatus.READY)
+    renamed = again.update_facts(ProcurementFacts(site_name="Разъём XS"), buyer)
+    assert renamed.status is ProcurementStatus.READY  # an edit that keeps the facts complete keeps the stage
 
-    cleared = line.update_facts(ProcurementFacts(actual_quantity=None), buyer)
+    cleared = renamed.update_facts(ProcurementFacts(actual_quantity=None), buyer)
+    assert (cleared.actual_quantity, cleared.status) == (None, ProcurementStatus.IN_WORK)
+    assert cleared.update_facts(ProcurementFacts(supplier="ООО Б"), buyer) is cleared  # nothing changed
 
-    assert cleared.actual_quantity is None
-    with pytest.raises(ProcurementValidationError, match="Поставщик"):
-        cleared.update_facts(ProcurementFacts(supplier=""), buyer)
+
+def test_facts_are_closed_once_the_supplier_request_is_out():
+    buyer = Actor(name="Петров", department="Закупки")
+    ready = create_line_from_requested(requested_message()).take_in_work(buyer).update_facts(
+        ProcurementFacts(supplier="ООО А"), buyer,
+    )
+    ordered = ready.send_supplier_request("PO-001", date(2026, 9, 15), "REQ", buyer)
+
+    with pytest.raises(ProcurementValidationError, match="«В работе» и «Готов к запросу»"):
+        ordered.update_facts(ProcurementFacts(supplier="ООО Б"), buyer)
+
+
+def test_take_in_work_prefills_quantity_and_unit_from_what_is_to_buy():
+    buyer = Actor(name="Петров", department="Закупки")
+    line = create_line_from_requested(requested_message())
+    assert (line.actual_quantity, line.actual_unit) == (None, None)
+
+    taken = line.take_in_work(buyer)
+
+    assert (taken.status, taken.buyer, taken.version) == (ProcurementStatus.IN_WORK, buyer, line.version + 1)
+    assert (taken.actual_quantity, taken.actual_unit) == (line.calculated_quantity, line.calculated_unit)
+    # A supplier already known (the link map at transfer) makes the line «Готов к запросу» at once.
+    with_supplier = replace(line, supplier="ООО А").take_in_work(buyer)
+    assert with_supplier.status is ProcurementStatus.READY
+    assert with_supplier.take_in_work(buyer) is with_supplier  # the buyer's own line on the desk: a retry
+    with pytest.raises(ProcurementValidationError, match="другим закупщиком"):
+        with_supplier.take_in_work(Actor(name="Сидоров", department="Закупки"))
+    # Typed facts are never overwritten.
+    typed = replace(line, actual_quantity=Decimal("5"), actual_unit="уп").take_in_work(buyer)
+    assert (typed.actual_quantity, typed.actual_unit) == (Decimal("5"), "уп")
+
+
+def test_requested_buyer_comes_from_the_payload_or_nobody():
+    message = requested_message()
+    buyer = Actor(name="Петров", department="Закупки")
+    with_buyer = replace(message, payload={
+        **message.payload, "buyer_id": str(buyer.id), "buyer_name": "Петров", "buyer_department": "Закупки",
+    })
+
+    assert requested_buyer(with_buyer) == buyer
+    assert requested_buyer(message) is None  # sent before the switch
+    assert requested_buyer(replace(message, payload={**message.payload, "buyer_id": "x", "buyer_name": "П"})) is None
+    assert requested_buyer(replace(message, payload={**message.payload, "buyer_id": str(buyer.id)})) is None
 
 
 def test_non_positive_actual_quantity_is_rejected():
@@ -277,6 +329,58 @@ def test_money_is_editable_only_by_owner_while_awaiting_invoice_or_payment():
     in_work = create_line_from_requested(requested_message()).take_in_work(buyer)
     with pytest.raises(ProcurementValidationError, match="«Жду счет» и «В оплату»"):
         in_work.update_money(RUB_ENTRY, None, buyer)
+
+
+def test_fact_price_is_the_gross_unit_price_in_roubles_with_vat_22_by_default():
+    """Owner, 05.10: inside an order only «Цена факт» per row is typed; net and sum follow."""
+    buyer = Actor(name="Петров", department="Закупки")
+    line = awaiting_invoice(buyer)
+
+    priced = line.set_fact_price(Decimal("1220"), buyer)
+
+    assert (priced.money.currency, priced.money.vat_rate) == ("RUB", Decimal("22"))
+    assert (priced.money.price, priced.money.price_with_vat, priced.money.sum) == (
+        Decimal("1000.00"), Decimal("1220"), Decimal("2440.00"),
+    )
+    assert priced.version == line.version + 1 and priced.status is ProcurementStatus.AWAITING_INVOICE
+    assert priced.set_fact_price(Decimal("1220"), buyer) is priced  # same price — no change, no version
+    # A rate already on the line is kept: 10% → net 1100 / 1.10.
+    ten = replace(line, money=replace(line.money, vat_rate=Decimal("10"))).set_fact_price(Decimal("1100"), buyer)
+    assert (ten.money.vat_rate, ten.money.price, ten.money.sum) == (Decimal("10"), Decimal("1000.00"), Decimal("2200.00"))
+    cleared = priced.set_fact_price(None, buyer)
+    assert (cleared.money.price, cleared.money.price_with_vat, cleared.money.sum) == (None, None, None)
+    assert cleared.money.currency == "RUB"
+
+
+def test_fact_price_is_refused_outside_the_order_stages_for_others_and_for_a_foreign_invoice():
+    buyer = Actor(name="Петров", department="Закупки")
+    line = awaiting_invoice(buyer)
+
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        line.set_fact_price(Decimal("100"), Actor(name="Сидоров", department="Закупки"))
+    with pytest.raises(ProcurementValidationError, match="«Жду счет» и «В оплату»"):
+        create_line_from_requested(requested_message()).take_in_work(buyer).set_fact_price(Decimal("100"), buyer)
+    usd = line.update_money(
+        MoneyEntry(amounts=MoneyInput(currency="USD", price=Decimal("10"), vat_rate=Decimal("22"))),
+        ExchangeRate(Decimal("90"), date(2026, 9, 18)),
+        buyer,
+    )
+    with pytest.raises(ProcurementValidationError, match="Счёт в USD: цену меняйте через «Внести КП»"):
+        usd.set_fact_price(Decimal("100"), buyer)
+    in_payment = line.set_fact_price(Decimal("1220"), buyer).with_invoice_item_name().record_invoice(
+        "https://files.test/invoice.pdf", date(2026, 9, 30), buyer,
+    )
+    assert in_payment.set_fact_price(Decimal("1342"), buyer).money.sum == Decimal("2684.00")  # «В оплату» too
+
+
+def test_order_invoice_name_defaults_to_the_site_name_else_the_calculated_one():
+    buyer = Actor(name="Петров", department="Закупки")
+    line = awaiting_invoice(buyer)
+
+    assert line.with_invoice_item_name().invoice_item_name == "Разъём SMA"
+    assert replace(line, site_name="SMA-KE").with_invoice_item_name().invoice_item_name == "SMA-KE"
+    typed = replace(line, invoice_item_name="Как в счёте")
+    assert typed.with_invoice_item_name() is typed
 
 
 def test_payment_is_refused_for_a_line_invoiced_without_money():

@@ -217,6 +217,8 @@ class ProcurementRequestedSnapshot:
     calculated_price_with_vat: Decimal | None
     calculated_sum: Decimal | None
     initiator_id: UUID | None = None
+    # Who pressed «В закупку» (owner, 05.10): Procurement puts the line on their desk «В работе».
+    buyer: Actor | None = None
 
 
 def _text(value: str | None) -> str:
@@ -456,6 +458,7 @@ def build_procurement_requested_snapshot(
         calculated_price=request.price,
         calculated_price_with_vat=request.price_with_vat,
         calculated_sum=request.line_sum,
+        buyer=request.procurement_actor,
     )
 
 

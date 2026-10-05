@@ -123,7 +123,7 @@ export function etkDrawWires(operation: Row): string {
     const e = ends[key], dir = key === "a" ? -1 : 1, edge = key === "a" ? x0 : x1;
     if (e.kind === "crimp") {
       const attach = edge - dir * 92 * S, at = (local: number) => attach + dir * local * S;
-      return { ins: at(18), tip: at(52), zone: [at(20), at(52)], attach, dir };
+      return { ins: at(26), tip: at(52), zone: [at(26), at(52)], attach, dir }; // изоляция выходит из крыльев в зазор
     }
     const inner = edge - dir * END;
     return e.kind === "none" ? { ins: edge, tip: edge, zone: null, attach: 0, dir } : { ins: inner, tip: edge, zone: [inner, edge], attach: 0, dir };

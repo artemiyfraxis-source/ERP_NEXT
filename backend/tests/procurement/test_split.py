@@ -94,7 +94,21 @@ def test_system_id_ignores_other_days_and_garbage_tails():
     assert next_system_id(["SM-20260928-50", "SM-20260929-x", "SM-20260929-07-Д2"], DAY) == "SM-20260929-08"
 
 
-def test_split_through_api_puts_copies_into_new_queue(procurement_api):  # noqa: F811
+def test_copies_land_on_the_splitters_desk_with_an_empty_supplier():
+    """Owner, 05.10: the copies are the splitter's «В работе», facts prefilled, ПОСТАВЩИК empty."""
+    splitter = Actor(name="Сидоров", department="Закупки")
+
+    copies = split_line(worked_line(), 2, [], DAY, NOW, buyer=splitter)
+
+    for copy in copies:
+        assert (copy.status, copy.buyer, copy.supplier) == (ProcurementStatus.IN_WORK, splitter, None)
+        assert (copy.actual_quantity, copy.actual_unit) == (copy.calculated_quantity, copy.calculated_unit)
+        assert copy.invoice_url is None and copy.money.currency is None
+    with pytest.raises(ProcurementValidationError, match="закупщик"):
+        split_line(worked_line(), 1, [], DAY, NOW, buyer=Actor(name=" ", department="Закупки"))
+
+
+def test_split_through_api_puts_copies_on_the_splitters_desk(procurement_api):  # noqa: F811
     client, line, sessions = procurement_api
     taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id)]}).json()["lines"][0]
 
@@ -106,15 +120,20 @@ def test_split_through_api_puts_copies_into_new_queue(procurement_api):  # noqa:
     assert (body["line"]["status"], body["line"]["version"]) == ("В работе", taken["version"] + 1)
     # the fixture's line is SM-20260915-01; the split happens on 15.09 (Moscow clock override)
     assert [copy["legacy_id"] for copy in body["copies"]] == ["SM-20260915-02", "SM-20260915-03"]
+    assert all(
+        (copy["status"], copy["buyer"], copy["supplier"], copy["actual_quantity"]) == ("В работе", "Петров", None, "2")
+        for copy in body["copies"]
+    )
     assert stale.status_code == 409
-    available = client.get("/api/procurement/available").json()["lines"]
-    assert {item["legacy_id"] for item in available} == {"SM-20260915-02", "SM-20260915-03"}
-    assert all(item["status"] == "Новый" and item["buyer"] is None for item in available)
+    assert client.get("/api/procurement/available").json()["lines"] == []
+    mine = {item["legacy_id"] for item in client.get("/api/procurement/mine").json()["lines"]}
+    assert mine == {line.legacy_id, "SM-20260915-02", "SM-20260915-03"}
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(ProcurementLineRow)) == 3
         events = list(session.scalars(select(AuditEventRow.event_type)))
     assert events.count("procurement.split") == 1
     assert events.count("procurement.created") == 3
+    assert events.count("procurement.taken_in_work") == 3  # the source line's take + the two copies
 
 
 def test_split_rejects_bad_count_and_is_open_to_any_buyer(procurement_api):  # noqa: F811

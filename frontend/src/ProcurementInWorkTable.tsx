@@ -4,21 +4,22 @@ import { selectRange } from "./bulk";
 import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
 import { RowMenu } from "./ProcurementRowMenu";
+import { formatMoney } from "./ProcurementSheetColumns";
 import { BulkStatus, StageHeading, type BulkState } from "./ProcurementStages";
 
 const fmtQty = (value: number) => String(Math.round(value * 1e6) / 1e6).replace(".", ",");
 
-/* Блок «В работе» в «Мои позиции»: лист, а не форма. Строки «В работе» правятся прямо в ячейках (Поставщик,
-   Наименование на сайте, Факт. кол-во, Ед., Артикул, Уточнённое наименование, Ссылка); правленые строки
-   сохраняются одной кнопкой «Сохранить всё» через тот же пакетный вызов, что и «Заполнить данные». Строки
-   «Готов к запросу» стоят здесь же ниже, с отметкой «готова к запросу», и только показываются (факты сервер
-   меняет лишь «В работе»). Контекст заявки — тип задачи, приоритет, категория, тип, кол-во по расчёту — серой
-   второй строкой в ячейке «Позиция». Флажки слева: выбранные строки — в массовые действия над таблицей.
-   Редкие действия строки — в меню «⋯»; новый пункт — одна строка в массиве `menuItems` ниже.
+/* Блок «В работе» в «Мои позиции»: лист, сгруппированный по поставщикам. Все строки — «В работе» и «Готов к
+   запросу» — правятся прямо в ячейках (Поставщик, Наименование на сайте, Факт. кол-во, Ед., Артикул, Ссылка);
+   правленые строки сохраняются одной кнопкой «Сохранить всё» через пакетный вызов. «Цена расч.» — только чтение.
+   Над строками поставщика — строка группы: число позиций, сумма по расчёту и «Сформировать запрос» по этой
+   группе (пока в группе есть несохранённые правки — недоступна). Группа «Без поставщика» стоит последней.
+   Контекст заявки — тип задачи, категория, тип, кол-во по расчёту — серой второй строкой в ячейке «Позиция».
+   Флажки слева: выбранные строки — в массовые действия над таблицей. Редкие действия строки — в меню «⋯».
    «Наименование на сайте» — поле НАИМЕНОВАНИЕ (Сайт): оно печатается названием позиции в письме поставщику. */
 
 export const LINK_HINT = "Ссылка на товар у поставщика. Если позиция есть на складе — «Со склада» в меню строки";
-export const IN_WORK_HINT = "Поставщик, факт. кол-во и ед. обязательны. Блок из Excel можно вставить в любую ячейку — он разойдётся по колонкам и строкам";
+export const IN_WORK_HINT = "Поставщик, факт. кол-во и ед. обязательны для запроса. Блок из Excel можно вставить в любую ячейку — он разойдётся по колонкам и строкам";
 
 /** Ссылка, по которой можно перейти: http(s):// или www. Всё прочее (старые данные, слово) — просто текст. */
 export function linkHref(value: string): string | null {
@@ -43,20 +44,21 @@ export type InWorkDraft = {
   actual_quantity: string;
   actual_unit: string;
   design_article: string;
-  calculated_name: string;
   link: string;
 };
 
 type Field = keyof InWorkDraft;
+type Column = { key: Field | "price"; title: string; head?: string; required?: boolean };
 // Порядок колонок — он же порядок вставки из Excel. `head` — короткий заголовок, чтобы колонка влезла на 16";
-// полное название — в подсказке заголовка и в имени поля.
-const FIELDS: { key: Field; title: string; head?: string; required?: boolean }[] = [
+// полное название — в подсказке заголовка и в имени поля. «Цена расч.» только читается: при вставке её место
+// пропускается, чтобы блок, скопированный с этого листа, ложился обратно как был.
+const FIELDS: Column[] = [
   { key: "supplier", title: "Поставщик", required: true },
   { key: "site_name", title: "Наименование на сайте", head: "Наим. на сайте" },
   { key: "actual_quantity", title: "Факт. кол-во", head: "Кол-во", required: true },
   { key: "actual_unit", title: "Ед.", required: true },
   { key: "design_article", title: "Артикул" },
-  { key: "calculated_name", title: "Уточнённое наименование", head: "Уточн. наименование" },
+  { key: "price", title: "Цена расчётная, с НДС", head: "Цена расч." },
   { key: "link", title: "Ссылка" },
 ];
 const COLUMN_COUNT = 2 + FIELDS.length + 2; // флажок + позиция + правка + комментарий + меню
@@ -68,13 +70,12 @@ export function inWorkDraftOf(line: ProcurementLine): InWorkDraft {
     actual_quantity: line.actual_quantity ?? line.calculated_quantity,
     actual_unit: line.actual_unit ?? line.calculated_unit,
     design_article: line.design_article ?? "",
-    calculated_name: line.calculated_name,
     link: line.link ?? "",
   };
 }
 
-const IN_WORK = "В работе";
-const editable = (line: ProcurementLine) => line.status === IN_WORK;
+const READY = "Готов к запросу";
+export const NO_SUPPLIER = "Без поставщика";
 const URGENT = /сроч/i;
 
 /** Серая вторая строка «Позиции»: то, что SUPPLYMAP показывал колонками ТИП ЗАДАЧИ … ЕД.ИЗМ (Расчет). */
@@ -82,6 +83,42 @@ export function contextOf(line: ProcurementLine): string {
   return [line.task_type, line.category, line.item_type, `расчёт ${line.calculated_quantity} ${line.calculated_unit}`]
     .filter((part) => part && part.trim())
     .join(" · ");
+}
+
+/** «1 позиция», «2 позиции», «5 позиций». */
+export function positionsWord(count: number): string {
+  const tail = count % 100;
+  const last = count % 10;
+  const word = tail >= 11 && tail <= 14 ? "позиций" : last === 1 ? "позиция" : last >= 2 && last <= 4 ? "позиции" : "позиций";
+  return `${count} ${word}`;
+}
+
+/** Цена по расчёту: с НДС, иначе без. */
+export function calculatedPriceOf(line: ProcurementLine): string {
+  const price = line.calculated_price_with_vat || line.calculated_price;
+  return price ? formatMoney(price) : "";
+}
+
+type Group = { key: string; title: string; lines: ProcurementLine[] };
+
+/** Группы по сохранённому поставщику (без пробелов по краям, без учёта регистра); «Без поставщика» — последней. */
+export function groupBySupplier(lines: ProcurementLine[]): Group[] {
+  const groups = new Map<string, Group>();
+  for (const line of lines) {
+    const title = (line.supplier ?? "").trim();
+    const key = title.toLowerCase();
+    const group = groups.get(key) ?? { key, title: title || NO_SUPPLIER, lines: [] };
+    group.lines.push(line);
+    groups.set(key, group);
+  }
+  const named = [...groups.values()].filter((group) => group.key).sort((a, b) => a.title.localeCompare(b.title, "ru"));
+  const none = groups.get("");
+  return none ? [...named, none] : named;
+}
+
+function groupSum(group: Group): string {
+  const sum = group.lines.reduce((total, line) => total + (Number(line.calculated_sum) || 0), 0);
+  return formatMoney(Math.round(sum * 100) / 100);
 }
 
 function invalidField(key: Field, value: string) {
@@ -139,7 +176,7 @@ function LinkCell({ id, value, disabled, onChange, onPaste }: {
 
 export function ProcurementInWorkTable({
   lines, units, disabled, busyId, editing, filling, bulk, onChanged, onError, onCancel, onCancelMany, onBuildRequests,
-  onCloseBulk, onFill, renderDetail,
+  onCloseBulk, renderDetail,
 }: {
   /** «В работе», затем «Готов к запросу». */
   lines: ProcurementLine[];
@@ -158,7 +195,7 @@ export function ProcurementInWorkTable({
   onCancelMany: (lines: ProcurementLine[]) => Promise<unknown>;
   onBuildRequests: (lines: ProcurementLine[]) => Promise<unknown>;
   onCloseBulk?: () => void;
-  /** «Заполнить данные» — все строки «В работе» одной формой. */
+  /** Больше не используется: поля правятся в ячейках. Оставлено для совместимости. */
   onFill?: () => void;
   /** Прослеживаемость, раздробить — раскрываются под строкой. */
   renderDetail: (line: ProcurementLine) => ReactNode;
@@ -173,17 +210,25 @@ export function ProcurementInWorkTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const anchor = useRef<string | null>(null);
 
-  const ids = new Set(lines.map((line) => line.id));
-  const chosen = lines.filter((line) => selected.has(line.id));
-  const chosenReady = chosen.filter((line) => !editable(line));
+  const groups = groupBySupplier(lines);
+  // Строки в порядке на экране: по ним идут вставка из Excel и выбор Shift-диапазоном.
+  const ordered = groups.flatMap((group) => group.lines);
+  const ids = new Set(ordered.map((line) => line.id));
+  const chosen = ordered.filter((line) => selected.has(line.id));
+  const chosenReady = chosen.filter((line) => line.status === READY);
 
-  const draftOf = (line: ProcurementLine): InWorkDraft => ({ ...inWorkDraftOf(line), ...(editable(line) ? edits[line.id] : undefined) });
+  const draftOf = (line: ProcurementLine): InWorkDraft => ({ ...inWorkDraftOf(line), ...edits[line.id] });
   const dirtyFields = (line: ProcurementLine): Field[] => {
-    if (!editable(line) || !edits[line.id]) return [];
+    if (!edits[line.id]) return [];
     const base = inWorkDraftOf(line);
     return (Object.entries(edits[line.id]) as [Field, string][]).filter(([key, value]) => value !== base[key]).map(([key]) => key);
   };
   const edited = lines.filter((line) => dirtyFields(line).length > 0);
+  // Пустой поставщик, который не трогали, не проверяем и не отправляем: сервер оставит поле как есть.
+  const fieldsOf = (line: ProcurementLine): Field[] => {
+    const keys = FIELDS.map((field) => field.key).filter((key): key is Field => key !== "price");
+    return keys.filter((key) => key !== "supplier" || dirtyFields(line).includes("supplier") || draftOf(line).supplier.trim() !== "");
+  };
 
   function patch(updates: { line: ProcurementLine; key: Field; value: string }[]) {
     setEdits((current) => {
@@ -194,18 +239,18 @@ export function ProcurementInWorkTable({
   }
 
   // Вставка из Excel: табы — колонки, переводы строк — строки; начинается с ячейки, куда вставили.
-  // Строки «Готов к запросу» не правятся — их часть блока пропускается, остальное ложится на свои строки.
+  // Колонка «Цена расч.» только читается — её место в блоке пропускается.
   function paste(event: ClipboardEvent, rowIndex: number, colIndex: number) {
     const text = event.clipboardData.getData("text").replace(/\r/g, "").replace(/\n$/, "");
     if (!/[\t\n]/.test(text)) return;
     event.preventDefault();
     const updates: { line: ProcurementLine; key: Field; value: string }[] = [];
     text.split("\n").forEach((rowText, i) => {
-      const line = lines[rowIndex + i];
-      if (!line || !editable(line)) return;
+      const line = ordered[rowIndex + i];
+      if (!line) return;
       rowText.split("\t").forEach((value, j) => {
         const field = FIELDS[colIndex + j];
-        if (field) updates.push({ line, key: field.key, value: value.trim() });
+        if (field && field.key !== "price") updates.push({ line, key: field.key, value: value.trim() });
       });
     });
     patch(updates);
@@ -215,7 +260,7 @@ export function ProcurementInWorkTable({
     if (!edited.length) return;
     const bad = new Set(edited.filter((line) => {
       const draft = draftOf(line);
-      return FIELDS.some((field) => invalidField(field.key, draft[field.key]));
+      return fieldsOf(line).some((field) => invalidField(field, draft[field]));
     }).map((line) => line.id));
     setInvalid(bad);
     if (bad.size) {
@@ -227,18 +272,18 @@ export function ProcurementInWorkTable({
     try {
       const result = await procurementApi.saveFactsBatch(edited.map((line) => {
         const draft = draftOf(line);
-        return {
+        const row: Record<string, unknown> = {
           line_id: line.id,
           legacy_id: line.legacy_id,
           version: line.version,
           design_article: draft.design_article.trim() || null,
-          calculated_name: draft.calculated_name.trim() || null,
           site_name: draft.site_name.trim() || null,
           link: draft.link.trim() || null,
-          supplier: draft.supplier.trim(),
           actual_quantity: draft.actual_quantity.trim().replace(",", "."),
           actual_unit: draft.actual_unit.trim(),
         };
+        if (fieldsOf(line).includes("supplier")) row.supplier = draft.supplier.trim();
+        return row;
       }));
       const parts = [`Сохранено строк: ${result.saved}`];
       if (result.skipped.length) parts.push(`пропущено (строка изменилась): ${result.skipped.join(", ")}`);
@@ -271,7 +316,7 @@ export function ProcurementInWorkTable({
   }
 
   function pick(line: ProcurementLine, event: MouseEvent<HTMLInputElement>) {
-    const order = lines.map((item) => item.id);
+    const order = ordered.map((item) => item.id);
     const checked = event.currentTarget.checked;
     const from = anchor.current;
     const shift = event.shiftKey;
@@ -297,20 +342,16 @@ export function ProcurementInWorkTable({
 
   function cell(line: ProcurementLine, rowIndex: number, colIndex: number) {
     const field = FIELDS[colIndex];
-    const value = draftOf(line)[field.key];
-    if (!editable(line)) {
-      if (field.key === "link") {
-        const href = linkHref(value);
-        return href
-          ? <a className="link-host" href={href} target="_blank" rel="noreferrer" aria-label={`Открыть ссылку ${line.legacy_id}`} title={value}>{linkHost(href)} ↗</a>
-          : <span className="cell-ro" title={value}>{value}</span>;
-      }
-      return <span className="cell-ro" title={value}>{value}</span>;
+    if (field.key === "price") {
+      const price = calculatedPriceOf(line);
+      return <span className="cell-ro" title={price}>{price}</span>;
     }
+    const key = field.key;
+    const value = draftOf(line)[key];
     const label = `${field.title} ${line.legacy_id}`;
     const off = disabled || saving;
-    const bad = invalid.has(line.id) && invalidField(field.key, value);
-    const set = (next: string) => patch([{ line, key: field.key, value: next }]);
+    const bad = invalid.has(line.id) && fieldsOf(line).includes(key) && invalidField(key, value);
+    const set = (next: string) => patch([{ line, key, value: next }]);
     if (field.key === "actual_unit") {
       return (
         <select className="cell-select" aria-label={label} aria-invalid={bad || undefined} disabled={off} value={value} onChange={(event) => set(event.target.value)} onPaste={(event) => paste(event, rowIndex, colIndex)}>
@@ -330,20 +371,19 @@ export function ProcurementInWorkTable({
         disabled={off}
         inputMode={field.key === "actual_quantity" ? "decimal" : undefined}
         value={value}
-        title={field.key === "site_name" || field.key === "calculated_name" ? value : undefined}
+        title={field.key === "site_name" ? value : undefined}
         onChange={(event) => set(event.target.value)}
         onPaste={(event) => paste(event, rowIndex, colIndex)}
       />
     );
   }
 
-  const allSelected = lines.length > 0 && lines.every((line) => selected.has(line.id));
+  const allSelected = ordered.length > 0 && ordered.every((line) => selected.has(line.id));
 
   return (
     <section className="panel table-panel procurement-stage stage-block" aria-label="В работе">
       <StageHeading title="В работе" count={lines.length} hint={IN_WORK_HINT}>
         {edited.length > 0 && <span className="dirty-note">изменено: {edited.length}</span>}
-        {onFill && <button type="button" className="secondary small" disabled={disabled} onClick={onFill}>Заполнить данные</button>}
         <button type="button" className={edited.length ? "primary small" : "secondary small"} disabled={disabled || saving || !edited.length} onClick={() => void saveAll()}>
           {saving ? "Сохраняем…" : edited.length ? `Сохранить всё (${edited.length})` : "Сохранить всё"}
         </button>
@@ -369,7 +409,7 @@ export function ProcurementInWorkTable({
           <table className="buy-grid">
             <colgroup>
               <col className="c-sel" /><col className="c-pos" /><col className="c-supplier" /><col className="c-site" />
-              <col className="c-qty" /><col className="c-unit" /><col className="c-article" /><col className="c-name" />
+              <col className="c-qty" /><col className="c-unit" /><col className="c-article" /><col className="c-price" />
               <col className="c-link" /><col className="c-note" /><col className="c-menu" />
             </colgroup>
             <thead>
@@ -389,10 +429,40 @@ export function ProcurementInWorkTable({
               </tr>
             </thead>
             <tbody>
-              {lines.map((line, rowIndex) => {
+              {groups.map((group) => {
+                const groupDirty = group.lines.some((line) => dirtyFields(line).length > 0);
+                const groupReady = group.lines.filter((line) => line.status === READY);
+                const requestTitle = groupDirty
+                  ? "Есть несохранённые правки — нажмите «Сохранить всё»"
+                  : groupReady.length ? undefined : "В группе нет строк «Готов к запросу» — заполните поставщика, кол-во и ед.";
+                return (
+                  <Fragment key={group.key || "none"}>
+                    <tr className="group-row">
+                      <td className="group-cell" colSpan={COLUMN_COUNT}>
+                        <div className="group-line">
+                          <span className="group-title">{group.title}</span>
+                          <span className="group-meta">
+                            {positionsWord(group.lines.length)}{group.key ? ` · ${groupSum(group)} по расчёту` : ""}
+                          </span>
+                          {group.key && (
+                            <span className="group-actions">
+                              <button
+                                type="button" className="primary small" title={requestTitle}
+                                disabled={disabled || saving || groupDirty || !groupReady.length}
+                                onClick={() => void onBuildRequests(groupReady)}
+                              >
+                                Сформировать запрос
+                              </button>
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {group.lines.map((line) => {
+                const rowIndex = ordered.indexOf(line);
                 const covered = coveredOf(line);
                 const dirty = new Set(dirtyFields(line));
-                const ready = !editable(line);
+                const ready = line.status === READY;
                 const menuItems: { label: string; disabled?: boolean; title?: string; run: () => void }[] = [
                   { label: "Со склада", run: () => stockToggle(line.id) },
                   ...(covered > 0 ? [{ label: "Снять «Со склада»", run: () => void releaseStock(line) }] : []),
@@ -409,7 +479,7 @@ export function ProcurementInWorkTable({
                       <td className="pos" title={[line.calculated_name, line.designation, contextOf(line)].filter(Boolean).join("\n")}>
                         <span className="pos-main"><strong>{line.legacy_id}</strong> {line.calculated_name}</span>
                         <span className="pos-sub">
-                          {ready && <span className="chip tone-ok">готова к запросу</span>}
+                          {ready && <span className="chip tone-ok">{READY}</span>}
                           {line.priority && URGENT.test(line.priority) && <span className="chip tone-danger">{line.priority}</span>}
                           {filling?.has(line.id) && <em className="filling">заполняется…</em>}
                           {covered > 0 && <span className="stock-note">со склада: {fmtQty(covered)} {line.calculated_unit} · к закупке: {fmtQty(Number(toBuyOf(line)))} · </span>}
@@ -417,12 +487,12 @@ export function ProcurementInWorkTable({
                         </span>
                       </td>
                       {FIELDS.map((field, colIndex) => {
-                        const value = draftOf(line)[field.key];
+                        const value = field.key === "price" ? "" : draftOf(line)[field.key];
                         const cls = [
-                          ready ? "ro" : "edit",
-                          dirty.has(field.key) ? "dirty" : "",
-                          invalid.has(line.id) && !ready && invalidField(field.key, value) ? "invalid" : "",
-                          field.key === "actual_quantity" ? "num" : "",
+                          field.key === "price" ? "ro" : "edit",
+                          dirty.has(field.key as Field) ? "dirty" : "",
+                          field.key !== "price" && invalid.has(line.id) && fieldsOf(line).includes(field.key) && invalidField(field.key, value) ? "invalid" : "",
+                          field.key === "actual_quantity" || field.key === "price" ? "num" : "",
                         ].join(" ").trim();
                         return <td key={field.key} className={cls}>{cell(line, rowIndex, colIndex)}</td>;
                       })}
@@ -442,6 +512,9 @@ export function ProcurementInWorkTable({
                       </td></tr>
                     )}
                     {open === line.id && <tr className="buy-detail"><td colSpan={COLUMN_COUNT}>{renderDetail(line)}</td></tr>}
+                  </Fragment>
+                );
+              })}
                   </Fragment>
                 );
               })}

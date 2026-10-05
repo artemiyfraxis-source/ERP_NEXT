@@ -97,13 +97,39 @@ function crimpSection(cx: number, cy: number, mode: "ok" | "loose" | "over"): st
   const shell = `M${cx - w},${top + 6} C${cx - w},${bottom + 2} ${cx + w},${bottom + 2} ${cx + w},${top + 6}` +
     ` M${cx - w},${top + 6} C${cx - w},${top - 2} ${cx - w / 2 - 3},${top - 3} ${cx - w / 2 + 1},${top + 4} C${cx - 3},${top + 10} ${cx - 1},${cy - 2} ${cx},${cy - 1}` +
     ` M${cx + w},${top + 6} C${cx + w},${top - 2} ${cx + w / 2 + 3},${top - 3} ${cx + w / 2 - 1},${top + 4} C${cx + 3},${top + 10} ${cx + 1},${cy - 2} ${cx},${cy - 1}`;
+  // Проволоки укладываются сотами внутри контура оболочки (дно втулки и два загнутых крыла, сходящихся к центру) и не
+  // задевают стенку — ни одна не выходит за контур. Слабый обжим — с пустотами.
+  const r = mode === "over" ? 1.4 : 1.7, clear = r + 2;
+  const bez = (a: [number, number], b: [number, number], c: [number, number], d: [number, number]) =>
+    Array.from({ length: 24 }, (_, i) => {
+      const s = (i + 1) / 24, u = 1 - s, k = [u ** 3, 3 * u * u * s, 3 * u * s * s, s ** 3];
+      return [k[0] * a[0] + k[1] * b[0] + k[2] * c[0] + k[3] * d[0], k[0] * a[1] + k[1] * b[1] + k[2] * c[1] + k[3] * d[1]] as [number, number];
+    });
+  const wing = (sx: number) => [
+    ...bez([cx + sx * w, top + 6], [cx + sx * w, top - 2], [cx + sx * (w / 2 + 3), top - 3], [cx + sx * (w / 2 - 1), top + 4]),
+    ...bez([cx + sx * (w / 2 - 1), top + 4], [cx + sx * 3, top + 10], [cx + sx, cy - 2], [cx, cy - 1]),
+  ];
+  const contour: Array<[number, number]> = [[cx - w, top + 6],
+    ...bez([cx - w, top + 6], [cx - w, bottom + 2], [cx + w, bottom + 2], [cx + w, top + 6]), ...wing(1), ...wing(-1).reverse()];
+  const inside = (x: number, y: number) => {
+    let hit = false;
+    for (let i = 0, j = contour.length - 1; i < contour.length; j = i, i += 1) {
+      const [xi, yi] = contour[i], [xj, yj] = contour[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+    }
+    return hit;
+  };
+  const gap = (x: number, y: number) => Math.min(...contour.map(([ax, ay], i) => {
+    const [bx, by] = contour[(i + 1) % contour.length], dx = bx - ax, dy = by - ay;
+    const q = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(x - ax - q * dx, y - ay - q * dy);
+  }));
+  const pts: Array<[number, number]> = [], step = 2 * r;
+  for (let row = 0, y = bottom; y > top; row += 1, y -= step * 0.866) {
+    for (let x = cx - w + (row % 2 ? step / 2 : 0); x <= cx + w; x += step) if (inside(x, y) && gap(x, y) >= clear) pts.push([x, y]);
+  }
   let strands = "";
-  const r = mode === "over" ? 2.2 : 2.5;
-  const pts: Array<[number, number]> = mode === "loose"
-    ? [[-12, 3], [-6, 7], [6, 7], [12, 2], [0, 9], [-13, -3], [9, -2]]
-    : mode === "over" ? [[-18, 3], [-13, 5], [-8, 5], [-3, 5], [2, 5], [7, 5], [12, 5], [17, 3], [-15, 0], [-10, 1], [-5, 1], [5, 1], [10, 1], [15, 0]]
-      : [[-13, 1], [-8, 0], [-11, 5], [-6, 5], [-1, 6], [4, 6], [9, 5], [14, 1], [8, 0], [11, 5], [-3, 2], [3, 2], [-9, 9], [-4, 10], [1, 10], [6, 10]];
-  for (const [dx, dy] of pts) strands += circle(cx + dx, cy + dy, r, CU, CU_LO, 0.5);
+  pts.forEach(([x, y], i) => { if (mode !== "loose" || i % 3 !== 1) strands += circle(x, y, r, CU, CU_LO, 0.5); });
   let out = strands + path(shell, "none", TIN_LO, 3.6) + path(shell, "none", TIN, 2);
   if (mode === "over") out += path(`M${cx - w},${cy + 4} l-8,-1 l0,4 z M${cx + w},${cy + 4} l8,-1 l0,4 z`, TIN, RED, 1) + mark(cx - w - 4, cy + 5, 7, 5) + mark(cx + w + 4, cy + 5, 7, 5);
   if (mode === "loose") out += mark(cx - 3, cy + 1, 10, 8);
@@ -169,10 +195,10 @@ const TN = { ins: () => ins(4, 50), gap: () => cond(50, 55), end: (o: { dull?: b
 const tinOk = () => TN.ins() + TN.gap() + TN.end();
 
 /** Концы провода для эскиза операции резки (etkDraw.etkDrawWires) — те же рисунки, что в «Норма | Брак». crimp — обжатый
- *  терминал, провод слева: крыло по изоляции от x = 0 (изоляция провода — до x = 20), жила до x = 52, торец контактной
- *  части x = 92. tin / copper — лужёная и голая жила x1..x2. */
+ *  терминал, провод слева: крыло по изоляции x = 0..20, изоляция выходит из него и кончается в зазоре (до x = 26), жила
+ *  до x = 52, торец контактной части x = 92. tin / copper — лужёная и голая жила x1..x2. */
 export const wireEndArt = {
-  crimp: (y: number) => cond(20, 52, y, 6) + terminal(0, y),
+  crimp: (y: number) => cond(26, 52, y, 6) + terminal(0, y),
   tin: (x1: number, x2: number, y: number, h = 6) => tinEnd(x1, x2, y, h),
   copper: (x1: number, x2: number, y: number, h = 6) => cond(x1, x2, y, h),
 };
@@ -348,18 +374,18 @@ const SCENES: Record<string, () => Scene> = {
   }),
   cxStrays: () => ({ view: CX_VIEW, ok: coaxPinJoint(), ng: coaxPinJoint({ strays: true }) + mark(57, 34, 11, 13) }),
   crimpIns: () => ({
-    ok: ins(2, 34) + cond(34, 78, 34, 6) + terminal(14),
-    ng: ins(2, 52) + cond(52, 78, 34, 6) + terminal(14) + rect(42, 30.5, 10, 7, INS, ` opacity=".85"`) + mark(46, 34, 9, 10),
+    ok: ins(2, 40) + cond(40, 66, 34, 6) + terminal(14),
+    ng: ins(2, 52) + cond(52, 66, 34, 6) + terminal(14) + rect(42, 30.5, 10, 7, INS, ` opacity=".85"`) + mark(46, 34, 9, 10),
     view: CLOSE_UP,
   }),
   brush: () => ({
-    ok: ins(2, 34) + cond(34, 66, 34, 6) + terminal(14) + rect(62, 31, 4, 6, CU) + dim(62, 66, 50, "", GREEN) + mark(64, 34, 5, 6, GREEN),
-    ng: ins(2, 34) + cond(34, 78, 34, 6) + terminal(14) + rect(62, 31, 16, 6, CU) + mark(71, 34, 9, 9),
+    ok: ins(2, 40) + cond(40, 66, 34, 6) + terminal(14) + rect(62, 31, 4, 6, CU) + dim(62, 66, 50, "", GREEN) + mark(64, 34, 5, 6, GREEN),
+    ng: ins(2, 40) + cond(40, 78, 34, 6) + terminal(14) + rect(62, 31, 16, 6, CU) + mark(71, 34, 9, 9),
     view: CLOSE_UP,
   }),
   strayCrimp: () => ({
-    ok: ins(2, 34) + cond(34, 66, 34, 6) + terminal(14),
-    ng: ins(2, 34) + cond(34, 66, 34, 6) + terminal(14) + path("M40,28 C44,18 50,16 56,14 M42,28 C46,22 50,20 54,20", "none", CU, 1.2) + mark(48, 20, 10, 8),
+    ok: ins(2, 40) + cond(40, 66, 34, 6) + terminal(14),
+    ng: ins(2, 40) + cond(40, 66, 34, 6) + terminal(14) + path("M40,28 C44,18 50,16 56,14 M42,28 C46,22 50,20 54,20", "none", CU, 1.2) + mark(48, 20, 10, 8),
     view: CLOSE_UP,
   }),
   crimpHeight: () => ({
@@ -371,8 +397,8 @@ const SCENES: Record<string, () => Scene> = {
     ng: crimpSection(58, 34, "over") + text(58, 60, "облой, «уши»", RED),
   }),
   bellmouth: () => ({
-    ok: ins(2, 34) + cond(34, 66, 34, 6) + terminal(14) + path("M42,24 L40,21 M42,44 L40,47", "none", E, 0.9) + mark(41, 34, 5, 14, GREEN),
-    ng: ins(2, 34) + cond(34, 66, 34, 6) + terminal(14) + line(42, 24, 42, 44, RED, 1.6) + mark(42, 34, 5, 14),
+    ok: ins(2, 40) + cond(40, 66, 34, 6) + terminal(14) + path("M42,24 L40,21 M42,44 L40,47", "none", E, 0.9) + mark(41, 34, 5, 14, GREEN),
+    ng: ins(2, 40) + cond(40, 66, 34, 6) + terminal(14) + line(42, 24, 42, 44, RED, 1.6) + mark(42, 34, 5, 14),
     view: CLOSE_UP,
   }),
   insGrip: () => ({
@@ -402,7 +428,7 @@ const SCENES: Record<string, () => Scene> = {
     ng: housing(56, 14, 56, 40) + rect(60, 24, 52, 20, "#fff", ` stroke="${PLAST_E}" stroke-width=".5"`) + ins(4, 36, 34, 8) + rect(36, 29, 56, 10, TIN, ` stroke="${E}" stroke-width=".7"`) + dim(92, 110, 20, "", RED) + text(58, 62, "контакт не до упора", RED) + mark(101, 34, 10, 8),
   }),
   pull: () => ({
-    ok: ins(0, 36) + cond(36, 72, 34, 6) + terminal(22) + arrow(18, 50, 2, 50, GREEN) + text(58, 62, "усилие отрыва по норме", GREEN),
+    ok: ins(0, 48) + cond(48, 72, 34, 6) + terminal(22) + arrow(18, 50, 2, 50, GREEN) + text(58, 62, "усилие отрыва по норме", GREEN),
     ng: ins(0, 14) + cond(14, 26, 34, 6) + terminal(22) + arrow(18, 50, 2, 50) + mark(58, 32, 12, 9) + text(58, 64, "жила вырвана из обжима", RED),
   }),
   latch: () => ({

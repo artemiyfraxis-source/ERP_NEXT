@@ -216,9 +216,11 @@ def test_cancelled_backorder_becomes_new_request_already_in_procurement(db):
     assert (reorder.quantity, reorder.unit, reorder.status) == (Decimal("2.5"), "шт", RequestStatus.IN_WORK)
     assert (reorder.actor.id, reorder.procurement_actor.id) == (INITIATOR.id, BUYER.id)
     assert reorder.link is None and backorder.legacy_id in (reorder.comment or "")
-    assert (fresh.legacy_id, fresh.status, fresh.calculated_quantity) == (
-        reorder.legacy_id, ProcurementStatus.NEW, Decimal("2.5"),
+    # Owner, 05.10: the reorder lands on the desk of the buyer who cancelled the backorder, facts prefilled.
+    assert (fresh.legacy_id, fresh.status, fresh.calculated_quantity, fresh.buyer.id) == (
+        reorder.legacy_id, ProcurementStatus.IN_WORK, Decimal("2.5"), BUYER.id,
     )
+    assert (fresh.actual_quantity, fresh.actual_unit, fresh.supplier) == (Decimal("2.5"), "шт", None)
     assert fresh.money.sum is None and fresh.invoice_url is None
     assert dispatch_next_reorder_requested(datetime(2026, 9, 25, 9, 2), db.requests()) is None
 

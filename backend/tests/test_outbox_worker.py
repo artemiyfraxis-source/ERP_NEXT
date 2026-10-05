@@ -24,6 +24,53 @@ def test_drain_available_reads_every_batch(monkeypatch):
     assert calls == [(sessions, 2), (sessions, 2), (sessions, 2)]
 
 
+def test_dispatch_puts_a_handed_off_line_on_the_buyers_desk_and_an_old_message_in_new():
+    """Owner, 05.10: the worker's consumer builds the line «В работе» for the buyer in the event (with the page fill
+    queued in the same transaction); a message sent before the switch carries nobody and lands «Новый»."""
+    from dataclasses import replace
+    from datetime import datetime
+
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.modules.procurement.domain import AUTOFILL_TOPIC, ProcurementStatus
+    from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
+    from app.shared.persistence import OutboxMessageRow, create_schema
+    from tests.factories import Actor
+    from tests.procurement.test_application import requested_message
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    create_schema(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    buyer = Actor(name="Петров", department="Закупки")
+    old = requested_message(1)
+    new = requested_message(2)
+    new = replace(new, payload={
+        **new.payload, "link": "https://shop.test/item/2",
+        "buyer_id": str(buyer.id), "buyer_name": buyer.name, "buyer_department": buyer.department,
+    })
+    with sessions() as session:
+        for message in (old, new):
+            session.add(OutboxMessageRow(
+                id=message.id, topic=message.topic, idempotency_key=message.idempotency_key,
+                created_at=datetime(2026, 9, 15, 11, 0), payload=message.payload,
+            ))
+        session.commit()
+
+    assert outbox_worker.dispatch_available(sessions) >= 2
+
+    with SqlAlchemyProcurementUnitOfWork(sessions) as uow:
+        lines = {line.legacy_id: line for line in uow.procurement.list()}
+    assert (lines["SM-20260915-01"].status, lines["SM-20260915-01"].buyer) == (ProcurementStatus.NEW, None)
+    taken = lines["SM-20260915-02"]
+    assert (taken.status, taken.buyer, taken.actual_quantity) == (ProcurementStatus.IN_WORK, buyer, 2)
+    with sessions() as session:
+        queued = session.scalars(select(OutboxMessageRow).where(OutboxMessageRow.topic == AUTOFILL_TOPIC)).all()
+    assert [(row.payload["line_id"], row.published_at) for row in queued] == [(str(taken.id), None)]
+    engine.dispose()
+
+
 def test_dispatch_available_rejects_non_positive_limit():
     with pytest.raises(ValueError, match="positive"):
         outbox_worker.dispatch_available(object(), limit=0)
