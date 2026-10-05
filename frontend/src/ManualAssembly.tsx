@@ -11,12 +11,13 @@ import {
   opMinutes,
   opTitle,
   removeOp,
-  setParallel,
+  setLink,
   toggleComponent,
   updateOp,
   type LibraryCard,
   type ManualOp,
   type ManualState,
+  type OpLink,
 } from "./manualLogic";
 import type { Comp, OpRec } from "./tcGenLogic";
 import { Field, UnitInput } from "./GenControls";
@@ -57,6 +58,14 @@ function LibraryPicker({ library, opRecs, added, onAdd, onClose }: {
   </div>;
 }
 
+/** Связь с предыдущей: подпись, подсказка; «тот же процесс» — один блок схемы, «одновременно» — своя ветка. */
+const LINKS: Array<[OpLink, string, string]> = [
+  ["after", "Следом", "Своим процессом после предыдущей операции"],
+  ["same", "Тот же процесс", "В одном процессе с предыдущей: один блок схемы, один полуфабрикат"],
+  ["parallel", "Одновременно", "В то же время, что и предыдущая, своей веткой; следующая операция соберёт обе"],
+];
+const LINK_NOTE: Record<OpLink, string> = { after: "", same: "тот же процесс, что у предыдущей", parallel: "одновременно с предыдущей" };
+
 function normLabel(minutes: number) {
   return minutes > 0 ? <b>{formatMinutes(minutes)} мин</b> : <b className="tone-warn">не задана</b>;
 }
@@ -66,7 +75,7 @@ export function ManualOpSummary({ op, position, partQty }: { op: ManualOp; posit
   return <div className="route-op-row manual-op-row">
     <span className="op-badge">{position}</span>
     <span className="op-title">{opTitle(op, position)}</span>
-    <small className="muted">{op.kind === "library" ? op.code : "своя операция"}{op.parallel && position > 1 ? " · одновременно с предыдущей" : ""} · на изделие {op.qty.trim() || "1"} · норма на партию {normLabel(opMinutes(op, partQty))}</small>
+    <small className="muted">{op.kind === "library" ? op.code : "своя операция"}{position > 1 && op.link !== "after" ? ` · ${LINK_NOTE[op.link]}` : ""} · на изделие {op.qty.trim() || "1"} · норма на партию {normLabel(opMinutes(op, partQty))}</small>
   </div>;
 }
 
@@ -83,8 +92,8 @@ export function ManualOpCard({ op, position, count, partQty, components, onChang
   const field = (key: "qty" | "prepMin" | "opSec", label: string, unit: string, name: string, placeholder: string) =>
     <Field label={label}><UnitInput unit={unit} inputMode="decimal" aria-label={`${name}: ${title}`} value={op[key]} placeholder={placeholder}
       onChange={(event) => set({ [key]: event.target.value })} /></Field>;
-  const together = op.parallel && position > 1;
-  return <div className={together ? "manual-op together" : "manual-op"} aria-label={`Операция ${position}: ${title}`}>
+  const link = position > 1 ? op.link : "after";
+  return <div className={link === "after" ? "manual-op" : `manual-op link-${link}`} aria-label={`Операция ${position}: ${title}`}>
     <div className="manual-op-head">
       <span className="op-badge">{position}</span>
       <div className="manual-op-name">
@@ -93,10 +102,10 @@ export function ManualOpCard({ op, position, count, partQty, components, onChang
         <small>{op.kind === "library" ? <>{op.code && <span className="op-code">{op.code}</span>} из библиотеки</> : "своя операция"}</small>
       </div>
       <div className="manual-op-tools">
-        {position > 1 && <label className={together ? "manual-together on" : "manual-together"} title="Идёт в то же время, что и предыдущая операция: своя ветка схемы, следующая операция соберёт обе">
-          <input type="checkbox" aria-label={`Одновременно с предыдущей: ${title}`} checked={together}
-            onChange={(event) => onChange((current) => setParallel(current, op.seq, event.target.checked))} /> Одновременно с предыдущей
-        </label>}
+        {position > 1 && <div className="manual-link" role="group" aria-label={`Связь с предыдущей: ${title}`}>
+          {LINKS.map(([value, label, hint]) => <button key={value} type="button" title={hint} aria-pressed={link === value} className={link === value ? "on" : ""}
+            onClick={() => onChange((current) => setLink(current, op.seq, value))}>{label}</button>)}
+        </div>}
         <button type="button" className="secondary small" aria-label={`Выше: ${title}`} title="Выше" disabled={position === 1} onClick={() => onChange((current) => moveOp(current, op.seq, -1))}>↑</button>
         <button type="button" className="secondary small" aria-label={`Ниже: ${title}`} title="Ниже" disabled={position === count} onClick={() => onChange((current) => moveOp(current, op.seq, 1))}>↓</button>
         <button type="button" className="btn-remove" aria-label={`Удалить операцию ${position}: ${title}`} title="Удалить" onClick={() => onChange((current) => removeOp(current, op.seq))}>×</button>
