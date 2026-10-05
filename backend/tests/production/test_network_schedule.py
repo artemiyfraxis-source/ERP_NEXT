@@ -65,8 +65,9 @@ def _task(operations: tuple[ProductionOperation, ...], edges: dict | None = None
     )
 
 
-def _merge(long_branch: str = "945") -> ProductionTask:
-    """Ветка А: нарезка → опрессовка (по 1 ч); ветка Б: нарезка 3 ч; обе → сборка → маркировка (по 1 ч)."""
+def _merge(long_branch: str = "472.5") -> ProductionTask:
+    """Ветка А: нарезка → опрессовка (по 1 ч); ветка Б: нарезка 3 ч (2 на сборку: 472,5 с × 20 шт); обе → сборка →
+    маркировка (по 1 ч)."""
     return _task(
         (_op(1, "Нарезка А"), _op(2, "Опрессовка А"), _op(3, "Нарезка Б", long_branch), _op(4, "Сборка"),
          _op(5, "Маркировка")),

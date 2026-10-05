@@ -482,6 +482,16 @@ class SqlAlchemyProductionRepository:
         )
         return [self._domain(row) for row in rows]
 
+    def for_operator(self, operator_id: UUID, limit: int = 300) -> list[ProductionTask]:
+        """Задания, где оператор назначен хотя бы на одну операцию (экран «Мои задания»), свежие первыми."""
+        ids = select(ProductionOperationRow.task_id).join(
+            ProductionOperationOperatorRow, ProductionOperationOperatorRow.operation_id == ProductionOperationRow.id,
+        ).where(ProductionOperationOperatorRow.operator_id == operator_id)
+        rows = self.session.scalars(select(ProductionTaskRow).where(ProductionTaskRow.id.in_(ids)).order_by(
+            ProductionTaskRow.created_at.desc(), ProductionTaskRow.id.desc(),
+        ).limit(limit))
+        return [self._domain(row) for row in rows]
+
     def planned(self, since: datetime) -> list[ProductionTask]:
         """Живые задания, где у кого-то есть окно, кончающееся не раньше since — только их двигает план по факту."""
         ids = select(ProductionOperationRow.task_id).join(

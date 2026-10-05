@@ -15,10 +15,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from heapq import heapify, heappop, heappush
+from math import ceil
 from typing import Iterable
 from uuid import UUID
 
 from .domain import (
+    OperationInput,
     OperationShare,
     OperatorSkill,
     ProductionOperation,
@@ -27,8 +30,12 @@ from .domain import (
     ProductionValidationError,
     WorkShift,
     add_work_seconds,
+    advance_clock,
+    clock_between,
+    clock_seconds,
     next_working_moment,
     operation_duration_seconds,
+    rewind_clock,
     skill_of,
 )
 from .scheduling import upstream_ids, work_seconds_between
@@ -51,7 +58,8 @@ class DispatchCalendar:
 
 @dataclass(frozen=True)
 class Progress:
-    """Факт выработки: сдано по операции всего и каждым монтажником (годные + брак, без исправленных записей)."""
+    """Факт выработки: сдано по операции всего и каждым монтажником (годные + брак, без исправленных записей) —
+    в штуках операции, как сдаёт монтажник (не в изделиях: «2 на изделие» сдаёт вдвое больше тиража)."""
     by_operation: dict[UUID, Decimal]
     by_operator: dict[tuple[UUID, UUID], Decimal]
 
@@ -112,15 +120,16 @@ def rate_of(skills: dict[str, dict[UUID, OperatorSkill]], code: str, operator_id
 
 
 def share_seconds(
+    task: ProductionTask,
     operation: ProductionOperation,
     quantity: int | None,
-    task_quantity: int,
     operator_ids: tuple[UUID, ...],
     skills: dict[str, dict[UUID, OperatorSkill]],
 ) -> int:
-    """Норма доли: подготовка + штучное время на свои штуки (бригада — на всё задание) / коэффициенты."""
+    """Норма доли: подготовка + штучное время на штуки операции для своих изделий (бригада — для всего задания)
+    / коэффициенты. Ветка «2 на изделие» делает вдвое больше штук — и идёт вдвое дольше."""
     return operation_duration_seconds(
-        operation, quantity if quantity is not None else task_quantity,
+        operation, task.operation_units(operation.id, quantity),
         operator_rate=rate_of(skills, operation.code, operator_ids),
     )
 
@@ -140,7 +149,8 @@ def nodes_of(tasks: Iterable[ProductionTask], progress: Progress) -> dict[NodeKe
             planned = [share for share in operation.shares if share.planned_start and share.planned_finish]
             if not planned:
                 continue
-            done = progress.by_operation.get(operation.id, Decimal(0)) >= task.quantity
+            # Сдано в штуках операции: ветка «2 на изделие» готова, когда сдано вдвое больше тиража.
+            done = progress.by_operation.get(operation.id, Decimal(0)) >= task.operation_units(operation.id)
 
             def fixed(share: OperationShare) -> bool:
                 return (
@@ -203,7 +213,7 @@ def place(
     меньшие номера); параллельная ветка той же сборки — просто другая работа монтажника. Работа, что стоит позже,
     не мешает — её потом сдвигает reflow. Хвост — на следующие рабочие дни, отсутствия (отпуск, больничный)
     перепрыгиваются."""
-    seconds = share_seconds(operation, quantity, task.quantity, (operator_id,), skills)
+    seconds = share_seconds(task, operation, quantity, (operator_id,), skills)
     others = [
         node for node in nodes_of(tasks, progress).values()
         if operator_id in node.operator_ids and node.operation.id != operation.id
@@ -233,6 +243,69 @@ def _whole_minute(moment: datetime, calendar: DispatchCalendar) -> datetime:
     return moment
 
 
+def _batch(edge: OperationInput, task: ProductionTask) -> int:
+    """Передаточная партия стрелки в изделиях задания: своя на ребре, иначе — всё задание (конец → начало).
+    Партия, выбранная в авторасчёте, в задании не хранится; нахлёст, который она дала, reflow держит как запас."""
+    return max(1, ceil(edge.transfer_batch)) if edge.transfer_batch is not None else task.quantity
+
+
+def ready_by_input(
+    consumer: Node,
+    consumer_clock: int,
+    edge: OperationInput,
+    windows: Iterable[tuple[Node, tuple[datetime, datetime]]],
+    calendar: DispatchCalendar,
+) -> datetime:
+    """Самый ранний старт потребителя i по стрелке j→i при окнах долей входа j (p — партия стрелки, τ — время одного
+    изделия по окну на часах): start-lag S_i ≥ S_j + p·τ_j — первая партия входа готова (у раздробленного входа —
+    у доли, что даст её раньше всех); finish-lag F_i ≥ F_j + p·τ_i — последняя партия потребителя не обгоняет конец
+    входа. Партия целиком — ровно «после конца входа». consumer_clock — длительность потребителя на часах."""
+    holidays, shift = calendar.holidays, calendar.shift
+    batch = _batch(edge, consumer.task)
+    first: datetime | None = None
+    last: datetime | None = None
+    for node, (start, finish) in windows:
+        pieces = node.quantity or node.task.quantity
+        ready = finish if batch >= pieces else advance_clock(
+            start, ceil(Decimal(batch) * clock_between(start, finish, holidays, shift) / pieces), holidays, shift,
+        )
+        first = ready if first is None else min(first, ready)
+        last = finish if last is None else max(last, finish)
+    assert first is not None and last is not None
+    pieces = consumer.quantity or consumer.task.quantity
+    tail = consumer_clock - ceil(Decimal(min(batch, pieces)) * consumer_clock / pieces)
+    return max(first, rewind_clock(last, tail, holidays, shift))
+
+
+def _network_order(
+    nodes: dict[NodeKey, Node],
+    by_operation: dict[UUID, list[NodeKey]],
+    rank,
+) -> list[NodeKey]:
+    """Узлы по рангу, но каждый — после долей всех своих входов (план внахлёст может ставить сборку раньше входа)."""
+    waiting = {
+        key: {other for edge in node.operation.inputs for other in by_operation.get(edge.input_operation_id, ())}
+        for key, node in nodes.items()
+    }
+    consumers: dict[NodeKey, list[NodeKey]] = {}
+    for key, inputs in waiting.items():
+        for source in inputs:
+            consumers.setdefault(source, []).append(key)
+    left = {key: len(inputs) for key, inputs in waiting.items()}
+    heap = [(rank(key), key) for key, count in left.items() if not count]
+    heapify(heap)
+    order: list[NodeKey] = []
+    while heap:
+        _, key = heappop(heap)
+        order.append(key)
+        for consumer in consumers.get(key, ()):
+            left[consumer] -= 1
+            if not left[consumer]:
+                heappush(heap, (rank(consumer), consumer))
+    seen = set(order)
+    return order + sorted((key for key in nodes if key not in seen), key=rank)
+
+
 def reflow(
     *,
     tasks: Iterable[ProductionTask],
@@ -244,11 +317,15 @@ def reflow(
     progress: Progress,
 ) -> dict[NodeKey, Move]:
     """Сдвиг плана после изменения окон sources (в tasks они уже новые; значение — окно до изменения, None — доля
-    поставлена впервые). Работа, стоявшая после изменённой (у того же монтажника или операция той же сборки, что берёт
-    её полуфабрикат по схеме входов), сдвигается, если теперь мешает; при pull (факт «раньше») подтягивается, если
-    стояла вплотную. Сдвиг идёт по графу дальше: сборка встаёт после самой поздней из своих входных веток, за ней —
-    её потребители до финальной операции. Новая доля двигает только работу своего монтажника: следующий этап той же
-    сборки мог нарочно идти внахлёст."""
+    поставлена впервые). Работа того же монтажника, стоявшая после изменённой, сдвигается, если теперь мешает; при
+    pull (факт «раньше») подтягивается, если стояла вплотную.
+
+    Связь по схеме входов — по каждой стрелке j→i с запаздываниями (ready_by_input): этап встаёт не раньше готовности
+    первой партии входа и так, чтобы его хвост не обогнал конец входа; за ним — его потребители до финальной операции.
+    Нахлёст сверх этого, который мастер поставил сам (или дал авторасчёт с меньшей партией), сохраняется как запас:
+    опоздал вход на час — сборка уходит на час, а не остаётся на месте и не встаёт «после конца». Новая доля связь по
+    схеме не двигает: следующий этап той же сборки мог нарочно идти внахлёст."""
+    holidays, shift = calendar.holidays, calendar.shift
     nodes = nodes_of(tasks, progress)
     old = {key: (node.start, node.finish) for key, node in nodes.items()}
     placed: set[NodeKey] = set()
@@ -261,19 +338,16 @@ def reflow(
         else:
             old[key] = before
     new = {key: (node.start, node.finish) for key, node in nodes.items()}
-    order = sorted(nodes, key=lambda key: (old[key][0], 0 if key in sources else 1, old[key][1], str(key)))
-    index = {key: position for position, key in enumerate(order)}
     by_operator: dict[UUID, list[NodeKey]] = {}
     by_operation: dict[UUID, list[NodeKey]] = {}
     for key, node in nodes.items():
         for operator_id in node.operator_ids:
             by_operator.setdefault(operator_id, []).append(key)
         by_operation.setdefault(node.operation.id, []).append(key)
-    # Входы операции по схеме задания (в цепочке — предыдущий номер): сборка ждёт каждую свою входную ветку.
-    inputs: dict[UUID, tuple[UUID, ...]] = {}
-    for node in nodes.values():
-        for operation in node.task.operations:
-            inputs[operation.id] = tuple(item.input_operation_id for item in operation.inputs)
+    order = _network_order(
+        nodes, by_operation, lambda key: (old[key][0], 0 if key in sources else 1, old[key][1], str(key)),
+    )
+    index = {key: position for position, key in enumerate(order)}
 
     moves: dict[NodeKey, Move] = {}
     for key in order:
@@ -285,28 +359,47 @@ def reflow(
             other for operator_id in node.operator_ids for other in by_operator[operator_id]
             if other != key and index[other] < index[key] and old[other][1] <= start + SEQUENCE_TOLERANCE
         }
-        for source in inputs.get(node.operation.id, ()):
-            before |= {
-                other for other in by_operation.get(source, ())
-                if other not in placed and index[other] < index[key] and old[other][1] <= start + SEQUENCE_TOLERANCE
-            }
+        edges = [
+            (edge, [other for other in by_operation.get(edge.input_operation_id, ()) if other not in placed])
+            for edge in node.operation.inputs
+        ]
+        edges = [(edge, others) for edge, others in edges if others]
         changed = [other for other in before if new[other] != old[other]]
-        if not changed:
+        if not changed and not any(new[other] != old[other] for _, others in edges for other in others):
             continue
-        lower = max(new[other][1] for other in before)
+        seconds = share_seconds(node.task, node.operation, node.quantity, node.operator_ids, skills)
+        lower = max((new[other][1] for other in before), default=None)
+        pullable = pull and any(
+            new[other][1] < old[other][1]
+            and work_seconds_between(old[other][1], start, holidays, shift) <= PULL_GAP_SECONDS
+            for other in changed
+        )
+        if edges:
+            span = clock_seconds(seconds, shift)
+            was = max(
+                ready_by_input(node, span, edge, [(nodes[other], old[other]) for other in others], calendar)
+                for edge, others in edges
+            )
+            ready = max(
+                ready_by_input(node, span, edge, [(nodes[other], new[other]) for other in others], calendar)
+                for edge, others in edges
+            )
+            # Запас нахлёста: на сколько рабочего времени этап по плану стоял раньше готовности своих входов.
+            ahead = clock_between(start, was, holidays, shift)
+            bound = rewind_clock(ready, ahead, holidays, shift) if ahead else ready
+            lower = bound if lower is None else max(lower, bound)
+            pullable = pullable or (
+                pull and ready < was and work_seconds_between(was, start, holidays, shift) <= PULL_GAP_SECONDS
+            )
+        assert lower is not None
         if lower > start:
             target = lower
-        elif pull and any(
-            new[other][1] < old[other][1]
-            and work_seconds_between(old[other][1], start, calendar.holidays, calendar.shift) <= PULL_GAP_SECONDS
-            for other in changed
-        ):
+        elif pullable:
             target = max(lower, now)
             if target >= start:
                 continue
         else:
             continue
-        seconds = share_seconds(node.operation, node.quantity, node.task.quantity, node.operator_ids, skills)
         moved = _clear_of_absences(target, seconds, node.operator_ids, calendar)
         if moved == old[key]:
             continue

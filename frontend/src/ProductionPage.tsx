@@ -7,6 +7,7 @@ import {
   type Principal,
   type ProductionAbsence,
   type ProductionBox,
+  type ProjectTechcard,
   type ProductionMaterialSource,
   type ProductionLaunchable,
   type ProductionAssignPlan,
@@ -20,6 +21,7 @@ import {
   type ProductionWorkSession,
 } from "./api";
 import { canAct, canSee, hasFullAccess } from "./navigation";
+import { EtkSheet } from "./ProjectEtk";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay } from "./format";
 import { MasterBoard } from "./MasterBoard";
@@ -144,7 +146,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={readOnly ? viewedName : ""} />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-    {mine && <MyQueue tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} />}
+    {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} />}
     {!mine && selectedTask && <TaskDetail
       key={`${selectedTask.id}:${selectedTask.version}`}
       task={selectedTask}
@@ -653,7 +655,8 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
 
 // Очередь оператора (myOpsRender_): операции по дням плана — «Сегодня / Завтра / Начато ранее», факт «сдано X из N»,
 // «вместе с», «план истёк»; «Начать» нет у выполненных и недоступно, пока есть начатая работа.
-function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
+function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false }: {
+  principal: Principal;
   tasks: ProductionTask[];
   session: ProductionWorkSession | null;
   busy: string;
@@ -661,15 +664,16 @@ function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [starting, setStarting] = useState("");
+  const [etkOpen, setEtkOpen] = useState("");
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekdays = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
-  const dayTitle = (date: Date | null) => {
+  const dayTitle = (date: Date | null, started: boolean) => {
     if (!date) return "Без плана";
     const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     const diff = Math.round((day.getTime() - today.getTime()) / 86_400_000);
     const base = `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}, ${weekdays[date.getDay()]}`;
-    return diff === 0 ? `Сегодня · ${base}` : diff === 1 ? `Завтра · ${base}` : diff < 0 ? `Начато ранее · ${base}` : base;
+    return diff === 0 ? `Сегодня · ${base}` : diff === 1 ? `Завтра · ${base}` : diff < 0 ? (started ? `Начато ранее · ${base}` : `Просрочено · план ${base.slice(0, 5)}`) : base;
   };
   const isDone = (task: ProductionTask) => {
     const operation = task.operations[0];
@@ -684,26 +688,29 @@ function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
     const plannedFinish = share?.planned_finish ?? operation.planned_finish;
     const startAt = parseDate(plannedStart);
     const finishAt = parseDate(plannedFinish);
-    const title = dayTitle(startAt);
+    const processed = Number(operation.fact?.processed ?? 0);
+    const running = Boolean(session && session.task_id === task.id && session.operation_id === operation.id);
+    const title = dayTitle(startAt, running || processed > 0 || Boolean(share?.started_at));
     const header = title !== last.title ? <div className="mo-day">{title}</div> : null;
     last.title = title;
-    const running = Boolean(session && session.task_id === task.id && session.operation_id === operation.id);
     const done = isDone(task);
     const late = Boolean(finishAt && finishAt < now && !done);
     const key = `${task.id}:${operation.id}`;
-    const processed = Number(operation.fact?.processed ?? 0);
     const stage = operation.stage || `Этап ${operation.position}`;
     return <div key={key}>
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
-        <div className="mo-h"><b>{stage}</b>{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(plannedStart)} → ${formatDate(plannedFinish)}` : "время не назначено"}</span></div>
+        <div className="mo-h"><b>{stage}</b>{running && <span className="mo-tag run">в работе</span>}{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(plannedStart)} → ${formatDate(plannedFinish)}` : "время не назначено"}</span></div>
         <div className="mo-s">{task.number} · этап {operation.position} · <b>{itemId(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>твои {share.quantity} шт</b></> : null}</div>
         {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        {operation.readiness && operation.readiness.state !== "done" && <div className={`mo-ready ${operation.readiness.state === "ready" || operation.readiness.state === "assembly" ? "tone-ok" : "tone-warn"}`}>{operation.readiness.text}{operation.readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${operation.readiness.boxes.length}` : ""}</div>}
         <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatDate(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatDate(share.finished_at)}` : ""}</div>
-        {!readOnly && !running && !done && <div className="mo-act">
-          <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>
-        </div>}
+        <div className="mo-act">
+          {!readOnly && !running && !done && <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>}
+          <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>ЭТК</button>
+        </div>
+        {etkOpen === key && <OperationEtk principal={principal} task={task} operation={operation} />}
         {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} />}
       </div>
     </div>;
@@ -720,6 +727,34 @@ function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
       <div className="my-queue">{finished.map((task) => renderCard(task, finishedMark))}</div>
     </details>}
   </div>;
+}
+
+// ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции.
+function OperationEtk({ principal, task, operation }: { principal: Principal; task: ProductionTask; operation: ProductionOperation }) {
+  const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string } } | undefined>(undefined);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    productionApi.operationEtk(task.id, operation.id)
+      .then((result) => { if (live) setView(result); })
+      .catch((reason) => { if (live) setError(reason instanceof Error ? reason.message : "ЭТК не открылась"); });
+    return () => { live = false; };
+  }, [task.id, operation.id]);
+  // Только чтение: правка и пересборка ЭТК — у технолога.
+  const viewer: Principal = { ...principal, permissions: { myops: "view" } };
+  return <div className="panel mo-etk">
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {!error && !view && <div className="empty">Загрузка…</div>}
+    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} />}
+  </div>;
+}
+
+export function goodPrefill(remaining: string | undefined, inputLimit: string | null | undefined): string {
+  if (!remaining) return "";
+  if (inputLimit == null || inputLimit === "") return remaining;
+  const left = Number(remaining), limit = Number(inputLimit);
+  if (!Number.isFinite(left) || !Number.isFinite(limit)) return remaining;
+  return limit < left ? String(limit) : remaining;
 }
 
 function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, ownerName = "" }: {
@@ -739,6 +774,11 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
   const session = execution.session;
   const task = session ? tasks.find((item) => item.id === session.task_id) : null;
   const operation = task?.operations.find((item) => item.id === session?.operation_id);
+  // «Годные» — остаток его доли, но не больше, чем есть во взятых входных коробках: не печатать то, что уже известно.
+  const prefill = goodPrefill(operation?.remaining, session?.input_limit);
+  useEffect(() => {
+    if (session && prefill) setGood((current) => current === "" ? prefill : current);
+  }, [session?.id, operation?.id, prefill]); // eslint-disable-line react-hooks/exhaustive-deps
   return <>
     {session && <div className="panel execution-current">
       <div className="manual-stock-head"><div><h2>Идёт работа</h2><small>{task?.number ?? session.task_id} · этап {operation?.position ?? "—"} {operation?.stage ?? ""} · с {formatDate(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}{session.status === "Пауза" ? " · на паузе" : ""}</small></div><span className="status">{session.status}</span></div>
@@ -851,20 +891,33 @@ function StartWorkForm({ task, operation, busy, mutate }: {
       .then((result) => { setBoxes(result.boxes); setMaterials(result.materials); })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"));
   }, [task.id, operation.id, operation.position]);
-  const inputs = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+  const [picked, setPicked] = useState<string[]>([]);
+  const chips = operation.readiness?.boxes.map((box) => ({ id: box.id, number: box.number ?? "", quantity: box.quantity, stage: box.stage, position: box.operation_position }))
+    ?? boxes.map((box) => ({ id: box.id, number: box.number ?? "", quantity: box.available, stage: "", position: box.operation_position }));
+  const typed = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+  const inputs = [...picked, ...typed.filter((item) => !picked.includes(item))];
   const materialInputs = materials.flatMap((material) => {
     const quantity = quantities[material.fulfillment_line_id]?.trim();
     return quantity && Number(quantity) > 0 ? [{ fulfillment_line_id: material.fulfillment_line_id, quantity }] : [];
   });
-  return <div className="start-work">
+  const [manual, setManual] = useState(false);
+  const wrongMaterial = materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0));
+  const needBox = !first && !inputs.length;
+  const why = busy ? "Идёт сохранение" : needBox ? "Выбери коробку или введи её номер" : wrongMaterial ? "Количество больше доступного в партии" : "";
+  return <div className="start-work sw-col">
     {error && <small className="danger-text">{error}</small>}
     {first && materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
     {!first && <>
-      <small>Введи номера коробок, из которых берёшь детали ({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`}). Несколько — через запятую или с новой строки.</small>
-      <label>Номера коробок<textarea aria-label="Номера коробок" rows={3} placeholder="000001-8" value={numbers} onChange={(event) => setNumbers(event.target.value)} /></label>
-      {boxes.length > 0 && <small>Подтверждённые: {boxes.map((box) => `${source ? `этап ${box.operation_position}: ` : ""}${box.number} (${box.available} шт)`).join(", ")}</small>}
+      <div className="sw-title">Из каких коробок берёшь детали <small>({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`})</small></div>
+      {chips.length > 0 && <div className="box-chips" role="group" aria-label="Готовые коробки">{chips.map((chip) => <button key={chip.id} type="button" className={`box-chip${picked.includes(chip.number) ? " on" : ""}`} aria-pressed={picked.includes(chip.number)}
+        onClick={() => setPicked((current) => current.includes(chip.number) ? current.filter((item) => item !== chip.number) : [...current, chip.number])}>
+        <b>{chip.number}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
+      {chips.length > 0 && !manual && !typed.length
+        ? <button type="button" className="link-button sw-manual-toggle" onClick={() => setManual(true)}>Ввести номер вручную</button>
+        : <label className="sw-manual">Ввести номер вручную<textarea aria-label="Номера коробок" rows={2} placeholder="000001-8; несколько — через запятую" value={numbers} onChange={(event) => setNumbers(event.target.value)} /></label>}
     </>}
-    <button className="primary small" disabled={busy || (!first && !inputs.length) || materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0))} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs))}>Начать</button>
+    <button className="primary sw-go" aria-label="Начать работу" disabled={busy || needBox || wrongMaterial} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs))}>▶ Начать</button>
+    {why && <small className="sw-why">{why}</small>}
   </div>;
 }
 
@@ -875,16 +928,28 @@ function BoxReview({ boxes, operators, busy, mutate }: {
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [returning, setReturning] = useState<Record<string, boolean>>({});
   const pending = boxes.filter((box) => box.status === "Закрыта оператором");
   if (!pending.length) return null;
-  return <div className="panel box-review"><div className="manual-stock-head"><h2>Коробки на подтверждение</h2><span className="page-count">{pending.length}</span></div>
+  const confirmAll = () => mutate("confirm-all", async () => {
+    for (const box of pending) await productionApi.boxAction(box.id, "confirm", box.version);
+  });
+  return <div className="panel box-review"><div className="manual-stock-head"><h2>Коробки на подтверждение</h2><span className="page-count">{pending.length}</span>
+    {pending.length > 1 && <button className="primary small" disabled={busy} onClick={() => void confirmAll()}>Подтвердить все</button>}</div>
     <div className="box-grid">{pending.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
       <strong>{box.number}</strong>
       <span>{box.item} · этап {box.operation_position}</span>
       <span>{box.quantity} шт · {operators.find((operator) => operator.id === box.operator_id)?.name ?? box.operator_id}</span>
       <button className="primary small" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "confirm", box.version))}>Подтвердить</button>
-      <label>Причина возврата<textarea value={reasons[box.id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [box.id]: event.target.value }))} /></label>
-      <button className="secondary small" disabled={busy || !(reasons[box.id] ?? "").trim()} onClick={() => void mutate(box.id, () => productionApi.returnBox(box.id, box.version, reasons[box.id]))}>Вернуть оператору</button>
+      {returning[box.id]
+        ? <>
+          <label>Причина возврата<textarea value={reasons[box.id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [box.id]: event.target.value }))} /></label>
+          <div className="box-return-act">
+            <button className="secondary small" disabled={busy || !(reasons[box.id] ?? "").trim()} onClick={() => void mutate(box.id, () => productionApi.returnBox(box.id, box.version, reasons[box.id]))}>Вернуть оператору</button>
+            <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: false }))}>Отмена</button>
+          </div>
+        </>
+        : <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: true }))}>Вернуть…</button>}
     </div>)}</div>
   </div>;
 }

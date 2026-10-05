@@ -183,7 +183,7 @@ class ProductionBox:
             closed_at=now, closed_by=str(actor).strip(),
         )
 
-    def input_error(self, *, item: str, previous_position: int | Iterable[int]) -> str:
+    def input_error(self, *, item: str, previous_position: int | Iterable[int], task_id: UUID | None = None) -> str:
         """prodInputError_: why this box cannot be an input of the operation ('' when it can).
 
         previous_position — номер этапа-входа или номера всех входов операции (сетевой график, ARCH-TRACK-2)."""
@@ -191,6 +191,8 @@ class ProductionBox:
         positions = _positions(previous_position)
         if self.status is not BoxStatus.CONFIRMED:
             return f"Коробка {label} — «{self.status.value}»: брать можно только подтверждённую мастером."
+        if task_id is not None and self.task_id != task_id:
+            return f"Коробка {label} — из другого производственного задания."
         if self.item.lower() != str(item).strip().lower():
             return f"Коробка {label} — от другого изделия ({self.item})."
         if self.operation_position not in positions:

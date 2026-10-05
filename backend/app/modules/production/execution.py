@@ -261,7 +261,7 @@ def material_operation(task: ProductionTask) -> ProductionOperation:
     return min((item for item in task.operations if not item.inputs), key=lambda item: item.position)
 
 
-def _input_boxes(numbers: Sequence[str], item: str, previous_position: int | tuple[int, ...], uow: ExecutionUnitOfWork) -> list[ProductionBox]:
+def _input_boxes(numbers: Sequence[str], item: str, previous_position: int | tuple[int, ...], uow: ExecutionUnitOfWork, task_id: UUID | None = None) -> list[ProductionBox]:
     """prodCheckInputs_: boxes by the numbers as typed, repeats skipped, first refusal reason raised."""
     seen: set[str] = set()
     boxes: list[ProductionBox] = []
@@ -275,7 +275,7 @@ def _input_boxes(numbers: Sequence[str], item: str, previous_position: int | tup
         box = uow.boxes.by_number(number)
         if box is None:
             raise ProductionValidationError(f"Коробки {number} нет в учёте.")
-        error = box.input_error(item=item, previous_position=previous_position)
+        error = box.input_error(item=item, previous_position=previous_position, task_id=task_id)
         if error:
             raise ProductionValidationError(error)
         boxes.append(box)
@@ -318,7 +318,7 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
             # Сетевой график: коробки — с любого этапа-входа операции, а не только с предыдущего номера.
             if not command.box_numbers:
                 raise ProductionValidationError(f"Введи номера входных коробок с {stages_text(stages)}.")
-            boxes = _input_boxes(command.box_numbers, task.item, tuple(stage.position for stage in stages), uow)
+            boxes = _input_boxes(command.box_numbers, task.item, tuple(stage.position for stage in stages), uow, task.id)
             missing = missing_stages(stages, boxes) if len(stages) > 1 else ()
             if missing:
                 # Сборка из нескольких полуфабрикатов начинается, только когда есть коробки каждого входа.
@@ -417,7 +417,7 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
                 box = uow.boxes.get(item.box_id)
                 if box is None:
                     raise ProductionValidationError("Входная коробка исчезла")
-                error = box.input_error(item=task.item, previous_position=positions)
+                error = box.input_error(item=task.item, previous_position=positions, task_id=task.id)
                 if error:
                     raise ProductionValidationError(error)
                 sources.append(box)

@@ -145,7 +145,8 @@ def test_hand_drawn_scheme_feeds_blocks_with_their_quantities_and_names_the_prod
         ("Опрессовка терминалов", "PRS_TERMINAL_hand", "end"),
     ]
     assert [(item.block, str(item.per_unit)) for item in steps[2].inputs] == [("cut", "2"), ("lug", "1")]
-    assert steps[0].seconds_per_unit == 6 and steps[0].setup_seconds == 120
+    # The ETK norm: 6 s × 2 «на изделие» per item + 120 s setup per batch (was 6 s per item: «на изделие» dropped).
+    assert steps[0].seconds_per_unit == 12 and steps[0].setup_seconds == 120
 
 
 def test_simultaneous_operations_are_branches_the_next_operation_joins():
