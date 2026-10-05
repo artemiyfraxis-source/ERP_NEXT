@@ -237,27 +237,35 @@ def test_fill_form_lists_own_in_work_lines_and_saves_marked_rows_in_one_call(pro
     listed = client.get("/api/procurement/in-work/mine").json()["lines"]
     assert {item["id"] for item in listed} == {str(line.id), str(second.id)}
 
-    refused = client.post(
+    # Owner, 05.10: a row without ПОСТАВЩИК no longer refuses the batch — it is saved and stays «В работе».
+    no_supplier = client.post(
         "/api/procurement/facts",
         json={"rows": [
-            {"line_id": str(line.id), "legacy_id": line.legacy_id, "version": taken[0]["version"], "supplier": "ЧипДип"},
-            {"line_id": str(second.id), "legacy_id": second.legacy_id, "version": taken[1]["version"], "supplier": " "},
+            {"line_id": str(second.id), "legacy_id": second.legacy_id, "version": taken[1]["version"],
+             "site_name": "Разъём на сайте"},
         ]},
-    )
-    assert refused.status_code == 422
-    assert second.legacy_id in refused.json()["detail"]
-    assert client.get("/api/procurement/in-work/mine").json()["lines"][0]["supplier"] is None  # nothing written
+    ).json()
+    assert (no_supplier["saved"], no_supplier["ready"], no_supplier["failed"]) == (1, 0, [])
+    assert (no_supplier["lines"][0]["status"], no_supplier["lines"][0]["supplier"]) == ("В работе", None)
 
     saved = client.post(
         "/api/procurement/facts",
         json={"rows": [
             {"line_id": str(line.id), "legacy_id": line.legacy_id, "version": taken[0]["version"],
              "supplier": "ЧипДип", "link": "https://chipdip.ru/p/1", "actual_quantity": "2", "actual_unit": "шт"},
-            {"line_id": str(second.id), "legacy_id": second.legacy_id, "version": 99, "supplier": "Элитан"},
+            {"line_id": str(second.id), "legacy_id": second.legacy_id, "version": taken[1]["version"], "supplier": "Элитан"},
         ]},
     ).json()
 
     assert (saved["saved"], saved["ready"], saved["skipped"], saved["failed"]) == (1, 1, [second.legacy_id], [])
     assert saved["lines"][0]["status"] == "Готов к запросу"
     assert suppliers.learned == [("https://chipdip.ru/p/1", "ЧипДип", "Петров")]
+
+    # An omitted ПОСТАВЩИК stays as it is, a «Готов к запросу» row is still editable.
+    kept = client.post(
+        "/api/procurement/facts",
+        json={"rows": [{"line_id": str(line.id), "version": saved["lines"][0]["version"], "actual_quantity": "3"}]},
+    ).json()
+    assert (kept["saved"], kept["lines"][0]["supplier"], kept["lines"][0]["status"]) == (1, "ЧипДип", "Готов к запросу")
+    assert kept["lines"][0]["actual_quantity"] == "3"
 

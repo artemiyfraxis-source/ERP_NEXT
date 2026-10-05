@@ -313,9 +313,10 @@ def test_repeated_transfer_appends_next_revision_with_new_system_id_and_keeps_ol
         ("SM-20260915-01", "A"),
         ("SM-20260915-02", "A"),
     ]
-    assert [(line.legacy_id, line.revision, line.status) for line in retransferred] == [
-        ("SM-20260916-01", "B", ProcurementStatus.NEW),
-        ("SM-20260916-02", "C", ProcurementStatus.NEW),
+    # Owner, 05.10: whoever pressed «В закупку» gets the new revision on the desk «В работе».
+    assert [(line.legacy_id, line.revision, line.status, line.buyer.id) for line in retransferred] == [
+        ("SM-20260916-01", "B", ProcurementStatus.IN_WORK, buyer.id),
+        ("SM-20260916-02", "C", ProcurementStatus.IN_WORK, buyer.id),
     ], "same НАЗНАЧЕНИЕ: max letter + 1, the next line in the batch sees the previous one"
     assert {line.source_request_id for line in retransferred} == {first_request.id, second_request.id}
     with sessions() as session:

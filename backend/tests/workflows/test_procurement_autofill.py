@@ -128,7 +128,9 @@ def test_take_fills_the_supplier_from_the_domain_at_once_and_queues_the_page_fie
     line = new_line(db)
     (taken,) = take(db, line, directory=directory)
 
-    assert (taken.status, taken.supplier) == (ProcurementStatus.IN_WORK, "ЧипДип")
+    # Owner, 05.10: КОЛ-ВО / ЕД.ИЗМ (факт) are prefilled, so the supplier from the domain completes the facts.
+    assert (taken.status, taken.supplier) == (ProcurementStatus.READY, "ЧипДип")
+    assert (taken.actual_quantity, taken.actual_unit) == (taken.calculated_quantity, taken.calculated_unit)
     assert stored(db, line).supplier == "ЧипДип"
     (filled,) = events(db, "procurement.autofilled")
     assert filled.details == {"legacy_id": line.legacy_id, "fields": ["supplier"]}
@@ -213,6 +215,30 @@ def test_tick_fills_only_empty_fields_from_the_page(db, directory):
     assert system.actor_name == "ERP Integration"
     assert [message.published_at for message in queue(db)] == [NOW]
     assert tick(db, pages, directory) == 0 and pages.calls == [CHIPDIP]  # сделано — повторно сайт не трогают
+
+
+def test_a_line_handed_off_with_its_buyer_is_on_the_desk_and_filled_in_the_background(db, directory):
+    """Owner, 05.10: «В закупку» puts the line «В работе» for whoever pressed it — supplier by the link at transfer,
+    facts prefilled, the page fill queued in the same transaction and worked off for «Готов к запросу» too."""
+    base = requested_message(7)
+    handed = replace(base, payload={
+        **base.payload, "link": CHIPDIP,
+        "buyer_id": str(BUYER.id), "buyer_name": BUYER.name, "buyer_department": BUYER.department,
+    })
+
+    line = consume_procurement_requested(handed, db.procurement(), directory)
+
+    assert (line.status, line.buyer, line.supplier) == (ProcurementStatus.READY, BUYER, "ЧипДип")
+    assert (line.actual_quantity, line.actual_unit) == (Decimal("2"), "шт")
+    assert [event.actor_name for event in events(db, "procurement.taken_in_work")] == ["Петров"]
+    (message,) = queue(db)
+    assert message.payload == {"line_id": str(line.id), "version": str(line.version), "legacy_id": line.legacy_id}
+
+    pages = FakePages({CHIPDIP: PageInfo(title="Разъём SMA-J", brand="Amphenol")})
+    assert tick(db, pages, directory) == 1
+    after = stored(db, line)
+    assert (after.site_name, after.trace.manufacturer, after.trace.country) == ("Разъём SMA-J", "Amphenol", "США")
+    assert (after.status, after.version) == (ProcurementStatus.READY, line.version)
 
 
 def test_tick_never_overwrites_what_is_already_there(db, directory):

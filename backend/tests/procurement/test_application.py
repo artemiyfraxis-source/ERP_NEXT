@@ -166,6 +166,90 @@ def test_requested_event_is_consumed_once_and_audited_atomically():
     assert uow.commits == 1
 
 
+class FakeSuppliers:
+    def __init__(self, suppliers=None):
+        self.suppliers = dict(suppliers or {})
+
+    def supplier_map(self):
+        return self.suppliers
+
+
+def handed_off(suffix: int = 1, buyer=None, **payload) -> OutboxMessage:
+    """`procurement.requested` as «В закупку» sends it since 05.10: with the buyer who pressed it."""
+    buyer = buyer or Actor(name="Петров", department="Закупки")
+    base = requested_message(suffix)
+    return replace(base, payload={
+        **base.payload, "buyer_id": str(buyer.id), "buyer_name": buyer.name, "buyer_department": buyer.department,
+        **payload,
+    })
+
+
+def test_handed_off_line_lands_in_work_for_the_buyer_with_facts_prefilled():
+    uow = FakeUnitOfWork()
+    buyer = Actor(name="Петров", department="Закупки")
+    message = handed_off(link="https://shop.test/item/1")
+
+    line = consume_procurement_requested(message, uow, FakeSuppliers())
+
+    assert (line.status, line.buyer, line.supplier) == (ProcurementStatus.IN_WORK, buyer, None)
+    assert (line.actual_quantity, line.actual_unit) == (Decimal("2"), "шт")
+    assert [(event.event_type, event.actor.name) for event in uow.audit.items] == [
+        ("procurement.created", "ERP Integration"), ("procurement.taken_in_work", "Петров"),
+    ]
+    assert uow.audit.items[1].details == {
+        "legacy_id": line.legacy_id, "from_status": "Новый", "to_status": "В работе",
+    }
+    (autofill,) = uow.outbox.items  # the page fill, queued in the same transaction (one commit)
+    assert (autofill.topic, autofill.payload["line_id"], autofill.payload["version"]) == (
+        "procurement.autofill_requested", str(line.id), str(line.version),
+    )
+    assert uow.commits == 1
+    assert consume_procurement_requested(message, uow, FakeSuppliers()) == line  # replay is read-only
+    assert len(uow.audit.items) == 2 and uow.commits == 1
+
+
+def test_handed_off_line_with_a_known_supplier_is_ready_at_once():
+    uow = FakeUnitOfWork()
+    message = handed_off(link="https://www.chipdip.ru/product/1")
+
+    line = consume_procurement_requested(message, uow, FakeSuppliers({"chipdip.ru": "ЧипДип"}))
+
+    assert (line.status, line.supplier) == (ProcurementStatus.READY, "ЧипДип")
+    assert uow.audit.items[1].details["to_status"] == "Готов к запросу"
+
+
+def test_an_old_message_without_the_buyer_still_lands_new():
+    uow = FakeUnitOfWork()
+
+    line = consume_procurement_requested(requested_message(), uow)
+
+    assert (line.status, line.buyer, line.actual_quantity, line.version) == (ProcurementStatus.NEW, None, None, 1)
+    assert [event.event_type for event in uow.audit.items] == ["procurement.created"]
+    assert uow.outbox.items == []
+
+
+def test_ready_line_stays_editable_and_falls_back_to_in_work_when_the_supplier_is_cleared():
+    uow = FakeUnitOfWork()
+    buyer = Actor(name="Петров", department="Закупки")
+    line = consume_procurement_requested(handed_off(), uow)
+    ready = save_procurement_facts(
+        SaveProcurementFactsCommand(line.id, ProcurementFacts(supplier="ООО А"), line.version, buyer,
+                                    datetime(2026, 9, 15, 12, 0)),
+        uow,
+    )
+    assert ready.status is ProcurementStatus.READY
+
+    back = save_procurement_facts(
+        SaveProcurementFactsCommand(ready.id, ProcurementFacts(supplier=""), ready.version, buyer,
+                                    datetime(2026, 9, 15, 12, 5)),
+        uow,
+    )
+
+    assert (back.status, back.supplier) == (ProcurementStatus.IN_WORK, None)
+    assert uow.audit.items[-1].details["from_status"] == "Готов к запросу"
+    assert uow.audit.items[-1].details["to_status"] == "В работе"
+
+
 def transfer(suffix: int, attempt: int = 1, **payload) -> OutboxMessage:
     """The `procurement.requested` of request `suffix`; attempt > 1 is a retransfer (new event, same request)."""
     base = requested_message(suffix)
