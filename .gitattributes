@@ -1,2 +1,2 @@
-# Byte-exact: SOURCE.json pins sha256 of synced files, so no EOL conversion.
+# No EOL conversion: every file is stored byte-exact as committed (scripts keep their own line endings).
 * -text

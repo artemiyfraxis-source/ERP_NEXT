@@ -14,8 +14,7 @@ $env:ERP_DATABASE_URL = 'sqlite+pysqlite:///demo.db'
 $env:ERP_COOKIE_SECURE = '0'
 & $py -m alembic upgrade head
 $env:ERP_NEW_USER_PASSWORD = 'Preview-2026!'; & $py -m app.identity_admin create-user --login preview --email preview@example.com --name 'Артемий' --department 'Руководство' --role admin
-$supplymap = if ($env:SUPPLYMAP_SOURCE_REPOSITORY) { $env:SUPPLYMAP_SOURCE_REPOSITORY } else { Join-Path $root '..\SUPPLYMAP' }
-& $py -m app.modules.references.load_mirror --source $supplymap
+& $py -m app.modules.references.load_mirror  # справочники из снимка backend\data\reference-mirror
 & $py -m app.modules.techcards.seed_library
 & $py -m app.modules.references.erp_corrections
 $api = Start-Process $py -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port',"$ApiPort" -WorkingDirectory $backend -PassThru

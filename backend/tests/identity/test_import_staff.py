@@ -19,6 +19,7 @@ from app.modules.identity.import_staff import (
     SourceEmployee,
     all_source_staff,
     import_staff,
+    main,
     read_source,
     staff_id,
 )
@@ -205,3 +206,10 @@ def test_reimport_updates_department_and_site_but_keeps_pin(source, sessions):
     # A third run with nothing changed leaves the row alone.
     third = import_staff(all_source_staff(source), _uow(sessions)(), NOW, apply=True, reset_pins=False)
     assert next(row for row in third if row.name == "Рыбкина Ольга").action == "пропущен (уже есть)"
+
+
+def test_cli_needs_an_explicit_source_and_never_guesses_a_sibling_checkout(monkeypatch, capsys):
+    # Owner 05.10: nothing in the ERP reaches for ../SUPPLYMAP by itself.
+    monkeypatch.delenv("SUPPLYMAP_SOURCE_REPOSITORY", raising=False)
+    assert main(["--dry-run"]) == 2
+    assert "--source" in capsys.readouterr().err
