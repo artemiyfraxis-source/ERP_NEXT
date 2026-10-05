@@ -56,8 +56,9 @@ describe("requestGridLogic", () => {
 
   it("validates cell by cell and skips blank rows", () => {
     expect(isBlankRow(emptyDraft(seed))).toBe(true);
-    const bad = { ...emptyDraft(seed), name: "X", quantity: "0", unit: "", category: "Левая", price: "abc", planned_date: "" };
-    expect(Object.keys(validateRow(bad, ["Общепром", "ИП", "ОП"])).sort()).toEqual(["category", "planned_date", "price", "quantity", "unit"]);
+    const bad = { ...emptyDraft(seed), name: "X", quantity: "0", unit: "", category: "Левая", price: "abc", planned_date: "", quality_document: "", item_type: "", delivery_point: "", procurement_deadline: "" };
+    // тип, док. качества, точка и даты не обязательны: пустые добирает сервер
+    expect(Object.keys(validateRow(bad, ["Общепром", "ИП", "ОП"])).sort()).toEqual(["category", "price", "quantity", "unit"]);
     const ok = { ...emptyDraft(seed), name: "X", planned_date: "2026-11-05" };
     expect(validateRow(ok, ["Общепром"])).toEqual({});
   });
