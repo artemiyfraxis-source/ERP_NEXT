@@ -118,7 +118,7 @@ export function installerLoad(operatorId: string, tasks: ProductionTask[], absen
 // дня в первое свободное окно (тот же assign и план, что в карточке с Гантом, prodPlan_).
 // Площадка без нормирования: задание ей отдают целиком (сервер: UNPLANNED_SITES).
 const HANDOVER_SITE = "ЖУК";
-const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
+export const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const WEEK_DAYS = 7;
 
 function addDays(day: string, count: number) {
