@@ -165,3 +165,28 @@ it("selects and clears a whole group from its header checkbox", () => {
   fireEvent.click(groupA);
   expect(screen.getByText("Выбрано: 1")).toBeTruthy();
 });
+
+it("shows a custom group label with the selected count and hides inapplicable bulk actions", () => {
+  render(
+    <DataTable
+      rows={rows}
+      columns={columns}
+      rowKey={(row) => row.id}
+      storageKey="group-label"
+      groupBy={(row) => row.supplier}
+      groupLabel={(name, group) => `${name} · ${group[0].name}`}
+      bulkActions={[
+        { label: "Всегда", run: () => undefined },
+        { label: "Только Чип", run: () => undefined, hidden: (picked) => !picked.some((row) => row.supplier === "Чип и Дип") },
+      ]}
+    />,
+  );
+  const header = screen.getByText("Кабель-Торг · Провод МГТФ 0,12", { selector: "strong" }).parentElement!;
+  expect(header.textContent).toBe("Кабель-Торг · Провод МГТФ 0,12 · 2");
+  fireEvent.click(screen.getByLabelText("Выбрать 3"));
+  expect(header.textContent).toBe("Кабель-Торг · Провод МГТФ 0,12 · 2 · выбрано 1");
+  expect(screen.queryByRole("button", { name: "Только Чип" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Всегда" })).toBeTruthy();
+  fireEvent.click(screen.getByLabelText("Выбрать 1"));
+  expect(screen.getByRole("button", { name: "Только Чип" })).toBeTruthy();
+});

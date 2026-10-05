@@ -456,15 +456,17 @@ it("groups by order by default and applies one УПД to the ticked rows of a gr
   });
   render(<ReceivingPage />);
 
-  expect(await screen.findByText("Заказ PO-001", { selector: "strong" })).toBeTruthy();
+  const header = await screen.findByText(`Заказ PO-001 · ${line.supplier}`, { selector: "strong" });
+  expect(header.parentElement?.textContent).toBe(`Заказ PO-001 · ${line.supplier} · 3`);
   fireEvent.click(screen.getByLabelText("Выбрать группу"));
   fireEvent.click(screen.getByLabelText(`Выбрать ${orderLines[1].id}`));
+  expect(header.parentElement?.textContent).toBe(`Заказ PO-001 · ${line.supplier} · 3 · выбрано 2`);
   fireEvent.click(screen.getByRole("button", { name: "Внести УПД" }));
 
   expect(await screen.findByText("УПД для 2 позиций")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("№ УПД/М-15"), { target: { value: "УПД-7" } });
   fireEvent.change(screen.getByLabelText("Дата УПД/М-15"), { target: { value: "2026-09-20" } });
-  fireEvent.click(screen.getByRole("button", { name: "Внести УПД в 2 позиций" }));
+  fireEvent.click(screen.getByRole("button", { name: "Внести УПД в 2 позиции" }));
 
   await waitFor(() => expect(sent).toBeTruthy());
   expect(sent).toEqual({
@@ -476,7 +478,7 @@ it("groups by order by default and applies one УПД to the ticked rows of a gr
     document_number: "УПД-7",
     document_date: "2026-09-20",
   });
-  expect(await screen.findByText("УПД внесён: 2 позиций")).toBeTruthy();
+  expect(await screen.findByText("УПД № УПД-7 от 20.09.2026 внесён: 2 позиции")).toBeTruthy();
 });
 
 it("disables «Внести УПД» when an accepted row is selected", async () => {
@@ -484,8 +486,32 @@ it("disables «Внести УПД» when an accepted row is selected", async ()
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [orderLines[0], accepted], next_cursor: null }));
   render(<ReceivingPage />);
 
-  await screen.findByText("Заказ PO-001", { selector: "strong" });
+  await screen.findByText(/^Заказ PO-001/, { selector: "strong" });
   fireEvent.click(screen.getByLabelText("Выбрать группу"));
 
   expect((screen.getByRole("button", { name: "Внести УПД" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("hides «Скопировать ГРН» when no selected row has a ГРН", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [orderLines[0], { ...orderLines[1], grn: "ГРН-1" }], next_cursor: null }));
+  render(<ReceivingPage />);
+  await screen.findByText(/^Заказ PO-001/, { selector: "strong" });
+  fireEvent.click(screen.getByLabelText(`Выбрать ${orderLines[0].id}`));
+  expect(screen.queryByRole("button", { name: "Скопировать ГРН" })).toBeNull();
+  fireEvent.click(screen.getByLabelText(`Выбрать ${orderLines[1].id}`));
+  expect(screen.getByRole("button", { name: "Скопировать ГРН" })).toBeTruthy();
+});
+
+it("shows the УПД column as dd.mm.yyyy", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [{ ...orderLines[0], document_number: "771", document_date: "2026-10-04" }], next_cursor: null }));
+  render(<ReceivingPage />);
+  expect(await screen.findByText("771 от 04.10.2026")).toBeTruthy();
+});
+
+it("names the document in the success banner", async () => {
+  const { updDoneText } = await import("./ReceivingPage");
+  expect(updDoneText({ url: "", number: "771", date: "2026-10-04" }, 6)).toBe("УПД № 771 от 04.10.2026 внесён: 6 позиций");
+  expect(updDoneText({ url: "", number: "771", date: "" }, 1)).toBe("УПД № 771 внесён: 1 позиция");
+  expect(updDoneText({ url: "", number: "", date: "2026-10-04" }, 3)).toBe("УПД от 04.10.2026 внесён: 3 позиции");
+  expect(updDoneText({ url: "/f.pdf", number: " ", date: "" }, 5)).toBe("Файл УПД внесён: 5 позиций");
 });
