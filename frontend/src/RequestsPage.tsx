@@ -316,8 +316,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
         retransfer
           ? "Заявка перенесена повторно: в закупке новая ревизия"
           : ids.length === 1
-            ? "Заявка передана в очередь закупки"
-            : `Передано в очередь закупки: ${ids.length}`,
+            ? "Заявка передана в закупку: строка в блоке «В работе» на странице «Закупка»"
+            : `Передано в закупку: ${ids.length} — строки в блоке «В работе» на странице «Закупка»`,
       );
       if (view === "mine") await loadMine(0);
       else await reload();

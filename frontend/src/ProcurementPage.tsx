@@ -1,24 +1,27 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
+  ApiError,
   failureText,
   manualRatePrompt,
   procurementApi,
+  type FactPriceRow,
   type InvoiceUpload,
   type KpRowInput,
   type ManualRatePrompt,
   type MoneyDriver,
+  type OrderInvoiceInput,
   type ProcurementLine,
   type ProcurementTraceabilityInput,
+  type SkippedRequestLine,
   type SupplierOrder,
 } from "./api";
 import { printStoredDocument } from "./print";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
-import { ProcurementFillForm } from "./ProcurementFillForm";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import {
   AwaitingInvoiceStage, BackorderStage, COMPACT_BELOW, OtherStage, PaidStage, StageHeading, ToPayStage,
-  type BulkState, type RowAction,
+  type BulkState, type OrderGroup, type RowAction,
 } from "./ProcurementStages";
 import { runInPool } from "./bulk";
 import { formatDate } from "./format";
@@ -40,6 +43,24 @@ const isBackorderLine = (line: ProcurementLine) => line.status === APPROVAL && l
 const AUTOFILL_REFRESH_MS = [4000, 10000];
 
 type BulkBlock = "inwork" | "awaiting" | "topay" | "paid";
+
+/** «Мои позиции» читаются все страницы подряд, чтобы заказ не разрезало границей страницы; не больше стольких. */
+const MAX_MINE_PAGES = 50;
+
+const FILE_NAME_FORBIDDEN = /[\\/:*?"<>|]/g;
+
+/** Скачивает текст запроса поставщику файлом «Запрос PO-012 — Поставщик.txt». */
+function downloadRequestLetter(order: SupplierOrder) {
+  const name = `Запрос ${order.order_number} — ${order.supplier}.txt`.replace(FILE_NAME_FORBIDDEN, "_");
+  const url = URL.createObjectURL(new Blob([order.letter], { type: "text/plain;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
 
 /** Свежие строки встают на место старых, новые — в конец; строк, которых в ответе нет, это не касается. */
 function mergeLines(current: ProcurementLine[], fresh: ProcurementLine[]) {
@@ -91,7 +112,6 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
 
 function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   const [units, setUnits] = useState<string[]>(DEFAULT_UNITS);
-  const [fillOpen, setFillOpen] = useState(false);
   // Только что взятые строки → их версия при взятии: пока сервер не дозаполнил строку, на ней «заполняется…».
   const [autofill, setAutofill] = useState<Map<string, number>>(new Map());
   const timers = useRef<number[]>([]);
@@ -106,7 +126,9 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busyId, setBusyId] = useState("");
-  const [orders, setOrders] = useState<SupplierOrder[]>([]);
+  // Строки, что в запрос не попали, и почему: остаются на экране, пока их не закроют.
+  const [skippedRequests, setSkippedRequests] = useState<{ text: string }[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState<"available" | "mine" | "">("");
   const kpReference = kpQueue[0] ?? "";
@@ -123,10 +145,20 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
         procurementApi.available(),
         secondQueue(),
       ]);
+      let mineLines = mineResult.lines;
+      let cursor = mineResult.next_cursor;
+      // «Мои позиции» группируются по заказам: страницы дочитываются все (кроме режима просмотра).
+      for (let pages = 1; !readOnly && cursor && pages < MAX_MINE_PAGES; pages += 1) {
+        const page = await secondQueue(cursor);
+        const known = new Set(mineLines.map((line) => line.id));
+        mineLines = [...mineLines, ...page.lines.filter((line) => !known.has(line.id))];
+        cursor = page.next_cursor;
+      }
       setAvailable(availableResult.lines);
-      setMine(mineResult.lines);
+      setMine(mineLines);
       setAvailableCursor(availableResult.next_cursor);
-      setMineCursor(mineResult.next_cursor);
+      setMineCursor(cursor);
+      setLoaded(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Ошибка загрузки закупки");
     } finally {
@@ -214,22 +246,71 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }
   }
 
-  /** `portalMarkPaid`: выбранные строки со счётом → «В пути»; уже оплаченные и без счёта пропускаются. */
-  async function markPaidMany(lines: ProcurementLine[]) {
-    if (interactionLocked || !lines.length) return;
-    setBusyId("paid-many");
+  /** «Цена факт» строк «Жду счёт» и «Ждёт оплаты»; вернёт строки, которые сервер не принял (набранное в них остаётся). */
+  async function saveFactPrices(rows: FactPriceRow[]): Promise<string[]> {
+    if (interactionLocked || !rows.length) return rows.map((row) => row.legacy_id);
+    setBusyId("fact-prices");
     setError("");
     try {
-      const result = await procurementApi.markPaidBatch(lines.map((line) => ({ line_id: line.id, version: line.version })));
-      const parts = [`Оплачено → В пути: ${result.done}`];
-      if (result.already) parts.push(`уже оплачено: ${result.already}`);
-      if (result.no_invoice.length) parts.push(`без счёта: ${result.no_invoice.join(", ")}`);
-      setNotice(parts.join("; "));
+      const result = await procurementApi.saveFactPrices(rows);
+      const parts = [`Цена факт сохранена: ${result.saved}`];
+      if (result.skipped.length) parts.push(`пропущено (строка изменилась): ${result.skipped.join(", ")}`);
+      setNotice(parts.join(" · "));
+      await reload(true);
       if (result.failed.length) setError(result.failed.map((item) => `${item.legacy_id}: ${item.error}`).join("; "));
+      return [...result.skipped, ...result.failed.map((item) => item.legacy_id)];
+    } catch (reason) {
+      setError(failureText(reason, "Цена факт не сохранена"));
+      return rows.map((row) => row.legacy_id);
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  /** Файл счёта → ссылка, № и дата (распознаются на сервере); привязка к первой строке заказа. */
+  async function uploadInvoice(file: File, lineId: string): Promise<InvoiceUpload> {
+    return procurementApi.uploadInvoiceFile(lineId, { name: file.name, type: file.type || "application/octet-stream", base64: await readBase64(file) });
+  }
+
+  /** «Вставить счёт» / «Заменить счёт» по заказу: все строки или ни одной. 409 — набор строк устарел: очередь перечитывается. */
+  async function submitOrderInvoice(group: OrderGroup, invoice: OrderInvoiceInput): Promise<void> {
+    setBusyId(`order:${group.number}`);
+    setError("");
+    try {
+      await procurementApi.orderInvoice(group.number, invoice);
+      setNotice(`${group.number}: счёт передан в оплату, строк: ${invoice.lines.length}`);
       await reload(true);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Оплата не проведена");
+      if (reason instanceof ApiError && reason.status === 409) {
+        await reload(true);
+        throw new Error("Строки заказа изменились — список обновлён. Проверьте заказ и вставьте счёт ещё раз");
+      }
       throw reason;
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  /** «Оплачено» по заказу: все строки → «В пути». Вернёт вопрос про курс, если ЦБ не ответил. */
+  async function paidOrder(group: OrderGroup, manualRate?: string): Promise<ManualRatePrompt | null> {
+    if (interactionLocked) return null;
+    setBusyId(`order:${group.number}`);
+    setError("");
+    try {
+      await procurementApi.orderPaid(group.number, group.lines.map((line) => ({ line_id: line.id, version: line.version })), manualRate);
+      setNotice(`${group.number}: оплачено, строк в пути: ${group.lines.length}`);
+      await reload(true);
+      return null;
+    } catch (reason) {
+      const prompt = manualRatePrompt(reason);
+      if (prompt) return prompt;
+      if (reason instanceof ApiError && reason.status === 409) {
+        await reload(true);
+        setError("Строки заказа изменились — список обновлён. Проверьте заказ и нажмите «Оплачено» ещё раз");
+      } else {
+        setError(failureText(reason, "Оплата не проведена"));
+      }
+      return null;
     } finally {
       setBusyId("");
     }
@@ -300,21 +381,32 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     return runMany("paid", "Сверяем курс с ЦБ", lines, (line) => procurementApi.reconcileRate(line.id, line.version), "Курс сверен");
   }
 
-  /** Запросы поставщикам: по выбранным строкам «Готов к запросу» (без выбора — по всем своим). */
+  /** Запросы поставщикам по строкам «Готов к запросу» (группа поставщика): заказ на поставщика, текст каждого
+   *  запроса скачивается файлом «Запрос PO-012 — Поставщик.txt»; пропущенные строки — списком с причиной. */
   async function buildRequests(lines?: ProcurementLine[]) {
     if (interactionLocked) return;
     setBusyId("supplier-requests");
     setError("");
+    setSkippedRequests([]);
     try {
       const result = await procurementApi.buildSupplierRequests(lines?.map((line) => line.id));
-      setOrders(result.orders);
+      const notSaved: string[] = [];
+      for (const order of result.orders) {
+        try { downloadRequestLetter(order); } catch { notSaved.push(order.order_number); }
+      }
       const parts = [`Сформировано запросов: ${result.orders.length}`];
-      if (result.skipped.length) parts.push(`пропущено: ${result.skipped.join(", ")}`);
+      if (result.orders.length) parts.push(notSaved.length ? `файл не сохранился: ${notSaved.join(", ")}` : "тексты запросов скачаны файлами");
       if (result.other_buyer) parts.push(`строк других закупщиков не тронуто: ${result.other_buyer}`);
       setNotice(parts.join("; "));
+      const names = new Map([...mine, ...(lines ?? [])].map((line) => [line.id, line.legacy_id]));
+      setSkippedRequests(result.skipped.map((item: SkippedRequestLine | string) => {
+        const entry = typeof item === "string" ? { line_id: item, reason: "" } : item;
+        const name = names.get(entry.line_id) ?? entry.line_id;
+        return { text: entry.reason ? `${name}: ${entry.reason}` : name };
+      }));
       await reload(true);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Запросы поставщикам не сформированы");
+      setError(failureText(reason, "Запросы поставщикам не сформированы"));
     } finally {
       setBusyId("");
     }
@@ -423,13 +515,20 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
+      {skippedRequests.length > 0 && (
+        <div className="warning-inline" role="alert">
+          <strong>В запросы не попало строк: {skippedRequests.length}</strong>
+          <ul>{skippedRequests.map((item) => <li key={item.text}>{item.text}</li>)}</ul>
+          <button type="button" className="link-button" onClick={() => setSkippedRequests([])}>Закрыть</button>
+        </div>
+      )}
 
       <div className="queue-summary">
         <span><strong>{available.length}</strong> доступно</span>
         <span><strong>{mine.length}</strong> {readOnly ? "в работе" : "у меня"}</span>
       </div>
 
-      <section className="panel table-panel procurement-stage">
+      {(readOnly || available.length > 0 || Boolean(availableCursor)) && <section className="panel table-panel procurement-stage">
         <StageHeading title="Неразобранные" count={available.length} hint={readOnly ? undefined : "Берите только то, что будете вести"} />
         <DataTable
           label="Неразобранные"
@@ -449,7 +548,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             {loadingMore === "available" ? "Загружаем…" : "Ещё неразобранные"}
           </button>
         )}
-      </section>
+      </section>}
 
       {readOnly && (
         <section className="panel table-panel procurement-stage">
@@ -472,6 +571,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
 
       {!readOnly && <section className="work-list">
         <h2 className="section-title">Мои позиции</h2>
+        {!loaded ? (refreshing ? <p className="empty">Загрузка…</p> : null) : <>
         <ProcurementInWorkTable
           lines={inWorkBlock}
           units={units}
@@ -485,7 +585,6 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
           onCancel={cancelLine}
           onCancelMany={cancelMany}
           onBuildRequests={buildRequests}
-          onFill={() => setFillOpen((current) => !current)}
           renderDetail={(line) => (
             <>
               <TraceabilityForm {...form(line)} />
@@ -493,32 +592,10 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             </>
           )}
         />
-        {fillOpen && (
-          <ProcurementFillForm
-            units={units}
-            onClose={() => setFillOpen(false)}
-            onSaved={(message) => {
-              setNotice(message);
-              void reload(true);
-            }}
-          />
-        )}
-        {orders.map((order) => (
-          <article className="panel procurement-card" key={order.order_number}>
-            <div className="procurement-title">
-              <div><strong>{order.order_number} · {order.supplier}</strong><small>{order.task_type} · от {formatDate(order.order_date)} · позиций: {order.line_ids.length}</small></div>
-            </div>
-            {order.document && (
-              <div className="supplier-document">
-                <small>{order.document.folder}/{order.document.file_name}</small>
-                <a className="secondary small" href={order.document.url} target="_blank" rel="noreferrer">Открыть документ</a>
-                <button type="button" className="secondary small" onClick={() => printStoredDocument(order.document!.url)}>Печать</button>
-              </div>
-            )}
-            <pre className="supplier-letter">{order.letter}</pre>
-          </article>
-        ))}
-        <AwaitingInvoiceStage {...stageProps} {...bulkOf("awaiting")} lines={awaiting} actionsOf={awaitingActions} onOpenKp={openKp} onPrint={printStoredDocument} />
+        <AwaitingInvoiceStage
+          {...stageProps} {...bulkOf("awaiting")} lines={awaiting} actionsOf={awaitingActions}
+          onOpenKp={openKp} onPrint={printStoredDocument} onSavePrices={saveFactPrices} onUploadInvoice={uploadInvoice} onSubmitInvoice={submitOrderInvoice}
+        />
         {kpReference && (
           <KpForm
             key={kpReference}
@@ -533,8 +610,11 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             }}
           />
         )}
-        <ToPayStage {...stageProps} {...bulkOf("topay")} lines={toPay} actionsOf={toPayActions} onMarkPaid={markPaidMany} />
-        <PaidStage {...stageProps} {...bulkOf("paid")} lines={paid} actionsOf={paidActions} onReconcile={reconcileMany} />
+        <ToPayStage
+          {...stageProps} {...bulkOf("topay")} lines={toPay} actionsOf={toPayActions}
+          onPrint={printStoredDocument} onSavePrices={saveFactPrices} onUploadInvoice={uploadInvoice} onSubmitInvoice={submitOrderInvoice} onPaidOrder={paidOrder}
+        />
+        <PaidStage {...stageProps} {...bulkOf("paid")} lines={paid} actionsOf={paidActions} onReconcile={reconcileMany} onPrint={printStoredDocument} />
         {backorders.length > 0 && (
           <BackorderStage
             {...stageProps}
@@ -549,6 +629,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             {loadingMore === "mine" ? "Загружаем…" : "Ещё мои"}
           </button>
         )}
+        </>}
       </section>}
     </section>
   );

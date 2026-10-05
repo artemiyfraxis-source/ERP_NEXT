@@ -149,8 +149,14 @@ export interface SupplierOrderDocument {
 export interface SupplierRequestsResult {
   orders: SupplierOrder[];
   lines: ProcurementLine[];
-  skipped: string[];
+  /** Строки, которые в запрос не попали, и почему (поставщик не указан, строка изменилась…). */
+  skipped: SkippedRequestLine[];
   other_buyer: number;
+}
+
+export interface SkippedRequestLine {
+  line_id: string;
+  reason: string;
 }
 
 export interface ProcurementLine {
@@ -1661,6 +1667,18 @@ export type KpRowInput = {
 
 export type KpMatch = { line_id: string; name: string; qty: string; price: string; vat: string };
 
+export type OrderLineRef = { line_id: string; version: number };
+
+export type FactPriceRow = OrderLineRef & { legacy_id: string; price_with_vat: string | null };
+
+export interface OrderInvoiceInput {
+  invoice_url: string;
+  invoice_number?: string | null;
+  invoice_date?: string | null;
+  expected_arrival: string;
+  lines: OrderLineRef[];
+}
+
 export interface InvoiceUpload {
   url: string;
   file_name: string;
@@ -1720,17 +1738,6 @@ export const procurementApi = {
   // PR-11 portalPurchaseBySupplier: открытые строки всех закупщиков и порядок этапов.
   bySupplier: () => api<{ lines: ProcurementLine[]; stages: string[] }>("/api/procurement/by-supplier"),
   meta: () => api<{ units: string[]; statuses: string[] }>("/api/procurement/meta"),
-  // portalMarkPaid: «Оплачено → В пути» пачкой, только строки со счётом.
-  markPaidBatch: (items: { line_id: string; version: number }[]) =>
-    api<{
-      lines: ProcurementLine[];
-      done: number;
-      already: number;
-      no_invoice: string[];
-      failed: { legacy_id: string; error: string }[];
-    }>("/api/procurement/paid", { method: "POST", body: JSON.stringify({ items }) }),
-  // portalPurchaseInWork: все свои строки «В работе» для «Заполнить данные».
-  myInWork: () => api<{ lines: ProcurementLine[] }>("/api/procurement/in-work/mine"),
   // portalSavePurchaseFacts: отмеченные строки одним вызовом.
   saveFactsBatch: (rows: Record<string, unknown>[]) =>
     api<{
@@ -1740,6 +1747,26 @@ export const procurementApi = {
       skipped: string[];
       failed: { legacy_id: string; error: string }[];
     }>("/api/procurement/facts", { method: "POST", body: JSON.stringify({ rows }) }),
+  /** «Цена факт» (с НДС) строк «Жду счёт» и «Ждёт оплаты» одним вызовом; остальное в строке сервер не трогает. */
+  saveFactPrices: (rows: FactPriceRow[]) =>
+    api<{
+      lines: ProcurementLine[];
+      saved: number;
+      skipped: string[];
+      failed: { legacy_id: string; error: string }[];
+    }>("/api/procurement/fact-prices", { method: "POST", body: JSON.stringify({ rows }) }),
+  /** «Вставить счёт»: один счёт на заказ — все строки заказа уходят «В оплату» или ни одной (409 — набор устарел, 422 — чего не хватает). */
+  orderInvoice: (orderNumber: string, invoice: OrderInvoiceInput) =>
+    api<{ lines: ProcurementLine[] }>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/invoice`, {
+      method: "POST",
+      body: JSON.stringify(invoice),
+    }),
+  /** «Оплачено» по заказу: все строки «В оплату» → «В пути»; 409 `manual_rate_required` — ЦБ молчит, нужен курс. */
+  orderPaid: (orderNumber: string, lines: OrderLineRef[], manualExchangeRate?: string) =>
+    api<{ lines: ProcurementLine[] }>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/paid`, {
+      method: "POST",
+      body: JSON.stringify(manualExchangeRate ? { lines, manual_exchange_rate: manualExchangeRate } : { lines }),
+    }),
   take: (lineIds: string[]) =>
     api<{ lines: ProcurementLine[]; skipped?: string[] }>("/api/procurement/take", {
       method: "POST",
