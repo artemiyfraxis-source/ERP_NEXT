@@ -147,6 +147,26 @@ describe("RequestsPage", () => {
     expect(await screen.findByText("Заявка перенесена повторно: в закупке новая ревизия")).toBeInTheDocument();
   });
 
+  it("counts requests by procurement stage in the status chips", async () => {
+    const stages = ["В работе", "Жду счет", "В оплату", "Готово", "Готово / Отменено", "Отменено", "Готово / В пути"];
+    const rows = [
+      row,
+      ...stages.map((stage, index) => ({ ...row, id: `stage-${index}`, status: "В работе", stage })),
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input) === "/api/requests/schema") return json(schema);
+      return json({ requests: rows });
+    });
+
+    render(<RequestsPage principal={principal} />);
+    expect(await screen.findByRole("button", { name: "Ждут переноса · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "В работе · 4" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ждут счет · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ждут оплаты · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Выполнено · 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Отменено · 1" })).toBeInTheDocument();
+  });
+
   it("keeps view-only users read-only and hides the hand-off to procurement", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input) === "/api/requests/schema") return json(schema);
