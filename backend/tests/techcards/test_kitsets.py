@@ -10,6 +10,7 @@ from app.modules.techcards.kitsets import (
     KitLot,
     KitsetValidationError,
     SupplyRow,
+    SupplyStock,
     batch_quantity,
     default_scrap,
     issue_tasks,
@@ -228,6 +229,38 @@ def test_issue_and_supply_take_piece_batch_in_whole_pieces():
     assert first.waiting[1] == "Корпус Molex: ГРН не выбран (16)"
     need = {line.article: line.need for line in supply_lines(kitset, [])}
     assert (need["UL1007 22AWG"], need["43025-0400"]) == (Decimal("15.75"), Decimal("16"))
+
+
+def test_supply_matches_a_row_without_article_by_its_name():
+    """A manual request typed without АРТИКУЛ КД used to stay «не заведено»: its name finds the position."""
+    kitset = write_from_calc(parse(calc_sheets(), "708К.4"), None, who="Т", now=NOW)
+    lines = {line.article: line for line in supply_lines(kitset, [
+        SupplyRow("", "Запрос", "Новый", name="  корпус   MOLEX "),  # the spec name, spacing and case aside
+        SupplyRow("", "Закупка", "В работе", name="43030-0007"),  # the КД article typed as the name
+        SupplyRow("", "Запрос", "Новый", name="Что-то другое"),
+    ])}
+    assert lines["43025-0400"].stage == "Запрос · Новый"
+    assert lines["43030-0007"].stage == "Закупка · В работе"
+    assert lines["UL1007 22AWG"].stage == "не заведено"
+
+
+def test_supply_short_is_need_less_free_stock_open_purchases_and_kits():
+    kitset = write_from_calc(parse(calc_sheets(), "708К.4"), None, who="Т", now=NOW)
+    lines = {line.article: line for line in supply_lines(kitset, [
+        SupplyRow("43030-0007", "Запрос", "Новый", open_quantity=Decimal("10")),
+        SupplyRow("43030-0007", "Приёмка", "Готово", received=True),  # accepted: counted on the shelf, not here
+        SupplyRow("UL1007 22AWG", "Закупка", "В работе", open_quantity=Decimal("20")),
+    ], stock=[
+        SupplyStock("43025-0400", "Корпус Molex", Decimal("15")),
+        SupplyStock("43030-0007", "Контакт", Decimal("4")),
+        SupplyStock("", "43030-0007", Decimal("2")),  # a lot accepted without an article, named by it
+    ], kitted=[SupplyStock("43030-0007", "Контакт", Decimal("6"))])}
+    molex, contact, wire = lines["43025-0400"], lines["43030-0007"], lines["UL1007 22AWG"]
+    assert (molex.need, molex.free, molex.ordered, molex.short) == (Decimal("20"), Decimal("15"), 0, Decimal("5"))
+    assert (contact.need, contact.free, contact.ordered, contact.kitted, contact.short) == (
+        Decimal("32"), Decimal("6"), Decimal("10"), Decimal("6"), Decimal("10"),
+    )
+    assert (wire.need, wire.ordered, wire.short) == (Decimal("15.75"), Decimal("20"), Decimal("0"))
 
 
 def test_sort_kitsets_like_portal():
