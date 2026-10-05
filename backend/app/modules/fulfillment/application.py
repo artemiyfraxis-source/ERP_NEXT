@@ -575,6 +575,57 @@ def _kit_order(request: FulfillmentRequest) -> tuple:
     return (number is None, number or 0, request.number)
 
 
+def _fill_line_fifo(
+    request: FulfillmentRequest,
+    line_id: UUID,
+    lots: Sequence[StockLot],
+    current_lots: dict[UUID, StockLot],
+    budget: dict[UUID, Decimal] | None,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+    details: dict,
+) -> tuple[FulfillmentRequest, Decimal, list[ProjectBinding]]:
+    """One waiting line takes what the lots give, in the order given (`_reserve_for_kit`: the project's covers, then
+    the КБ's techcard reserve, then ДОСТУПНО). A lot that falls short splits the line and the next lot takes the
+    remainder. `current_lots` holds each lot as reserved so far in this transaction; `budget` (lot id → the most it
+    may still give, None — no limit) caps a lot below its ДОСТУПНО. → (request, need left uncovered, bindings)."""
+    kb = kb_of(request.purpose)
+    line = next(row for row in request.lines if row.id == line_id)
+    need, target = line.requirement, line_id
+    bound: list[ProjectBinding] = []
+    for candidate in lots:
+        if need <= 0:
+            break
+        lot = current_lots[candidate.id]
+        wanted = need if budget is None else min(need, budget.get(lot.id, Decimal("0")))
+        if wanted <= 0:
+            continue
+        give, reserved_lot = _reserve_for_kit(request, lot, wanted, actor, now, uow)
+        if give <= 0:
+            continue
+        before = {row.id for row in request.lines}
+        request = request.bind_line(target, LotSnapshot(
+            lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
+            storage_location=lot.storage_location,
+        ), give, lot.unit)
+        current_lots[lot.id] = reserved_lot
+        uow.warehouse.add(reserved_lot)
+        if budget is not None:
+            budget[lot.id] = budget.get(lot.id, Decimal("0")) - give
+        bound.append(ProjectBinding(
+            request_id=request.id, number=request.number, kb=kb, line_id=target,
+            quantity=give, lot_id=lot.id, grn=lot.grn,
+        ))
+        _audit(request, "fulfillment.lot_bound", actor, now, {
+            "line_id": str(target), "lot_id": str(lot.id), "quantity": str(give), **details,
+        }, uow)
+        need -= give
+        if need > 0:  # the lot fell short: the split-off remainder waits for the next lot
+            target = next(row.id for row in request.lines if row.id not in before)
+    return request, max(need, Decimal("0")), bound
+
+
 def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> ProjectBindResult:
     """One item of a project gets the chosen lots for every КБ at once, in one transaction (owner 05.10.2026).
 
@@ -649,33 +700,12 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
                         **_off_book_details(line), "project": command.project,
                     }, uow)
                     continue
-                need, target = line.requirement, line_id
-                for candidate in lots:
-                    if need <= 0:
-                        break
-                    lot = current_lots[candidate.id]
-                    give, reserved_lot = _reserve_for_kit(request, lot, need, command.actor, command.now, uow)
-                    if give <= 0:
-                        continue
-                    before = {row.id for row in request.lines}
-                    request = request.bind_line(target, LotSnapshot(
-                        lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
-                        storage_location=lot.storage_location,
-                    ), give, lot.unit)
-                    current_lots[lot.id] = reserved_lot
-                    uow.warehouse.add(reserved_lot)
-                    bound.append(ProjectBinding(
-                        request_id=request.id, number=request.number, kb=kb, line_id=target,
-                        quantity=give, lot_id=lot.id, grn=lot.grn,
-                    ))
-                    _audit(request, "fulfillment.lot_bound", command.actor, command.now, {
-                        "line_id": str(target), "lot_id": str(lot.id), "quantity": str(give),
-                        "project": command.project,
-                    }, uow)
-                    need -= give
-                    if need > 0:  # the lot fell short: the split-off remainder waits for the next lot
-                        target = next(row.id for row in request.lines if row.id not in before)
-                short += max(need, Decimal("0"))
+                request, need, filled = _fill_line_fifo(
+                    request, line_id, lots, current_lots, None, command.actor, command.now, uow,
+                    {"project": command.project},
+                )
+                bound.extend(filled)
+                short += need
             if request is not original:
                 # Every bind bumped the version; the request changed once — one version step, as the screen expects.
                 request = replace(request, version=original.version + 1).stamped(command.now)
@@ -685,6 +715,112 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
             raise FulfillmentValidationError("У выбранных партий нет доступного остатка")
         uow.commit()
         return ProjectBindResult(bound=tuple(bound), short=short, unit=unit, requests=tuple(saved))
+
+
+@dataclass(frozen=True)
+class BindArrivedLotCommand:
+    """A lot that just arrived, bought for `project`: what it is (КД articles and names of the purchase and the lot)
+    and how much arrived — the most the arrival binds, so free stock already on a topped-up lot stays free."""
+
+    project: str
+    lot_id: UUID
+    quantity: Decimal
+    articles: tuple[str, ...]
+    names: tuple[str, ...]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class ArrivedKit:
+    """One kit request of the project the arrival reached: how many of its lines it bound, how many still wait."""
+
+    request: FulfillmentRequest
+    kb: str
+    lines: int
+    quantity: Decimal
+    missing: int
+
+    @property
+    def complete(self) -> bool:
+        return self.missing == 0
+
+
+@dataclass(frozen=True)
+class ArrivedLotResult:
+    kits: tuple[ArrivedKit, ...]
+    bound: tuple[ProjectBinding, ...]
+    short: Decimal  # need of the matching lines the arrival did not cover
+
+
+def _text_key(value: str | None) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+
+
+def arrival_matches(line: FulfillmentLine, articles: Sequence[str], names: Sequence[str]) -> bool:
+    """Is the waiting kit line the item that arrived? The КД article is the key kit and purchase share
+    (techcards `supply_lines`): a line with an article matches only by article; a line without one — by name."""
+    article = _text_key(line.article)
+    if article:
+        return article in {_text_key(value) for value in articles if _text_key(value)}
+    name = _text_key(line.name)
+    return bool(name) and name in {_text_key(value) for value in names if _text_key(value)}
+
+
+def bind_arrived_lot(command: BindArrivedLotCommand, uow: UnitOfWork) -> ArrivedLotResult:
+    """An arrival binds itself to the waiting kit lines of the project it was bought for (owner 05.10.2026).
+
+    Runs inside the caller's open unit of work and does not commit: the outbox consumer commits it together with its
+    message, so a message is applied once. The lines are those of the project's open requests that still wait for a
+    lot and are the arrived item (`arrival_matches`); КБ in natural order, each line takes what the lot gives
+    (`_fill_line_fifo` — the project's own reserves, then ДОСТУПНО; never another project's reserve), at most the
+    arrived quantity in all. Kits of other projects and lines that already have a lot are not touched."""
+    empty = ArrivedLotResult(kits=(), bound=(), short=Decimal("0"))
+    key = project_key(command.project)
+    if not key or command.quantity <= 0:
+        return empty
+    lot = uow.warehouse.get(command.lot_id)
+    if lot is None:
+        return empty
+
+    def waiting(line: FulfillmentLine) -> bool:
+        return line.waiting and arrival_matches(line, command.articles, command.names)
+
+    requests = sorted(
+        (
+            request for request in uow.fulfillment.open_requests()
+            if project_key(project_of(request.purpose)) == key and any(waiting(line) for line in request.lines)
+        ),
+        key=_kit_order,
+    )
+    current_lots = {lot.id: lot}
+    budget = {lot.id: command.quantity}
+    kits: list[ArrivedKit] = []
+    bound: list[ProjectBinding] = []
+    short = Decimal("0")
+    for request in requests:
+        original = request
+        filled_here: list[ProjectBinding] = []
+        for line_id in [line.id for line in request.lines if waiting(line)]:
+            request, need, filled = _fill_line_fifo(
+                request, line_id, (lot,), current_lots, budget, command.actor, command.now, uow,
+                {"project": command.project, "source": "arrival"},
+            )
+            filled_here.extend(filled)
+            short += need
+        if request is original:
+            continue
+        request = replace(request, version=original.version + 1).stamped(command.now)
+        uow.fulfillment.add(request)
+        bound.extend(filled_here)
+        kits.append(ArrivedKit(
+            request=request,
+            kb=kb_of(request.purpose),
+            lines=len(filled_here),
+            quantity=sum((item.quantity for item in filled_here), Decimal("0")),
+            missing=len(request.open_lines()),
+        ))
+    return ArrivedLotResult(kits=tuple(kits), bound=tuple(bound), short=short)
 
 
 def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest:
