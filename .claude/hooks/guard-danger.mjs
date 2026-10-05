@@ -5,12 +5,14 @@
 //   - force-push / hard reset / clean / discard  -> ask  (destroys work no tree can restore)
 //   - live stock import without --dry-run        -> ask  (writes the warehouse into a real DB)
 //   - alembic downgrade                          -> ask  (drops columns/tables with their data)
-//   - not the owner's git identity: push to main, gh pr merge, server update/deploy/ssh -> deny
-//     (main auto-deploys to production; Витя's sessions stop at a PR — .claude/team/RULES.md)
+//   - not the owner's git identity: direct push to main, push.ps1, server ssh -> deny; unknown identity also
+//     can't merge PRs or request a server update (main auto-deploys; Витя releases via PR — .claude/team/RULES.md)
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const OWNER_EMAIL = "artemiyfraxis@gmail.com";
+const TEAM_EMAILS = [OWNER_EMAIL, "tektra.real.tektra@gmail.com"];
+const TEAM_LOGINS = ["artemiyfraxis-source", "h4styq"];
 
 let input;
 try {
@@ -52,8 +54,22 @@ const git = (args) => {
 const touchesMain =
   /git\s+push\b[^|;&]*[\s:+](refs\/heads\/)?main(\s|$)/.test(cmd) ||
   (/git\s+push\b(?![^|;&]*\s[\w./-]+\s+[\w./:+-]+)/.test(cmd) && git("rev-parse --abbrev-ref HEAD") === "main");
-const releases =
-  /gh\s+pr\s+merge|gh\s+workflow\s+run\s+[^|;&]*update-server|push\.ps1|erp@|100\.96\.49\.68/.test(cmd);
-if ((touchesMain || releases) && git("config user.email").toLowerCase() !== OWNER_EMAIL) {
-  decide("deny", "Blocked by .claude/hooks/guard-danger.mjs: this session is not the owner's (git user.email). main auto-deploys to production, so only the owner merges, pushes main and updates the server. Push your branch vitya/<topic>, mark the PR ready and stop — see .claude/team/RULES.md.");
+const ownerOnly = touchesMain || /push\.ps1|erp@|100\.96\.49\.68/.test(cmd);
+const release = /gh\s+pr\s+merge|gh\s+workflow\s+run\s+[^|;&]*update-server/.test(cmd);
+if (ownerOnly || release) {
+  const email = git("config user.email").toLowerCase();
+  if (email !== OWNER_EMAIL) {
+    if (ownerOnly) {
+      decide("deny", "Blocked by .claude/hooks/guard-danger.mjs: direct push to main, push.ps1 and server ssh are the owner's. main auto-deploys to production — merge a PR with green CI instead, see .claude/team/RULES.md «Releasing».");
+    }
+    let team = TEAM_EMAILS.includes(email);
+    if (!team) {
+      try {
+        team = TEAM_LOGINS.includes(execSync("gh api user --jq .login", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10000 }).trim());
+      } catch {}
+    }
+    if (!team) {
+      decide("deny", "Blocked by .claude/hooks/guard-danger.mjs: neither git user.email nor the gh login is a known developer of this repo, and merging or updating the server releases to production.");
+    }
+  }
 }
