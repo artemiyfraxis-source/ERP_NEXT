@@ -2182,7 +2182,52 @@ export const fulfillmentApi = {
     }),
 };
 
+export interface AutoplanProposal {
+  task_id: string;
+  task_version: number;
+  task_number: string;
+  operation_id: string;
+  position: number;
+  stage: string;
+  code: string;
+  operator_id: string;
+  operator_name: string;
+  start: string;
+  finish: string;
+  machine: string;
+  setup_label: string;
+  changeover_seconds: number;
+  setup_seconds: number;
+  batched: boolean;
+}
+
+export interface AutoplanRequest {
+  date_from: string;
+  date_to: string;
+  task_ids?: string[];
+  replan_auto: boolean;
+}
+
+export interface AutoplanPreview {
+  period: { start: string; finish: string };
+  proposals: AutoplanProposal[];
+  batches: Array<{ operator_id: string; operator_name: string; batches: Array<{ label: string; machine: string; operations: number; tasks: string[]; start: string; finish: string; changeover_seconds: number }> }>;
+  unplaced: Array<{ operation_id: string; task_id: string; task_number: string; position: number | null; reason: string }>;
+  warnings: string[];
+  stats: { changeovers: number; changeovers_naive: number; saved_seconds: number };
+  fingerprint: string;
+}
+
 export const productionApi = {
+  autoplanPreview: (payload: AutoplanRequest) => api<AutoplanPreview>("/api/production/autoplan/preview", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  autoplanApply: (payload: AutoplanRequest & { items: Array<{ task_id: string; operation_id: string; operator_id: string }>; fingerprint: string }) =>
+    api<{ applied: number; tasks: Array<{ id: string; number: string; version: number }> }>("/api/production/autoplan/apply", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
   mine: (operatorId = "") => api<{ tasks: ProductionTask[] }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),

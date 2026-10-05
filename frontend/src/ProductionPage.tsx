@@ -23,6 +23,7 @@ import { canAct, canSee, hasFullAccess } from "./navigation";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay } from "./format";
 import { MasterBoard } from "./MasterBoard";
+import { AutoplanPanel } from "./AutoplanPanel";
 import { feedsText, isFirst, isNetwork, previousStage, requiredNote, requiredOf } from "./productionGraph";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
@@ -36,6 +37,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [showLaunch, setShowLaunch] = useState(false);
+  const [showAutoplan, setShowAutoplan] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [holidays, setHolidays] = useState<string[]>([]);
@@ -129,13 +131,14 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
           {viewable.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>}
-      {canEdit && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></div>}
+      {canEdit && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></div>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {readOnly && <div className="warning-inline" role="status">Вид сотрудника {viewedName} — только просмотр</div>}
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
     {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
+    {showAutoplan && canEdit && <AutoplanPanel tasks={tasks} close={() => setShowAutoplan(false)} onApplied={(count) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций`); void reload(); }} />}
     {showLaunch && canEdit && <LaunchForm tasks={tasks} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} />}

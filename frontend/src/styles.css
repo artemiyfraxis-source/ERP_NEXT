@@ -2409,3 +2409,33 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .order-list .table-wrap .grid thead th { z-index: 3; }
 /* Orders come in pages of 30 — the page scrolls, not a nested box that clips the last row. */
 .data-table.order-list .table-wrap { max-height: none; }
+
+/* Автоплан */
+.autoplan-body { width: min(780px, 100vw); }
+.autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+.autoplan-form label { display: grid; gap: 3px; font-size: 12px; }
+.autoplan-tasks { margin-bottom: 8px; font-size: 13px; }
+.autoplan-tasks summary { cursor: pointer; padding: 4px 0; }
+.autoplan-task-list { display: grid; gap: 2px; max-height: 180px; overflow: auto; padding: 4px 0; }
+.autoplan-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.autoplan-check input { width: auto; margin: 0; }
+.autoplan-result { display: grid; gap: 8px; margin-top: 8px; }
+.autoplan-summary { font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 8px; background: var(--accent); }
+.autoplan-fitter { border: 1px solid var(--border); border-radius: 8px; background: var(--card); padding: 8px 10px; }
+.autoplan-fitter h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 14px; }
+.autoplan-fitter h3 small { color: var(--muted-foreground); font-weight: 400; }
+.autoplan-day-title { font-size: 12px; font-weight: 600; color: var(--muted-foreground); margin: 6px 0 2px; }
+.autoplan-batch { border-left: 3px solid var(--primary); padding-left: 8px; margin-bottom: 6px; }
+.autoplan-batch-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; padding: 2px 0; }
+.autoplan-batch-head small { color: var(--muted-foreground); font-weight: 400; }
+.autoplan-row { display: grid; grid-template-columns: 24px 70px minmax(0, 1fr) 130px 150px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; border-top: 1px solid var(--border); }
+.autoplan-row input { width: auto; margin: 0; }
+.autoplan-op small { display: block; color: var(--muted-foreground); font-size: 11px; }
+.autoplan-slot { white-space: nowrap; }
+.autoplan-change { color: var(--muted-foreground); font-size: 12px; }
+.autoplan-unplaced { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--card); }
+.autoplan-unplaced h3 { margin: 0 0 4px; font-size: 14px; }
+.autoplan-unplaced-row { font-size: 13px; padding: 2px 0; }
+.autoplan-actions { position: sticky; bottom: 0; background: var(--background, #f6f8f8); padding: 8px 0; }
+@media (max-width: 700px) { .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
+@media (pointer: coarse) { .autoplan-check, .autoplan-row { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
