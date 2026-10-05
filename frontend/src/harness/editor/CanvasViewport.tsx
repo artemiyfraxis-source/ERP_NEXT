@@ -1,4 +1,4 @@
-import { renderPartSvg } from "../wire-blank-artwork.mjs";
+import { renderPartSvg } from "../wire-blank-artwork";
 import { drawVolumeStroke, drawVolumeSurface } from "./drawing-volume";
 import { commonParallelSpan, commonHorizontalPairSpan, parallelSpanWorld, parallelSpanLocal, type ParallelSpan } from "./e4-parallel-spans";
 import { intersectSegments, segmentsParallel } from "./segment-geometry";

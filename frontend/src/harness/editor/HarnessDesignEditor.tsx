@@ -13,12 +13,12 @@ import { DrawingDimensionsPanel } from "./DrawingDimensionsPanel";
 import { drawingDimensionScene, dimensionRouteKey, toggleDrawingDimensions } from "./drawing-dimensions";
 import { projectComponentTemplateView } from "./component-template-view-renderer";
 import { materializePlacementRows } from "./component-template-placement";
-import { routeCutReadiness } from "../manufacturing/route-cut-readiness";
+import { routeCutReadiness } from "./cut-readiness";
 import { DrawingTableWindows } from "./DrawingTableWindows";
 import { CONTACT_SIDE_VIEW_PLACEMENT_ID, drawingLocalDirection, drawingLocalDirectionVector, drawingLocalPoint, drawingScale, DRAWING_VIEW_PLACEMENT_ID } from "./drawing-scale";
 import { DrawingScaleControl } from "./DrawingScaleControl";
 import { DrawingDocumentsPanel } from "./DrawingDocumentsPanel";
-import { addDrawingPositions, createPositionRail, drawingDocumentScene, moveDrawingAnnotation, reconcileDrawingDocuments, setDrawingPositionsVisibility } from "./drawing-documents";
+import { type DrawingDocuments, type DrawingTable, addDrawingPositions, createPositionRail, drawingDocumentScene, moveDrawingAnnotation, reconcileDrawingDocuments, setDrawingPositionsVisibility } from "./drawing-documents";
 import { alignDrawingConnectorIndexes, drawingObjectIndexScene, moveDrawingIndex } from "./drawing-indices";
 import { type PhysicalCovering, coveringMaterial, standardCovering, standardCoveringOver } from "./physical-coverings";
 import { PhysicalTopologyPanel } from "./PhysicalTopologyPanel";
@@ -31,8 +31,6 @@ import { joiningPipeEndpoint, joiningPipeExit, migrateJoiningPipes } from "./phy
 import { projectE4DrawingCompanions } from "./component-template-view-renderer";
 import { freeTwistedPairPaths } from "./drawing-twisted-pair";
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
-import type { LocalSession } from "../local-session";
-import type { RuntimeConfig } from "../runtime-config";
 import { applyEditorCommand, createWire, e4RoutingIssues, type EditorCommand } from "./commands";
 import { InfoHint } from "../InfoHint";
 import { drawingBendRadius } from "./drawing-route-path";
@@ -44,27 +42,22 @@ import { defaultDrawingSnaps, type DrawingSnaps } from "../component-library/dra
 import { terminalArticleLabel } from "./terminal-article-label";
 import { refreshedTemplateTerminalCatalog } from "./template-terminal-catalog";
 import {
-  createHarnessDesignApi,
-  parseRecoverableHarnessDesignContent,
+  createInMemoryHarnessDesignApi,
   type HarnessDesignApi,
   type HarnessDesignResource,
 } from "./design-api";
 import { DesignSaveCoordinator } from "./design-save-coordinator";
 import {
-  browserRecoveryStorage,
-  readHarnessDesignRecoveryDraft,
-  removeHarnessDesignRecoveryDraft,
-  writeHarnessDesignRecoveryDraft,
-} from "./design-recovery-draft";
-import { createDesignRecoveryApi, DesignRecoverySession, type ServerRecoveryDraft } from "./design-recovery-api";
-import {
-  createComponentPlacementApi,
+  createInMemoryComponentPlacementApi,
   componentPlacementRequest,
+  type ComponentPlacementApi,
   type PlaceComponentRequest,
   type ProjectComponentPlacementGraph,
   type ProjectComponentSnapshotResource,
 } from "./component-placement-api";
-import { createComponentTemplateApi, type ComponentTemplateApi } from "../component-library/component-template-api";
+import { createInMemoryComponentTemplateCatalog, type ComponentTemplateApi } from "../component-library/component-template-api";
+import { createInMemoryReferenceCatalog, type ReferenceCatalogAdapter } from "../reference-catalog";
+import { createInMemoryCoveringMaterialApi, type CoveringMaterialApi } from "./covering-assets";
 import { isTemplateContentV3, isTemplateContentV4, isTemplateContentV5 } from "../component-library/template-content";
 import {
   createConnectorInstanceFromComponentTemplateV3,
@@ -80,7 +73,6 @@ import { useEditorReferenceCatalog, useTerminalArticleLookup, useWireDatabaseLoo
 import { hydrateTerminalDetails, resolveTerminalDetails, wireEndTerminalCorrections } from "./terminal-details";
 import type { EditorCatalogItem, EditorLayer as UiLayer, EditorSceneObject, HarnessEditorView } from "./editor-types";
 import { HarnessEditorWorkspace, type EditorSaveState } from "./HarnessEditorWorkspace";
-import type { HarnessSectionId } from "./HarnessSectionNavigation";
 import { CableSelectionPanel } from "./CableSelectionPanel";
 import { E4ConnectorInspector } from "./E4ConnectorInspector";
 import { resolveConnectedWireMaterials } from "./resolve-wire-materials";
@@ -119,34 +111,36 @@ import { HarnessRelationsPanel } from "./HarnessRelationsPanel";
 import { ConnectionTableSettings } from "./ConnectionTableSettings";
 import { useConnectionTableSettings } from "./connection-table-settings";
 
+/** Catalog data the editor reads: component library, reference books, covering materials. */
+export interface HarnessEditorCatalogApi {
+  readonly templates: ComponentTemplateApi;
+  readonly references: ReferenceCatalogAdapter;
+  readonly materials: CoveringMaterialApi;
+}
+
+export function createInMemoryHarnessEditorCatalog(parts: Partial<HarnessEditorCatalogApi> = {}): HarnessEditorCatalogApi {
+  return {
+    templates: parts.templates ?? createInMemoryComponentTemplateCatalog(),
+    references: parts.references ?? createInMemoryReferenceCatalog(),
+    materials: parts.materials ?? createInMemoryCoveringMaterialApi(),
+  };
+}
+
 export interface HarnessDesignEditorProps {
-  readonly config: RuntimeConfig;
-  readonly session: LocalSession;
   readonly projectId: string;
   readonly harnessId: string;
   readonly harnessDesignation: string;
   readonly initialView: HarnessEditorView;
   readonly harnessQuantity?: number;
   readonly initialReveal?: { readonly projectId: string; readonly harnessId: string; readonly objectId: string };
+  /** Document storage. Defaults to an in-memory store (snapshot v1 JSON). */
   readonly apiOverride?: HarnessDesignApi;
-  readonly componentPlacementApiOverride?: ReturnType<typeof createComponentPlacementApi>;
+  /** Library component placements. Defaults to an in-memory store bound to the default document store. */
+  readonly componentPlacementApiOverride?: ComponentPlacementApi;
+  /** Component library, reference books and covering materials. Defaults to empty in-memory catalogs. */
+  readonly catalogOverride?: HarnessEditorCatalogApi;
   readonly onClose?: () => void;
   readonly onViewChange?: (view: HarnessEditorView) => void;
-  readonly onRouteRequest?: () => void;
-  readonly onSectionChange?: (section: HarnessSectionId) => void | Promise<void>;
-  /** Edits an independent drawing copy in memory until the operator explicitly saves it. */
-  readonly localCopy?: {
-    readonly initialDocument: HarnessDesignDocument;
-    readonly hiddenObjectIds?: readonly string[];
-    readonly backgroundOpacity?: number;
-    readonly onSave: (document: HarnessDesignDocument, hiddenObjectIds: readonly string[], backgroundOpacity: number) => void;
-    readonly onCancel: () => void;
-    readonly onHiddenObjectIdsChange?: (ids: readonly string[]) => void;
-    readonly onBackgroundOpacityChange?: (opacity: number) => void;
-    readonly onDraftChange?: (document: HarnessDesignDocument, hiddenObjectIds: readonly string[], backgroundOpacity: number) => void;
-    /** Creates a detached material fragment from the current working copy. */
-    readonly onIsolateObjects?: (document: HarnessDesignDocument, objectIds: readonly string[], scene?: readonly EditorSceneObject[]) => HarnessDesignDocument | null;
-  };
 }
 
 export type ProjectComponentSnapshotLookup = ReadonlyMap<string, ProjectComponentSnapshotResource>;
@@ -598,61 +592,8 @@ export function wireMaterialUpdateFromCatalogItem(
   };
 }
 
+/** Placement pins exactly the published version shown in the catalog (TECHMAP-GRAPHER published a pending draft here). */
 export async function loadComponentTemplateForPlacement(
-  api: ComponentTemplateApi,
-  templateId: string,
-  catalogVersion: number,
-) {
-  const draft = await api.getDraft(templateId);
-  return draft
-    ? api.publishDraft(templateId, draft.baseVersion, draft.draftRevision)
-    : api.getVersion(templateId, catalogVersion);
-}
-
-/** Read-only artwork for route previews whose copy contains connectors without project placements. */
-const EMPTY_TEMPLATE_INSTANCES: readonly ComponentTemplateViewInstance[] = [];
-export function useLocalCopyTemplateViews(
-  document: HarnessDesignDocument | undefined,
-  config: RuntimeConfig,
-  session: LocalSession,
-  projectId: string,
-  enabled = true,
-  projectInstances: readonly ComponentTemplateViewInstance[] = EMPTY_TEMPLATE_INSTANCES,
-  projectAssetUrl?: (snapshotId: string, assetId: string) => string,
-) {
-  const api = useMemo(() => createComponentTemplateApi(config, session), [config, session]);
-  const [snapshots, setSnapshots] = useState<ProjectComponentSnapshotLookup>(() => new Map());
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (!enabled || !document) return;
-    let cancelled = false;
-    const bindings = document.connectors.flatMap(connector => connector.libraryBinding?.mode === "template" && !projectInstances.some(instance => instance.objectId === connector.id)
-      ? [{connectorId: connector.id, binding: connector.libraryBinding}]
-      : []);
-    void Promise.all(bindings.map(async ({connectorId, binding}) => {
-      const template = await loadComponentTemplateForLocalCopy(api, binding.templateId, binding.templateVersion);
-      if (template.versionSha256 !== binding.versionSha256) throw new Error("Версия библиотечного рисунка изменилась.");
-      return [connectorId, localTemplateSnapshot(projectId, template)] as const;
-    })).then(entries => {
-      if (!cancelled) { setSnapshots(new Map(entries)); setError(""); }
-    }).catch(cause => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : "Не удалось загрузить библиотечные рисунки копии.");
-    });
-    return () => { cancelled = true; };
-  }, [api, document?.connectors, enabled, projectId, projectInstances]);
-  const instances = useMemo(() => enabled && document
-    ? [...projectInstances, ...buildComponentTemplateViewInstances(document, snapshots).filter(instance => !projectInstances.some(project => project.objectId === instance.objectId))] : projectInstances,
-    [document, enabled, snapshots, projectInstances]);
-  const resolveAssetUrl = useCallback((snapshotId: string, assetId: string) => {
-    const snapshot = [...snapshots.values()].find(item => item.snapshotId === snapshotId);
-    return snapshot ? api.assetContentUrl(snapshot.sourceTemplateId, snapshot.sourceVersion, assetId)
-      : projectAssetUrl?.(snapshotId, assetId) ?? "";
-  }, [api, snapshots, projectAssetUrl]);
-  return {instances, resolveAssetUrl, error};
-}
-
-/** Local drawing copies may read a published snapshot but must never publish a library draft. */
-export function loadComponentTemplateForLocalCopy(
   api: ComponentTemplateApi,
   templateId: string,
   catalogVersion: number,
@@ -660,27 +601,17 @@ export function loadComponentTemplateForLocalCopy(
   return api.getVersion(templateId, catalogVersion);
 }
 
-/** Adapts a read-only published template response to the renderer snapshot contract. */
-export function localTemplateSnapshot(
-  projectId: string,
-  template: Awaited<ReturnType<ComponentTemplateApi["getVersion"]>>,
-): ProjectComponentSnapshotResource {
-  return {
-    snapshotId: crypto.randomUUID(), projectId, sourceTemplateId: template.templateId,
-    sourceVersion: template.version, sourceVersionSha256: template.versionSha256,
-    code: template.code, name: template.name, articleBindings: template.articleBindings,
-    assets: template.assets, schemaVersion: template.content.schemaVersion, content: template.content,
-    createdUtc: template.createdUtc, updatedUtc: template.updatedUtc ?? template.createdUtc,
-  };
-}
-
-export function saveLocalDrawingCopy(
-  document: HarnessDesignDocument,
-  hiddenObjectIds: readonly string[],
-  backgroundOpacity: number,
-  onSave: (document: HarnessDesignDocument, hiddenObjectIds: readonly string[], backgroundOpacity: number) => void,
-): void {
-  onSave(structuredClone(document), [...hiddenObjectIds], backgroundOpacity);
+/**
+ * Opens a drawing table (connections, cut map, BOM) once. A repeated request returns the same documents,
+ * so the caller can skip the command. TECHMAP-GRAPHER's relations panel stacked a new cut table per click.
+ */
+export function withDrawingTable(
+  documents: DrawingDocuments | undefined,
+  kind: DrawingTable["kind"],
+): DrawingDocuments | undefined {
+  const current = documents ?? { tables: [], leaders: [], bomOrder: [] };
+  if (current.tables.some((table) => table.kind === kind)) return documents;
+  return { ...current, tables: [...current.tables, { id: crypto.randomUUID(), kind, position: { x: 20, y: 20 }, dock: "bottom", width: 960, height: 300 }] };
 }
 
 type CableUpdateCommand = Extract<EditorCommand, { readonly type: "update-cable" }>;
@@ -810,46 +741,36 @@ export function snapRoutePoint(
 }
 
 export function HarnessDesignEditor({
-  config,
-  session,
   projectId,
   harnessId,
   harnessDesignation,
   initialView, harnessQuantity = 1, initialReveal,
   apiOverride,
   componentPlacementApiOverride,
+  catalogOverride,
   onClose,
   onViewChange,
-  onRouteRequest,
-  onSectionChange,
-  localCopy,
 }: HarnessDesignEditorProps) {
   // Subscribe the scene projection as well as the left-panel editor to the
   // global preference, so a column change is visible immediately on the field.
   const connectionTableSettings = useConnectionTableSettings();
-  const api = useMemo(() => apiOverride ?? createHarnessDesignApi(config, session), [apiOverride, config, session]);
-  const recoveryApi = useMemo(() => createDesignRecoveryApi(config, session), [config, session]);
-  const recoverySession = useMemo(() => new DesignRecoverySession(recoveryApi, projectId, harnessId), [recoveryApi, projectId, harnessId]);
-  const [recoveryError, setRecoveryError] = useState("");
-  const recoveryCleanupWarning = "Документ сохранён, но очистка аварийной копии не выполнена. Копия сохранена для проверки.";
-  const recoveryBusy = useRef(false);
-  const recoveryArchives = useRef<Pick<ServerRecoveryDraft, "draftId" | "sequence">[]>([]);
-  const componentTemplateApi = useMemo(() => createComponentTemplateApi(config, session), [config, session]);
-  const componentPlacementApi = useMemo(
-    () => componentPlacementApiOverride ?? createComponentPlacementApi(config, session),
-    [componentPlacementApiOverride, config, session],
-  );
-  const prepareCoverings=useMemo(()=>createGlobalCoveringPreparer(config,session,projectId),[config,session,projectId]);
+  const catalogApi = useMemo(() => catalogOverride ?? createInMemoryHarnessEditorCatalog(), [catalogOverride]);
+  const defaultStore = useMemo(() => {
+    const design = createInMemoryHarnessDesignApi();
+    return { design, placements: createInMemoryComponentPlacementApi(design, catalogApi.templates) };
+  }, [catalogApi]);
+  const api = apiOverride ?? defaultStore.design;
+  const componentTemplateApi = catalogApi.templates;
+  const componentPlacementApi = componentPlacementApiOverride ?? defaultStore.placements;
+  const prepareCoverings=useMemo(()=>createGlobalCoveringPreparer(catalogApi.materials,projectId),[catalogApi,projectId]);
   const preparingCovering=useRef(false);
-  const catalog = useEditorReferenceCatalog(config, session);
-  const terminalLookup = useTerminalArticleLookup(config, session);
-  const wireLookup = useWireDatabaseLookup(config, session);
-  const [view, setView] = useState<HarnessEditorView>(localCopy ? "drawing" : initialView);
+  const catalog = useEditorReferenceCatalog(catalogApi.references, componentTemplateApi);
+  const terminalLookup = useTerminalArticleLookup(catalogApi.references);
+  const wireLookup = useWireDatabaseLookup(catalogApi.references);
+  const [view, setView] = useState<HarnessEditorView>(initialView);
   const [resource, setResource] = useState<HarnessDesignResource | null>(null);
   const [history, setHistory] = useState<EditorHistory | null>(null);
-  const [hiddenObjectIds, setHiddenObjectIds] = useState<readonly string[]>(localCopy?.hiddenObjectIds ?? []);
-  const [backgroundOpacity, setBackgroundOpacity] = useState(localCopy?.backgroundOpacity ?? 1);
-  const textureAssets=useCoveringAssets(config,session,projectId,!!history?.present.drawingDocuments?.coveringLibrary?.textures.length,history?.present.drawingDocuments?.coveringLibrary?.textures.map(t=>t.sha256).join(",")??"");
+  const textureAssets=useCoveringAssets(catalogApi.materials,projectId,!!history?.present.drawingDocuments?.coveringLibrary?.textures.length,history?.present.drawingDocuments?.coveringLibrary?.textures.map(t=>t.sha256).join(",")??"");
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [selectedObjectIds, setSelectedObjectIds] = useState<readonly string[]>([]);
   const graphicsClipboardRef=useRef<readonly import("./drawing-documents").DrawingGraphic[]>([]);
@@ -873,18 +794,8 @@ export function HarnessDesignEditor({
     readonly mode?: import("./physical-editing").PhysicalDragMode;
   } | null>(null);
   const [message, setMessage] = useState("Загружаем документ жгута…");
-  const [recoveryDrafts, setRecoveryDrafts] = useState<readonly {
-    readonly id: string;
-    readonly sequence?: number;
-    readonly content: HarnessDesignDocument;
-    readonly baseRevision: number;
-    readonly serverContent?: unknown;
-    readonly serverRevision?: number;
-  }[]>([]);
   const [componentSnapshotsByPlacement, setComponentSnapshotsByPlacement] =
     useState<ProjectComponentSnapshotLookup>(() => new Map());
-  const localTemplateLoading = useRef(new Set<string>());
-  const localTemplateSnapshotIds = useRef(new Set<string>());
   const [componentGraphLoaded, setComponentGraphLoaded] = useState(false);
   const [componentGraphMessage, setComponentGraphMessage] = useState("");
   const historyRef = useRef<EditorHistory | null>(null);
@@ -904,13 +815,8 @@ export function HarnessDesignEditor({
   const materialResolutionGeneration = useRef<number | null>(null);
 
   useEffect(() => { historyRef.current = history; }, [history]);
-  const draftChangeRef = useRef(localCopy?.onDraftChange);
-  draftChangeRef.current = localCopy?.onDraftChange;
-  useEffect(() => {
-    if (history) draftChangeRef.current?.(history.present, hiddenObjectIds, backgroundOpacity);
-  }, [history?.present, hiddenObjectIds, backgroundOpacity]);
   useEffect(() => { resourceRef.current = resource; }, [resource]);
-  useEffect(() => setView(localCopy ? "drawing" : initialView), [initialView, localCopy]);
+  useEffect(() => setView(initialView), [initialView]);
 
   // Library presets contain mark and section text but older documents do not
   // contain the published record ID. Resolve that text once the active wire
@@ -960,34 +866,9 @@ export function HarnessDesignEditor({
     }
   }, [componentPlacementApi, harnessId, projectId]);
   const resolveComponentTemplateAssetUrl = useCallback(
-    (snapshotId: string, assetId: string) => {
-      if (localCopy && localTemplateSnapshotIds.current.has(snapshotId)) {
-        const snapshot = [...componentSnapshotsByPlacement.values()].find(item => item.snapshotId === snapshotId);
-        if (snapshot) return componentTemplateApi.assetContentUrl(snapshot.sourceTemplateId, snapshot.sourceVersion, assetId);
-      }
-      return componentPlacementApi.assetContentUrl(projectId, harnessId, snapshotId, assetId);
-    },
-    [componentPlacementApi, componentSnapshotsByPlacement, componentTemplateApi, harnessId, projectId, localCopy],
+    (snapshotId: string, assetId: string) => componentPlacementApi.assetContentUrl(projectId, harnessId, snapshotId, assetId),
+    [componentPlacementApi, harnessId, projectId],
   );
-
-  useEffect(() => {
-    if (!localCopy || !history || !componentGraphLoaded) return;
-    const generation = loadGeneration.current;
-    for (const connector of history.present.connectors) {
-      const binding = connector.libraryBinding;
-      if (binding?.mode !== "template" || componentSnapshotsByPlacement.has(connector.id) || localTemplateLoading.current.has(connector.id)) continue;
-      localTemplateLoading.current.add(connector.id);
-      void loadComponentTemplateForLocalCopy(componentTemplateApi, binding.templateId, binding.templateVersion).then(template => {
-        if (generation !== loadGeneration.current) return;
-        if (template.versionSha256 !== binding.versionSha256) throw new Error("Версия библиотечного рисунка изменилась.");
-        const snapshot = localTemplateSnapshot(projectId, template);
-        localTemplateSnapshotIds.current.add(snapshot.snapshotId);
-        setComponentSnapshotsByPlacement(current => new Map(current).set(connector.id, snapshot));
-      }).catch(error => {
-        if (generation === loadGeneration.current) setMessage(error instanceof Error ? error.message : "Не удалось загрузить библиотечный рисунок копии.");
-      }).finally(() => localTemplateLoading.current.delete(connector.id));
-    }
-  }, [localCopy, history?.present.connectors, componentSnapshotsByPlacement, componentTemplateApi, projectId, componentGraphLoaded]);
 
   useEffect(() => {
     const generation = ++loadGeneration.current;
@@ -1005,35 +886,11 @@ export function HarnessDesignEditor({
     setEditingObjectId(null);
     setMovePreview(null);
     setComponentSnapshotsByPlacement(new Map());
-    localTemplateLoading.current.clear();
-    localTemplateSnapshotIds.current.clear();
     setComponentGraphLoaded(false);
     setComponentGraphMessage("");
     setMessage("Загружаем документ жгута…");
-    setRecoveryDrafts([]);
-    setRecoveryError("");
-    recoveryArchives.current = [];
     setSaveState("saved");
-    if (localCopy) {
-      const copied = structuredClone(localCopy.initialDocument);
-      const localResource: HarnessDesignResource = {
-        harnessId, schemaVersion: 1, revision: 0, content: copied,
-        updatedUtc: new Date().toISOString(),
-      };
-      setResource(localResource);
-      setHistory(createEditorHistory(copied));
-      savedJsonRef.current = JSON.stringify(copied);
-      setHiddenObjectIds(localCopy.hiddenObjectIds ?? []);
-      setBackgroundOpacity(localCopy.backgroundOpacity ?? 1);
-      setMessage("");
-      void refreshComponentGraph(generation);
-      return () => { loadGeneration.current += 1; componentGraphRequestGeneration.current += 1; };
-    }
-    const journalRequest = recoveryApi.list(projectId, harnessId).catch(() => {
-      if (generation === loadGeneration.current) setRecoveryError("Аварийный журнал недоступен. Восстановление после смены порта не гарантировано; сохраните копию перед закрытием.");
-      return [];
-    });
-    const designRequest = Promise.all([api.get(projectId, harnessId), journalRequest]).then(([loaded, journal]) => {
+    const designRequest = api.get(projectId, harnessId).then((loaded) => {
       if (generation !== loadGeneration.current) return;
       if (initialReveal?.projectId === projectId && initialReveal.harnessId === harnessId) {
         const found = resolveHarnessSelection(buildHarnessSelectionIndex(loaded.content), [initialReveal.objectId]);
@@ -1041,45 +898,10 @@ export function HarnessDesignEditor({
         setRevealRequest({token: Date.now(), objectIds: [...found.wireIds, ...found.componentIds]});
       }
       const savedJson = JSON.stringify(loaded.content);
-      let recoveryMessage = loaded.recoveryWarning ?? "";
-      const candidates: typeof recoveryDrafts[number][] = [];
-      for (const item of journal) {
-        try {
-          const parsed = parseRecoverableHarnessDesignContent(item.content).content;
-          if (JSON.stringify(parsed) === savedJson) {
-            // The server has acknowledged these exact contents. Older clients
-            // could leave this journal behind when their DELETE URL was rejected.
-            void recoveryApi.remove(projectId, harnessId, item.draftId, item.sequence).catch(() => {
-              if (generation === loadGeneration.current) setRecoveryError(recoveryCleanupWarning);
-            });
-            continue;
-          }
-          candidates.push({ id: item.draftId, sequence: item.sequence, content: parsed,
-            baseRevision: item.baseRevision, serverContent: item.serverContent, serverRevision: item.serverRevision });
-        } catch { setRecoveryError("Одна из аварийных копий повреждена и сохранена на диске без изменений."); }
-      }
-      const draft = readHarnessDesignRecoveryDraft(browserRecoveryStorage(), projectId, harnessId);
-      if (draft) {
-        try {
-          const recoveredDraft = parseRecoverableHarnessDesignContent(draft.content);
-          if (JSON.stringify(recoveredDraft.content) !== savedJson) {
-            if (!candidates.some(c => JSON.stringify(c.content) === JSON.stringify(recoveredDraft.content))) candidates.unshift({ id: "browser", content: recoveredDraft.content, baseRevision: draft.baseRevision, serverContent: loaded.content, serverRevision: loaded.revision });
-            const revisionWarning = draft.baseRevision === loaded.revision
-              ? ""
-              : ` Черновик создан от ревизии ${draft.baseRevision}, на сервере уже ревизия ${loaded.revision}; после восстановления внимательно проверьте изменения.`;
-            recoveryMessage = `Найдены несохранённые изменения этого жгута. Серверный документ открыт без изменений; восстановите черновик кнопкой ниже.${revisionWarning}`;
-          } else {
-            removeHarnessDesignRecoveryDraft(browserRecoveryStorage(), projectId, harnessId);
-          }
-        } catch {
-          recoveryMessage = `${recoveryMessage ? `${recoveryMessage} ` : ""}Найден локальный черновик, но он повреждён и не применён.`;
-        }
-      }
-      setRecoveryDrafts(candidates);
       setResource(loaded);
       setHistory(createEditorHistory(reconcileDrawingDocuments(loaded.content, migrateJoiningPipes(loaded.content))));
       savedJsonRef.current = savedJson;
-      setMessage(recoveryMessage);
+      setMessage(loaded.recoveryWarning ?? "");
     }).catch((error: unknown) => {
       if (generation !== loadGeneration.current) return;
       setSaveState("error");
@@ -1092,10 +914,9 @@ export function HarnessDesignEditor({
       loadGeneration.current += 1;
       componentGraphRequestGeneration.current += 1;
     };
-  }, [api, harnessId, projectId, recoveryApi, refreshComponentGraph, localCopy?.initialDocument]);
+  }, [api, harnessId, projectId, refreshComponentGraph]);
 
   const saveOnce = useCallback(async (): Promise<boolean> => {
-      if (localCopy) return true;
       savingRef.current = true;
       try {
         const currentHistory = historyRef.current;
@@ -1115,18 +936,6 @@ export function HarnessDesignEditor({
           historyRef.current = acknowledgedHistory;
           setHistory(acknowledgedHistory);
           setSaveState("saved");
-          if (!recoveryDrafts.some(d => d.id === "browser")) removeHarnessDesignRecoveryDraft(browserRecoveryStorage(), projectId, harnessId);
-          const generation = loadGeneration.current;
-          const archivedAtSave = recoveryArchives.current.slice();
-          void recoverySession.clear().then(() => recoveryApi.removeMany(projectId, harnessId, archivedAtSave)).then((removedIds) => {
-            recoveryArchives.current = recoveryArchives.current.filter(draft => !removedIds.includes(draft.draftId));
-            if (generation === loadGeneration.current) {
-              setRecoveryDrafts(current => current.filter(draft => !removedIds.includes(draft.id)));
-              setRecoveryError(current => current === recoveryCleanupWarning ? "" : current);
-            }
-          }).catch(() => {
-            if (generation === loadGeneration.current) setRecoveryError(recoveryCleanupWarning);
-          });
         } else {
           setSaveState("changed");
         }
@@ -1139,7 +948,7 @@ export function HarnessDesignEditor({
       } finally {
         savingRef.current = false;
       }
-  }, [api, harnessId, projectId, recoveryApi, recoveryDrafts, recoverySession, localCopy]);
+  }, [api, harnessId, projectId]);
 
   const flushSave = useCallback((): Promise<boolean> => {
     if (!saveCoordinatorRef.current) {
@@ -1154,39 +963,14 @@ export function HarnessDesignEditor({
 
   useEffect(() => {
     if (!history) return;
-    if (localCopy) {
-      setSaveState(JSON.stringify(history.present) === savedJsonRef.current ? "saved" : "changed");
-      return;
-    }
     if (JSON.stringify(history.present) === savedJsonRef.current) {
       if (!savingRef.current) setSaveState("saved");
       return;
     }
-    const baseRevision = resourceRef.current?.revision;
-    const recoveryGeneration = loadGeneration.current;
-    if (baseRevision !== undefined) {
-      const localWritten = !recoveryDrafts.some(d => d.id === "browser") && writeHarnessDesignRecoveryDraft(
-        browserRecoveryStorage(),
-        projectId,
-        harnessId,
-        baseRevision,
-        history.present,
-      );
-      if (!localWritten) setRecoveryError("Локальная аварийная копия недоступна или содержит прежний конфликт. Ожидается запись серверного журнала; не закрывайте редактор.");
-      void recoverySession.write(baseRevision, history.present).then(() => {
-        if (recoveryGeneration !== loadGeneration.current) return;
-        setRecoveryError(localWritten ? "" : "Аварийная копия записана на сервере. Резервная запись в браузере недоступна.");
-      }).catch(() => {
-        if (recoveryGeneration !== loadGeneration.current) return;
-        setRecoveryError(localWritten
-          ? "Серверный аварийный журнал не записан. Копия есть только в этом браузере и на этом порту; сохраните документ перед закрытием."
-          : "Аварийная копия не записана ни в браузере, ни на сервере. Не закрывайте редактор; сохраните документ или скачайте копию.");
-      });
-    }
     setSaveState("changed");
     const timer = window.setTimeout(() => void flushSave(), 650);
     return () => window.clearTimeout(timer);
-  }, [flushSave, harnessId, history, projectId, recoveryDrafts, recoverySession, localCopy]);
+  }, [flushSave, history]);
 
   useEffect(() => {
     if (!history) return;
@@ -1333,7 +1117,7 @@ export function HarnessDesignEditor({
     if (placementBusyRef.current || pendingPlacementRef.current) return false;
     const current = historyRef.current;
     if (!current) return false;
-    if(!localCopy && command.type==="set-physical-topology"&&!command.coveringLibrary&&command.topology.coverings?.some(c=>coveringMaterialChanged(current.present,c))){
+    if(command.type==="set-physical-topology"&&!command.coveringLibrary&&command.topology.coverings?.some(c=>coveringMaterialChanged(current.present,c))){
       if(preparingCovering.current){setMessage("Подождите: закрепляем материал оболочки.");return false;}
       preparingCovering.current=true;const generation=loadGeneration.current;setMessage("Закрепляем материал оболочки…");
       void prepareCoverings(current.present,command).then(prepared=>{
@@ -1361,14 +1145,22 @@ export function HarnessDesignEditor({
       setMessage(error instanceof Error ? error.message : "Не удалось изменить документ жгута.");
       return false;
     }
-  }, [prepareCoverings, localCopy, wireLookup.databaseOptions]);
+  }, [prepareCoverings, wireLookup.databaseOptions]);
+
+  const stepHistory = useCallback((step: (history: EditorHistory) => EditorHistory) => {
+    if (placementBusyRef.current || pendingPlacementRef.current) return;
+    const current = historyRef.current;
+    if (!current) return;
+    const next = step(current);
+    historyRef.current = next;
+    setHistory(next);
+  }, []);
 
   const initializedExits = useRef(new Set<string>());
   useEffect(() => {
     if (view !== "drawing" || !history || placementBusy || placementPending) return;
     const pending = history.present.connectors.filter(c=>!initializedExits.current.has(c.id));
     if(!pending.length)return;
-    if (localCopy) return;
     const topology = ensureConnectorExits(history.present);
     if (topology === history.present.physicalTopology || run({ type: "set-physical-topology", topology }))
       history.present.connectors.forEach(c=>initializedExits.current.add(c.id));
@@ -1438,7 +1230,7 @@ export function HarnessDesignEditor({
         setEditingObjectId(null);
         return;
       }
-      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
+      if (target instanceof Element && target.matches("input, textarea, select, [contenteditable='true']")) return;
       if (event.key === "Escape") { setRelatedSourceIds([]); setSelectedObjectId(null); setSelectedObjectIds([]); return; }
       if ((event.key === "Delete" || event.key === "Backspace") && selectedObjectIds.length > 0) {
         const current = historyRef.current?.present;
@@ -1460,15 +1252,15 @@ export function HarnessDesignEditor({
       if((event.key==="["||event.key==="]")&&current){const selected=new Set(selectedObjectIds),delta=event.key==="]"?15:-15,graphics=current.drawingDocuments?.graphics??[],changed=graphics.filter(g=>selected.has(g.id));if(changed.length){event.preventDefault();const docs=current.drawingDocuments!;run({type:"set-drawing-documents",documents:{...docs,graphics:graphics.map(g=>{if(!selected.has(g.id))return g;if(g.kind==="text")return {...g,angle:((g.angle??0)+delta+360)%360};const cx=g.points.reduce((s,p)=>s+p.x,0)/g.points.length,cy=g.points.reduce((s,p)=>s+p.y,0)/g.points.length,a=delta*Math.PI/180,c=Math.cos(a),sn=Math.sin(a);return {...g,points:g.points.map(p=>({x:cx+(p.x-cx)*c-(p.y-cy)*sn,y:cy+(p.x-cx)*sn+(p.y-cy)*c}))};})}});return;}}
       if (key === "z" && !event.shiftKey) {
         event.preventDefault();
-        setHistory((current) => current ? undoEditorCommand(current) : current);
+        stepHistory(undoEditorCommand);
       } else if (key === "y" || (key === "z" && event.shiftKey)) {
         event.preventDefault();
-        setHistory((current) => current ? redoEditorCommand(current) : current);
+        stepHistory(redoEditorCommand);
       }
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [editingObjectId, run, selectedObjectIds,joiningPipeDraft]);
+  }, [editingObjectId, run, selectedObjectIds,joiningPipeDraft,stepHistory]);
 
   if (!history || !resource) {
     return <div className={`he-loading ${saveState === "error" ? "error" : ""}`} role="status">{message}</div>;
@@ -1649,10 +1441,8 @@ export function HarnessDesignEditor({
     let isPersistentTemplate = false;
     if (item.componentTemplateId && item.componentTemplateVersion) {
       try {
-        const template = localCopy
-          ? await loadComponentTemplateForLocalCopy(componentTemplateApi, item.componentTemplateId, item.componentTemplateVersion)
-          : await loadComponentTemplateForPlacement(
-            componentTemplateApi, item.componentTemplateId, item.componentTemplateVersion);
+        const template = await loadComponentTemplateForPlacement(
+          componentTemplateApi, item.componentTemplateId, item.componentTemplateVersion);
         if (generation !== loadGeneration.current) return;
         if (!isTemplateContentV3(template.content) && !isTemplateContentV4(template.content) && !isTemplateContentV5(template.content)) {
           throw new Error("Для размещения в жгуте требуется шаблон v3 или v4.");
@@ -1700,7 +1490,7 @@ export function HarnessDesignEditor({
       type: "add-connector",
       connector: { ...preview, positions: { e4: placement, drawing: placement } },
     };
-    if (isPersistentTemplate && !localCopy) {
+    if (isPersistentTemplate) {
       const currentHistory = historyRef.current;
       const currentResource = resourceRef.current;
       if (!currentHistory || !currentResource) return;
@@ -1941,22 +1731,6 @@ export function HarnessDesignEditor({
   };
 
   const positionsVisible = !!history?.present.drawingDocuments?.leaders.some(leader => !leader.hidden);
-  const isolateLocalObjects = (objectIds: readonly string[]) => {
-    if (!localCopy?.onIsolateObjects) return;
-    const current = historyRef.current?.present;
-    if (!current) return;
-    const detached = localCopy.onIsolateObjects(current, objectIds, scene);
-    if (!detached) return;
-    const next = createEditorHistory(detached);
-    historyRef.current = next;
-    setHistory(next);
-    setHiddenObjectIds([]);
-    setBackgroundOpacity(0);
-    setSelectedObjectId(null);
-    setSelectedObjectIds([]);
-    setMessage("Создан изолированный фрагмент. Его геометрия не связана с исходным маршрутом.");
-  };
-
   return (
     <div className={`he-host ${placementBusy ? "is-placement-busy" : ""}`}>
       {message && <div className="he-save-message" role="alert">{message.startsWith("Схема открыта в безопасном режиме")
@@ -1968,61 +1742,6 @@ export function HarnessDesignEditor({
           {routingIssues.map((issue) => <div key={issue.wireId}>{issue.wireId}: {issue.message}</div>)}
         </InfoHint>
       </div>}
-      {recoveryError && <div className="he-save-message" role="alert">{recoveryError}
-        <button type="button" onClick={() => {
-          const url = URL.createObjectURL(new Blob([JSON.stringify(history.present, null, 2)], { type: "application/json" }));
-          const link = document.createElement("a"); link.href = url; link.download = `harness-${harnessId}-recovery.json`; link.click();
-          window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-        }}>Скачать текущую копию</button>
-      </div>}
-      {recoveryDrafts.map(draft => <div key={draft.id} className="he-recovery-draft" role="alert">
-        <span>Аварийная копия от ревизии {draft.baseRevision}. Текущий серверный документ не заменён.</span>
-        <button type="button" onClick={() => void (async () => {
-          if (recoveryBusy.current) return;
-          recoveryBusy.current = true;
-          const beforeRestore = historyRef.current;
-          const generation = loadGeneration.current;
-          try {
-            const archived: Pick<ServerRecoveryDraft, "draftId" | "sequence">[] = [];
-            if (beforeRestore && JSON.stringify(beforeRestore.present) !== savedJsonRef.current) {
-              // The current editor can itself contain unsaved edits when another copy is selected.
-              const draftId = crypto.randomUUID();
-              await recoveryApi.put(projectId, harnessId, draftId, 1,
-                resourceRef.current?.revision ?? 0, beforeRestore.present);
-              archived.push({ draftId, sequence: 1 });
-            }
-            // Archive both alternatives before applying the recovery copy.
-            const draftId = crypto.randomUUID();
-            await recoveryApi.put(projectId, harnessId, draftId, 1, draft.baseRevision, draft.content);
-            archived.push({ draftId, sequence: 1 });
-            if (generation !== loadGeneration.current) return;
-            if (historyRef.current !== beforeRestore) {
-              setRecoveryError("Во время подготовки восстановления документ изменился. Обе копии сохранены; повторите восстановление после завершения изменений.");
-              return;
-            }
-            recoverySession.preserve();
-            recoveryArchives.current.push(...archived);
-            const next = createEditorHistory(migrateJoiningPipes(draft.content));
-            historyRef.current = next; setHistory(next);
-            setRecoveryDrafts(current => current.filter(item => item.id !== draft.id));
-            if (draft.id === "browser") removeHarnessDesignRecoveryDraft(browserRecoveryStorage(), projectId, harnessId);
-            setMessage("Аварийная копия восстановлена; исходная и серверная версии сохранены в журнале.");
-          } catch { setRecoveryError("Восстановление отменено: не удалось сохранить обе конфликтующие копии в журнале."); }
-          finally { recoveryBusy.current = false; }
-        })()}>Восстановить</button>
-        <button type="button" onClick={() => {
-          const url = URL.createObjectURL(new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" }));
-          const link = document.createElement("a"); link.href = url; link.download = `harness-${harnessId}-conflict.json`; link.click();
-          window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-        }}>Скачать обе версии</button>
-        <button type="button" onClick={() => void (async () => {
-          try {
-            if (draft.id === "browser") removeHarnessDesignRecoveryDraft(browserRecoveryStorage(), projectId, harnessId);
-            else await recoveryApi.remove(projectId, harnessId, draft.id, draft.sequence!);
-            setRecoveryDrafts(current => current.filter(item => item.id !== draft.id));
-          } catch { setRecoveryError("Копия изменилась или журнал недоступен. Аварийная копия не удалена."); }
-        })()}>Удалить эту аварийную копию</button>
-      </div>)}
       {view==="drawing" && drawingDocument.connectors.some(c=>c.libraryBinding?.mode==="template"&&materializedConnectorIds.has(c.id)&&componentTemplateViewInstances.some(i=>i.objectId===c.id&&projectComponentTemplateView(i,"drawing",{x:0,y:0})?.commands.length)&&c.libraryBinding.snapshot.contacts.some(p=>!p.representations.some(r=>r.viewKind==="drawing"))) && <div className="he-save-message" role="alert">В рисунке не заданы точки части контактов. Откройте рисунок артикула в библиотеке, свяжите контакты с колонкой № либо задайте общий выход для чертежа и обновите компонент.</div>}
       {componentGraphIntegrityMessage && <ComponentGraphErrorAlert
         message={componentGraphIntegrityMessage}
@@ -2041,8 +1760,6 @@ export function HarnessDesignEditor({
         harnessDesignation={harnessDesignation}
         view={view}
         objects={withCoveringTextureUrls(scene,textureAssets.urls).map(object => (object.kind === "wire" || object.kind === "physical-segment" || object.kind === "physical-covering") ? {...object,metadata:{...object.metadata,volumeShading:object.metadata?.volumeShading??String(history.present.drawingDocuments?.volumeShading !== false)}} : object)}
-        backgroundObjects={localCopy ? withCoveringTextureUrls(scene.filter(object => hiddenObjectIds.includes(object.id)), textureAssets.urls) : undefined}
-        backgroundOpacity={localCopy ? backgroundOpacity : undefined}
         layers={layers}
         catalogItems={catalog.items}
         catalogSources={catalog.sources}
@@ -2078,7 +1795,7 @@ export function HarnessDesignEditor({
           {view === "e4" && <>
             <ConnectionTableSettings />
             <section className="he-utility-section he-controls-section" aria-labelledby="he-e4-routing-heading">
-              <h3 id="he-e4-routing-heading">Маршрути Э4</h3>
+              <h3 id="he-e4-routing-heading">Маршруты Э4</h3>
               <button
                 type="button"
                 className="ui-control he-control-action"
@@ -2112,7 +1829,7 @@ export function HarnessDesignEditor({
             <h3 id="he-documents-heading">Документы</h3>
             {view === "drawing" && <button type="button" className="ui-control he-document-action" onClick={()=>run({type:"set-drawing-documents",documents:addDrawingPositions(history.present,drawingPerimeters)})}><span className="he-doc-icon"><DocumentIcon kind="positions" /></span>Добавить позиции</button>}
             {view === "drawing" && <button type="button" className="ui-control he-document-action he-document-toggle" aria-pressed={positionsVisible} aria-label={positionsVisible?"Скрыть позиции":"Показать позиции"} title={positionsVisible?"Скрыть позиции на чертеже":"Показать позиции на чертеже"} onClick={()=>run({type:"set-drawing-documents",documents:setDrawingPositionsVisibility(history.present,!positionsVisible,drawingPerimeters)})}><span className="he-doc-icon"><DocumentIcon kind="visibility" visible={positionsVisible} /></span>Позиции</button>}
-            {(["connections","cut","bom"] as const).map(kind=><button type="button" className="ui-control he-document-action" key={kind} disabled={kind==="cut"&&!routeCutReadiness(history.present,resource.sourceFingerprint,saveState!=="saved").ready} title={kind==="cut"?routeCutReadiness(history.present,resource.sourceFingerprint,saveState!=="saved").message:undefined} onClick={()=>{if(kind!=="connections"&&view!=="drawing"){setView("drawing");onViewChange?.("drawing");}const documents=history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]};if(!documents.tables.some(t=>t.kind===kind))run({type:"set-drawing-documents",documents:{...documents,tables:[...documents.tables,{id:crypto.randomUUID(),kind,position:{x:20,y:20},dock:"bottom",width:960,height:300}]}});}}><span className="he-doc-icon"><DocumentIcon kind={kind} /></span>{kind==="bom"?"Спецификация":kind==="cut"?"Карта резки":"Таблица соединений"}</button>)}
+            {(["connections","cut","bom"] as const).map(kind=><button type="button" className="ui-control he-document-action" key={kind} disabled={kind==="cut"&&!routeCutReadiness(history.present,resource.sourceFingerprint,saveState!=="saved").ready} title={kind==="cut"?routeCutReadiness(history.present,resource.sourceFingerprint,saveState!=="saved").message:undefined} onClick={()=>{if(kind!=="connections"&&view!=="drawing"){setView("drawing");onViewChange?.("drawing");}const documents=withDrawingTable(history.present.drawingDocuments,kind);if(documents&&documents!==history.present.drawingDocuments)run({type:"set-drawing-documents",documents});}}><span className="he-doc-icon"><DocumentIcon kind={kind} /></span>{kind==="bom"?"Спецификация":kind==="cut"?"Карта резки":"Таблица соединений"}</button>)}
           </section>
         </>}
         drawingWindows={camera=><DrawingTableWindows connectionTableSettings={connectionTableSettings} sourceFingerprint={resource.sourceFingerprint} wireOptions={wireLookup.options} wireDatabaseOptions={wireLookup.databaseOptions} onWireSearch={wireLookup.search} perimeters={drawingPerimeters} view={view} document={history.present} camera={camera} quantity={harnessQuantity} revision={resource.revision} unsaved={saveState!=="saved"} selectedIds={[...selectedObjectIds,...related.rowIds]} onChange={documents=>run({type:"set-drawing-documents",documents})} onCommand={run} onReveal={ids=>{setRelatedSourceIds(ids);setSelectedObjectId(null);setSelectedObjectIds([]);}}/>}
@@ -2138,11 +1855,11 @@ export function HarnessDesignEditor({
         onGraphicCopy={()=>{graphicsClipboardRef.current=(history.present.drawingDocuments?.graphics??[]).filter(g=>selectedObjectIds.includes(g.id));}}
         onGraphicPaste={()=>{const documents=history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]},copies=graphicsClipboardRef.current.map(g=>({...g,id:crypto.randomUUID(),view,points:g.points.map(p=>({x:p.x+20,y:p.y+20}))}));if(copies.length&&run({type:"set-drawing-documents",documents:{...documents,graphics:[...(documents.graphics??[]),...copies]}})){setSelectedObjectIds(copies.map(g=>g.id));setSelectedObjectId(copies.at(-1)?.id??null);}}}
         onGraphicDelete={()=>{const commands=selectedEditorDeletionCommands(history.present,selectedObjectIds);commands.filter(c=>c.type==="set-drawing-documents"&&c.documents.graphics!==undefined).forEach(run);setSelectedObjectIds([]);setSelectedObjectId(null);}}
-        onUndo={()=>setHistory(current=>current?undoEditorCommand(current):current)}
+        onUndo={()=>stepHistory(undoEditorCommand)}
         angleStep={graphicAngleStep}
         onAngleStepChange={setGraphicAngleStep}
         onDrawingSnapsChange={setDrawingSnaps}
-        relationPanel={()=><>{view === "drawing" && <PhysicalTopologyPanel mode="actions" document={history.present} selectedId={selectedObjectId} selectedIds={selectedObjectIds} onChange={topology => run({ type: "set-physical-topology", topology })} onSelect={(id,additive) => { setRelatedSourceIds([]); setSelectedObjectId(id); setSelectedObjectIds(additive ? [...new Set([...selectedObjectIds,id])] : [id]); }} />}{view==="drawing"&&<SpecificationItemsPanel documents={history.present.drawingDocuments} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})} onSelect={id=>{setSelectedObjectId(id);setSelectedObjectIds([id]);}}/>}{view==="drawing"&&<DrawingDimensionsPanel pipeInterval={selectedPipeInterval} document={history.present} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})}/>} {<DrawingDocumentsPanel connectionTableSettings={connectionTableSettings} sourceFingerprint={resource.sourceFingerprint} unsaved={saveState!=="saved"} wireOptions={wireLookup.options} wireDatabaseOptions={wireLookup.databaseOptions} onWireSearch={wireLookup.search} perimeters={drawingPerimeters} availableKinds={view==="drawing"?undefined:["connections"]} document={history.present} quantity={harnessQuantity} selectedId={selectedObjectId} selectedIds={[...selectedObjectIds,...related.wireIds,...related.componentIds,...related.rowIds]} onChange={documents=>run({type:"set-drawing-documents",documents})} onCommand={run} onReveal={ids=>{setRelatedSourceIds(ids);setSelectedObjectId(null);setSelectedObjectIds([]);}} />}<HarnessRelationsPanel sourceFingerprint={resource.sourceFingerprint} showCut={view==="drawing"} onOpenCut={view==="drawing"?()=>run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),tables:[...(history.present.drawingDocuments?.tables??[]),{id:crypto.randomUUID(),kind:"cut",position:{x:20,y:20}}]}}):undefined} revision={resource.revision} onCommand={run} document={history.present} projectId={projectId} harnessId={harnessId} quantity={harnessQuantity} related={related} wholeNet={wholeNet} onWholeNet={setWholeNet} unsaved={saveState !== "saved"} hiddenCount={related.wireIds.filter(id => { const wire = history.present.wires.find(w => w.id === id); return wire && layers.some(layer => layer.id === wire.layerIds[view] && !layer.visible); }).length}
+        relationPanel={()=><>{view === "drawing" && <PhysicalTopologyPanel mode="actions" document={history.present} selectedId={selectedObjectId} selectedIds={selectedObjectIds} onChange={topology => run({ type: "set-physical-topology", topology })} onSelect={(id,additive) => { setRelatedSourceIds([]); setSelectedObjectId(id); setSelectedObjectIds(additive ? [...new Set([...selectedObjectIds,id])] : [id]); }} />}{view==="drawing"&&<SpecificationItemsPanel documents={history.present.drawingDocuments} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})} onSelect={id=>{setSelectedObjectId(id);setSelectedObjectIds([id]);}}/>}{view==="drawing"&&<DrawingDimensionsPanel pipeInterval={selectedPipeInterval} document={history.present} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})}/>} {<DrawingDocumentsPanel connectionTableSettings={connectionTableSettings} sourceFingerprint={resource.sourceFingerprint} unsaved={saveState!=="saved"} wireOptions={wireLookup.options} wireDatabaseOptions={wireLookup.databaseOptions} onWireSearch={wireLookup.search} perimeters={drawingPerimeters} availableKinds={view==="drawing"?undefined:["connections"]} document={history.present} quantity={harnessQuantity} selectedId={selectedObjectId} selectedIds={[...selectedObjectIds,...related.wireIds,...related.componentIds,...related.rowIds]} onChange={documents=>run({type:"set-drawing-documents",documents})} onCommand={run} onReveal={ids=>{setRelatedSourceIds(ids);setSelectedObjectId(null);setSelectedObjectIds([]);}} />}<HarnessRelationsPanel sourceFingerprint={resource.sourceFingerprint} showCut={view==="drawing"} onOpenCut={view==="drawing"?()=>{const documents=withDrawingTable(history.present.drawingDocuments,"cut");if(documents&&documents!==history.present.drawingDocuments)run({type:"set-drawing-documents",documents});}:undefined} revision={resource.revision} onCommand={run} document={history.present} projectId={projectId} harnessId={harnessId} quantity={harnessQuantity} related={related} wholeNet={wholeNet} onWholeNet={setWholeNet} unsaved={saveState !== "saved"} hiddenCount={related.wireIds.filter(id => { const wire = history.present.wires.find(w => w.id === id); return wire && layers.some(layer => layer.id === wire.layerIds[view] && !layer.visible); }).length}
           onClear={() => {setRelatedSourceIds([]); setSelectedObjectId(null); setSelectedObjectIds([]);}}
           onReveal={id => {
             const found = id && selectionIndex ? resolveHarnessSelection(selectionIndex, [id], wholeNet) : related;
@@ -2162,26 +1879,7 @@ export function HarnessDesignEditor({
         componentTemplateViewInstances={componentTemplateViewInstances}
         resolveComponentTemplateAssetUrl={resolveComponentTemplateAssetUrl}
         saveState={saveState}
-        onSaveRequest={localCopy ? () => {
-          const current = historyRef.current?.present;
-          if (current) {
-            try {
-              saveLocalDrawingCopy(current, hiddenObjectIds, backgroundOpacity, localCopy.onSave);
-              setSaveState("saved");
-              setMessage("");
-            } catch (error) {
-              setSaveState("error");
-              setMessage(error instanceof Error ? error.message : "Не удалось сохранить фрагмент.");
-            }
-          }
-        } : () => void flushSave()}
-        localCopyControls={localCopy ? {
-          hiddenObjectIds, backgroundOpacity,
-          onHiddenObjectIdsChange: ids => { setHiddenObjectIds(ids); localCopy.onHiddenObjectIdsChange?.(ids); },
-          onBackgroundOpacityChange: opacity => { setBackgroundOpacity(opacity); localCopy.onBackgroundOpacityChange?.(opacity); },
-          onObjectsIsolate: localCopy.onIsolateObjects ? isolateLocalObjects : undefined,
-          onCancel: localCopy.onCancel,
-        } : undefined}
+        onSaveRequest={() => void flushSave()}
         onDrawingScale={(connectorId,drawingId,scale)=>run({type:"set-drawing-placement",connectorId,drawingId,scale})}
         onDrawingMove={(connectorId,drawingId,offset)=>run({type:"set-drawing-placement",connectorId,drawingId,offset})}
         propertyInspector={selectedObjectId && history.present.drawingDocuments?.graphics?.some(g=>g.id===selectedObjectId) ? <DrawingObjectProperties document={history.present} objectId={selectedObjectId} selectedIds={selectedObjectIds} onCommand={run} instances={componentTemplateViewInstances} wireMaterialOptions={wireLookup.databaseOptions} onSelect={id=>{setSelectedObjectId(id);setSelectedObjectIds([id]);}}/> : selectedObjectId && (history.present.drawingDocuments?.specificationItems?.some(i=>i.id===selectedObjectId) || history.present.drawingDocuments?.dimensions?.some(d=>d.id===selectedObjectId) || history.present.drawingDocuments?.tables.some(t=>t.id===selectedObjectId) || history.present.drawingDocuments?.leaders.some(l=>l.id===selectedObjectId||`${l.id}:anchor`===selectedObjectId) || history.present.drawingDocuments?.rails?.some(r=>selectedObjectId===r.id||selectedObjectId===`${r.id}:start`||selectedObjectId===`${r.id}:end`) || history.present.physicalTopology?.coverings?.some(c=>c.id===selectedObjectId) || history.present.physicalTopology?.nodes.some(n=>n.id===selectedObjectId) || history.present.physicalTopology?.segments.some(s=>s.id===selectedObjectId) || history.present.physicalTopology?.joiningPipes?.some(p=>p.id===selectedObjectId)) ? <></> : selectedConnector ? (<>
@@ -2256,13 +1954,6 @@ export function HarnessDesignEditor({
           setView(nextView);
           onViewChange?.(nextView);
         }}
-        onRouteRequest={!localCopy && onRouteRequest ? async () => {
-          if (await flushSave()) onRouteRequest();
-        } : undefined}
-        onSectionChange={!localCopy && onSectionChange ? async section => {
-          if (section === "e4" || section === "drawing") return;
-          if (await flushSave()) await onSectionChange(section);
-        } : undefined}
         onSelectedObjectChange={(objectId) => {
           setRelatedSourceIds([]);
           setSelectedObjectId(objectId);
@@ -2546,7 +2237,7 @@ export function HarnessDesignEditor({
           view,
           layers: fromUiLayers(nextLayers, history.present.views[view].layers),
         })}
-        onClose={localCopy ? localCopy.onCancel : onClose ? async () => {
+        onClose={onClose ? async () => {
           if (await flushSave()) onClose();
         } : undefined}
       /></HarnessEditorErrorBoundary>

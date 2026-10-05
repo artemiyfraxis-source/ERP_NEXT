@@ -1,15 +1,13 @@
 import { catalogOuterDiameter } from "./drawing-thickness";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { LocalSession } from "../local-session";
 import {
-  createReferenceCatalogApi,
   ReferenceCatalogApiError,
+  type ReferenceCatalogAdapter,
   type ReferenceCatalogSearchRecord,
-} from "../reference-catalog-api";
-import type { RuntimeConfig } from "../runtime-config";
-import {
-  createComponentTemplateApi,
-  type ComponentTemplateSummary,
+} from "../reference-catalog";
+import type {
+  ComponentTemplateApi,
+  ComponentTemplateSummary,
 } from "../component-library/component-template-api";
 import { builtInConnectorTemplates } from "./connector-series-demo";
 import { normalizeWireStripProfileBinding } from "./model";
@@ -41,8 +39,8 @@ const componentLibrarySource: EditorCatalogSource = {
 };
 
 export const remoteEditorCatalogSources: readonly RemoteCatalogSource[] = [
-  { id: "technology-wires", label: "Провода", description: "Каталог проводов E3:AJ: марка и комплексное сечение", entityTypes: ["wire", "cable"], accent: "#356c88" },
-  { id:"technology-protection", catalogSourceId:"technology-database", label:"Защита", description:"Защитные покрытия из опубликованного справочника: тип protective-covering", entityTypes:["protective-covering"], accent:"#758087" },
+  { id: "technology-wires", label: "Провода", description: "Каталог проводов: марка и сечение", entityTypes: ["wire", "cable"], accent: "#356c88" },
+  { id:"technology-protection", catalogSourceId:"technology-database", label:"Защита", description:"Защитные покрытия из справочника", entityTypes:["protective-covering"], accent:"#758087" },
   {
     id: "technology-database",
     label: "Провода (универсальная база)",
@@ -53,21 +51,21 @@ export const remoteEditorCatalogSources: readonly RemoteCatalogSource[] = [
   {
     id: "technology-terminals",
     label: "Терминалы",
-    description: "Опубликованный справочник БД.ТЕР",
+    description: "Справочник терминалов",
     entityTypes: ["terminal"],
     accent: "#8a6635",
   },
   {
     id: "technology-coax-cables",
     label: "Кабели",
-    description: "Диаметры коаксиальных кабелей из СПР.КАБ",
+    description: "Диаметры коаксиальных кабелей",
     entityTypes: ["coax-cable"],
     accent: "#596d78",
   },
   {
     id: "technology-coax-terminations",
     label: "Разделка коаксиала",
-    description: "Послойные диаметры и длины разделки из БД.КОАКС",
+    description: "Послойные диаметры и длины разделки коаксиала",
     entityTypes: ["coax-termination"],
     accent: "#6d5b78",
   },
@@ -392,10 +390,8 @@ export interface TerminalArticleLookupState {
  * The inline free connector keeps manual input, while the datalist can query
  * the whole published terminal reference as the operator types. */
 export function useTerminalArticleLookup(
-  config: RuntimeConfig,
-  session: LocalSession,
+  api: ReferenceCatalogAdapter,
 ): TerminalArticleLookupState {
-  const api = useMemo(() => createReferenceCatalogApi(config, session), [config, session]);
   const [query, setQuery] = useState<string | null>(null);
   const [debouncedQuery, setDebouncedQuery] = useState<string | null>(null);
   const [articles, setArticles] = useState<readonly string[]>([]);
@@ -445,8 +441,7 @@ export function useTerminalArticleLookup(
 const pageSize = 30;
 
 /** Debounced lookup stays independent from the currently selected side catalog. */
-export function useWireDatabaseLookup(config: RuntimeConfig, session: LocalSession) {
-  const api = useMemo(() => createReferenceCatalogApi(config, session), [config, session]);
+export function useWireDatabaseLookup(api: ReferenceCatalogAdapter) {
   const [query, setQuery] = useState<string | null>(null);
   const [options, setOptions] = useState<readonly WireDatabaseOption[]>(builtInWireOptions);
   const [databaseOptions, setDatabaseOptions] = useState<readonly WireDatabaseOption[]>([]);
@@ -458,18 +453,18 @@ export function useWireDatabaseLookup(config: RuntimeConfig, session: LocalSessi
       if (!snapshot) {
         setDatabaseOptions([]);
         setOptions(builtInWireOptions);
-        setMessage("Каталог проводов E3:AJ ещё не загружен. Откройте «Справочники» → «Подключить базу проводов».");
+        setMessage("Каталог проводов ещё не подключён. Доступны встроенные варианты и ручной ввод.");
         return;
       }
       const next = snapshot.records.filter(record => record.entityType === "wire" && isSelectableWirePayload(record.payload))
         .map(record => wireDatabaseOption(record, { snapshotId: snapshot.snapshotId, snapshotSha256: snapshot.sha256 }));
       setDatabaseOptions(next);
       setOptions(next.length ? next : builtInWireOptions);
-      setMessage(next.length ? null : "Каталог проводов пуст. Загрузите лист «Провода», диапазон E3:AJ.");
+      setMessage(next.length ? null : "Каталог проводов пуст. Доступны встроенные варианты и ручной ввод.");
     }).catch(() => {
       if (!controller.signal.aborted) {
         setDatabaseOptions([]);
-        setMessage("Не удалось прочитать каталог проводов. Проверьте справочник в разделе «Справочники».");
+        setMessage("Не удалось прочитать каталог проводов. Доступны встроенные варианты и ручной ввод.");
       }
     });
     return () => controller.abort();
@@ -505,11 +500,9 @@ export function useWireDatabaseLookup(config: RuntimeConfig, session: LocalSessi
 }
 
 export function useEditorReferenceCatalog(
-  config: RuntimeConfig,
-  session: LocalSession,
+  api: ReferenceCatalogAdapter,
+  componentApi: ComponentTemplateApi,
 ): EditorReferenceCatalogState {
-  const api = useMemo(() => createReferenceCatalogApi(config, session), [config, session]);
-  const componentApi = useMemo(() => createComponentTemplateApi(config, session), [config, session]);
   const [selectedSourceId, setSelectedSourceId] = useState(componentLibrarySource.id);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");

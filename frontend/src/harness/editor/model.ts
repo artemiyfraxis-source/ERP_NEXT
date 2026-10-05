@@ -1,5 +1,4 @@
 import {restoreTemplateContactNumbers,templateContactNumbers} from "./template-contact-numbering";
-import { parseManufacturingRoute, type ManufacturingRoute } from "../manufacturing/route-model";
 import { commonParallelSpan } from "./e4-parallel-spans";
 import { segmentPointDistance } from "./segment-geometry";
 import { straightLeadEnd } from "./route-lead";
@@ -568,7 +567,8 @@ export interface HarnessDesignDocument {
   readonly schemaVersion: 1;
   /** Minimum writer contract required to safely preserve this document. */
   readonly requiredWriterContractVersion?: 1 | 2;
-  readonly manufacturingRoute?: ManufacturingRoute;
+  /** Manufacturing route of TECHMAP-GRAPHER (Route V2). Not edited in the ERP; kept verbatim so a save never drops it. */
+  readonly manufacturingRoute?: Readonly<Record<string, unknown>>;
   /** User-created wire colors retained by this harness even when temporarily unused. */
   readonly customWireColors?: readonly string[];
   readonly connectors: readonly ConnectorInstance[];
@@ -741,7 +741,7 @@ export function parseHarnessDesignDocument(value: unknown): HarnessDesignDocumen
   let document: HarnessDesignDocument = {
     schemaVersion: 1,
     ...(record.requiredWriterContractVersion === 1 || record.requiredWriterContractVersion === 2 ? { requiredWriterContractVersion: record.requiredWriterContractVersion } : {}),
-    ...(record.manufacturingRoute !== undefined ? { manufacturingRoute: parseManufacturingRoute(record.manufacturingRoute) } : {}),
+    ...(record.manufacturingRoute !== undefined ? { manufacturingRoute: requireRecord(record.manufacturingRoute, "Маршрут изготовления задан неверно.") } : {}),
     customWireColors: parseCustomWireColors(record.customWireColors),
     connectors: record.connectors.map(parseConnector),
     wires: wireValues.map(parseWire),

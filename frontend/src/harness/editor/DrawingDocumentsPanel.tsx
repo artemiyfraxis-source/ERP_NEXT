@@ -1,4 +1,4 @@
-import { routeCutReadiness } from "../manufacturing/route-cut-readiness";
+import { routeCutReadiness } from "./cut-readiness";
 import type { DrawingPerimeters } from "./drawing-object-perimeter";
 import { pipeMeasuredWireLength } from "./drawing-dimensions";
 import { useEffect, useState, type CSSProperties } from "react";

@@ -1,40 +1,50 @@
-import {useEffect,useMemo,useState} from "react";
-import {createMutationHeaders,type LocalSession} from "../local-session";
-import {buildApiUrl,type RuntimeConfig} from "../runtime-config";
+import {useEffect,useState} from "react";
 import type {CoveringTextureEntry} from "./covering-library";
 import type {EditorSceneObject} from "./editor-types";
+import type {CoveringKind} from "./physical-coverings";
+
 export function withCoveringTextureUrls(objects:readonly EditorSceneObject[],urls:Readonly<Record<string,string>>):EditorSceneObject[] {
   return objects.map(o=>{if(o.kind!=="physical-covering")return o;const texture=JSON.parse(o.metadata?.coveringStyle??"{}").texture as string|undefined;
     return {...o,metadata:{...o.metadata,coveringTextureUrl:texture?.startsWith("asset:")?urls[texture.slice(6)]??"":""}};
   });
 }
 
-interface TextureAttachment {attachmentId:string;sha256:string;fileName:string;mediaType:string;purpose:string}
-export function createCoveringAssetApi(config:RuntimeConfig,session:LocalSession,projectId:string,fetcher:typeof fetch=fetch) {
-  const path=`projects/${encodeURIComponent(projectId)}`;
-  const request=async(route:string,init?:RequestInit)=>{
-    const r=await fetcher(buildApiUrl(config,route),{credentials:"same-origin",cache:"no-store",...init});
-    if(!r.ok)throw new Error(r.status===409?"Проект изменился. Повторите загрузку текстуры.":"Не удалось загрузить текстуру проекта.");
-    return r.json();
-  };
-  const parse=(a:TextureAttachment)=>{
-    if(!a||typeof a.attachmentId!=="string"||!/^([\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})$/i.test(a.attachmentId)||typeof a.sha256!=="string"||!/^([a-f0-9]{64})$/.test(a.sha256)||a.mediaType!=="image/png"||a.purpose!=="covering-texture"||typeof a.fileName!=="string")throw new Error("Повреждена запись текстуры.");return a;
-  };
-  const url=(a:TextureAttachment)=>buildApiUrl(config,`${path}/attachments/${encodeURIComponent(a.attachmentId)}/content`);
+/** A shared covering material: either a hatch (hatchCode) or a texture image pinned into the project. */
+export interface GlobalMaterial {
+  readonly materialId:string; readonly name:string;
+  readonly lineColor:string; readonly lineWidth:number; readonly textureAngle:number; readonly textureScale:number;
+  readonly tint:string; readonly backgroundColor?:string; readonly hatchCode?:string|null; readonly hatchLineWidth?:number;
+  readonly coveringKind:CoveringKind|null; readonly updatedUtc:string; readonly revision:number;
+}
+
+/**
+ * Covering materials and project textures. Uploading photos/images is not part of the ERP port;
+ * the adapter only lists what already exists and pins a material's texture into the project.
+ */
+export interface CoveringMaterialApi {
+  listMaterials():Promise<readonly GlobalMaterial[]>;
+  /** Returns the project texture entry for a texture-based material, pinning it when needed. */
+  pinTexture(projectId:string,material:GlobalMaterial):Promise<CoveringTextureEntry>;
+  listTextures(projectId:string):Promise<readonly {readonly entry:CoveringTextureEntry;readonly url:string}[]>;
+}
+
+export function createInMemoryCoveringMaterialApi(
+  materials:readonly GlobalMaterial[]=[],
+  textures:Readonly<Record<string,{readonly entry:CoveringTextureEntry;readonly url:string}>>={},
+):CoveringMaterialApi {
   return {
-    async list(){const data=await request(`${path}/attachments`);if(!Array.isArray(data.attachments))throw new Error("Повреждён список текстур.");return (data.attachments as TextureAttachment[]).filter(a=>a.purpose==="covering-texture"&&a.mediaType==="image/png").map(a=>({entry:{sha256:parse(a).sha256,name:a.fileName},url:url(a)}));},
-    async upload(file:File){
-      const {importDrawingImage}=await import("../component-library/image-import");
-      const image=await importDrawingImage(file);
-      const project=await request(path);if(!Number.isSafeInteger(project.revision)||project.revision<0)throw new Error("Повреждена версия проекта.");
-      const result=await request(`${path}/attachments`,{method:"POST",headers:createMutationHeaders(session),body:JSON.stringify({commandId:crypto.randomUUID(),expectedRevision:project.revision,...image,purpose:"covering-texture"})});
-      const a=parse(result.attachment);return {entry:{sha256:a.sha256,name:file.name},url:url(a)};
+    async listMaterials(){return materials;},
+    async pinTexture(_projectId,material){
+      const found=textures[material.materialId];
+      if(!found)throw new Error("Не загружена текстура материала.");
+      return {...found.entry,name:material.name};
     },
+    async listTextures(){return Object.values(textures);},
   };
 }
-export function useCoveringAssets(config:RuntimeConfig,session:LocalSession,projectId:string,needed:boolean,version="") {
-  const api=useMemo(()=>createCoveringAssetApi(config,session,projectId),[config,session,projectId]);
+
+export function useCoveringAssets(api:CoveringMaterialApi,projectId:string,needed:boolean,version="") {
   const [urls,setUrls]=useState<Readonly<Record<string,string>>>({}),[error,setError]=useState("");
-  useEffect(()=>{let cancelled=false;setUrls({});setError("");if(needed)void api.list().then(items=>{if(!cancelled)setUrls(Object.fromEntries(items.map(a=>[a.entry.sha256,a.url])));}).catch(e=>{if(!cancelled)setError(String(e.message));});return()=>{cancelled=true;};},[api,needed,version]);
-  return {urls,error,upload:async(file:File):Promise<CoveringTextureEntry>=>{const value=await api.upload(file);setUrls(old=>({...old,[value.entry.sha256]:value.url}));return value.entry;}};
+  useEffect(()=>{let cancelled=false;setUrls({});setError("");if(needed)void api.listTextures(projectId).then(items=>{if(!cancelled)setUrls(Object.fromEntries(items.map(a=>[a.entry.sha256,a.url])));}).catch(e=>{if(!cancelled)setError(e instanceof Error?e.message:String(e));});return()=>{cancelled=true;};},[api,projectId,needed,version]);
+  return {urls,error};
 }

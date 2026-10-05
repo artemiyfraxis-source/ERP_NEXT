@@ -13,6 +13,8 @@ export function createEditorHistory(document: HarnessDesignDocument): EditorHist
 
 export function executeEditorCommand(history: EditorHistory, command: EditorCommand): EditorHistory {
   const next = applyEditorCommand(history.present, command);
+  // A command that changes nothing must not leave an empty undo step behind.
+  if (next === history.present) return history;
   return {
     past: [...history.past, history.present].slice(-100),
     present: next,

@@ -4,9 +4,6 @@ import "./harness-section-navigation.css";
 export const harnessSectionItems = [
   { id: "e4", label: "Схема Э4" },
   { id: "drawing", label: "Чертёж" },
-  { id: "route", label: "Маршрут" },
-  { id: "route-v2", label: "Маршрут v2" },
-  { id: "uml", label: "UML универсальный" },
 ] as const;
 
 export type HarnessSectionId = typeof harnessSectionItems[number]["id"];

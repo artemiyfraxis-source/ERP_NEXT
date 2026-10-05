@@ -1,10 +1,9 @@
-import { createMutationHeaders, type LocalSession } from "../local-session";
-import { buildApiUrl, type RuntimeConfig } from "../runtime-config";
 import {
   parseComponentTemplateContent,
   type ComponentTemplateContent,
 } from "../component-library/template-content";
-import { HarnessDesignApiError } from "./design-api";
+import type { ComponentTemplateApi } from "../component-library/component-template-api";
+import { HarnessDesignApiError, type InMemoryHarnessDesignApi } from "./design-api";
 import type { ConnectorInstance } from "./model";
 import { validateConnectorLibraryMetadata } from "./model";
 
@@ -90,78 +89,81 @@ export interface ProjectComponentPlacementGraph {
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+/** Project-owned placements of library components: each placement pins an immutable template snapshot. */
+export interface ComponentPlacementApi {
+  list(projectId: string, harnessId: string): Promise<ProjectComponentPlacementGraph>;
+  assetContentUrl(projectId: string, harnessId: string, snapshotId: string, assetId: string): string;
+  /** Atomically pins the snapshot and adds the connector to the design (revision + 1). Idempotent by commandId. */
+  place(projectId: string, harnessId: string, body: PlaceComponentRequest): Promise<ComponentPlacementResult>;
+}
 
-export function createComponentPlacementApi(
-  config: RuntimeConfig,
-  session: LocalSession,
-  fetcher: Fetcher = fetch,
-) {
-  const headers = createMutationHeaders(session);
+/**
+ * In-memory counterpart of the placement endpoint. It writes the connector into the in-memory design
+ * store under the same revision check a server would apply, so the editor's confirmation path
+ * (place → get → compare revision) runs unchanged.
+ */
+export function createInMemoryComponentPlacementApi(
+  design: InMemoryHarnessDesignApi,
+  templates: ComponentTemplateApi,
+  now: () => string = () => new Date().toISOString(),
+): ComponentPlacementApi {
+  const placements = new Map<string, ProjectComponentPlacementResource[]>();
+  const snapshots = new Map<string, ProjectComponentSnapshotResource>();
+  const commands = new Map<string, ComponentPlacementResult>();
+  const key = (projectId: string, harnessId: string) => `${projectId}\u0000${harnessId}`;
   return {
-    async list(projectId: string, harnessId: string): Promise<ProjectComponentPlacementGraph> {
-      let response: Response;
-      try {
-        response = await fetcher(componentPlacementsUrl(config, projectId, harnessId), {
-          method: "GET",
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        });
-      } catch {
-        throw new HarnessDesignApiError("Не удалось связаться с локальным сервером.", null, null);
-      }
-      if (!response.ok) throw await responseError(response);
-      return parseComponentPlacementGraph(await readResponseObject(response, true), projectId, harnessId);
+    async list(projectId, harnessId) {
+      const items = placements.get(key(projectId, harnessId)) ?? [];
+      const used = [...new Set(items.map((item) => item.snapshotId))];
+      return Object.freeze({
+        placements: Object.freeze([...items]),
+        snapshots: Object.freeze(used.map((id) => snapshots.get(id)!)),
+      });
     },
-    assetContentUrl(
-      projectId: string,
-      harnessId: string,
-      snapshotId: string,
-      assetId: string,
-    ): string {
-      for (const [value, name] of [[snapshotId, "ID снимка"], [assetId, "ID изображения"]] as const) {
-        if (!idPattern.test(value)) throw new Error(`${name} задан неверно.`);
-      }
-      return `${componentPlacementsUrl(config, projectId, harnessId)}/snapshots/${encodeURIComponent(snapshotId)}` +
-        `/assets/${encodeURIComponent(assetId)}/content`;
+    assetContentUrl(_projectId, _harnessId, snapshotId, assetId) {
+      const snapshot = snapshots.get(snapshotId);
+      return snapshot ? templates.assetContentUrl(snapshot.sourceTemplateId, snapshot.sourceVersion, assetId) : "";
     },
-    async place(projectId: string, harnessId: string, body: PlaceComponentRequest): Promise<ComponentPlacementResult> {
-      let response: Response;
-      try {
-        response = await fetcher(componentPlacementsUrl(config, projectId, harnessId), {
-          method: "POST",
-          credentials: "same-origin",
-          cache: "no-store",
-          headers,
-          body: JSON.stringify(body),
-        });
-      } catch {
-        throw new HarnessDesignApiError("Не удалось связаться с локальным сервером.", null, null);
+    async place(projectId, harnessId, body) {
+      const done = commands.get(body.commandId);
+      if (done) return done;
+      const binding = body.instance.libraryBinding;
+      if (binding?.mode !== "template" || binding.templateId !== body.sourceTemplateId ||
+          binding.templateVersion !== body.sourceVersion) {
+        throw new HarnessDesignApiError("Размещение не совпадает с привязкой компонента.", "placement_invalid", null);
       }
-      if (!response.ok) {
-        throw await responseError(response);
+      const template = await templates.getVersion(body.sourceTemplateId, body.sourceVersion);
+      if (template.versionSha256 !== binding.versionSha256) {
+        throw new HarnessDesignApiError("Версия библиотечного компонента изменилась.", "placement_invalid", null);
       }
-      return parseComponentPlacementResult(await readResponseObject(response, true), body, projectId, harnessId);
+      const saved = design.mutate(projectId, harnessId, body.expectedRevision, (content) => {
+        if (content.connectors.some((connector) => connector.id === body.placementId)) {
+          throw new HarnessDesignApiError("Компонент уже размещён в жгуте.", "placement_duplicate", null);
+        }
+        return { ...content, connectors: [...content.connectors, body.instance] };
+      });
+      const timestamp = now();
+      const snapshot: ProjectComponentSnapshotResource = Object.freeze({
+        snapshotId: crypto.randomUUID(), projectId,
+        sourceTemplateId: template.templateId, sourceVersion: template.version, sourceVersionSha256: template.versionSha256,
+        code: template.code, name: template.name, articleBindings: template.articleBindings, assets: template.assets,
+        schemaVersion: template.content.schemaVersion, content: template.content,
+        createdUtc: timestamp, updatedUtc: timestamp,
+      });
+      snapshots.set(snapshot.snapshotId, snapshot);
+      const list = placements.get(key(projectId, harnessId)) ?? [];
+      list.push(Object.freeze({
+        placementId: body.placementId, harnessId, snapshotId: snapshot.snapshotId,
+        sourceId: body.sourceId, entityType: body.entityType, articleKey: body.articleKey,
+        instance: Object.freeze({ ...body.instance }) as Readonly<Record<string, unknown>>,
+        createdUtc: timestamp, updatedUtc: timestamp,
+      }));
+      placements.set(key(projectId, harnessId), list);
+      const result = { commandId: body.commandId, resultingRevision: saved.revision, snapshotId: snapshot.snapshotId };
+      commands.set(body.commandId, result);
+      return result;
     },
   };
-}
-
-function componentPlacementsUrl(config: RuntimeConfig, projectId: string, harnessId: string): string {
-  return buildApiUrl(config,
-    `projects/${encodeURIComponent(projectId)}/harnesses/${encodeURIComponent(harnessId)}/component-placements`);
-}
-
-async function responseError(response: Response): Promise<HarnessDesignApiError> {
-  const value = await readResponseObject(response, false);
-  const code = typeof value?.error === "string" ? value.error : null;
-  const currentRevision = value && Number.isSafeInteger(value.currentRevision) && Number(value.currentRevision) >= 0
-    ? Number(value.currentRevision) : null;
-  const message = code === "design_revision_conflict"
-    ? "Документ изменился после открытия. Перезагрузите жгут перед повторным размещением."
-    : typeof value?.message === "string" && value.message.trim()
-      ? value.message : `Сервер не выполнил запрос (HTTP ${response.status}).`;
-  return new HarnessDesignApiError(message, code, currentRevision);
 }
 
 export function parseComponentPlacementGraph(
@@ -336,18 +338,6 @@ export function parseComponentPlacementResult(
     throw new Error("Сервер вернул повреждённый результат размещения компонента.");
   }
   return { commandId, resultingRevision, snapshotId };
-}
-
-async function readResponseObject(response: Response, required: boolean): Promise<Record<string, unknown>> {
-  let value: unknown;
-  try {
-    value = await response.json();
-  } catch {
-    if (!required) return {};
-    throw new Error("Сервер вернул пустой или нечитаемый результат размещения компонента.");
-  }
-  if (!required && (value === null || typeof value !== "object" || Array.isArray(value))) return {};
-  return requireRecord(value);
 }
 
 function requireRecord(value: unknown): Record<string, unknown> {

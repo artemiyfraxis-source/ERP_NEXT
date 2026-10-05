@@ -27,7 +27,7 @@ export const connectionTableColumnLabels: Readonly<Record<ConnectionTableColumnI
   route: "Маршрут",
 };
 
-const storageKey = "techmap.connection-table-settings.v1";
+const storageKey = "erp.harness.connection-table-settings.v1";
 const defaultSettings: ConnectionTableSettings = {
   columns: connectionTableColumnIds.map(id => ({ id, visible: true })),
 };

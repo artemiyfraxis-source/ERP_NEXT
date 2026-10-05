@@ -1,4 +1,4 @@
-import { routeCutReadiness } from "../manufacturing/route-cut-readiness";
+import { routeCutReadiness } from "./cut-readiness";
 import { CutDiagramPanel } from "./CutDiagramPanel";
 import type { EditorCommand } from "./commands";
 import { useMemo, useState } from "react";

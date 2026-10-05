@@ -1,7 +1,4 @@
-import {createMaterialLibraryApi,type GlobalMaterial} from "../material-library-api";
-import {createCoveringAssetApi} from "./covering-assets";
-import type {RuntimeConfig} from "../runtime-config";
-import type {LocalSession} from "../local-session";
+import type {CoveringMaterialApi,GlobalMaterial} from "./covering-assets";
 import {coveringKind,type PhysicalCovering} from "./physical-coverings";
 import type {HarnessDesignDocument} from "./model";
 import type {EditorCommand} from "./commands";
@@ -33,19 +30,12 @@ export async function prepareGlobalCoverings(document:HarnessDesignDocument,comm
  const library=document.drawingDocuments?.coveringLibrary??{textures:[],defaults:{}};
  return {...command,coveringLibrary:{...library,textures:[...new Map([...library.textures,...entries].map(e=>[e.sha256,e])).values()]},topology:{...command.topology,coverings:command.topology.coverings!.map(c=>replacements.get(c.id)??c)}};
 }
-export function createGlobalCoveringPreparer(config:RuntimeConfig,session:LocalSession,projectId:string){
- const library=createMaterialLibraryApi(config,session),assets=createCoveringAssetApi(config,session,projectId);
+export function createGlobalCoveringPreparer(api:CoveringMaterialApi,projectId:string){
  return async(document:HarnessDesignDocument,command:Extract<EditorCommand,{type:"set-physical-topology"}>)=>{
-  let existing:Awaited<ReturnType<typeof assets.list>>|undefined;const cache=new Map<string,CoveringTextureEntry>();
-  return prepareGlobalCoverings(document,command,library.list,async m=>{
+  const cache=new Map<string,CoveringTextureEntry>();
+  return prepareGlobalCoverings(document,command,async()=>[...await api.listMaterials()],async m=>{
    const cached=cache.get(m.materialId);if(cached)return cached;
-   const full=await library.get(m.materialId);
-   if(full.revision!==m.revision)throw new Error("Материал изменился. Повторите добавление оболочки.");
-   const bytes=Uint8Array.from(atob(full.imageBase64),c=>c.charCodeAt(0));
-   const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");
-   existing??=await assets.list();
-   const entry=existing.find(a=>a.entry.sha256===hash)?.entry??(await assets.upload(new File([bytes],"material.png",{type:"image/png"}))).entry;
-   const named={...entry,name:m.name};cache.set(m.materialId,named);return named;
+   const entry={...await api.pinTexture(projectId,m),name:m.name};cache.set(m.materialId,entry);return entry;
   });
  };
 }

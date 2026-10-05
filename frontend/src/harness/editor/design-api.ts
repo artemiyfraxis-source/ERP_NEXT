@@ -1,7 +1,5 @@
-import { createMutationHeaders, type LocalSession } from "../local-session";
-import { buildApiUrl, type RuntimeConfig } from "../runtime-config";
 import { normalizeE4RoutingDocument } from "./commands";
-import { parseHarnessDesignDocument, type HarnessDesignDocument } from "./model";
+import { createEmptyHarnessDesign, parseHarnessDesignDocument, type HarnessDesignDocument } from "./model";
 
 export interface HarnessDesignResource {
   readonly harnessId: string;
@@ -15,6 +13,7 @@ export interface HarnessDesignResource {
   readonly recoveryWarning?: string;
 }
 
+/** Loads and saves one harness design document (snapshot v1). The ERP backend adapter comes later. */
 export interface HarnessDesignApi {
   get(projectId: string, harnessId: string): Promise<HarnessDesignResource>;
   save(projectId: string, harnessId: string, expectedRevision: number, content: HarnessDesignDocument): Promise<HarnessDesignResource>;
@@ -30,77 +29,6 @@ export class HarnessDesignApiError extends Error {
     this.code = code;
     this.currentRevision = currentRevision;
   }
-}
-
-type DesignFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
-export function createHarnessDesignApi(
-  config: RuntimeConfig,
-  session: LocalSession,
-  fetcher: DesignFetcher = fetch,
-): HarnessDesignApi {
-  const headers = createMutationHeaders(session);
-  const resource = (projectId: string, harnessId: string) =>
-    `projects/${encodeURIComponent(projectId)}/harnesses/${encodeURIComponent(harnessId)}/design`;
-
-  async function request(
-    path: string,
-    init: RequestInit,
-  ): Promise<HarnessDesignResource> {
-    let response: Response;
-    try {
-      response = await fetcher(buildApiUrl(config, path), {
-        credentials: "same-origin",
-        cache: "no-store",
-        ...init,
-      });
-    } catch {
-      throw new HarnessDesignApiError("Не удалось связаться с локальным сервером.", null, null);
-    }
-    if (!response.ok) throw await parseError(response);
-    let value: unknown;
-    try {
-      value = await response.json();
-    } catch {
-      throw new HarnessDesignApiError("Сервер вернул нечитаемый документ жгута.", null, null);
-    }
-    return parseResource(value);
-  }
-
-  return {
-    get: (projectId, harnessId) => request(resource(projectId, harnessId), {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    }),
-    save: async (projectId, harnessId, expectedRevision, content) => {
-      const validatedContent = parseRecoverableHarnessDesignContent(content).content;
-      return request(resource(projectId, harnessId), {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ expectedRevision, schemaVersion: 1, writerContractVersion: 2, content: validatedContent }),
-      });
-    },
-  };
-}
-
-function parseResource(value: unknown): HarnessDesignResource {
-  const record = requireRecord(value);
-  const harnessId = requireString(record.harnessId, "harnessId");
-  if (!/^[0-9a-f-]{36}$/i.test(harnessId) || record.schemaVersion !== 1 ||
-      !Number.isSafeInteger(record.revision) || (record.revision as number) < 0) {
-    throw new Error("Сервер вернул повреждённые метаданные документа жгута.");
-  }
-  const parsedContent = parseRecoverableHarnessDesignContent(record.content);
-  return {
-    harnessId,
-    schemaVersion: 1,
-    revision: record.revision as number,
-    content: parsedContent.content,
-    updatedUtc: requireString(record.updatedUtc, "updatedUtc"),
-    ...(typeof record.sourceFingerprint === "string" && /^[a-f0-9]{64}$/i.test(record.sourceFingerprint) ? { sourceFingerprint: record.sourceFingerprint } : {}),
-    ...(Number.isSafeInteger(record.harnessQuantity) && (record.harnessQuantity as number) > 0 ? { harnessQuantity: record.harnessQuantity as number } : {}),
-    ...(parsedContent.warning ? { recoveryWarning: parsedContent.warning } : {}),
-  };
 }
 
 export interface RecoverableHarnessDesignContent {
@@ -179,33 +107,108 @@ export function parseRecoverableHarnessDesignContent(value: unknown): Recoverabl
   }
 }
 
-async function parseError(response: Response): Promise<HarnessDesignApiError> {
-  try {
-    const value = requireRecord(await response.json());
-    const code = typeof value.error === "string" ? value.error : null;
-    const revision = Number.isSafeInteger(value.currentRevision) && (value.currentRevision as number) >= 0
-      ? value.currentRevision as number : null;
-    const message = code === "design_revision_conflict"
-      ? "Документ изменился после открытия. Перезагрузите жгут перед повторным сохранением."
-      : code === "harness_not_found" || code === "project_not_found"
-        ? "Проект или жгут не найден."
-        : typeof value.message === "string" && value.message.trim()
-          ? value.message
-          : `Сервер не выполнил запрос (HTTP ${response.status}).`;
-    return new HarnessDesignApiError(message, code, revision);
-  } catch {
-    return new HarnessDesignApiError(`Сервер не выполнил запрос (HTTP ${response.status}).`, null, null);
-  }
-}
-
 function requireRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("Сервер вернул повреждённый документ жгута.");
+    throw new Error("Документ жгута повреждён.");
   }
   return value as Record<string, unknown>;
 }
 
 function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || !value) throw new Error(`Поле ответа «${name}» задано неверно.`);
+  if (typeof value !== "string" || !value) throw new Error(`Поле «${name}» снимка задано неверно.`);
   return value;
+}
+
+/**
+ * Parses a stored snapshot v1 (`{harnessId, schemaVersion: 1, revision, content, updatedUtc}`).
+ * Domain data goes through the same strict parser as a server response would.
+ */
+export function parseHarnessDesignSnapshot(value: unknown): HarnessDesignResource {
+  const record = requireRecord(value);
+  const harnessId = requireString(record.harnessId, "harnessId");
+  if (record.schemaVersion !== 1 || !Number.isSafeInteger(record.revision) || (record.revision as number) < 0) {
+    throw new Error("Снимок документа жгута повреждён: неверная версия схемы или ревизия.");
+  }
+  const parsedContent = parseRecoverableHarnessDesignContent(record.content);
+  return {
+    harnessId,
+    schemaVersion: 1,
+    revision: record.revision as number,
+    content: parsedContent.content,
+    updatedUtc: requireString(record.updatedUtc, "updatedUtc"),
+    ...(typeof record.sourceFingerprint === "string" && /^[a-f0-9]{64}$/i.test(record.sourceFingerprint) ? { sourceFingerprint: record.sourceFingerprint } : {}),
+    ...(Number.isSafeInteger(record.harnessQuantity) && (record.harnessQuantity as number) > 0 ? { harnessQuantity: record.harnessQuantity as number } : {}),
+    ...(parsedContent.warning ? { recoveryWarning: parsedContent.warning } : {}),
+  };
+}
+
+export interface InMemoryHarnessDesignApi extends HarnessDesignApi {
+  /** Snapshot v1 JSON of the stored document, or null when nothing was saved yet. */
+  exportSnapshot(projectId: string, harnessId: string): string | null;
+  /** Replaces the stored document with a snapshot v1 JSON (validated). */
+  importSnapshot(projectId: string, json: string): HarnessDesignResource;
+  /** Server-side mutation used by the in-memory placement adapter (atomic, revision-checked). */
+  mutate(projectId: string, harnessId: string, expectedRevision: number,
+    change: (content: HarnessDesignDocument) => HarnessDesignDocument): HarnessDesignResource;
+}
+
+/**
+ * Keeps snapshot v1 JSON strings in memory, the way a backend would store them:
+ * every read parses the stored JSON, every save validates, checks the revision and bumps it.
+ */
+export function createInMemoryHarnessDesignApi(
+  initial: readonly { readonly projectId: string; readonly snapshot: string }[] = [],
+  now: () => string = () => new Date().toISOString(),
+): InMemoryHarnessDesignApi {
+  const store = new Map<string, string>();
+  const key = (projectId: string, harnessId: string) => `${projectId}\u0000${harnessId}`;
+  const read = (projectId: string, harnessId: string): HarnessDesignResource => {
+    const json = store.get(key(projectId, harnessId));
+    if (json === undefined) {
+      return { harnessId, schemaVersion: 1, revision: 0, content: createEmptyHarnessDesign(), updatedUtc: now() };
+    }
+    return parseHarnessDesignSnapshot(JSON.parse(json));
+  };
+  const write = (projectId: string, resource: HarnessDesignResource): HarnessDesignResource => {
+    const snapshot = {
+      harnessId: resource.harnessId, schemaVersion: 1 as const, revision: resource.revision,
+      content: resource.content, updatedUtc: resource.updatedUtc,
+      ...(resource.sourceFingerprint ? { sourceFingerprint: resource.sourceFingerprint } : {}),
+      ...(resource.harnessQuantity ? { harnessQuantity: resource.harnessQuantity } : {}),
+    };
+    store.set(key(projectId, resource.harnessId), JSON.stringify(snapshot));
+    return read(projectId, resource.harnessId);
+  };
+  const conflict = (current: number) => new HarnessDesignApiError(
+    "Документ изменился после открытия. Перезагрузите жгут перед повторным сохранением.",
+    "design_revision_conflict", current);
+  const api: InMemoryHarnessDesignApi = {
+    async get(projectId, harnessId) {
+      return read(projectId, harnessId);
+    },
+    async save(projectId, harnessId, expectedRevision, content) {
+      const current = read(projectId, harnessId);
+      if (current.revision !== expectedRevision) throw conflict(current.revision);
+      const validated = parseRecoverableHarnessDesignContent(JSON.parse(JSON.stringify(content))).content;
+      return write(projectId, { ...current, revision: current.revision + 1, content: validated, updatedUtc: now() });
+    },
+    exportSnapshot(projectId, harnessId) {
+      return store.get(key(projectId, harnessId)) ?? null;
+    },
+    importSnapshot(projectId, json) {
+      // Validate, but keep the stored JSON verbatim: a document that opens in safe mode must keep
+      // reporting it until the operator saves a repaired version.
+      const parsed = parseHarnessDesignSnapshot(JSON.parse(json));
+      store.set(key(projectId, parsed.harnessId), json);
+      return parsed;
+    },
+    mutate(projectId, harnessId, expectedRevision, change) {
+      const current = read(projectId, harnessId);
+      if (current.revision !== expectedRevision) throw conflict(current.revision);
+      const content = parseRecoverableHarnessDesignContent(JSON.parse(JSON.stringify(change(current.content)))).content;
+      return write(projectId, { ...current, revision: current.revision + 1, content, updatedUtc: now() });
+    },
+  };
+  for (const item of initial) api.importSnapshot(item.projectId, item.snapshot);
+  return api;
 }

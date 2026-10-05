@@ -1,4 +1,5 @@
-.harness-section-navigation {
+/* Scoped under .harness-root: generated from TECHMAP-GRAPHER CSS (e63befb), UI colours mapped to ERP tokens. */
+.harness-root .harness-section-navigation {
   box-sizing: border-box;
   min-width: 0;
   height: 40px;
@@ -10,22 +11,22 @@
   overflow-x: auto;
   scrollbar-width: none;
   padding: 4px 14px;
-  background: #193d50;
-  border-bottom: 1px solid #2a5367;
+  background: var(--foreground);
+  border-bottom: 1px solid var(--foreground);
 }
 
-.harness-section-links {
+.harness-root .harness-section-links {
   min-width: max-content;
   display: flex;
   align-items: center;
   gap: 3px;
 }
 
-.harness-section-navigation::-webkit-scrollbar {
+.harness-root .harness-section-navigation::-webkit-scrollbar {
   display: none;
 }
 
-.harness-section-navigation button {
+.harness-root .harness-section-navigation button {
   box-sizing: border-box;
   flex: 0 0 auto;
   height: 30px;
@@ -34,82 +35,82 @@
   border: 1px solid transparent !important;
   border-radius: 6px !important;
   background: transparent !important;
-  color: #bdd2db !important;
+  color: var(--border) !important;
   font: 700 11px/1.25 "Segoe UI", Arial, sans-serif !important;
   white-space: nowrap;
   cursor: pointer;
 }
 
-.harness-section-navigation button:hover:not(:disabled) {
-  border-color: #527889 !important;
-  background: #244d60 !important;
-  color: #fff !important;
+.harness-root .harness-section-navigation button:hover:not(:disabled) {
+  border-color: var(--muted-foreground) !important;
+  background: var(--foreground) !important;
+  color: var(--primary-foreground) !important;
 }
 
-.harness-section-navigation button.active,
-.harness-section-navigation button[aria-current="page"] {
-  border-color: #00a0b7 !important;
-  background: #00a0b7 !important;
-  color: #fff !important;
+.harness-root .harness-section-navigation button.active,
+.harness-root .harness-section-navigation button[aria-current="page"] {
+  border-color: var(--primary) !important;
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
 }
 
-.harness-section-navigation button:disabled {
+.harness-root .harness-section-navigation button:disabled {
   cursor: default !important;
   opacity: 1 !important;
 }
 
-.harness-section-navigation button[aria-current="page"]:disabled {
+.harness-root .harness-section-navigation button[aria-current="page"]:disabled {
   opacity: 1 !important;
 }
 
-.harness-section-home {
+.harness-root .harness-section-home {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   flex: 0 0 auto;
-  border-color: #527889 !important;
-  background: #244d60 !important;
-  color: #d8edf2 !important;
+  border-color: var(--muted-foreground) !important;
+  background: var(--foreground) !important;
+  color: var(--border) !important;
 }
 
-.harness-section-home > span:first-child {
+.harness-root .harness-section-home > span:first-child {
   font-size: 15px;
   line-height: 1;
 }
 
-.harness-editor .harness-section-navigation {
+.harness-root .harness-editor .harness-section-navigation {
   width: calc(100% + 28px);
   margin-inline: -14px;
   padding: 4px 14px;
   border-bottom: 0;
 }
 
-.harness-editor .harness-section-navigation button {
-  color: #b9d0da;
+.harness-root .harness-editor .harness-section-navigation button {
+  color: var(--border);
 }
 
-.harness-editor .harness-section-navigation button.active,
-.harness-editor .harness-section-navigation button[aria-current="page"] {
-  color: #fff;
+.harness-root .harness-editor .harness-section-navigation button.active,
+.harness-root .harness-editor .harness-section-navigation button[aria-current="page"] {
+  color: var(--primary-foreground);
 }
 
-.manufacturing-route-panel > .harness-section-navigation {
+.harness-root .manufacturing-route-panel > .harness-section-navigation {
   margin: -28px clamp(-52px, -3vw, -20px) 16px;
   padding-inline: 14px;
 }
 
-.route-v2-panel > .harness-section-navigation,
-.uml-panel > .harness-section-navigation {
+.harness-root .route-v2-panel > .harness-section-navigation,
+.harness-root .uml-panel > .harness-section-navigation {
   margin: -18px -22px 18px;
   padding-inline: 14px;
 }
 
-.he-save-state-utility {
+.harness-root .he-save-state-utility {
   align-self: flex-start;
   width: max-content;
   min-height: 29px;
   padding: 5px 8px;
-  border: 1px solid #c8dbe3;
-  background: #fff;
-  color: #2a596d;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
 }

@@ -1,4 +1,4 @@
-import type { ReferenceCatalogSearchRecord } from "../reference-catalog-api";
+import type { ReferenceCatalogSearchRecord } from "../reference-catalog";
 import type { HarnessDesignDocument, ConnectorContact, WireEndpoint, WireInstance } from "./model";
 import { terminalArticleLabel } from "./terminal-article-label";
 

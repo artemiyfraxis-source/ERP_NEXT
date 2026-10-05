@@ -1,6 +1,6 @@
 import { buildLiveCutList } from "./live-cut-list";
 import { HarnessCutListTable } from "../HarnessCutListPanel";
-import { routeCutReadiness } from "../manufacturing/route-cut-readiness";
+import { routeCutReadiness } from "./cut-readiness";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { InfoHint } from "../InfoHint";
 import type { EditorCommand } from "./commands";

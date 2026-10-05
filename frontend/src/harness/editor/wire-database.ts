@@ -1,5 +1,5 @@
 import { catalogOuterDiameter } from "./drawing-thickness";
-import type { ReferenceCatalogSearchRecord } from "../reference-catalog-api";
+import type { ReferenceCatalogSearchRecord } from "../reference-catalog";
 import { builtInWireReferences } from "./wire-reference-catalog";
 import type { WireMaterialBinding } from "./model";
 

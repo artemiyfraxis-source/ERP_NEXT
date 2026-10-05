@@ -1,2 +1,3 @@
-.anchored-popover[popover] { position: fixed; inset: auto; margin: 0; box-sizing: border-box; overflow: auto; }
-.anchored-popover[popover]:not(:popover-open) { display: none; }
+/* Scoped under .harness-root: generated from TECHMAP-GRAPHER CSS (e63befb), UI colours mapped to ERP tokens. */
+.harness-root .anchored-popover[popover] { position: fixed; inset: auto; margin: 0; box-sizing: border-box; overflow: auto; }
+.harness-root .anchored-popover[popover]:not(:popover-open) { display: none; }

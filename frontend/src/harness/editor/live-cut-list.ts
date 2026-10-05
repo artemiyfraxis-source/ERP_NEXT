@@ -1,4 +1,4 @@
-import type { HarnessCutList, HarnessCutListItem } from "../harness-cut-list-api";
+import type { HarnessCutList, HarnessCutListItem } from "../HarnessCutListPanel";
 import { calculateWireCutLength, type HarnessDesignDocument } from "./model";
 import { coveringMeasuredLength } from "./physical-coverings";
 

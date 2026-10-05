@@ -651,11 +651,7 @@ export function HarnessEditorWorkspace({
         {!localCopyControls ? (
           <HarnessSectionNavigation
             active={view}
-            onNavigate={async section => {
-              if (section === "e4" || section === "drawing") changeView(section);
-              else if (section === "route" && onRouteRequest) await onRouteRequest();
-              else await onSectionChange?.(section);
-            }}
+            onNavigate={section => changeView(section)}
             onHome={onClose}
           />
         ) : (
