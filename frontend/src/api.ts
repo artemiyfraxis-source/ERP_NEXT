@@ -1394,7 +1394,8 @@ export function failureText(reason: unknown, fallback: string) {
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  // FormData (a file upload) sets its own multipart boundary — the header is left to the browser.
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const method = (init.method ?? "GET").toUpperCase();
   if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
     const csrf = cookie("__Host-erp_csrf") || cookie("erp_csrf");
@@ -1679,14 +1680,43 @@ export type KpMatch = { line_id: string; name: string; qty: string; price: strin
 
 export type OrderLineRef = { line_id: string; version: number };
 
-export type FactPriceRow = OrderLineRef & { legacy_id: string; price_with_vat: string | null };
+/** «Вставить счёт» / «Вставить КП»: what the server read from the file, matched to the order's lines. */
+export type OrderDocumentKind = "invoice" | "kp";
+export type MatchConfidence = "article" | "name" | "weak" | null;
 
-export interface OrderInvoiceInput {
-  invoice_url: string;
+export interface RecognizedOrderLine {
+  line_id: string;
+  legacy_id: string;
+  version: number;
+  price_with_vat: string | null;
+  price: string | null;
+  vat_rate: string | null;
+  quantity: string | null;
+  unit: string | null;
+  sum: string | null;
+  matched_name: string | null;
+  confidence: MatchConfidence;
+}
+
+export interface OrderDocumentRecognition {
+  file: { url: string; name: string };
+  kind: OrderDocumentKind;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  currency: string | null;
+  lines: RecognizedOrderLine[];
+  unmatched_items: { name: string; quantity: string | null; price_with_vat: string | null }[];
+  unmatched_lines: string[];
+  totals: { sum: string | null; vat: string | null; sum_with_vat: string | null } | null;
+}
+
+export interface ApplyOrderDocumentInput {
+  kind: OrderDocumentKind;
+  file_url: string;
   invoice_number?: string | null;
   invoice_date?: string | null;
-  expected_arrival: string;
-  lines: OrderLineRef[];
+  expected_arrival?: string | null;
+  lines: (OrderLineRef & { price_with_vat: string | null })[];
 }
 
 export interface InvoiceUpload {
@@ -1757,19 +1787,19 @@ export const procurementApi = {
       skipped: string[];
       failed: { legacy_id: string; error: string }[];
     }>("/api/procurement/facts", { method: "POST", body: JSON.stringify({ rows }) }),
-  /** «Цена факт» (с НДС) строк «Жду счёт» и «Ждёт оплаты» одним вызовом; остальное в строке сервер не трогает. */
-  saveFactPrices: (rows: FactPriceRow[]) =>
-    api<{
-      lines: ProcurementLine[];
-      saved: number;
-      skipped: string[];
-      failed: { legacy_id: string; error: string }[];
-    }>("/api/procurement/fact-prices", { method: "POST", body: JSON.stringify({ rows }) }),
-  /** «Вставить счёт»: один счёт на заказ — все строки заказа уходят «В оплату» или ни одной (409 — набор устарел, 422 — чего не хватает). */
-  orderInvoice: (orderNumber: string, invoice: OrderInvoiceInput) =>
-    api<{ lines: ProcurementLine[] }>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/invoice`, {
+  /** Файл счёта или КП по заказу → цены строк, № и дата, распознанные сервером (ничего в строки не пишет). */
+  recognizeOrderDocument: (orderNumber: string, file: File, kind: OrderDocumentKind) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("kind", kind);
+    return api<OrderDocumentRecognition>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/recognize`, { method: "POST", body: form });
+  },
+  /** Проверенные цены документа — все строки заказа или ни одной (409 — набор устарел, 422 — сервер называет строку).
+   *  КП: цены, строки остаются «Жду счет»; счёт: цены и счёт, строки уходят «В оплату». */
+  applyOrderDocument: (orderNumber: string, input: ApplyOrderDocumentInput) =>
+    api<{ lines: ProcurementLine[] }>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/apply-document`, {
       method: "POST",
-      body: JSON.stringify(invoice),
+      body: JSON.stringify(input),
     }),
   /** «Оплачено» по заказу: все строки «В оплату» → «В пути»; 409 `manual_rate_required` — ЦБ молчит, нужен курс. */
   orderPaid: (orderNumber: string, lines: OrderLineRef[], manualExchangeRate?: string) =>

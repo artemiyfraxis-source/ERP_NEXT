@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { DataTable, type DataBulkAction, type DataColumn } from "./DataTable";
-import { failureText, type FactPriceRow, type InvoiceUpload, type ManualRatePrompt, type OrderInvoiceInput, type ProcurementLine } from "./api";
+import {
+  failureText, type ApplyOrderDocumentInput, type ManualRatePrompt, type OrderDocumentKind, type OrderDocumentRecognition, type ProcurementLine,
+} from "./api";
 import { formatDate, formatDay } from "./format";
 import { ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { RowMenu, type MenuItem } from "./ProcurementRowMenu";
 import { formatAmount } from "./ProcurementSheetColumns";
 
-/* «Мои позиции» листа закупки — блоки в порядке работы (владелец, 04.10): «В работе» (ProcurementInWorkTable),
-   «Жду счёт», «Ждёт оплаты» и «Оплачено» (в пути и карантин) — таблицы по заказам: заголовок группы
-   «PO-012 от 05.10 · поставщик · N поз. · факт … ₽ / расчёт … ₽» с действиями заказа («Вставить счёт»,
-   «Оплачено», меню «⋯»), под ним строки заказа; «Цена факт» правится в строке, «Сохранить всё» — одним вызовом.
-   «Дозавоз» — только когда он есть, «Прочие позиции» внизу. Блок виден и пустым: заголовок с «0» и одна серая
-   строка. Ручного этапа «Согласование» нет (владелец, 04.10: «сразу запрос и всё»).
+/* «Мои позиции» листа закупки (владелец, 05.10): один блок «В работе» (ProcurementInWorkTable) — сверху группы
+   поставщиков к запросу, под ними лента заказов (`OrderList`): «PO-012 от 05.10 · поставщик · N поз. · факт … ₽ /
+   расчёт … ₽» и плашка статуса (Жду счёт → Ждёт оплаты → Оплачено · в пути / карантин). Заказ не переезжает
+   между блоками — меняется его статус; строки заказа раскрываются щелчком по заголовку. Цену вносит окно
+   «Вставить счёт» / «Вставить КП» (файл → распознанные цены). «Дозавоз» — только когда он есть, «Прочие позиции»
+   внизу. Ручного этапа «Согласование» нет (владелец, 04.10: «сразу запрос и всё»).
    Таблицы показывают; что делать со строкой, решает страница (`actionsOf`, колбэки): редкие действия лежат в
    меню «⋯» строки, формы открываются под таблицей, массовые — над таблицей, когда выбрана хоть одна строка.
    Две колонки правятся прямо в ячейке (`editing`): «Комментарий» и «Ожид. дата» от «Жду счет» до «Карантин»;
@@ -212,30 +215,22 @@ export function nearestWorkingDay(from = new Date()): string {
 
 type GroupColumn = { key: string; title: string; numeric?: boolean; cell?: string; render: (line: ProcurementLine) => ReactNode };
 
-/** Правка «Цена факт» (с НДС) в ячейке: черновики по строкам, «Сохранить всё» — одним вызовом. */
-type PriceEdit = {
-  valueOf: (line: ProcurementLine) => string;
-  set: (line: ProcurementLine, value: string) => void;
-  /** «Сумма факт» строки: пока цена набрана, но не сохранена — кол-во факт × набранная цена. */
-  sumOf: (line: ProcurementLine) => string | null | undefined;
-  disabled: boolean;
-};
-
-/** Строки по заказам: заголовок группы (`tr.group-row`) с итогами и действиями, под ним строки заказа. */
-function OrderGroupTable({ label, groups, columns, headerActions, groupExtra, menu }: {
+/** Заказы одной лентой: заголовок группы (`tr.group-row`) — № и дата заказа, поставщик, итоги, статус и действия
+ *  заказа; щелчок по заголовку раскрывает строки заказа. Свёрнуто по умолчанию. */
+function OrderGroupTable({ label, groups, columns, expanded, onToggle, headerActions, menu }: {
   label: string;
   groups: OrderGroup[];
   columns: GroupColumn[];
+  expanded: Set<string>;
+  onToggle: (key: string) => void;
   headerActions: (group: OrderGroup) => ReactNode;
-  /** Форма под заголовком группы (счёт). */
-  groupExtra?: (group: OrderGroup) => ReactNode;
   menu?: (line: ProcurementLine) => ReactNode;
 }) {
   const span = columns.length + (menu ? 1 : 0);
   return (
-    <div className="data-table" role="region" aria-label={label}>
+    <div className="data-table order-list" role="region" aria-label={label}>
       <div className="table-wrap">
-        <table className="grid wide">
+        <table className="grid wide order-lines">
           <thead>
             <tr>
               {columns.map((column) => <th key={column.key} className={column.numeric ? "num" : undefined}>{column.title}</th>)}
@@ -244,20 +239,24 @@ function OrderGroupTable({ label, groups, columns, headerActions, groupExtra, me
           </thead>
           {groups.map((group) => {
             const heading = groupHeading(group);
-            const extra = groupExtra?.(group);
+            const status = orderStatus(group);
+            const open = expanded.has(group.key);
             return (
-              <tbody key={group.key} aria-label={heading.title}>
-                <tr className="group-row">
+              <tbody key={group.key} aria-label={heading.title} className={open ? "order-open" : undefined}>
+                <tr className="group-row order-head" onClick={() => onToggle(group.key)}>
                   <td className="group-cell" colSpan={span}>
                     <div className="group-line">
-                      <span className="group-title">{heading.title}</span>
+                      <button type="button" className="group-toggle" aria-expanded={open} onClick={(event) => { event.stopPropagation(); onToggle(group.key); }}>
+                        <span className="caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
+                        <span className="group-title">{heading.title}</span>
+                      </button>
                       <span className="group-meta">{heading.meta}</span>
-                      <span className="group-actions">{headerActions(group)}</span>
+                      <span className={`order-chip ${status.tone}`} title={status.title}>{status.label}</span>
+                      <span className="group-actions" onClick={(event) => event.stopPropagation()}>{headerActions(group)}</span>
                     </div>
                   </td>
                 </tr>
-                {extra && <tr className="group-form"><td colSpan={span}>{extra}</td></tr>}
-                {group.lines.map((line) => (
+                {open && group.lines.map((line) => (
                   <tr key={line.id}>
                     {columns.map((column) => <td key={column.key} className={[column.numeric && "num", column.cell].filter(Boolean).join(" ") || undefined}>{column.render(line)}</td>)}
                     {menu && <td className="menu">{menu(line)}</td>}
@@ -276,219 +275,132 @@ function OrderMenu({ group, disabled, items }: { group: OrderGroup; disabled: bo
   return <RowMenu label={`Действия заказа ${group.number || "без номера"}`} disabled={disabled} items={items} />;
 }
 
-const documentItems = (group: OrderGroup, onPrint: (url: string) => void): MenuItem[] => [
+const documentItems = (group: OrderGroup): MenuItem[] => [
   { label: "Документ запроса", disabled: !group.url, title: group.url ? undefined : "Документ запроса не сформирован", run: () => { if (group.url) window.open(group.url, "_blank", "noopener"); } },
-  { label: "Печать запроса", disabled: !group.url, run: () => { if (group.url) onPrint(group.url); } },
 ];
 
-function priceColumn(price: PriceEdit): GroupColumn {
+// ── Статус заказа: меняется на месте, заказ из ленты не уходит ─────────────────────────────────────
+
+const AWAITING = "Жду счет";
+const TO_PAY = "В оплату";
+
+export type OrderStage = "awaiting" | "topay" | "paid";
+
+/** Стадия заказа — по самой ранней из его строк: пока есть строка «Жду счет», заказ ждёт счёт. */
+export function orderStage(group: OrderGroup): OrderStage {
+  if (group.lines.some((line) => line.status === AWAITING)) return "awaiting";
+  if (group.lines.some((line) => line.status === TO_PAY)) return "topay";
+  return "paid";
+}
+
+/** Плашка статуса в заголовке заказа: Жду счёт → Ждёт оплаты → Оплачено · в пути / карантин / принято. */
+export function orderStatus(group: OrderGroup): { label: string; tone: string; title?: string } {
+  const stage = orderStage(group);
+  if (stage === "awaiting") return { label: "Жду счёт", tone: "tone-info", title: group.date ? `Запрос отправлен ${formatDay(group.date)}` : "Запрос отправлен" };
+  if (stage === "topay") return { label: "Ждёт оплаты", tone: "tone-warn" };
+  const count = (status: string) => group.lines.filter((line) => line.status === status).length;
+  const transit = count("В пути");
+  const quarantine = count("Карантин");
+  const done = count("Готово");
+  if (done === group.lines.length) return { label: "Принято", tone: "tone-neutral" };
+  const mixed = [transit, quarantine, done].filter(Boolean).length > 1;
+  const part = (amount: number, word: string) => (amount ? (mixed ? `${word} ${amount}` : word) : "");
+  const parts = [part(transit, "в пути"), part(quarantine, "карантин"), part(done, "принято")].filter(Boolean);
   return {
-    key: "price", title: "Цена факт, ₽", numeric: true, cell: "cell-edit",
-    render: (line) => (
-      <input
-        className="cell-input" aria-label={`Цена факт ${line.legacy_id}`} inputMode="decimal" disabled={price.disabled}
-        value={price.valueOf(line)} onChange={(event) => price.set(line, event.target.value)}
-      />
-    ),
+    label: parts.length ? `Оплачено · ${parts.join(", ")}` : "Оплачено",
+    tone: quarantine ? "tone-warn" : "tone-ok",
+    title: quarantine ? "Приёмка нашла несоответствие — ждёт решения" : undefined,
   };
 }
 
-/** Черновики «Цена факт» стадии: тронутые строки, «Сохранить всё (N)»; строки, что сервер пропустил, остаются набранными. */
-function useFactPrices(lines: ProcurementLine[], onSave: (rows: FactPriceRow[]) => Promise<string[] | void>, disabled: boolean) {
-  const [edits, setEdits] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const base = (line: ProcurementLine) => line.actual_price_with_vat ?? "";
-  const dirty = lines.filter((line) => edits[line.id] !== undefined && edits[line.id].trim() !== base(line));
-  const price: PriceEdit = {
-    valueOf: (line) => edits[line.id] ?? base(line),
-    set: (line, value) => setEdits((current) => ({ ...current, [line.id]: value })),
-    sumOf: (line) => {
-      const typed = edits[line.id];
-      if (typed === undefined || typed.trim() === base(line)) return line.actual_sum;
-      const price = Number(typed.trim().replace(/\s/g, "").replace(",", "."));
-      const quantity = Number(line.actual_quantity ?? line.calculated_quantity);
-      return typed.trim() && Number.isFinite(price) && Number.isFinite(quantity) ? String(Math.round(price * quantity * 100) / 100) : null;
-    },
-    disabled: disabled || saving,
+/** Заказы ленты: сначала те, что ждут действия (счёт, оплата), потом оплаченные; внутри — свежие сверху. */
+export function orderGroups(lines: ProcurementLine[]): OrderGroup[] {
+  const rank = (group: OrderGroup) => (orderStage(group) === "paid" ? 1 : 0);
+  return groupByOrder(lines).sort((a, b) => rank(a) - rank(b)
+    || (b.date ?? "").localeCompare(a.date ?? "")
+    || b.number.localeCompare(a.number, "ru", { numeric: true }));
+}
+
+/** «Заказы: Все · Активные · Скрыть» над лентой; выбор помнится в браузере для каждого закупщика. */
+export type OrdersView = "all" | "active" | "none";
+
+export function visibleOrders(groups: OrderGroup[], view: OrdersView): OrderGroup[] {
+  if (view === "none") return [];
+  return view === "active" ? groups.filter((group) => orderStage(group) !== "paid") : groups;
+}
+
+function readOrdersView(key: string): OrdersView {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === "active" || value === "none" ? value : "all";
+  } catch {
+    return "all";
+  }
+}
+
+export function useOrdersView(storageKey: string): [OrdersView, (view: OrdersView) => void] {
+  const [view, setView] = useState<OrdersView>(() => readOrdersView(storageKey));
+  const change = (next: OrdersView) => {
+    setView(next);
+    try { window.localStorage.setItem(storageKey, next); } catch { /* приватное окно: выбор живёт до перезагрузки */ }
   };
-  async function saveAll() {
-    if (!dirty.length || saving) return;
-    setSaving(true);
-    try {
-      const rows = dirty.map((line): FactPriceRow => ({
-        line_id: line.id, version: line.version, legacy_id: line.legacy_id,
-        price_with_vat: edits[line.id].trim().replace(",", ".") || null,
-      }));
-      const kept = new Set((await onSave(rows)) ?? []);
-      setEdits((current) => Object.fromEntries(Object.entries(current).filter(([id]) => kept.has(lines.find((line) => line.id === id)?.legacy_id ?? ""))));
-    } finally {
-      setSaving(false);
-    }
-  }
-  const button = (
-    <button type="button" className={dirty.length ? "primary small" : "secondary small"} disabled={disabled || saving || !dirty.length} onClick={() => void saveAll()}>
-      {saving ? "Сохраняем…" : dirty.length ? `Сохранить всё (${dirty.length})` : "Сохранить всё"}
-    </button>
-  );
-  return { price, button };
+  return [view, change];
 }
 
-export type OrderInvoiceHandlers = {
-  /** Файл счёта → ссылка и распознанные № и дата. */
-  onUploadInvoice: (file: File, lineId: string) => Promise<InvoiceUpload>;
-  /** Отправка счёта по заказу; при отказе бросает Error с текстом сервера. */
-  onSubmitInvoice: (group: OrderGroup, invoice: OrderInvoiceInput) => Promise<void>;
-};
-
-/** «Вставить счёт» / «Заменить счёт»: один счёт на все строки заказа — файл, № и дата (из файла, правятся),
- *  ожидаемая дата обязательна. Все строки заказа или ни одной. */
-function OrderInvoiceForm({ group, replace, disabled, onUploadInvoice, onSubmitInvoice, onClose }: OrderInvoiceHandlers & {
-  group: OrderGroup;
-  replace: boolean;
-  disabled: boolean;
-  onClose: () => void;
-}) {
-  const first = group.lines[0];
-  const [url, setUrl] = useState("");
-  const [fileNote, setFileNote] = useState("");
-  const [number, setNumber] = useState(replace ? first?.invoice_number ?? "" : "");
-  const [date, setDate] = useState(replace ? first?.invoice_date ?? "" : "");
-  const [expected, setExpected] = useState(replace && group.expected ? group.expected : nearestWorkingDay());
-  const [uploading, setUploading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
-  const busy = uploading || sending;
-
-  async function upload(file: File) {
-    setUploading(true);
-    setError("");
-    setFileNote("");
-    try {
-      const result = await onUploadInvoice(file, first.id);
-      setUrl(result.url);
-      if (result.invoice_number) setNumber(result.invoice_number);
-      if (result.invoice_date) setDate(result.invoice_date);
-      setFileNote(result.hint
-        ? `${result.file_name} · ${result.hint}`
-        : `${result.file_name} · распознано: № ${result.invoice_number || "—"}, дата ${formatDay(result.invoice_date) || "—"} — проверьте`);
-    } catch (reason) {
-      setError(failureText(reason, "Счёт не загружен"));
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setSending(true);
-    setError("");
-    try {
-      await onSubmitInvoice(group, {
-        invoice_url: url,
-        invoice_number: number.trim() || null,
-        invoice_date: date || null,
-        expected_arrival: expected,
-        lines: group.lines.map((line) => ({ line_id: line.id, version: line.version })),
-      });
-      onClose();
-    } catch (reason) {
-      setError(failureText(reason, "Счёт не принят"));
-      setSending(false);
-    }
-  }
-
+export function OrdersToggle({ groups, view, onChange }: { groups: OrderGroup[]; view: OrdersView; onChange: (view: OrdersView) => void }) {
+  const active = groups.filter((group) => orderStage(group) !== "paid").length;
+  const options: [OrdersView, string, number | undefined][] = [["all", "Все", groups.length], ["active", "Активные", active], ["none", "Скрыть", undefined]];
   return (
-    <form className="inline-action order-invoice-form" onSubmit={submit} aria-label={`${replace ? "Заменить счёт" : "Вставить счёт"} ${group.number}`}>
-      <label>Файл счёта
-        <input type="file" accept=".pdf,image/*" disabled={disabled || busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(file); }} />
-      </label>
-      <label>№ счёта<input value={number} disabled={disabled || busy} onChange={(event) => setNumber(event.target.value)} /></label>
-      <label>Дата счёта<input type="date" value={date} disabled={disabled || busy} onChange={(event) => setDate(event.target.value)} /></label>
-      <label>Ожидаемая дата *<input type="date" required value={expected} disabled={disabled || busy} onChange={(event) => setExpected(event.target.value)} /></label>
-      <button className="primary small" disabled={disabled || busy || !url || !expected}>
-        {sending ? "Передаём…" : replace ? "Заменить счёт" : `В оплату (${group.lines.length})`}
-      </button>
-      <button type="button" className="secondary small" disabled={sending} onClick={onClose}>Закрыть</button>
-      {uploading && <small className="hint">Загружаем счёт…</small>}
-      {fileNote && <small className="hint">{fileNote}</small>}
-      {error && <small className="danger-text" role="alert">{error}</small>}
-    </form>
+    <div className="orders-toggle" role="group" aria-label="Показ заказов">
+      <span>Заказы:</span>
+      <div className="seg-tabs">
+        {options.map(([value, label, amount]) => (
+          <button key={value} type="button" className={view === value ? "on" : undefined} aria-pressed={view === value} onClick={() => onChange(value)}>
+            {label}{amount !== undefined && <> <small>{amount}</small></>}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
-/** Какая форма счёта открыта под заголовком какого заказа. */
-function useOpenGroup(groups: OrderGroup[]) {
-  const [openKey, setOpenKey] = useState<string | null>(null);
-  useEffect(() => { if (openKey && !groups.some((group) => group.key === openKey)) setOpenKey(null); }, [groups, openKey]);
-  return { openKey, toggle: (key: string) => setOpenKey((current) => (current === key ? null : key)), close: () => setOpenKey(null) };
+const LINE_STATUS: Record<string, string> = { [AWAITING]: "Жду счёт", [TO_PAY]: "Ждёт оплаты", "Готово": "Принято" };
+
+/** «Статус» строки заказа и, мелко под ним, чего не хватает для счёта или оплаты. */
+function lineStatus(line: ProcurementLine): ReactNode {
+  const label = LINE_STATUS[line.status] ?? line.status;
+  if (line.status === AWAITING) {
+    const missing = missingForInvoice(line);
+    return <>{label}{missing.length > 0 && <small className="tone-warn">не хватает: {missing.join(", ")}</small>}</>;
+  }
+  if (line.status === TO_PAY) {
+    const hint = !line.invoice_url ? "нет счёта" : line.pay_missing.length ? `не хватает: ${line.pay_missing.join(", ")}` : "";
+    return <>{label}{hint && <small className="tone-warn">{hint}</small>}</>;
+  }
+  if (line.status === "Карантин") return <span className="tone-warn" title="Приёмка нашла несоответствие — ждёт решения">Карантин</span>;
+  return label;
 }
 
-export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onOpenKp, onPrint, onSavePrices, onUploadInvoice, onSubmitInvoice }: StageProps & OrderInvoiceHandlers & {
-  /** «Внести КП» по заказу. */
-  onOpenKp: (references: string[]) => void;
-  onPrint: (url: string) => void;
-  onSavePrices: (rows: FactPriceRow[]) => Promise<string[] | void>;
-}) {
-  const groups = useMemo(() => groupByOrder(lines), [lines]);
-  const panel = useLinePanel(lines, actionsOf, disabled, busyId);
-  const prices = useFactPrices(lines, onSavePrices, disabled);
-  const open = useOpenGroup(groups);
-  const columns: GroupColumn[] = [
-    { key: "id", title: "ID", render: (line) => <strong>{line.legacy_id}</strong> },
-    { key: "name", title: "Наименование", render: (line) => line.calculated_name },
-    { key: "qty", title: "Кол-во (факт)", render: qtyOf },
-    priceColumn(prices.price),
-    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(prices.price.sumOf(line)) },
-    { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
-    { key: "expected", title: "Ожид. дата", render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> },
-    {
-      key: "missing", title: "Не хватает для счёта",
-      render: (line) => { const missing = missingForInvoice(line); return missing.length ? <span className="tone-warn">{missing.join(", ")}</span> : <span className="tone-ok">всё есть</span>; },
-    },
-    { key: "note", title: "Комментарий", render: (line) => <NoteCell line={line} editing={editing} disabled={disabled} /> },
-  ];
+/** «Сумма факт» в рублях; счёт в валюте — второй строкой: сумма в валюте и курс ЦБ. */
+function sumCell(line: ProcurementLine): ReactNode {
+  if (!line.source_currency) return formatAmount(line.actual_sum);
   return (
-    <section className="panel table-panel procurement-stage">
-      <StageHeading title="Жду счёт" count={groups.length} hint="«Вставить счёт» — один файл на заказ: все его строки уходят «В оплату» или ни одной. «Цена факт» правится в строке; «Внести КП» — в меню заказа">
-        {prices.button}
-      </StageHeading>
-      <BulkStatus bulk={bulk} onClose={onCloseBulk} />
-      {!groups.length ? <StageEmpty text="Нет заказов, ждущих счёт" /> : (
-        <OrderGroupTable
-          label="Жду счёт"
-          groups={groups}
-          columns={columns}
-          menu={panel.menu}
-          headerActions={(group) => (
-            <>
-              <button type="button" className="primary small" disabled={disabled || !group.number} aria-expanded={open.openKey === group.key} onClick={() => open.toggle(group.key)}>Вставить счёт</button>
-              <OrderMenu group={group} disabled={disabled} items={[
-                ...documentItems(group, onPrint),
-                { label: "Внести КП", disabled: !group.number, run: () => onOpenKp([group.number]) },
-              ]} />
-            </>
-          )}
-          groupExtra={(group) => open.openKey === group.key
-            ? <OrderInvoiceForm key={group.key} group={group} replace={false} disabled={disabled} onUploadInvoice={onUploadInvoice} onSubmitInvoice={onSubmitInvoice} onClose={open.close} />
-            : null}
-        />
-      )}
-      {panel.node}
-    </section>
+    <>
+      {formatAmount(line.actual_sum)}
+      <small className="source-money">
+        <span>{`${line.source_sum ?? line.source_price_with_vat ?? line.source_price ?? ""} ${line.source_currency}`}</span>
+        {line.exchange_rate && <> · курс {line.exchange_rate} на {formatDate(line.exchange_rate_date)}</>}
+        {line.exchange_rate_manual && <span className="tone-warn"> · вручную, сверьте</span>}
+      </small>
+    </>
   );
 }
 
-// ── Ждёт оплаты ─────────────────────────────────────────────────────────────────────────────────
+// ── Лента заказов «Мои позиции» ───────────────────────────────────────────────────────────────────
 
 /** `portalPurchaseToPay`: «В оплату» со счётом и без отметки об оплате — кандидаты на «Оплачено → В пути». */
 export function payable(line: ProcurementLine) {
-  return line.status === "В оплату" && Boolean(line.invoice_url) && !line.paid_at;
-}
-
-function payReadiness(line: ProcurementLine) {
-  if (!line.invoice_url) return <span className="tone-warn">нет счёта</span>;
-  if (line.pay_missing.length) return <span className="tone-warn">не хватает: {line.pay_missing.join(", ")}</span>;
-  return <span className="tone-ok">можно оплачивать</span>;
+  return line.status === TO_PAY && Boolean(line.invoice_url) && !line.paid_at;
 }
 
 /** «Оплачено» заказа; когда ЦБ молчит, сервер просит курс — поле встаёт рядом с кнопкой. */
@@ -500,7 +412,7 @@ function PaidOrderAction({ group, disabled, onPaidOrder }: {
   const [prompt, setPrompt] = useState<ManualRatePrompt | null>(null);
   const [rate, setRate] = useState("");
   const [busy, setBusy] = useState(false);
-  const notReady = group.lines.some((line) => !payable(line) || line.pay_missing.length > 0);
+  const notReady = group.lines.filter((line) => line.status === TO_PAY).some((line) => !payable(line) || line.pay_missing.length > 0);
 
   async function pay() {
     setBusy(true);
@@ -528,56 +440,330 @@ function PaidOrderAction({ group, disabled, onPaidOrder }: {
   );
 }
 
-export function ToPayStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onPrint, onSavePrices, onUploadInvoice, onSubmitInvoice, onPaidOrder }: StageProps & OrderInvoiceHandlers & {
-  onPrint: (url: string) => void;
-  onSavePrices: (rows: FactPriceRow[]) => Promise<string[] | void>;
+/** Документ по заказу: открытое окно «Вставить счёт» / «Вставить КП» / «Заменить счёт». */
+type OpenDocument = { key: string; kind: OrderDocumentKind; replace: boolean };
+
+export type OrderDocumentHandlers = {
+  /** Файл → распознанные № и дата, цены строк заказа. */
+  onRecognize: (group: OrderGroup, file: File, kind: OrderDocumentKind) => Promise<OrderDocumentRecognition>;
+  /** Проверенные цены (и счёт) — на сервер; при отказе бросает Error с текстом для окна. */
+  onApplyDocument: (group: OrderGroup, input: ApplyOrderDocumentInput, replace: boolean) => Promise<void>;
+};
+
+/** Заказы под «В работе» одной лентой (владелец, 05.10: «позиции в работе просто скрываются, а не перетекают»):
+ *  заказ не переезжает между блоками, его статус меняется на месте. Заголовок заказа свёрнут; в нём действия
+ *  стадии — «Вставить счёт» / «Вставить КП» (окно), «Оплачено», меню «⋯». Строки заказа только показывают цену:
+ *  её вносит окно документа. */
+export function OrderList({
+  groups, hiddenNote, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onOpenKp, onPaidOrder, onReconcile,
+  onRecognize, onApplyDocument,
+}: StageProps & OrderDocumentHandlers & {
+  /** Заказы, которые показывает переключатель, в порядке ленты. */
+  groups: OrderGroup[];
+  /** «Скрыто заказов: 3» — когда переключатель что-то спрятал. */
+  hiddenNote?: string;
+  /** «Внести КП в валюте» — прежняя форма КП по строкам (курс, НДС, суммы). */
+  onOpenKp: (references: string[]) => void;
   /** «Оплачено» по заказу; вернёт вопрос про курс, если ЦБ не ответил. */
   onPaidOrder: (group: OrderGroup, manualRate?: string) => Promise<ManualRatePrompt | null>;
+  /** «Сверить курс с ЦБ» для строк с курсом, введённым вручную. */
+  onReconcile: (lines: ProcurementLine[]) => Promise<unknown>;
 }) {
-  const groups = useMemo(() => groupByOrder(lines), [lines]);
+  const lines = useMemo(() => groups.flatMap((group) => group.lines), [groups]);
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
-  const prices = useFactPrices(lines, onSavePrices, disabled);
-  const open = useOpenGroup(groups);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [doc, setDoc] = useState<OpenDocument | null>(null);
+  const docGroup = doc ? groups.find((group) => group.key === doc.key) : undefined;
+  const docLines = doc && docGroup ? docGroup.lines.filter((line) => line.status === (doc.replace ? TO_PAY : AWAITING)) : [];
+  // Строки заказа ушли дальше (другая вкладка, перечитанная очередь) — окно закрывается.
+  useEffect(() => { if (doc && !docLines.length) setDoc(null); }, [doc, docLines.length]);
+
+  const toggle = (key: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
   const columns: GroupColumn[] = [
     { key: "id", title: "ID", render: (line) => <strong>{line.legacy_id}</strong> },
-    { key: "name", title: "Наименование", render: (line) => line.calculated_name },
-    { key: "qty", title: "Кол-во (факт)", render: qtyOf },
-    priceColumn(prices.price),
-    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(prices.price.sumOf(line)) },
+    { key: "name", title: "Наименование", cell: "name-cell", render: (line) => line.calculated_name },
+    { key: "qty", title: "Кол-во факт", render: qtyOf },
+    { key: "price", title: "Цена факт, ₽", numeric: true, render: (line) => formatAmount(line.actual_price_with_vat) },
+    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: sumCell },
     { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
     { key: "invoice", title: "Счёт", render: (line) => invoiceColumn.render!(line) },
     { key: "expected", title: "Ожид. дата", render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> },
-    { key: "ready", title: "Готовность", render: payReadiness },
-    { key: "note", title: "Комментарий", render: (line) => <NoteCell line={line} editing={editing} disabled={disabled} /> },
+    { key: "actual_arrival", title: "Факт. дата", render: (line) => formatDay(line.actual_arrival) },
+    { key: "status", title: "Статус", cell: "status-cell", render: lineStatus },
+    { key: "note", title: "Комментарий", cell: "note-cell", render: (line) => <NoteCell line={line} editing={editing} disabled={disabled} /> },
   ];
+
+  const headerActions = (group: OrderGroup) => {
+    const stage = orderStage(group);
+    const off = disabled || !group.number;
+    const docs = documentItems(group);
+    if (stage === "awaiting") {
+      return (
+        <>
+          <button type="button" className="primary small" disabled={off} onClick={() => setDoc({ key: group.key, kind: "invoice", replace: false })}>Вставить счёт</button>
+          <button type="button" className="secondary small" disabled={off} onClick={() => setDoc({ key: group.key, kind: "kp", replace: false })}>Вставить КП</button>
+          <OrderMenu group={group} disabled={disabled} items={[
+            ...docs,
+            { label: "Внести КП в валюте…", title: "КП по строкам: валюта, НДС, суммы, курс", disabled: !group.number, run: () => onOpenKp([group.number]) },
+          ]} />
+        </>
+      );
+    }
+    if (stage === "topay") {
+      return (
+        <>
+          <PaidOrderAction group={group} disabled={off} onPaidOrder={onPaidOrder} />
+          <OrderMenu group={group} disabled={disabled} items={[
+            ...docs,
+            { label: "Заменить счёт…", disabled: !group.number, run: () => setDoc({ key: group.key, kind: "invoice", replace: true }) },
+          ]} />
+        </>
+      );
+    }
+    const manual = group.lines.filter((line) => line.exchange_rate_manual);
+    return (
+      <OrderMenu group={group} disabled={disabled} items={[
+        ...docs,
+        ...(manual.length ? [{ label: `Сверить курс с ЦБ (${manual.length})`, title: "Курс введён вручную — сверьте с ЦБ, когда он ответит", run: () => void onReconcile(manual) }] : []),
+      ]} />
+    );
+  };
+
   return (
-    <section className="panel table-panel procurement-stage">
-      <StageHeading title="Ждёт оплаты" count={groups.length} hint="«Оплачено» — все строки заказа уходят «В пути» в приёмку. «Цена факт» правится в строке">
-        {prices.button}
-      </StageHeading>
+    <div className="order-block">
       <BulkStatus bulk={bulk} onClose={onCloseBulk} />
-      {!groups.length ? <StageEmpty text="Нет счетов к оплате" /> : (
+      {groups.length > 0 && (
         <OrderGroupTable
-          label="Ждёт оплаты"
-          groups={groups}
-          columns={columns}
-          menu={panel.menu}
-          headerActions={(group) => (
-            <>
-              <PaidOrderAction group={group} disabled={disabled} onPaidOrder={onPaidOrder} />
-              <OrderMenu group={group} disabled={disabled} items={[
-                ...documentItems(group, onPrint),
-                { label: "Заменить счёт", run: () => open.toggle(group.key) },
-              ]} />
-            </>
-          )}
-          groupExtra={(group) => open.openKey === group.key
-            ? <OrderInvoiceForm key={group.key} group={group} replace disabled={disabled} onUploadInvoice={onUploadInvoice} onSubmitInvoice={onSubmitInvoice} onClose={open.close} />
-            : null}
+          label="Заказы" groups={groups} columns={columns} expanded={expanded} onToggle={toggle}
+          headerActions={headerActions} menu={panel.menu}
         />
       )}
+      {hiddenNote && <p className="stage-empty orders-hidden">{hiddenNote}</p>}
       {panel.node}
-    </section>
+      {doc && docGroup && docLines.length > 0 && (
+        <OrderDocumentDialog
+          key={`${doc.key}:${doc.kind}:${doc.replace}`}
+          group={docGroup}
+          lines={docLines}
+          kind={doc.kind}
+          replace={doc.replace}
+          onRecognize={(file) => onRecognize(docGroup, file, doc.kind)}
+          onApply={(input) => onApplyDocument(docGroup, input, doc.replace)}
+          onClose={() => setDoc(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Окно «Вставить счёт» / «Вставить КП» ─────────────────────────────────────────────────────────
+
+const CONFIDENCE: Record<string, { text: string; tone: string }> = {
+  article: { text: "по артикулу", tone: "tone-ok" },
+  name: { text: "по названию", tone: "tone-ok" },
+  weak: { text: "слабое — проверьте", tone: "tone-warn" },
+};
+
+const decimal = (value: string) => value.trim().replace(/\s/g, "").replace(",", ".");
+const isNumber = (value: string) => decimal(value) !== "" && Number.isFinite(Number(decimal(value)));
+
+/** Окно документа по заказу (владелец, 05.10: «вставка КП / счёта, и с него автоматом считывается цена»,
+ *  «это должно быть окном, а не снизу»): файл → сервер распознаёт № и дату, цены строк и насколько уверенно
+ *  нашёл каждую; цены правятся здесь же, если распознано не то. Подтверждение пишет все строки заказа или ни одной:
+ *  КП — только цены, строки ждут счёт; счёт — цены и счёт, строки уходят «В оплату» (ожидаемая дата обязательна). */
+function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply, onClose }: {
+  group: OrderGroup;
+  /** Строки стадии, к которым относится документ: «Жду счет», а для «Заменить счёт» — «В оплату». */
+  lines: ProcurementLine[];
+  kind: OrderDocumentKind;
+  replace: boolean;
+  onRecognize: (file: File) => Promise<OrderDocumentRecognition>;
+  onApply: (input: ApplyOrderDocumentInput) => Promise<void>;
+  onClose: () => void;
+}) {
+  const invoice = kind === "invoice";
+  const title = replace ? "Заменить счёт" : invoice ? "Вставить счёт" : "Вставить КП";
+  const heading = groupHeading(group);
+  const first = lines[0];
+  const [result, setResult] = useState<OrderDocumentRecognition | null>(null);
+  const [prices, setPrices] = useState<Record<string, string>>(() => Object.fromEntries(lines.map((line) => [line.id, line.actual_price_with_vat ?? ""])));
+  const [number, setNumber] = useState(replace ? first?.invoice_number ?? "" : "");
+  const [date, setDate] = useState(replace ? first?.invoice_date ?? "" : "");
+  const [expected, setExpected] = useState(replace && group.expected ? group.expected : nearestWorkingDay());
+  const [reading, setReading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const busy = reading || sending;
+
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !sending) onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose, sending]);
+
+  const matches = new Map((result?.lines ?? []).map((match) => [match.line_id, match]));
+  const unmatched = new Set(result?.unmatched_lines ?? []);
+  const priceOf = (line: ProcurementLine) => prices[line.id] ?? "";
+  const quantityOf = (line: ProcurementLine) => Number(line.actual_quantity ?? line.calculated_quantity);
+  const sumOf = (line: ProcurementLine) => {
+    const price = priceOf(line);
+    return isNumber(price) && Number.isFinite(quantityOf(line)) ? Math.round(Number(decimal(price)) * quantityOf(line) * 100) / 100 : null;
+  };
+  const total = Math.round(lines.reduce((sum, line) => sum + (sumOf(line) ?? 0), 0) * 100) / 100;
+  const documentTotal = result?.totals?.sum_with_vat;
+  const totalDiffers = Boolean(documentTotal) && Math.abs(Number(documentTotal) - total) > 0.01;
+  const currency = (result?.currency || "RUB").toUpperCase();
+  const money = currency === "RUB" || currency === "РУБ" ? "₽" : currency;
+  const badPrice = lines.filter((line) => priceOf(line).trim() !== "" && !isNumber(priceOf(line)));
+  const noPrice = lines.filter((line) => priceOf(line).trim() === "");
+  const blocker = !result ? `Выберите файл ${invoice ? "счёта" : "КП"}`
+    : badPrice.length ? `Цена не числом: ${badPrice.map((line) => line.legacy_id).join(", ")}`
+      : invoice && noPrice.length ? `Нет цены: ${noPrice.map((line) => line.legacy_id).join(", ")}`
+        : invoice && !expected ? "Укажите ожидаемую дату" : "";
+
+  async function read(file: File) {
+    setReading(true);
+    setError("");
+    try {
+      const recognized = await onRecognize(file);
+      setResult(recognized);
+      if (recognized.invoice_number) setNumber(recognized.invoice_number);
+      if (recognized.invoice_date) setDate(recognized.invoice_date);
+      setPrices((current) => {
+        const next = { ...current };
+        for (const match of recognized.lines) if (match.price_with_vat) next[match.line_id] = match.price_with_vat;
+        return next;
+      });
+    } catch (reason) {
+      setError(failureText(reason, "Файл не распознан"));
+    } finally {
+      setReading(false);
+    }
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!result || blocker) return;
+    setSending(true);
+    setError("");
+    const input: ApplyOrderDocumentInput = {
+      kind,
+      file_url: result.file.url,
+      lines: lines.map((line) => ({ line_id: line.id, version: line.version, price_with_vat: decimal(priceOf(line)) || null })),
+    };
+    if (invoice) {
+      input.invoice_number = number.trim() || null;
+      input.invoice_date = date || null;
+      input.expected_arrival = expected;
+    }
+    try {
+      await onApply(input);
+      onClose();
+    } catch (reason) {
+      setError(failureText(reason, "Документ не принят"));
+      setSending(false);
+    }
+  }
+
+  return createPortal(
+    <div className="dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !sending) onClose(); }}>
+      <form className="panel move-dialog wide order-doc-dialog" role="dialog" aria-label={`${title} ${group.number}`} onSubmit={(event) => void submit(event)}>
+        <h2>{title} · {group.number}</h2>
+        <div className="move-lot"><strong>{heading.title}</strong><span>{heading.meta}</span></div>
+        <div className={invoice ? "move-grid" : "move-grid two"}>
+          <label>Файл {invoice ? "счёта" : "КП"}
+            <input type="file" accept=".pdf,.xlsx,.xls,.csv,image/*" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void read(file); }} />
+          </label>
+          {invoice && <>
+            <label>№ счёта<input value={number} disabled={busy} onChange={(event) => setNumber(event.target.value)} /></label>
+            <label>Дата счёта<input type="date" value={date} disabled={busy} onChange={(event) => setDate(event.target.value)} /></label>
+            <label>Ожидаемая дата *<input type="date" required value={expected} disabled={busy} onChange={(event) => setExpected(event.target.value)} /></label>
+          </>}
+        </div>
+        {reading && <p className="hint doc-note">Читаем файл…</p>}
+        {result && (
+          <p className="hint doc-note">
+            {result.file.name} · распознано: № {result.invoice_number || "—"}{result.invoice_date ? ` от ${formatDay(result.invoice_date)}` : ""}
+            {" · "}найдено строк {lines.filter((line) => matches.get(line.id)?.confidence).length} из {lines.length} — проверьте цены
+          </p>
+        )}
+        <div className="table-wrap doc-lines">
+          <table className="grid wide">
+            <thead>
+              <tr>
+                <th>Позиция</th>
+                <th className="num">Кол-во факт</th>
+                <th className="num">Цена с НДС, {money}</th>
+                <th className="num">Сумма, {money}</th>
+                <th>Совпадение</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line) => {
+                const match = matches.get(line.id);
+                const lost = Boolean(result) && (!match?.confidence || unmatched.has(line.legacy_id));
+                const confidence = match?.confidence ? CONFIDENCE[match.confidence] : undefined;
+                const warn = lost || match?.confidence === "weak";
+                const otherQuantity = match?.quantity ? Number(match.quantity) !== quantityOf(line) : false;
+                return (
+                  <tr key={line.id} className={warn ? "doc-warn" : undefined}>
+                    <td>
+                      <strong>{line.legacy_id}</strong> {line.calculated_name}
+                      {match?.matched_name && <small>в документе: {match.matched_name}</small>}
+                    </td>
+                    <td className="num">
+                      {qtyOf(line)}
+                      {otherQuantity && <small className="tone-warn">в документе {match?.quantity} {match?.unit ?? ""}</small>}
+                    </td>
+                    <td className="num doc-price">
+                      <input
+                        aria-label={`Цена с НДС ${line.legacy_id}`} inputMode="decimal" disabled={sending} aria-invalid={badPrice.includes(line) || undefined}
+                        value={priceOf(line)} onChange={(event) => setPrices((current) => ({ ...current, [line.id]: event.target.value }))}
+                      />
+                    </td>
+                    <td className="num">{formatAmount(sumOf(line))}</td>
+                    <td>{!result ? "—" : lost ? <span className="tone-warn">нет в документе</span> : <span className={confidence?.tone}>{confidence?.text}</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={3}>Итого{totalDiffers && <span className="tone-warn"> · в документе {formatAmount(documentTotal)} {money}</span>}</td>
+                <td className="num"><strong>{formatAmount(total)}</strong></td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        {result && result.unmatched_items.length > 0 && (
+          <div className="warning-inline doc-unmatched">
+            <strong>В документе, но не найдено в заказе: {result.unmatched_items.length}</strong>
+            <ul>
+              {result.unmatched_items.map((item, index) => (
+                <li key={`${index}:${item.name}`}>
+                  {item.name}{item.quantity ? ` · ${item.quantity}` : ""}{item.price_with_vat ? ` · ${formatAmount(item.price_with_vat)} ${money}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {error && <div className="error-banner" role="alert">{error}</div>}
+        <div className="move-actions">
+          {blocker && <small className="hint doc-blocker">{blocker}</small>}
+          <button type="button" className="secondary" disabled={sending} onClick={onClose}>Отмена</button>
+          <button className="primary" disabled={busy || Boolean(blocker)}>
+            {sending ? "Сохраняем…" : replace ? "Заменить счёт" : invoice ? `В оплату (${lines.length})` : `Внести цены (${lines.length})`}
+          </button>
+        </div>
+      </form>
+    </div>,
+    document.body,
   );
 }
 
@@ -632,60 +818,6 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
         compactBelow={COMPACT_BELOW}
         emptyText="Дозавоза нет"
       />
-      {panel.node}
-    </section>
-  );
-}
-
-// ── Оплачено: в пути и карантин (стадии приёмки) ────────────────────────────────────────────────
-
-export function PaidStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onReconcile, onPrint }: StageProps & {
-  /** «Сверить курс с ЦБ» для строк с курсом, введённым вручную. */
-  onReconcile: (lines: ProcurementLine[]) => Promise<unknown>;
-  onPrint: (url: string) => void;
-}) {
-  const groups = useMemo(() => groupByOrder(lines), [lines]);
-  const panel = useLinePanel(lines, actionsOf, disabled, busyId);
-  // «В счёте» и «Курс ЦБ» — только когда есть счёт в валюте; рублёвые строки их не заполняют.
-  const foreign = lines.some((line) => line.source_currency);
-  const manual = lines.filter((line) => line.exchange_rate_manual);
-  const columns: GroupColumn[] = [
-    { key: "id", title: "ID", render: (line) => <strong>{line.legacy_id}</strong> },
-    { key: "name", title: "Наименование", render: (line) => line.calculated_name },
-    { key: "qty", title: "Кол-во (факт)", render: qtyOf },
-    { key: "expected", title: "Ожид. дата", render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> },
-    { key: "actual_arrival", title: "Факт. дата", render: (line) => formatDay(line.actual_arrival) },
-    { key: "status", title: "Статус", render: (line) => line.status === "Карантин" ? <span className="tone-warn" title="Приёмка нашла несоответствие — ждёт решения">Карантин</span> : line.status },
-    { key: "invoice", title: "Счёт", render: (line) => invoiceColumn.render!(line) },
-    { key: "sum", title: "Сумма, ₽", numeric: true, render: (line) => formatAmount(line.actual_sum) },
-    ...(foreign ? [
-      { key: "source", title: "В счёте", render: (line: ProcurementLine) => (line.source_currency ? `${line.source_sum ?? line.source_price_with_vat ?? line.source_price ?? ""} ${line.source_currency}` : "") },
-      {
-        key: "rate", title: "Курс ЦБ",
-        render: (line: ProcurementLine) => line.source_currency
-          ? <>{line.exchange_rate} на {formatDate(line.exchange_rate_date)}{line.exchange_rate_manual && <span className="tone-warn"> · вручную, сверьте</span>}</>
-          : "",
-      },
-    ] : []),
-    { key: "note", title: "Комментарий", render: (line) => <NoteCell line={line} editing={editing} disabled={disabled} /> },
-  ];
-  return (
-    <section className="panel table-panel procurement-stage">
-      <StageHeading title="Оплачено" count={groups.length} hint="Оплачено и передано в приёмку: в пути и на карантине (приёмка нашла несоответствие — ждёт решения)">
-        {manual.length > 0 && (
-          <button type="button" className="secondary small" disabled={disabled} onClick={() => void onReconcile(manual)}>Сверить курс с ЦБ ({manual.length})</button>
-        )}
-      </StageHeading>
-      <BulkStatus bulk={bulk} onClose={onCloseBulk} />
-      {!groups.length ? <StageEmpty text="Нет оплаченных позиций в пути" /> : (
-        <OrderGroupTable
-          label="Оплачено"
-          groups={groups}
-          columns={columns}
-          menu={panel.menu}
-          headerActions={(group) => <OrderMenu group={group} disabled={disabled} items={documentItems(group, onPrint)} />}
-        />
-      )}
       {panel.node}
     </section>
   );
