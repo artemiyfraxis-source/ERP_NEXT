@@ -126,7 +126,9 @@ def test_two_lots_go_to_three_kb_in_natural_order_fifo_by_grn_with_a_split_and_a
     assert [((line["lot"] or {}).get("grn"), line["requirement"], line["reserved"]) for line in item_lines(tenth)] == [
         ("FRX.26.0000010", "1", "1"), (None, "3", "0"),
     ]
-    assert first["status"] == "Недоукомплектован" and tenth["status"] == "Недоукомплектован"
+    # G1-T3: КБ1 had only this item — its last open line closed, «Укомплектован» by itself; КБ2 and КБ10 still wait.
+    assert first["status"] == "Укомплектован"
+    assert second["status"] == "Недоукомплектован" and tenth["status"] == "Недоукомплектован"
     provod = next(line for line in second["lines"] if line["article"] == "КД-2")
     assert provod["lot"] is None and provod["reserved"] == "0"  # another item of the КБ is not touched
     assert fetch(client, other["id"])["version"] == other["version"]  # another project is not touched
@@ -242,11 +244,12 @@ def test_off_book_line_mark_unmark_and_return_refuses_good_back(api):
 
     assert marked.status_code == 200, marked.text
     assert marked.json()["request"]["lines"][0]["off_book"] is True
-    assert marked.json()["request"]["status"] == "Недоукомплектован"
+    assert marked.json()["request"]["status"] == "Укомплектован"  # the only line closed by the mark (G1-T3)
     assert stale.status_code == 409
     assert again.status_code == 422
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["request"]["lines"][0]["off_book"] is False
+    assert cleared.json()["request"]["status"] == "Недоукомплектован"  # the mark removed: rolled back
 
     request = client.post(url, json={"version": cleared.json()["request"]["version"]}).json()["request"]
     request = client.post(f"/api/issues/{request['id']}/complete", json={"version": request["version"]}).json()["request"]
