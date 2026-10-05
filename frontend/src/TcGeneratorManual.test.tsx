@@ -63,14 +63,22 @@ function addFromLibrary(name: RegExp) {
 }
 
 const diagram = () => screen.queryByRole("list", { name: "Блоки схемы" }) ?? screen.getByRole("group", { name: "Блоки схемы" });
-const blockButton = (name: RegExp) => within(diagram()).getByRole("button", { name });
+/** Сам блок схемы (не его «+» и «→»). */
+const blockButton = (name: RegExp) => {
+  const found = within(diagram()).getAllByRole("button", { name }).filter((button) => button.classList.contains("route-block"));
+  expect(found).toHaveLength(1);
+  return found[0];
+};
+const blockCount = () => diagram().querySelectorAll(".route-block").length;
+/** Развернуть свёрнутую операцию по её номеру. */
+const unfold = (position: number) => fireEvent.click(screen.getByRole("button", { name: new RegExp(`^Развернуть операцию ${position}:`) }));
 
 it("draws the diagram first: adds a block, puts library operations into it by a row click, own ones into the product, and builds", async () => {
   const onBuild = mount();
   await openManual();
   // Формы кабелей и типовые операции на этой вкладке не нужны; схема — только итоговый блок, он выбран.
   expect(screen.queryByText("Кабели")).not.toBeInTheDocument();
-  expect(within(diagram()).getAllByRole("button")).toHaveLength(1);
+  expect(blockCount()).toBe(1);
   expect(blockButton(/Провод нетиповой 300мм/)).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByText("Выберите блок и добавьте операцию из библиотеки или свою.")).toBeInTheDocument();
   expect(screen.getByText(/Добавьте блок и операции в него/)).toBeInTheDocument();
@@ -93,6 +101,10 @@ it("draws the diagram first: adds a block, puts library operations into it by a 
   fireEvent.change(within(picker).getByLabelText("Поиск карточки"), { target: { value: "" } });
   addFromLibrary(/^Опрессовка терминалов \(А\)$/);
 
+  // Операции из библиотеки — свёрнутые строки с нормой; поля открываются нажатием.
+  expect(screen.getByLabelText("Норма: Резка")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Подготовка, мин: Резка")).not.toBeInTheDocument();
+  unfold(1); unfold(2);
   // Норма — из БД.ОП по коду карточки, иначе из библиотеки.
   expect(screen.getByLabelText("Подготовка, мин: Резка")).toHaveValue("2");
   expect(screen.getByLabelText("Операция, сек/шт: Резка")).toHaveValue("6");
@@ -122,8 +134,10 @@ it("draws the diagram first: adds a block, puts library operations into it by a 
   // Схема — два блока цепочкой, у блоков номера операций; справа — порядок по блокам.
   expect(within(diagram()).getAllByRole("listitem")).toHaveLength(2);
   expect(blockButton(/Провод с лепестком/)).toHaveTextContent("1–2");
-  expect(screen.getByLabelText("Штук из «Провод с лепестком» на один «Провод нетиповой 300мм»")).toHaveValue("1");
-  fireEvent.change(screen.getByLabelText("Штук из «Провод с лепестком» на один «Провод нетиповой 300мм»"), { target: { value: "2" } });
+  // Число штук — «N шт» на стрелке; нажатие открывает поле.
+  fireEvent.click(screen.getByTitle("Штук из «Провод с лепестком» на один «Провод нетиповой 300мм»"));
+  expect(screen.getByLabelText("Штук — Штук из «Провод с лепестком» на один «Провод нетиповой 300мм»")).toHaveValue("1");
+  fireEvent.change(screen.getByLabelText("Штук — Штук из «Провод с лепестком» на один «Провод нетиповой 300мм»"), { target: { value: "2" } });
   const order = screen.getByRole("group", { name: "Порядок операций" });
   expect(within(order).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
     expect.stringMatching(/^1Резка/), expect.stringMatching(/^2Опрессовка терминалов \(А\)/), expect.stringMatching(/^3Пайка экрана/),
@@ -163,8 +177,8 @@ it("adds several cards at once into the selected block and deletes a block with 
   fireEvent.click(screen.getByRole("button", { name: "+ Блок" }));
   fireEvent.click(screen.getByRole("button", { name: "+ Операция из библиотеки" }));
   const picker = screen.getByRole("region", { name: "Библиотека операций" });
-  fireEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать cut" }));
-  fireEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать heat" }));
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать: Резка" }));
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать: Усадка" }));
   fireEvent.click(within(picker).getByRole("button", { name: "Добавить выбранные" }));
   expect(await screen.findByRole("status")).toHaveTextContent("Добавлено в «Блок 2»: 2 оп.");
   expect(blockButton(/Усадка/)).toHaveTextContent("2 оп.");
@@ -176,7 +190,7 @@ it("adds several cards at once into the selected block and deletes a block with 
   confirm.mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Удалить блок" }));
   expect(screen.queryByLabelText("Название операции 1")).not.toBeInTheDocument();
-  expect(within(diagram()).getAllByRole("button")).toHaveLength(1);
+  expect(blockCount()).toBe(1);
   // Итоговый блок не удаляется.
   expect(screen.queryByRole("button", { name: "Удалить блок" })).not.toBeInTheDocument();
 });
@@ -207,7 +221,7 @@ it("will not take an input that loops the diagram or cut a block off the product
   fireEvent.change(screen.getByLabelText("Название блока"), { target: { value: "Трубка" } });
   // «Трубка» берёт «Провод» — можно; потом «Провод» не может взять «Трубку» — в списке её уже нет.
   fireEvent.change(screen.getByLabelText("Добавить вход из блока"), { target: { value: "b2" } });
-  fireEvent.click(screen.getByRole("button", { name: "Добавить вход" }));
+  expect(screen.queryByRole("button", { name: "Добавить вход" })).not.toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Блок «Трубка»" })).getByRole("button", { name: "Убрать вход «Провод»" })).toBeInTheDocument();
   fireEvent.click(blockButton(/Провод нетиповой 300мм/));
   fireEvent.click(screen.getByRole("button", { name: "Убрать вход «Трубка»" }));
@@ -232,6 +246,7 @@ it("opens a card built by hand on its tab with its blocks, keeps them across tab
   const onBuild = mount({ card: builtCard });
   expect(await screen.findByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
   expect(screen.getByLabelText("Название операции 1")).toHaveValue("Резка");
+  unfold(2);
   expect(screen.getByLabelText("Подготовка, мин: Пайка экрана")).toHaveValue("5");
   expect(blockButton(/Провод с лепестком/)).toHaveTextContent("2 оп.");
   expect(screen.getByLabelText("Название блока")).toHaveValue("Провод с лепестком");
@@ -252,4 +267,77 @@ it("opens a card built by hand on its tab with its blocks, keeps them across tab
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0].ops.map((op: Record<string, unknown>) => op.seq)).toEqual([4, 7]);
   expect(onBuild.mock.calls[0][0].route).toEqual({ blocks: [{ key: "b1", name: "Провод с лепестком", ops: [1, 2], final: true }], edges: [] });
+});
+
+/** Блок «Провод» и «Трубка» — входы итога; «Трубка» выбрана. */
+async function twoBlocks() {
+  mount();
+  await openManual();
+  fireEvent.click(screen.getByRole("button", { name: "+ Блок" }));
+  fireEvent.change(screen.getByLabelText("Название блока"), { target: { value: "Провод" } });
+  fireEvent.click(blockButton(/Провод нетиповой 300мм/));
+  fireEvent.click(screen.getByRole("button", { name: "+ Блок" }));
+  fireEvent.change(screen.getByLabelText("Название блока"), { target: { value: "Трубка" } });
+}
+
+it("«+» on a block makes its new input, opens the library aimed at it and names the block after the picked operation", async () => {
+  mount();
+  await openManual();
+  fireEvent.click(screen.getByRole("button", { name: "Добавить вход в блок «Провод нетиповой 300мм»" }));
+  expect(blockCount()).toBe(2);
+  const picker = screen.getByRole("region", { name: "Библиотека операций" });
+  expect(within(picker).getByText("Операция из библиотеки → в блок «Блок 2»")).toBeInTheDocument();
+  addFromLibrary(/^Резка$/);
+  expect(blockButton(/Резка/)).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByLabelText("Название блока")).toHaveValue("Резка");
+  expect(screen.getByLabelText("Операция 1: Резка")).toBeInTheDocument();
+  // Своё название второй раз не затирается.
+  fireEvent.change(screen.getByLabelText("Название блока"), { target: { value: "Нарезанный провод" } });
+  addFromLibrary(/^Усадка$/);
+  expect(screen.getByLabelText("Название блока")).toHaveValue("Нарезанный провод");
+});
+
+it("connects two blocks by two taps on «→» and a block, and refuses a cycle in Russian", async () => {
+  await twoBlocks();
+  // «Провод» ещё не берёт «Трубку»: Трубка → Провод.
+  fireEvent.click(screen.getByRole("button", { name: "Соединить блок «Трубка» с другим блоком" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Нажмите блок, куда идёт «Трубка».");
+  fireEvent.click(blockButton(/Провод(?! нетиповой)/));
+  expect(within(screen.getByRole("region", { name: "Блок «Трубка»" })).queryByRole("button", { name: /Убрать вход/ })).not.toBeInTheDocument();
+  fireEvent.click(blockButton(/Провод(?! нетиповой)/));
+  expect(within(screen.getByRole("region", { name: "Блок «Провод»" })).getByRole("button", { name: "Убрать вход «Трубка»" })).toBeInTheDocument();
+  // Обратная связь «Провод» → «Трубка» замкнула бы схему.
+  fireEvent.click(screen.getByRole("button", { name: "Соединить блок «Провод» с другим блоком" }));
+  fireEvent.click(blockButton(/Трубка/));
+  expect(screen.getByRole("alert")).toHaveTextContent(/^Так нельзя:/);
+});
+
+it("changes the number on the arrow pill and removes the link from it", async () => {
+  await twoBlocks();
+  const label = "Штук из «Трубка» на один «Провод нетиповой 300мм»";
+  fireEvent.click(screen.getByTitle(label));
+  fireEvent.change(screen.getByLabelText(`Штук — ${label}`), { target: { value: "3" } });
+  expect(screen.getByTitle(label)).toHaveTextContent("3 шт");
+  fireEvent.click(screen.getByRole("button", { name: "Убрать связь" }));
+  // Трубка без связи не доходит до изделия — убрать нельзя.
+  expect(screen.getByRole("alert")).toHaveTextContent(/^Так нельзя:/);
+  expect(screen.getByTitle(label)).toHaveTextContent("3 шт");
+});
+
+it("adds an input from the list at once, selects a block from the summary and folds an operation card", async () => {
+  await twoBlocks();
+  fireEvent.click(screen.getByRole("button", { name: "+ Операция из библиотеки" }));
+  addFromLibrary(/^Резка$/);
+  expect(screen.getByLabelText("Операция 1: Резка")).toBeInTheDocument();
+  // Карточка свёрнута; нажатие открывает, ещё одно — сворачивает.
+  expect(screen.queryByLabelText("Параметры: Резка")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Развернуть операцию 1: Резка" }));
+  expect(screen.getByLabelText("Параметры: Резка")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Свернуть операцию 1: Резка" }));
+  expect(screen.queryByLabelText("Параметры: Резка")).not.toBeInTheDocument();
+  // Блок из «Итога» выбирается нажатием.
+  const order = screen.getByRole("group", { name: "Порядок операций" });
+  fireEvent.click(within(order).getByRole("button", { name: "Провод нетиповой 300мм" }));
+  expect(screen.getByRole("region", { name: "Блок «Провод нетиповой 300мм»" })).toBeInTheDocument();
+  expect(blockButton(/Провод нетиповой 300мм/)).toHaveAttribute("aria-pressed", "true");
 });

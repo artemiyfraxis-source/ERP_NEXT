@@ -26,7 +26,7 @@ export interface DataColumn<T> {
   /** Длинный текст с переносом. */
   wrap?: boolean;
   /** Ширина колонки (px) — чтобы несколько таблиц одной страницы шли колонка в колонку. */
-  width?: number;
+  width?: number | string;
   /** Подсказка при наведении на заголовок (например, полное название при сокращённом). */
   hint?: string;
 }
@@ -67,6 +67,8 @@ export interface DataTableProps<T> {
   /** Клик по строке целиком — действие (вместо раскрытия строки); rowTitle — подсказка строки. */
   onRowClick?: (row: T) => void;
   rowTitle?: (row: T) => string;
+  /** Подпись отметки строки для чтения с экрана (по умолчанию — ключ строки). */
+  rowLabel?: (row: T) => string;
   /** Имя файла выгрузки без расширения; без него кнопки «Excel» нет. */
   exportName?: string;
   emptyText?: string;
@@ -168,6 +170,7 @@ export function DataTable<T>({
   rowClassName,
   onRowClick,
   rowTitle,
+  rowLabel,
   exportName,
   emptyText = "Ничего не найдено.",
   pageSize = 200,
@@ -327,7 +330,7 @@ export function DataTable<T>({
         >
           {selectable && (
             <td onClick={(event) => event.stopPropagation()}>
-              <input type="checkbox" aria-label={`Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} />
+              <label className="sel-hit"><input type="checkbox" aria-label={rowLabel ? `Выбрать: ${rowLabel(row)}` : `Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} /></label>
             </td>
           )}
           {visible.map((column, index) => (
@@ -421,7 +424,7 @@ export function DataTable<T>({
         <table className={selectable ? "grid wide selectable" : "grid wide"}>
           <thead>
             <tr>
-              {selectable && <th><input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} /></th>}
+              {selectable && <th><label className="sel-hit"><input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} /></label></th>}
               {visible.map((column) => {
                 const direction = sort?.key === column.key ? sort.direction : 0;
                 return (

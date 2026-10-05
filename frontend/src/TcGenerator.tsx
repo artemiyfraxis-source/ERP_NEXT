@@ -49,7 +49,7 @@ import { RouteEditor } from "./RouteEditor";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 import { ManualAssembly, ManualSummary } from "./ManualAssembly";
 import {
-  MANUAL_MODE, cardCategory, cardLabel, emptyManual, manualConfig, manualFromConfig, manualProblem,
+  MANUAL_MODE, cardCategory, cardLabel, emptyManual, manualConfig, manualFromConfig, manualProblem, selectBlock,
   type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
@@ -829,7 +829,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <div className="gen-side-head"><h3>Итог</h3><span className="gsec-meta">{summary}</span></div>
           {warning && <div className="warning-inline">{warning}</div>}
           {manualTab
-            ? <ManualSummary state={manual} partQty={partQty} finalName={finalName} />
+            ? <ManualSummary state={manual} partQty={partQty} finalName={finalName} onSelect={(key) => setManual((current) => selectBlock(current, key))} />
             : <>
               <div className="op-list" role="group" aria-label="Операции">
                 {ops.length > 0 && <div className="op-row head" aria-hidden="true"><span>№</span><span>Операция</span><span>Карточка</span>{OP_TIMES.map(([key, label]) => <span key={key}>{label}</span>)}</div>}

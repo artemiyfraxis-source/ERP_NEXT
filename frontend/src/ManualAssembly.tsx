@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatMinutes, pluralBlocks } from "./etkRoute";
 import { RouteDiagram, numberRange } from "./RouteDiagram";
@@ -7,6 +7,7 @@ import {
   addBlock,
   addCustomOp,
   addInput,
+  addInputBlock,
   addLibraryOp,
   blockOrder,
   cardCategory,
@@ -15,6 +16,7 @@ import {
   inputCandidates,
   manualRoute,
   moveOp,
+  nameBlockAfter,
   opMinutes,
   opTitle,
   orderedOps,
@@ -51,9 +53,10 @@ function LibraryPicker({ library, opRecs, target, added, onAdd, onClose }: {
   const columns: DataColumn<LibraryCard>[] = [
     { key: "name", title: "Операция", value: (card) => `${cardLabel(card)} ${card.code}`,
       render: (card) => <span className="manual-card-name"><b>{cardLabel(card)}</b>{card.code && <small>{card.code}</small>}</span> },
-    { key: "category", title: "Категория", value: cardCategory, width: 150 },
-    { key: "norm", title: "Норма БД.ОП", value: (card) => normText(card, opRecs), width: 170 },
-    { key: "step", title: "Первый шаг", value: (card) => card.first_step || "", render: (card) => <span className="manual-card-step">{card.first_step}</span> },
+    { key: "category", title: "Категория", value: cardCategory, width: 100 },
+    { key: "norm", title: "Норма БД.ОП", value: (card) => normText(card, opRecs), render: (card) => normText(card, opRecs) || "—", width: 120 },
+    { key: "step", title: "Первый шаг", value: (card) => card.first_step || "", width: "28%",
+      render: (card) => <span className="manual-card-step" title={card.first_step || undefined}>{card.first_step}</span> },
   ];
   return <div className="manual-picker" role="region" aria-label="Библиотека операций">
     <div className="section-hdr"><strong>Операция из библиотеки → в блок «{target}»</strong>
@@ -63,7 +66,7 @@ function LibraryPicker({ library, opRecs, target, added, onAdd, onClose }: {
       presets={categories.map((category) => ({ label: category, test: (card: LibraryCard) => cardCategory(card) === category }))}
       searchLabel="Поиск карточки" searchPlaceholder="Название или код карточки" emptyText="Нет таких карточек — смените категорию или поиск." pageSize={40}
       bulkActions={[{ label: "Добавить выбранные", run: (rows) => onAdd(rows) }]}
-      onRowClick={(card) => onAdd([card])} rowTitle={(card) => `Добавить «${cardLabel(card)}» в блок «${target}»${card.first_step ? `\nПервый шаг: ${card.first_step}` : ""}`} />
+      onRowClick={(card) => onAdd([card])} rowLabel={cardLabel} rowTitle={(card) => `Добавить «${cardLabel(card)}» в блок «${target}»${card.first_step ? `\nПервый шаг: ${card.first_step}` : ""}`} />
       : <div className="empty">Библиотека операций не загружена — добавьте свою операцию.</div>}
   </div>;
 }
@@ -74,9 +77,13 @@ function normLabel(minutes: number) {
 
 /** Операция ручной сборки: название, норма, параметры, результат; у своей — ход операции, контроль, оснастка;
     комплектующие из состава КБ. ↑/↓ — внутри блока. */
-export function ManualOpCard({ op, position, first, last, partQty, components, onChange }: {
+export function ManualOpCard({ op, position, first, last, partQty, components, onChange, open: openProp, onToggle }: {
   op: ManualOp; position: number; first: boolean; last: boolean; partQty: number; components: Comp[]; onChange: Change;
+  open?: boolean; onToggle?: () => void;
 }) {
+  const [openOwn, setOpenOwn] = useState(false);
+  const open = openProp ?? openOwn;
+  const toggle = onToggle ?? (() => setOpenOwn(!openOwn));
   const set = (patch: Partial<ManualOp>) => onChange((current) => updateOp(current, op.seq, patch));
   const title = opTitle(op, position);
   const minutes = opMinutes(op, partQty);
@@ -85,20 +92,23 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
   const field = (key: "qty" | "prepMin" | "opSec", label: string, unit: string, name: string, placeholder: string) =>
     <Field label={label}><UnitInput unit={unit} inputMode="decimal" aria-label={`${name}: ${title}`} value={op[key]} placeholder={placeholder}
       onChange={(event) => set({ [key]: event.target.value })} /></Field>;
-  return <div className="manual-op" aria-label={`Операция ${position}: ${title}`}>
+  return <div className={open ? "manual-op is-open" : "manual-op"} aria-label={`Операция ${position}: ${title}`}>
     <div className="manual-op-head">
-      <span className="op-badge">{position}</span>
+      <button type="button" className="manual-op-fold" aria-expanded={open} aria-label={`${open ? "Свернуть" : "Развернуть"} операцию ${position}: ${title}`}
+        title={open ? "Свернуть" : "Открыть: норма, параметры, результат"} onClick={toggle}><span className="op-badge">{position}</span></button>
       <div className="manual-op-name">
         <input aria-label={`Название операции ${position}`} value={op.label} placeholder={op.kind === "custom" ? "Название своей операции" : ""}
           className={op.kind === "custom" && !op.label.trim() ? "f-empty" : undefined} onChange={(event) => set({ label: event.target.value })} />
-        <small>{op.kind === "library" ? <>{op.code && <span className="op-code">{op.code}</span>} из библиотеки</> : "своя операция"}</small>
+        <small>{op.kind === "library" ? <>из библиотеки{op.code && <> · <span className="op-code">{op.code}</span></>}</> : "своя операция"}</small>
       </div>
       <div className="manual-op-tools">
+        {!open && <button type="button" className="manual-op-norm" aria-label={`Норма: ${title}`} title="Открыть" onClick={toggle}>{normLabel(minutes)}</button>}
         <button type="button" className="secondary small" aria-label={`Выше: ${title}`} title="Выше в блоке" disabled={first} onClick={() => onChange((current) => moveOp(current, op.seq, -1))}>↑</button>
         <button type="button" className="secondary small" aria-label={`Ниже: ${title}`} title="Ниже в блоке" disabled={last} onClick={() => onChange((current) => moveOp(current, op.seq, 1))}>↓</button>
         <button type="button" className="btn-remove" aria-label={`Удалить операцию ${position}: ${title}`} title="Удалить" onClick={() => onChange((current) => removeOp(current, op.seq))}>×</button>
       </div>
     </div>
+    {open && <>
     <div className="manual-grid">
       {field("qty", "На изделие", "шт", "На изделие", "1")}
       {field("prepMin", "Подготовка", "мин", "Подготовка, мин", "0")}
@@ -125,6 +135,7 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
         </span>;
       })}</div>
     </details>}
+    </>}
   </div>;
 }
 
@@ -140,7 +151,10 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const [picking, setPicking] = useState(false);
   const [added, setAdded] = useState("");
   const [problem, setProblem] = useState("");
-  const [addFrom, setAddFrom] = useState("");
+  const [nameOnPick, setNameOnPick] = useState(false);
+  const [opened, setOpened] = useState<Set<number>>(new Set());
+  const panel = useRef<HTMLDivElement>(null);
+  const seen = useRef(state.selected);
   const { route, ops: routeOps } = useMemo(() => manualRoute(state, partQty), [state, partQty]);
   const totals = useMemo(() => routeTotals(route, routeOps, partQty), [route, routeOps, partQty]);
   const ordered = useMemo(() => orderedOps(state), [state]);
@@ -153,7 +167,22 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const total = ordered.reduce((sum, op) => sum + opMinutes(op, partQty), 0);
   const blockName = title(block);
 
-  const select = (key: string) => { onChange((current) => selectBlock(current, key)); setProblem(""); setAddFrom(""); setAdded(""); };
+  const select = (key: string) => { onChange((current) => selectBlock(current, key)); setProblem(""); setAdded(""); setNameOnPick(false); };
+  // Выбрали блок (на схеме или в «Итоге») — панель блока подъезжает в видимую часть.
+  useEffect(() => {
+    if (seen.current === block.key) return;
+    seen.current = block.key;
+    panel.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [block.key]);
+  const toggleOp = (seq: number) => setOpened((current) => { const next = new Set(current); if (!next.delete(seq)) next.add(seq); return next; });
+  const addInputTo = (to: string) => {
+    onChange((current) => addInputBlock(current, to));
+    setProblem(""); setAdded(""); setPicking(true); setNameOnPick(true);
+  };
+  const connect = (from: string, to: string) => {
+    if (state.edges.some((edge) => edge.from === from && edge.to === to)) return;
+    edgeEdit((current) => addInput(current, from, to, finalName));
+  };
   const edgeEdit = (edit: (current: ManualState) => EdgeEdit) => {
     const result = edit(state);
     setProblem(result.problem ? `Так нельзя: ${result.problem}` : "");
@@ -180,15 +209,18 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
       <span className="gsec-meta">{pluralBlocks(route.blocks.length)} · {ordered.length} оп.{ordered.length > 0 && <> · {formatMinutes(total)} мин на партию {partQty} шт.</>}</span>
       <span className="manual-add">
         <button type="button" className="secondary small" title={`Новый полуфабрикат — вход блока «${blockName}»`}
-          onClick={() => { onChange((current) => addBlock(current)); setProblem(""); setAdded(""); }}>+ Блок</button>
+          onClick={() => { onChange((current) => addBlock(current)); setProblem(""); setAdded(""); setNameOnPick(false); }}>+ Блок</button>
       </span>
     </div>
     <RouteDiagram route={route} title={title} numbers={(item) => numberRange(item.ops)} totals={totals} selected={block.key}
-      onSelect={select} edgeLabel={edgeLabel} onPerUnit={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))} />
+      onSelect={select} edgeLabel={edgeLabel} onPerUnit={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
+      onAddInput={addInputTo} onConnect={connect} onEdgeEdit={() => setProblem("")}
+      onEdgeQuantity={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
+      onEdgeRemove={(edge) => edgeEdit((current) => removeInput(current, edge.from, edge.to, finalName))} />
     {error && <div className="error-banner" role="alert">{error}</div>}
     {problem && <div className="warning-inline" role="alert">{problem}</div>}
 
-    <div className="manual-block" role="region" aria-label={`Блок «${blockName}»`}>
+    <div className="manual-block" ref={panel} role="region" aria-label={`Блок «${blockName}»`}>
       <div className="manual-block-head">
         <Field label={block.final ? "Название блока · итог — изделие" : "Название блока"} className="manual-block-name">
           <input aria-label="Название блока" value={own.name} placeholder={title({ ...block, name: "" })}
@@ -207,12 +239,10 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
             })}
             {!inputs.length && <span className="muted">нет — блок начинает сборку</span>}
             {candidates.length > 0 && <span className="manual-input-add">
-              <select aria-label="Добавить вход из блока" value={addFrom} onChange={(event) => setAddFrom(event.target.value)}>
+              <select aria-label="Добавить вход из блока" value="" onChange={(event) => { if (event.target.value) edgeEdit((current) => addInput(current, event.target.value, block.key, finalName)); }}>
                 <option value="">+ вход из блока…</option>
                 {candidates.map((other) => <option key={other.key} value={other.key}>{title(byKey.get(other.key)!)}</option>)}
               </select>
-              <button type="button" className="secondary small" disabled={!addFrom}
-                onClick={() => { if (edgeEdit((current) => addInput(current, addFrom, block.key, finalName))) setAddFrom(""); }}>Добавить вход</button>
             </span>}
           </div>
         </div>
@@ -222,12 +252,15 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
       <div className="manual-ops-head">
         <strong>Операции блока «{blockName}»{blockOps.length ? ` · ${blockOps.length}` : ""}</strong>
         <span className="manual-add">
-          <button type="button" className="secondary small" aria-expanded={picking} onClick={() => { setPicking(!picking); setAdded(""); }}>+ Операция из библиотеки</button>
-          <button type="button" className="secondary small" onClick={() => onChange((current) => addCustomOp(current, block.key))}>+ Своя операция</button>
+          <button type="button" className="secondary small" aria-expanded={picking} onClick={() => { setPicking(!picking); setAdded(""); setNameOnPick(false); }}>+ Операция из библиотеки</button>
+          <button type="button" className="secondary small" onClick={() => { const seq = state.nextSeq; setOpened((current) => new Set(current).add(seq)); onChange((current) => addCustomOp(current, block.key)); }}>+ Своя операция</button>
         </span>
       </div>
       {picking && <LibraryPicker library={library} opRecs={opRecs} target={blockName} added={added} onClose={() => { setPicking(false); setAdded(""); }} onAdd={(cards) => {
-        onChange((current) => cards.reduce((next, card) => addLibraryOp(next, card, opRecs, block.key), current));
+        onChange((current) => {
+          const next = cards.reduce((acc, card) => addLibraryOp(acc, card, opRecs, block.key), current);
+          return nameOnPick ? nameBlockAfter(next, block.key, cardLabel(cards[0])) : next;
+        });
         setAdded(`Добавлено в «${blockName}»: ${cards.length === 1 ? `«${cardLabel(cards[0])}»` : `${cards.length} оп.`}`);
       }} />}
       <div className="manual-ops">
@@ -235,14 +268,15 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
           ? `В блоке «${blockName}» нет операций — добавьте операцию из библиотеки или свою.`
           : "Выберите блок и добавьте операцию из библиотеки или свою."}</div>}
         {blockOps.map((op, index) => <ManualOpCard key={op.seq} op={op} position={position.get(op.seq) ?? index + 1} first={index === 0} last={index === blockOps.length - 1}
-          partQty={partQty} components={components} onChange={onChange} />)}
+          partQty={partQty} components={components} onChange={onChange}
+          open={opened.has(op.seq)} onToggle={() => toggleOp(op.seq)} />)}
       </div>
     </div>
   </section>;
 }
 
 /** Итог ручной сборки (правая панель): операции по блокам в порядке номеров, норма на партию, всего. */
-export function ManualSummary({ state, partQty, finalName }: { state: ManualState; partQty: number; finalName: string }) {
+export function ManualSummary({ state, partQty, finalName, onSelect }: { state: ManualState; partQty: number; finalName: string; onSelect?: (key: string) => void }) {
   const { route, ops } = manualRoute(state, partQty);
   const ordered = orderedOps(state);
   const position = new Map(ordered.map((op, index) => [op.seq, index + 1]));
@@ -255,7 +289,9 @@ export function ManualSummary({ state, partQty, finalName }: { state: ManualStat
       const block = state.blocks.find((item) => item.key === key)!;
       const shown = byKey.get(key)!;
       return <div className="manual-summary-block" key={key}>
-        <div className="manual-summary-name">{blockTitle(shown, ops, finalName)}{block.final && <span className="route-block-tag">итог</span>}</div>
+        <div className={state.selected === key ? "manual-summary-name is-selected" : "manual-summary-name"}>
+          {onSelect ? <button type="button" className="manual-summary-pick" aria-pressed={state.selected === key} title="Показать блок на схеме" onClick={() => onSelect(key)}>{blockTitle(shown, ops, finalName)}</button>
+            : blockTitle(shown, ops, finalName)}{block.final && <span className="route-block-tag">итог</span>}</div>
         {block.ops.length ? <ol>{block.ops.map((seq) => {
           const op = bySeq.get(seq);
           if (!op) return null;
