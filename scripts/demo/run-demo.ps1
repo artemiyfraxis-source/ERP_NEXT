@@ -13,7 +13,7 @@ Remove-Item -ErrorAction SilentlyContinue demo.db
 $env:ERP_DATABASE_URL = 'sqlite+pysqlite:///demo.db'
 $env:ERP_COOKIE_SECURE = '0'
 & $py -m alembic upgrade head
-"Preview-2026!`nPreview-2026!`n" | & $py -m app.identity_admin create-user --login preview --email preview@example.com --name 'Артемий' --department 'Руководство' --role admin
+$env:ERP_NEW_USER_PASSWORD = 'Preview-2026!'; & $py -m app.identity_admin create-user --login preview --email preview@example.com --name 'Артемий' --department 'Руководство' --role admin
 $supplymap = if ($env:SUPPLYMAP_SOURCE_REPOSITORY) { $env:SUPPLYMAP_SOURCE_REPOSITORY } else { Join-Path $root '..\SUPPLYMAP' }
 & $py -m app.modules.references.load_mirror --source $supplymap
 & $py -m app.modules.techcards.seed_library
