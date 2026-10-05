@@ -2493,10 +2493,10 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, document }),
     }),
-  autoBuild: (cardId: string, version: number, config: Record<string, unknown>) =>
+  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build`, {
       method: "POST",
-      body: JSON.stringify({ version, config }),
+      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}) }),
     }),
   issue: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/issue`, {
@@ -2909,4 +2909,42 @@ export const kitsetsApi = {
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   openTechcard: (project: string, index: string) =>
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
+};
+
+/** «Чертёж → схема»: черновики «Ручной сборки» по позиции проекта; финал и урок — пара для корпуса образцов. */
+export type AssemblyDraftSource = "claude-code" | "server-agent" | "manual";
+
+export interface AssemblyDraft {
+  id: string;
+  project: string;
+  item_index: string;
+  drawing_document_id: string | null;
+  drawing_url: string | null;
+  source: AssemblyDraftSource | string;
+  author: string;
+  status: "draft" | "final" | string;
+  final_revision: number | null;
+  lesson: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+  /** Есть только у одного черновика (GET /drafts/{id}), в списке их нет. */
+  draft_config?: Record<string, unknown>;
+  final_config?: Record<string, unknown> | null;
+}
+
+export const assemblyApi = {
+  /** Типовая сборка генератора как «Ручная сборка»: блоки с операциями; ничего не сохраняется. */
+  fromGenerator: (config: Record<string, unknown>) =>
+    api<Record<string, unknown>>("/api/techcards/assembly/from-generator", { method: "POST", body: JSON.stringify({ config }) }),
+  drafts: (project: string, itemIndex: string) =>
+    api<{ items: AssemblyDraft[] }>(`/api/techcards/assembly/drafts?project=${encodeURIComponent(project)}&item_index=${encodeURIComponent(itemIndex)}`),
+  draft: (id: string) => api<AssemblyDraft>(`/api/techcards/assembly/drafts/${encodeURIComponent(id)}`),
+  setLesson: (id: string, lesson: string) =>
+    api<AssemblyDraft>(`/api/techcards/assembly/drafts/${encodeURIComponent(id)}/lesson`, { method: "PUT", body: JSON.stringify({ lesson }) }),
+  /** Чертёж позиции — в КД её сборки: PDF, JPG или PNG до 20 МБ. */
+  uploadDrawing: (project: string, itemIndex: string, fileName: string, contentBase64: string) =>
+    api<{ id: string; name: string; url: string | null }>("/api/techcards/assembly/drawings", {
+      method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, content_base64: contentBase64 }),
+    }),
 };

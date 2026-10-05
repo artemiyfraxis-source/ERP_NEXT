@@ -1261,6 +1261,19 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .manual-op-name input { font-size: 14px; font-weight: 600; }
 .tcgen .manual-op-name small { color: var(--muted-foreground); font-size: 11.5px; }
 .tcgen .manual-op-name .op-code { margin-right: 6px; }
+.tcgen .manual-op-title { font-size: 14px; line-height: 30px; }
+.tcgen .manual-op-params { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcgen .manual-op-params .op-code { margin: 0; }
+.tcgen .drafts .draft-note-cell { white-space: normal; }
+.tcgen .drafts .draft-detail { display: grid; gap: 8px; padding: 8px 4px; }
+.tcgen .drafts .draft-note { margin: 0; white-space: pre-wrap; }
+.tcgen .drafts .draft-pair { display: flex; flex-wrap: wrap; gap: 4px 32px; margin: 0; }
+.tcgen .drafts .draft-pair dt { color: var(--muted-foreground); font-size: 11.5px; }
+.tcgen .drafts .draft-pair dd { margin: 0; font-weight: 600; }
+.tcgen .drafts .draft-built { display: grid; gap: 6px; padding: 8px 0; }
+.tcgen .drafts .draft-lesson { display: grid; gap: 6px; max-width: 720px; }
+.tcgen .drafts .draft-lesson-foot { display: flex; align-items: center; gap: 12px; }
+.tcgen .drafts .draft-lesson textarea { width: 100%; }
 .tcgen .manual-op-tools { display: flex; gap: 4px; align-items: center; }
 .tcgen .manual-op-tools .small { min-width: 30px; padding: 3px 8px; }
 .tcgen .manual-op { padding: 8px 0; }
@@ -1355,6 +1368,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 }
 @media (pointer: coarse) {
   .tcgen .sel-hit { min-width: 40px; min-height: 40px; }
+  .tcgen .drafts button, .tcgen .gen-foot > button { min-height: 40px; }
   .tcgen .manual-picker .data-table table.selectable > thead > tr > th:first-child, .tcgen .manual-picker .data-table table.selectable > tbody > tr:not(.detail):not(.group-row) > td:first-child { width: 48px; padding: 0 4px; }
   .tcgen input:not([type="checkbox"]):not([type="radio"]), .tcgen select, .tcgen .gpick-face { height: 40px; }
   .tcgen .gpick-face { padding-top: 11px; }
