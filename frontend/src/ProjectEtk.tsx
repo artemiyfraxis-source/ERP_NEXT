@@ -550,7 +550,7 @@ export function EtkSheet({ card, principal, title, focus, onChange, onRebuild }:
     <div className="etk-top">
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
         <span className="muted">{list.length} операций · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
-      {list.length > 0 && <button className="secondary small" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, Object.fromEntries(sketches.map((item) =>
+      {list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, Object.fromEntries(sketches.map((item) =>
         [item.operation_key, window.location.origin + techcardsApi.sketchUrl(card.id, item.operation_key, item.uploaded_at)]))))}>🖨 Печать / PDF</button>}
       {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>⚙️ Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}

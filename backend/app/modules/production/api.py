@@ -60,6 +60,7 @@ from .execution import (
     correct_box,
     decide_defect,
     handoff_box,
+    input_stages,
     material_operation,
     operation_quantity,
     pause_work,
@@ -655,6 +656,24 @@ def operation_etk(
     return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}
 
 
+def _input_limit(uow, session: WorkSession) -> str | None:
+    """Сколько штук выхода можно сдать из взятых входных коробок: по каждому входу остаток штук ÷ штук на одну
+    (как take_inputs), берём наименьшее. Нет входных коробок (первая операция) — None."""
+    taken = list(uow.work.inputs(session.id))
+    task = uow.production.get(session.task_id)
+    if not taken or task is None:
+        return None
+    operation = next((item for item in task.operations if item.id == session.operation_id), None)
+    if operation is None:
+        return None
+    boxes = [box for box in (uow.boxes.get(item.box_id) for item in taken) if box is not None]
+    limits = []
+    for stage in input_stages(task, operation):
+        have = sum((box.available for box in boxes if box.operation_position == stage.position), Decimal(0))
+        limits.append(have / stage.per_unit)
+    return _number(min(limits)) if limits else None
+
+
 @router.get("/my/execution")
 def my_execution(
     principal: Annotated[Principal, Depends(production_view_principal)],
@@ -665,8 +684,9 @@ def my_execution(
         viewed = _viewed_operator(uow, principal, operator_id)
         current = uow.work.current(viewed)
         boxes = uow.boxes.list(operator_id=viewed)
+        limit = _input_limit(uow, current) if current else None
     return {
-        "session": _session_result(current) if current else None,
+        "session": {**_session_result(current), "input_limit": limit} if current else None,
         "boxes": [_box_result(box) for box in boxes],
     }
 

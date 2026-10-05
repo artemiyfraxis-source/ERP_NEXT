@@ -874,6 +874,8 @@ export interface ProductionWorkSession {
   status: string;
   pause_started_at: string | null;
   pause_seconds: number;
+  /** Сколько штук можно сдать из взятых входных коробок; нет входов — null. */
+  input_limit?: string | null;
 }
 
 export interface ProductionMaterialSource {

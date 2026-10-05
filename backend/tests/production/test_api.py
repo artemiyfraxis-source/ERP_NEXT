@@ -529,8 +529,10 @@ def test_operator_starts_and_cancels_work_from_confirmed_previous_box(production
         f"/api/production/tasks/{task['id']}/operations/{task['operations'][1]['id']}/work/start",
         json={"inputs": [source.number]},
     )
+    running = client.get("/api/production/my/execution").json()["session"]
     cancelled = client.post(f"/api/production/work/{started.json()['session']['id']}/cancel")
 
+    assert running["input_limit"] == "10"
     assert inputs.status_code == 200, inputs.text
     assert inputs.json()["boxes"][0]["number"] == "104233-2"
     assert started.status_code == 200, started.text
