@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  assemblyApi,
   referencesApi,
   techcardsApi,
   type GrapherImportResult,
@@ -379,6 +380,24 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       return null;
     }
     return routeOverride ? { ...cfg, route: routePayload(routeOverride) } : cfg;
+  }
+
+  /** «Поправить вручную»: текущая типовая сборка уходит на сервер как есть и возвращается блоками с операциями. */
+  async function editByHand() {
+    const { cfg, error } = gen.validate();
+    if (error) { setStatus({ text: error, error: true }); return; }
+    // Русское название операции — как её назвал генератор (в конфиге его нет); порядок тот же, что у операций с шаблоном.
+    const ops = (cfg.ops as Array<Record<string, unknown>>).map((op, index) => (routeSpecs[index]?.label ? { ...op, label: routeSpecs[index].label } : op));
+    setStatus({ text: "Открываю в ручной сборке…", error: false });
+    try {
+      const restored = manualFromConfig(await assemblyApi.fromGenerator({ ...cfg, ops }));
+      if (!restored) throw new Error("Сборку не удалось открыть в ручной сборке");
+      setManual(restored); setRouteError("");
+      update((current) => switchGenTab(current, "manual"));
+      setStatus({ text: "", error: false });
+    } catch (reason) {
+      setStatus({ text: reason instanceof Error ? reason.message : "Сборку не удалось открыть в ручной сборке", error: true });
+    }
   }
 
   async function generate() {
@@ -853,6 +872,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <div className="gen-foot">
           {status.text ? <div className={status.error ? "error-banner" : "gen-status"} role={status.error ? "alert" : undefined}>{status.text}</div>
             : <span className="gen-foot-sum">{summary}</span>}
+          {!manualTab && <button className="secondary" disabled={busy || !ops.length} onClick={() => void editByHand()}>Поправить вручную</button>}
           <button className="primary" disabled={busy} onClick={() => void generate()}>{busy ? "Собираю…" : card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>
         </div>
       </aside>

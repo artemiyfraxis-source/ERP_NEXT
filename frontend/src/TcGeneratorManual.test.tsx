@@ -53,7 +53,7 @@ function mount(props: Partial<Parameters<typeof TcGenerator>[0]> = {}) {
 
 async function openManual() {
   fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
-  expect(screen.getByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
+  expect(await screen.findByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
 }
 
 /** Одна карточка библиотеки — кликом по строке, в выбранный блок. */

@@ -2910,3 +2910,9 @@ export const kitsetsApi = {
   openTechcard: (project: string, index: string) =>
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
 };
+
+export const assemblyApi = {
+  /** Типовая сборка генератора как «Ручная сборка»: блоки с операциями; ничего не сохраняется. */
+  fromGenerator: (config: Record<string, unknown>) =>
+    api<Record<string, unknown>>("/api/techcards/assembly/from-generator", { method: "POST", body: JSON.stringify({ config }) }),
+};
