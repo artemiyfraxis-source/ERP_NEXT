@@ -222,6 +222,58 @@ def test_delivery_without_upd_is_accepted_with_a_note_and_no_nonconformity_act(e
     assert SHIPPING_DOCUMENT_PENDING_NOTE in str(build_act_print_sheet(result.lines[0], "incoming").to_dict())
 
 
+def test_delivery_without_upd_matches_a_single_vk_without_upd(erp):
+    """One way to say «УПД позже»: the delivery path and a single-line ВК give the same line state, note and act."""
+    from app.modules.receiving.api import _result
+    from app.modules.receiving.application import (
+        InspectReceivingCommand,
+        _incoming_results,
+        inspect_receiving,
+    )
+    from app.modules.receiving.domain import InspectionInput
+
+    receiving, _, _ = erp
+    by_delivery, by_vk = expect(receiving, 1, 2)
+
+    (delivered,) = deliver(receiving, [item(by_delivery)], document_number="", document_date=None).lines
+    inspected = inspect_receiving(
+        InspectReceivingCommand(
+            line_id=by_vk.id,
+            expected_version=by_vk.version,
+            inspection=InspectionInput(
+                fact_quantity=by_vk.ordered_quantity,
+                document_quantity=by_vk.ordered_quantity,
+                ordered_quantity=by_vk.ordered_quantity,
+                has_shipping_document=False,
+                quality_document_required=by_vk.quality_document_required,
+                quality_document_present=True,
+                expiry_date=None,
+                inspection_date=NOW.date(),
+            ),
+            actor=RECEIVER,
+            now=NOW,
+        ),
+        receiving(),
+    )
+
+    def state(line):
+        shown = _result(line)
+        return (
+            line.status,
+            line.verdict,
+            line.nonconformities,
+            line.shipping_document_pending,
+            bool(line.nc_act_number),
+            shown["shipping_document_note"],
+            shown["nonconformities"],
+            _incoming_results(line),
+        )
+
+    assert state(delivered) == state(inspected)
+    assert state(delivered)[0] is ReceivingStatus.ACCEPTED
+    assert state(delivered)[5] == "УПД не приложен — придёт по ЭДО"
+
+
 def test_delivery_without_upd_over_http(api):
     client, receiving, _ = api
     (line,) = expect(receiving, 1)

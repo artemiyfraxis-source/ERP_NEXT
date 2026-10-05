@@ -498,8 +498,13 @@ it("a delivery with only the УПД requisites sends the lines without quantitie
   expect(screen.getByText("CSM-01")).toBeTruthy();
 });
 
-it("the УПД is optional: a delivery goes without number and date", async () => {
-  const calls = mockDelivery(() => accepted([deliveryLines[0], deliveryLines[1]]));
+it("the УПД is optional: a delivery goes without number and date and the banner keeps the ЭДО note", async () => {
+  const calls = mockDelivery(() => json({
+    delivery_id: "d1",
+    lines: [deliveryLines[0], deliveryLines[1]].map((item, index) => ({
+      ...item, status: "Принято", grn: `CSM-0${index + 1}`, version: item.version + 1, shipping_document_note: "УПД не приложен — придёт по ЭДО",
+    })),
+  }));
   render(<ReceivingPage />);
   await screen.findByRole("region", { name: "Ожидаются" });
   fireEvent.click(screen.getAllByRole("button", { name: "Принять поставку" })[0]);
@@ -507,6 +512,7 @@ it("the УПД is optional: a delivery goes without number and date", async () =
   fireEvent.click(screen.getByRole("button", { name: "Провести поставку (2 поз.)" }));
   await waitFor(() => expect(calls).toHaveLength(1));
   expect(calls[0]).toMatchObject({ document_number: "", document_date: null, shipping_document_url: null });
+  expect(await screen.findByText("Принято 2 позиции, ГРН присвоены; УПД не приложен — придёт по ЭДО (внесите кнопкой «Внести УПД»)")).toBeTruthy();
 });
 
 it("a discrepancy row sends the fact, an unticked line stays out, the deviation select sends the deviation", async () => {

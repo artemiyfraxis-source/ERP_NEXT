@@ -59,10 +59,11 @@ def test_shortage_is_accepted_with_nonconformity_and_complaint_acts(erp):
 def test_release_from_waiting_issues_use_permit(erp):
     receiving, _, _ = erp
     line = consume_receiving_expected(expected_message(), receiving())
-    waiting = run(receiving, line, replace(inspection(), shipping_document_url=None))
+    # A defect holds the line (a missing УПД or a shortfall no longer does, owner 05.10.2026).
+    waiting = run(receiving, line, replace(inspection(), manual_nonconformities=("Механическое повреждение / брак",)))
     assert waiting.status.value == "Ожидание"
 
-    # УПД принесли: повторный контроль без несоответствий — выход из «Ожидания» в «Принято» с РИ.
+    # Брак не подтвердился: повторный контроль без несоответствий — выход из «Ожидания» в «Принято» с РИ.
     released = run(receiving, waiting, inspection())
     assert released.status.value == "Принято"
     assert released.use_permit_number == "РИ-20260921-01"

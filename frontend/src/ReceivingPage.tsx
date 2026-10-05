@@ -326,7 +326,8 @@ function DeliveryPanel({ group, onClose, onDone }: {
         <label>Место для всех<input placeholder="1F4" title={placeHint.busy ? BUSY_TITLE : undefined} value={commonPlace} disabled={busy || done} onChange={(event) => setCommonPlace(event.target.value)} /></label>
       </div>
       <p className="page-sub">УПД по ЭДО можно внести позже — «Внести УПД».</p>
-      <PlaceHint {...placeHint} place={commonPlace} onPick={setCommonPlace} />
+      {/* После проведения место уже занято этой же поставкой — подсказка «здесь лежит другая позиция» ложная. */}
+      {!done && <PlaceHint {...placeHint} place={commonPlace} onPick={setCommonPlace} />}
       <div className="table-wrap">
         <table className="delivery-table">
           <thead><tr><th /><th>Наименование</th><th>Заказ</th><th>Ждём</th><th>По УПД</th><th>Факт</th><th>Место</th><th>Отклонение</th>{done && <th>ГРН</th>}</tr></thead>
@@ -350,7 +351,7 @@ function DeliveryPanel({ group, onClose, onDone }: {
                     {row.deviation === "brak" && <input type="number" min="0.000001" step="any" className="qty" placeholder={`N ${row.line.unit}`} aria-label={`Брак, ${row.line.unit}: ${itemTitle(row.line)}`} value={row.deviationQuantity} disabled={locked} onChange={(event) => edit(row.line.id, { deviationQuantity: event.target.value })} />}
                     {row.deviation === "expired" && <input type="date" aria-label={`Срок годности: ${itemTitle(row.line)}`} value={row.expiry} disabled={locked} onChange={(event) => edit(row.line.id, { expiry: event.target.value })} />}
                   </td>
-                  {done && <td>{row.ticked ? (result?.grn ? <strong>{result.grn}</strong> : <span className="status">{result?.status ?? "—"}</span>) : ""}</td>}
+                  {done && <td className="num">{row.ticked ? (result?.grn ? <strong>{result.grn}</strong> : <span className="status">{result?.status ?? "—"}</span>) : ""}{result && Number(result.backorder_quantity) > 0 && <span className="delivery-short">недовоз {result.backorder_quantity} {result.unit} → дозавоз</span>}</td>}
                 </tr>
               );
             })}
@@ -365,7 +366,8 @@ function DeliveryPanel({ group, onClose, onDone }: {
   );
 }
 
-/** «Принято N позиций, ГРН присвоены; недовоз → дозавоз: …»; не принятые (брак, возврат) называются отдельно. */
+/** «Принято N позиций, ГРН присвоены; недовоз → дозавоз: …»; не принятые (брак, возврат) называются отдельно;
+ *  без УПД — пометка «УПД не приложен — придёт по ЭДО». */
 export function deliveryDoneText(lines: ReceivingLine[]) {
   const accepted = lines.filter((line) => line.status === "Принято");
   const rest = lines.filter((line) => line.status !== "Принято");
@@ -373,6 +375,9 @@ export function deliveryDoneText(lines: ReceivingLine[]) {
   const parts = [`Принято ${pluralLines(accepted.length)}, ГРН присвоены`];
   if (backorders.length) parts.push(`недовоз → дозавоз: ${backorders.map((line) => `${itemTitle(line)} ${line.backorder_quantity} ${line.unit}`).join(", ")}`);
   if (rest.length) parts.push(`не приняты: ${rest.map((line) => `${itemTitle(line)} — ${line.status}`).join(", ")}`);
+  // Тот же вычисляемый `shipping_document_note`, что у одиночного ВК без УПД.
+  const pending = lines.find((line) => line.shipping_document_note)?.shipping_document_note;
+  if (pending) parts.push(`${pending} (внесите кнопкой «Внести УПД»)`);
   return parts.join("; ");
 }
 

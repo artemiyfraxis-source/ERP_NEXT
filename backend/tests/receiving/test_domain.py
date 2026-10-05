@@ -127,7 +127,8 @@ def test_missing_upd_no_longer_blocks_the_line():
     assert result.missing_documents is False
 
 
-def test_documents_wait_and_confirmed_defect_goes_to_quarantine():
+def test_missing_documents_are_noted_and_confirmed_defect_goes_to_quarantine():
+    # Neither a missing УПД nor a missing certificate holds the line any more (owner, 05.10.2026).
     documents = inspect_delivery(inspection(quality_document_required=True, quality_document_present=False))
     defect = inspect_delivery(
         inspection(
@@ -136,7 +137,7 @@ def test_documents_wait_and_confirmed_defect_goes_to_quarantine():
         )
     )
 
-    assert documents.status is ReceivingStatus.WAITING
+    assert documents.status is ReceivingStatus.ACCEPTED
     assert documents.missing_documents is True
     assert documents.nonconformity_act_required is False
     assert defect.status is ReceivingStatus.QUARANTINE
@@ -350,7 +351,7 @@ def test_quarantine_notify_targets_follow_the_nature(nature, expected):
 
 def waiting_line(inspected_on=date(2026, 9, 24)):
     line = create_line_from_expected(expected_message()).inspect(
-        inspection(quality_document_required=True, inspection_date=inspected_on),
+        inspection(manual_nonconformities=("Механическое повреждение / брак",), inspection_date=inspected_on),
         Actor(name="Приёмщик", department="ОТК"),
         existing_grns=(),
     )
@@ -376,7 +377,7 @@ def test_waiting_without_decision_goes_to_quarantine_after_two_workdays():
 def test_timer_restarts_on_reinspection_and_ignores_other_statuses():
     line = waiting_line(date(2026, 9, 21))
     again = line.inspect(
-        inspection(quality_document_required=True, inspection_date=date(2026, 9, 24)),
+        inspection(manual_nonconformities=("Механическое повреждение / брак",), inspection_date=date(2026, 9, 24)),
         Actor(name="Приёмщик", department="ОТК"),
         existing_grns=(line.grn,),
     )

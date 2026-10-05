@@ -306,7 +306,7 @@ def _revise(uow, line, now):
 def test_new_vk_archives_line_opens_revision_and_audits_both_atomically():
     uow = Uow()
     line = consume_receiving_expected(message(), uow)
-    waiting = _inspect(uow, line, datetime(2026, 9, 21, 11, 0), fact_quantity=Decimal("9"))
+    waiting = _inspect(uow, line, datetime(2026, 9, 21, 11, 0), manual_nonconformities=("Механическое повреждение / брак",))
     assert waiting.status is ReceivingStatus.WAITING
 
     archived, revision = _revise(uow, waiting, datetime(2026, 9, 22, 9, 0))
@@ -350,7 +350,7 @@ def test_putaway_sheet_lists_only_accepted_lines_without_a_place():
                 payload={**message().payload, "legacy_id": "SM-20260921-02"}),
         uow,
     )
-    _inspect(uow, waiting_line, datetime(2026, 9, 21, 11, 0), fact_quantity=Decimal("9"))  # -> «Ожидание»
+    _inspect(uow, waiting_line, datetime(2026, 9, 21, 11, 0), manual_nonconformities=("Механическое повреждение / брак",))  # -> «Ожидание»
 
     already_placed = consume_receiving_expected(
         replace(message(), id=UUID("10000000-0000-0000-0000-000000000003"),
