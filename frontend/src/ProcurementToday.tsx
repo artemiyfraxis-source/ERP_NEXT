@@ -3,7 +3,8 @@ import { api, failureText } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 
-/** Option `procurement.today`: the buyer's prioritized to-do list, computed by the server on read. */
+/** Option `procurement.today`: the buyer's board. Fields in priority order hold project cards (one project may sit
+ *  in several fields); a card opens the project's open positions with their stage and field. */
 export type TodayItem = {
   id: string | null;
   name: string;
@@ -13,49 +14,104 @@ export type TodayItem = {
   date: string | null;
   days: number | null;
   hint: string;
+  project?: string;
+  status?: string;
 };
-export type TodaySection = { key: string; title: string; count: number; items: TodayItem[] };
+export type TodayCard = { project: string; count: number; days: number | null; date: string | null; suppliers: string[]; line_ids: string[] };
+export type TodaySection = { key: string; title: string; count: number; items: TodayItem[]; projects?: TodayCard[] };
+export type TodayLine = {
+  id: string; name: string; article: string | null; supplier: string | null; order_number: string | null;
+  status: string; expected: string | null; quantity: string | null; unit: string | null; field: string | null;
+};
+type Board = { sections: TodaySection[]; projects?: Record<string, TodayLine[]> };
 
-const columns: DataColumn<TodayItem>[] = [
-  { key: "name", title: "Позиция", wrap: true, value: (item) => item.name, render: (item) => <>{item.name}{item.article && <small>{item.article}</small>}</> },
-  { key: "supplier", title: "Поставщик", value: (item) => item.supplier, render: (item) => item.supplier || "—" },
-  { key: "order", title: "Заказ №", value: (item) => item.order_number, render: (item) => item.order_number || "—" },
-  { key: "date", title: "Дата", value: (item) => item.date, render: (item) => (item.date ? formatDate(item.date) : "—") },
-  { key: "days", title: "Дней", numeric: true, value: (item) => item.days, render: (item) => (item.days === null ? "—" : item.days) },
-  { key: "hint", title: "Что делать", wrap: true, value: (item) => item.hint },
+const URGENT = new Set(["overdue", "arriving"]);
+
+const lineColumns: DataColumn<TodayLine>[] = [
+  { key: "name", title: "Позиция", wrap: true, value: (row) => row.name, render: (row) => <>{row.name}{row.article && <small>{row.article}</small>}</> },
+  { key: "status", title: "Этап", value: (row) => row.status, render: (row) => <span className="today-stage">{row.status}</span> },
+  { key: "field", title: "На доске", value: (row) => row.field, render: (row) => row.field || "—" },
+  { key: "supplier", title: "Поставщик", value: (row) => row.supplier, render: (row) => row.supplier || "—" },
+  { key: "qty", title: "Кол-во", numeric: true, value: (row) => row.quantity, render: (row) => (row.quantity ? `${Number(row.quantity).toLocaleString("ru-RU")} ${row.unit ?? ""}` : "—") },
+  { key: "order", title: "Заказ №", value: (row) => row.order_number, render: (row) => row.order_number || "—" },
+  { key: "expected", title: "Ожидаем", value: (row) => row.expected, render: (row) => (row.expected ? formatDate(row.expected) : "—") },
 ];
 
+function daysText(section: string, days: number | null) {
+  if (days === null) return "";
+  if (section === "overdue") return `просрочка ${days} дн.`;
+  if (section === "arriving") return days === 0 ? "сегодня" : "завтра";
+  return `${days} дн.`;
+}
+
 export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }) {
-  const [sections, setSections] = useState<TodaySection[] | null>(null);
+  const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState("");
+  const [open, setOpen] = useState<{ project: string; field: string } | null>(null);
+  const [onlyField, setOnlyField] = useState(true);
 
   useEffect(() => {
     let live = true;
-    api<{ sections: TodaySection[] }>("/api/procurement/today")
-      .then((result) => { if (live) setSections(result.sections); })
+    api<Board>("/api/procurement/today")
+      .then((result) => { if (live) setBoard(result); })
       .catch((reason) => { if (live) setError(failureText(reason, "«Сегодня» не загрузилось")); });
     return () => { live = false; };
   }, []);
+
+  const sections = board?.sections ?? null;
+  const drill = open ? (board?.projects?.[open.project] ?? []) : [];
+  const shown = open && onlyField ? drill.filter((row) => row.field === open.field) : drill;
 
   return (
     <section className="page">
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!error && sections === null && <div className="empty">Загружаю…</div>}
       {sections !== null && !sections.length && <div className="empty">На сегодня всё сделано</div>}
-      {sections?.map((section) => (
-        <section className="panel table-panel" key={section.key}>
-          <div className="panel-heading"><h2>{section.title}</h2><span>{section.count}</span></div>
-          <DataTable
-            label={section.title}
-            rows={section.items}
-            columns={columns}
-            rowKey={(item) => item.id ?? section.key}
-            compactBelow={1000}
-            onRowClick={onOpenQueues ? () => onOpenQueues() : undefined}
-            rowTitle={() => "Открыть в «Очередях»"}
-          />
+      {sections !== null && sections.length > 0 && (
+        <div className="today-board" role="list" aria-label="Доска «Сегодня»">
+          {sections.map((section) => (
+            <section className={`today-field${URGENT.has(section.key) ? " urgent" : ""}`} key={section.key} role="listitem" aria-label={section.title}>
+              <header><h2>{section.title}</h2><span className="today-count">{section.count}</span></header>
+              {section.key === "available" ? (
+                <button type="button" className="today-card" onClick={() => onOpenQueues?.()}>
+                  <strong>{section.items[0]?.name}</strong>
+                  <small>{section.items[0]?.hint}</small>
+                </button>
+              ) : (section.projects ?? []).map((card) => {
+                const active = open?.project === card.project && open.field === section.title;
+                return (
+                  <button
+                    type="button"
+                    key={card.project}
+                    className={`today-card${active ? " active" : ""}`}
+                    aria-pressed={active}
+                    onClick={() => { setOpen(active ? null : { project: card.project, field: section.title }); setOnlyField(true); }}
+                  >
+                    <span className="today-card-head"><strong>{card.project}</strong><span>{card.count} поз.</span></span>
+                    {card.days !== null && <span className={`today-days${section.key === "overdue" ? " late" : ""}`}>{daysText(section.key, card.days)}</span>}
+                    {card.suppliers.length > 0 && <small>{card.suppliers.slice(0, 3).join(", ")}{card.suppliers.length > 3 ? ` +${card.suppliers.length - 3}` : ""}</small>}
+                  </button>
+                );
+              })}
+            </section>
+          ))}
+        </div>
+      )}
+      {open && (
+        <section className="panel table-panel today-drill" aria-label={`Проект ${open.project}`}>
+          <div className="panel-heading">
+            <h2>{open.project}</h2>
+            <span>{open.field}</span>
+            <span className="today-drill-actions">
+              <button type="button" className={`secondary small${onlyField ? " active" : ""}`} aria-pressed={onlyField} onClick={() => setOnlyField(true)}>В этом поле</button>
+              <button type="button" className={`secondary small${!onlyField ? " active" : ""}`} aria-pressed={!onlyField} onClick={() => setOnlyField(false)}>Все позиции проекта · {drill.length}</button>
+              {onOpenQueues && <button type="button" className="secondary small" onClick={() => onOpenQueues()}>В «Очереди»</button>}
+              <button type="button" className="link-button" onClick={() => setOpen(null)}>Закрыть</button>
+            </span>
+          </div>
+          <DataTable label={`Позиции проекта ${open.project}`} rows={shown} columns={lineColumns} rowKey={(row) => row.id} compactBelow={1000} />
         </section>
-      ))}
+      )}
     </section>
   );
 }

@@ -3077,3 +3077,22 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .theme-switch-buttons button { flex: 1; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--card); font-size: 11px; line-height: 1.2; }
 .theme-switch-buttons button[aria-pressed="true"] { color: var(--on-accent); background: var(--primary); border-color: var(--primary); }
 .theme-switch-buttons button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* «Сегодня» как доска (Витя): поля по срочности → карточки проектов → позиции проекта. Только токены — есть тёмная тема. */
+.today-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 6px; align-items: start; }
+.today-field { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); min-height: 120px; }
+.today-field.urgent { border-color: var(--tone-danger); }
+.today-field header { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.today-field h2 { margin: 0; font-size: 12.5px; font-weight: 700; }
+.today-count { font-size: 11px; font-weight: 700; color: var(--muted-foreground); }
+.today-card { display: grid; gap: 3px; width: 100%; text-align: left; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); cursor: pointer; font: inherit; }
+.today-card:hover { border-color: var(--primary); }
+.today-card.active { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary) inset; }
+.today-card-head { display: flex; justify-content: space-between; gap: 6px; font-size: 13px; }
+.today-card-head span { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.today-card small { color: var(--muted-foreground); font-size: 11px; }
+.today-days { font-size: 11.5px; font-weight: 600; color: var(--tone-warn); }
+.today-days.late { color: var(--tone-danger); }
+.today-drill { margin-top: 12px; }
+.today-drill-actions { display: inline-flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+.today-stage { font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }

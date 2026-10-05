@@ -125,7 +125,7 @@ from app.modules.warehouse.domain import StockLot
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
 from .kpi import build_kpi
-from .today import build_today
+from .today import build_board
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
@@ -708,7 +708,7 @@ def today_lines(
     _require_option("procurement.today")
     lines = buyer_procurement(principal.actor, uow_factory(), limit=5000)
     available = available_procurement(uow_factory(), limit=1000)
-    return {"sections": build_today(lines, now.date(), len(available))}
+    return build_board(lines, now.date(), len(available))
 
 
 @router.get("/kpi")

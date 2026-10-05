@@ -76,3 +76,30 @@ def test_today_endpoint_lists_the_buyers_lines_when_on(procurement_api, monkeypa
     assert [s["key"] for s in sections] == ["overdue"]
     assert sections[0]["items"][0]["id"] == str(free_line.id)
     assert sections[0]["items"][0]["days"] == 5  # the stubbed clock is 2026-09-15
+
+
+def test_board_puts_project_cards_in_fields_and_one_project_can_sit_in_several():
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from app.modules.procurement.today import build_board
+
+    def own(status, **fields):
+        return line(status, id=uuid4(), **fields)
+
+    lines = [
+        own(ProcurementStatus.IN_TRANSIT, expected_arrival=TODAY - timedelta(days=5), project_reference="591К.3"),
+        own(ProcurementStatus.IN_TRANSIT, expected_arrival=TODAY - timedelta(days=2), project_reference="591К.3"),
+        own(ProcurementStatus.TO_PAY, project_reference="591К.3"),
+        own(ProcurementStatus.IN_TRANSIT, expected_arrival=TODAY - timedelta(days=1), project_reference="700К.1"),
+        own(ProcurementStatus.DONE, project_reference="591К.3"),
+    ]
+    board = build_board(lines, TODAY)
+    fields = {section["key"]: section for section in board["sections"]}
+    overdue = fields["overdue"]["projects"]
+    assert [card["project"] for card in overdue] == ["591К.3", "700К.1"]  # the worst delay first
+    assert overdue[0]["count"] == 2 and overdue[0]["days"] == 5
+    assert [card["project"] for card in fields["to_pay"]["projects"]] == ["591К.3"]
+    drill = board["projects"]["591К.3"]
+    assert len(drill) == 3  # the finished line stays out
+    assert {row["field"] for row in drill} == {"Просрочена поставка", "Ждёт оплаты"}
