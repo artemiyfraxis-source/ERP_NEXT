@@ -336,12 +336,13 @@ const DONE = "Готово";
 
 export type OrderStage = "awaiting" | "topay" | "transit" | "quarantine" | "accepted";
 
-/** Стадия заказа — по самой ранней из его строк: пока есть строка «Жду счет», заказ ждёт счёт; «Карантин» у любой
- *  строки выносит заказ в «Карантин»; «Принято» — все строки «Готово»; остальное (в том числе частично принятый) — «В пути». */
+/** Стадия заказа: «Карантин» у любой строки выносит заказ в «Карантин» (решение по нему важнее оплаты остального);
+ *  иначе — по самой ранней из строк: пока есть строка «Жду счет», заказ ждёт счёт; «Принято» — все строки «Готово»;
+ *  остальное (в том числе частично принятый) — «В пути». */
 export function orderStage(group: OrderGroup): OrderStage {
+  if (group.lines.some((line) => line.status === QUARANTINE)) return "quarantine";
   if (group.lines.some((line) => line.status === AWAITING)) return "awaiting";
   if (group.lines.some((line) => line.status === TO_PAY)) return "topay";
-  if (group.lines.some((line) => line.status === QUARANTINE)) return "quarantine";
   if (group.lines.every((line) => line.status === DONE)) return "accepted";
   return "transit";
 }
@@ -355,8 +356,11 @@ export function orderStatus(group: OrderGroup): { label: string; tone: string; t
   const done = group.lines.filter((line) => line.status === DONE).length;
   const accepted = done ? `принято ${done} из ${group.lines.length}` : "";
   if (stage === "quarantine") {
-    const ids = group.lines.filter((line) => line.status === QUARANTINE).map((line) => line.legacy_id);
-    const shown = ids.length > 3 ? `${ids.slice(0, 3).join(", ")} и ещё ${ids.length - 3}` : ids.join(", ");
+    const held = group.lines.filter((line) => line.status === QUARANTINE);
+    const ids = held.map((line) => line.legacy_id);
+    // Закупщик узнаёт позицию по названию, не по системному ID — ID остаются в подсказке.
+    const names = held.map((line) => (line.calculated_name || line.design_article || line.legacy_id).trim());
+    const shown = names.length > 3 ? `${names.slice(0, 3).join(", ")} и ещё ${names.length - 3}` : names.join(", ");
     return {
       label: ["Карантин: " + shown, accepted].filter(Boolean).join(" · "),
       tone: "tone-warn",

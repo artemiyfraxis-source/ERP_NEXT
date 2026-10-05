@@ -667,7 +667,7 @@ it("shows «Мои позиции» as separate blocks: В работе → Жд
   // «Карантин»: заказ с любой строкой в карантине, хоть другие строки и в пути; в строке названо, какие именно.
   const quarantine = within(screen.getByRole("region", { name: "Заказы: Карантин" }));
   const quarantined = quarantine.getByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" });
-  expect(quarantined.querySelector(".order-chip")?.textContent).toBe("Карантин: REQ-7");
+  expect(quarantined.querySelector(".order-chip")?.textContent).toBe("Карантин: Разъём");
   expect(quarantined.querySelector(".order-chip")).toHaveClass("tone-warn");
 
   // «Принято за 30 дней» свёрнут по умолчанию: заказов не видно, пока не раскрыть заголовок.
@@ -814,7 +814,7 @@ it("puts an order with a Карантин line into «Карантин», a full
   expect(heading("Принято")).toHaveTextContent("Принято за 30 дней 1");
   expect(heading("В пути")).toHaveTextContent("В пути 1");
   const group = (block: string, number: string) => within(screen.getByRole("region", { name: `Заказы: ${block}` })).getByRole("rowgroup", { name: new RegExp(`^${number}`) });
-  expect(group("Карантин", "PO-001").querySelector(".order-chip")?.textContent).toBe("Карантин: REQ-1");
+  expect(group("Карантин", "PO-001").querySelector(".order-chip")?.textContent).toBe("Карантин: Разъём");
   expect(group("В пути", "PO-003").querySelector(".order-chip")?.textContent).toBe("В пути · принято 1 из 2");
   await openPaidBlock(/^Принято/);
   expect(group("Принято за 30 дней", "PO-002").querySelector(".order-chip")?.textContent).toBe("Принято");
