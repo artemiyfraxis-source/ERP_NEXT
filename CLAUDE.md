@@ -18,8 +18,9 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 
 ## SUPPLYMAP is legacy (owner, 05.10.2026)
 - Do not consult `../SUPPLYMAP` to decide how a fix or a feature works: the ERP's own data, code and the owner's
-  words decide. Don't brief workers with «check SUPPLYMAP». The sibling checkout is still needed only by the
-  architecture tests (`SOURCE.json` pins); the drift hook is off.
+  words decide. Don't brief workers with «check SUPPLYMAP». Nothing in the dev loop needs the sibling checkout:
+  reference data for the demo/tests live in `backend/data/reference-mirror/`; only `deploy/` uses `/opt/supplymap`
+  for one-off imports.
 
 ## Cloud sessions (claude.ai/code)
 - `.claude/hooks/cloud-siblings.mjs` (SessionStart, only when `CLAUDE_CODE_REMOTE=true`) clones `../SUPPLYMAP` and
@@ -37,11 +38,10 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 ## Commands
 - `npm run check` (repo root) — THE gate: architecture tests + backend pytest + frontend tests + build.
   Run it after every slice. Backend alone: `npm run test:backend`; frontend: `npm run test:frontend`.
-- GitHub CI (`.github/workflows/check.yml`) runs the same gate on every PR and push to `main`, minus the
-  architecture tests (they need the sibling SUPPLYMAP checkout). Don't merge a PR whose `check` is red.
-- Architecture tests pin each module's `SOURCE.json` to a SUPPLYMAP commit; SUPPLYMAP is frozen, so they
-  stay green. If they go red because SUPPLYMAP moved, re-baseline the pin (`npm run sync:*` for techcards and
-  the operation library) — don't port anything. Never edit file hashes in `SOURCE.json` by hand.
+- GitHub CI (`.github/workflows/check.yml`) runs the same gate, architecture tests included, on every PR and
+  push to `main`. Merge only when the check state is SUCCESS (never pipe `gh pr checks` into `head` before a merge).
+- `SOURCE.json` files are frozen provenance records: no pins, no `sync:*`. `npm run check` proves logic only —
+  screens are checked by screenshots, data by the live-data rehearsal.
 - Local preview: `.claude/launch.json` (`erp-api` on 8021 over `backend/preview.db`, `erp-web` on 5176).
   Preview login: `preview` / `Preview-2026!` (local SQLite only).
 - Python 3.12 venv in `backend/.venv` (`pip install -r requirements.lock.txt`); schema changes only via
