@@ -5,8 +5,8 @@ import {
   failureText, type ApplyOrderDocumentInput, type ManualRatePrompt, type OrderDocumentKind, type OrderDocumentRecognition, type ProcurementLine,
 } from "./api";
 import { formatDate, formatDay } from "./format";
-import { ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
-import { RowMenu, type MenuItem } from "./ProcurementRowMenu";
+import { ActualDateCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
+import { RowActions, type MenuItem } from "./ProcurementRowMenu";
 import { formatAmount } from "./ProcurementSheetColumns";
 
 /* «Мои позиции» листа закупки — раздельные блоки, каждый сворачивается щелчком по заголовку (владелец, 05.10:
@@ -15,13 +15,13 @@ import { formatAmount } from "./ProcurementSheetColumns";
    (`OrderStageBlock`: заказы «PO-012 от 05.10 · поставщик · N поз. · факт … ₽ / расчёт … ₽», строки заказа
    раскрываются щелчком по заголовку) → «Дозавоз» (когда есть) → «Прочие позиции». Цену вносит окно
    «Вставить счёт» / «Вставить КП» (файл → распознанные цены). Ручного этапа «Согласование» нет (владелец, 04.10).
-   Таблицы показывают; что делать со строкой, решает страница (`actionsOf`, колбэки): редкие действия лежат в
-   меню «⋯» строки, формы открываются под таблицей, массовые — над таблицей, когда выбрана хоть одна строка.
+   Таблицы показывают; что делать со строкой, решает страница (`actionsOf`, колбэки): действия строки видны на ней (без меню «⋯»), формы открываются под таблицей, массовые — над таблицей, когда выбрана хоть одна строка.
    Две колонки правятся прямо в ячейке (`editing`): «Комментарий» и «Ожид. дата» от «Жду счет» до «Карантин»;
-   «Факт. дата» (день приёмки) только показывается. */
+   «Факт. дата» (день приёмки) заполняет приёмка, закупщик может
+   проставить или поправить её сам — необязательно. */
 
 /** Действие строки: выполняется сразу (`run`) или открывает форму под таблицей (`panel`). */
-export type RowAction = { label: string; title?: string; disabled?: boolean; run?: () => void; panel?: () => ReactNode };
+export type RowAction = { label: string; short?: string; title?: string; disabled?: boolean; run?: () => void; panel?: () => ReactNode };
 
 /** До стольких строк таблица блока — без строки поиска и «Показано N из N»: искать в трёх строках нечего. */
 export const COMPACT_BELOW = 8;
@@ -43,11 +43,12 @@ function useLinePanel(
   useEffect(() => { if (open && !action) setOpen(null); }, [open, action]);
 
   const menu = (row: ProcurementLine) => (
-    <RowMenu
+    <RowActions
       label={`Действия ${row.legacy_id}`}
       disabled={disabled || busyId === row.id}
       items={actionsOf(row).map((item): MenuItem => ({
         label: item.label,
+        short: item.short,
         title: item.title,
         disabled: item.disabled,
         run: () => {
@@ -192,7 +193,7 @@ function expectedColumn(editing: LineEditing | undefined, disabled: boolean): Da
 const actualArrivalColumn: DataColumn<ProcurementLine> = { key: "actual_arrival", title: "Факт. дата", value: (line) => line.actual_arrival ?? "", render: (line) => formatDay(line.actual_arrival) };
 
 function menuColumn(menu: (line: ProcurementLine) => ReactNode): DataColumn<ProcurementLine> {
-  return { key: "actions", title: "", value: () => "", render: menu, width: 48 };
+  return { key: "actions", title: "", value: () => "", render: menu, width: 150 };
 }
 
 // ── «Жду счёт», «Ждёт оплаты», «Оплачено»: таблицы по заказам ──────────────────────────────────
@@ -319,13 +320,37 @@ function OrderGroupTable({ label, groups, columns, expanded, onToggle, headerAct
   );
 }
 
-function OrderMenu({ group, disabled, items }: { group: OrderGroup; disabled: boolean; items: MenuItem[] }) {
-  return <RowMenu label={`Действия заказа ${group.number || "без номера"}`} disabled={disabled} items={items} />;
+/** Счета заказа: разные ссылки его строк (по номеру и адресу), в порядке строк. */
+export function orderInvoices(group: OrderGroup): { url: string; number: string }[] {
+  const seen = new Map<string, string>();
+  for (const line of group.lines) if (line.invoice_url && !seen.has(line.invoice_url)) seen.set(line.invoice_url, line.invoice_number ?? "");
+  return [...seen].map(([url, number]) => ({ url, number }));
 }
 
-const documentItems = (group: OrderGroup): MenuItem[] => [
-  { label: "Документ запроса", disabled: !group.url, title: group.url ? undefined : "Документ запроса не сформирован", run: () => { if (group.url) window.open(group.url, "_blank", "noopener"); } },
-];
+/** «Счёт» и «Запрос» в заголовке заказа — всегда на виду, открываются в новой вкладке. Несколько счетов —
+ *  «Счета (N)» со списком под рукой. */
+function OrderDocLinks({ group }: { group: OrderGroup }) {
+  const invoices = orderInvoices(group);
+  const name = (invoice: { number: string }) => (invoice.number ? `Счёт № ${invoice.number}` : "Счёт");
+  return (
+    <span className="doc-links order-doc-links">
+      {invoices.length === 1 && (
+        <a className="doc-link" href={invoices[0].url} target="_blank" rel="noreferrer" title={name(invoices[0])}>Счёт</a>
+      )}
+      {invoices.length > 1 && (
+        <details className="invoice-pop">
+          <summary>Счета ({invoices.length})</summary>
+          <span className="invoice-pop-list">
+            {invoices.map((invoice) => <a key={invoice.url} href={invoice.url} target="_blank" rel="noreferrer">{name(invoice)}</a>)}
+          </span>
+        </details>
+      )}
+      {group.url
+        ? <a className="doc-link" href={group.url} target="_blank" rel="noreferrer">Запрос</a>
+        : <span className="doc-link off" title="Документ запроса не сформирован">Запрос</span>}
+    </span>
+  );
+}
 
 // ── Статус заказа: меняется на месте, заказ из ленты не уходит ─────────────────────────────────────
 
@@ -519,16 +544,24 @@ export function OrderList({
     return next;
   });
 
+  const groupOf = new Map(groups.flatMap((group) => group.lines.map((line) => [line.id, group] as const)));
   const allColumns: GroupColumn[] = [
     { key: "id", title: "ID", render: (line) => <strong>{line.legacy_id}</strong> },
-    { key: "name", title: "Наименование", cell: "name-cell", render: (line) => line.calculated_name },
+    {
+      key: "name", title: "Наименование", cell: "name-cell",
+      render: (line) => {
+        const named = (line.invoice_item_name ?? "").trim();
+        return <>{line.calculated_name}{named && named !== line.calculated_name.trim() && <small className="invoice-name">в счёте: {named}</small>}</>;
+      },
+    },
     { key: "qty", title: "Кол-во факт", render: qtyOf },
     { key: "price", title: "Цена факт, ₽", numeric: true, render: (line) => formatAmount(line.actual_price_with_vat) },
     { key: "sum", title: "Сумма факт, ₽", numeric: true, render: sumCell },
     { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
-    { key: "invoice", title: "Счёт", render: (line) => invoiceColumn.render!(line) },
+    // Счёт заказа открывается из его заголовка; у строки он только если отличается от счёта заказа.
+    { key: "invoice", title: "Счёт", render: (line) => (orderInvoices(groupOf.get(line.id)!).length > 1 ? invoiceColumn.render!(line) : "—") },
     { key: "expected", title: "Ожид. дата", render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> },
-    { key: "actual_arrival", title: "Факт. дата", render: (line) => formatDay(line.actual_arrival) },
+    { key: "actual_arrival", title: "Факт. дата", render: (line) => <ActualDateCell line={line} editing={editing} disabled={disabled} /> },
     { key: "status", title: "Статус", cell: "status-cell", render: lineStatus },
     { key: "note", title: "Комментарий", cell: "note-cell", render: (line) => <NoteCell line={line} editing={editing} disabled={disabled} /> },
   ];
@@ -537,36 +570,34 @@ export function OrderList({
   const headerActions = (group: OrderGroup) => {
     const stage = orderStage(group);
     const off = disabled || !group.number;
-    const docs = documentItems(group);
+    const docs = <OrderDocLinks group={group} />;
     if (stage === "awaiting") {
       return (
         <>
+          {docs}
           <button type="button" className="primary small" disabled={off} onClick={() => setDoc({ key: group.key, kind: "invoice", replace: false })}>Вставить счёт</button>
           <button type="button" className="secondary small" disabled={off} onClick={() => setDoc({ key: group.key, kind: "kp", replace: false })}>Вставить КП</button>
-          <OrderMenu group={group} disabled={disabled} items={[
-            ...docs,
-            { label: "Внести КП в валюте…", title: "КП по строкам: валюта, НДС, суммы, курс", disabled: !group.number, run: () => onOpenKp([group.number]) },
-          ]} />
+          <button type="button" className="secondary small" disabled={off} title="КП по строкам: валюта, НДС, суммы, курс" onClick={() => onOpenKp([group.number])}>Внести КП в валюте…</button>
         </>
       );
     }
     if (stage === "topay") {
       return (
         <>
+          {docs}
           <PaidOrderAction group={group} disabled={off} onPaidOrder={onPaidOrder} />
-          <OrderMenu group={group} disabled={disabled} items={[
-            ...docs,
-            { label: "Заменить счёт…", disabled: !group.number, run: () => setDoc({ key: group.key, kind: "invoice", replace: true }) },
-          ]} />
+          <button type="button" className="secondary small" disabled={off} onClick={() => setDoc({ key: group.key, kind: "invoice", replace: true })}>Заменить счёт…</button>
         </>
       );
     }
     const manual = group.lines.filter((line) => line.exchange_rate_manual);
     return (
-      <OrderMenu group={group} disabled={disabled} items={[
-        ...docs,
-        ...(manual.length ? [{ label: `Сверить курс с ЦБ (${manual.length})`, title: "Курс введён вручную — сверьте с ЦБ, когда он ответит", run: () => void onReconcile(manual) }] : []),
-      ]} />
+      <>
+        {docs}
+        {manual.length > 0 && (
+          <button type="button" className="secondary small" title="Курс введён вручную — сверьте с ЦБ, когда он ответит" disabled={disabled} onClick={() => void onReconcile(manual)}>{`Сверить курс с ЦБ (${manual.length})`}</button>
+        )}
+      </>
     );
   };
 
@@ -677,6 +708,9 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
   const [result, setResult] = useState<OrderDocumentRecognition | null>(null);
   const startPrices = () => Object.fromEntries(lines.map((line) => [line.id, line.actual_price_with_vat ?? ""]));
   const [prices, setPrices] = useState<Record<string, string>>(startPrices);
+  // «Наименование в счёте»: необязательно; пусто — у строки остаётся название с сайта поставщика.
+  const startNames = () => Object.fromEntries(lines.map((line) => [line.id, line.invoice_item_name ?? ""]));
+  const [names, setNames] = useState<Record<string, string>>(startNames);
   const [number, setNumber] = useState(replace ? first?.invoice_number ?? "" : "");
   const [date, setDate] = useState(replace ? first?.invoice_date ?? "" : "");
   const [expected, setExpected] = useState(replace && group.expected ? group.expected : nearestWorkingDay());
@@ -724,6 +758,12 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
         for (const match of recognized.lines) if (match.price_with_vat) next[match.line_id] = match.price_with_vat;
         return next;
       });
+      // Название строки из документа подставляется в «Наименование в счёте»; его можно поправить или стереть.
+      setNames((current) => {
+        const next = { ...current };
+        for (const match of recognized.lines) if (match.matched_name) next[match.line_id] = match.matched_name;
+        return next;
+      });
     } catch (reason) {
       setError(failureText(reason, "Файл не распознан"));
     } finally {
@@ -735,6 +775,7 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
   function removeFile() {
     setResult(null);
     setPrices(startPrices());
+    setNames(startNames());
     setNumber(replace ? first?.invoice_number ?? "" : "");
     setDate(replace ? first?.invoice_date ?? "" : "");
     setError("");
@@ -748,7 +789,9 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
     const input: ApplyOrderDocumentInput = {
       kind,
       file_url: result.file.url,
-      lines: lines.map((line) => ({ line_id: line.id, version: line.version, price_with_vat: decimal(priceOf(line)) || null })),
+      lines: lines.map((line) => ({ line_id: line.id, version: line.version, price_with_vat: decimal(priceOf(line)) || null,
+        ...(invoice ? { invoice_item_name: (names[line.id] ?? "").trim() || null } : {}),
+      })),
     };
     if (invoice) {
       input.invoice_number = number.trim() || null;
@@ -804,6 +847,7 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
             <thead>
               <tr>
                 <th>Позиция</th>
+                {invoice && <th>Наименование в счёте</th>}
                 <th className="num">Кол-во факт</th>
                 <th className="num">Цена с НДС, {money}</th>
                 <th className="num">Сумма, {money}</th>
@@ -823,6 +867,15 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
                       <strong>{line.legacy_id}</strong> {line.calculated_name}
                       {match?.matched_name && <small>в документе: {match.matched_name}</small>}
                     </td>
+                    {invoice && (
+                      <td>
+                        <input
+                          aria-label={`Наименование в счёте ${line.legacy_id}`} disabled={sending} maxLength={1024}
+                          placeholder={line.site_name || line.calculated_name}
+                          value={names[line.id] ?? ""} onChange={(event) => setNames((current) => ({ ...current, [line.id]: event.target.value }))}
+                        />
+                      </td>
+                    )}
                     <td className="num">
                       {qtyOf(line)}
                       {otherQuantity && <small className="tone-warn">в документе {match?.quantity} {match?.unit ?? ""}</small>}
@@ -842,7 +895,7 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={3}>Итого{totalDiffers && <span className="tone-warn"> · в документе {formatAmount(documentTotal)} {money}</span>}</td>
+                <td colSpan={invoice ? 4 : 3}>Итого{totalDiffers && <span className="tone-warn"> · в документе {formatAmount(documentTotal)} {money}</span>}</td>
                 <td className="num"><strong>{formatAmount(total)}</strong></td>
                 <td />
               </tr>

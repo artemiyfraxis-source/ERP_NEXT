@@ -9,12 +9,15 @@ import pytest
 
 from app.modules.procurement.api import _line_result
 from app.modules.procurement.application import (
+    SetActualArrivalCommand,
     SetExpectedArrivalCommand,
     SetNoteCommand,
+    set_procurement_actual_arrival,
     set_procurement_expected_arrival,
     set_procurement_note,
 )
 from app.modules.procurement.domain import (
+    ACTUAL_ARRIVAL_EDITABLE,
     EXPECTED_ARRIVAL_EDITABLE,
     NOTE_EDITABLE,
     NOTE_MAX_LENGTH,
@@ -152,6 +155,43 @@ def test_actual_arrival_follows_receipts_in_one_version_step_and_is_never_cleare
     assert dated.follow_receipts(ProcurementStatus.IN_TRANSIT, date(2026, 9, 24)) is dated
     approval = line_in(ProcurementStatus.APPROVAL)
     assert approval.follow_receipts(ProcurementStatus.DONE, date(2026, 9, 24)) is approval
+
+
+def test_buyer_sets_actual_arrival_from_in_transit_on_and_can_clear_or_correct_it():
+    assert ACTUAL_ARRIVAL_EDITABLE == {ProcurementStatus.IN_TRANSIT, ProcurementStatus.QUARANTINE, ProcurementStatus.DONE}
+    for status in set(ProcurementStatus) - ACTUAL_ARRIVAL_EDITABLE:
+        with pytest.raises(ProcurementValidationError):
+            line_in(status).set_actual_arrival(date(2026, 9, 24), BUYER)
+    line = line_in(ProcurementStatus.IN_TRANSIT)
+    dated = line.set_actual_arrival(date(2026, 9, 24), BUYER)
+    assert (dated.actual_arrival, dated.version) == (date(2026, 9, 24), line.version + 1)
+    assert dated.set_actual_arrival(date(2026, 9, 24), BUYER) is dated
+    corrected = dated.set_actual_arrival(date(2026, 9, 25), BUYER)
+    assert corrected.actual_arrival == date(2026, 9, 25)
+    assert corrected.set_actual_arrival(None, BUYER).actual_arrival is None
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        line.set_actual_arrival(date(2026, 9, 24), OTHER)
+    with pytest.raises(ProcurementValidationError, match="раньше заказа"):
+        line.set_actual_arrival(date(2026, 9, 1), BUYER)
+    # приёмка по-прежнему дописывает дату и не стирает пустым значением
+    assert corrected.follow_receipts(None, None) is corrected
+
+
+def test_actual_arrival_use_case_checks_version_and_audits():
+    uow = FakeUnitOfWork()
+    line = line_awaiting_invoice(uow, BUYER)
+    in_transit = replace(line, status=ProcurementStatus.IN_TRANSIT, version=line.version + 1)
+    uow.procurement.add(in_transit)
+    saved = set_procurement_actual_arrival(
+        SetActualArrivalCommand(in_transit.id, in_transit.version, date(2026, 9, 24), BUYER, NOW), uow,
+    )
+    assert saved.actual_arrival == date(2026, 9, 24)
+    assert uow.audit.items[-1].event_type == "procurement.actual_arrival_set"
+    assert uow.audit.items[-1].details["actual_arrival"] == "2026-09-24"
+    with pytest.raises(Exception, match="изменилась"):
+        set_procurement_actual_arrival(
+            SetActualArrivalCommand(in_transit.id, in_transit.version, None, BUYER, NOW), uow,
+        )
 
 
 def test_line_json_carries_the_calc_prices_note_and_actual_arrival():

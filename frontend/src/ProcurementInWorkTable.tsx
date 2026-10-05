@@ -4,7 +4,7 @@ import { selectRange } from "./bulk";
 import { readSaved, writeSaved, type Saved } from "./DataTable";
 import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
-import { RowMenu } from "./ProcurementRowMenu";
+import { RowActions } from "./ProcurementRowMenu";
 import { formatMoney } from "./ProcurementSheetColumns";
 import { BulkStatus, StageHeading, stageSummary, useCollapsed, type BulkState } from "./ProcurementStages";
 
@@ -16,7 +16,7 @@ const fmtQty = (value: number) => String(Math.round(value * 1e6) / 1e6).replace(
    Над строками поставщика — строка группы: число позиций, сумма по расчёту и «Сформировать запрос» по этой
    группе (пока в группе есть несохранённые правки — недоступна). Группа «Без поставщика» стоит последней.
    Контекст заявки — тип задачи, категория, тип, кол-во по расчёту — серой второй строкой в ячейке «Позиция».
-   Флажки слева: выбранные строки — в массовые действия над таблицей. Редкие действия строки — в меню «⋯».
+   Флажки слева: выбранные строки — в массовые действия над таблицей. Действия строки видны на ней (без меню «⋯»).
    «Наименование на сайте» — поле НАИМЕНОВАНИЕ (Сайт): оно печатается названием позиции в письме поставщику.
    После «Сформировать запрос» группа уходит заказом в блок «Жду счёт». Блок сворачивается щелчком по заголовку. */
 
@@ -493,10 +493,10 @@ export function ProcurementInWorkTable({
                 const covered = coveredOf(line);
                 const dirty = new Set(dirtyFields(line));
                 const ready = line.status === READY;
-                const menuItems: { label: string; disabled?: boolean; title?: string; run: () => void }[] = [
+                const menuItems: { label: string; short?: string; disabled?: boolean; title?: string; run: () => void }[] = [
                   { label: "Со склада", run: () => stockToggle(line.id) },
                   ...(covered > 0 ? [{ label: "Снять «Со склада»", run: () => void releaseStock(line) }] : []),
-                  { label: "Прослеживаемость, раздробить…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
+                  { label: "Прослеживаемость, раздробить…", short: "Прослеж.…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
                   { label: "Отменить строку", run: () => onCancel(line) },
                 ];
                 const rowClass = [dirty.size ? "edited" : "", selected.has(line.id) ? "selected" : "", ready ? "ready" : ""].join(" ").trim();
@@ -528,7 +528,7 @@ export function ProcurementInWorkTable({
                       })}
                       <td className="note"><NoteCell line={line} editing={editing} disabled={disabled} /></td>
                       <td className="menu">
-                        <RowMenu label={`Действия ${line.legacy_id}`} disabled={disabled || busyId === line.id} items={menuItems} />
+                        <RowActions label={`Действия ${line.legacy_id}`} disabled={disabled || busyId === line.id} items={menuItems} />
                       </td>
                     </tr>
                     {stockFor.has(line.id) && (
