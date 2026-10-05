@@ -45,6 +45,7 @@ from .application import (
     edited_unit_mass,
     move_location,
     move_lot,
+    lot_destinations,
     return_writeoff,
     warehouse_lots,
     write_off,
@@ -509,6 +510,21 @@ def add_batches(
         ],
         "errors": [{"i": row.i, "error": row.error} for row in result.errors],
     }
+
+
+@router.get("/batches/{lot_id}/issued-to")
+def issued_to(
+    lot_id: UUID,
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """«Откуда» of a return: where this lot was written off to and how much is still there."""
+    destinations = _guarded(lambda: lot_destinations(lot_id, uow_factory()))
+    return {"destinations": [
+        {"name": item.name, "written_off": _number(item.written_off), "returned": _number(item.returned),
+         "outstanding": _number(item.outstanding), "unit": item.unit, "last_date": item.last_date.isoformat()}
+        for item in destinations
+    ]}
 
 
 @router.post("/batches/{lot_id}/writeoff")

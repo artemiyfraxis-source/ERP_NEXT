@@ -1172,6 +1172,56 @@ def warehouse_lots(
 
 
 @dataclass(frozen=True)
+class LotDestination:
+    """Where a lot was written off to («Откуда» of its return): the sums are the journal's, not the lot's."""
+
+    name: str
+    written_off: Decimal
+    returned: Decimal
+    outstanding: Decimal
+    unit: str
+    last_date: datetime
+
+
+def _destination_label(entry: WriteOffEntry) -> str:
+    if entry.kind == "issue":  # a kitting issue names no НАЗНАЧЕНИЕ: its basis is «Выдача <номер заявки>»
+        return re.sub(r"^\s*выдача\s*", "", entry.reason, flags=re.IGNORECASE).strip()
+    return " ".join(str(entry.purpose or "").split())
+
+
+def lot_destinations(lot_id: UUID, uow: UnitOfWork) -> list[LotDestination]:
+    """Destinations (project number or surname) this lot was written off or issued to, with what is still out
+    there (written off − returned from the same destination, case-insensitively), newest write-off first.
+    Fully returned destinations and rows that name no destination are left out."""
+    with uow:
+        if uow.warehouse.get(lot_id) is None:
+            raise KeyError(f"Warehouse lot not found: {lot_id}")
+        entries = uow.writeoffs.for_lot(lot_id)
+    groups: dict[str, dict] = {}
+    for entry in sorted(entries, key=lambda item: item.occurred_at):
+        if entry.kind == "supplier_return" or not entry.posted:
+            continue
+        is_return = entry.kind == "return" or (entry.kind == "legacy" and bool(_RETURN_REASON.match(entry.reason)))
+        label = _destination_label(entry)
+        if not label:
+            continue
+        group = groups.setdefault(label.casefold(), {
+            "name": label, "out": Decimal("0"), "back": Decimal("0"), "unit": entry.unit, "last": None,
+        })
+        if is_return:
+            group["back"] += entry.quantity
+            continue
+        group["name"], group["unit"] = label, entry.unit or group["unit"]
+        group["out"] += entry.quantity
+        group["last"] = entry.occurred_at
+    result = [
+        LotDestination(g["name"], g["out"], g["back"], g["out"] - g["back"], g["unit"], g["last"])
+        for g in groups.values() if g["last"] is not None and g["out"] - g["back"] > 0
+    ]
+    return sorted(result, key=lambda item: item.last_date, reverse=True)
+
+
+@dataclass(frozen=True)
 class ShelfOccupancy:
     warehouse: str
     shelf: str

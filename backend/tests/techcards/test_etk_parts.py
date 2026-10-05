@@ -1,4 +1,4 @@
-from app.modules.techcards.etk_parts import attach_parts, part_row, use_article
+from app.modules.techcards.etk_parts import attach_parts, kit_article, part_row, use_article
 
 
 def _names(article: str) -> str:
@@ -54,3 +54,40 @@ def test_kd_analogue_is_replaced_in_operation_and_harness_and_a_second_pass_chan
     assert attach_parts(once) == once
     assert document["operations"][0]["connector"] == "BL2018P-04"  # the stored document is not mutated
     assert attach_parts(None) is None
+
+
+def test_kit_row_uses_the_wire_from_the_name_when_the_calc_replaced_it():
+    """Owner, 05.10: the wire was changed in the calc — «Наименование» is the item used, the КД article stays as kd."""
+    assert [
+        kit_article("Силиконовый 28AWG черный", "Силиконовый 30AWG черный"),
+        kit_article("МК26-13 0,35 черный", "МГТФ 0,35 белый"),
+        kit_article("BL2018TS", "SHF-001T-0.8BS"),
+    ] == [
+        {"art": "Силиконовый 30AWG черный", "kd": "Силиконовый 28AWG черный"},
+        {"art": "МГТФ 0,35 белый", "kd": "МК26-13 0,35 черный"},
+        {"art": "SHF-001T-0.8BS", "kd": "BL2018TS"},
+    ]
+
+
+def test_kit_row_name_that_describes_the_article_is_not_a_replacement():
+    article = "МК26-13 0,35 черный"
+    assert [
+        kit_article(article, "Провод МК 26-13 (цветной МГТФ). Продажа от 5 метров!"),  # supplier page title
+        kit_article(article, "Провод МК26-13 0,35 черный"),  # repeats the article
+        kit_article(article, "мк26-13 0.35 чёрный"),  # the same article, spelled otherwise
+        kit_article(article, "Провод монтажный МК 26-13 сечением 0,35 цвет черный"),  # too long for a designation
+        kit_article(article, ""),
+        kit_article("GHR-04V-S", "Колодка 4pin 1.25мм"),  # a part number keeps its descriptive name
+        kit_article("", "Силиконовый 30AWG черный"),
+    ] == [
+        {"art": article, "kd": ""}, {"art": article, "kd": ""}, {"art": article, "kd": ""},
+        {"art": article, "kd": ""}, {"art": article, "kd": ""},
+        {"art": "GHR-04V-S", "kd": ""}, {"art": "Силиконовый 30AWG черный", "kd": ""},
+    ]
+
+
+def test_issued_etk_rows_keep_the_article_they_were_built_with():
+    # Read-time ETK conversion stays on kitUseArt_: an ETK built with the КД wire is not relabelled as the new one.
+    assert use_article("Силиконовый 28AWG черный", "Силиконовый 30AWG черный") == {
+        "art": "Силиконовый 28AWG черный", "kd": "",
+    }

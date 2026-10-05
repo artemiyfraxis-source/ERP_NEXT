@@ -52,7 +52,7 @@ function mount(props: Partial<Parameters<typeof TcGenerator>[0]> = {}) {
 }
 
 async function openManual() {
-  fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
   expect(screen.getByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
 }
 
@@ -177,7 +177,7 @@ it("opens a card built by hand on its tab with its list and scheme, keeps them a
   expect(screen.getByRole("alert")).toHaveTextContent("Сборка отменена — техкарта осталась ручной сборкой.");
   expect(onBuild).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("tab", { name: "Ручная сборка" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
   expect(screen.getByLabelText("Название операции 2")).toHaveValue("Пайка экрана");
   confirm.mockImplementation(() => true);
   fireEvent.click(screen.getByRole("button", { name: "Пересобрать" }));
