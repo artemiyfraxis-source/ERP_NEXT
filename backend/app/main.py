@@ -4,7 +4,9 @@ import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from .database import configure_database
 from .modules.identity import api as identity_api
@@ -77,8 +79,15 @@ watch_stop_file()  # локальная ERP на ПК: обновление ос
 
 
 @app.get("/api/health")
-def health() -> dict:
-    return {"ok": True, "service": "erp-next"}
+def health(db: int = 0):
+    if not db:
+        return {"ok": True, "service": "erp-next"}
+    try:
+        with app.state.database_engine.connect() as connection:
+            revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    except Exception:  # noqa: BLE001 - наружу уходит только короткий текст, без стека и адреса БД
+        return JSONResponse(status_code=503, content={"ok": False, "error": "База данных недоступна или не размечена миграциями"})
+    return {"ok": True, "revision": revision}
 
 
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
