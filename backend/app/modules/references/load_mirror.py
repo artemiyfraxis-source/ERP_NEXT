@@ -1,7 +1,11 @@
-"""REF-MIRROR-LOAD / REF-MIRROR-ALL CLI: SUPPLYMAP DB mirror `_local/db/*.tsv` → references snapshot.
+"""REF-MIRROR-LOAD / REF-MIRROR-ALL CLI: the «Технология» bases mirror (`*.tsv`) → references snapshot.
 
     ERP_DATABASE_URL=... python -m app.modules.references.load_mirror --dry-run
-    ERP_DATABASE_URL=... python -m app.modules.references.load_mirror [--source ../SUPPLYMAP]
+    ERP_DATABASE_URL=... python -m app.modules.references.load_mirror [--source <папка>]
+
+The default source is the snapshot bundled with the repo, `backend/data/reference-mirror/` (the SUPPLYMAP mirror
+`_local/db` as of 29.09.2026, copied once, owner 05.10: nothing in the ERP needs the sibling SUPPLYMAP checkout).
+`--source` takes a folder with the `.tsv` files, or a checkout that keeps them under `_local/db`.
 
 Reads the bases of the «Технология» workbook: БД.ОБ, БД.ОП, БД.ТЕР, БД.КОАКС (records built exactly as the GAS
 exporter builds them — `sheet_snapshot_records` → `import_supplymap_snapshot`, the same path as
@@ -59,16 +63,18 @@ class MirrorLoadResult:
     skipped_edited: dict[str, int] | None = None  # tab → mirror rows not applied because edited in ERP
 
 
+BUNDLED_MIRROR = Path(__file__).resolve().parents[3] / "data" / "reference-mirror"
+
+
 def default_source() -> Path:
-    """SUPPLYMAP_SOURCE_REPOSITORY, else the nearest `SUPPLYMAP` sibling of this checkout or any parent
-    (a Desktop worktree sits under `.claude/worktrees/`, so plain `../SUPPLYMAP` would miss it)."""
-    override = os.getenv("SUPPLYMAP_SOURCE_REPOSITORY", "").strip()
-    if override:
-        return Path(override)
-    for parent in Path(__file__).resolve().parents:
-        if (parent.parent / "SUPPLYMAP").is_dir():
-            return parent.parent / "SUPPLYMAP"
-    return Path("..") / "SUPPLYMAP"
+    """The snapshot bundled with the repo — no sibling checkout, no env var."""
+    return BUNDLED_MIRROR
+
+
+def mirror_dir(source: Path) -> Path:
+    """`source/_local/db` when the source is a checkout that keeps the mirror there, else the folder itself."""
+    nested = Path(source) / MIRROR_SUBDIR
+    return nested if nested.is_dir() else Path(source)
 
 
 def _inputs(records) -> list[TechRecordInput]:
@@ -80,7 +86,7 @@ def _inputs(records) -> list[TechRecordInput]:
 
 def _read_text(path: Path) -> str:
     if not path.is_file():
-        raise MirrorLoadError(f"Нет файла зеркала {path}: задайте --source или SUPPLYMAP_SOURCE_REPOSITORY")
+        raise MirrorLoadError(f"Нет файла зеркала {path}: укажите --source (папка с .tsv)")
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
@@ -108,7 +114,7 @@ def _pulled_at(db: Path, sheets: list[str]) -> str:
 def read_mirror(source: Path) -> MirrorSnapshot:
     """ОБ/ОП/ТЕР/КОАКС and ПРОВ/МАТ files are required; a missing one is an error, not a silent empty base. СПР.КАБ
     is optional (absent → its two tabs are not in the result and stay as they are in the snapshot)."""
-    db = Path(source) / MIRROR_SUBDIR
+    db = mirror_dir(source)
     headers: dict[str, list[str]] = {}
     raw_records: list[dict[str, object]] = []
     for tab, (sheet, _row) in TECH_SHEETS.items():
@@ -188,8 +194,8 @@ def format_report(result: MirrorLoadResult) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Загрузка баз «Технологии» (БД.ОБ, БД.ОП, БД.ТЕР, БД.КОАКС, БД.ПРОВ, БД.МАТ, СПР.КАБ) из зеркала SUPPLYMAP в снимок справочников (REF-MIRROR-ALL)")
-    parser.add_argument("--source", default=None, help="корень репозитория SUPPLYMAP (по умолчанию SUPPLYMAP_SOURCE_REPOSITORY или соседняя папка)")
+    parser = argparse.ArgumentParser(description="Загрузка баз «Технологии» (БД.ОБ, БД.ОП, БД.ТЕР, БД.КОАКС, БД.ПРОВ, БД.МАТ, СПР.КАБ) из зеркала в снимок справочников (REF-MIRROR-ALL)")
+    parser.add_argument("--source", default=None, help="папка с .tsv зеркала или репозиторий с ними в _local/db (по умолчанию — снимок в backend/data/reference-mirror)")
     parser.add_argument("--dry-run", action="store_true", help="только посчитать строки, без записи в базу")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):

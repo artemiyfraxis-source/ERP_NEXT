@@ -304,9 +304,21 @@ def test_load_replaces_every_mirrored_base_in_one_snapshot_and_is_repeatable(tmp
     assert metadata["source_updated_at"].replace(tzinfo=timezone.utc) == datetime(2026, 9, 29, 9, 23, tzinfo=timezone.utc)
 
 
-def test_default_source_prefers_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("SUPPLYMAP_SOURCE_REPOSITORY", str(tmp_path))
-    assert default_source() == tmp_path
+def test_default_source_is_the_snapshot_bundled_with_the_repo(monkeypatch, tmp_path):
+    """Owner 05.10: the demo and local bases load references without the sibling SUPPLYMAP checkout."""
+    monkeypatch.setenv("SUPPLYMAP_SOURCE_REPOSITORY", str(tmp_path / "absent"))
+    source = default_source()
+    assert source == Path(__file__).resolve().parents[2] / "data" / "reference-mirror"
+    snapshot = read_mirror(source)
+    assert set(snapshot.tables) == {tab.value for tab in TechOperationTab}
+    assert all(snapshot.tables.values()), "every tab of the bundled snapshot has records"
+    assert snapshot.source_updated_at == datetime(2026, 9, 29, 9, 23, tzinfo=timezone.utc)
+
+
+def test_source_may_be_a_flat_folder_of_tsv_files(tmp_path, uow):
+    nested = mirror(tmp_path / "repo")
+    flat = nested / "_local" / "db"
+    assert read_mirror(flat).tables == read_mirror(nested).tables
 
 
 def test_main_needs_database_url(monkeypatch, capsys):
