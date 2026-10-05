@@ -265,6 +265,16 @@ export function DataTable<T>({
     });
   }
 
+  function toggleGroup(groupRows: T[], checked: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const row of groupRows) {
+        if (checked) next.add(rowKey(row)); else next.delete(rowKey(row));
+      }
+      return next;
+    });
+  }
+
   async function runBulk(action: DataBulkAction<T>) {
     setRunning(action.label);
     try {
@@ -422,7 +432,26 @@ export function DataTable<T>({
           <tbody>
             {groups.map(([name, groupRows]) => (
               <Fragment key={`group:${name}`}>
-                {groupBy && <tr className="group-row"><td colSpan={span}><strong>{name || "—"}</strong> · {groupRows.length}</td></tr>}
+                {groupBy && (
+                  <tr className="group-row">
+                    <td colSpan={span}>
+                      {selectable && (() => {
+                        const picked = groupRows.filter((row) => selected.has(rowKey(row))).length;
+                        return (
+                          <input
+                            type="checkbox"
+                            aria-label="Выбрать группу"
+                            title="Выбрать группу"
+                            checked={picked === groupRows.length}
+                            ref={(input) => { if (input) input.indeterminate = picked > 0 && picked < groupRows.length; }}
+                            onChange={(event) => toggleGroup(groupRows, event.currentTarget.checked)}
+                          />
+                        );
+                      })()}
+                      <strong>{name || "—"}</strong> · {groupRows.length}
+                    </td>
+                  </tr>
+                )}
                 {groupRows.map(renderRow)}
               </Fragment>
             ))}

@@ -1959,6 +1959,15 @@ export const receivingApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  /** «Внести УПД»: один документ на несколько позиций заказа, всё или ничего. */
+  attachDocuments: (
+    lines: { id: string; version: number }[],
+    payload: { shipping_document_url: string | null; document_number: string; document_date: string | null },
+  ) =>
+    api<{ lines: ReceivingLine[] }>("/api/receiving/documents", {
+      method: "POST",
+      body: JSON.stringify({ lines, ...payload }),
+    }),
   place: (lineId: string, version: number, storageLocation: string) =>
     api<{ line: ReceivingLine }>(`/api/receiving/${lineId}/place`, {
       method: "POST",

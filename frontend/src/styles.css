@@ -863,6 +863,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table tr.detail > td > .detail-body { position: sticky; left: 0; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 24px); }
 .data-table tr.group-row td { background: var(--accent); font-size: 12px; }
 .data-table tr.group-row strong { display: inline; }
+.data-table tr.group-row input[type="checkbox"] { margin: 0 8px 0 2px; vertical-align: middle; }
 .data-table .calendar-chips { margin-bottom: 0; }
 /* Dense, spreadsheet-like reading (the owner is used to Google Sheets): compact rows, zebra, dark text, the header
    pinned while the rows scroll inside the card, columns as wide as their content, the first column as the row key. */

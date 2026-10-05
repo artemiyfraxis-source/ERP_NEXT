@@ -557,6 +557,35 @@ class ReceivingLine:
             return self
         return replace(self, expected_arrival=expected_arrival, version=self.version + 1)
 
+    def attach_shipping_document(
+        self, *, url: str | None, number: str, document_date: date | None
+    ) -> ReceivingLine:
+        """Массовое внесение УПД до приёмки: только реквизиты документа, статус и ВК не трогаем.
+        Пустое значение не затирает уже внесённое."""
+        if self.warehouse_event_emitted or self.status not in (
+            ReceivingStatus.IN_TRANSIT,
+            ReceivingStatus.WAITING,
+        ):
+            raise ReceivingValidationError(
+                f"Позиция {self.legacy_id}: УПД вносится только для «В пути» и «Ожидание», сейчас «{self.status.value}»"
+            )
+        try:
+            normalized_url = normalize_document_url(url)
+        except ValueError as error:
+            raise ReceivingValidationError(str(error)) from error
+        clean_number = str(number or "").strip()
+        if not (normalized_url or clean_number or document_date):
+            raise ReceivingValidationError("Укажите файл, № или дату УПД")
+        updated = replace(
+            self,
+            shipping_document_url=normalized_url or self.shipping_document_url,
+            document_number=clean_number or self.document_number,
+            document_date=document_date or self.document_date,
+        )
+        if updated == self:
+            return self
+        return replace(updated, version=self.version + 1)
+
     def place(self, location: str) -> ReceivingLine:
         if self.warehouse_event_emitted:
             raise ReceivingValidationError(

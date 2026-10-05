@@ -370,3 +370,93 @@ def test_receiving_file_needs_a_known_line_and_an_editor(receiving_api):
         permissions={"receiving": "view"},
     )
     assert client.post("/api/receiving/files", json={**body, "line_id": str(line.id)}).status_code == 403
+
+
+def _second_line():
+    return consume_receiving_expected(expected_message(2), app.state.receiving_uow_factory())
+
+
+def _documents(client, lines, **fields):
+    return client.post(
+        "/api/receiving/documents",
+        json={"lines": [{"id": str(line.id), "version": line.version} for line in lines], **fields},
+    )
+
+
+def test_bulk_upd_is_attached_to_selected_lines_without_status_change(receiving_api):
+    client, first = receiving_api
+    second = _second_line()
+
+    response = _documents(
+        client, [first, second], document_number="УПД-77", document_date="2026-09-20",
+        shipping_document_url="https://files.test/upd.pdf",
+    )
+
+    assert response.status_code == 200, response.text
+    lines = response.json()["lines"]
+    assert [item["document_number"] for item in lines] == ["УПД-77", "УПД-77"]
+    assert all(item["version"] == first.version + 1 for item in lines)
+    assert all(item["status"] == first.status.value for item in lines)
+    with app.state.receiving_uow_factory() as uow:
+        stored = uow.receiving.get(first.id)
+    assert stored.shipping_document_url == "https://files.test/upd.pdf"
+    assert str(stored.document_date) == "2026-09-20"
+
+
+def test_bulk_upd_blank_fields_keep_existing_values(receiving_api):
+    client, first = receiving_api
+    done = _documents(client, [first], document_number="УПД-1", document_date="2026-09-20").json()["lines"][0]
+    again = client.post(
+        "/api/receiving/documents",
+        json={"lines": [{"id": done["id"], "version": done["version"]}], "shipping_document_url": "https://files.test/a.pdf"},
+    )
+
+    assert again.status_code == 200, again.text
+    line = again.json()["lines"][0]
+    assert line["document_number"] == "УПД-1"
+    assert line["document_date"] == "2026-09-20"
+
+
+def test_bulk_upd_rejects_accepted_line_and_applies_nothing(receiving_api):
+    client, first = receiving_api
+    second = _second_line()
+    base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    accepted = client.post(
+        f"/api/receiving/{second.id}/inspect",
+        json={**base, "version": second.version, "shipping_document_url": "https://files.test/x.pdf"},
+    ).json()["line"]
+    assert accepted["status"] == "Принято"
+
+    response = client.post(
+        "/api/receiving/documents",
+        json={
+            "lines": [{"id": str(first.id), "version": first.version}, {"id": accepted["id"], "version": accepted["version"]}],
+            "document_number": "УПД-9",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Принято" in response.json()["detail"]
+    with app.state.receiving_uow_factory() as uow:
+        assert uow.receiving.get(first.id).document_number == ""
+        assert uow.receiving.get(first.id).version == first.version
+
+
+def test_bulk_upd_version_conflict_is_409(receiving_api):
+    client, first = receiving_api
+
+    response = client.post(
+        "/api/receiving/documents",
+        json={"lines": [{"id": str(first.id), "version": first.version + 5}], "document_number": "УПД-1"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_bulk_upd_requires_lines_and_some_value(receiving_api):
+    client, first = receiving_api
+
+    assert client.post("/api/receiving/documents", json={"lines": [], "document_number": "1"}).status_code == 422
+    empty = _documents(client, [first])
+    assert empty.status_code == 422
+    assert "Укажите файл, № или дату УПД" in empty.json()["detail"]

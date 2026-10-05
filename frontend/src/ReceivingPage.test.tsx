@@ -433,3 +433,59 @@ it("asks for CSM or PPM up front when the purpose gives no ГРН prefix", async
   expect(prefix).toBeRequired();
   expect(prefix).toHaveValue("");
 });
+
+
+const orderLines: ReceivingLine[] = [1, 2, 3].map((n) => ({
+  ...line,
+  id: `20000000-0000-0000-0000-00000000010${n}`,
+  legacy_id: `SM-20260921-0${n}`,
+  order_number: "PO-001",
+  version: n,
+}));
+
+it("groups by order by default and applies one УПД to the ticked rows of a group only", async () => {
+  let sent: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: orderLines, next_cursor: null });
+    if (path === "/api/receiving/documents" && init?.method === "POST") {
+      sent = JSON.parse(String(init.body));
+      return json({ lines: [] });
+    }
+    throw new Error(`unexpected ${path}`);
+  });
+  render(<ReceivingPage />);
+
+  expect(await screen.findByText("Заказ PO-001", { selector: "strong" })).toBeTruthy();
+  fireEvent.click(screen.getByLabelText("Выбрать группу"));
+  fireEvent.click(screen.getByLabelText(`Выбрать ${orderLines[1].id}`));
+  fireEvent.click(screen.getByRole("button", { name: "Внести УПД" }));
+
+  expect(await screen.findByText("УПД для 2 позиций")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("№ УПД/М-15"), { target: { value: "УПД-7" } });
+  fireEvent.change(screen.getByLabelText("Дата УПД/М-15"), { target: { value: "2026-09-20" } });
+  fireEvent.click(screen.getByRole("button", { name: "Внести УПД в 2 позиций" }));
+
+  await waitFor(() => expect(sent).toBeTruthy());
+  expect(sent).toEqual({
+    lines: [
+      { id: orderLines[0].id, version: 1 },
+      { id: orderLines[2].id, version: 3 },
+    ],
+    shipping_document_url: null,
+    document_number: "УПД-7",
+    document_date: "2026-09-20",
+  });
+  expect(await screen.findByText("УПД внесён: 2 позиций")).toBeTruthy();
+});
+
+it("disables «Внести УПД» when an accepted row is selected", async () => {
+  const accepted = { ...orderLines[1], status: "Принято" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [orderLines[0], accepted], next_cursor: null }));
+  render(<ReceivingPage />);
+
+  await screen.findByText("Заказ PO-001", { selector: "strong" });
+  fireEvent.click(screen.getByLabelText("Выбрать группу"));
+
+  expect((screen.getByRole("button", { name: "Внести УПД" }) as HTMLButtonElement).disabled).toBe(true);
+});

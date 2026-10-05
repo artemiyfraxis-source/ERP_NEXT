@@ -23,7 +23,7 @@ const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "location", title: "Место", value: (line) => line.storage_location ?? "" },
   { key: "warehouse", title: "Склад", value: (line) => line.warehouse, filter: true, hidden: true },
   { key: "series", title: "Серия", value: (line) => line.series, hidden: true },
-  { key: "document", title: "УПД", value: (line) => [line.document_number, line.document_date].filter(Boolean).join(" от "), hidden: true },
+  { key: "document", title: "УПД", value: (line) => [line.document_number, line.document_date].filter(Boolean).join(" от ") },
   { key: "fact", title: "Факт", value: (line) => line.fact_quantity ?? "", numeric: true, hidden: true },
   { key: "verdict", title: "Вердикт", value: (line) => line.verdict ?? "", filter: true, hidden: true },
 ];
@@ -109,6 +109,33 @@ const GROUPS: Record<string, ((line: ReceivingLine) => string) | undefined> = {
   order: (line) => line.order_number ? `Заказ ${line.order_number}` : "Без номера заказа",
 };
 
+/** «Внести УПД»: один документ на выбранные позиции заказа (остальные можно отметить другим УПД). */
+function UpdPanel({ rows, busy, onSubmit, onClose }: {
+  rows: ReceivingLine[];
+  busy: boolean;
+  onSubmit: (payload: { url: string; number: string; date: string }) => void;
+  onClose: () => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [number, setNumber] = useState("");
+  const [date, setDate] = useState("");
+  return (
+    <form className="panel" onSubmit={(event) => { event.preventDefault(); onSubmit({ url, number, date }); }}>
+      <h2>УПД для {rows.length} позиций</h2>
+      <p className="muted">{rows.map((line) => line.legacy_id).join(", ")}</p>
+      <div className="form-grid">
+        <DocumentField lineId={rows[0].id} kind="upd" label="Документ УПД/М-15" value={url} disabled={busy} onChange={setUrl} />
+        <label>№ УПД/М-15<input value={number} disabled={busy} onChange={(event) => setNumber(event.target.value)} /></label>
+        <label>Дата УПД/М-15<input type="date" value={date} disabled={busy} onChange={(event) => setDate(event.target.value)} /></label>
+      </div>
+      <div className="page-actions">
+        <button type="submit" className="primary" disabled={busy || !(url.trim() || number.trim() || date)}>Внести УПД в {rows.length} позиций</button>
+        <button type="button" className="secondary" disabled={busy} onClick={onClose}>Отмена</button>
+      </div>
+    </form>
+  );
+}
+
 /** `readOnly` — «режим просмотра» (ID-6): the queue is read; no inspection, placement or new ВК
  *  (SUPPLYMAP: «Приёмка — просмотр» has no canReceive). */
 export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {}) {
@@ -118,7 +145,8 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [returning, setReturning] = useState(false);
-  const [group, setGroup] = useState("");
+  const [group, setGroup] = useState("order");
+  const [updRows, setUpdRows] = useState<ReceivingLine[] | null>(null);
   const [notice, setNotice] = useState("");
 
   async function reload(after?: string) {
@@ -206,6 +234,27 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     }
   }
 
+  async function attachDocuments(selected: ReceivingLine[], payload: { url: string; number: string; date: string }) {
+    setBusy("upd");
+    setError("");
+    try {
+      await receivingApi.attachDocuments(
+        selected.map((line) => ({ id: line.id, version: line.version })),
+        { shipping_document_url: payload.url.trim() || null, document_number: payload.number.trim(), document_date: payload.date || null },
+      );
+      setBusy("");
+      setNotice(`УПД внесён: ${selected.length} ${selected.length === 1 ? "позиция" : "позиций"}`);
+      setUpdRows(null);
+      const result = await receivingApi.list();
+      setLines(result.lines);
+      setNextCursor(result.next_cursor);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "УПД не внесён");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function openVkRevision(line: ReceivingLine) {
     if (busy || loading) return;
     if (!window.confirm(`Строка ${line.legacy_id} уйдёт в «Архив ВК» (акты сохранятся как история). Появится ревизия с контекстом заказа и УПД — по ней проведёте приёмку заново. Продолжить?`)) return;
@@ -235,6 +284,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       {readOnly && <p className="page-sub">Приёмка открыта вам только на просмотр.</p>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {returning && <SupplierReturnPanel onDone={() => void reload()} onClose={() => setReturning(false)} />}
+      {updRows && <UpdPanel rows={updRows} busy={Boolean(busy)} onSubmit={(payload) => void attachDocuments(updRows, payload)} onClose={() => setUpdRows(null)} />}
       {notice && <div className="success-banner" role="status">{notice}</div>}
       <DataTable
         rows={lines}
@@ -246,7 +296,14 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
         groupBy={GROUPS[group]}
         exportName="Приёмка"
         emptyText={loading ? "Загружаем…" : "Поставок для приёмки пока нет."}
-        bulkActions={[{ label: "Скопировать ГРН", run: copyGrns, disabled: (rows) => !rows.some((line) => line.grn) }]}
+        bulkActions={[
+          ...(readOnly ? [] : [{
+            label: "Внести УПД",
+            run: async (rows: ReceivingLine[]) => { setNotice(""); setUpdRows(rows); },
+            disabled: (rows: ReceivingLine[]) => rows.some((line) => line.status !== "В пути" && line.status !== "Ожидание"),
+          }]),
+          { label: "Скопировать ГРН", run: copyGrns, disabled: (rows) => !rows.some((line) => line.grn) },
+        ]}
         toolbar={(
           <label className="inline-select">Группировать<select value={group} onChange={(event) => setGroup(event.target.value)}><option value="">нет</option><option value="supplier">по поставщику</option><option value="order">по заказу</option></select></label>
         )}

@@ -140,3 +140,28 @@ it("counts chips over the searched rows when asked (SUPPLYMAP issFilterRender_),
   expect(screen.getByRole("button", { name: "Новая · 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Готово · 1" })).toBeInTheDocument();
 });
+
+it("selects and clears a whole group from its header checkbox", () => {
+  render(
+    <DataTable
+      rows={rows}
+      columns={columns}
+      rowKey={(row) => row.id}
+      storageKey="group-select"
+      groupBy={(row) => row.supplier}
+      bulkActions={[{ label: "Действие", run: () => undefined }]}
+    />,
+  );
+  const [groupA, groupB] = screen.getAllByLabelText("Выбрать группу") as HTMLInputElement[];
+  fireEvent.click(groupB);
+  expect((screen.getByLabelText("Выбрать 2") as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByLabelText("Выбрать 3") as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByLabelText("Выбрать 1") as HTMLInputElement).checked).toBe(false);
+  fireEvent.click(screen.getByLabelText("Выбрать 3"));
+  expect(groupB.indeterminate).toBe(true);
+  expect(groupB.checked).toBe(false);
+  fireEvent.click(groupA);
+  expect(screen.getByText("Выбрано: 2")).toBeTruthy();
+  fireEvent.click(groupA);
+  expect(screen.getByText("Выбрано: 1")).toBeTruthy();
+});

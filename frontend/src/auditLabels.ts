@@ -53,6 +53,7 @@ const EVENT_NAMES: Record<string, string> = {
 
   "receiving.expected": "Ожидается поставка",
   "receiving.unpacked": "Поставка распакована",
+  "receiving.document_attached": "Внесён УПД",
   "receiving.inspected": "Входной контроль",
   "receiving.auto_quarantined": "В карантин автоматически",
   "receiving.file_attached": "Документ приложен",
