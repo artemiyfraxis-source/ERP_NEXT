@@ -272,15 +272,23 @@ def _per_wire(wire: Mapping[str, Any], quantity: Decimal) -> str:
     return _format(_number(wire.get("qty"), Decimal(1)) * quantity)
 
 
-def _result_rows(op: Mapping[str, Any], config: Mapping[str, Any], result: str, is_last: bool) -> list[dict[str, str]]:
-    """SUPPLYMAP etkResult_: what the operation hands on and how many pieces per batch."""
+def _single_name(config: Mapping[str, Any], result: str, is_last: bool) -> str:
+    """The name of the one piece an operation hands on: the product itself after the last operation."""
+    return str(config.get("assemblyName") or result) if is_last else result
+
+
+def _result_rows(
+    op: Mapping[str, Any], config: Mapping[str, Any], result: str, is_last: bool, single: str | None = None,
+) -> list[dict[str, str]]:
+    """SUPPLYMAP etkResult_: what the operation hands on and how many pieces per batch. `single` — the name of the
+    one-piece row (default: the result, the product after the last operation; «Ручная сборка» passes its block's)."""
     if not result:
         return []
     operation_type = str(op.get("type") or "")
     kind = _kind(op)
     wires = _wires(op, config)
     quantity = _part_quantity(config)
-    single = str(config.get("assemblyName") or result) if is_last else result
+    single = _single_name(config, result, is_last) if single is None else single
     build_side = op.get("side") != "B"
     if kind == "prs" and _endpoint(op).get("double") and len(wires) >= 2:
         return [_row(name, _format(quantity)) for name in _double_crimp_rows(op, config, wires)]
@@ -660,6 +668,80 @@ def _resolve_card(
     return {"name": card.name, "safety": card.safety, "defects": defects, "steps": steps, "tooling": tooling}
 
 
+def _wire_data(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+    """The cut's wires as one placeholder set (several wires joined line by line); other operations have none."""
+    return _combined_wire_data(_wires(op, config)) if op.get("type") in CUT_TYPES else {}
+
+
+def _typed_fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping[str, Any]) -> dict[str, Any]:
+    fields = _fields(op, config, wire_data)
+    if op.get("type") == "cutWireCrimp":
+        fields["cutCrimp"] = True
+        if fields.get("applicator"):
+            fields["applicator"] = _machine_applicator(str(fields["applicator"]))
+    return fields
+
+
+def _card_warning(op: Mapping[str, Any], position: int, code: str) -> str:
+    missing_card = code or op.get("templateId") or "шаблон не выбран"
+    return f"Операция {position} ({op.get('type') or ''}): нет карточки {missing_card}"
+
+
+def _terminal_warning(op: Mapping[str, Any], position: int, code: str) -> str | None:
+    terminal_norm = op.get("terminalNorm")
+    if not isinstance(terminal_norm, Mapping):
+        return None
+    missing_sections = [
+        str(item.get("section") or "сечение не определено")
+        for item in terminal_norm.get("bySection") or []
+        if isinstance(item, Mapping) and not item.get("found")
+    ]
+    if not missing_sections:
+        return None
+    terminal = str(_endpoint(op).get("termArt") or _endpoint(op).get("termName") or "")
+    return f"Операция {position} ({code}): нет нормы терминала {terminal} для {', '.join(missing_sections)}"
+
+
+def _typed_connector(op: Mapping[str, Any], fallback: object) -> str:
+    """The connector part of the ETK operation key: the sheet suffix, else the side, else `fallback`."""
+    return _suffix(op) or str(op.get("side") or fallback)
+
+
+def _typed_operation(
+    op: Mapping[str, Any], config: Mapping[str, Any], *, position: int, code: str,
+    card: OperationCardTemplate | None, cards_by_code: Mapping[str, OperationCardTemplate],
+    previous: str, result: str, single: str, is_last: bool, semis: list[dict[str, str]], connector: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    """One ETK operation from a generator operation (cut, crimp, mount, TUT, coax…): its card with the placeholders
+    filled, kit lines, result rows, time and the fields of its sketch. `previous` / `result` — the product names of the
+    generator chain (card placeholders), `single` — the name of the one piece it hands on, `semis` — its input."""
+    wire_data = _wire_data(op, config)
+    fields = _typed_fields(op, config, wire_data)
+    terminal_warning = _terminal_warning(op, position, code)
+    if terminal_warning:
+        warnings.append(terminal_warning)
+    replacements = _placeholder_map(op, config, previous, result, wire_data, fields)
+    return {
+        "position": position, "code": code, "type": str(op.get("type") or ""),
+        "side": str(op.get("side") or ""), "connector": connector,
+        "connector_article": str(_endpoint(op).get("connArt") or _endpoint(op).get("connName") or ""),
+        "template_id": str(op.get("templateId") or ""), "title": card.title if card else "",
+        "card": _resolve_card(card, replacements, fields, cards_by_code) if card else None,
+        "components": _components(op, config, code), "semis": semis,
+        "result": _result_rows(op, config, result, is_last, single),
+        "result_label": "Изделие" if is_last else "Полуфабрикат",
+        "time": _time(op, config, single),
+        "times": _times(op),
+        "fields": fields,
+    }
+
+
+def _times(op: Mapping[str, Any]) -> dict[str, str]:
+    return {"operation_seconds": str(op.get("tOp") or ""), "setup_seconds": str(op.get("tPrep") or ""),
+            "machine_seconds": str(op.get("tMachine") or "")}
+
+
 def _topology(config: Mapping[str, Any]) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = []
     by_id: dict[str, dict[str, Any]] = {}
@@ -829,6 +911,15 @@ def _route(document: Mapping[str, Any], *, strict: bool) -> dict[str, Any] | Non
 MANUAL_MODE = "manual"
 LIBRARY_OP = "libraryOp"
 TOOL_SECTIONS = ("Инструмент", "Оборудование", "Расходники")
+# Операции типового генератора (05.10: генератор и ручная сборка — одна модель, блоки с операциями). Такая операция
+# в ручной сборке идёт со своими полями как есть (провода, длины, терминалы, нормы) и собирается тем же типовым кодом,
+# что и в генераторе, — без потерь при переводе в libraryOp.
+GENERATOR_TYPES = frozenset({
+    "cutWire", "cutWireStrip", "cutWireCrimp", "cutTut", "insTut", "heatTut", "endCap", "foldCore", "stripCable",
+    "twist", "tin", "insMark", "seal", "insWrap", "prsTerm", "insTerm", "solderConn", "splice", "insHousing",
+    "coaxCut", "coaxCutTut", "coaxStrip", "coaxPin", "coaxShield", "coaxSolderShield", "coaxInsSleeve", "coaxInsTut",
+    "coaxHeat", "coaxHousing", "coaxCapCrimp", "coaxCapScrew",
+})
 
 
 def _manual_error(message: str) -> ValueError:
@@ -864,6 +955,8 @@ class _ManualOp:
     operation_seconds: Decimal  # per piece
     setup_seconds: Decimal      # per batch
     product: str                # what it hands on, unless it closes a block (then the block's name)
+    generator: bool = False     # a typed generator operation (GENERATOR_TYPES)
+    previous: str = ""          # generator chain: the product it takes (card placeholders, its result name)
 
 
 def _manual_ops(
@@ -873,12 +966,21 @@ def _manual_ops(
     if not isinstance(raw, list) or not raw:
         raise _manual_error("добавьте хотя бы одну операцию — из библиотеки или свою")
     result: list[_ManualOp] = []
+    previous = ""  # the generator chain over the list: a generator operation names its product after the one before
     for position, op in enumerate(raw, start=1):
         if not isinstance(op, Mapping):
             raise _manual_error(f"операция {position} — непонятная запись")
         kind = _manual_text(op.get("type"))
         card = None
-        if kind == LIBRARY_OP:
+        generator = kind in GENERATOR_TYPES
+        if generator:
+            template = _manual_text(op.get("templateId"))
+            card = cards_by_id.get(template)
+            code = card.code if card else _manual_text(op.get("opNum"))
+            label = _manual_text(op.get("label")) or (card.name if card else "") or code or kind
+            if card is None:
+                warnings.append(_card_warning(op, position, code))
+        elif kind == LIBRARY_OP:
             template = _manual_text(op.get("templateId"))
             if not template:
                 raise _manual_error(f"операция {position}: не выбрана карточка из библиотеки")
@@ -896,7 +998,8 @@ def _manual_ops(
                 f"операция {position}: непонятный вид операции — выберите карточку из библиотеки или «Своя операция»"
             )
         named = f"операция {position} «{label}»"
-        quantity = _manual_amount(op.get("qty"), Decimal(1))
+        # A generator operation counts its own pieces (wires, terminals, TUT segments): no «на изделие» multiplier.
+        quantity = Decimal(1) if generator else _manual_amount(op.get("qty"), Decimal(1))
         if quantity is None or quantity <= 0:
             raise _manual_error(f"{named}: количество на изделие должно быть числом больше нуля")
         setup = _manual_amount(op.get("tPrep"), Decimal(0))
@@ -905,8 +1008,16 @@ def _manual_ops(
         seconds = _manual_amount(op.get("tOp"), Decimal(0))
         if seconds is None or seconds < 0:
             raise _manual_error(f"{named}: время на штуку должно быть числом не меньше нуля")
-        product = _manual_text(op.get("result")) or f"Полуфабрикат после «{label}»"
-        result.append(_ManualOp(position, op, kind, label, code, card, quantity, seconds, setup, product))
+        if generator:
+            chain_previous = previous
+            product = _manual_text(op.get("result")) or _result_name(op, config, previous)
+            if _advances_chain(op):
+                previous = product
+        else:
+            chain_previous = ""
+            product = previous = _manual_text(op.get("result")) or f"Полуфабрикат после «{label}»"
+        result.append(_ManualOp(position, op, kind, label, code, card, quantity, seconds, setup, product,
+                                generator, chain_previous))
     return result
 
 
@@ -979,6 +1090,27 @@ def _manual_components(op: _ManualOp, quantity: Decimal) -> list[dict[str, str]]
     return rows
 
 
+def _manual_generator_operation(
+    item: _ManualOp, config: Mapping[str, Any], cards_by_code: Mapping[str, OperationCardTemplate], *,
+    semis: list[dict[str, str]], single: str, is_last: bool, seq: str, warnings: list[str],
+) -> dict[str, Any]:
+    """A generator operation inside «Ручная сборка»: the typed build of the generator (card, kit lines, result rows,
+    time, fields) with the input from the scheme and the product named by its block. Its own name, kit lines,
+    parameters and note — if the technologist added them — go on top, as for a library operation."""
+    operation = _typed_operation(
+        item.source, config, position=item.position, code=item.code, card=item.card, cards_by_code=cards_by_code,
+        previous=item.previous, result=item.product, single=single, is_last=is_last, semis=semis,
+        connector=_typed_connector(item.source, seq), warnings=warnings,
+    )
+    if operation["card"] is not None and _manual_text(item.source.get("label")):
+        operation["card"]["name"] = item.label
+    operation["components"].extend(_manual_components(item, _part_quantity(config)))
+    for key in ("params", "note"):
+        if _manual_text(item.source.get(key)):
+            operation["fields"][key] = _manual_text(item.source.get(key))
+    return operation
+
+
 def _build_manual(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str, technology_source: Mapping[str, Any] | None,
@@ -1016,6 +1148,12 @@ def _build_manual(
             semis = [_row(by_key[edge.source].name, _format(edge.per_unit * quantity))
                      for edge in route.edges if edge.target == block.key]
         result = product[item.position]
+        if item.generator:
+            built.append(_manual_generator_operation(
+                item, config, cards_by_code, semis=semis, single=result,
+                is_last=block.final and item.position == order[-1], seq=seqs[item.position - 1], warnings=warnings,
+            ))
+            continue
         norm = (item.operation_seconds * item.quantity * quantity + item.setup_seconds) / 60
         if not norm:
             warnings.append(f"Операция {item.position} ({item.label}): не задана норма времени")
@@ -1049,6 +1187,7 @@ def _build_manual(
             "fields": fields,
         })
 
+    connections = _connections(config)
     document = {
         "schema_version": ETK_VERSION,
         "kit": {
@@ -1058,6 +1197,7 @@ def _build_manual(
         },
         "operations": built,
         "topology": _topology(config),
+        **({"connections": connections} if connections else {}),
         "warnings": warnings,
         "build_config": deepcopy(dict(config)),
         "source": {
@@ -1099,12 +1239,7 @@ def build_etk(
         card = cards_by_id.get(str(op.get("templateId") or ""))
         code = card.code if card else str(op.get("opNum") or "")
         if card is None:
-            missing_card = code or op.get("templateId") or "шаблон не выбран"
-            warnings.append(
-                f"Операция {index} ({op.get('type') or ''}): нет карточки {missing_card}"
-            )
-        wires = _wires(op, config)
-        wire_data = _combined_wire_data(wires) if op.get("type") in {"cutWire", "cutWireStrip", "cutWireCrimp"} else {}
+            warnings.append(_card_warning(op, index, code))
         result = _result_name(op, config, previous_result)
         if op.get("type") == "cutTut":
             tut_cuts.append({"name": result, "norm": _decimal(op.get("tutCount")) * _part_quantity(config)})
@@ -1112,26 +1247,6 @@ def build_etk(
         if op.get("type") in {"insTut", "endCap"}:
             auxiliary = {"name": "; ".join(item["name"] for item in tut_cuts), "norm": _format(sum((item["norm"] for item in tut_cuts), Decimal(0)))}
             tut_cuts = []
-        fields = _fields(op, config, wire_data)
-        if op.get("type") == "cutWireCrimp":
-            fields["cutCrimp"] = True
-            if fields.get("applicator"):
-                fields["applicator"] = _machine_applicator(str(fields["applicator"]))
-        terminal_norm = op.get("terminalNorm")
-        if isinstance(terminal_norm, Mapping):
-            missing_sections = [
-                str(item.get("section") or "сечение не определено")
-                for item in terminal_norm.get("bySection") or []
-                if isinstance(item, Mapping) and not item.get("found")
-            ]
-            if missing_sections:
-                terminal = str(_endpoint(op).get("termArt") or _endpoint(op).get("termName") or "")
-                warnings.append(
-                    f"Операция {index} ({code}): нет нормы терминала {terminal} "
-                    f"для {', '.join(missing_sections)}"
-                )
-        replacements = _placeholder_map(op, config, previous_result, result, wire_data, fields)
-        components = _components(op, config, code)
         tut_on = False
         if op.get("type") == "insTut" and not op.get("harness"):
             tut_on_wires = True
@@ -1139,21 +1254,11 @@ def build_etk(
             tut_on, tut_on_wires = True, False
         semis = [] if code.startswith("CUT_") else _semis_rows(op, config, previous_result, previous_norm, auxiliary, tut_on)
         is_last = index == len(operations)
-        result_rows = _result_rows(op, config, result, is_last)
-        single_name = str(config.get("assemblyName") or result) if is_last else result
-        suffix = _suffix(op)
-        built.append({
-            "position": index, "code": code, "type": str(op.get("type") or ""),
-            "side": str(op.get("side") or ""), "connector": suffix or str(op.get("side") or index),
-            "connector_article": str(_endpoint(op).get("connArt") or _endpoint(op).get("connName") or ""),
-            "template_id": str(op.get("templateId") or ""), "title": card.title if card else "",
-            "card": _resolve_card(card, replacements, fields, cards_by_code) if card else None,
-            "components": components, "semis": semis, "result": result_rows,
-            "result_label": "Изделие" if is_last else "Полуфабрикат",
-            "time": _time(op, config, single_name),
-            "times": {"operation_seconds": str(op.get("tOp") or ""), "setup_seconds": str(op.get("tPrep") or ""), "machine_seconds": str(op.get("tMachine") or "")},
-            "fields": fields,
-        })
+        built.append(_typed_operation(
+            op, config, position=index, code=code, card=card, cards_by_code=cards_by_code,
+            previous=previous_result, result=result, single=_single_name(config, result, is_last), is_last=is_last,
+            semis=semis, connector=_typed_connector(op, index), warnings=warnings,
+        ))
         if _advances_chain(op):
             previous_result = result
             previous_norm = _output_norm(op, config)

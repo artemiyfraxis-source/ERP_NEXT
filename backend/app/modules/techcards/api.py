@@ -15,7 +15,7 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -23,7 +23,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.clock import moscow_now
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import (
-    Principal, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
+    TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
     tctemplates_edit_principal, tctemplates_view_principal,
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
@@ -60,6 +60,8 @@ from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
 from .grapher_import import GrapherComponent, GrapherImportError, read_export
 from .connector_housings import attach_housings, connector_catalog, housing_of
+from .assembly_schema import generator_to_assembly
+from .assembly_drafts import AssemblyDraftError, AssemblyDraftNotFound, draft_for_card, finalise_draft
 from .etk_builder import attach_route
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
@@ -101,6 +103,8 @@ class RebuildTechcardPayload(VersionPayload):
 
 class AutoBuildTechcardPayload(VersionPayload):
     config: dict[str, Any]
+    # «Ручная сборка» opened from an agent's draft: the build finalises it (final config + revision, corpus example).
+    draft_id: UUID | None = None
 
 
 class EditOperationPayload(VersionPayload):
@@ -164,10 +168,35 @@ class GrapherComponentPayload(BaseModel):
     name: str = Field(default="", max_length=512)
 
 
+class AssemblyFromGeneratorPayload(BaseModel):
+    config: dict[str, Any]
+
+
 class GrapherImportPayload(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_base64: str = Field(min_length=1, max_length=42_000_000)
     components: list[GrapherComponentPayload] = Field(default_factory=list, max_length=5000)
+
+
+def _generator_gate(*scopes: str):
+    """«Генератор техкарт» for a person (the generator's own gate decides), or an API token with one of `scopes` —
+    authenticated_principal admits no other token here (FastAPI security scopes, see app.shared.http_auth)."""
+
+    def gate(
+        principal: Annotated[Principal, Security(
+            authenticated_principal, scopes=[TOKEN_SCOPE_PREFIX + scope for scope in scopes],
+        )],
+    ) -> Principal:
+        return principal if principal.service else tcgen_principal(principal)
+
+    gate.token_scopes = frozenset(scopes)  # type: ignore[attr-defined]  (the contract test reads it)
+    return gate
+
+
+# «Чертёж → схема сборки»: the assembly drafts API (assembly_api.py) takes an `assembly` token; the conversion of a
+# generator config into «Ручная сборка» is pure computation and serves both the generator and the drafting agent.
+assembly_principal = _generator_gate("assembly")
+generator_or_assembly_principal = _generator_gate("tcgen", "assembly")
 
 
 def techcards_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -312,6 +341,16 @@ def import_grapher_export(
             GrapherComponent(item.id, item.article, item.name) for item in payload.components
         ))
     except (binascii.Error, GrapherImportError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/techcards/assembly/from-generator", dependencies=[Depends(generator_or_assembly_principal)])
+def assembly_from_generator(payload: AssemblyFromGeneratorPayload) -> dict:
+    """Генераторная сборка как ручная («Ручная сборка»: блоки с операциями) — открыть и править в редакторе схемы.
+    Операции генератора идут со своими полями как есть; ничего не сохраняется."""
+    try:
+        return generator_to_assembly(payload.config)
+    except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
@@ -545,7 +584,12 @@ def rebuild_project_etk(
     return _card_result(card, identify)
 
 
-@router.post("/techcards/projects/{card_id}/build")
+# A `tcgen` API token reads and routes, it never writes a project techcard (an issued card would get a new revision):
+# the agent flow writes assembly drafts only. Refused before the body is read.
+@router.post(
+    "/techcards/projects/{card_id}/build",
+    dependencies=[Depends(refuse_api_tokens("Токен API не собирает техкарты проектов."))],
+)
 def auto_build_project_etk(
     card_id: UUID,
     payload: AutoBuildTechcardPayload,
@@ -558,6 +602,8 @@ def auto_build_project_etk(
         Depends(optional_references_uow_factory),
     ],
 ) -> dict:
+    if payload.draft_id is not None:
+        _draft_run(lambda: draft_for_card(payload.draft_id, card_id, uow_factory))
     config, technology_source = with_technology(payload.config, references_factory)
     card = _run(lambda: auto_build_project_techcard(AutoBuildProjectTechcardCommand(
         card_id=card_id,
@@ -567,7 +613,21 @@ def auto_build_project_etk(
         now=now,
         technology_source=technology_source,
     ), uow_factory()))
+    if payload.draft_id is not None:
+        # The config as the master built it (before the reference norms are filled in) — the pair to the draft.
+        _draft_run(lambda: finalise_draft(
+            payload.draft_id, payload.config, card.revision, principal.actor, now, uow_factory,
+        ))
     return _card_result(card, identify)
+
+
+def _draft_run(operation):
+    try:
+        return operation()
+    except AssemblyDraftNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except AssemblyDraftError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.post("/techcards/projects/{card_id}/issue")

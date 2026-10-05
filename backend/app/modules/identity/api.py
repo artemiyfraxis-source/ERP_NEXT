@@ -14,6 +14,10 @@ from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.http_auth import access_admin_principal, staffdir_principal
 
 from .application import (
+    API_TOKEN_MAX_DAYS,
+    API_TOKEN_NAME_MAX,
+    API_TOKEN_SCOPES,
+    ApiToken,
     AuthenticationError,
     AuthenticationRateLimited,
     LoginResult,
@@ -21,11 +25,14 @@ from .application import (
     PinReveal,
     UnitOfWork,
     change_own_password,
+    issue_api_token,
+    list_api_tokens,
     login,
     login_staff,
     login_with_pin,
     logout,
     deactivate_user,
+    revoke_api_token,
     role_label,
     toggle_admin_mode,
 )
@@ -642,3 +649,73 @@ def save_user_access_route(
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     return {"user_id": str(user_id), "access": _modes(access)}
+
+
+# ── Токены API: administrator only; the secret is in the create answer once and nowhere else ──────────
+
+
+class ApiTokenInput(BaseModel):
+    name: str = Field(min_length=1, max_length=API_TOKEN_NAME_MAX)
+    scopes: list[str] = Field(min_length=1, max_length=len(API_TOKEN_SCOPES))
+    days: int = Field(default=90, ge=1, le=API_TOKEN_MAX_DAYS)
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _api_token_result(token: ApiToken, now: datetime) -> dict:
+    return {
+        "id": str(token.id),
+        "name": token.name,
+        "scopes": sorted(token.scopes),
+        "scope_labels": [API_TOKEN_SCOPES.get(scope, scope) for scope in sorted(token.scopes)],
+        "status": token.status(now),
+        "created_at": _iso(token.created_at),
+        "created_by": token.created_by_name,
+        "expires_at": _iso(token.expires_at),
+        "last_used_at": _iso(token.last_used_at),
+        "revoked_at": _iso(token.revoked_at),
+        "revoked_by": token.revoked_by_name,
+    }
+
+
+@router.get("/api-tokens")
+def api_tokens_route(
+    _principal: Annotated[Principal, Depends(access_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    return {
+        "tokens": [_api_token_result(token, now) for token in list_api_tokens(uow_factory())],
+        "scopes": API_TOKEN_SCOPES,
+    }
+
+
+@router.post("/api-tokens", status_code=201)
+def issue_api_token_route(
+    payload: ApiTokenInput,
+    principal: Annotated[Principal, Depends(access_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    try:
+        issued = issue_api_token(payload.name, payload.scopes, payload.days, principal.actor, now, uow_factory())
+    except IdentityValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    # `token` is shown once: only its hash is stored.
+    return {**_api_token_result(issued.token, now), "token": issued.secret}
+
+
+@router.post("/api-tokens/{token_id}/revoke")
+def revoke_api_token_route(
+    token_id: UUID,
+    principal: Annotated[Principal, Depends(access_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    try:
+        token = revoke_api_token(token_id, principal.actor, now, uow_factory())
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Токен не найден.") from error
+    return _api_token_result(token, now)

@@ -3,12 +3,22 @@
 Уровни доступа (owner 04.10.2026, docs/migration/access-levels-plan.md): a route checks the mode of its section(s) and
 nothing else — no role lists. superadmin/admin pass every gate; the administrator's tools are theirs alone. Which
 section and minimum each dependency takes is the contract `app.modules.identity.level_migration.GATES`
-(tests/identity/test_level_gates.py keeps the two equal)."""
+(tests/identity/test_level_gates.py keeps the two equal).
+
+Токены API (owner 05.10.2026): a request with `Authorization: Bearer erp_…` carries a service principal — the token's
+name and its scopes, no level and no section rights. Default deny: `authenticated_principal` refuses it, and so does
+every gate below, unless the gate names one of the token's scopes (`require_section(..., scopes=(...))`). The gate
+says so through FastAPI security scopes (`Security(authenticated_principal, scopes=["token:<scope>"])`): they are part
+of the dependency cache key, so the acceptance belongs to that gate alone — a `Depends(authenticated_principal)`
+elsewhere on the same route is resolved on its own and still refuses the token. A router-level gate built with
+`defer_tokens=True` lets a token through to the route's own gate without accepting it. The administrator's tools
+(`require_full_access`) never accept a token."""
 
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Security
+from fastapi.security import SecurityScopes
 
 from app.modules.identity.domain import FULL_ACCESS_LEVELS, LEVEL_SECTION_LABELS
 
@@ -25,6 +35,9 @@ class Principal:
     permissions: dict[str, Literal["view", "edit"]]
     admin_mode: bool = False
     can_admin_mode: bool = False
+    # A service principal (an API token): acts with these scopes only, never with the creator's rights.
+    service: bool = False
+    scopes: frozenset[str] = frozenset()
 
     @property
     def level(self) -> str:
@@ -36,11 +49,33 @@ class Principal:
         return bool(self.roles & FULL_ACCESS_LEVELS)
 
 
-def authenticated_principal(request: Request) -> Principal:
+SERVICE_DENIED = "Токен API не открывает этот раздел."
+TOKEN_SCOPE_PREFIX = "token:"
+TOKEN_DEFER = TOKEN_SCOPE_PREFIX + "*"  # a router-level gate: the route's own gate decides
+
+
+def authenticated_principal(request: Request, security_scopes: SecurityScopes = SecurityScopes()) -> Principal:
     principal = getattr(request.state, "principal", None)
     if not isinstance(principal, Principal):
         raise HTTPException(status_code=401, detail="Требуется вход в ERP")
+    if principal.service:
+        named = {scope for scope in security_scopes.scopes if scope.startswith(TOKEN_SCOPE_PREFIX)}
+        accepted = {scope.removeprefix(TOKEN_SCOPE_PREFIX) for scope in named}
+        if TOKEN_DEFER not in named and not principal.scopes & accepted:
+            raise HTTPException(status_code=403, detail=SERVICE_DENIED)
     return principal
+
+
+def refuse_api_tokens(detail: str = SERVICE_DENIED):
+    """A route no token reaches even when its gate names the token's scope (a write the scope must not cover). Listed
+    in the route's `dependencies`, so it runs before the body is read."""
+
+    def refuse(request: Request) -> None:
+        principal = getattr(request.state, "principal", None)
+        if isinstance(principal, Principal) and principal.service:
+            raise HTTPException(status_code=403, detail=detail)
+
+    return refuse
 
 
 def section_allowed(principal: Principal, sections: tuple[str, ...], minimum: Literal["view", "edit"]) -> bool:
@@ -58,17 +93,31 @@ def require_section(
     minimum: Literal["view", "edit"],
     *,
     detail: str = "Недостаточно прав для раздела",
+    scopes: tuple[str, ...] = (),
+    defer_tokens: bool = False,
 ):
-    """A tuple of sections passes when ANY of them grants `minimum`."""
+    """A tuple of sections passes when ANY of them grants `minimum`. `scopes` — the API-token scopes this gate admits
+    (a token never passes a gate without them). `defer_tokens` — a router-level gate: a token passes it untouched and
+    the route's own gate decides."""
     sections = (section,) if isinstance(section, str) else section
+    accepted = frozenset(scopes)
+    if accepted and defer_tokens:
+        raise ValueError("A gate either names token scopes or defers tokens, not both.")
+    token_scopes = [TOKEN_DEFER] if defer_tokens else [TOKEN_SCOPE_PREFIX + scope for scope in sorted(accepted)]
+    base = Security(authenticated_principal, scopes=token_scopes) if token_scopes else Depends(authenticated_principal)
 
     def dependency(
-        principal: Annotated[Principal, Depends(authenticated_principal)],
+        principal: Annotated[Principal, base],
     ) -> Principal:
+        if principal.service:
+            if defer_tokens or principal.scopes & accepted:
+                return principal
+            raise HTTPException(status_code=403, detail=SERVICE_DENIED)
         if not section_allowed(principal, sections, minimum):
             raise HTTPException(status_code=403, detail=detail)
         return principal
 
+    dependency.token_scopes = accepted  # type: ignore[attr-defined]  (the contract test reads it)
     return dependency
 
 
@@ -78,7 +127,7 @@ def require_full_access(detail: str = "Только администратору
     def dependency(
         principal: Annotated[Principal, Depends(authenticated_principal)],
     ) -> Principal:
-        if not principal.full_access:
+        if principal.service or not principal.full_access:
             raise HTTPException(status_code=403, detail=detail)
         return principal
 
@@ -102,7 +151,8 @@ myrequests_principal = require_section(
 )
 # ID-3 (SUPPLYMAP PORTAL_SECTIONS_, Portal.gs:661-664): templates (`erptctpl`) and the generator (`tcgen`) have keys of
 # their own; the techcards router admits any of the three and each route narrows it down.
-techcards_router_principal = require_section(("techcards", "erptctpl", "tcgen"), "view")
+# A token passes the router gate untouched; each route's own gate decides (only tcgen_principal admits `tcgen`).
+techcards_router_principal = require_section(("techcards", "erptctpl", "tcgen"), "view", defer_tokens=True)
 techcards_view_principal = require_section("techcards", "view", detail="Раздел «Техкарты проектов» вам не открыт.")
 # «Проекты» — карточки наборов (SUPPLYMAP erptechmap): просмотр читает, запись (загрузка, правка, удаление,
 # отправка на комплектацию, КД) — только с правом правки раздела (portalSectionEditGuard_).
@@ -123,7 +173,9 @@ tctemplates_edit_principal = require_section(
 # Loading the SUPPLYMAP operation library is the administrator's tool (sync script).
 tctemplates_admin_principal = require_full_access("Загрузка библиотеки шаблонов — только администратору.")
 # ErpTechmap.gs: every generator handle is portalErpGuard_(token, 'tcgen') — the section being open is enough.
-tcgen_principal = require_section("tcgen", "view", detail="Раздел «Генератор техкарт» вам не открыт.")
+tcgen_principal = require_section(
+    "tcgen", "view", detail="Раздел «Генератор техкарт» вам не открыт.", scopes=("tcgen",),
+)
 # «Режим просмотра» (ID-6, SUPPLYMAP portalApplyAccess_ 'view' + portalErpGuard_): a section granted as view is
 # readable, every write keeps the *_edit_principal gate.
 procurement_view_principal = require_section("procurement", "view")

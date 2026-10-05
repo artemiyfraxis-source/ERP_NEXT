@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -30,7 +31,7 @@ from app.shared.persistence import Base
 from app.shared.persistence import SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.clock import as_utc
 
-from .application import IdentitySession, PinRecord
+from .application import ApiToken, IdentitySession, PinRecord
 from .domain import FULL_ACCESS_LEVELS, LEVEL_SEED, AccessMode, IdentityUser, normalize_login
 from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
 
@@ -179,6 +180,30 @@ class IdentitySessionRow(Base):
     revoked_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), index=True)
     # portal_admin_<token>: «Режим админа» of this session is on until this moment.
     admin_mode_until: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+
+
+class IdentityApiTokenRow(Base):
+    """Токен API (0088): a named service credential with scopes. Only the sha256 of the secret is stored."""
+
+    __tablename__ = "identity_api_tokens"
+    __table_args__ = (Index("ux_identity_api_tokens_token_hash", "token_hash", unique=True),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    scopes: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_by: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="SET NULL", name="fk_identity_api_tokens_created_by"),
+    )
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_used_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+    revoked_by: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="SET NULL", name="fk_identity_api_tokens_revoked_by"),
+    )
+    revoked_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityDepartmentRow(Base):
@@ -514,6 +539,9 @@ class SqlAlchemyIdentityRepository:
         self.session.execute(
             update(IdentityDepartmentRow).where(IdentityDepartmentRow.head_user_id == user_id).values(head_user_id=None)
         )
+        # API tokens keep their row; a token whose creator is gone stops working (resolve_api_token).
+        for column in (IdentityApiTokenRow.created_by, IdentityApiTokenRow.revoked_by):
+            self.session.execute(update(IdentityApiTokenRow).where(column == user_id).values({column.key: None}))
         self.session.execute(delete(IdentityUserRow).where(IdentityUserRow.id == user_id))
 
     def update_user(self, user: IdentityUser, *, flags_as_given: bool = False) -> None:
@@ -669,6 +697,76 @@ class SqlAlchemyIdentityRepository:
             .values(admin_mode_until=until)
         )
         return result.rowcount == 1
+
+    # ── Токены API ──
+
+    def _user_names(self, ids: set[UUID]) -> dict[UUID, str]:
+        if not ids:
+            return {}
+        rows = self.session.execute(
+            select(IdentityUserRow.id, IdentityUserRow.name, IdentityUserRow.email).where(IdentityUserRow.id.in_(ids))
+        )
+        return {row.id: row.name or row.email for row in rows}
+
+    def _api_token(self, row: IdentityApiTokenRow, names: dict[UUID, str]) -> ApiToken:
+        return ApiToken(
+            id=row.id,
+            name=row.name,
+            token_hash=row.token_hash,
+            scopes=frozenset(str(scope) for scope in row.scopes or ()),
+            created_by=row.created_by,
+            created_at=as_utc(row.created_at),
+            expires_at=as_utc(row.expires_at),
+            last_used_at=as_utc(row.last_used_at) if row.last_used_at is not None else None,
+            revoked_by=row.revoked_by,
+            revoked_at=as_utc(row.revoked_at) if row.revoked_at is not None else None,
+            created_by_name=names.get(row.created_by, "") if row.created_by else "",
+            revoked_by_name=names.get(row.revoked_by, "") if row.revoked_by else "",
+        )
+
+    def add_api_token(self, token: ApiToken) -> None:
+        self.session.add(
+            IdentityApiTokenRow(
+                id=token.id,
+                name=token.name,
+                token_hash=token.token_hash,
+                scopes=sorted(token.scopes),
+                created_by=token.created_by,
+                created_at=token.created_at,
+                expires_at=token.expires_at,
+            )
+        )
+
+    def api_tokens(self) -> list[ApiToken]:
+        rows = list(self.session.scalars(select(IdentityApiTokenRow)))
+        names = self._user_names({uid for row in rows for uid in (row.created_by, row.revoked_by) if uid})
+        return [self._api_token(row, names) for row in rows]
+
+    def api_token_for_update(self, token_id: UUID) -> ApiToken | None:
+        row = self.session.get(IdentityApiTokenRow, token_id, with_for_update=True)
+        if row is None:
+            return None
+        return self._api_token(row, self._user_names({uid for uid in (row.created_by, row.revoked_by) if uid}))
+
+    def revoke_api_token(self, token_id: UUID, revoked_by: UUID, revoked_at) -> bool:
+        result = self.session.execute(
+            update(IdentityApiTokenRow)
+            .where(IdentityApiTokenRow.id == token_id, IdentityApiTokenRow.revoked_at.is_(None))
+            .values(revoked_by=revoked_by, revoked_at=revoked_at)
+        )
+        return result.rowcount == 1
+
+    def api_token_by_hash(self, token_hash: str) -> tuple[ApiToken, bool] | None:
+        row = self.session.scalar(select(IdentityApiTokenRow).where(IdentityApiTokenRow.token_hash == token_hash))
+        if row is None:
+            return None
+        creator = self.session.get(IdentityUserRow, row.created_by) if row.created_by else None
+        return self._api_token(row, {}), bool(creator is not None and creator.active)
+
+    def touch_api_token(self, token_id: UUID, now) -> None:
+        self.session.execute(
+            update(IdentityApiTokenRow).where(IdentityApiTokenRow.id == token_id).values(last_used_at=now)
+        )
 
 
 class SqlAlchemyIdentityUnitOfWork:
