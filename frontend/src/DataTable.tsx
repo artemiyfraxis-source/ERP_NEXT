@@ -67,6 +67,8 @@ export interface DataTableProps<T> {
   /** Клик по строке целиком — действие (вместо раскрытия строки); rowTitle — подсказка строки. */
   onRowClick?: (row: T) => void;
   rowTitle?: (row: T) => string;
+  /** Подпись отметки строки для чтения с экрана (по умолчанию — ключ строки). */
+  rowLabel?: (row: T) => string;
   /** Имя файла выгрузки без расширения; без него кнопки «Excel» нет. */
   exportName?: string;
   emptyText?: string;
@@ -168,6 +170,7 @@ export function DataTable<T>({
   rowClassName,
   onRowClick,
   rowTitle,
+  rowLabel,
   exportName,
   emptyText = "Ничего не найдено.",
   pageSize = 200,
@@ -327,7 +330,7 @@ export function DataTable<T>({
         >
           {selectable && (
             <td onClick={(event) => event.stopPropagation()}>
-              <input type="checkbox" aria-label={`Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} />
+              <input type="checkbox" aria-label={rowLabel ? `Выбрать: ${rowLabel(row)}` : `Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} />
             </td>
           )}
           {visible.map((column, index) => (

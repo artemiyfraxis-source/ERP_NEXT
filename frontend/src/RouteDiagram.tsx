@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { formatMinutes } from "./etkRoute";
 import { formatPerUnit, parsePositive, routeChain, routeLayout, type BlockTotals, type Route, type RouteBlock, type RouteEdge } from "./routeLogic";
 
@@ -33,8 +33,7 @@ export function BlockBox({ block, title, numbers, totals, selected, linking, onS
   if (empty) {
     return <button type="button" className={classes} aria-pressed={selected} title={title} onClick={onSelect}>
       <span className="route-block-name">{title}</span>
-      <span className="route-block-meta"><span className="tone-warn">нет операций</span></span>
-      {block.final && <span className="route-block-tag">итог</span>}
+      <span className="route-block-meta"><span className="tone-warn">нет операций</span>{block.final && <span className="route-block-tag">итог</span>}</span>
     </button>;
   }
   return <button type="button" className={classes} aria-pressed={selected} title={title} onClick={onSelect}>
@@ -55,6 +54,15 @@ function EdgePill({ edge, label, onEdit, onQuantity, onRemove }: {
 }) {
   const [open, setOpen] = useState(false);
   const holder = useRef<HTMLSpanElement>(null);
+  const pop = useRef<HTMLSpanElement>(null);
+  const [flip, setFlip] = useState(false);
+  // Окно рядом с «N шт» — справа, в промежутке между строками блоков (имён соседей не закрывает); не влезает в рисунок — слева.
+  useLayoutEffect(() => {
+    if (!open) { setFlip(false); return; }
+    const canvas = holder.current?.closest(".route-canvas"), box = pop.current?.getBoundingClientRect();
+    if (!canvas || !box || !box.width || flip) return;
+    if (box.right > canvas.getBoundingClientRect().right) setFlip(true);
+  }, [open, flip]);
   useEffect(() => {
     if (!open) return undefined;
     const outside = (event: Event) => { if (holder.current && !holder.current.contains(event.target as Node)) setOpen(false); };
@@ -66,7 +74,7 @@ function EdgePill({ edge, label, onEdit, onQuantity, onRemove }: {
   return <span className="route-edge-holder" ref={holder}>
     <button type="button" className={edge.per_unit === 1 ? "route-edge-pill is-one" : "route-edge-pill"} title={label} aria-expanded={open}
       onClick={() => { if (!open) onEdit(edge); setOpen(!open); }}>{formatPerUnit(edge.per_unit)} шт</button>
-    {open && <span className="route-edge-pop" role="dialog" aria-label={label}>
+    {open && <span className={flip ? "route-edge-pop is-left" : "route-edge-pop"} role="dialog" aria-label={label} ref={pop}>
       <PerUnit value={edge.per_unit} label={`Штук — ${label}`} unit="шт на 1" onChange={(value) => onQuantity?.(edge, value)} />
       <span className="route-edge-pop-actions">
         {onRemove && <button type="button" className="small btn-link route-edge-remove" onClick={() => { setOpen(false); onRemove(edge); }}>Убрать связь</button>}
@@ -76,8 +84,13 @@ function EdgePill({ edge, label, onEdit, onQuantity, onRemove }: {
   </span>;
 }
 
-/* Размеры рисунка: карточка 84 px, пустой блок — строка 34 px, между строками 56 px (в нём «N шт» и ход стрелки). */
-const CARD = 84, LINE = 34, GAP = 56;
+/* Размеры рисунка: карточка 84 px; пустой блок — строка 38 px (на планшете 44, чтобы влезли кнопки 40 px); между строками
+   56 px (на планшете 72) — в нём «N шт» и ход стрелки. */
+const CARD = 84;
+
+export type DiagramSizes = { line: number; gap: number };
+export const sizesFor = (coarse: boolean): DiagramSizes => (coarse ? { line: 44, gap: 72 } : { line: 38, gap: 56 });
+const isCoarse = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
 
 /** Схема целиком: блоки и стрелки с числом штук. Блок выбирается кликом. Необязательные крючки нужны ручной сборке:
     «+» на блоке, «→» (соединить два блока двумя нажатиями), окно «N шт» на стрелке. Без них рисунок работает как раньше. */
@@ -120,7 +133,7 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
   const node = (item: RouteBlock) => {
     const name = title(item);
     const tools = !!(onAddInput || onConnect);
-    return <div className={tools ? "route-node has-tools" : "route-node"}>
+    return <div className={[tools ? "route-node has-tools" : "route-node", item.ops.length === 0 ? "is-empty-node" : ""].filter(Boolean).join(" ")}>
       <BlockBox block={item} title={name} numbers={numbers(item)} totals={totals.get(item.key)} selected={selected === item.key}
         linking={linking === item.key} onSelect={() => pick(item.key)} />
       {tools && <span className="route-tools">
@@ -153,6 +166,8 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
 
   // Сверху вниз: итог внизу; места по горизонтали — доли ширины, поэтому рисунок всегда во всю доступную ширину без прокрутки.
   const layout = routeLayout(route);
+  const coarse = isCoarse();
+  const { line: LINE, gap: GAP } = sizesFor(coarse);
   const compact = (item: RouteBlock) => item.ops.length === 0;
   const rowHeight = Array.from({ length: layout.layers }, () => LINE);
   route.blocks.forEach((item) => { const at = layout.cells.get(item.key)!.layer; if (!compact(item)) rowHeight[at] = CARD; });
@@ -160,6 +175,12 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
   rowHeight.reduce((top, height, index) => { rowTop[index] = top; return top + height + GAP; }, 0);
   const height = rowTop[rowTop.length - 1] + rowHeight[rowHeight.length - 1];
   const percent = (x: number) => `${(((x + 0.5) / layout.cols) * 100).toFixed(3)}%`;
+  // Настоящее место блока: пустой блок стоит по центру строки, поэтому низ считаем от его верха и высоты, а не от строки.
+  const box = (item: RouteBlock) => {
+    const h = compact(item) ? LINE : CARD, layer = layout.cells.get(item.key)!.layer;
+    const top = rowTop[layer] + (rowHeight[layer] - h) / 2;
+    return { top, height: h, bottom: top + h };
+  };
   const outgoing = new Map<string, RouteEdge[]>();
   route.edges.forEach((edge) => outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge]));
   return <>
@@ -172,7 +193,7 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
         {route.edges.map((edge) => {
           const from = layout.cells.get(edge.from), to = layout.cells.get(edge.to);
           if (!from || !to) return null;
-          const y1 = rowTop[from.layer] + (compact(byKey.get(edge.from)!) ? LINE : rowHeight[from.layer]), y2 = rowTop[to.layer], mid = y2 - GAP / 3;
+          const y1 = box(byKey.get(edge.from)!).bottom, y2 = box(byKey.get(edge.to)!).top, mid = y2 - GAP / 3;
           const x1 = percent(from.x), x2 = percent(to.x);
           const key = `${edge.from}>${edge.to}`;
           return from.x === to.x
@@ -186,15 +207,15 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
       </svg>
       {route.blocks.map((item) => {
         const cell = layout.cells.get(item.key)!;
-        const h = compact(item) ? LINE : CARD;
-        return <div key={item.key} className="route-cell" style={{ left: percent(cell.x), top: rowTop[cell.layer] + (rowHeight[cell.layer] - h) / 2, height: h }}>{node(item)}</div>;
+        const { top, height: h } = box(item);
+        return <div key={item.key} className="route-cell" style={{ left: percent(cell.x), top, height: h }}>{node(item)}</div>;
       })}
       {route.edges.map((edge) => {
         const from = layout.cells.get(edge.from);
         if (!from || !layout.cells.has(edge.to)) return null;
         const siblings = outgoing.get(edge.from)!, shift = (siblings.indexOf(edge) - (siblings.length - 1) / 2) * 76;
-        const y1 = rowTop[from.layer] + (compact(byKey.get(edge.from)!) ? LINE : rowHeight[from.layer]);
-        return <span key={`${edge.from}>${edge.to}`} className="route-edge-label" style={{ left: `calc(${percent(from.x)} + ${shift}px)`, top: y1 + 16 }}>{pill(edge, "шт")}</span>;
+        const y1 = box(byKey.get(edge.from)!).bottom;
+        return <span key={`${edge.from}>${edge.to}`} className="route-edge-label" style={{ left: `calc(${percent(from.x)} + ${shift}px)`, top: y1 + (coarse ? 26 : 18) }}>{pill(edge, "шт")}</span>;
       })}
     </div>
   </>;

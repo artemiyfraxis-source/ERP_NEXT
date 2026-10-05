@@ -79,3 +79,23 @@ it("opens a popup on the «N шт» pill to change the number or remove the link
   fireEvent.keyDown(document, { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it("starts the edge and puts the «N шт» pill below the real bottom of an empty block that shares a row with a card", () => {
+  const props = mount({ onEdgeEdit: vi.fn() });
+  const px = (value: string) => Number.parseFloat(value);
+  const cell = (key: string) => screen.getByTitle(`Блок ${key}`).closest(".route-cell") as HTMLElement;
+  const bottom = (key: string) => px(cell(key).style.top) + px(cell(key).style.height);
+  const empty = cell("b4"), card = cell("b1");
+  expect(px(empty.style.height)).toBeLessThan(px(card.style.height));
+  expect(px(empty.style.top)).toBeGreaterThan(px(card.style.top)); // пустой блок стоит по центру строки карточек
+  const pill = (from: string) => screen.getByTitle(`Штук ${from} → b3`).closest(".route-edge-label") as HTMLElement;
+  // значок: его верх (центр минус полвысоты 13 px) не выше низа блока-источника — на блок не наезжает
+  expect(px(pill("b4").style.top) - 13).toBeGreaterThanOrEqual(bottom("b4"));
+  expect(px(pill("b1").style.top) - 13).toBeGreaterThanOrEqual(bottom("b1"));
+  // начало стрелки — от настоящего низа пустого блока, а не от верха строки + высота строки
+  const starts = Array.from(document.querySelectorAll("svg line")).map((line) => px(line.getAttribute("y1")!));
+  expect(starts).toContain(bottom("b4"));
+  // клик по пустому блоку выбирает его
+  fireEvent.click(screen.getByTitle("Блок b4"));
+  expect(props.onSelect).toHaveBeenCalledWith("b4");
+});

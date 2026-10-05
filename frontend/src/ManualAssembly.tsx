@@ -50,11 +50,21 @@ function LibraryPicker({ library, opRecs, target, added, onAdd, onClose }: {
   library: LibraryCard[]; opRecs: OpRec[]; target: string; added: string; onAdd: (cards: LibraryCard[]) => void; onClose: () => void;
 }) {
   const categories = useMemo(() => [...new Set(library.map(cardCategory))].sort((a, b) => (a === "Прочее" ? 1 : b === "Прочее" ? -1 : a.localeCompare(b, "ru"))), [library]);
+  // Одинаковые русские названия («Литье пластика» ×3) различаются серой строкой: код карточки и её первый шаг.
+  const sameName = useMemo(() => {
+    const count = new Map<string, number>();
+    library.forEach((card) => count.set(cardLabel(card), (count.get(cardLabel(card)) ?? 0) + 1));
+    return count;
+  }, [library]);
   const columns: DataColumn<LibraryCard>[] = [
     { key: "name", title: "Операция", value: (card) => `${cardLabel(card)} ${card.code}`,
-      render: (card) => <span className="manual-card-name"><b>{cardLabel(card)}</b>{card.code && <small>{card.code}</small>}</span> },
-    { key: "category", title: "Категория", value: cardCategory, width: 150 },
-    { key: "norm", title: "Норма БД.ОП", value: (card) => normText(card, opRecs), width: 170 },
+      render: (card) => {
+        const twin = (sameName.get(cardLabel(card)) ?? 0) > 1 && card.first_step;
+        return <span className="manual-card-name"><b>{cardLabel(card)}</b>
+          {(card.code || twin) && <small>{[card.code, twin ? card.first_step : ""].filter(Boolean).join(" · ")}</small>}</span>;
+      } },
+    { key: "category", title: "Категория", value: cardCategory, width: 110 },
+    { key: "norm", title: "Норма БД.ОП", value: (card) => normText(card, opRecs), width: 150 },
     { key: "step", title: "Первый шаг", value: (card) => card.first_step || "", render: (card) => <span className="manual-card-step">{card.first_step}</span> },
   ];
   return <div className="manual-picker" role="region" aria-label="Библиотека операций">
@@ -65,7 +75,7 @@ function LibraryPicker({ library, opRecs, target, added, onAdd, onClose }: {
       presets={categories.map((category) => ({ label: category, test: (card: LibraryCard) => cardCategory(card) === category }))}
       searchLabel="Поиск карточки" searchPlaceholder="Название или код карточки" emptyText="Нет таких карточек — смените категорию или поиск." pageSize={40}
       bulkActions={[{ label: "Добавить выбранные", run: (rows) => onAdd(rows) }]}
-      onRowClick={(card) => onAdd([card])} rowTitle={(card) => `Добавить «${cardLabel(card)}» в блок «${target}»${card.first_step ? `\nПервый шаг: ${card.first_step}` : ""}`} />
+      onRowClick={(card) => onAdd([card])} rowLabel={cardLabel} rowTitle={(card) => `Добавить «${cardLabel(card)}» в блок «${target}»${card.first_step ? `\nПервый шаг: ${card.first_step}` : ""}`} />
       : <div className="empty">Библиотека операций не загружена — добавьте свою операцию.</div>}
   </div>;
 }
@@ -98,7 +108,7 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
       <div className="manual-op-name">
         <input aria-label={`Название операции ${position}`} value={op.label} placeholder={op.kind === "custom" ? "Название своей операции" : ""}
           className={op.kind === "custom" && !op.label.trim() ? "f-empty" : undefined} onChange={(event) => set({ label: event.target.value })} />
-        <small>{op.kind === "library" ? <>{op.code && <span className="op-code">{op.code}</span>} из библиотеки</> : "своя операция"}</small>
+        <small>{op.kind === "library" ? <>из библиотеки{op.code && <> · <span className="op-code">{op.code}</span></>}</> : "своя операция"}</small>
       </div>
       <div className="manual-op-tools">
         {!open && <button type="button" className="manual-op-norm" aria-label={`Норма: ${title}`} title="Открыть" onClick={toggle}>{normLabel(minutes)}</button>}

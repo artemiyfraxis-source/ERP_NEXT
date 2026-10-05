@@ -177,8 +177,8 @@ it("adds several cards at once into the selected block and deletes a block with 
   fireEvent.click(screen.getByRole("button", { name: "+ Блок" }));
   fireEvent.click(screen.getByRole("button", { name: "+ Операция из библиотеки" }));
   const picker = screen.getByRole("region", { name: "Библиотека операций" });
-  fireEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать cut" }));
-  fireEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать heat" }));
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать: Резка" }));
+  fireEvent.click(within(picker).getByRole("checkbox", { name: "Выбрать: Усадка" }));
   fireEvent.click(within(picker).getByRole("button", { name: "Добавить выбранные" }));
   expect(await screen.findByRole("status")).toHaveTextContent("Добавлено в «Блок 2»: 2 оп.");
   expect(blockButton(/Усадка/)).toHaveTextContent("2 оп.");
