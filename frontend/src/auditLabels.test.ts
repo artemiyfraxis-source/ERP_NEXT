@@ -39,3 +39,14 @@ it("names the automatic fill after «Взять в работу» and its fields
     "поля: поставщик, наименование (сайт), изготовитель, страна",
   );
 });
+
+it("names the access-level events and the level and flag details in Russian", () => {
+  expect(auditEventName("identity.level_access_saved")).toBe("Доступы уровней сохранены");
+  expect(auditEventName("identity.access_levels_migrated")).toBe("Роли переведены в уровни доступа");
+  expect(auditEventName("identity.dormant_access_archived")).toBe("Исключения прежней роли с полным доступом убраны в архив");
+  expect(auditDetails({ level: "tech_lead", changes: "3" })).toBe("уровень: Технический руководитель · изменения: 3");
+  expect(auditDetails({ login: "petrov", access_level: "foreman", shop_worker: "да", site_master: "да" })).toBe(
+    "логин: petrov · уровень доступа: Бригадир · монтажник: да · мастер площадки: да",
+  );
+  expect(auditDetails({ access_level: "unknown_level" })).toBe("уровень доступа: unknown_level");
+});

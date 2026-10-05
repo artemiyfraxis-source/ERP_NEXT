@@ -293,8 +293,8 @@ it("opens someone else's card from ?section=card&user= and edits through the sta
     if (path === "/api/auth/me") return json(admin);
     if (path === `/api/employee-card/${other}`) return json({ ...CARD, header: { ...CARD.header, id: other, name: "Сидоров Олег" } });
     if (path === "/api/auth/staff") return json({
-      users: [{ id: other, login: "o@example.test", email: "o@example.test", name: "Сидоров Олег", department: "КБ", role: "staff", site: "", active: true, pin_set: false }],
-      departments: ["КБ"], roles: [{ key: "staff", label: "Сотрудник" }], sites: [],
+      users: [{ id: other, login: "o@example.test", email: "o@example.test", name: "Сидоров Олег", department: "КБ", access_level: "operator", site: "", active: true, shop_worker: false, site_master: false, pin_set: false }],
+      departments: ["КБ"], levels: [{ key: "operator", label: "Оператор", full: false }], sites: [],
     });
     throw new Error(`Unexpected request: ${path}`);
   });
