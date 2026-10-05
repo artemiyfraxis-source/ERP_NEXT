@@ -5,7 +5,7 @@ import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
 import { RowMenu } from "./ProcurementRowMenu";
 import { formatMoney } from "./ProcurementSheetColumns";
-import { BulkStatus, StageHeading, type BulkState } from "./ProcurementStages";
+import { BulkStatus, StageHeading, useCollapsed, type BulkState } from "./ProcurementStages";
 
 const fmtQty = (value: number) => String(Math.round(value * 1e6) / 1e6).replace(".", ",");
 
@@ -17,8 +17,7 @@ const fmtQty = (value: number) => String(Math.round(value * 1e6) / 1e6).replace(
    Контекст заявки — тип задачи, категория, тип, кол-во по расчёту — серой второй строкой в ячейке «Позиция».
    Флажки слева: выбранные строки — в массовые действия над таблицей. Редкие действия строки — в меню «⋯».
    «Наименование на сайте» — поле НАИМЕНОВАНИЕ (Сайт): оно печатается названием позиции в письме поставщику.
-   Под группами поставщиков страница кладёт ленту заказов (`children`): после «Сформировать запрос» группа
-   остаётся в этом же блоке заказом. */
+   После «Сформировать запрос» группа уходит заказом в блок «Жду счёт». Блок сворачивается щелчком по заголовку. */
 
 export const LINK_HINT = "Ссылка на товар у поставщика. Если позиция есть на складе — «Со склада» в меню строки";
 export const IN_WORK_HINT = "Поставщик, факт. кол-во и ед. обязательны для запроса. Блок из Excel можно вставить в любую ячейку — он разойдётся по колонкам и строкам";
@@ -181,7 +180,7 @@ function LinkCell({ id, value, disabled, onChange, onPaste }: {
 
 export function ProcurementInWorkTable({
   lines, units, disabled, busyId, editing, filling, bulk, onChanged, onError, onCancel, onCancelMany, onBuildRequests,
-  onCloseBulk, renderDetail, headingExtra, children,
+  onCloseBulk, renderDetail,
 }: {
   /** «В работе», затем «Готов к запросу». */
   lines: ProcurementLine[];
@@ -204,11 +203,8 @@ export function ProcurementInWorkTable({
   onFill?: () => void;
   /** Прослеживаемость, раздробить — раскрываются под строкой. */
   renderDetail: (line: ProcurementLine) => ReactNode;
-  /** Слева от «Сохранить всё» в заголовке блока — переключатель показа заказов. */
-  headingExtra?: ReactNode;
-  /** Лента заказов под группами поставщиков: тот же блок, заказ из него не уходит. */
-  children?: ReactNode;
 }) {
+  const [collapsed, toggleCollapsed] = useCollapsed("inwork");
   // Правки — только тронутые ячейки поверх свежих данных строки: дозаполнение с сервера или перечитанная
   // очередь не стирают набранное, а нетронутые ячейки показывают то, что пришло.
   const [edits, setEdits] = useState<Record<string, Partial<InWorkDraft>>>({});
@@ -395,13 +391,13 @@ export function ProcurementInWorkTable({
 
   return (
     <section className="panel table-panel procurement-stage stage-block" aria-label="В работе">
-      <StageHeading title="В работе" count={lines.length} hint={IN_WORK_HINT}>
-        {headingExtra}
+      <StageHeading title="В работе" count={lines.length} hint={IN_WORK_HINT} collapsed={collapsed} onToggle={toggleCollapsed}>
         {edited.length > 0 && <span className="dirty-note">изменено: {edited.length}</span>}
         <button type="button" className={edited.length ? "primary small" : "secondary small"} disabled={disabled || saving || !edited.length} onClick={() => void saveAll()}>
           {saving ? "Сохраняем…" : edited.length ? `Сохранить всё (${edited.length})` : "Сохранить всё"}
         </button>
       </StageHeading>
+      {!collapsed && <>
       <BulkStatus bulk={bulk} onClose={onCloseBulk} />
       {chosen.length > 0 && (
         <div className="bulk-bar stage-bulk" role="toolbar" aria-label="Действия с выбранными">
@@ -418,7 +414,7 @@ export function ProcurementInWorkTable({
           <button type="button" className="secondary small" onClick={() => setSelected(new Set())}>Снять выбор</button>
         </div>
       )}
-      {!lines.length ? (children ? null : <p className="stage-empty">Нет строк в работе — возьмите позиции из «Неразобранных»</p>) : (
+      {!lines.length ? <p className="stage-empty">Нет строк в работе — возьмите позиции из «Неразобранных»</p> : (
         <div className="buy-scroll">
           <table className="buy-grid">
             <colgroup>
@@ -536,7 +532,7 @@ export function ProcurementInWorkTable({
           </table>
         </div>
       )}
-      {children}
+      </>}
     </section>
   );
 }

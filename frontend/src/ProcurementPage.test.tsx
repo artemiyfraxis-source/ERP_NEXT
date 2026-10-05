@@ -165,8 +165,16 @@ async function clickWhenEnabled(name: string | RegExp) {
 }
 
 /** Заказ в ленте свёрнут: щелчок по его заголовку («PO-001 от …», «Без № заказа …») раскрывает строки. */
-async function openOrder(number: string) {
-  const toggle = await screen.findByRole("button", { name: new RegExp(`^${number}`) });
+async function openOrder(number: string, scope?: HTMLElement) {
+  const root = scope ? within(scope) : screen;
+  const toggle = await root.findByRole("button", { name: new RegExp(`^${number}`) });
+  if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "true"));
+}
+
+/** «Оплачено» свёрнут по умолчанию: щелчок по заголовку блока раскрывает его заказы. */
+async function openPaidBlock() {
+  const toggle = within(await screen.findByRole("heading", { name: /^Оплачено/ })).getByRole("button");
   if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
   await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "true"));
 }
@@ -355,12 +363,14 @@ it("forms supplier requests: downloads each order's PDF, lists the skipped rows 
   const warning = await screen.findByText(/В запросы не попало строк: 1/);
   expect(warning.closest(".warning-inline")).toHaveTextContent("REQ-2: поставщик не указан");
 
-  // Группа поставщика осталась в том же блоке «В работе» — заказом: № и дата, поставщик, итоги, статус; свёрнута.
-  const group = await within(block).findByRole("rowgroup", { name: "PO-012 от 05.10 · ООО А" });
+  // Сформированный заказ ушёл из «В работе» в свой блок «Жду счёт»: № и дата, поставщик, итоги, статус; свёрнут.
+  const awaiting = await screen.findByRole("region", { name: "Жду счёт" });
+  const group = await within(awaiting).findByRole("rowgroup", { name: "PO-012 от 05.10 · ООО А" });
+  expect(within(block).queryByRole("rowgroup", { name: "PO-012 от 05.10 · ООО А" })).not.toBeInTheDocument();
   expect(within(group).getByText("1 поз. · факт 122,00 ₽ / расчёт 100,00 ₽")).toBeInTheDocument();
   expect(within(group).getByText("Жду счёт")).toHaveClass("order-chip");
   expect(within(group).queryByText("REQ-1")).not.toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: /^Жду счёт/ })).not.toBeInTheDocument();
+  expect(within(awaiting).getByRole("heading", { name: /^Жду счёт/ })).toBeInTheDocument();
 });
 
 it("replaces the invoice of a paid line without touching its payment", async () => {
@@ -387,6 +397,7 @@ it("replaces the invoice of a paid line without touching its payment", async () 
   });
 
   render(<ProcurementPage />);
+  await openPaidBlock();
   await openOrder("Без № заказа");
   await pickRowAction("REQ-1", "Заменить счёт…");
   fireEvent.change(await screen.findByLabelText("Ссылка на новый счёт"), { target: { value: "https://files.test/invoice-v2.pdf" } });
@@ -416,6 +427,7 @@ it("splits an own line into supplier copies with its optimistic version", async 
   });
 
   render(<ProcurementPage />);
+  await openPaidBlock();
   await openOrder("Без № заказа");
   await pickRowAction("REQ-1", "Раздробить по поставщикам…");
   fireEvent.change(await screen.findByLabelText(/Раздробить по поставщикам, копий/), { target: { value: "3" } });
@@ -500,7 +512,7 @@ it("«Жду счёт»: the order menu opens «Внести КП» for that ord
   });
 
   render(<ProcurementPage />);
-  await screen.findByRole("region", { name: "Заказы" });
+  await screen.findByRole("region", { name: "Заказы: Жду счёт" });
 
   // Заказ без документа: «Документ запроса» закрыт; «Печать запроса» нет — печатает просмотрщик PDF.
   await clickWhenEnabled("Действия заказа PO-002");
@@ -591,7 +603,7 @@ it("lists unsorted lines with their supplier and says when a line has none", asy
   expect(within(second).getByText("нет (запрос не сформируется)")).toBeInTheDocument();
 });
 
-it("shows «Мои позиции» as one list: supplier groups, then orders that need action, then paid ones, newest first; Дозавоз and the rest below", async () => {
+it("shows «Мои позиции» as separate blocks: В работе → Жду счёт → Ждёт оплаты → Оплачено → Дозавоз → Прочие позиции, newest orders first inside a block", async () => {
   const base: ProcurementLine = { ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт" };
   const at = (n: number, status: string, extra: Partial<ProcurementLine> = {}): ProcurementLine => ({
     ...base, id: `30000000-0000-0000-0000-0000000001${n}0`, legacy_id: `REQ-${n}`, status, ...extra,
@@ -615,46 +627,60 @@ it("shows «Мои позиции» as one list: supplier groups, then orders th
   });
 
   const { container } = render(<ProcurementPage />);
-  const block = await screen.findByRole("region", { name: "В работе" });
-  const orders = within(block).getByRole("region", { name: "Заказы" });
-  // Отдельных блоков «Жду счёт», «Ждёт оплаты», «Оплачено» нет: заказы — в «В работе», под группами поставщиков.
+  const work = await screen.findByRole("region", { name: "В работе" });
+  await screen.findByRole("region", { name: "Прочие позиции" });
   const blocks = ["В работе", "Жду счёт", "Ждёт оплаты", "Оплачено", "Дозавоз", "Прочие позиции"];
   const headings = screen.getAllByRole("heading", { level: 2 })
-    .map((heading) => blocks.find((name) => heading.textContent?.startsWith(name))).filter(Boolean);
-  expect(headings).toEqual(["В работе", "Дозавоз", "Прочие позиции"]);
+    .map((heading) => blocks.find((name) => heading.textContent?.replace(/^[▸▾]/, "").startsWith(name))).filter(Boolean);
+  // Блоки отдельные и идут в этом порядке; в «В работе» заказов нет — только строки и группы поставщиков.
+  expect(headings).toEqual(blocks);
   expect(container.querySelectorAll(".procurement-card")).toHaveLength(0);
-  expect(within(block).getByText("REQ-1")).toBeInTheDocument();
-  expect(within(within(block).getByText("REQ-2").closest("tr")!).getByText("Готов к запросу")).toBeInTheDocument();
-  expect(block.querySelector(".buy-scroll")!.compareDocumentPosition(orders) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(work).getByText("REQ-1")).toBeInTheDocument();
+  expect(within(within(work).getByText("REQ-2").closest("tr")!).getByText("Готов к запросу")).toBeInTheDocument();
+  expect(within(work).queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
+  const positions = blocks.map((name) => screen.getByRole("region", { name }));
+  positions.slice(1).forEach((block, index) => {
+    expect(positions[index].compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING, blocks[index + 1]).toBeTruthy();
+  });
 
-  // Порядок: ждущие счёта или оплаты, свежие сверху; потом оплаченные, тоже свежие сверху. Статус — плашкой.
-  const groups = within(orders).getAllByRole("rowgroup").filter((group) => group.getAttribute("aria-label"));
-  expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
-    "PO-002 от 03.10 · ООО Б", "PO-001 от 01.10 · ООО А", "PO-003 от 04.10 · ООО В", "PO-004 от 02.10 · ООО Г",
-  ]);
-  expect(groups.map((group) => group.querySelector(".order-chip")?.textContent)).toEqual([
-    "Ждёт оплаты", "Жду счёт", "Оплачено · в пути 1, карантин 1", "Принято",
-  ]);
-  expect(within(groups[0]).getByRole("button", { name: "Оплачено" })).toBeInTheDocument();
-  expect(within(groups[1]).getByRole("button", { name: "Вставить счёт" })).toBeInTheDocument();
-  expect(within(groups[1]).getByRole("button", { name: "Вставить КП" })).toBeInTheDocument();
+  // Каждый блок заказов — своя лента со своим статусом заказа.
+  const labelsOf = (region: HTMLElement) => within(region).getAllByRole("rowgroup")
+    .filter((group) => group.getAttribute("aria-label")).map((group) => group.getAttribute("aria-label"));
+  const awaiting = screen.getByRole("region", { name: "Заказы: Жду счёт" });
+  expect(labelsOf(awaiting)).toEqual(["PO-001 от 01.10 · ООО А"]);
+  expect(within(awaiting).getByText("Жду счёт", { selector: ".order-chip" })).toBeInTheDocument();
+  expect(within(awaiting).getByRole("button", { name: "Вставить счёт" })).toBeInTheDocument();
+  expect(within(awaiting).getByRole("button", { name: "Вставить КП" })).toBeInTheDocument();
+  const toPay = screen.getByRole("region", { name: "Заказы: Ждёт оплаты" });
+  expect(labelsOf(toPay)).toEqual(["PO-002 от 03.10 · ООО Б"]);
+  expect(within(toPay).getByText("Ждёт оплаты", { selector: ".order-chip" })).toBeInTheDocument();
+  expect(within(toPay).getByRole("button", { name: "Оплачено" })).toBeInTheDocument();
 
-  // Свёрнуто по умолчанию; щелчок по заголовку раскрывает строки заказа, второй — сворачивает.
-  expect(within(orders).queryByText("REQ-6")).not.toBeInTheDocument();
-  fireEvent.click(within(groups[2]).getByText("PO-003 от 04.10 · ООО В"));
-  expect(within(groups[2]).getByRole("button", { name: "PO-003 от 04.10 · ООО В" })).toHaveAttribute("aria-expanded", "true");
-  expect(within(within(groups[2]).getByText("REQ-6").closest("tr")!).getByText("В пути")).toBeInTheDocument();
-  expect(within(within(groups[2]).getByText("REQ-7").closest("tr")!).getByText("Карантин")).toHaveClass("tone-warn");
-  expect(within(groups[2]).getByText("12.10.2026")).toBeInTheDocument();
-  expect(within(orders).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+  // «Оплачено» свёрнут по умолчанию: заказов не видно, пока не раскрыть заголовок.
+  expect(screen.queryByRole("region", { name: "Заказы: Оплачено" })).not.toBeInTheDocument();
+  await openPaidBlock();
+  const paid = within(screen.getByRole("region", { name: "Заказы: Оплачено" }));
+  const groups = paid.getAllByRole("rowgroup").filter((group) => group.getAttribute("aria-label"));
+  // Свежие заказы сверху: PO-003 от 04.10, затем PO-004 от 02.10.
+  expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["PO-003 от 04.10 · ООО В", "PO-004 от 02.10 · ООО Г"]);
+  expect(groups.map((group) => group.querySelector(".order-chip")?.textContent)).toEqual(["Оплачено · в пути 1, карантин 1", "Принято"]);
+
+  // Заказ свёрнут; щелчок по заголовку раскрывает строки, второй — сворачивает.
+  expect(paid.queryByText("REQ-6")).not.toBeInTheDocument();
+  fireEvent.click(within(groups[0]).getByText("PO-003 от 04.10 · ООО В"));
+  expect(within(groups[0]).getByRole("button", { name: "PO-003 от 04.10 · ООО В" })).toHaveAttribute("aria-expanded", "true");
+  expect(within(within(groups[0]).getByText("REQ-6").closest("tr")!).getByText("В пути")).toBeInTheDocument();
+  expect(within(within(groups[0]).getByText("REQ-7").closest("tr")!).getByText("Карантин")).toHaveClass("tone-warn");
+  expect(within(groups[0]).getByText("12.10.2026")).toBeInTheDocument();
+  expect(paid.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
     "ID", "Наименование", "Кол-во факт", "Цена факт, ₽", "Сумма факт, ₽", "Расчёт, ₽", "Счёт", "Ожид. дата", "Факт. дата", "Статус", "Комментарий", "",
   ]);
-  fireEvent.click(within(groups[3]).getByRole("button", { name: "PO-004 от 02.10 · ООО Г" }));
+  fireEvent.click(within(groups[1]).getByRole("button", { name: "PO-004 от 02.10 · ООО Г" }));
   // Цена в строке только показана — её вносит окно «Вставить счёт» / «Вставить КП».
-  expect(within(within(groups[3]).getByText("REQ-9").closest("tr")!).getByText("61,00")).toBeInTheDocument();
+  expect(within(within(groups[1]).getByText("REQ-9").closest("tr")!).getByText("61,00")).toBeInTheDocument();
   expect(screen.queryByLabelText(/Цена факт REQ/)).not.toBeInTheDocument();
-  fireEvent.click(groups[2].querySelector("tr.order-head")!);
-  expect(within(orders).queryByText("REQ-6")).not.toBeInTheDocument();
+  fireEvent.click(groups[0].querySelector("tr.order-head")!);
+  expect(paid.queryByText("REQ-6")).not.toBeInTheDocument();
 
   // «Дозавоз» — только строки дозавоза, со своим решением; обычная строка «Согласование» — в «Прочих».
   const head = (name: string) => within(screen.getByRole("region", { name })).getAllByRole("columnheader").map((cell) => cell.textContent);
@@ -664,7 +690,7 @@ it("shows «Мои позиции» as one list: supplier groups, then orders th
   expect(screen.queryByRole("button", { name: "Одобрено — продолжить" })).not.toBeInTheDocument();
 });
 
-it("hides sent and paid orders by the «Заказы» toggle and remembers the choice per buyer", async () => {
+it("keeps the blocks separate: «Оплачено» starts collapsed, a heading click collapses/expands its block and the choice is remembered", async () => {
   const awaiting = { ...awaitingInvoice, order_number: "PO-001", order_date: "2026-10-01", supplier: "ООО А" };
   const transit = { ...awaitingInvoice, id: "30000000-0000-0000-0000-000000000003", legacy_id: "REQ-3", status: "В пути", order_number: "PO-003", order_date: "2026-10-04", supplier: "ООО В", invoice_url: "https://files.test/i.pdf", pay_missing: [] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -674,35 +700,44 @@ it("hides sent and paid orders by the «Заказы» toggle and remembers the 
     if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
-  const toggle = () => within(screen.getByRole("group", { name: "Показ заказов" }));
+  const toggleOf = (title: RegExp) => within(screen.getByRole("heading", { name: title })).getByRole("button");
+  const stored = (block: string) => window.localStorage.getItem(`procurement-block-collapsed:${block}`);
 
   const first = render(<ProcurementPage buyerName="Артемий" />);
-  await screen.findByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" });
-  expect(toggle().getByRole("button", { name: "Все 2" })).toHaveAttribute("aria-pressed", "true");
-  fireEvent.click(toggle().getByRole("button", { name: "Активные 1" }));
+  await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
+  // Блоки раздельные; «Жду счёт» открыт, «Оплачено» свёрнут (заголовок и счётчик на месте, заказов нет).
+  expect(toggleOf(/^Жду счёт/)).toHaveAttribute("aria-expanded", "true");
+  expect(toggleOf(/^Оплачено/)).toHaveAttribute("aria-expanded", "false");
+  expect(toggleOf(/^Оплачено/)).toHaveTextContent("Оплачено 1");
+  expect(screen.queryByRole("region", { name: "Заказы: Оплачено" })).not.toBeInTheDocument();
   expect(screen.queryByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" })).not.toBeInTheDocument();
-  expect(screen.getByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" })).toBeInTheDocument();
-  expect(screen.getByText("Оплаченные заказы скрыты: 1")).toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Показ заказов" })).not.toBeInTheDocument();
+
+  // Раскрыли «Оплачено», свернули «Жду счёт»: каждый блок сам по себе.
+  fireEvent.click(toggleOf(/^Оплачено/));
+  expect(await screen.findByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" })).toBeInTheDocument();
+  fireEvent.click(toggleOf(/^Жду счёт/));
+  expect(screen.queryByRole("region", { name: "Заказы: Жду счёт" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /^Жду счёт/ })).toBeInTheDocument();
+  expect(stored("orders-paid")).toBe("0");
+  expect(stored("orders-awaiting")).toBe("1");
+  expect(stored("inwork")).toBeNull();
   first.unmount();
 
-  // Выбор помнится: тот же закупщик снова видит только активные; «Скрыть» убирает ленту целиком.
+  // Выбор помнится после перезагрузки: «Оплачено» открыт, «Жду счёт» свёрнут.
   const second = render(<ProcurementPage buyerName="Артемий" />);
-  await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
-  expect(toggle().getByRole("button", { name: "Активные 1" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.queryByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" })).not.toBeInTheDocument();
-  fireEvent.click(toggle().getByRole("button", { name: "Скрыть" }));
-  expect(screen.queryByRole("region", { name: "Заказы" })).not.toBeInTheDocument();
-  expect(screen.getByText("Заказы скрыты: 2")).toBeInTheDocument();
-  expect(window.localStorage.getItem("procurement-orders-view:Артемий")).toBe("none");
-  second.unmount();
-
-  // У другого закупщика свой выбор: по умолчанию «Все».
-  render(<ProcurementPage buyerName="Петров" />);
   await screen.findByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" });
-  expect(toggle().getByRole("button", { name: "Все 2" })).toHaveAttribute("aria-pressed", "true");
+  expect(toggleOf(/^Оплачено/)).toHaveAttribute("aria-expanded", "true");
+  expect(toggleOf(/^Жду счёт/)).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" })).not.toBeInTheDocument();
+  // Раскрыли обратно — «Жду счёт» снова с заказом, ключ перезаписан.
+  fireEvent.click(toggleOf(/^Жду счёт/));
+  expect(await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" })).toBeInTheDocument();
+  expect(stored("orders-awaiting")).toBe("0");
+  second.unmount();
 });
 
-it("keeps «В работе» on screen when it is empty: its header with 0 and one grey line, no order toggle", async () => {
+it("keeps «В работе» on screen when it is empty: its header with 0 and one grey line, no order blocks", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [] });
@@ -714,8 +749,7 @@ it("keeps «В работе» on screen when it is empty: its header with 0 and 
   await screen.findByText(/Нет строк в работе/);
   expect(screen.getByRole("heading", { name: /^В работе/ })).toHaveTextContent("В работе 0");
   expect(screen.getByText(/Нет строк в работе/)).toHaveClass("stage-empty");
-  expect(screen.queryByRole("group", { name: "Показ заказов" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "Заказы" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: /Жду счёт|Ждёт оплаты|Оплачено|Дозавоз|Прочие позиции/ })).not.toBeInTheDocument();
 });
 
@@ -919,7 +953,7 @@ it("groups waiting orders with their header totals and opens «Внести КП
   });
 
   render(<ProcurementPage />);
-  const table = await screen.findByRole("region", { name: "Заказы" });
+  const table = await screen.findByRole("region", { name: "Заказы: Жду счёт" });
   const one = within(table).getByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
   const two = within(table).getByRole("rowgroup", { name: "PO-002 от 01.10 · ООО Б" });
   expect(within(one).getByText("2 поз. · факт — / расчёт 0,00 ₽")).toBeInTheDocument();
@@ -951,7 +985,7 @@ it("lists orders waiting for payment with header totals and closes «Оплач�
   });
 
   render(<ProcurementPage />);
-  const table = await screen.findByRole("region", { name: "Заказы" });
+  const table = await screen.findByRole("region", { name: "Заказы: Ждёт оплаты" });
   const group = within(table).getByRole("rowgroup", { name: "PO-005 от 05.10 · Поставщик" });
   expect(within(group).getByText("1 поз. · факт 244,00 ₽ / расчёт 200,00 ₽")).toBeInTheDocument();
   expect(within(group).getByText("Ждёт оплаты")).toHaveClass("order-chip");
@@ -1015,7 +1049,8 @@ it("paid orders: offer to reconcile a hand-typed rate only for lines that have o
   });
 
   render(<ProcurementPage />);
-  const table = await screen.findByRole("region", { name: "Заказы" });
+  await openPaidBlock();
+  const table = await screen.findByRole("region", { name: "Заказы: Оплачено" });
   await openOrder("Без № заказа");
   expect(within(table).getByText(/вручную, сверьте/)).toBeInTheDocument();
   expect(within(table).getByText("100 USD")).toBeInTheDocument();
@@ -1189,6 +1224,7 @@ it("says to type № and date by hand when the invoice file has no text", async 
   });
 
   render(<ProcurementPage />);
+  await openPaidBlock();
   await openOrder("Без № заказа");
   await pickRowAction("REQ-1", "Заменить счёт…");
   fireEvent.change(await screen.findByLabelText("Файл счёта"), { target: { files: [new File(["jpg"], "scan.jpg", { type: "image/jpeg" })] } });
@@ -1263,8 +1299,13 @@ it("edits «Комментарий» on every stage from «В работе» and
   });
 
   render(<ProcurementPage />);
-  await screen.findByRole("region", { name: "Заказы" });
-  for (const order of ["PO-009", "PO-001", "Без № заказа"]) await openOrder(order);
+  await openPaidBlock();
+  const awaitingBlock = await screen.findByRole("region", { name: "Жду счёт" });
+  const toPayBlock = screen.getByRole("region", { name: "Ждёт оплаты" });
+  const paidBlock = screen.getByRole("region", { name: "Оплачено" });
+  await openOrder("PO-009", awaitingBlock);
+  await openOrder("Без № заказа", toPayBlock);
+  await openOrder("PO-001", paidBlock);
 
   const noteOn = (id: string) => screen.queryByRole("button", { name: `Комментарий ${id}` });
   const dateOn = (id: string) => screen.queryByRole("button", { name: `Ожид. дата ${id}` });
@@ -1275,11 +1316,11 @@ it("edits «Комментарий» on every stage from «В работе» and
   for (const id of ["REQ-3", "REQ-4", "REQ-6", "REQ-7"]) expect(dateOn(id), id).toBeInTheDocument();
   for (const id of ["REQ-1", "REQ-2", "REQ-5", "REQ-8"]) expect(dateOn(id), id).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Ожид. дата REQ-6" })).toHaveTextContent("12.10.2026");
-  // «Факт. дата» — день приёмки, только показ; принятая строка заказа («Готово») остаётся в его ленте.
-  const orders = within(screen.getByRole("region", { name: "Заказы" }));
+  // «Факт. дата» — день приёмки, только показ. Заказ без № (REQ-4 «В оплату» + принятая REQ-8) целиком в «Ждёт оплаты»: блок — по стадии заказа.
+  const orders = within(screen.getByRole("region", { name: "Заказы: Оплачено" }));
   expect(orders.getByText("03.10.2026")).toBeInTheDocument();
   expect(orders.getByText("04.10.2026")).toBeInTheDocument();
-  expect(orders.getByText("02.10.2026")).toBeInTheDocument();
+  expect(within(toPayBlock).getByText("02.10.2026")).toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Прочие позиции" })).getByText("REQ-5")).toBeInTheDocument();
 });
 
@@ -1299,6 +1340,7 @@ it("saves a typed «Комментарий» and «Ожид. дата» of a sta
   });
 
   render(<ProcurementPage />);
+  await openPaidBlock();
   await openOrder("Без № заказа");
   fireEvent.click(await screen.findByRole("button", { name: "Комментарий REQ-6" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Комментарий REQ-6" }), { target: { value: "Груз в Казани" } });
@@ -1336,7 +1378,7 @@ it("edits the date and the note of a line inside an opened «Жду счет» o
   fireEvent.change(screen.getByLabelText("Ожид. дата REQ-3"), { target: { value: "2026-10-15" } });
   fireEvent.keyDown(screen.getByLabelText("Ожид. дата REQ-3"), { key: "Enter" });
   await waitFor(() => expect(screen.getByRole("button", { name: "Ожид. дата REQ-3" })).toHaveTextContent("15.10.2026"));
-  expect(within(screen.getByRole("region", { name: "Заказы" })).getAllByText("15.10.2026").length).toBeGreaterThanOrEqual(1);
+  expect(within(screen.getByRole("region", { name: "Заказы: Жду счёт" })).getAllByText("15.10.2026").length).toBeGreaterThanOrEqual(1);
 
   fireEvent.click(screen.getByRole("button", { name: "Комментарий REQ-3" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Комментарий REQ-3" }), { target: { value: "Счёт обещали во вторник" } });
@@ -1596,6 +1638,61 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
   await waitFor(() => expect(same.querySelector(".order-chip")).toHaveTextContent("Ждёт оплаты"));
   expect(within(same).getByRole("button", { name: "Оплачено" })).toBeInTheDocument();
   expect(bodies).toHaveLength(3);
+});
+
+it("«Убрать» in the invoice window drops the recognised file: the picker is back, prices and № / date return to the start", async () => {
+  const first = { ...line, status: "Жду счет" as const, buyer: "Закупщик", supplier: "ООО А", order_number: "PO-001", order_date: "2026-10-01", actual_quantity: "2", actual_unit: "шт" };
+  const second = { ...first, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", calculated_name: "Кабель", version: 5 };
+  let recognizeCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine") return json({ lines: [first, second], next_cursor: null });
+    if (path === "/api/procurement/orders/PO-001/recognize" && init?.method === "POST") {
+      recognizeCalls += 1;
+      return json(recognized("invoice", [
+        { line_id: first.id, legacy_id: "REQ-1", version: 3, price_with_vat: "122", confidence: "article" },
+        { line_id: second.id, legacy_id: "REQ-2", version: 5, price_with_vat: "50", confidence: "article" },
+      ]));
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const group = await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
+  await waitFor(() => expect(within(group).getByRole("button", { name: "Вставить счёт" })).toBeEnabled());
+  fireEvent.click(within(group).getByRole("button", { name: "Вставить счёт" }));
+  const dialog = await screen.findByRole("dialog", { name: "Вставить счёт PO-001" });
+  expect(within(dialog).queryByRole("button", { name: "Убрать" })).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("№ счёта")).toHaveValue("");
+  expect(within(dialog).getByLabelText("Цена с НДС REQ-1")).toHaveValue("");
+
+  fireEvent.change(within(dialog).getByLabelText("Файл счёта"), { target: { files: [new File(["%PDF"], "счёт.pdf", { type: "application/pdf" })] } });
+  // После распознавания выбор файла заменён именем файла и кнопкой «Убрать»; цены и № — из файла.
+  expect(await within(dialog).findByText("Счёт № 58.pdf", { selector: ".doc-file-name" })).toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Файл счёта")).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("№ счёта")).toHaveValue("58");
+  expect(within(dialog).getByLabelText("Дата счёта")).toHaveValue("2026-09-14");
+  expect(within(dialog).getByLabelText("Цена с НДС REQ-1")).toHaveValue("122");
+  expect(within(dialog).getByLabelText("Цена с НДС REQ-2")).toHaveValue("50");
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Убрать" }));
+  // Окно вернулось к началу: поле файла на месте, имени и «Убрать» нет, распознанное стёрто.
+  expect(within(dialog).getByLabelText("Файл счёта")).toBeInTheDocument();
+  expect(within(dialog).queryByRole("button", { name: "Убрать" })).not.toBeInTheDocument();
+  expect(within(dialog).queryByText("Счёт № 58.pdf")).not.toBeInTheDocument();
+  expect(within(dialog).queryByText(/распознано/)).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("№ счёта")).toHaveValue("");
+  expect(within(dialog).getByLabelText("Дата счёта")).toHaveValue("");
+  expect(within(dialog).getByLabelText("Цена с НДС REQ-1")).toHaveValue("");
+  expect(within(dialog).getByLabelText("Цена с НДС REQ-2")).toHaveValue("");
+  expect(within(dialog).getByText("Выберите файл счёта")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "В оплату (2)" })).toBeDisabled();
+
+  // Можно выбрать другой файл: распознавание идёт заново.
+  fireEvent.change(within(dialog).getByLabelText("Файл счёта"), { target: { files: [new File(["%PDF"], "v2.pdf", { type: "application/pdf" })] } });
+  await waitFor(() => expect(within(dialog).getByLabelText("№ счёта")).toHaveValue("58"));
+  expect(recognizeCalls).toBe(2);
 });
 
 it("«Вставить КП» reads the prices from the file, lets a wrong one be fixed and keeps the order waiting for the invoice", async () => {
