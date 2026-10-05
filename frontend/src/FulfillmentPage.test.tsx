@@ -562,3 +562,148 @@ it("walks every page of requests, not only the first hundred", async () => {
   expect(screen.getByText("FRX-ISS-26-0001")).toBeInTheDocument();
   expect(paths).toEqual(["/api/issues", `/api/issues?after=${request.id}`]);
 });
+
+/* «ГРН на все КБ» and «Есть, не заведено» (owner 05.10.2026). */
+const kb1 = { ...request, id: "k1", number: "REQ.26.0000001", purpose: "728К.2 · КБ1 · Жгут", project: "728К.2" };
+const kb2 = { ...request, id: "k2", version: 5, number: "REQ.26.0000002", purpose: "728К.2 · КБ2 · Жгут", project: "728К.2", lines: [{ ...request.lines[0], id: "line-2" }] };
+const projectLots = [
+  { id: "lot-2", warehouse: "ЦАР", grn: "FRX.26.0000002", package: "", article: "CON-001", name: "Разъём", unit: "шт", storage_location: "1F5", available: "10" },
+  { id: "lot-1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", article: "CON-001", name: "Разъём", unit: "шт", storage_location: "1F4", available: "5" },
+];
+
+async function openWholeOrder() {
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
+}
+
+it("picks several lots for every КБ at once, previews the FIFO split and reports what was assigned", async () => {
+  let payload: any;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [kb1, kb2], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path.startsWith("/api/issues/lots?project=")) return json({ lots: projectLots });
+    if (path === `/api/issues/projects/${encodeURIComponent("728К.2")}/bind-lots`) {
+      payload = JSON.parse(String(init?.body));
+      return json({ bound: [
+        { request_id: "k1", number: "REQ.26.0000001", kb: "КБ1", line_id: "l", lot_id: "lot-1", grn: "FRX.26.0000001", quantity: "4" },
+        { request_id: "k2", number: "REQ.26.0000002", kb: "КБ2", line_id: "line-2", lot_id: "lot-1", grn: "FRX.26.0000001", quantity: "1" },
+        { request_id: "k2", number: "REQ.26.0000002", kb: "КБ2", line_id: "line-2", lot_id: "lot-2", grn: "FRX.26.0000002", quantity: "3" },
+      ], short: 0, message: "" });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  await openWholeOrder();
+  fireEvent.click(await screen.findByRole("button", { name: "ГРН на все КБ" }));
+  const assign = screen.getByRole("button", { name: "Назначить ГРН на все КБ" });
+  expect(assign).toBeDisabled();
+  fireEvent.click(await screen.findByRole("checkbox", { name: "ГРН FRX.26.0000002" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "ГРН FRX.26.0000001" }));
+
+  const preview = screen.getByRole("table", { name: "Предварительная раскладка" });
+  expect(within(preview).getByText("Предварительно, окончательно разложит сервер")).toBeInTheDocument();
+  const rows = within(preview).getAllByRole("row");
+  expect(rows[1]).toHaveTextContent("КБ1");
+  expect(rows[1]).toHaveTextContent("FRX.26.0000001 4 шт");
+  expect(rows[2]).toHaveTextContent("FRX.26.0000001 1 шт; FRX.26.0000002 3 шт");
+
+  fireEvent.click(assign);
+  expect(await screen.findByText("Назначено: КБ1 — ГРН FRX.26.0000001 4 шт; КБ2 — ГРН FRX.26.0000001 1 шт, ГРН FRX.26.0000002 3 шт")).toBeInTheDocument();
+  expect(payload).toEqual({ article: "CON-001", name: "Разъём", lot_ids: ["lot-2", "lot-1"], off_book: false, versions: { k1: 3, k2: 5 } });
+});
+
+it("says how much is still missing when the chosen lots do not cover every КБ", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [kb1, kb2], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path.startsWith("/api/issues/lots?project=")) return json({ lots: projectLots });
+    if (path.endsWith("/bind-lots")) return json({ bound: [{ request_id: "k1", number: "n", kb: "КБ1", line_id: "l", lot_id: "lot-1", grn: "FRX.26.0000001", quantity: "4" }, { request_id: "k2", number: "n", kb: "КБ2", line_id: "l2", lot_id: "lot-1", grn: "FRX.26.0000001", quantity: "1" }], short: "3" });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await openWholeOrder();
+  fireEvent.click(await screen.findByRole("button", { name: "ГРН на все КБ" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "ГРН FRX.26.0000001" }));
+  expect(within(screen.getByRole("table", { name: "Предварительная раскладка" })).getAllByRole("row")[2]).toHaveTextContent("3");
+  fireEvent.click(screen.getByRole("button", { name: "Назначить ГРН на все КБ" }));
+  expect(await screen.findByText(/; не хватает 3$/)).toBeInTheDocument();
+});
+
+it("reloads the requests and says so when a КБ changed under the bulk pick (409)", async () => {
+  let loads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") { loads += 1; return json({ requests: [kb1, kb2], next_cursor: null }); }
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path.startsWith("/api/issues/lots?project=")) return json({ lots: projectLots });
+    if (path.endsWith("/bind-lots")) return new Response(JSON.stringify({ detail: "Версия заявки устарела" }), { status: 409, headers: { "Content-Type": "application/json" } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await openWholeOrder();
+  fireEvent.click(await screen.findByRole("button", { name: "ГРН на все КБ" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "ГРН FRX.26.0000001" }));
+  fireEvent.click(screen.getByRole("button", { name: "Назначить ГРН на все КБ" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Заявки изменились, пока выбирали ГРН");
+  expect(loads).toBe(2);
+});
+
+it("shows a failed lot load honestly and retries it", async () => {
+  let lotCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [kb1, kb2], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path.startsWith("/api/issues/lots?project=")) {
+      lotCalls += 1;
+      return lotCalls === 1 ? new Response(JSON.stringify({ detail: "Склад недоступен" }), { status: 500, headers: { "Content-Type": "application/json" } }) : json({ lots: projectLots });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await openWholeOrder();
+  fireEvent.click(await screen.findByRole("button", { name: "ГРН на все КБ" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Склад недоступен");
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+  expect(await screen.findByRole("checkbox", { name: "ГРН FRX.26.0000001" })).toBeInTheDocument();
+});
+
+it("marks a whole position «есть, не заведено» for every КБ", async () => {
+  let payload: any;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [kb1, kb2], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path.endsWith("/bind-lots")) { payload = JSON.parse(String(init?.body)); return json({ bound: [], short: 0, message: "Отмечено: КБ1, КБ2" }); }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await openWholeOrder();
+  fireEvent.click(await screen.findByRole("button", { name: "Есть, не заведено: Разъём" }));
+  expect(await screen.findByText("Отмечено: КБ1, КБ2")).toBeInTheDocument();
+  expect(payload).toEqual({ article: "CON-001", name: "Разъём", lot_ids: [], off_book: true, versions: { k1: 3, k2: 5 } });
+});
+
+it("marks one line «есть, не заведено», counts it as closed and takes the mark off", async () => {
+  const calls: Array<[string, string, unknown]> = [];
+  let marked = false;
+  const url = `/api/issues/${request.id}/lines/${request.lines[0].id}/off-book`;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [{ ...request, version: marked ? 4 : 3, lines: [{ ...request.lines[0], off_book: marked }] }], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path === url) {
+      calls.push([init?.method ?? "GET", path, JSON.parse(String(init?.body))]);
+      marked = init?.method === "POST";
+      return json({ request });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  await expand(request.number);
+  expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Есть, не заведено" }));
+  expect(await screen.findByText("Набрано 1 из 1 поз.")).toBeInTheDocument();
+  expect(screen.getByText("есть, не заведено")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Снять отметку" }));
+  expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
+  expect(calls).toEqual([["POST", url, { version: 3 }], ["DELETE", url, { version: 4 }]]);
+});

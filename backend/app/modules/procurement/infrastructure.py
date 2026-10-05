@@ -747,7 +747,8 @@ class ProcurementStockCoverRow(Base):
     )
     legacy_id: Mapped[str] = mapped_column(String(32), nullable=False)
     project_reference: Mapped[str | None] = mapped_column(String(128), index=True)
-    lot_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    # Nullable since 0087: «есть на складе без ГРН» (the rule that writes such a cover comes later).
+    lot_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
     grn: Mapped[str] = mapped_column(String(32), nullable=False)
     package: Mapped[str] = mapped_column(String(32), nullable=False)

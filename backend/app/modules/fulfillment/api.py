@@ -28,17 +28,21 @@ from app.shared.warehouse_location import SHELF_LETTERS, configured_rack_layout,
 
 from .application import (
     BindLotCommand,
+    BindProjectLotsCommand,
     CompleteReturnCommand,
     ConcurrentFulfillmentUpdate,
     CreateFulfillmentCommand,
     DeleteFulfillmentCommand,
     MarkReadyCommand,
     MarkReturnedCommand,
+    OffBookCommand,
     ReturnDisposition,
     UnitOfWork,
     UnbindLotCommand,
     VersionedFulfillmentCommand,
     bind_lot,
+    bind_project_lots,
+    set_off_book,
     build_issue_print_sheet,
     build_issue_return_sheet,
     cancel_fulfillment,
@@ -89,6 +93,16 @@ class VersionPayload(BaseModel):
 
 class BindPayload(VersionPayload):
     lot_id: UUID
+
+
+class ProjectBindPayload(BaseModel):
+    """«Запросы на комплектацию»: lots (or «есть, но не заведено») for one item across every КБ of the project."""
+    article: str = Field(default="", max_length=255)
+    name: str = Field(default="", max_length=1024)
+    lot_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    off_book: bool = False
+    # The version of every request the screen showed: {request_id: version}.
+    versions: dict[UUID, Annotated[int, Field(ge=1)]] = Field(default_factory=dict, max_length=500)
 
 
 class PlacePayload(BaseModel):
@@ -171,6 +185,7 @@ def _result(request: FulfillmentRequest) -> dict:
                 "defective_returned": _number(line.defective_returned),
                 "defective_missing": _number(line.defective_missing),
                 "consumed": _number(line.consumed),
+                "off_book": line.off_book,
                 "lot": None if line.lot is None else {
                     "id": str(line.lot.lot_id),
                     "warehouse": line.lot.warehouse,
@@ -253,7 +268,9 @@ def available_lots(
     q: Annotated[str, Query(max_length=255)] = "",
     project: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
-    """`project` (optional): the kit's project — its own «Со склада» reserve on a lot counts as available."""
+    """`project` (optional): the kit's project — its own reserves on a lot («Со склада» covers and the techcard
+    reserves of any of its КБ) count as available: `available` = ДОСТУПНО + `reserved` (the project's part), the same
+    shape as /api/kitsets/lots."""
     with uow_factory() as uow:
         lots = uow.warehouse.list(limit=5000, query=q, include_zero=False)
         held = project_reserve_by_lot(uow, lots, project.strip())
@@ -263,6 +280,7 @@ def available_lots(
     ]  # portalIssueStock: the whole warehouse at once, the browser searches
     return {"lots": [{
         "id": str(lot.id),
+        "lot_id": str(lot.id),
         "warehouse": lot.warehouse,
         "grn": lot.grn,
         "package": lot.package,
@@ -375,6 +393,98 @@ def unbind(
         actor=principal.actor,
         now=now,
     ), uow_factory()))
+
+
+def _off_book(request_id: UUID, line_id: UUID, payload: VersionPayload, principal: Principal, now: datetime,
+              uow_factory: Callable[[], UnitOfWork], off_book: bool) -> dict:
+    return _run(lambda: set_off_book(OffBookCommand(
+        request_id=request_id,
+        expected_version=payload.version,
+        line_id=line_id,
+        off_book=off_book,
+        actor=principal.actor,
+        now=now,
+    ), uow_factory()))
+
+
+@router.post("/{request_id}/lines/{line_id}/off-book")
+def mark_off_book(
+    request_id: UUID,
+    line_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«есть, но не заведено»: the waiting position passes without a lot and without a stock movement."""
+    return _off_book(request_id, line_id, payload, principal, now, uow_factory, True)
+
+
+@router.delete("/{request_id}/lines/{line_id}/off-book")
+def clear_off_book(
+    request_id: UUID,
+    line_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    return _off_book(request_id, line_id, payload, principal, now, uow_factory, False)
+
+
+@router.post("/projects/{project}/bind-lots")
+def bind_lots_for_project(
+    project: str,
+    payload: ProjectBindPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """One item gets one or several ГРН for every КБ of the project at once (owner 05.10.2026): КБ1, КБ2 … КБ10, lots
+    FIFO by ГРН, a short lot splits the line, the rest stays waiting. `off_book` marks the item «есть, но не заведено»
+    on every waiting line instead. One transaction; a request changed since the screen loaded → 409."""
+    try:
+        result = bind_project_lots(BindProjectLotsCommand(
+            project=project.strip(),
+            article=payload.article,
+            name=payload.name,
+            lot_ids=tuple(payload.lot_ids),
+            off_book=payload.off_book,
+            versions=dict(payload.versions),
+            actor=principal.actor,
+            now=now,
+        ), uow_factory())
+    except (FulfillmentValidationError, WarehouseValidationError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ConcurrentFulfillmentUpdate as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Партия не найдена на складе") from error
+    except (IntegrityError, StaleDataError) as error:
+        raise HTTPException(status_code=409, detail="Конкурентное изменение: обновите данные") from error
+    kbs = len({item.request_id for item in result.bound})
+    label = payload.name or payload.article
+    if payload.off_book:
+        message = f"«{label}»: есть, но не заведено — позиций {len(result.bound)} в {kbs} КБ."
+    else:
+        message = f"«{label}»: партии привязаны — строк {len(result.bound)} в {kbs} КБ."
+    if result.short > 0:
+        message += f" Не хватает {_number(result.short)} {result.unit}".rstrip() + " — эти позиции ждут поставки."
+    return {
+        "bound": [{
+            "request_id": str(item.request_id),
+            "number": item.number,
+            "kb": item.kb,
+            "line_id": str(item.line_id),
+            "lot_id": str(item.lot_id) if item.lot_id else None,
+            "grn": item.grn,
+            "quantity": _number(item.quantity),
+            "off_book": item.off_book,
+        } for item in result.bound],
+        "short": _number(result.short),
+        "message": message,
+        "requests": [_result(request) for request in result.requests],
+    }
 
 
 def _handout_location(payload: ReadyPayload) -> str:
