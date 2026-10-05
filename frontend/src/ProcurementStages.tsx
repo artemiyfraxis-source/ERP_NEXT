@@ -574,7 +574,7 @@ export function OrderList({
       {groups.length > limit && (
         <div className="stage-more">
           <button type="button" className="secondary small" onClick={() => setLimit((current) => current + ORDERS_PAGE)}>
-            Показать ещё ({Math.min(ORDERS_PAGE, groups.length - limit)} из {groups.length - limit})
+            Показать ещё {Math.min(ORDERS_PAGE, groups.length - limit)} · показано {limit} из {groups.length}
           </button>
         </div>
       )}
