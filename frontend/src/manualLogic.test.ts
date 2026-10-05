@@ -9,6 +9,7 @@ import {
   manualProblem,
   moveOp,
   removeOp,
+  setParallel,
   setRoute,
   stepsPayload,
   toolingPayload,
@@ -127,5 +128,37 @@ describe("manual assembly list", () => {
     expect(manualProblem(updateOp(state, 1, { opSec: "шесть" }))).toBe("Ручная сборка: операция 1 «Резка» — время на штуку должно быть числом секунд не меньше нуля.");
     expect(manualProblem(updateOp(state, 1, { prepMin: "-1" }))).toBe("Ручная сборка: операция 1 «Резка» — подготовка должна быть числом минут не меньше нуля.");
     expect(manualProblem(updateOp(state, 3, { qty: "0" }))).toBe("Ручная сборка: операция 3 «Опрессовка терминалов (А)» — количество на изделие должно быть числом больше нуля.");
+  });
+
+  it("puts operations marked «одновременно с предыдущей» on their own branches and joins them in the next operation", () => {
+    // Резка, затем пайка и опрессовка одновременно, затем контроль — собирает обе ветки.
+    let state = addCustomOp(three());
+    state = updateOp(state, 4, { label: "Контроль" });
+    state = setParallel(state, 3, true);
+    const config = manualConfig(state, base);
+    expect((config.ops as Array<Record<string, unknown>>).map((op) => op.parallel ?? false)).toEqual([false, false, true, false]);
+    expect(config.route).toEqual({
+      blocks: [{ key: "b1", ops: [1], final: false }, { key: "b2", ops: [2], final: false }, { key: "b3", ops: [3], final: false }, { key: "b4", ops: [4], final: true }],
+      edges: [{ from: "b1", to: "b2", per_unit: 1 }, { from: "b2", to: "b4", per_unit: 1 }, { from: "b3", to: "b4", per_unit: 1 }],
+    });
+    // Сохранённая схема с ветками — не ручная правка: при открытии снова «по списку», флаг на месте.
+    const restored = manualFromConfig(config);
+    expect(restored?.ops.map((op) => op.parallel)).toEqual([false, false, true, false]);
+    expect(restored?.route).toBeNull();
+    // У первой операции флаг не действует.
+    expect((manualConfig(setParallel(three(), 1, true), base).ops as Array<Record<string, unknown>>)[0].parallel).toBeUndefined();
+  });
+
+  it("will not end the list with a simultaneous operation and resets a hand-edited scheme when the flag changes", () => {
+    const state = setParallel(three(), 3, true);
+    expect(manualProblem(state)).toBe("Ручная сборка: операция 3 «Опрессовка терминалов (А)» идёт одновременно с предыдущей и завершает список — "
+      + "добавьте после одновременных операций итоговую (например, контроль), которая соберёт их результат.");
+    const edited = setRoute(three(), {
+      blocks: [{ key: "b1", name: "", ops: [1, 2], final: false, components: [] }, { key: "b3", name: "", ops: [3], final: true, components: [] }],
+      edges: [{ from: "b1", to: "b3", per_unit: 1 }],
+    });
+    const reset = setParallel(edited, 2, true);
+    expect(reset.route).toBeNull();
+    expect(reset.notice).toMatch(/схема снова по списку/);
   });
 });

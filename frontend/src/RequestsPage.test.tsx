@@ -51,7 +51,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); }); // выбранный чип таблицы запоминается
 
 describe("RequestsPage", () => {
   it("reuses the creation key after an ambiguous network failure", async () => {
@@ -132,6 +132,8 @@ describe("RequestsPage", () => {
 
     render(<RequestsPage principal={principal} />);
     expect(screen.queryByRole("button", { name: "В закупку" })).not.toBeInTheDocument();
+    // По умолчанию открыт чип «Ждут переноса»: строка «В работе» — под чипом «В работе».
+    fireEvent.click(await screen.findByRole("button", { name: /^В работе · / }));
     const button = await screen.findByRole("button", { name: "Повторно в закупку" });
     fireEvent.click(button);
     expect(fetchMock).not.toHaveBeenCalledWith("/api/requests/handoff", expect.anything());

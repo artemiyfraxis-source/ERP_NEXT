@@ -1,16 +1,19 @@
 """Supplier requests (SupplierRequest.gs): grouping, № ЗАКАЗА prefix-NNN, ДАТА ЗАКАЗА, the letter."""
 
+import io
 import sqlite3
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from pypdf import PdfReader
 
 from app.main import app
 from app.modules.procurement.application import (
@@ -42,12 +45,12 @@ from app.modules.procurement.domain import (
     position_paragraphs,
     supplier_reference,
     supplier_request_blockers,
-    supplier_request_document_html,
     supplier_request_document_title,
     supplier_request_folder,
     supplier_request_letter,
 )
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
+from app.modules.procurement.request_pdf import render_request_pdf
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
 from tests.procurement.test_api import message as api_message, procurement_api  # noqa: F401
@@ -299,12 +302,18 @@ def test_document_folder_is_year_month_supplier():
     assert supplier_request_document_title("PO-007", date(2026, 9, 5)) == "PO-007 от 05.09.2026"
 
 
-def test_document_is_the_template_one_paragraph_per_line_escaped():
-    page = supplier_request_document_html("PO-001 от 05.09.2026", "ООО <А> · REQ#\n\n1. Наименование: X\n\tКол-во: 2 шт")
+def _pdf_text(content: bytes) -> str:
+    return "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(content)).pages)
 
-    assert "<title>PO-001 от 05.09.2026</title>" in page
-    assert "<p>ООО &lt;А&gt; · REQ#</p><p>&nbsp;</p><p>1. Наименование: X</p><p>\tКол-во: 2 шт</p>" in page
-    assert "<script" not in page
+
+def test_document_is_a_pdf_with_embedded_cyrillic_font_and_the_letter_text():
+    content = render_request_pdf("Запрос PO-001 от 05.09.2026", "ООО <А> · REQ#\n\n1. Наименование: Жгут\n\tКол-во: 2 шт")
+
+    assert content.startswith(b"%PDF")
+    assert b"DejaVu" in content
+    text = _pdf_text(content)
+    assert "Запрос PO-001 от 05.09.2026" in text
+    assert "ООО <А> · REQ#" in text and "1. Наименование: Жгут" in text and "Кол-во: 2 шт" in text
 
 
 # --- Line transition -------------------------------------------------------------------------------
@@ -380,10 +389,21 @@ def test_build_issues_one_order_per_group_numbered_through_the_table():
     assert "PO-001" in result.orders[0].letter and "2. Наименование" in result.orders[0].letter
     meta, content = supplier_order_document("PO-001", uow)
     assert (meta.file_name, meta.folder, meta.created_by) == (
-        "PO-001 от 16.09.2026.html", "Запросы поставщикам/2026/09 Сентябрь/ООО А", "Петров",
+        "PO-001 от 16.09.2026.pdf", "Запросы поставщикам/2026/09 Сентябрь/ООО А", "Петров",
     )
-    assert meta.size == len(content) and "2. Наименование" in content.decode("utf-8")
+    assert meta.size == len(content) and content.startswith(b"%PDF") and meta.content_type == "application/pdf"
+    assert "2. Наименование" in _pdf_text(content)
     assert result.orders[0].document == meta
+
+    # Заказ, выданный до PDF (в хранилище HTML-письмо), отдаёт PDF, собранный из текста письма заказа.
+    old_meta = replace(meta, order_number="PO-009", file_name="PO-009 от 16.09.2026.html", content_type="text/html; charset=utf-8")
+    uow.procurement.orders["PO-009"] = replace(result.orders[0], order_number="PO-009", letter="ООО А · старый заказ\nДобрый день!")
+    uow.procurement.documents["PO-009"] = (old_meta, "<!doctype html><p>Добрый день!</p>".encode("utf-8"))
+    legacy_meta, legacy = supplier_order_document("PO-009", uow)
+    assert legacy.startswith(b"%PDF") and legacy_meta.file_name == "PO-009 от 16.09.2026.pdf"
+    assert legacy_meta.content_type == "application/pdf" and legacy_meta.size == len(legacy)
+    assert "ООО А · старый заказ" in _pdf_text(legacy)
+    del uow.procurement.orders["PO-009"], uow.procurement.documents["PO-009"]
 
     make_ready(uow, 5, supplier="ООО А")
     again = build_supplier_requests(BuildSupplierRequestsCommand(actor=BUYER, now=now), uow)
@@ -450,14 +470,18 @@ def test_supplier_requests_endpoint_persists_orders_and_serves_the_letter(procur
     assert client.get("/api/procurement/supplier-requests/PO-404").status_code == 404
     document = order.json()["order"]["document"]
     assert document["url"] == f"/api/procurement/supplier-requests/{numbers['ООО Б']}/document"
-    assert document["file_name"] == f"{numbers['ООО Б']} от 15.09.2026.html"
+    assert document["file_name"] == f"{numbers['ООО Б']} от 15.09.2026.pdf"
     assert document["folder"] == "Запросы поставщикам/2026/09 Сентябрь/ООО Б"
     assert body["orders"][0]["document"]["url"].endswith("/document")
     file = client.get(document["url"])
     assert file.status_code == 200
-    assert file.headers["content-type"].startswith("text/html")
-    assert file.headers["content-disposition"].startswith("inline; filename*=UTF-8''")
-    assert "Контактное лицо для доставки: Гусев Алексей, тел. +79259647705." in file.text
+    assert file.headers["content-type"] == "application/pdf"
+    assert file.headers["content-disposition"] == f"inline; filename*=UTF-8''{quote('Запрос ' + numbers['ООО Б'] + '.pdf')}"
+    assert file.content.startswith(b"%PDF")
+    assert "Контактное лицо для доставки: Гусев Алексей, тел. +79259647705." in _pdf_text(file.content).replace("\n", " ")
+    download = client.get(document["url"] + "?download=1")
+    assert download.headers["content-disposition"].startswith("attachment; filename*=UTF-8''")
+    assert download.content == file.content
     assert client.get("/api/procurement/supplier-requests/PO-404/document").status_code == 404
     mine = client.get("/api/procurement/mine").json()["lines"]
     assert {l["order_number"] for l in mine} == {"PO-001", "PO-002"}

@@ -300,7 +300,7 @@ it("does not offer generic approval or cancel on a backorder", async () => {
   expect(screen.queryByRole("menuitem", { name: "На согласование" })).not.toBeInTheDocument();
 });
 
-it("forms supplier requests: downloads each order's letter as a .txt, lists the skipped rows with the reason and groups the order", async () => {
+it("forms supplier requests: downloads each order's PDF, lists the skipped rows with the reason and groups the order", async () => {
   const ready: ProcurementLine = { ...line, status: "Готов к запросу", buyer: "Закупщик", supplier: "ООО А" };
   const noSupplier: ProcurementLine = { ...line, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", buyer: "Закупщик", status: "Готов к запросу", supplier: null };
   let formed = false;
@@ -333,38 +333,26 @@ it("forms supplier requests: downloads each order's letter as a .txt, lists the 
     }
     throw new Error(`Unexpected request: ${path}`);
   });
-  const blobs: Blob[] = [];
-  const downloads: string[] = [];
-  const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
-  URL.createObjectURL = vi.fn((blob: Blob) => { blobs.push(blob); return "blob:letter"; });
-  URL.revokeObjectURL = vi.fn();
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push(this.download); });
+  const downloads: { name: string; href: string }[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click(this: HTMLAnchorElement) { downloads.push({ name: this.download, href: this.getAttribute("href") ?? "" }); });
 
-  try {
-    render(<ProcurementPage />);
-    // «Готов к запросу» — в блоке «В работе»: «Сформировать запрос» по поставщику (отметка строк, если блок её просит).
-    const block = await screen.findByRole("region", { name: "В работе" });
-    await waitFor(() => expect(within(block).getByLabelText("Выбрать REQ-1")).toBeEnabled());
-    fireEvent.click(within(block).getByLabelText("Выбрать все"));
-    fireEvent.click(screen.getByRole("button", { name: "Сформировать запрос" }));
+  render(<ProcurementPage />);
+  // «Готов к запросу» — в блоке «В работе»: «Сформировать запрос» по поставщику (отметка строк, если блок её просит).
+  const block = await screen.findByRole("region", { name: "В работе" });
+  await waitFor(() => expect(within(block).getByLabelText("Выбрать REQ-1")).toBeEnabled());
+  fireEvent.click(within(block).getByLabelText("Выбрать все"));
+  fireEvent.click(screen.getByRole("button", { name: "Сформировать запрос" }));
 
-    expect(await screen.findByText("Сформировано запросов: 1; тексты запросов скачаны файлами; строк других закупщиков не тронуто: 2")).toBeInTheDocument();
-    expect(requestBody).toEqual({ line_ids: expect.arrayContaining([ready.id]) });
-    expect(downloads).toEqual(["Запрос PO-012 — ООО А.txt"]);
-    expect(blobs).toHaveLength(1);
-    const text = await new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blobs[0]); });
-    expect(text).toBe("ООО А · REQ# 05.10.2026 - MR#D-1 PO-012");
+  expect(await screen.findByText("Сформировано запросов: 1; PDF запросов скачаны файлами; строк других закупщиков не тронуто: 2")).toBeInTheDocument();
+  expect(requestBody).toEqual({ line_ids: expect.arrayContaining([ready.id]) });
+  expect(downloads).toEqual([{ name: "Запрос PO-012.pdf", href: "/api/procurement/supplier-requests/PO-012/document?download=1" }]);
 
-    const warning = await screen.findByText(/В запросы не попало строк: 1/);
-    expect(warning.closest(".warning-inline")).toHaveTextContent("REQ-2: поставщик не указан");
+  const warning = await screen.findByText(/В запросы не попало строк: 1/);
+  expect(warning.closest(".warning-inline")).toHaveTextContent("REQ-2: поставщик не указан");
 
-    // Сформированный заказ — группа «Жду счёт»: № и дата заказа, поставщик, итоги факта и расчёта.
-    const group = await screen.findByRole("rowgroup", { name: "PO-012 от 05.10 · ООО А" });
-    expect(within(group).getByText("1 поз. · факт 122,00 ₽ / расчёт 100,00 ₽")).toBeInTheDocument();
-  } finally {
-    URL.createObjectURL = original.create;
-    URL.revokeObjectURL = original.revoke;
-  }
+  // Сформированный заказ — группа «Жду счёт»: № и дата заказа, поставщик, итоги факта и расчёта.
+  const group = await screen.findByRole("rowgroup", { name: "PO-012 от 05.10 · ООО А" });
+  expect(within(group).getByText("1 поз. · факт 122,00 ₽ / расчёт 100,00 ₽")).toBeInTheDocument();
 });
 
 it("replaces the invoice of a paid line without touching its payment", async () => {
@@ -504,17 +492,15 @@ it("«Жду счёт»: the order menu opens «Внести КП» for that ord
   render(<ProcurementPage />);
   await screen.findByRole("region", { name: "Жду счёт" });
 
-  // Заказ без документа: пункты «Документ запроса» и «Печать запроса» закрыты.
+  // Заказ без документа: «Документ запроса» закрыт; «Печать запроса» нет — печатает просмотрщик PDF.
   await clickWhenEnabled("Действия заказа PO-002");
   expect(screen.getByRole("menuitem", { name: "Документ запроса" })).toBeDisabled();
-  expect(screen.getByRole("menuitem", { name: "Печать запроса" })).toBeDisabled();
+  expect(screen.queryByRole("menuitem", { name: "Печать запроса" })).not.toBeInTheDocument();
   fireEvent.mouseDown(document.body);
 
-  await pickOrderAction("PO-001", "Печать запроса");
-  expect([...document.querySelectorAll("iframe")].map((frame) => frame.getAttribute("src"))).toEqual([
-    "/api/procurement/supplier-requests/PO-001/document",
-  ]);
-  document.querySelectorAll("iframe").forEach((frame) => frame.remove());
+  const opened = vi.spyOn(window, "open").mockImplementation(() => null);
+  await pickOrderAction("PO-001", "Документ запроса");
+  expect(opened).toHaveBeenCalledWith("/api/procurement/supplier-requests/PO-001/document", "_blank", "noopener");
 
   await pickOrderAction("PO-003", "Внести КП");
   const form = await screen.findByRole("form", { name: "КП по заказу PO-003" });
@@ -1516,6 +1502,8 @@ it("saves the typed «Цена факт» of «Жду счёт» in one call and
   const save = stage.closest("section")!.querySelector(".stage-head")!.querySelector("button")!;
   expect(save).toBeDisabled();
   fireEvent.change(await screen.findByLabelText("Цена факт REQ-1"), { target: { value: "12,5" } });
+  // «Сумма факт» пересчитывается сразу: кол-во факт 2 × 12,5.
+  expect(screen.getByLabelText("Цена факт REQ-1").closest("tr")).toHaveTextContent("25,00");
   fireEvent.change(screen.getByLabelText("Цена факт REQ-2"), { target: { value: "7" } });
   fireEvent.click(within(stage.closest("section")!).getByRole("button", { name: "Сохранить всё (2)" }));
 

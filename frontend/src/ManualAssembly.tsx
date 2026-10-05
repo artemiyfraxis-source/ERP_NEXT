@@ -11,6 +11,7 @@ import {
   opMinutes,
   opTitle,
   removeOp,
+  setParallel,
   toggleComponent,
   updateOp,
   type LibraryCard,
@@ -65,7 +66,7 @@ export function ManualOpSummary({ op, position, partQty }: { op: ManualOp; posit
   return <div className="route-op-row manual-op-row">
     <span className="op-badge">{position}</span>
     <span className="op-title">{opTitle(op, position)}</span>
-    <small className="muted">{op.kind === "library" ? op.code : "своя операция"} · на изделие {op.qty.trim() || "1"} · норма на партию {normLabel(opMinutes(op, partQty))}</small>
+    <small className="muted">{op.kind === "library" ? op.code : "своя операция"}{op.parallel && position > 1 ? " · одновременно с предыдущей" : ""} · на изделие {op.qty.trim() || "1"} · норма на партию {normLabel(opMinutes(op, partQty))}</small>
   </div>;
 }
 
@@ -82,7 +83,8 @@ export function ManualOpCard({ op, position, count, partQty, components, onChang
   const field = (key: "qty" | "prepMin" | "opSec", label: string, unit: string, name: string, placeholder: string) =>
     <Field label={label}><UnitInput unit={unit} inputMode="decimal" aria-label={`${name}: ${title}`} value={op[key]} placeholder={placeholder}
       onChange={(event) => set({ [key]: event.target.value })} /></Field>;
-  return <div className="manual-op" aria-label={`Операция ${position}: ${title}`}>
+  const together = op.parallel && position > 1;
+  return <div className={together ? "manual-op together" : "manual-op"} aria-label={`Операция ${position}: ${title}`}>
     <div className="manual-op-head">
       <span className="op-badge">{position}</span>
       <div className="manual-op-name">
@@ -91,6 +93,10 @@ export function ManualOpCard({ op, position, count, partQty, components, onChang
         <small>{op.kind === "library" ? <>{op.code && <span className="op-code">{op.code}</span>} из библиотеки</> : "своя операция"}</small>
       </div>
       <div className="manual-op-tools">
+        {position > 1 && <label className={together ? "manual-together on" : "manual-together"} title="Идёт в то же время, что и предыдущая операция: своя ветка схемы, следующая операция соберёт обе">
+          <input type="checkbox" aria-label={`Одновременно с предыдущей: ${title}`} checked={together}
+            onChange={(event) => onChange((current) => setParallel(current, op.seq, event.target.checked))} /> Одновременно с предыдущей
+        </label>}
         <button type="button" className="secondary small" aria-label={`Выше: ${title}`} title="Выше" disabled={position === 1} onClick={() => onChange((current) => moveOp(current, op.seq, -1))}>↑</button>
         <button type="button" className="secondary small" aria-label={`Ниже: ${title}`} title="Ниже" disabled={position === count} onClick={() => onChange((current) => moveOp(current, op.seq, 1))}>↓</button>
         <button type="button" className="btn-remove" aria-label={`Удалить операцию ${position}: ${title}`} title="Удалить" onClick={() => onChange((current) => removeOp(current, op.seq))}>×</button>

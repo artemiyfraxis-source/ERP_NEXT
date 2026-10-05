@@ -1206,6 +1206,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .manual-op-name .op-code { margin-right: 6px; }
 .tcgen .manual-op-tools { display: flex; gap: 4px; align-items: center; }
 .tcgen .manual-op-tools .small { min-width: 30px; padding: 3px 8px; }
+/* «Одновременно с предыдущей»: операция идёт параллельно — карточка прижата к предыдущей и отмечена полосой слева. */
+.tcgen .manual-together { display: inline-flex; gap: 6px; align-items: center; margin-right: 8px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 12.5px; color: var(--muted-foreground); cursor: pointer; white-space: nowrap; }
+.tcgen .manual-together.on { border-color: var(--primary); color: var(--foreground); background: var(--accent); }
+.tcgen .manual-op.together { border-top-style: dashed; padding-left: 12px; box-shadow: inset 3px 0 0 var(--primary); }
 .tcgen .manual-grid { display: grid; grid-template-columns: 92px 112px 116px 112px minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; margin-left: 36px; align-items: end; }
 .tcgen .manual-grid .wide { grid-column: span 2; }
 .tcgen .manual-grid .result { grid-column: span 4; }

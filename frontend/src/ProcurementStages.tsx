@@ -213,7 +213,13 @@ export function nearestWorkingDay(from = new Date()): string {
 type GroupColumn = { key: string; title: string; numeric?: boolean; cell?: string; render: (line: ProcurementLine) => ReactNode };
 
 /** Правка «Цена факт» (с НДС) в ячейке: черновики по строкам, «Сохранить всё» — одним вызовом. */
-type PriceEdit = { valueOf: (line: ProcurementLine) => string; set: (line: ProcurementLine, value: string) => void; disabled: boolean };
+type PriceEdit = {
+  valueOf: (line: ProcurementLine) => string;
+  set: (line: ProcurementLine, value: string) => void;
+  /** «Сумма факт» строки: пока цена набрана, но не сохранена — кол-во факт × набранная цена. */
+  sumOf: (line: ProcurementLine) => string | null | undefined;
+  disabled: boolean;
+};
 
 /** Строки по заказам: заголовок группы (`tr.group-row`) с итогами и действиями, под ним строки заказа. */
 function OrderGroupTable({ label, groups, columns, headerActions, groupExtra, menu }: {
@@ -270,9 +276,8 @@ function OrderMenu({ group, disabled, items }: { group: OrderGroup; disabled: bo
   return <RowMenu label={`Действия заказа ${group.number || "без номера"}`} disabled={disabled} items={items} />;
 }
 
-const documentItems = (group: OrderGroup, onPrint: (url: string) => void): MenuItem[] => [
+const documentItems = (group: OrderGroup): MenuItem[] => [
   { label: "Документ запроса", disabled: !group.url, title: group.url ? undefined : "Документ запроса не сформирован", run: () => { if (group.url) window.open(group.url, "_blank", "noopener"); } },
-  { label: "Печать запроса", disabled: !group.url, run: () => { if (group.url) onPrint(group.url); } },
 ];
 
 function priceColumn(price: PriceEdit): GroupColumn {
@@ -296,6 +301,13 @@ function useFactPrices(lines: ProcurementLine[], onSave: (rows: FactPriceRow[]) 
   const price: PriceEdit = {
     valueOf: (line) => edits[line.id] ?? base(line),
     set: (line, value) => setEdits((current) => ({ ...current, [line.id]: value })),
+    sumOf: (line) => {
+      const typed = edits[line.id];
+      if (typed === undefined || typed.trim() === base(line)) return line.actual_sum;
+      const price = Number(typed.trim().replace(/\s/g, "").replace(",", "."));
+      const quantity = Number(line.actual_quantity ?? line.calculated_quantity);
+      return typed.trim() && Number.isFinite(price) && Number.isFinite(quantity) ? String(Math.round(price * quantity * 100) / 100) : null;
+    },
     disabled: disabled || saving,
   };
   async function saveAll() {
@@ -410,10 +422,9 @@ function useOpenGroup(groups: OrderGroup[]) {
   return { openKey, toggle: (key: string) => setOpenKey((current) => (current === key ? null : key)), close: () => setOpenKey(null) };
 }
 
-export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onOpenKp, onPrint, onSavePrices, onUploadInvoice, onSubmitInvoice }: StageProps & OrderInvoiceHandlers & {
+export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onOpenKp, onSavePrices, onUploadInvoice, onSubmitInvoice }: StageProps & OrderInvoiceHandlers & {
   /** «Внести КП» по заказу. */
   onOpenKp: (references: string[]) => void;
-  onPrint: (url: string) => void;
   onSavePrices: (rows: FactPriceRow[]) => Promise<string[] | void>;
 }) {
   const groups = useMemo(() => groupByOrder(lines), [lines]);
@@ -425,7 +436,7 @@ export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, editi
     { key: "name", title: "Наименование", render: (line) => line.calculated_name },
     { key: "qty", title: "Кол-во (факт)", render: qtyOf },
     priceColumn(prices.price),
-    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(line.actual_sum) },
+    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(prices.price.sumOf(line)) },
     { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
     { key: "expected", title: "Ожид. дата", render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> },
     {
@@ -450,7 +461,7 @@ export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, editi
             <>
               <button type="button" className="primary small" disabled={disabled || !group.number} aria-expanded={open.openKey === group.key} onClick={() => open.toggle(group.key)}>Вставить счёт</button>
               <OrderMenu group={group} disabled={disabled} items={[
-                ...documentItems(group, onPrint),
+                ...documentItems(group),
                 { label: "Внести КП", disabled: !group.number, run: () => onOpenKp([group.number]) },
               ]} />
             </>
@@ -515,8 +526,7 @@ function PaidOrderAction({ group, disabled, onPaidOrder }: {
   );
 }
 
-export function ToPayStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onPrint, onSavePrices, onUploadInvoice, onSubmitInvoice, onPaidOrder }: StageProps & OrderInvoiceHandlers & {
-  onPrint: (url: string) => void;
+export function ToPayStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onSavePrices, onUploadInvoice, onSubmitInvoice, onPaidOrder }: StageProps & OrderInvoiceHandlers & {
   onSavePrices: (rows: FactPriceRow[]) => Promise<string[] | void>;
   /** «Оплачено» по заказу; вернёт вопрос про курс, если ЦБ не ответил. */
   onPaidOrder: (group: OrderGroup, manualRate?: string) => Promise<ManualRatePrompt | null>;
@@ -530,7 +540,7 @@ export function ToPayStage({ lines, disabled, busyId, actionsOf, editing, bulk, 
     { key: "name", title: "Наименование", render: (line) => line.calculated_name },
     { key: "qty", title: "Кол-во (факт)", render: qtyOf },
     priceColumn(prices.price),
-    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(line.actual_sum) },
+    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(prices.price.sumOf(line)) },
     { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
     { key: "invoice", title: "Счёт", render: (line) => invoiceColumn.render!(line) },
     { key: "expected", title: "Ожид. дата", render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> },
@@ -553,7 +563,7 @@ export function ToPayStage({ lines, disabled, busyId, actionsOf, editing, bulk, 
             <>
               <PaidOrderAction group={group} disabled={disabled} onPaidOrder={onPaidOrder} />
               <OrderMenu group={group} disabled={disabled} items={[
-                ...documentItems(group, onPrint),
+                ...documentItems(group),
                 { label: "Заменить счёт", run: () => open.toggle(group.key) },
               ]} />
             </>
@@ -626,10 +636,9 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
 
 // ── Оплачено: в пути и карантин (стадии приёмки) ────────────────────────────────────────────────
 
-export function PaidStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onReconcile, onPrint }: StageProps & {
+export function PaidStage({ lines, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onReconcile }: StageProps & {
   /** «Сверить курс с ЦБ» для строк с курсом, введённым вручную. */
   onReconcile: (lines: ProcurementLine[]) => Promise<unknown>;
-  onPrint: (url: string) => void;
 }) {
   const groups = useMemo(() => groupByOrder(lines), [lines]);
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
@@ -670,7 +679,7 @@ export function PaidStage({ lines, disabled, busyId, actionsOf, editing, bulk, o
           groups={groups}
           columns={columns}
           menu={panel.menu}
-          headerActions={(group) => <OrderMenu group={group} disabled={disabled} items={documentItems(group, onPrint)} />}
+          headerActions={(group) => <OrderMenu group={group} disabled={disabled} items={documentItems(group)} />}
         />
       )}
       {panel.node}
