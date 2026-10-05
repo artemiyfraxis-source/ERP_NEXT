@@ -145,3 +145,58 @@ def test_jst_gh_xh_ph_zh_and_microfit_follow_the_maker_drawings():
 def test_series_without_a_checked_drawing_keep_the_warning():
     for article in ("51021-0400", "43645-0400", "43020-0400", "43640-0400", "22-55-2081", "DS1033-09F"):
         assert housing_of(article)["conf"] != "high", article
+
+
+def test_jst_ze_nsh_pni_rcy_follow_the_jst_drawings():
+    # eZE / eNSH / ePNI-WB: front view = lock face, wire end up, circuit 1 at the right -> wire side, lock up: 1 LEFT.
+    cases = {"ZER-04V-S": ("jst-ze", 1.5, "lever"), "NSHR-04V-S": ("jst-nsh", 1.0, "ramp"), "PNIRP-04V-S": ("jst-pni", 2.0, "lever")}
+    for article, (family, pitch, latch) in cases.items():
+        layout = housing_of(article)
+        assert (layout["family"], layout["pitch"], layout["latch"]) == (family, pitch, latch), article
+        assert layout["grid"] == [[1, 2, 3, 4]] and layout["conf"] == "high" and layout["src"].startswith("JST e"), article
+
+    width = lambda layout: (layout["cols"] - 1) * layout["pitch"] + layout["body"]["extra"]
+    assert width(housing_of("NSHR-04V-S")) == 6.0 and width(housing_of("NSHR-15V-S")) == 17.0
+    assert width(housing_of("NSHR-02V-S")) == 5.0  # the 3-circuit housing with the middle cavity plugged
+    assert round(width(housing_of("PNIRP-04V-S")), 2) == 9.7 and round(width(housing_of("PNIRP-10V-S")), 2) == 21.7
+
+    # eRCY: «1 2» moulded on the flat face; with it up, SYR has 1 on the right, SYP (its mate) on the left.
+    receptacle, plug = housing_of("SYR-02T"), housing_of("SYP-02T-1")
+    assert (receptacle["family"], receptacle["grid"], receptacle["latch"]) == ("jst-rcy", [[2, 1]], "mark")
+    assert (plug["family"], plug["grid"], plug["latch"]) == ("jst-rcy-p", [[1, 2]], "mark")
+    assert receptacle["conf"] == plug["conf"] == "high" and receptacle["pitch"] == plug["pitch"] == 2.5
+    assert receptacle["color"] == "#c8322d" and housing_of("SYR-02TV")["color"] == "#efe6cf"
+
+
+def test_rcy_split_keeps_the_warehouse_name():
+    from app.workflows.warehouse_article import infer_article_identity
+
+    assert infer_article_identity("SYR-02T").name == infer_article_identity("SYP-02T-1").name == "RCY 2pin (однорядный)"
+
+
+def test_connfly_ds1069_and_hirose_follow_the_maker_drawings():
+    # Connfly DS1069 «Circuit No.1 Mark» on the right end of the mating view = JST eXH: wire side, lock up, 1 LEFT.
+    ds1069 = housing_of("I-DS1069-SCW004")
+    assert ds1069["conf"] == "high" and ds1069["grid"] == housing_of("XHP-4")["grid"] == [[1, 2, 3, 4]]
+    assert ds1069["body"]["extra"] == housing_of("XHP-4")["body"]["extra"] and housing_of("I-DS1069-SCB004")["color"] == "#2b2b2b"
+
+    # DF13: ▽ and every-fifth marks on the front face, locks on the back -> wire side, locks up: 1 RIGHT.
+    df13 = housing_of("DF13-4S-1.25C")
+    assert (df13["grid"], df13["latch"], df13["pitch"], df13["conf"]) == ([[4, 3, 2, 1]], "ramp", 1.25, "high")
+    # DF14: «CONTACT NO.1» ▽ and the lock on the same front face -> wire side, lock up: 1 LEFT.
+    df14 = housing_of("DF14-4S-1.25C")
+    assert (df14["grid"], df14["latch"], df14["pitch"], df14["conf"]) == ([[1, 2, 3, 4]], "ramp", 1.25, "high")
+    # DF11: no latch; ▽ face up — odd contacts along the top row from the left, even ones under them.
+    df11 = housing_of("DF11-8DS-2C")
+    assert (df11["grid"], df11["latch"], df11["pitch"], df11["conf"]) == ([[1, 3, 5, 7], [2, 4, 6, 8]], "mark", 2.0, "high")
+    assert (df11["cols"] - 1) * df11["pitch"] + df11["body"]["extra"] == 10.0  # catalogue A for 8 contacts
+    for layout in (df13, df14, df11):
+        assert layout["src"].startswith("Hirose EDC")
+
+
+def test_series_whose_drawing_has_no_contact_one_say_so():
+    # CZHR, FI-X and Connfly DS1071 have no circuit-1 mark on any maker drawing reachable — the warning stays.
+    for article in ("CZHR-04V-S", "FI-X30HL", "I-DS1071-SCB02X5"):
+        layout = housing_of(article)
+        assert layout["conf"] == "low" and not layout["src"] and "чертеже" in layout["note"], article
+    assert housing_of("CZHR-04V-S")["grid"] == [[1, 2, 3, 4]]  # unchanged until checked on a part
