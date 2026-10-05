@@ -15,6 +15,8 @@ import {
   WRAP_SLOTS_,
   addEndpoint,
   applyGrapherGroups,
+  grapherHasCorrections,
+  grapherLengthText,
   coaxDiaFromRecords,
   coaxFromFields,
   coaxRecordFields,
@@ -316,7 +318,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         reader.readAsDataURL(file);
       });
       const data = await techcardsApi.importGrapher(file.name, dataUrl.split(",", 2)[1] || "",
-        wireOptions.map((c) => ({ id: c.id, article: c.art || "", name: c.name || "" })));
+        wireOptions.map((c) => ({ id: c.id, article: c.art || "", name: c.name || "" })),
+        components.map((c) => ({ id: c.id, type: c.type || "", name: c.name || "", article: c.art || "", kd: c.kd || "", qty: c.qty ?? null })));
       if (!data.harnesses.length) { setStatus({ text: "В проекте чертежа нет жгутов.", error: true }); return; }
       const index = data.harnesses.findIndex((h) => h.designation.trim().toLowerCase() === card.item_index.trim().toLowerCase());
       setGrapher({ data, pick: index >= 0 ? index : 0 });
@@ -334,9 +337,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       compId: group.component_id && components.some((c) => c.id === group.component_id) ? group.component_id : "",
       qty: group.quantity, length: Number(group.length_mm) || 0, cores: group.cores,
       jacket: group.jacket_mm == null ? "" : String(group.jacket_mm),
+      cut: group.cut_mm == null ? null : Number(group.cut_mm),
+      correctionFrom: Number(group.correction_from_mm) || 0, correctionTo: Number(group.correction_to_mm) || 0,
     }));
     update((current) => applyGrapherGroups(current, groups));
-    setStatus({ text: `Кабели из ${harness.designation || "чертежа"} подставлены в «Кабели»`, error: false });
+    setStatus({ text: `Кабели из ${harness.designation || "чертежа"} подставлены в «Кабели»${grapherHasCorrections(groups) ? " — по длине реза с поправками чертежа" : ""}`, error: false });
   }
 
   async function saveTer(ep: Endpoint) {
@@ -811,7 +816,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {grapher && (() => {
       const h = grapher.data.harnesses[grapher.pick];
       const our = gen.getLengthAdjustment_();
-      const sg = (x: string | number) => (Number(x) >= 0 ? "+" : "") + x;
+      const byCut = grapherHasCorrections(h.groups.map((g) => ({ correctionFrom: Number(g.correction_from_mm), correctionTo: Number(g.correction_to_mm) })));
       return <section className="gsec full grapher-box" aria-label="Чертёж">
         <div className="gsec-head"><h3>Чертёж {grapher.data.project.designation || grapher.data.project.name}</h3>
           {grapher.data.harnesses.length > 1 ? <select aria-label="Жгут чертежа" value={grapher.pick} onChange={(event) => setGrapher({ ...grapher, pick: Number(event.target.value) })}>
@@ -819,15 +824,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             : <span className="gsec-meta">жгут {h.designation} × {h.quantity}</span>}
           <button className="primary small" onClick={grapherApply}>Подставить в «Кабели»</button>
           <button className="btn-link" onClick={() => setGrapher(null)}>скрыть</button></div>
-        <div className="gtable-wrap"><table className="gtable"><thead><tr><th>Материал в чертеже</th><th>Позиция набора</th><th className="num">Шт</th><th className="num">По чертежу, мм</th><th>Поправки</th><th className="num">Рез в чертеже</th><th>Концы</th></tr></thead><tbody>
+        <div className="gtable-wrap"><table className="gtable"><thead><tr><th>Материал в чертеже</th><th>Позиция набора</th><th className="num">Шт</th><th>Длина</th><th>Концы</th></tr></thead><tbody>
           {h.groups.map((g, i) => <tr key={i}><td>{g.material || "—"}{g.cores > 1 ? ` · ${g.cores} жил${g.jacket_mm != null ? ", разделка " + g.jacket_mm : ""}` : ""}</td>
             <td>{g.component_id && gen.getCompById(g.component_id) ? compLabel(g.component_id) : <span className="tone-danger">не найдено — выбери</span>}</td>
-            <td className="num">{g.quantity}</td><td className="num">{g.length_mm == null ? <span className="tone-danger">нет</span> : g.length_mm}</td>
-            <td>{Number(g.correction_from_mm) || Number(g.correction_to_mm) ? `${sg(g.correction_from_mm)} / ${sg(g.correction_to_mm)}` : "—"}{g.mixed_corrections ? " (разные)" : ""}</td>
-            <td className="num">{g.cut_mm == null ? "—" : g.cut_mm}</td><td className="muted">{g.ends.join("; ")}{g.quantity > g.ends.length ? " …" : ""}</td></tr>)}
+            <td className="num">{g.quantity}</td>
+            <td>{g.length_mm == null ? <span className="tone-danger">нет длины</span> : grapherLengthText(g)}{g.mixed_corrections ? " (поправки разные)" : ""}</td>
+            <td className="muted">{g.ends.join("; ")}{g.quantity > g.ends.length ? " …" : ""}</td></tr>)}
         </tbody></table></div>
-        <small className="muted">Припуск у нас: {our.parts.length ? `${our.parts.join(", ")} = ${our.total} мм` : "концы ещё не выбраны"} — длина реза считается по нему. Разъёмы: {h.connectors.map((c) => `${c.designation} ${c.part_number}${c.terminals.length ? ` (терм. ${c.terminals.join(", ")})` : ""}`).join("; ") || "нет"}{h.pairs ? `. Свитых пар в чертеже: ${h.pairs} — включи свивку ниже.` : "."}</small>
-        {h.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}
+        <small className="muted">{byCut ? "Режем по длине реза чертежа (с поправками концов) — припуск L+/L− из БД.ТЕР не добавляется."
+          : <>Припуск у нас: {our.parts.length ? `${our.parts.join(", ")} = ${our.total} мм` : "концы ещё не выбраны"} — длина реза считается по нему.</>} Разъёмы: {h.connectors.map((c) => `${c.designation} ${c.part_number}${c.terminals.length ? ` (терм. ${c.terminals.join(", ")})` : ""}`).join("; ") || "нет"}{h.pairs ? `. Свитых пар в чертеже: ${h.pairs} — включи свивку ниже.` : "."}</small>
+        {[...h.warnings, ...(h.sheet_warnings ?? [])].map((item) => <div className="warning-inline" key={item}>{item}</div>)}
       </section>;
     })()}
     {sideSection("A")}

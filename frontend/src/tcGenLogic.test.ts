@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { initState, makeGen, parsePinList_, updateEndpoint, type GenData } from "./tcGenLogic";
+import { applyGrapherGroups, grapherLengthText, initState, makeGen, parsePinList_, updateEndpoint, type GenData } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -44,6 +44,24 @@ it("builds the interboard config the /build endpoint reads (TcGenInline buildCon
   expect(cfg.ops[0]).toMatchObject({ opNum: "CUT_WIRE_auto", tOp: "12", tPrep: "60", tMachine: "3" });
   expect(cfg.ops[1]).toMatchObject({ firstTerm: true, ep: { connArt: "XHP-2", termArt: "SXH-001T-P0.6" }, wireSources: [""] });
   expect(cfg.ops[3].wireSources).toEqual(["Колодка XH 2"]);
+});
+
+it("a drawing with end allowances is cut by the drawing's cut length — our L+ is not added twice (owner 06.10)", () => {
+  const D = data(interboard);
+  const S = initState(D);
+  // TECHMAP-GRAPHER: 300 по чертежу + поправки +8/+4 → резка 312 (вверх до шага один раз) — как cut_mm экспорта.
+  const byCut = applyGrapherGroups(S, [{ compId: "w", qty: 2, length: 300, cut: 312, correctionFrom: 8, correctionTo: 4 }]);
+  expect(byCut.measureMode).toBe("cut");
+  expect((makeGen(D, byCut).buildConfig() as Record<string, any>).wires[0].length).toBe(312);
+  // Без поправок в чертеже — как раньше: длина по чертежу + наш L+ обеих сторон из БД.ТЕР.
+  const plain = applyGrapherGroups(S, [{ compId: "w", qty: 2, length: 300, cut: 300 }]);
+  expect(plain.measureMode).toBe("inner");
+  expect((makeGen(D, plain).buildConfig() as Record<string, any>).wires[0].length).toBe(310);
+  expect(grapherLengthText({ length_mm: 300, cut_mm: 312, correction_from_mm: 8, correction_to_mm: 4 }))
+    .toBe("по чертежу 300 мм · резка 312 мм (+8/+4)");
+  expect(grapherLengthText({ length_mm: "150.2", cut_mm: 149, correction_from_mm: "0.4", correction_to_mm: -2 }))
+    .toBe("по чертежу 150,2 мм · резка 149 мм (+0,4/−2)");
+  expect(grapherLengthText({ length_mm: 90, cut_mm: 90, correction_from_mm: 0, correction_to_mm: 0 })).toBe("по чертежу 90 мм");
 });
 
 it("pairs the wire ends by the order of both pin lists: А «1-2», В «2, 1» is a crossover", () => {
