@@ -20,7 +20,7 @@ const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "purpose", title: "Назначение", value: (line) => line.purpose, filter: true, wrap: true, width: 140 },
   { key: "ordered", title: "Заказано", value: (line) => line.ordered_quantity, numeric: true, render: (line) => `${line.ordered_quantity} ${line.unit}` },
   { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <span className="status">{line.status}</span> },
-  { key: "document", title: "УПД", value: (line) => [line.document_number, formatDate(line.document_date)].filter(Boolean).join(" от "), wrap: true, width: 100 },
+  { key: "document", title: "УПД", value: (line) => [line.document_number, formatDate(line.document_date)].filter(Boolean).join(" от ") || (line.shipping_document_note ? "ждём по ЭДО" : ""), wrap: true, width: 100 },
   { key: "grn", title: "ГРН", value: (line) => line.grn ? `${line.grn}${line.package ? ` / ${line.package}` : ""}` : "" },
   { key: "location", title: "Место", value: (line) => line.storage_location ?? "", hidden: true },
   { key: "warehouse", title: "Склад", value: (line) => line.warehouse, filter: true, hidden: true },
@@ -105,6 +105,9 @@ const PRESETS: DataPreset<ReceivingLine>[] = [
   { label: "Возврат", test: (line) => line.status === "Возврат" },
   { label: "Архив ВК", test: (line) => line.status === "Архив ВК" },
 ];
+
+/** «Внести УПД»: all but «Архив ВК» and «Возврат» — УПД по ЭДО приходит и после приёмки. */
+const UPD_STATUSES = new Set(["В пути", "Ожидание", "Карантин", "Принято"]);
 
 const GROUPS: Record<string, ((line: ReceivingLine) => string) | undefined> = {
   "": undefined,
@@ -325,7 +328,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
           ...(readOnly ? [] : [{
             label: "Внести УПД",
             run: async (rows: ReceivingLine[]) => { setNotice(""); setUpdRows(rows); },
-            disabled: (rows: ReceivingLine[]) => rows.some((line) => line.status !== "В пути" && line.status !== "Ожидание"),
+            disabled: (rows: ReceivingLine[]) => rows.some((line) => !UPD_STATUSES.has(line.status)),
           }]),
           { label: "Скопировать ГРН", run: copyGrns, hidden: (rows) => !rows.some((line) => line.grn) },
         ]}
@@ -464,12 +467,13 @@ function ReceivingCard({
       </div>
       {line.nonconformities.length > 0 && <p className="nonconformity">{line.nonconformities.join(" · ")}</p>}
       {line.nonconformity_description && <p className="nonconformity">{line.nonconformity_description}</p>}
+      {line.shipping_document_note && <p className="hint">{line.shipping_document_note}</p>}
       {(line.document_number || line.inspection_note) && <p className="hint">{[line.document_number && `УПД ${line.document_number}${line.document_date ? ` от ${line.document_date}` : ""}`, line.inspection_note].filter(Boolean).join(" · ")}</p>}
       {Number(line.backorder_quantity) > 0 && <p className="nonconformity">Недовоз {line.backorder_quantity} {line.unit} — оплаченный остаток ушёл в закупку дозавозом</p>}
       {inspectable && (
         <form onSubmit={submitInspection}>
           <div className="facts-grid">
-            <DocumentField lineId={line.id} kind="upd" label="Документ УПД/М-15" value={shippingDocument} disabled={disabled} hint="Приложите скан первым делом. Без УПД позиция уйдёт в «Ожидание» с несоответствием документов." onChange={setShippingDocument} />
+            <DocumentField lineId={line.id} kind="upd" label="Документ УПД/М-15" value={shippingDocument} disabled={disabled} hint="УПД по ЭДО можно внести позже — «Внести УПД» в списке." onChange={setShippingDocument} />
             <label>№ УПД/М-15<input value={documentNumber} onChange={(event) => setDocumentNumber(event.target.value)} /></label>
             <label>Дата УПД/М-15<input type="date" required={historical} value={documentDate} onChange={(event) => setDocumentDate(event.target.value)} /></label>
             <label className="wide">Наименование по УПД<input value={documentName} onChange={(event) => setDocumentName(event.target.value)} /></label>

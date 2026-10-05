@@ -306,7 +306,7 @@ def _revise(uow, line, now):
 def test_new_vk_archives_line_opens_revision_and_audits_both_atomically():
     uow = Uow()
     line = consume_receiving_expected(message(), uow)
-    waiting = _inspect(uow, line, datetime(2026, 9, 21, 11, 0), shipping_document_url=None)
+    waiting = _inspect(uow, line, datetime(2026, 9, 21, 11, 0), fact_quantity=Decimal("9"))
     assert waiting.status is ReceivingStatus.WAITING
 
     archived, revision = _revise(uow, waiting, datetime(2026, 9, 22, 9, 0))
@@ -350,7 +350,7 @@ def test_putaway_sheet_lists_only_accepted_lines_without_a_place():
                 payload={**message().payload, "legacy_id": "SM-20260921-02"}),
         uow,
     )
-    _inspect(uow, waiting_line, datetime(2026, 9, 21, 11, 0), shipping_document_url=None)  # -> «Ожидание»
+    _inspect(uow, waiting_line, datetime(2026, 9, 21, 11, 0), fact_quantity=Decimal("9"))  # -> «Ожидание»
 
     already_placed = consume_receiving_expected(
         replace(message(), id=UUID("10000000-0000-0000-0000-000000000003"),
@@ -422,13 +422,28 @@ def _notifications(uow):
     return [item for item in uow.outbox.items if item.topic == "notification.requested"]
 
 
+def test_missing_upd_accepts_the_line_without_any_alert():
+    # Owner 05.10.2026: УПД comes later by ЭДО — «Принято» with a ГРН, a note only, nobody is notified.
+    uow = Uow()
+    line = consume_receiving_expected(message(), uow)
+
+    inspected = _inspect(uow, line, datetime(2026, 9, 21, 11, 0), shipping_document_url=None)
+
+    assert inspected.status is ReceivingStatus.ACCEPTED
+    assert inspected.grn
+    assert inspected.nonconformities == ()
+    assert inspected.shipping_document_pending is True
+    assert _notifications(uow) == []
+    assert quarantine_overdue_waiting(datetime(2026, 9, 30, 6, 0), uow) == []
+
+
 @pytest.mark.parametrize(
     ("change", "audiences"),
     [
         # Receiving.gs:771-788 via quarNotifyTargets_: брак → технолог (аудитория «Технолог»: суперадмин и админ)…
         ({"manual_nonconformities": ("Механическое повреждение / брак",)}, "technologist"),
         # …anything else → снабжение (редактируют «Лист закупки»).
-        ({"shipping_document_url": None}, "supply"),
+        ({"fact_quantity": Decimal("9")}, "supply"),
         ({"fact_quantity": Decimal("8"), "document_quantity": Decimal("8")}, "supply"),
     ],
 )
