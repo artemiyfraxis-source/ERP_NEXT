@@ -86,6 +86,17 @@ function tsvToGrid(text: string): string[][] {
     .map((line) => line.split("\t"));
 }
 
+/* A split request carries the joined statuses of its procurement lines («Готово / В пути»). */
+function stageParts(stage: string | null | undefined): string[] {
+  return String(stage ?? "").split(" / ").map((part) => part.trim()).filter(Boolean);
+}
+
+/* Closed = every procurement line is «Готово» or «Отменено». */
+function stageClosed(stage: string | null | undefined): boolean {
+  const parts = stageParts(stage);
+  return parts.length > 0 && parts.every((part) => part === "Готово" || part === "Отменено");
+}
+
 /* NAV-1: «Оформить заявку» (view="create": the form only) and «Мои заявки» (view="mine": own rows) are separate
    sections, as in SUPPLYMAP; without view it is «Заявки»: form plus every row.
    RQ-MINE: «mine» is loaded server-side by the caller's own actor id (`/api/requests/mine`, paginated), not a
@@ -782,7 +793,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               {...serverSearch}
               presets={[
                 { label: "Ждут переноса", test: (row) => row.status === "Новый" },
-                { label: "В работе", test: (row) => row.status === "В работе" },
+                { label: "В работе", test: (row) => row.status === "В работе" && !stageClosed(row.stage) },
+                { label: "Ждут счет", test: (row) => stageParts(row.stage).includes("Жду счет") },
+                { label: "Ждут оплаты", test: (row) => stageParts(row.stage).includes("В оплату") },
+                { label: "Выполнено", test: (row) => stageClosed(row.stage) && stageParts(row.stage).includes("Готово") },
+                { label: "Отменено", test: (row) => stageClosed(row.stage) && !stageParts(row.stage).includes("Готово") },
               ]}
               defaultPreset="Ждут переноса"
               bulkActions={canHandoff ? [{
