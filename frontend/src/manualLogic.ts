@@ -50,7 +50,29 @@ export type ManualOp = {
   /** Типовая операция генератора (есть `type`): её поля как пришли с сервера (провода, длины, зачистка, терминал, коакс…) —
       на экране только строкой, в конфиг уходят как есть; правятся норма, блок и место. */
   gen?: Record<string, unknown>;
+  /** Откуда операция в КД: устойчивый ключ `harness:<объект>:<код операции>` (kdKey). Нет — операция мастера. */
+  origin?: string;
+  /** Поля, которые мастер правил у операции из КД: при пересчёте по КД они не трогаются (мастер главнее). */
+  edited?: KdField[];
+  /** Значение из КД (JSON) у правленного мастером поля — с чем сравнивать, когда КД поменяется. */
+  kdBase?: Partial<Record<KdField, string>>;
+  /** Что поменялось в КД при последнем пересчёте: «в КД было X → стало Y» по полю. */
+  kdChanges?: KdChange[];
+  /** Ключа операции больше нет в КД — операция не удаляется, только помечается «нет в КД». */
+  kdGone?: boolean;
 };
+
+/** Поля операции, которые приходят из КД и сверяются при пересчёте. */
+export const KD_FIELDS = ["label", "qty", "prepMin", "opSec", "params", "note", "result", "steps", "controls", "tooling", "components", "gen"] as const;
+export type KdField = (typeof KD_FIELDS)[number];
+export const KD_FIELD_NAMES: Record<KdField, string> = {
+  label: "Название", qty: "На изделие", prepMin: "Подготовка, мин", opSec: "Операция, с/шт", params: "Параметры", note: "Примечание",
+  result: "Результат", steps: "Ход операции", controls: "Контроль", tooling: "Оснастка", components: "Комплектующие", gen: "Параметры",
+};
+export type KdChange = { field: KdField; was: string; now: string };
+
+/** Ключ операции в КД: объект документа жгута и код операции — по нему пересчёт находит «ту же» операцию. */
+export const kdKey = (objectId: string, opCode: string) => `harness:${objectId}:${opCode}`;
 
 const SIDES: Record<string, string> = { A: "А", B: "В", "А": "А", "В": "В" };
 
@@ -103,14 +125,24 @@ export function libraryOp(seq: number, card: LibraryCard, opRecs: OpRec[]): Manu
   };
 }
 
-/** Блок схемы ручной сборки: свои операции (по seq, в порядке внутри блока). Итоговый — изделие, он один. */
-export type ManualBlock = { key: string; name: string; final: boolean; ops: number[] };
+/** Вид блока схемы (как у Route V2 Васи): полуфабрикат, сборка (в неё входят другие блоки), итог — изделие. */
+export type BlockKind = "semiFinished" | "assembly" | "final";
+export const BLOCK_KIND_NAMES: Record<BlockKind, string> = { semiFinished: "Полуфабрикат", assembly: "Сборка", final: "Итог — изделие" };
+
+/** Блок схемы ручной сборки: свои операции (по seq, в порядке внутри блока). Итоговый — изделие, он один.
+    Необязательное (старые конфиги без него): вид, если мастер его задал; штук в блоке; объекты КД; «проверено мастером». */
+export type ManualBlock = {
+  key: string; name: string; final: boolean; ops: number[];
+  kind?: Exclude<BlockKind, "final">; quantity?: number; refs?: string[]; checked?: boolean;
+};
 
 /** Операции (по seq, порядок массива не важен — номера даёт схема), блоки в порядке создания, стрелки и выбранный блок. */
 export type ManualState = {
   ops: ManualOp[]; nextSeq: number; blocks: ManualBlock[]; edges: RouteEdge[]; selected: string;
   /** Данные сборки, нужные операциям генератора (провода, свивка, лужение, зачистка, соединения, коакс…) — как пришли. */
   extra?: Record<string, unknown>;
+  /** Ключи КД операций, которые мастер удалил: пересчёт по КД их не возвращает. */
+  kdDropped?: string[];
 };
 
 const FINAL_KEY = "b1";
@@ -286,11 +318,48 @@ export function removeBlock(state: ManualState, key: string): ManualState {
   }));
   const dropped = new Set(gone.ops);
   const selected = state.selected === key ? outs[0]?.to ?? state.blocks.find((block) => block.final)!.key : state.selected;
-  return { ...state, ops: state.ops.filter((op) => !dropped.has(op.seq)), blocks: state.blocks.filter((block) => block.key !== key), edges, selected };
+  return withDropped(
+    { ...state, ops: state.ops.filter((op) => !dropped.has(op.seq)), blocks: state.blocks.filter((block) => block.key !== key), edges, selected },
+    state.ops.filter((op) => dropped.has(op.seq)),
+  );
+}
+
+/** Удалённые мастером операции из КД запоминаются, чтобы пересчёт по КД не вернул их. */
+function withDropped(state: ManualState, removed: ManualOp[]): ManualState {
+  const keys = removed.map((op) => op.origin).filter((origin): origin is string => !!origin);
+  if (!keys.length) return state;
+  return { ...state, kdDropped: [...new Set([...(state.kdDropped ?? []), ...keys])] };
 }
 
 export function renameBlock(state: ManualState, key: string, name: string): ManualState {
   return { ...state, blocks: state.blocks.map((block) => (block.key === key ? { ...block, name } : block)) };
+}
+
+/** Вид блока: итоговый — «итог»; заданный мастером; иначе по схеме — есть входы → сборка, нет → полуфабрикат. */
+export function blockKind(state: Pick<ManualState, "blocks" | "edges">, key: string): BlockKind {
+  const block = state.blocks.find((item) => item.key === key);
+  if (!block || block.final) return "final";
+  return block.kind ?? (state.edges.some((edge) => edge.to === key) ? "assembly" : "semiFinished");
+}
+
+function patchBlock(state: ManualState, key: string, patch: (block: ManualBlock) => ManualBlock): ManualState {
+  return { ...state, blocks: state.blocks.map((block) => (block.key === key ? patch(block) : block)) };
+}
+
+/** Задать вид блока (итоговый не меняется — он всегда изделие). */
+export function setBlockKind(state: ManualState, key: string, kind: Exclude<BlockKind, "final">): ManualState {
+  return patchBlock(state, key, (block) => (block.final ? block : { ...block, kind }));
+}
+
+/** Штук в блоке (больше нуля); 1 не хранится. */
+export function setBlockQuantity(state: ManualState, key: string, quantity: number): ManualState {
+  if (!(quantity > 0) || !Number.isFinite(quantity)) return state;
+  return patchBlock(state, key, ({ quantity: _old, ...block }) => (quantity === 1 ? block : { ...block, quantity }));
+}
+
+/** «Проверено мастером» — отметка на блоке. */
+export function setBlockChecked(state: ManualState, key: string, checked: boolean): ManualState {
+  return patchBlock(state, key, ({ checked: _old, ...block }) => (checked ? { ...block, checked: true } : block));
 }
 
 /** Блоки, которые можно сделать входом `key`: не итоговые, ещё не входы и не идущие после него. */
@@ -343,15 +412,33 @@ export function addCustomOp(state: ManualState, blockKey = state.selected): Manu
   return withOp(state, blank(state.nextSeq), blockKey);
 }
 
+/** Значение поля КД для сравнения (JSON: строки, комплектующие, поля генератора — одинаково). */
+function kdRaw(op: Pick<ManualOp, KdField>, field: KdField): string {
+  return JSON.stringify(op[field] ?? null);
+}
+
+/** Правка операции. У операции из КД поля, которые мастер поменял, отмечаются в `edited` (и запоминается их значение
+    из КД), чтобы пересчёт по КД их больше не трогал. */
 export function updateOp(state: ManualState, seq: number, patch: Partial<ManualOp>): ManualState {
-  return { ...state, ops: state.ops.map((op) => (op.seq === seq ? { ...op, ...patch } : op)) };
+  return { ...state, ops: state.ops.map((op) => (op.seq === seq ? markEdited(op, patch) : op)) };
+}
+
+function markEdited(op: ManualOp, patch: Partial<ManualOp>): ManualOp {
+  const next = { ...op, ...patch };
+  if (!op.origin) return next;
+  const was = op.edited ?? [];
+  const changed = KD_FIELDS.filter((field) => field in patch && !was.includes(field) && kdRaw(op, field) !== kdRaw(next, field));
+  if (!changed.length) return next;
+  const kdBase = { ...op.kdBase };
+  changed.forEach((field) => { kdBase[field] ??= kdRaw(op, field); });
+  return { ...next, edited: [...was, ...changed], kdBase };
 }
 
 export function removeOp(state: ManualState, seq: number): ManualState {
-  return {
+  return withDropped({
     ...state, ops: state.ops.filter((op) => op.seq !== seq),
     blocks: state.blocks.map((block) => ({ ...block, ops: block.ops.filter((item) => item !== seq) })),
-  };
+  }, state.ops.filter((op) => op.seq === seq));
 }
 
 /** Сдвинуть операцию внутри её блока на `delta` мест (−1 — выше). */
@@ -368,6 +455,124 @@ export function moveOp(state: ManualState, seq: number, delta: number): ManualSt
       return { ...block, ops };
     }),
   };
+}
+
+/** Значение поля КД словами для подсказки «было → стало»: строки как есть (до 60 знаков), комплектующие списком. */
+export function kdText(field: KdField, raw: string | undefined): string {
+  let value: unknown = null;
+  try { value = raw == null ? null : JSON.parse(raw); } catch { value = raw; }
+  let shown = "";
+  if (field === "components") shown = list(value).map((comp) => [str(comp.art || comp.name), str(comp.qty), str(comp.unit)].filter(Boolean).join(" ")).join(", ");
+  else if (field === "gen") shown = value && typeof value === "object" ? genParams(value as Record<string, unknown>) || "заданы" : "";
+  else shown = str(value).split("\n").map((line) => line.trim()).filter(Boolean).join(" / ");
+  if (!shown) return "пусто";
+  return shown.length > 60 ? `${shown.slice(0, 59)}…` : shown;
+}
+
+/** «Название: в КД было «Резка» → стало «Резка с зачисткой»» — подсказка на операции. */
+export function kdChangeText(change: KdChange): string {
+  return `${KD_FIELD_NAMES[change.field]}: в КД было «${change.was}» → стало «${change.now}»`;
+}
+
+export const NEW_FROM_KD = "Новое из КД";
+
+/** Операция из КД с полями КД `kd`: поля, которые мастер не правил, берутся из КД; правленные остаются его, только
+    запоминается новое значение КД. Что поменялось — в `kdChanges` (по полю, последнее изменение). Ничего — та же операция. */
+function refreshOp(op: ManualOp, kd: ManualOp): ManualOp {
+  const edited = op.edited ?? [];
+  const changes: KdChange[] = [];
+  const next: ManualOp = { ...op, kind: kd.kind, templateId: kd.templateId, code: kd.code, side: kd.side };
+  const kdBase = { ...op.kdBase };
+  for (const field of KD_FIELDS) {
+    const now = kdRaw(kd, field);
+    if (edited.includes(field)) {
+      const base = kdBase[field];
+      if (base !== undefined && base !== now) changes.push({ field, was: kdText(field, base), now: kdText(field, now) });
+      kdBase[field] = now;
+      continue;
+    }
+    const current = kdRaw(op, field);
+    if (current === now) continue;
+    changes.push({ field, was: kdText(field, current), now: kdText(field, now) });
+    if (kd[field] === undefined) delete next[field];
+    else (next as Record<KdField, unknown>)[field] = structuredClone(kd[field]);
+  }
+  const sameMeta = next.kind === op.kind && next.templateId === op.templateId && next.code === op.code && next.side === op.side;
+  if (!changes.length && !op.kdGone && sameMeta && JSON.stringify(kdBase) === JSON.stringify(op.kdBase ?? {})) return op;
+  delete next.kdGone;
+  if (edited.length) next.kdBase = kdBase;
+  if (changes.length) {
+    const fields = new Set(changes.map((change) => change.field));
+    next.kdChanges = [...(op.kdChanges ?? []).filter((change) => !fields.has(change.field)), ...changes];
+  }
+  return next;
+}
+
+/** Куда в блоке встаёт новая операция из КД: после ближайшей предыдущей по КД, иначе перед ближайшей следующей, иначе в конец. */
+function insertAt(blockOps: number[], siblings: Array<string | undefined>, at: number, originOf: Map<number, string | undefined>, seq: number): number[] {
+  const index = (origin: string | undefined) => (origin ? blockOps.findIndex((item) => originOf.get(item) === origin) : -1);
+  for (let back = at - 1; back >= 0; back -= 1) {
+    const found = index(siblings[back]);
+    if (found >= 0) return [...blockOps.slice(0, found + 1), seq, ...blockOps.slice(found + 1)];
+  }
+  for (let ahead = at + 1; ahead < siblings.length; ahead += 1) {
+    const found = index(siblings[ahead]);
+    if (found >= 0) return [...blockOps.slice(0, found), seq, ...blockOps.slice(found)];
+  }
+  return [...blockOps, seq];
+}
+
+/**
+ * Пересчёт схемы мастера по новой схеме из КД (`derived`) — правило слияния:
+ * 1) нового ключа КД ещё нет — операция добавляется в блок, который предлагает КД (тот же ключ блока; итог — в итог); если
+ *    мастер этот блок убрал или переделал — в блок «Новое из КД» (создаётся входом итога); удалённые мастером не возвращаются;
+ * 2) ключ есть — поля КД обновляются, кроме правленных мастером (мастер главнее); что поменялось — подсказка «было → стало»;
+ * 3) блоки мастера, их порядок, операции в них и стрелки не трогаются (только добавляются новые);
+ * 4) ключа больше нет в КД — операция остаётся с отметкой «нет в КД»;
+ * 5) операции без ключа КД (свои у мастера) не трогаются.
+ */
+export function rederive(manual: ManualState, derived: ManualState): ManualState {
+  const fresh = new Map<string, ManualOp>();
+  derived.ops.forEach((op) => { if (op.origin && !fresh.has(op.origin)) fresh.set(op.origin, op); });
+  let state: ManualState = {
+    ...manual,
+    ops: manual.ops.map((op) => {
+      if (!op.origin) return op;
+      const kd = fresh.get(op.origin);
+      if (!kd) return op.kdGone ? op : { ...op, kdGone: true };
+      return refreshOp(op, kd);
+    }),
+  };
+  const known = new Set(manual.ops.map((op) => op.origin).filter(Boolean));
+  const dropped = new Set(manual.kdDropped ?? []);
+  const ownerOf = new Map(derived.blocks.flatMap((block) => block.ops.map((seq) => [seq, block] as const)));
+  const derivedOrigin = new Map(derived.ops.map((op) => [op.seq, op.origin]));
+  for (const kdOp of orderedOps(derived)) {
+    const origin = kdOp.origin;
+    if (!origin || known.has(origin) || dropped.has(origin)) continue;
+    known.add(origin);
+    const from = ownerOf.get(kdOp.seq);
+    const finalKey = state.blocks.find((block) => block.final)!.key;
+    let target = from?.final ? finalKey : state.blocks.find((block) => from && block.key === from.key && !block.final)?.key;
+    if (!target) {
+      let spare = state.blocks.find((block) => !block.final && block.name === NEW_FROM_KD);
+      if (!spare) {
+        spare = { key: freeKey(state.blocks), name: NEW_FROM_KD, final: false, ops: [] };
+        state = { ...state, blocks: [...state.blocks, spare], edges: [...state.edges, { from: spare.key, to: finalKey, per_unit: 1 }] };
+      }
+      target = spare.key;
+    }
+    const seq = state.nextSeq;
+    const { edited: _e, kdBase: _b, kdChanges: _c, kdGone: _g, ...clean } = structuredClone(kdOp);
+    const originOf = new Map(state.ops.map((op) => [op.seq, op.origin]));
+    const siblings = (from?.ops ?? []).map((item) => derivedOrigin.get(item));
+    const place = (from?.ops ?? []).indexOf(kdOp.seq);
+    state = {
+      ...state, ops: [...state.ops, { ...clean, seq }], nextSeq: seq + 1,
+      blocks: state.blocks.map((block) => (block.key === target ? { ...block, ops: insertAt(block.ops, siblings, place, originOf, seq) } : block)),
+    };
+  }
+  return state;
 }
 
 /** Состав КБ на операции: отметить строку — со своим количеством из состава, снять — убрать. */
@@ -470,11 +675,11 @@ export function manualConfig(state: ManualState, base: Record<string, unknown>):
     };
     // Операция генератора: свои поля как есть, правятся номер, название и норма; «на изделие» у неё нет.
     if (op.gen) {
-      return { ...op.gen, seq: op.seq, label: op.label.trim() || opTitle(op, index + 1), tPrep: seconds(op.prepMin), tOp: plain(op.opSec) };
+      return { ...op.gen, seq: op.seq, label: op.label.trim() || opTitle(op, index + 1), tPrep: seconds(op.prepMin), tOp: plain(op.opSec), ...kdPayload(op) };
     }
     return op.kind === "library"
-      ? { type: LIBRARY_OP, templateId: op.templateId, opNum: op.code, side: op.side, ...common }
-      : { type: CUSTOM_OP, ...common, steps: stepsPayload(op), tooling: toolingPayload(op) };
+      ? { type: LIBRARY_OP, templateId: op.templateId, opNum: op.code, side: op.side, ...common, ...kdPayload(op) }
+      : { type: CUSTOM_OP, ...common, steps: stepsPayload(op), tooling: toolingPayload(op), ...kdPayload(op) };
   });
   const { route: scheme } = manualRoute(state, Number(base.partQty) || 1);
   const route = routePayload({
@@ -484,7 +689,67 @@ export function manualConfig(state: ManualState, base: Record<string, unknown>):
       components: block.ops.flatMap((position) => (ordered[position - 1]?.components || []).map((comp) => ({ id: comp.id, art: comp.art, name: comp.name, qty: plain(comp.qty) || "1" }))),
     })),
   });
-  return { ...state.extra, mode: MANUAL_MODE, assemblyIndex: base.assemblyIndex, assemblyName: base.assemblyName, partQty: base.partQty, ops, route };
+  // Вид, штуки, объекты КД и «проверено мастером» — на блоке схемы, только заданные (сервер лишние ключи блока не читает).
+  const own = new Map(state.blocks.map((block) => [block.key, block]));
+  const blocks = (route.blocks as Array<Record<string, unknown>>).map((block) => {
+    const item = own.get(String(block.key));
+    if (!item) return block;
+    return {
+      ...block,
+      ...(item.kind && !item.final ? { kind: item.kind } : {}),
+      ...(item.quantity != null && item.quantity !== 1 ? { quantity: item.quantity } : {}),
+      ...(item.refs?.length ? { refs: [...item.refs] } : {}),
+      ...(item.checked ? { checked: true } : {}),
+    };
+  });
+  return {
+    ...state.extra, mode: MANUAL_MODE, assemblyIndex: base.assemblyIndex, assemblyName: base.assemblyName, partQty: base.partQty, ops,
+    route: { ...route, blocks }, ...(state.kdDropped?.length ? { kdDropped: [...state.kdDropped] } : {}),
+  };
+}
+
+/** Связь операции с КД в конфиг — только заданное. */
+function kdPayload(op: ManualOp): Record<string, unknown> {
+  return {
+    ...(op.origin ? { origin: op.origin } : {}),
+    ...(op.edited?.length ? { edited: [...op.edited] } : {}),
+    ...(op.kdBase && Object.keys(op.kdBase).length ? { kdBase: { ...op.kdBase } } : {}),
+    ...(op.kdChanges?.length ? { kdChanges: op.kdChanges.map((change) => ({ ...change })) } : {}),
+    ...(op.kdGone ? { kdGone: true } : {}),
+  };
+}
+
+const isKdField = (value: unknown): value is KdField => (KD_FIELDS as readonly unknown[]).includes(value);
+
+/** Связь операции с КД из сохранённого конфига: непонятное отбрасывается, старые конфиги без неё — без изменений. */
+function kdFromConfig(item: Record<string, unknown>): Partial<ManualOp> {
+  const origin = str(item.origin).trim();
+  if (!origin) return {};
+  const edited = [...new Set(Array.isArray(item.edited) ? item.edited.filter(isKdField) : [])];
+  const rawBase = item.kdBase && typeof item.kdBase === "object" ? item.kdBase as Record<string, unknown> : {};
+  const kdBase = Object.fromEntries(Object.entries(rawBase).filter(([field, value]) => isKdField(field) && typeof value === "string")) as Partial<Record<KdField, string>>;
+  const kdChanges = list(item.kdChanges).filter((change) => isKdField(change.field))
+    .map((change) => ({ field: change.field as KdField, was: str(change.was), now: str(change.now) }));
+  return {
+    origin,
+    ...(edited.length ? { edited } : {}),
+    ...(Object.keys(kdBase).length ? { kdBase } : {}),
+    ...(kdChanges.length ? { kdChanges } : {}),
+    ...(item.kdGone === true ? { kdGone: true } : {}),
+  };
+}
+
+/** Необязательное блока из сохранённой схемы (по ключу блока): вид, штуки, объекты КД, «проверено мастером». */
+function blockFromConfig(raw: Record<string, unknown> | undefined): Partial<ManualBlock> {
+  if (!raw) return {};
+  const quantity = Number(raw.quantity);
+  const refs = [...new Set(Array.isArray(raw.refs) ? raw.refs.filter((ref): ref is string => typeof ref === "string" && !!ref.trim()) : [])];
+  return {
+    ...(raw.kind === "semiFinished" || raw.kind === "assembly" ? { kind: raw.kind } : {}),
+    ...(Number.isFinite(quantity) && quantity > 0 && quantity !== 1 ? { quantity } : {}),
+    ...(refs.length ? { refs } : {}),
+    ...(raw.checked === true ? { checked: true } : {}),
+  };
 }
 
 function str(value: unknown): string {
@@ -511,11 +776,12 @@ export function manualFromConfig(config: unknown): ManualState | null {
     const prep = num(item.tPrep);
     const kindOf = str(item.type);
     if (kindOf && kindOf !== LIBRARY_OP && kindOf !== CUSTOM_OP) {
-      const { seq: _seq, label: _label, tPrep: _tPrep, tOp: _tOp, ...rest } = item;
+      const { seq: _seq, label: _label, tPrep: _tPrep, tOp: _tOp, origin: _o, edited: _e, kdBase: _b, kdChanges: _c, kdGone: _g, ...rest } = item;
       return {
         ...blank(seq), kind: "custom", templateId: str(item.templateId), code: str(item.opNum), side: str(item.side),
         label: str(item.label) || opTypeName(kindOf), qty: "1",
         prepMin: prep == null || Number.isNaN(prep) ? "" : text(prep / 60), opSec: str(item.tOp).replace(".", ","), gen: rest,
+        ...kdFromConfig(item),
       };
     }
     return {
@@ -527,18 +793,27 @@ export function manualFromConfig(config: unknown): ManualState | null {
       controls: steps.filter(control).map((step) => [str(step.text), str(step.tolerance)].filter(Boolean).join(" | ")).join("\n"),
       tooling: list(item.tooling).map((tool) => (str(tool.section) && str(tool.section) !== TOOL_SECTIONS[0] ? `${str(tool.section)}: ${str(tool.name)}` : str(tool.name))).join("\n"),
       components: list(item.components).map((comp) => ({ id: str(comp.id), art: str(comp.art), name: str(comp.name), qty: str(comp.qty || "1").replace(".", ","), unit: str(comp.unit) || "Шт." })),
+      ...kdFromConfig(item),
     };
   });
   const nextSeq = Math.max(0, ...ops.map((op) => op.seq)) + 1;
-  const { mode: _mode, ops: _ops, route: _route, assemblyIndex: _index, assemblyName: _name, partQty: _qty, materialsSheet: _sheet, ...extra } = saved;
+  const { mode: _mode, ops: _ops, route: _route, assemblyIndex: _index, assemblyName: _name, partQty: _qty, materialsSheet: _sheet, kdDropped: _dropped, ...extra } = saved;
   const withExtra = Object.keys(extra).length ? { extra } : {};
-  if (!ops.length) return { ...emptyManual(), nextSeq, ...withExtra };
+  const droppedKeys = [...new Set(Array.isArray(saved.kdDropped) ? saved.kdDropped.filter((key): key is string => typeof key === "string" && !!key.trim()) : [])];
+  const withDroppedKeys = droppedKeys.length ? { kdDropped: droppedKeys } : {};
+  if (!ops.length) return { ...emptyManual(), nextSeq, ...withExtra, ...withDroppedKeys };
   const positioned = routeOps(ops, Number(saved.partQty) || 1);
   const parsed = parseRoute(saved.route);
   const together = new Set(items.flatMap((item, index) => ((item.parallel === true || item.link === "parallel") && index > 0 ? [index + 1] : [])));
-  const route = parsed && !routeProblem(parsed, positioned) ? parsed : chainRoute(positioned, together);
-  const blocks: ManualBlock[] = route.blocks.map((block) => ({
-    key: block.key, name: block.name, final: block.final, ops: [...block.ops].sort((a, b) => a - b).map((position) => ops[position - 1].seq),
-  }));
-  return { ops, nextSeq, blocks, edges: route.edges.map((edge) => ({ ...edge })), selected: blocks.find((block) => block.final)!.key, ...withExtra };
+  const fromSaved = !!parsed && !routeProblem(parsed, positioned);
+  const route = fromSaved ? parsed! : chainRoute(positioned, together);
+  const rawBlocks = new Map(fromSaved ? list((saved.route as Record<string, unknown>).blocks).map((block) => [str(block.key).trim(), block] as const) : []);
+  const blocks: ManualBlock[] = route.blocks.map((block) => {
+    const { kind, ...meta } = blockFromConfig(rawBlocks.get(block.key));
+    return {
+      key: block.key, name: block.name, final: block.final, ops: [...block.ops].sort((a, b) => a - b).map((position) => ops[position - 1].seq),
+      ...(kind && !block.final ? { kind } : {}), ...meta,
+    };
+  });
+  return { ops, nextSeq, blocks, edges: route.edges.map((edge) => ({ ...edge })), selected: blocks.find((block) => block.final)!.key, ...withExtra, ...withDroppedKeys };
 }
