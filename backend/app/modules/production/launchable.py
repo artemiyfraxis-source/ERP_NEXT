@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping, Sequence
+
+from app.modules.techcards.etk_builder import operation_norms
 
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, link_inputs
 from .plan import kit_stage_key
@@ -115,62 +117,109 @@ def _derived_blocks(count: int) -> list[_Block]:
 _OP_KEY_FIELDS = ("key", "opKey", "id")
 
 
-def _step_by_op_key(count: int, op_keys: Sequence[Iterable[object]]) -> dict[str, int]:
-    """Operation key → step index. A key is the op's own `key`/`opKey`/`id`; with none, the step's 1-based position.
-    A key that names two steps is ambiguous (-1) and invalidates any block that cites it."""
+def _keyed_steps(count: int, op_keys: Sequence[Iterable[object]]) -> dict[str, int]:
+    """Operation's own key (`key`/`opKey`/`id`) → step index. A key that names two steps is ambiguous (-1) and
+    invalidates any block that cites it."""
     result: dict[str, int] = {}
     for index in range(count):
-        names = {str(name).strip() for name in op_keys[index] if name is not None and str(name).strip()}
-        for name in names or {str(index + 1)}:
+        for name in {str(name).strip() for name in op_keys[index] if name is not None and str(name).strip()}:
             result[name] = -1 if result.get(name, index) != index else index
     return result
 
 
-def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]) -> list[_Block] | None:
-    """Per-step block data from ETK document.route {blocks:[{key,name,ops,final}], edges:[{from,to,per_unit}]}.
-    None when the scheme cannot be applied to these steps exactly (unknown or doubled op, step left in no block,
-    duplicate block key, edge to an unknown block): production then falls back to the derived linear chain."""
-    if not isinstance(route, Mapping) or not isinstance(route.get("blocks"), list) or not count:
-        return None
-    by_op = _step_by_op_key(count, op_keys)
+def _step_of(value: object, count: int, keyed: Mapping[str, int]) -> int:
+    """The step a block's `ops` entry names, -1 — none. The ETK numbers a block's operations by position (the scheme
+    editor, the ETK builder and «Ручная сборка» all write 1-based positions), whatever keys the operations carry
+    (generator ops keep their `opKey`); an entry that is no position of these steps is looked up as an op key."""
+    text = str(value).strip() if value is not None and not isinstance(value, bool) else ""
+    try:
+        number = Decimal(text)
+    except InvalidOperation:
+        number = None
+    if number is not None and number.is_finite() and number == number.to_integral_value() and 1 <= number <= count:
+        return int(number) - 1
+    return keyed.get(text, -1)
+
+
+def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]) -> tuple[list[_Block] | None, str]:
+    """Per-step block data from ETK document.route {blocks:[{key,name,ops,final}], edges:[{from,to,per_unit}]}, or
+    None and why (Russian) when the scheme cannot be applied to these steps exactly (unknown or doubled op, step left
+    in no block, duplicate block key, edge to an unknown block): production then falls back to the linear chain."""
+    if not count:
+        return None, "в техкарте нет операций"
+    if not isinstance(route, Mapping) or not isinstance(route.get("blocks"), list) or not route["blocks"]:
+        return None, "в схеме нет блоков"
+    keyed = _keyed_steps(count, op_keys)
     blocks: dict[str, Mapping[str, Any]] = {}
     owner: dict[int, str] = {}
-    for block in route["blocks"]:
+    for number, block in enumerate(route["blocks"], start=1):
         key = str(block.get("key") or "").strip() if isinstance(block, Mapping) else ""
-        if not key or key in blocks or not isinstance(block.get("ops"), list):
-            return None
+        if not key:
+            return None, f"у блока №{number} нет ключа"
+        if key in blocks:
+            return None, f"ключ блока «{key}» повторяется"
+        if not isinstance(block.get("ops"), list):
+            return None, f"у блока «{key}» нет списка операций"
         blocks[key] = block
         for op_key in block["ops"]:
-            index = by_op.get(str(op_key).strip(), -1)
-            if index < 0 or index in owner:
-                return None
+            index = _step_of(op_key, count, keyed)
+            if index < 0:
+                return None, f"операции «{op_key}» нет в техкарте (операций {count})"
+            if index in owner:
+                return None, f"операция {index + 1} входит в два блока — «{owner[index]}» и «{key}»"
             owner[index] = key
-    if len(owner) != count:
-        return None
+    missing = [str(index + 1) for index in range(count) if index not in owner]
+    if missing:
+        return None, (f"операция {missing[0]} не входит" if len(missing) == 1 else f"операции {', '.join(missing)} не входят") + " ни в один блок"
     incoming: dict[str, list[BlockInput]] = {key: [] for key in blocks}
     for edge in route.get("edges") or []:
         source, target = (str(edge.get("from") or "").strip(), str(edge.get("to") or "").strip()) if isinstance(edge, Mapping) else ("", "")
         if source not in blocks or target not in blocks:
-            return None
+            return None, f"стрелка «{source or '?'}» → «{target or '?'}» ведёт в блок, которого нет в схеме"
         incoming[target].append(BlockInput(source, _per_unit(edge.get("per_unit"))))
     return [
         _Block(owner[index], str(blocks[owner[index]].get("name") or "").strip(), bool(blocks[owner[index]].get("final")),
                tuple(incoming[owner[index]]))
         for index in range(count)
-    ]
+    ], ""
 
 
-def route_from_document(document: Mapping[str, Any] | None) -> tuple[RouteStep, ...]:
+_MICRO = Decimal("0.000001")  # production_operations.seconds_per_unit is Numeric(18, 6)
+
+
+def _step_seconds(norm_minutes: Decimal | None, batch: Decimal, op_seconds: Decimal, setup: Decimal) -> tuple[Decimal, Decimal]:
+    """(seconds per unit, setup seconds) of a step. With the ETK's norm of the operation (minutes per batch) the plan
+    counts exactly what the ETK shows: setup = the card's tPrep, per unit = (norm − setup) / batch, so the task of the
+    ETK's batch takes the ETK norm (a setup larger than the whole norm is cut to it). Without one — the card's tOp."""
+    if norm_minutes is None:
+        return op_seconds, setup
+    total = norm_minutes * 60
+    setup = min(setup, total)
+    return ((total - setup) / batch).quantize(_MICRO, rounding=ROUND_HALF_UP), setup
+
+
+@dataclass(frozen=True)
+class LaunchRoute:
+    """The route a task is launched by and the warnings for the master (the scheme did not fit — chain instead)."""
+
+    steps: tuple[RouteStep, ...]
+    warnings: tuple[str, ...] = ()
+
+
+def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
     """One route step per ETK operation, as tcRoutingFromConfig_ builds the «Техкарты» rows.
 
-    The generator config (build_config.ops) is the SUPPLYMAP source of stage/code/times; the built ETK
-    operation fills what the config lacks (a card code resolved from the operation library, a title).
+    The generator config (build_config.ops) is the SUPPLYMAP source of stage/code; the built ETK operation fills what
+    the config lacks (a card code resolved from the operation library, a title). Times are the ETK's own: its norm of
+    the operation (time rows: wires × cores × batch, «на изделие» of «Ручная сборка»…) split into the card's setup and
+    seconds per unit — one source of truth with what the ETK and its block scheme show.
 
     Each step also carries its block of the semi-finished scheme (block, block_name, final, inputs) — from
     a hand-drawn document.route when the card has one, otherwise a linear chain derived from the step order. The block
-    data is extra: the steps, their order and positions are the same with or without a scheme."""
+    data is extra: the steps, their order and positions are the same with or without a scheme. A hand-drawn scheme
+    that does not fit the operations does not stop the launch: the chain goes instead, with a warning."""
     if not isinstance(document, Mapping):
-        return ()
+        return LaunchRoute(())
     built = [item for item in document.get("operations") or [] if isinstance(item, Mapping)]
     config = document.get("build_config")
     config_ops = [item for item in (config.get("ops") if isinstance(config, Mapping) else None) or [] if isinstance(item, Mapping)]
@@ -185,7 +234,13 @@ def route_from_document(document: Mapping[str, Any] | None) -> tuple[RouteStep, 
     # generator derives by itself is a hint on the ETK, and production keeps today's chain for it.
     if isinstance(route, Mapping) and route.get("source") == "derived":
         route = None
-    blocks = _route_blocks(route, count, op_keys) or _derived_blocks(count)
+    blocks, problem = _route_blocks(route, count, op_keys) if route and count else (None, "")
+    warnings: tuple[str, ...] = ()
+    if blocks is None and problem:
+        warnings = (f"Схема полуфабрикатов техкарты не подошла к её операциям ({problem}) — этапы задания идут "
+                    f"цепочкой по порядку операций. Поправьте схему в техкарте и выпустите её заново.",)
+    blocks = blocks or _derived_blocks(count)
+    batch, norms = operation_norms(document)
     steps: list[RouteStep] = []
     for index in range(count):
         op = config_ops[index] if index < len(config_ops) else {}
@@ -197,19 +252,29 @@ def route_from_document(document: Mapping[str, Any] | None) -> tuple[RouteStep, 
         code = operation_code(str(op.get("opNumber") or op.get("code") or etk.get("code") or ""))
         side = str(op.get("side") or etk.get("side") or "").strip()
         description = str(op.get("descr") or op.get("title") or etk.get("title") or stage).strip()
+        seconds_per_unit, setup_seconds = _step_seconds(
+            norms[index] if index < len(norms) else None, batch,
+            _seconds(op.get("tOp") if op else times.get("operation_seconds")),
+            _seconds(op.get("tPrep") if op else times.get("setup_seconds")),
+        )
         steps.append(RouteStep(
             position=index + 1,
             code=code,
             stage=stage,
             description=description + (f" (ст. {side})" if side else ""),
-            seconds_per_unit=_seconds(op.get("tOp") if op else times.get("operation_seconds")),
-            setup_seconds=_seconds(op.get("tPrep") if op else times.get("setup_seconds")),
+            seconds_per_unit=seconds_per_unit,
+            setup_seconds=setup_seconds,
             block=blocks[index].key,
             block_name=blocks[index].name or stage,
             final=blocks[index].final,
             inputs=blocks[index].inputs,
         ))
-    return tuple(steps)
+    return LaunchRoute(tuple(steps), warnings)
+
+
+def route_from_document(document: Mapping[str, Any] | None) -> tuple[RouteStep, ...]:
+    """The steps of `launch_route` (screens and planners that do not show its warnings)."""
+    return launch_route(document).steps
 
 
 def launched_quantity(tasks: Iterable[ProductionTask]) -> dict[str, int]:

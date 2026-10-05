@@ -39,7 +39,10 @@ from .application import (
     HandOverProductionCommand,
 )
 from .domain import OperatorSkill, ProductionTask, ProductionValidationError, WorkShift
-from .launchable import item_id, launch_operations, launched_quantity, operation_code, operation_codes, route_from_document, stage_name
+from .launchable import (
+    item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, route_from_document,
+    stage_name,
+)
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
@@ -889,7 +892,8 @@ def launchable(
         launched = launched_quantity(uow.production.list(limit=10_000))
     items = []
     for card in cards:
-        route = route_from_document(card.document)
+        planned = launch_route(card.document)
+        route = planned.steps
         if not route:
             continue
         item = item_id(card.project, card.item_index)
@@ -901,6 +905,7 @@ def launchable(
             "run": _number(run) if run else str((kit or {}).get("part_quantity") or ""),
             "deadline": card.deadline.isoformat() if card.deadline else None,
             "launched": launched.get(kit_stage_key(card.project, card.item_index), 0), "operations": len(route),
+            "warnings": list(planned.warnings),
         })
     items.sort(key=lambda value: (value["project"], value["index"]))
     return {"items": items}
@@ -936,7 +941,8 @@ def launch(
     if card is None:
         raise HTTPException(status_code=404, detail="Техкарта не найдена")
     item = item_id(card.project, card.item_index)
-    route = route_from_document(card.document) if card.status is TechcardStatus.ISSUED else ()
+    planned = launch_route(card.document if card.status is TechcardStatus.ISSUED else None)
+    route = planned.steps
     if not route:
         raise HTTPException(status_code=422, detail=f"Техкарта «{item}» не выдана — запускать нечего")
     try:
@@ -944,12 +950,15 @@ def launch(
     except ProductionValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     # Решено агентом: ERP хранит в задании изделие индексом КБ (как план и приёмка ГП), а не «проект+индекс».
-    return _run(lambda: launch_production(LaunchProductionCommand(
+    response = _run(lambda: launch_production(LaunchProductionCommand(
         idempotency_key=idempotency_key, project=card.project, item=card.item_index,
         name=card.product_name, quantity=payload.quantity,
         fulfillment_request_id=payload.fulfillment_request_id, deadline=payload.deadline,
         operations=operations, actor=principal.actor, now=now,
     ), uow_factory()))
+    # Схема полуфабрикатов не подошла — задание идёт цепочкой; экран заданий показывает warnings мастеру.
+    response["warnings"] = list(planned.warnings)
+    return response
 
 
 @router.post("/tasks/{task_id}/operations/{operation_id}/assign")
