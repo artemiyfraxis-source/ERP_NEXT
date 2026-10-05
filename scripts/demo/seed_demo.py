@@ -189,18 +189,21 @@ def _prefix(name: str):
 @step("3. Procurement")
 def procurement():
     buyer = S["petrov.buyer"]
+    # «В закупку» нажал закупщик — строки уже у него «В работе» (взять их не нужно).
     lines = {}
-    for l in buyer.ok("GET", "/api/procurement/available")["lines"]:
+    for l in buyer.ok("GET", "/api/procurement/mine")["lines"]:
         try:
             lines[_prefix(l["calculated_name"])] = l
         except StopIteration:
             pass
     take = ["Провод МГТФ", "Провод НВ-4", "Клемма JST", "Разъём Molex", "Термоусадочная",
             "Кабель КСПВГ", "Разъём DB-9", "Стяжки"]
-    t = buyer.ok("POST", "/api/procurement/take", "taken", json={"line_ids": [lines[k]["id"] for k in take]})
-    if not t:
+    missing = [k for k in take if k not in lines]
+    if missing:
+        FAILS.append(f"procurement: not in buyer's «В работе» after handoff: {missing}")
         return
-    ver = {l["id"]: l["version"] for l in t["lines"]}
+    bump("taken", len(take))
+    ver = {lines[k]["id"]: lines[k]["version"] for k in take}
     S["pline"] = {k: lines[k]["id"] for k in take}
     for k in take[:7]:  # «Стяжки» stay «В работе» (no facts yet)
         l = lines[k]

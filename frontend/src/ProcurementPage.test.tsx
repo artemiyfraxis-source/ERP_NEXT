@@ -346,7 +346,7 @@ it("forms supplier requests: downloads each order's letter as a .txt, lists the 
     const block = await screen.findByRole("region", { name: "В работе" });
     await waitFor(() => expect(within(block).getByLabelText("Выбрать REQ-1")).toBeEnabled());
     fireEvent.click(within(block).getByLabelText("Выбрать все"));
-    fireEvent.click(screen.getByRole("button", { name: /^Сформировать запрос/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Сформировать запрос" }));
 
     expect(await screen.findByText("Сформировано запросов: 1; тексты запросов скачаны файлами; строк других закупщиков не тронуто: 2")).toBeInTheDocument();
     expect(requestBody).toEqual({ line_ids: expect.arrayContaining([ready.id]) });
@@ -628,7 +628,7 @@ it("shows «Мои позиции» as fixed blocks: В работе → Жду 
   // «В работе» — и строки «Готов к запросу», с отметкой.
   const inWork = within(screen.getByRole("region", { name: "В работе" }));
   expect(inWork.getByText("REQ-1")).toBeInTheDocument();
-  expect(within(inWork.getByText("REQ-2").closest("tr")!).getByText("готова к запросу")).toBeInTheDocument();
+  expect(within(inWork.getByText("REQ-2").closest("tr")!).getByText("Готов к запросу")).toBeInTheDocument();
 
   const head = (name: string) => within(screen.getByRole("region", { name })).getAllByRole("columnheader").map((cell) => cell.textContent);
   expect(head("Жду счёт")).toEqual(["ID", "Наименование", "Кол-во (факт)", "Цена факт, ₽", "Сумма факт, ₽", "Расчёт, ₽", "Ожид. дата", "Не хватает для счёта", "Комментарий", ""]);
