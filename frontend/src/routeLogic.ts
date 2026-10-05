@@ -221,33 +221,56 @@ export function routeChain(route: Route): string[] | null {
   return order && order.length === route.blocks.length ? order : null;
 }
 
-export type RouteLayout = { cells: Map<string, { layer: number; row: number }>; layers: number; rows: number };
+export type RouteCell = { level: number; layer: number; row: number; x: number };
+/** `layer` — строка рисунка сверху вниз (итог — последняя), `row` — место в строке, `x` — положение центра в «колонках»
+    (0 … cols − 1, бывает дробным: блок стоит над своей целью), `level` — расстояние до итога. */
+export type RouteLayout = { cells: Map<string, RouteCell>; layers: number; rows: number; cols: number };
 
-/** Слои слева направо: слой блока — самый длинный путь до него от блоков без входов. Строки в слое — по среднему
-    положению входов, чтобы стрелки не лезли друг на друга. */
-export function routeLayout(route: Route): RouteLayout {
+/** Схема сверху вниз: уровень блока — самый длинный путь от него до итога, итог внизу. Блоки одного уровня стоят в одной
+    строке и центрируются над своими целями; уровень шире `maxPerRow` переносится на следующую строку, а не прокручивается. */
+export function routeLayout(route: Route, maxPerRow = 4): RouteLayout {
   const order = topoOrder(route) ?? route.blocks.map((block) => block.key);
-  const layer = new Map<string, number>();
-  order.forEach((key) => layer.set(key, route.edges.filter((edge) => edge.to === key && layer.has(edge.from))
-    .reduce((deep, edge) => Math.max(deep, layer.get(edge.from)! + 1), 0)));
+  const level = new Map<string, number>();
+  [...order].reverse().forEach((key) => level.set(key, route.edges.filter((edge) => edge.from === key && level.has(edge.to))
+    .reduce((deep, edge) => Math.max(deep, level.get(edge.to)! + 1), 0)));
   const first = new Map(route.blocks.map((block) => [block.key, block.ops.length ? Math.min(...block.ops) : 0]));
-  const layers = Math.max(0, ...layer.values()) + 1;
-  const cells = new Map<string, { layer: number; row: number }>();
-  let rows = 1;
-  for (let index = 0; index < layers; index += 1) {
-    const keys = route.blocks.map((block) => block.key).filter((key) => layer.get(key) === index);
-    const center = (key: string) => {
-      const from = route.edges.filter((edge) => edge.to === key && cells.has(edge.from)).map((edge) => cells.get(edge.from)!.row);
-      return from.length ? from.reduce((sum, row) => sum + row, 0) / from.length : Number.POSITIVE_INFINITY;
-    };
-    keys.sort((a, b) => {
-      const gap = center(a) === center(b) ? 0 : center(a) < center(b) ? -1 : 1;
-      return gap || (first.get(a) ?? 0) - (first.get(b) ?? 0);
+  const top = Math.max(0, ...level.values());
+  const limit = Math.max(1, Math.floor(maxPerRow));
+  const chunkSizes = (count: number) => {
+    const parts = Math.ceil(count / limit), base = Math.floor(count / parts), extra = count % parts;
+    return Array.from({ length: parts }, (_, index) => base + (index < extra ? 1 : 0));
+  };
+  const members = (at: number) => route.blocks.map((block) => block.key).filter((key) => level.get(key) === at);
+  let cols = 1;
+  for (let at = 0; at <= top; at += 1) if (members(at).length) cols = Math.max(cols, ...chunkSizes(members(at).length));
+  const placed = new Map<string, number>();
+  const wanted = (key: string) => {
+    const to = route.edges.filter((edge) => edge.from === key && placed.has(edge.to)).map((edge) => placed.get(edge.to)!);
+    return to.length ? to.reduce((sum, x) => sum + x, 0) / to.length : (cols - 1) / 2;
+  };
+  // Считаем от итога вверх (цель стоит раньше своих входов), рисуем сверху вниз.
+  const chunks: Array<{ at: number; keys: string[] }> = [];
+  for (let at = 0; at <= top; at += 1) {
+    const keys = members(at);
+    if (!keys.length) continue;
+    keys.sort((a, b) => (wanted(a) - wanted(b)) || (first.get(a) ?? 0) - (first.get(b) ?? 0));
+    let start = 0;
+    const parts = chunkSizes(keys.length).map((size) => { const part = keys.slice(start, start + size); start += size; return part; });
+    parts.forEach((part) => {
+      const x = part.map((key) => Math.min(Math.max(wanted(key), 0), cols - 1));
+      for (let index = 1; index < x.length; index += 1) x[index] = Math.max(x[index], x[index - 1] + 1);
+      if (x[x.length - 1] > cols - 1) {
+        x[x.length - 1] = cols - 1;
+        for (let index = x.length - 2; index >= 0; index -= 1) x[index] = Math.min(x[index], x[index + 1] - 1);
+      }
+      part.forEach((key, index) => placed.set(key, x[index]));
     });
-    keys.forEach((key, row) => cells.set(key, { layer: index, row }));
-    rows = Math.max(rows, keys.length);
+    chunks.push(...parts.map((part) => ({ at, keys: part })));
   }
-  return { cells, layers, rows };
+  const cells = new Map<string, RouteCell>();
+  const drawn = chunks.map((chunk, index) => ({ chunk, index })).sort((a, b) => (b.chunk.at - a.chunk.at) || (a.index - b.index)).map((item) => item.chunk);
+  drawn.forEach((chunk, layer) => chunk.keys.forEach((key, row) => cells.set(key, { level: chunk.at, layer, row, x: placed.get(key)! })));
+  return { cells, layers: drawn.length, rows: Math.max(1, ...drawn.map((chunk) => chunk.keys.length)), cols };
 }
 
 /** Блоки, с которыми блок соединён стрелкой: до него и после него. */

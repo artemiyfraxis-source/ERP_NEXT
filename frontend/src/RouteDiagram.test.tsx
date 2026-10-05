@@ -1,0 +1,81 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
+import { RouteDiagram } from "./RouteDiagram";
+import type { Route, RouteBlock, RouteEdge } from "./routeLogic";
+
+const block = (key: string, ops: number[], final = false): RouteBlock => ({ key, name: `Блок ${key}`, ops, final, components: [] });
+/* b1 и b2 сходятся в b3 (итог); b4 без операций — тоже вход итога. */
+const route: Route = {
+  blocks: [block("b1", [1]), block("b2", [2]), block("b4", []), block("b3", [3], true)],
+  edges: [{ from: "b1", to: "b3", per_unit: 2 }, { from: "b2", to: "b3", per_unit: 1 }, { from: "b4", to: "b3", per_unit: 1 }],
+};
+
+function mount(extra: Partial<Parameters<typeof RouteDiagram>[0]> = {}) {
+  const props = { onSelect: vi.fn(), onPerUnit: vi.fn(), ...extra };
+  render(<RouteDiagram route={route} title={(item) => item.name} numbers={(item) => item.ops.join(", ")} totals={new Map()} selected="b1"
+    edgeLabel={(edge: RouteEdge) => `Штук ${edge.from} → ${edge.to}`} {...props} />);
+  return props;
+}
+
+it("draws the empty block as one compact line and has no sideways scroller", () => {
+  mount();
+  const empty = screen.getByTitle("Блок b4");
+  expect(empty).toHaveClass("is-empty");
+  expect(within(empty).getByText("нет операций")).toBeInTheDocument();
+  expect(document.querySelector(".route-scroll")).toBeNull();
+});
+
+it("shows no hooks unless the caller passes them", () => {
+  mount();
+  expect(screen.queryByRole("button", { name: /Добавить вход/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Соединить блок/ })).toBeNull();
+  expect(document.querySelectorAll("input.route-per").length).toBe(3); // как раньше: число правится прямо на стрелке
+});
+
+it("adds an input with the plus on the block", () => {
+  const onAddInput = vi.fn();
+  const props = mount({ onAddInput });
+  fireEvent.click(screen.getByRole("button", { name: "Добавить вход в блок «Блок b3»" }));
+  expect(onAddInput).toHaveBeenCalledWith("b3");
+  expect(props.onSelect).not.toHaveBeenCalled();
+});
+
+it("connects two blocks with two taps and cancels with Esc or a second tap", () => {
+  const onConnect = vi.fn();
+  const props = mount({ onConnect });
+  const arrow = (name: string) => screen.getByRole("button", { name: `Соединить блок «${name}» с другим блоком` });
+  fireEvent.click(arrow("Блок b1"));
+  expect(screen.getByRole("status")).toHaveTextContent("Esc — отмена");
+  fireEvent.click(screen.getByTitle("Блок b2"));
+  expect(onConnect).toHaveBeenCalledWith("b1", "b2");
+  expect(props.onSelect).not.toHaveBeenCalled(); // нажатие во время соединения не выбирает блок
+  expect(screen.queryByRole("status")).toBeNull();
+
+  fireEvent.click(arrow("Блок b1"));
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("status")).toBeNull();
+  fireEvent.click(arrow("Блок b1"));
+  fireEvent.click(arrow("Блок b1"));
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(onConnect).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByTitle("Блок b2")); // вне режима — обычный выбор
+  expect(props.onSelect).toHaveBeenCalledWith("b2");
+});
+
+it("opens a popup on the «N шт» pill to change the number or remove the link", () => {
+  const onEdgeEdit = vi.fn(), onEdgeQuantity = vi.fn(), onEdgeRemove = vi.fn();
+  mount({ onEdgeEdit, onEdgeQuantity, onEdgeRemove });
+  fireEvent.click(screen.getByTitle("Штук b1 → b3"));
+  expect(onEdgeEdit).toHaveBeenCalledWith(route.edges[0]);
+  const dialog = screen.getByRole("dialog", { name: "Штук b1 → b3" });
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "5" } });
+  expect(onEdgeQuantity).toHaveBeenCalledWith(route.edges[0], 5);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Убрать связь" }));
+  expect(onEdgeRemove).toHaveBeenCalledWith(route.edges[0]);
+  expect(screen.queryByRole("dialog")).toBeNull();
+
+  fireEvent.click(screen.getByTitle("Штук b1 → b3"));
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+});

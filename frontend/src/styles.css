@@ -1166,13 +1166,32 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .route-badge.manual { background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
 .tcgen .route-summary { color: var(--muted-foreground); font-size: 12px; }
 .tcgen .route-summary strong { color: var(--foreground); }
-.tcgen .route-scroll { width: 100%; overflow-x: auto; padding: 2px 2px 8px; }
-.tcgen .route-canvas { position: relative; }
-.tcgen .route-canvas svg { position: absolute; inset: 0; pointer-events: none; }
+.tcgen .route-canvas { position: relative; width: 100%; padding-bottom: 2px; }
+.tcgen .route-canvas svg { position: absolute; inset: 0; width: 100%; pointer-events: none; }
 .tcgen .route-edge-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.5; }
 .tcgen .route-arrowhead { fill: var(--muted-foreground); }
-.tcgen .route-cell { position: absolute; }
-.tcgen .route-edge-label { position: absolute; transform: translate(-50%, -50%); }
+.tcgen .route-cell { position: absolute; width: calc(100% / var(--cols, 1)); max-width: 264px; padding: 0 6px; transform: translateX(-50%); }
+.tcgen .route-cell .route-node { height: 100%; }
+.tcgen .route-edge-label { position: absolute; z-index: 2; transform: translate(-50%, -50%); }
+.tcgen .route-node { position: relative; }
+.tcgen .route-tools { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; }
+.tcgen .route-tool { display: inline-grid; place-items: center; width: 24px; height: 24px; min-height: 0; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--muted-foreground); font-size: 14px; font-weight: 700; line-height: 1; cursor: pointer; }
+.tcgen .route-tool:hover, .tcgen .route-tool.is-on { border-color: var(--primary); color: var(--foreground); }
+.tcgen .route-tool.is-on { background: color-mix(in srgb, var(--primary) 16%, var(--card)); }
+.tcgen .route-node.has-tools .route-block-body { padding-right: 54px; }
+.tcgen .route-node.has-tools .route-block.is-empty { padding-right: 58px; }
+.tcgen .route-block.is-linking { border-style: dashed; border-color: var(--primary); }
+.tcgen .route-link-hint { margin: 0 0 6px; padding: 4px 10px; border-radius: 6px; background: color-mix(in srgb, var(--primary) 10%, transparent); color: var(--foreground); font-size: 12px; }
+.tcgen .route-block.is-empty { display: flex; align-items: center; gap: 8px; padding: 0 10px; border-style: dashed; }
+.tcgen .route-block.is-empty .route-block-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; -webkit-line-clamp: unset; }
+.tcgen .route-block.is-empty .route-block-meta { flex: none; }
+.tcgen .route-edge-holder { position: relative; display: inline-block; }
+.tcgen .route-edge-pill { height: 26px; min-height: 0; padding: 0 10px; border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--border)); border-radius: 999px; background: var(--card); color: var(--foreground); font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; }
+.tcgen .route-edge-pill.is-one { border-color: var(--border); color: var(--muted-foreground); font-weight: 400; }
+.tcgen .route-edge-pill:hover, .tcgen .route-edge-pill[aria-expanded="true"] { border-color: var(--primary); }
+.tcgen .route-edge-pop { position: absolute; top: calc(100% + 4px); left: 50%; z-index: 10; transform: translateX(-50%); display: grid; gap: 6px; justify-items: start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(0, 0, 0, .16); white-space: nowrap; }
+.tcgen .route-edge-pop-actions { display: flex; gap: 12px; }
+.tcgen .route-edge-remove { color: var(--tone-danger); }
 /* Блок схемы (общий рисунок, RouteDiagram): значок номеров операций, название до двух строк, «N оп. · M мин/шт». */
 .tcgen .route-block { width: 100%; height: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 12px; font-weight: 400; overflow: hidden; cursor: pointer; }
 .tcgen .route-block:hover { border-color: var(--primary); }
@@ -1319,6 +1338,11 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
   .tcgen .manual-comp input[inputmode] { height: 36px; }
   .tcgen .route-per-chip { height: 40px; }
+  .tcgen .route-tool { width: 40px; height: 40px; font-size: 18px; }
+  .tcgen .route-node.has-tools .route-block-body { padding-right: 90px; }
+  .tcgen .route-node.has-tools .route-block.is-empty { padding-right: 94px; }
+  .tcgen .route-edge-pill { height: 40px; padding: 0 14px; }
+  .tcgen .route-edge-pop .small { min-height: 40px; }
   .tcgen input.route-per { height: 36px; width: 44px; }
   .tcgen .manual-input .btn-remove { width: 36px; height: 36px; }
   .tcgen .manual-input-add select { height: 40px; }

@@ -69,12 +69,44 @@ it("splits and moves operations without losing any", () => {
   expect(moveOp({ blocks: [block("x", [1]), block("y", [2], true)], edges: [] }, 1, "y").blocks.map((item) => item.ops)).toEqual([[1], [2]]); // единственную операцию блока не переносим
 });
 
-it("lays blocks out in layers by the longest way from the sources and recognises a single chain", () => {
+it("wraps a level that has too many blocks instead of widening the scheme", () => {
+  const inputs = ["a", "b", "c", "d", "e", "f"];
+  const route: Route = { blocks: [...inputs.map((key, index) => block(key, [index + 1])), block("z", [9], true)], edges: inputs.map((from) => ({ from, to: "z", per_unit: 1 })) };
+  const layout = routeLayout(route, 4);
+  expect(layout.cols).toBe(3);
+  expect(layout.layers).toBe(3); // 3 + 3 входов и итог
+  expect(inputs.map((key) => layout.cells.get(key)!.layer)).toEqual([0, 0, 0, 1, 1, 1]);
+  expect(inputs.map((key) => layout.cells.get(key)!.level)).toEqual([1, 1, 1, 1, 1, 1]);
+  expect(layout.cells.get("z")!.layer).toBe(2);
+});
+
+it("draws a seven-block scheme narrow: a direct input sits right above the final block, siblings are centred over their target", () => {
+  const route: Route = {
+    blocks: [block("b1", [1]), block("b2", [2]), block("b3", [3]), block("b4", [4]), block("b5", [5]), block("b6", [6], true), block("b7", [7])],
+    edges: [["b1", "b4"], ["b2", "b4"], ["b3", "b5"], ["b4", "b5"], ["b5", "b6"], ["b7", "b6"]].map(([from, to]) => ({ from, to, per_unit: 1 })),
+  };
+  const layout = routeLayout(route);
+  const level = (key: string) => layout.cells.get(key)!.level;
+  expect(["b6", "b5", "b7", "b4", "b3", "b1", "b2"].map(level)).toEqual([0, 1, 1, 2, 2, 3, 3]);
+  expect(layout.cells.get("b7")!.layer).toBe(layout.cells.get("b6")!.layer - 1); // прямой вход — строкой над итогом
+  expect(layout.cells.get("b5")!.layer).toBe(layout.cells.get("b7")!.layer);
+  expect(layout.layers).toBe(4);
+  expect(layout.cols).toBe(2); // ни одна строка не шире своих веток
+  for (const layer of [0, 1, 2, 3]) {
+    const xs = [...layout.cells.values()].filter((cell) => cell.layer === layer).map((cell) => cell.x).sort((a, b) => a - b);
+    expect(xs.length).toBeLessThanOrEqual(2);
+    xs.forEach((x, index) => { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(1); if (index) expect(x - xs[index - 1]).toBeGreaterThanOrEqual(1); });
+  }
+  expect(layout.cells.get("b6")!.x).toBeCloseTo(0.5, 6); // итог по центру
+});
+
+it("lays blocks out top to bottom by the distance to the final block and recognises a single chain", () => {
   const tut = deriveRoute([op(1, "cutWire"), op(2, "cutTut"), op(3, "insTut"), op(4, "solderConn")]);
   const layout = routeLayout(tut);
-  expect([...layout.cells].map(([key, cell]) => `${key}:${cell.layer}.${cell.row}`)).toEqual(["b1:0.0", "b2:0.1", "b3:1.0", "b4:2.0"]);
+  expect([...layout.cells].map(([key, cell]) => `${key}:${cell.level}.${cell.layer}.${cell.row}`)).toEqual(["b1:2.0.0", "b2:2.0.1", "b3:1.1.0", "b4:0.2.0"]);
   expect(layout.layers).toBe(3);
   expect(layout.rows).toBe(2);
+  expect(layout.cols).toBe(2);
   expect(routeChain(tut)).toBeNull();
   expect(routeChain(deriveRoute([op(1, "cutWire"), op(2, "prsTerm"), op(3, "prsTerm")]))).toEqual(["b1", "b2", "b3"]);
   expect(routeChain(deriveRoute([op(1, "cutWire")]))).toBeNull(); // один блок — нечего рисовать цепочкой
