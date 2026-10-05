@@ -2530,3 +2530,13 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .pl-detail li.late strong { color: var(--tone-danger); }
 @media (pointer: coarse) { .pl-table .mb-cell, .pl-table .mb-cell > button { height: 40px; min-height: 40px; } .pl-only { min-height: 40px; } .pl-head .mb-week-nav .small { min-height: 40px; padding: 3px 12px; } .pl-detail-head .mb-day-close { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; font-size: 22px; } }
 @media (max-width: 1100px) { .pl-table thead th:first-child { width: 150px; } .pl-table .mb-cell { font-size: 11px; } }
+
+/* Токены API: форма выпуска в одну строку и панель одноразового секрета. */
+.token-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin: 0 0 14px; }
+.token-form label { display: grid; gap: 4px; font-size: 13px; }
+.token-form .check-field { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 6px 12px; }
+.token-form .check-field label { display: flex; margin: 0; }
+.token-secret { margin: 0 0 14px; padding: 12px 16px; }
+.token-secret p { margin: 0 0 8px; }
+.token-secret-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.token-secret-value { flex: 1 1 360px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }

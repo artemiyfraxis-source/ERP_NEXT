@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
+import { ApiTokens } from "./ApiTokens";
 import { accessApi, type AccessLevel, type AccessMode, type AccessOverview, type AccessRow, type AccessSetting } from "./api";
 
 /** NAV-ACCESS «Доступы» (SUPPLYMAP Portal.gs portalAccessGet/portalAccessSave, PortalApp.html openAccessHub and the
@@ -14,7 +15,7 @@ const MODE_TONE: Record<AccessSetting, string> = { none: "tone-danger", view: "t
 const FIXED_FULL_HINT = "Всегда полный доступ";
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
-type Tab = "levels" | "people";
+type Tab = "levels" | "people" | "tokens";
 type Section = AccessOverview["sections"][number];
 type Option = [value: AccessSetting | "", label: string];
 
@@ -226,6 +227,7 @@ export function AccessPage() {
       <div className="shipping-tabs">
         <button className={tab === "levels" ? "secondary active" : "secondary"} onClick={() => setTab("levels")}>Уровни × разделы</button>
         <button className={tab === "people" ? "secondary active" : "secondary"} onClick={() => setTab("people")}>Исключения по сотрудникам</button>
+        <button className={tab === "tokens" ? "secondary active" : "secondary"} onClick={() => setTab("tokens")}>Токены API</button>
       </div>
       {data && tab === "levels" && <Legend />}
     </div>
@@ -241,6 +243,7 @@ export function AccessPage() {
         {matrixDirty && <span className="access-dirty-note">Есть несохранённые правки</span>}
       </div>
     </>}
+    {tab === "tokens" && <ApiTokens />}
     {data && tab === "people" && <article className="access-people">
       <div className="filters">
         <select aria-label="Сотрудник" value={personId} onChange={(event) => choosePerson(event.target.value)}>
