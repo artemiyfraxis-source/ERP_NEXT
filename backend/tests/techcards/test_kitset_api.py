@@ -516,3 +516,132 @@ def test_project_requests_need_newrequest_right_and_never_fail_the_project(kitse
         assert empty["requests"] is None and empty["requests_error"]
     finally:
         del app.state.calc_spreadsheet_reader
+
+
+# ── Заказать недостающее ─────────────────────────────────────────────
+
+
+RAMENSKOE = "г. Раменское, ул. 100-й Свирской Дивизии, д. 52"
+
+
+def _file_request(name, quantity, *, article=None, point=RAMENSKOE, key="manual"):
+    from app.modules.requests.application import CreateRequestsCommand, create_requests
+    from app.modules.requests.domain import RequestDraft
+
+    draft = RequestDraft(
+        purpose="Обеспечение производства", delivery_point=point, name=name, item_type="Комплектующие",
+        quantity=Decimal(quantity), unit="шт", quality_document="Нет", procurement_deadline=datetime(2026, 10, 9).date(),
+        planned_date=datetime(2026, 10, 9).date(), project_reference="708К.4", design_article=article,
+    )
+    actor = Actor(id=UUID("40000000-0000-0000-0000-000000000009"), name="Снабженец", department="Снабжение")
+    return create_requests(CreateRequestsCommand(
+        creation_key=key, drafts=(draft,), actor=actor, now=datetime(2026, 9, 28, 9, 0),
+    ), app.state.uow_factory())[0]
+
+
+def _hand_over(request, quantity):
+    """The request is in procurement: a live line «В работе» of the project."""
+    from app.modules.procurement.domain import ProcurementStatus, create_line_from_requested
+    from app.shared.events import OutboxMessage
+
+    line = create_line_from_requested(OutboxMessage(
+        id=UUID("50000000-0000-0000-0000-000000000001"), topic="procurement.requested",
+        idempotency_key=f"request:{request.id}:procurement:v2", created_at=datetime(2026, 9, 28, 10, 0),
+        payload={
+            "source_request_id": str(request.id), "legacy_id": request.legacy_id, "request_date": "2026-09-28",
+            "initiator": "Снабженец", "department": "Снабжение", "task_type": "Закупка",
+            "designation": request.designation, "project_reference": "708К.4", "priority": "Срочно",
+            "delivery_point": request.delivery_point, "planned_date": "2026-10-09", "item_type": "Комплектующие",
+            "design_article": request.design_article, "category": "Общепром", "calculated_name": request.name,
+            "calculated_quantity": quantity, "calculated_unit": "шт",
+        },
+    ))
+    with app.state.procurement_uow_factory() as uow:
+        uow.procurement.add(replace(line, status=ProcurementStatus.IN_WORK))
+        uow.commit()
+
+
+def _supply(client):
+    lines = client.get("/api/techcards/kitsets/708К.4/supply").json()["lines"]
+    return {line["art"]: line for line in lines}
+
+
+def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cover(kitset_api):
+    client, _lot = kitset_api  # 15 шт of 43025-0400 lie free on the shelf
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "newrequest": "edit"})
+    assert _load(client, deadline="2026-10-20").status_code == 200
+    _file_request("Корпус Molex", "3")  # manual, no АРТИКУЛ КД: found by the spec name
+    _hand_over(_file_request("Контакт", "30", article="43030-0007", key="contact"), "30")
+
+    supply = _supply(client)
+    picked = {art: (line["need"], line["free"], line["ordered"], line["short"], line["stage"]) for art, line in supply.items()}
+    assert picked == {
+        "UL1007 22AWG": ("15.75", "0", "0", "15.75", "не заведено"),
+        "43025-0400": ("20", "15", "3", "2", "Запрос · Новый"),
+        "43030-0007": ("32", "0", "30", "2", "Закупка · В работе"),
+    }
+
+    ordered = client.post("/api/techcards/kitsets/708К.4/order-missing", json={})
+    assert ordered.status_code == 200, ordered.text
+    body = ordered.json()
+    assert body["message"] == "Заявки созданы: 3."
+    assert sorted((item["art"], item["quantity"], item["unit"]) for item in body["created"]) == [
+        ("43025-0400", "2", "шт"), ("43030-0007", "2", "шт"), ("UL1007 22AWG", "15.75", "м"),
+    ]
+    with app.state.uow_factory() as uow:
+        filed = [row for row in uow.requests.recent(100) if row.creation_key.startswith("kitset-missing:")]
+    assert {(row.design_article, row.name, row.project_reference, row.purpose, row.delivery_point,
+             row.quality_document, str(row.planned_date), str(row.procurement_deadline), row.item_type)
+            for row in filed} == {
+        ("UL1007 22AWG", "UL1007 22AWG", "708К.4", "Обеспечение производства", RAMENSKOE, "Нет",
+         "2026-10-20", "2026-10-20", "Провод"),
+        ("43025-0400", "Корпус Molex", "708К.4", "Обеспечение производства", RAMENSKOE, "Нет",
+         "2026-10-20", "2026-10-20", "Разъём"),
+        ("43030-0007", "43030-0007", "708К.4", "Обеспечение производства", RAMENSKOE, "Нет",
+         "2026-10-20", "2026-10-20", "Контакт"),
+    }
+    assert {row.designation for row in filed} == {"708К.4.001"}
+    assert {row.comment for row in filed} == {"708К.4 · КБ1", "708К.4 · КБ2"}
+
+    again = client.post("/api/techcards/kitsets/708К.4/order-missing", json={}).json()
+    assert again["created"] == []
+    assert again["message"] == "Заявки созданы: 0, пропущено 3 (уже в закупке)."
+    with app.state.uow_factory() as uow:
+        assert len(uow.requests.recent(100)) == 5
+    assert {art: line["short"] for art, line in _supply(client).items()} == {
+        "UL1007 22AWG": "0", "43025-0400": "0", "43030-0007": "0",
+    }
+
+
+def test_order_missing_picked_lines_deadline_and_rights(kitset_api):
+    client, _lot = kitset_api
+    assert _load(client).status_code == 200  # no deadline on the project
+    refused = client.post("/api/techcards/kitsets/708К.4/order-missing", json={})
+    assert refused.status_code == 403
+    assert "Оформить заявку" in refused.json()["detail"]
+
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "newrequest": "edit"})
+    no_deadline = client.post("/api/techcards/kitsets/708К.4/order-missing", json={"articles": ["UL1007 22AWG"]})
+    assert no_deadline.status_code == 422
+    assert "дедлайна" in no_deadline.json()["detail"]
+
+    client.put("/api/techcards/kitsets/708К.4/lines", json={"edits": [
+        {"index": "КБ1", "art": "43025-0400", "per": "1", "scrap": "0"},
+    ]})  # 10 needed, 15 free on the shelf
+    covered = client.post("/api/techcards/kitsets/708К.4/order-missing", json={
+        "articles": ["43025-0400"], "deadline": "2026-10-15",
+    }).json()
+    assert covered["created"] == []
+    assert covered["skipped"] == [{"art": "43025-0400", "kind": "хватает на складе", "reason": "свободно на складе: 15"}]
+    assert covered["message"] == "Заявки созданы: 0, пропущено 1 (хватает на складе)."
+
+    picked = client.post("/api/techcards/kitsets/708К.4/order-missing", json={
+        "articles": ["ul1007  22awg", "НЕТ-ТАКОГО"], "deadline": "2026-10-15",
+    }).json()
+    assert [(item["art"], item["quantity"]) for item in picked["created"]] == [("UL1007 22AWG", "15.75")]
+    assert [item["kind"] for item in picked["skipped"]] == ["нет в спецификации"]
+    with app.state.uow_factory() as uow:
+        (filed,) = uow.requests.recent(100)
+    # No earlier request of the project: the first point of the directory, the deadline given.
+    assert (filed.delivery_point, str(filed.planned_date)) == ("г. Москва, ул. 6-я Радиальная, д. 17", "2026-10-15")
+    assert _supply(client)["43030-0007"]["short"] == "32"  # not picked — not ordered

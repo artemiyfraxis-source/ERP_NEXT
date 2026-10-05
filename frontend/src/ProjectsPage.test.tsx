@@ -375,6 +375,60 @@ describe("ProjectsPage", () => {
     expect(screen.getByText("15.75")).toBeTruthy();  // провод в метрах — до сотых
   });
 
+  it("orders what the project lacks from «Снабжение»: picked lines, the project deadline, the result banner", async () => {
+    const supplyLine = { kbs: ["КБ1"], kitted: "0", grn: "", received: false, rows: [] };
+    const lines = [
+      { ...supplyLine, art: "UL1007 22AWG", name: "", need: "15.75", unit: "м", free: "0", ordered: "0", short: "15.75", stage: "не заведено" },
+      { ...supplyLine, art: "43025-0400", name: "Корпус Molex", need: "20", unit: "шт", free: "15", ordered: "3", short: "2", stage: "Запрос · Новый" },
+      { ...supplyLine, art: "43030-0007", name: "", need: "32", unit: "шт", free: "0", ordered: "32", short: "0", stage: "Закупка · В работе" },
+    ];
+    let done = false;
+    const orders: unknown[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json({ ...card, deadline: "2026-10-20" });
+      if (url === "/api/techcards/kitsets/708К.4/supply") {
+        return json({ project: "708К.4", lines: done ? lines.map((line) => ({ ...line, short: "0", ordered: line.need })) : lines });
+      }
+      if (url === "/api/techcards/kitsets/708К.4/order-missing") {
+        orders.push(JSON.parse(String(init?.body)));
+        done = true;
+        return json({ created: [{ art: "43025-0400", name: "Корпус Molex", quantity: "2", unit: "шт", legacy_id: "SM-20261005-01" }], skipped: [], message: "Заявки созданы: 1." });
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", newrequest: "edit" } }} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Снабжение" }));
+
+    expect(await screen.findByRole("button", { name: "Заказать недостающее (2)" })).toBeTruthy();
+    expect((screen.getByLabelText("Срок закупки") as HTMLInputElement).value).toBe("2026-10-20");
+    expect(screen.queryByLabelText("Заказать 43030-0007")).toBeNull();  // covered by the purchase: nothing to pick
+    fireEvent.click(screen.getByLabelText("Заказать 43025-0400"));
+    fireEvent.click(screen.getByRole("button", { name: "Заказать недостающее (1)" }));
+
+    expect(await screen.findByText("Заявки созданы: 1.")).toBeTruthy();
+    expect(orders).toEqual([{ articles: ["43025-0400"], deadline: "2026-10-20" }]);
+    await waitFor(() => expect((screen.getByRole("button", { name: "Заказать недостающее (0)" }) as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  it("shows «Снабжение» without the order button to whoever cannot file requests", async () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (decodeURIComponent(String(input)) === "/api/techcards/kitsets/708К.4/supply") {
+        return json({ project: "708К.4", lines: [{ art: "43025-0400", name: "Корпус Molex", kbs: ["КБ1"], need: "20", unit: "шт", free: "15", ordered: "0", kitted: "0", short: "5", grn: "", stage: "не заведено", received: false, rows: [] }] });
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Снабжение" }));
+    expect(await screen.findByText("Корпус Molex")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Заказать недостающее/ })).toBeNull();
+    expect(screen.queryByLabelText("Заказать 43025-0400")).toBeNull();
+  });
+
   it("sends the kit to picking only with a deadline", async () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
