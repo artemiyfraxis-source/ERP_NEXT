@@ -47,8 +47,8 @@ other identities).
 
 ## Repo invariants
 - Gate: `npm run check` (repo root) — architecture tests + backend pytest + frontend tests + build. CI runs the
-  same minus architecture tests (they need a sibling `../SUPPLYMAP` checkout; without it, skip them locally).
-  A PR with red `check` is not merged.
+  same gate, architecture tests included. A PR with red `check` is not merged. The gate proves logic only — say so in
+  reports: screens are checked by screenshots, data by the live-data rehearsal.
 - Python 3.12 venv in `backend/.venv` (`pip install -r requirements.lock.txt`), frontend `npm ci` in `frontend/`.
 - Schema only via Alembic migrations; the app never creates tables. Never edit a migration already on `main` —
   add a new one after the head. One head: right before merge, rebase on fresh `main`; if `main` gained a
