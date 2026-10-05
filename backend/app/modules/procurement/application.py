@@ -18,7 +18,7 @@ from app.shared.notifications import NotificationOutbox, notification_requested,
 from app.shared.print_sheet import PrintSheet
 
 from .invoice_file import (
-    INVOICE_FILE_LIMIT, INVOICE_FILE_PATH, InvoiceInfo, invoice_file_name, recognise_invoice,
+    INVOICE_FILE_LIMIT, INVOICE_FILE_PATH, InvoiceInfo, invoice_file_name, kp_file_name, recognise_invoice,
 )
 from .domain import (
     AUTOFILL_TOPIC,
@@ -57,6 +57,9 @@ from .domain import (
 )
 from .request_pdf import render_request_pdf
 from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
+from .invoice_file import invoice_date as invoice_day
+from .document_items import SupplierDocument, read_supplier_document
+from .document_match import DocumentMatch, OrderLineCandidate, match_document_items
 
 
 _log = logging.getLogger(__name__)
@@ -2781,3 +2784,235 @@ def remove_untouched_request_lines(command: RemoveRequestLinesCommand, uow: Unit
         if removed:
             uow.commit()
     return result
+
+
+# --- «Вставить КП» / «Вставить счёт» (owner, 05.10): prices read from the supplier's document --------------------
+
+DOCUMENT_KINDS = ("invoice", "kp")
+_DOCUMENT_STAGES = (ProcurementStatus.AWAITING_INVOICE, ProcurementStatus.TO_PAY)
+
+
+@dataclass(frozen=True)
+class RecogniseOrderDocumentCommand:
+    order_number: str
+    kind: str  # «invoice» / «kp»
+    file_name: str
+    content_type: str
+    content: bytes
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class RecognisedOrderDocument:
+    kind: str
+    file: StoredInvoiceFile
+    url: str
+    document: SupplierDocument
+    lines: list[ProcurementLine]
+    matches: list[DocumentMatch]
+    unmatched_items: list[int]
+    unmatched_lines: list[ProcurementLine]
+
+
+@dataclass(frozen=True)
+class DocumentPriceRow:
+    """One order line as the buyer confirmed it: no price — the document does not price it, the stored one stays."""
+
+    line_id: UUID
+    expected_version: int
+    price_with_vat: Decimal | None = None
+    price: Decimal | None = None
+    vat_rate: Decimal | None = None
+    invoice_item_name: str | None = None
+
+
+@dataclass(frozen=True)
+class ApplyOrderDocumentCommand:
+    order_number: str
+    kind: str
+    file_url: str
+    rows: Sequence[DocumentPriceRow]
+    actor: Actor
+    now: datetime
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+    expected_arrival: date | None = None
+
+
+def foreign_document_message(currency: str) -> str:
+    return f"Документ в {currency}: цены и курс вносите через «Внести КП»"
+
+
+def _document_kind(kind: str) -> str:
+    if kind not in DOCUMENT_KINDS:
+        raise ProcurementValidationError("Документ — счёт или КП")
+    return kind
+
+
+def _document_lines(reference: str, actor: Actor, uow: UnitOfWork) -> list[ProcurementLine]:
+    lines = sorted(
+        (line for line in _buyer_order_lines(reference, actor, uow) if line.status in _DOCUMENT_STAGES),
+        key=lambda line: line.legacy_id,
+    )
+    if not lines:
+        raise ProcurementValidationError(
+            f"Нет строк заказа {reference} в статусе «{ProcurementStatus.AWAITING_INVOICE.value}» или "
+            f"«{ProcurementStatus.TO_PAY.value}»"
+        )
+    return lines
+
+
+def recognise_order_document(command: RecogniseOrderDocumentCommand, uow: UnitOfWork) -> RecognisedOrderDocument:
+    """The КП or the invoice dropped on the order: kept in ERP storage like an invoice file, its items table read and
+    matched to the buyer's order lines in «Жду счет» / «В оплату». The lines are not touched — the buyer checks the
+    matches and sends them to `apply_order_document`."""
+    kind = _document_kind(command.kind)
+    reference = _order_reference(command.order_number)
+    if not command.content:
+        raise ProcurementValidationError("Файл не передан")
+    if len(command.content) > INVOICE_FILE_LIMIT:
+        raise ProcurementValidationError("Файл больше 20 МБ")
+    document = read_supplier_document(command.file_name, command.content, kind)
+    with uow:
+        lines = _document_lines(reference, command.actor, uow)
+        first = lines[0]
+        info = InvoiceInfo(number=document.number, date=document.date)
+        stored = StoredInvoiceFile(
+            id=uuid4(),
+            line_id=first.id,
+            file_name=(
+                invoice_file_name(info, first.supplier or "", first.designation, reference, command.file_name)
+                if kind == "invoice"
+                else kp_file_name(info, first.supplier or "", reference, command.file_name)
+            ),
+            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            size=len(command.content),
+            uploaded_by=command.actor.name,
+            uploaded_at=command.now,
+        )
+        uow.files.add(stored, command.content)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=first.id,
+                event_type="procurement.document_file_uploaded",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={
+                    "file_id": str(stored.id),
+                    "name": stored.file_name,
+                    "kind": kind,
+                    "order_reference": reference,
+                    "items": str(len(document.items)),
+                    "currency": document.currency,
+                },
+            )
+        )
+        uow.commit()
+    candidates = [
+        OrderLineCandidate(
+            key=str(line.id),
+            article=line.design_article,
+            names=(line.site_name, line.calculated_name, line.invoice_item_name),
+            quantity=line.actual_quantity if line.actual_quantity is not None else line.to_buy,
+        )
+        for line in lines
+    ]
+    matches, free_items, free_keys = match_document_items(document.items, candidates)
+    by_key = {str(line.id): line for line in lines}
+    return RecognisedOrderDocument(
+        kind=kind,
+        file=stored,
+        url=invoice_file_url(stored.id),
+        document=document,
+        lines=lines,
+        matches=matches,
+        unmatched_items=free_items,
+        unmatched_lines=[by_key[key] for key in free_keys],
+    )
+
+
+def _stored_document(file_url: str, uow: UnitOfWork) -> tuple[StoredInvoiceFile, bytes]:
+    text = str(file_url or "").strip()
+    try:
+        file_id = UUID(text[len(INVOICE_FILE_PATH):]) if text.startswith(INVOICE_FILE_PATH) else None
+    except ValueError:
+        file_id = None
+    found = uow.files.get(file_id) if file_id is not None else None
+    if found is None:
+        raise ProcurementValidationError("Файл документа не найден в ERP — вставьте его ещё раз")
+    return found
+
+
+def apply_order_document(command: ApplyOrderDocumentCommand, uow: UnitOfWork) -> list[ProcurementLine]:
+    """«Вставить КП / счёт», second half: the prices the buyer confirmed, in one transaction, all rows or none.
+
+    КП: «Цена факт» (with the document's НДС rate and net price) on the rows sent, which stay where they are; the КП
+    file is named in each row's audit event (the line has no КП field). Invoice: the same prices, then the order-wide
+    invoice (`invoice_supplier_order` rules) — the rows sent must be exactly the order's «Жду счет» rows (they go
+    «В оплату») or exactly its «В оплату» rows (the invoice is replaced). A row refused by its stage, the pay gate or a
+    foreign-currency document refuses the whole call; a stale row is `ConcurrentProcurementUpdate`."""
+    kind = _document_kind(command.kind)
+    reference = _order_reference(command.order_number)
+    refs = [OrderLineRef(row.line_id, row.expected_version) for row in command.rows]
+    requested = _order_refs(refs)
+    with uow:
+        order_lines = _buyer_order_lines(reference, command.actor, uow)
+        by_id = {line.id: line for line in order_lines}
+        stored, content = _stored_document(command.file_url, uow)
+        if stored.line_id not in by_id:
+            raise ProcurementValidationError(f"Файл загружен не к заказу {reference}")
+        document = read_supplier_document(stored.file_name, content, kind)
+        if document.currency != "RUB":
+            raise ProcurementValidationError(foreign_document_message(document.currency))
+        outside = [row.line_id for row in command.rows if row.line_id not in by_id]
+        if outside:
+            raise ProcurementValidationError(f"Строка {outside[0]} не входит в заказ {reference}")
+        if kind == "invoice":
+            awaiting = _stage_ids(order_lines, ProcurementStatus.AWAITING_INVOICE)
+            to_pay = _stage_ids(order_lines, ProcurementStatus.TO_PAY)
+            if requested != awaiting and requested != to_pay:
+                raise OrderLinesMismatch(
+                    f"Заказ {reference} изменился: счёт вносится сразу на все его строки "
+                    f"«{ProcurementStatus.AWAITING_INVOICE.value}» ({len(awaiting)}) или на все строки "
+                    f"«{ProcurementStatus.TO_PAY.value}» ({len(to_pay)}) — обновите данные"
+                )
+        rows = _versioned_rows(order_lines, refs)
+        planned = []
+        for row, current in zip(command.rows, rows):
+            try:
+                updated = current.apply_document_price(
+                    command.actor,
+                    price_with_vat=row.price_with_vat,
+                    price=row.price,
+                    vat_rate=row.vat_rate,
+                    invoice_item_name=row.invoice_item_name,
+                )
+            except ProcurementValidationError as error:
+                raise ProcurementValidationError(f"{current.legacy_id}: {error}") from error
+            planned.append((current, updated))
+        source = {"order_reference": reference, "document_kind": kind, "document_url": command.file_url}
+        priced = [
+            _save_transition(
+                current, updated, event_type="procurement.fact_price_saved", actor=command.actor, now=command.now,
+                uow=uow, details={
+                    **source, **_fact_price_details(current.money, updated.money),
+                    "invoice_item_name": updated.invoice_item_name or "",
+                },
+            )
+            for current, updated in planned
+        ]
+        result = priced
+        if kind == "invoice":
+            # The pay gate is checked on every row before the first invoice write; a refusal rolls the prices back too.
+            result = _invoice_order(
+                priced, command.file_url, command.actor, command.now, uow,
+                expected_arrival=command.expected_arrival,
+                invoice_number=command.invoice_number or document.number or None,
+                invoice_date=command.invoice_date or invoice_day(document.date),
+                order_wide=True,
+            )
+        if any(after != before for after, before in zip(result, rows)):
+            uow.commit()
+        return result
