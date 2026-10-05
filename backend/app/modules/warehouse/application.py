@@ -71,6 +71,8 @@ class WarehouseRepository(Protocol):
 
 
 class OutboxRepository(Protocol):
+    def add(self, message: OutboxMessage) -> None: ...
+    def by_idempotency_key(self, idempotency_key: str) -> OutboxMessage | None: ...
     def next_unpublished(self, topic: str, now: datetime) -> OutboxMessage | None: ...
     def mark_published(self, message_id: UUID, published_at: datetime) -> None: ...
     def mark_failed(self, message_id: UUID, failed_at: datetime, error: str) -> None: ...
@@ -276,6 +278,33 @@ def _audit_value(value) -> str:
     return str(value)
 
 
+LOT_ARRIVED_TOPIC = "fulfillment.lot_arrived"
+
+
+def _emit_lot_arrived(uow: UnitOfWork, lot: StockLot, incoming: StockLot, payload: dict, now: datetime) -> None:
+    """Stock arrived on the lot (a new lot or a top-up): the kit requests waiting for it may take it
+    (`workflows/arrival_kits.py`). Once per receipt — the receipt id the lot counts the arrival by."""
+    receipt_id = incoming.source_receiving_ids[0]
+    key = f"warehouse:{receipt_id}:lot_arrived"
+    if uow.outbox.by_idempotency_key(key) is not None:
+        return
+    uow.outbox.add(OutboxMessage(
+        id=uuid4(),
+        topic=LOT_ARRIVED_TOPIC,
+        idempotency_key=key,
+        created_at=now,
+        payload={
+            "lot_id": str(lot.id),
+            "receipt_id": receipt_id,
+            "receiving_line_id": str(payload.get("receiving_line_id") or ""),
+            "warehouse": lot.warehouse,
+            "grn": lot.grn,
+            "package": lot.package,
+            "quantity": format(incoming.inbound.normalize(), "f"),
+        },
+    ))
+
+
 def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot | None:
     with uow:
         message = uow.outbox.next_unpublished("warehouse.received", now)
@@ -316,6 +345,7 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
                     details=details,
                 )
             )
+            _emit_lot_arrived(uow, lot, incoming, message.payload, now)
         uow.outbox.mark_published(message.id, now)
         uow.commit()
         return lot

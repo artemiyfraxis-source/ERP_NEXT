@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -1167,3 +1167,35 @@ def test_order_payment_asks_for_a_manual_rate_like_the_single_row_payment(procur
     assert paid.status_code == 200, paid.text
     (done,) = paid.json()["lines"]
     assert (done["status"], done["exchange_rate"], done["exchange_rate_manual"]) == ("В пути", "95", True)
+
+
+def test_mine_returns_lines_accepted_in_the_last_30_days_but_never_cancelled(procurement_api):
+    client, line, sessions = procurement_api  # «сегодня» в тесте — 15.09.2026
+    lines = [line, *(second_line(client, sessions, suffix) for suffix in (2, 3, 4, 5))]
+    taken = client.post("/api/procurement/take", json={"line_ids": [str(item.id) for item in lines]})
+    assert taken.status_code == 200, taken.text
+    recent, old, cancelled, no_date, active = lines
+    with sessions() as session:
+        for item, status, arrival in (
+            (recent, "Готово", date(2026, 9, 5)),  # 10 дней назад
+            (old, "Готово", date(2026, 8, 6)),  # 40 дней назад
+            (cancelled, "Отменено", date(2026, 9, 10)),
+            (no_date, "Готово", None),  # без ФАКТ. ДАТЫ — по дню создания строки (15.09)
+            (active, "В пути", None),
+        ):
+            row = session.get(ProcurementLineRow, item.id)
+            row.status, row.actual_arrival = status, arrival
+        session.commit()
+
+    returned = {item["id"] for item in client.get("/api/procurement/mine?limit=500").json()["lines"]}
+    assert returned == {str(recent.id), str(no_date.id), str(active.id)}
+
+    # Курсорные страницы по 2 строки отдают те же строки без пропусков и повторов.
+    seen, after = [], None
+    while True:
+        page = client.get("/api/procurement/mine", params={"limit": 2, **({"after": after} if after else {})}).json()
+        seen += [item["id"] for item in page["lines"]]
+        after = page["next_cursor"]
+        if not after:
+            break
+    assert sorted(seen) == sorted(returned)

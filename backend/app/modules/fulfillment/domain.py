@@ -25,6 +25,11 @@ class FulfillmentStatus(str, Enum):
     CANCELLED = "Отменена"
 
 
+# «Отправить на выдачу» offers this place when the kit's site has none used before (owner, G1-T3 05.10.2026): the rack
+# layout has no named handout zone, so it is a text place, editable on the screen.
+DEFAULT_HANDOUT_PLACE = "Зона выдачи"
+
+
 def project_of(purpose: str) -> str:
     """SUPPLYMAP issueProjectOf_: the project is the first part of НАЗНАЧЕНИЕ «728К.2 · КБ1 · …»; a manual request
     without « · » has no project → ''."""
@@ -334,13 +339,25 @@ class FulfillmentRequest:
                 updated.append(remainder)
         if not found:
             raise FulfillmentValidationError("Позиция заявки не найдена")
-        # FF-3 (Issue.gs issueHeadSync_): the first bound lot moves «Новая» → «Недоукомплектован» and nothing else;
-        # «Укомплектован» is a separate manual step (`mark_complete`) with the whole-kit gate.
-        status = FulfillmentStatus.UNDERFILLED if touch and self.status is FulfillmentStatus.NEW else self.status
+        lines = tuple(updated)
         return replace(
-            self, lines=tuple(updated), status=status, version=self.version + 1,
+            self, lines=lines, status=self._picked_status(lines, touch), version=self.version + 1,
             shortfall_note=None if touch else self.shortfall_note,
         )
+
+    def _picked_status(self, lines: tuple[FulfillmentLine, ...], touch: bool) -> FulfillmentStatus:
+        """FF-3 after the picker binds a lot or marks «есть, но не заведено» (owner, G1-T3 05.10.2026: fewer clicks
+        to hand a kit out): the pick that closes the last open line makes the kit «Укомплектован» by itself; while a
+        line still waits, the first pick moves «Новая» → «Недоукомплектован» (issueHeadSync_). touch=False — the
+        reserve made while the request is created — leaves «Новая» as it is (issueCreateTasks_), even when every line
+        got its lot there: that kit is completed by hand (`mark_complete`)."""
+        if not touch:
+            return self.status
+        if self.status in {FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED} and lines and all(
+            line.covered for line in lines
+        ):
+            return FulfillmentStatus.COMPLETE
+        return FulfillmentStatus.UNDERFILLED if self.status is FulfillmentStatus.NEW else self.status
 
     @property
     def shortfall(self) -> str:
@@ -368,8 +385,14 @@ class FulfillmentRequest:
         return tuple(line for line in self.lines if not line.covered)
 
     def mark_complete(self) -> FulfillmentRequest:
-        """«Укомплектован» by hand (ISS_MODES_.pick.next: from «Новая» and «Недоукомплектован»). The gate is
-        issueStatusSweep_'s: while a line is not closed by a lot the status would roll back — refuse instead."""
+        """«Укомплектован» by hand (ISS_MODES_.pick.next: from «Новая» and «Недоукомплектован»). Picking the last open
+        line completes the kit by itself (`_picked_status`); the button stays for a kit that is whole without a pick:
+        every line got its lot when the request was created (it stays «Новая»), or a request left
+        «Недоукомплектован» with every line closed before the automatic step existed. The gate is issueStatusSweep_'s:
+        while a line is not closed by a lot the status would roll back — refuse instead. A kit the last pick already
+        completed is left as it is (a screen or a script that still presses the button changes nothing)."""
+        if self.status is FulfillmentStatus.COMPLETE:
+            return self
         if self.status not in {FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED}:
             raise FulfillmentValidationError(f"Из статуса «{self.status.value}» в «Укомплектован» не переводят")
         waiting = self.open_lines()
@@ -407,6 +430,8 @@ class FulfillmentRequest:
         return replace(self, **changes) if changes else self
 
     def unbind_line(self, line_id: UUID) -> FulfillmentRequest:
+        """The lot removed: the line waits again, so the kit rolls back to «Недоукомплектован» — also from the
+        «Укомплектован» the last pick set by itself — and the handout place is forgotten."""
         self._require_editable()
         released = False
         updated: list[FulfillmentLine] = []
@@ -428,14 +453,16 @@ class FulfillmentRequest:
         )
 
     def mark_off_book(self, line_id: UUID, *, touch: bool = True) -> FulfillmentRequest:
-        """«есть, но не заведено»: the waiting position counts as covered without a lot. Like the first bound lot it
-        moves «Новая» → «Недоукомплектован» and rewrites НЕДОБОР from the lines (issueHeadSync_)."""
+        """«есть, но не заведено»: the waiting position counts as covered without a lot. Like a bound lot it moves the
+        status (`_picked_status`: the last open line → «Укомплектован») and rewrites НЕДОБОР from the lines
+        (issueHeadSync_)."""
         self._require_editable()
         if not any(line.id == line_id for line in self.lines):
             raise FulfillmentValidationError("Позиция заявки не найдена")
         lines = tuple(line.mark_off_book() if line.id == line_id else line for line in self.lines)
-        status = FulfillmentStatus.UNDERFILLED if touch and self.status is FulfillmentStatus.NEW else self.status
-        return replace(self, lines=lines, status=status, version=self.version + 1, shortfall_note=None)
+        return replace(
+            self, lines=lines, status=self._picked_status(lines, touch), version=self.version + 1, shortfall_note=None,
+        )
 
     def clear_off_book(self, line_id: UUID) -> FulfillmentRequest:
         """The mark removed: the position waits again, exactly as after a lot is removed (FF-6 fold included)."""

@@ -44,7 +44,7 @@ def test_off_book_line_counts_as_covered_and_is_issued_whole_without_reserve():
 
     assert marked.fully_reserved is True
     assert marked.shortfall == ""
-    assert marked.status.value == "Недоукомплектован"
+    assert marked.status.value == "Укомплектован"
     line = marked.lines[0].mark_issued()
     assert (line.issued, line.reserved, line.lot) == (Decimal("4"), Decimal("0"), None)
 

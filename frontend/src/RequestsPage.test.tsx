@@ -487,6 +487,38 @@ describe("RequestsPage", () => {
     expect(await screen.findByText("Создано заявок: 2 (REQ-1, REQ-2)")).toBeInTheDocument();
   });
 
+  it("manual form: only name, quantity, unit and purpose are required; cleared defaults are left to the server", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/requests/schema") return json(schema);
+      if (path === "/api/requests" && init?.method === "POST") return json({ requests: [row] }, 201);
+      if (path === "/api/requests") return json({ requests: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    render(<RequestsPage principal={principal} view="create" />);
+    await screen.findByRole("button", { name: "Оформить" });
+
+    // defaults are visible and editable
+    expect(screen.getByLabelText("Документ качества")).toHaveValue("Нет");
+    expect(screen.getByLabelText("Срок закупки")).not.toHaveValue("");
+    expect(screen.getByLabelText("Плановая дата")).not.toHaveValue("");
+
+    fireEvent.change(screen.getByLabelText("Наименование, строка 1"), { target: { value: "Болт М3" } });
+    fireEvent.change(screen.getByLabelText("Тип, строка 1"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("План. дата, строка 1"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Док. качества, строка 1"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/api/requests" && init?.method === "POST")).toBe(true));
+    const [, init] = fetchMock.mock.calls.find(([input, reqInit]) => String(input) === "/api/requests" && reqInit?.method === "POST")!;
+    const sent = JSON.parse(String(init?.body)).requests[0];
+    expect(sent).toMatchObject({ name: "Болт М3", quantity: "1", unit: "шт", purpose: "RND" });
+    expect(sent).not.toHaveProperty("item_type");
+    expect(sent).not.toHaveProperty("planned_date");
+    expect(sent).not.toHaveProperty("quality_document");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("T7: a block pasted into the grid fills rows and columns; 100 rows fit, the rest is dropped", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input) === "/api/requests/schema") return json(schema);
@@ -583,7 +615,7 @@ describe("RequestsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Вставить из Excel" }));
     fireEvent.click(screen.getByRole("button", { name: "Скопировать заголовки" }));
     await waitFor(() => expect(writeText).toHaveBeenCalled());
-    expect(writeText.mock.calls[0][0]).toContain("Наименование *\tТип *\tКатегория\tАртикул КД");
+    expect(writeText.mock.calls[0][0]).toContain("Наименование *\tТип\tКатегория\tАртикул КД");
     expect(await screen.findByText(/Заголовки скопированы/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Скачать шаблон (.csv)" }));
     expect(click).toHaveBeenCalled();

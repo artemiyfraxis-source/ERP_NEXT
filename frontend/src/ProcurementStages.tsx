@@ -331,36 +331,44 @@ const documentItems = (group: OrderGroup): MenuItem[] => [
 
 const AWAITING = "Жду счет";
 const TO_PAY = "В оплату";
+const QUARANTINE = "Карантин";
+const DONE = "Готово";
 
-export type OrderStage = "awaiting" | "topay" | "paid";
+export type OrderStage = "awaiting" | "topay" | "transit" | "quarantine" | "accepted";
 
-/** Стадия заказа — по самой ранней из его строк: пока есть строка «Жду счет», заказ ждёт счёт. */
+/** Стадия заказа: «Карантин» у любой строки выносит заказ в «Карантин» (решение по нему важнее оплаты остального);
+ *  иначе — по самой ранней из строк: пока есть строка «Жду счет», заказ ждёт счёт; «Принято» — все строки «Готово»;
+ *  остальное (в том числе частично принятый) — «В пути». */
 export function orderStage(group: OrderGroup): OrderStage {
+  if (group.lines.some((line) => line.status === QUARANTINE)) return "quarantine";
   if (group.lines.some((line) => line.status === AWAITING)) return "awaiting";
   if (group.lines.some((line) => line.status === TO_PAY)) return "topay";
-  return "paid";
+  if (group.lines.every((line) => line.status === DONE)) return "accepted";
+  return "transit";
 }
 
-/** Плашка статуса в заголовке заказа: Жду счёт → Ждёт оплаты → Оплачено · в пути / карантин / принято. */
+/** Плашка статуса в заголовке заказа: Жду счёт / Ждёт оплаты / В пути (принято N из M) / Карантин: строки / Принято. */
 export function orderStatus(group: OrderGroup): { label: string; tone: string; title?: string } {
   const stage = orderStage(group);
   if (stage === "awaiting") return { label: "Жду счёт", tone: "tone-info", title: group.date ? `Запрос отправлен ${formatDay(group.date)}` : "Запрос отправлен" };
   if (stage === "topay") return { label: "Ждёт оплаты", tone: "tone-warn" };
-  const count = (status: string) => group.lines.filter((line) => line.status === status).length;
-  const transit = count("В пути");
-  const quarantine = count("Карантин");
-  const done = count("Готово");
-  if (done === group.lines.length) return { label: "Принято", tone: "tone-neutral" };
-  const mixed = [transit, quarantine, done].filter(Boolean).length > 1;
-  const part = (amount: number, word: string) => (amount ? (mixed ? `${word} ${amount}` : word) : "");
-  const parts = [part(transit, "в пути"), part(quarantine, "карантин"), part(done, "принято")].filter(Boolean);
-  return {
-    label: parts.length ? `Оплачено · ${parts.join(", ")}` : "Оплачено",
-    tone: quarantine ? "tone-warn" : "tone-ok",
-    title: quarantine ? "Приёмка нашла несоответствие — ждёт решения" : undefined,
-  };
+  if (stage === "accepted") return { label: "Принято", tone: "tone-neutral" };
+  const done = group.lines.filter((line) => line.status === DONE).length;
+  const accepted = done ? `принято ${done} из ${group.lines.length}` : "";
+  if (stage === "quarantine") {
+    const held = group.lines.filter((line) => line.status === QUARANTINE);
+    const ids = held.map((line) => line.legacy_id);
+    // Закупщик узнаёт позицию по названию, не по системному ID — ID остаются в подсказке.
+    const names = held.map((line) => (line.calculated_name || line.design_article || line.legacy_id).trim());
+    const shown = names.length > 3 ? `${names.slice(0, 3).join(", ")} и ещё ${names.length - 3}` : names.join(", ");
+    return {
+      label: ["Карантин: " + shown, accepted].filter(Boolean).join(" · "),
+      tone: "tone-warn",
+      title: `Приёмка нашла несоответствие — ждёт решения: ${ids.join(", ")}`,
+    };
+  }
+  return { label: ["В пути", accepted].filter(Boolean).join(" · "), tone: "tone-ok" };
 }
-
 /** Заказы блока: свежие сверху. */
 export function orderGroups(lines: ProcurementLine[]): OrderGroup[] {
   return groupByOrder(lines).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")
@@ -477,7 +485,7 @@ export type OrderDocumentHandlers = {
   onApplyDocument: (group: OrderGroup, input: ApplyOrderDocumentInput, replace: boolean) => Promise<void>;
 };
 
-/** Заказы одного блока («Жду счёт» / «Ждёт оплаты» / «Оплачено»). Заголовок заказа свёрнут; в нём действия
+/** Заказы одного блока («Жду счёт» / «Ждёт оплаты» / «В пути» / «Карантин» / «Принято»). Заголовок заказа свёрнут; в нём действия
  *  стадии — «Вставить счёт» / «Вставить КП» (окно), «Оплачено», меню «⋯». Строки заказа только показывают цену:
  *  её вносит окно документа. */
 export function OrderList({
@@ -930,13 +938,17 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
 
 // ── Прочие статусы: строка не пропадает с экрана, даже если стадия новая ───────────────────────────
 
+/** Что внутри «Прочих позиций» (подсказка в заголовке). */
+export const OTHER_HINT = "Строки вне потока: новые, на согласовании";
+
 export function OtherStage({ lines, disabled, busyId, actionsOf, editing }: StageProps) {
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
   const [collapsed, toggle] = useCollapsed("other");
-  if (!lines.length) return <EmptyStage title="Прочие позиции" text="Нет позиций" />;
+  // Единственный блок, что прячется без строк: он нужен лишь тем, чей статус вне потока.
+  if (!lines.length) return null;
   return (
     <section className="panel table-panel procurement-stage stage-block">
-      <StageHeading title="Прочие позиции" count={lines.length} summary={stageSummary(lines)} collapsed={collapsed} onToggle={toggle} />
+      <StageHeading title="Прочие позиции" count={lines.length} hint={OTHER_HINT} summary={stageSummary(lines)} collapsed={collapsed} onToggle={toggle} />
       {!collapsed && <><DataTable
         label="Прочие позиции"
         rows={lines}

@@ -8,6 +8,7 @@ import {
   blockOrder,
   cardLabel,
   emptyManual,
+  genParams,
   manualConfig,
   manualFromConfig,
   manualProblem,
@@ -213,6 +214,45 @@ describe("manual assembly: diagram first", () => {
     expect(stepsPayload(restored.ops.find((op) => op.seq === 5)!)).toHaveLength(2);
     expect(toolingPayload(restored.ops.find((op) => op.seq === 5)!)).toEqual([{ section: "Оборудование", name: "лупа" }]);
     expect(manualFromConfig({ ops: [] })).toBeNull();
+  });
+
+  it("genParams: side Б in Cyrillic, empty values omitted instead of a dash", () => {
+    expect(genParams({ side: "B", strip: { a: true, lenA: "", b: true, lenB: "5" } })).toBe("сторона Б · зачистка Б 5 мм");
+    expect(genParams({ strip: { a: true, lenA: "", b: true, lenB: "" } })).toBe("");
+    expect(genParams({ side: "B" })).not.toMatch(/[BВ]/);
+    expect(genParams({ strip: { a: true, lenA: "4", b: true, lenB: "6" } })).toBe("зачистка А 4, Б 6 мм");
+  });
+
+  it("round-trips generator operations: their fields and the assembly data stay, the norm is editable, the name is Russian", () => {
+    const wires = [{ name: "МГТФ", art: "МГТФ", qty: 2, length: 160 }];
+    const generated = {
+      mode: "manual", assemblyIndex: "КБ1", assemblyName: "Жгут", partQty: 10, wires, twist: { enabled: false }, bigAssembly: false,
+      ops: [
+        { type: "cutWireStrip", seq: 1, templateId: "cut", opNum: "CUT_WIRE_auto", tPrep: "60", tOp: "4", tMachine: "2", wires, strip: { a: true, lenA: "5", b: false, lenB: "" } },
+        { type: "prsTerm", seq: 2, side: "A", label: "Опрессовка терминалов А1", templateId: "prs", opNum: "PRS", tPrep: "", tOp: "6", ep: { termArt: "SXH", connArt: "XHP-2" }, wires },
+        { type: "libraryOp", seq: 3, templateId: "heat", opNum: "HEAT", side: "", label: "Усадка", qty: "1", tPrep: "30", tOp: "5" },
+      ],
+      route: { blocks: [{ key: "b1", name: "Жгут", ops: [1, 2, 3], final: true }], edges: [] },
+    };
+    const state = manualFromConfig(generated)!;
+    // Название — русское (по типу, когда в конфиге его нет), тип как заголовок не показывается.
+    expect(state.ops.map((op) => [op.label, op.gen?.type])).toEqual([["Резка с разделкой", "cutWireStrip"], ["Опрессовка терминалов А1", "prsTerm"], ["Усадка", undefined]]);
+    expect(genParams(state.ops[0].gen!)).toBe("1 пров. · L 160 мм · зачистка А 5 мм");
+    expect(genParams(state.ops[1].gen!)).toBe("сторона А · 1 пров. · L 160 мм · терминал SXH · разъём XHP-2");
+    expect(state.ops[0].prepMin).toBe("1");
+    const config = manualConfig(state, { assemblyIndex: "КБ1", assemblyName: "Жгут", partQty: 10 });
+    expect(config).toMatchObject({ mode: "manual", wires, twist: { enabled: false }, bigAssembly: false });
+    expect(config.ops).toEqual([
+      { ...generated.ops[0], label: "Резка с разделкой" }, generated.ops[1], generated.ops[2],
+    ]);
+    expect(manualFromConfig(config)).toEqual(state);
+    // Норма правится, остальные поля генератора не трогаются; операцию можно убрать и переставить.
+    const edited = moveOp(updateOp(state, 1, { prepMin: "2", opSec: "5" }), 2, -1);
+    const next = manualConfig(edited, { partQty: 10 }).ops as Array<Record<string, unknown>>;
+    expect(next.map((op) => op.seq)).toEqual([2, 1, 3]);
+    expect(next[1]).toMatchObject({ type: "cutWireStrip", tPrep: "120", tOp: "5", tMachine: "2", strip: { a: true } });
+    expect(manualConfig(removeOp(state, 2), { partQty: 10 }).ops).toHaveLength(2);
+    expect(manualProblem(state, "Жгут")).toBeNull();
   });
 
   it("loads an old list without a scheme as a chain of blocks, one per operation", () => {

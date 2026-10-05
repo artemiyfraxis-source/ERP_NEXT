@@ -661,7 +661,7 @@ API_TOKEN_PREFIX = "erp_"
 API_TOKEN_PATTERN = re.compile(r"erp_[A-Za-z0-9_-]{43}")
 API_TOKEN_SCOPES: dict[str, str] = {
     "tcgen": "Генератор техкарт",
-    "assembly": "Схемы сборки",
+    "assembly": "Черновики сборки",
 }
 API_TOKEN_MAX_DAYS = 365
 API_TOKEN_NAME_MAX = 128

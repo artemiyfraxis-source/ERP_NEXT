@@ -640,7 +640,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       <div className={view === "create" ? "single-layout" : "list-layout"}>
         {view !== "create" ? null : canEdit ? (
           <div className="panel request-form">
-            <div className="panel-heading"><h2>Новая заявка</h2><span>Обязательные поля отмечены *</span></div>
+            <div className="panel-heading"><h2>Новая заявка</h2><span>Обязательные поля отмечены *; остальное заполнено по умолчанию</span></div>
             <div className="mode-tabs">
               <button type="button" className={createMode === "manual" ? "secondary small active" : "secondary small"} onClick={() => switchMode("manual")}>Вручную</button>
               <button type="button" className={createMode === "excel" ? "secondary small active" : "secondary small"} onClick={() => switchMode("excel")}>Вставить из Excel</button>
@@ -657,11 +657,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                       {/* Ручная заявка: номер проекта вписывают руками, пусто — без проекта; реестр только подсказывает. */}
                       <SuggestInput options={projects} value={common.project_reference} onChange={(value) => setCommonField("project_reference", value)} placeholder="пусто — без проекта, например 591К.3" />
                     </label>
-                    <label className="rg-point">Точка отгрузки *<select value={common.delivery_point} onChange={(e) => setCommonField("delivery_point", e.target.value)}><option value="">Выберите точку</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
+                    <label className="rg-point">Точка отгрузки<select value={common.delivery_point} onChange={(e) => setCommonField("delivery_point", e.target.value)}><option value="">Выберите точку</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
                     <label>Категория<select value={common.category} onChange={(e) => setCommonField("category", e.target.value)}>{schema?.categories.map((item) => <option key={item}>{item}</option>)}</select></label>
-                    <label>Документ качества *<select value={common.quality_document} disabled={common.category === "ОП"} onChange={(e) => setCommonField("quality_document", e.target.value)}><option>Нет</option><option>Да</option></select></label>
-                    <label>Срок закупки *<input type="date" value={common.procurement_deadline} onChange={(e) => setCommonField("procurement_deadline", e.target.value)} /></label>
-                    <label>Плановая дата *<input type="date" value={common.planned_date} onChange={(e) => setCommonField("planned_date", e.target.value)} /></label>
+                    <label>Документ качества<select value={common.quality_document} disabled={common.category === "ОП"} onChange={(e) => setCommonField("quality_document", e.target.value)}><option>Нет</option><option>Да</option></select></label>
+                    <label>Срок закупки<input type="date" value={common.procurement_deadline} onChange={(e) => setCommonField("procurement_deadline", e.target.value)} /></label>
+                    <label>Плановая дата<input type="date" value={common.planned_date} onChange={(e) => setCommonField("planned_date", e.target.value)} /></label>
                   </div>
                 </div>
                 <p className="rg-hint">Вставьте блок из Excel или Таблиц прямо в таблицу (Ctrl+V в любую ячейку) · Enter — вниз, Tab — вправо, на последней строке Enter добавляет строку · в одной заявке до {GRID_LIMIT} позиций</p>

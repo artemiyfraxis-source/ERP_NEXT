@@ -11,11 +11,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
+from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.procurement.infrastructure import SqlAlchemyStockCoverRepository
+from app.modules.production.domain import ProductionStatus
+from app.modules.production.plan import normalize_project_number, project_from_purpose
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal
-from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
-from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, KitReserve, LotSnapshot
+from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, KitReserve, LotSnapshot, kb_of
 
 
 class FulfillmentRequestRow(Base):
@@ -345,6 +348,77 @@ class SqlAlchemyFulfillmentRepository:
         self.session.flush()
 
 
+# The shop site a kit goes to when no production task gives another one, and the site of a master with an empty
+# site: ЦАР is the default site of the staff and the site the autoplan schedules (`production.autoplan.AUTOPLAN_SITE`).
+DEFAULT_KIT_SITE = "ЦАР"
+# How far back `last_handout` looks for a place used at the site.
+_HANDOUT_LOOKBACK = 200
+
+
+def _same_kb(task_item: str, kb: str) -> bool:
+    """КБ of a production task «КБ1», «КБ-1» or «708К.4.КБ1» against the kit's «КБ1» (as `workflows.arbiter`)."""
+    item = str(task_item or "").upper().replace(" ", "").replace("КБ-", "КБ")
+    return bool(kb) and (item == kb or item.endswith(f".{kb}") or item.endswith(f"-{kb}"))
+
+
+class SqlAlchemyKitSites:
+    """Where a kit goes on the shop floor (owner, G1-T3 05.10.2026), read in the fulfillment transaction.
+
+    The site is the one the kit's production task is handed to («Отдать в ЖУК», `production_tasks.handed_to`): the task
+    launched on this kit, else a task of the same project and КБ; a task distributed by people, or no task yet, means
+    ЦАР. The masters are active people with «Мастер площадки» on that site (an empty site counts as ЦАР)."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def site_of(self, request: FulfillmentRequest) -> str:
+        # Imported here: production's persistence imports this module (kit rows), so a top-level import would cycle.
+        from app.modules.production.infrastructure import ProductionTaskRow
+
+        live = ProductionTaskRow.status != ProductionStatus.CANCELLED.value
+        linked = self.session.scalars(
+            select(ProductionTaskRow.handed_to)
+            .where(ProductionTaskRow.fulfillment_request_id == request.id, live)
+            .order_by(ProductionTaskRow.created_at.desc())
+        ).first()
+        if linked is not None:
+            return str(linked or "").strip() or DEFAULT_KIT_SITE
+        project, kb = project_from_purpose(request.purpose), kb_of(request.purpose)
+        if not project or not kb:
+            return DEFAULT_KIT_SITE
+        handed = self.session.execute(
+            select(ProductionTaskRow.project, ProductionTaskRow.item, ProductionTaskRow.handed_to)
+            .where(ProductionTaskRow.handed_to != "", live)
+            .order_by(ProductionTaskRow.created_at.desc())
+        )
+        for task_project, item, site in handed:
+            if normalize_project_number(task_project) == project and _same_kb(item, kb):
+                return str(site).strip()
+        return DEFAULT_KIT_SITE
+
+    def masters(self, site: str) -> list[UUID]:
+        wanted = str(site or "").strip() or DEFAULT_KIT_SITE
+        rows = self.session.execute(
+            select(IdentityUserRow.id, IdentityUserRow.site)
+            .where(IdentityUserRow.active.is_(True), IdentityUserRow.site_master.is_(True))
+            .order_by(IdentityUserRow.name)
+        )
+        return [user_id for user_id, user_site in rows if (str(user_site or "").strip() or DEFAULT_KIT_SITE) == wanted]
+
+    def last_handout(self, site: str) -> str | None:
+        """The place of the latest «Готов к выдаче» at the site (`fulfillment.ready` keeps both since G1-T3)."""
+        details = self.session.scalars(
+            select(AuditEventRow.details)
+            .where(AuditEventRow.event_type == "fulfillment.ready")
+            .order_by(AuditEventRow.occurred_at.desc())
+            .limit(_HANDOUT_LOOKBACK)
+        )
+        for item in details:
+            if isinstance(item, dict) and item.get("site") == site and str(item.get("handout_location") or "").strip():
+                return str(item["handout_location"]).strip()
+        return None
+
+
 class SqlAlchemyFulfillmentUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -363,6 +437,8 @@ class SqlAlchemyFulfillmentUnitOfWork:
         self.stock_covers = SqlAlchemyStockCoverRepository(self.session)
         # Techcard reserves of a project КБ: its kit request takes them over after the project's covers.
         self.kit_reserves = SqlAlchemyKitReserveRepository(self.session)
+        # The kit's shop site: its masters hear «готов к выдаче», its last handout place is offered next time.
+        self.kit_sites = SqlAlchemyKitSites(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

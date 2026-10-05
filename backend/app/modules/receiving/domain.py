@@ -46,7 +46,11 @@ class ReceivingStatus(str, Enum):
     VK_ARCHIVE = "Архив ВК"
 
 
+# Kept for lines inspected before 05.10.2026 and for the act layout: a missing УПД no longer blocks a line.
 MISSING_SHIPPING_DOCUMENT = "Отсутствие / несоответствие УПД/М-15"
+# Owner 05.10.2026: УПД often comes later by ЭДО — the line is accepted without it, with this note until
+# «Внести УПД» adds the document. No alert, no hold.
+SHIPPING_DOCUMENT_PENDING_NOTE = "УПД не приложен — придёт по ЭДО"
 MISSING_QUALITY_DOCUMENT = "Отсутствие / несоответствие документа по качеству"
 WRONG_ITEM = "Не тот товар (несоответствие счету)"
 EXPIRED = "Истёк срок годности"
@@ -66,6 +70,10 @@ MANUAL_NONCONFORMITIES = QUALITY_FAULTS
 QUARANTINE_WORKDAYS = 2
 # Open deliveries: ОЖИД. ДАТА still means something until the line is accepted, returned or archived.
 EXPECTED_ARRIVAL_FOLLOWS = frozenset({ReceivingStatus.IN_TRANSIT, ReceivingStatus.WAITING, ReceivingStatus.QUARANTINE})
+# «Внести УПД»: everything but «Архив ВК» (history) and «Возврат» (closed).
+ATTACH_DOCUMENT_STATUSES = frozenset({
+    ReceivingStatus.IN_TRANSIT, ReceivingStatus.WAITING, ReceivingStatus.QUARANTINE, ReceivingStatus.ACCEPTED,
+})
 TECHNOLOGIST_NONCONFORMITIES = {MECHANICAL_DAMAGE}
 NOTIFY_TECHNOLOGIST = "Технолог"
 NOTIFY_SUPPLY = "Снабжение"
@@ -137,6 +145,7 @@ class InspectionInput:
     fact_quantity: Decimal
     document_quantity: Decimal
     ordered_quantity: Decimal
+    # Informational only since 05.10.2026: a missing УПД is not a nonconformity (SHIPPING_DOCUMENT_PENDING_NOTE).
     has_shipping_document: bool
     quality_document_required: bool
     quality_document_present: bool
@@ -243,8 +252,6 @@ def inspect_delivery(data: InspectionInput) -> InspectionResult:
     nature: list[str] = []
     for item in data.manual_nonconformities:
         _append_unique(nature, item)
-    if not data.has_shipping_document:
-        _append_unique(nature, MISSING_SHIPPING_DOCUMENT)
     if data.quality_document_required and not data.quality_document_present:
         _append_unique(nature, MISSING_QUALITY_DOCUMENT)
     reference = data.verdict_date or data.inspection_date
@@ -394,6 +401,16 @@ class ReceivingLine:
     complaint_act_date: date | None = None
     use_permit_number: str = ""
     use_permit_date: date | None = None
+
+    @property
+    def shipping_document_pending(self) -> bool:
+        """Inspected without УПД (no file, no №) — non-blocking note until «Внести УПД» adds it."""
+        return bool(
+            self.verdict is not None
+            and self.status not in (ReceivingStatus.VK_ARCHIVE, ReceivingStatus.RETURN)
+            and not str(self.shipping_document_url or "").strip()
+            and not str(self.document_number or "").strip()
+        )
 
     def act(self, kind: str) -> tuple[str, date | None]:
         return {
@@ -560,14 +577,13 @@ class ReceivingLine:
     def attach_shipping_document(
         self, *, url: str | None, number: str, document_date: date | None
     ) -> ReceivingLine:
-        """Массовое внесение УПД до приёмки: только реквизиты документа, статус и ВК не трогаем.
+        """Массовое внесение УПД: только реквизиты документа, статус, ВК и склад не трогаем.
+        Принятая (и уже переданная на склад) позиция тоже: УПД по ЭДО приходит позже приёмки.
         Пустое значение не затирает уже внесённое."""
-        if self.warehouse_event_emitted or self.status not in (
-            ReceivingStatus.IN_TRANSIT,
-            ReceivingStatus.WAITING,
-        ):
+        if self.status not in ATTACH_DOCUMENT_STATUSES:
             raise ReceivingValidationError(
-                f"Позиция {self.legacy_id}: УПД вносится только для «В пути» и «Ожидание», сейчас «{self.status.value}»"
+                f"Позиция {self.legacy_id}: УПД вносится для «В пути», «Ожидание», «Карантин» и «Принято», "
+                f"сейчас «{self.status.value}»"
             )
         try:
             normalized_url = normalize_document_url(url)

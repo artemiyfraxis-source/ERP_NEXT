@@ -42,6 +42,7 @@ from .domain import (
     CATEGORIES,
     DELIVERY_POINTS,
     ITEM_TYPES,
+    DEFAULT_ITEM_TYPE,
     REQUIRED_FIELDS,
     STATIC_PURPOSES,
     TASK_TYPE,
@@ -70,14 +71,14 @@ CALC_IMPORT_LIMIT = 500  # SUPPLYMAP has no cap on an import; решено аг�
 
 class RequestDraftInput(BaseModel):
     purpose: str = Field(max_length=128)
-    delivery_point: str = Field(max_length=512)
+    delivery_point: str | None = Field(default=None, max_length=512)
     name: str = Field(max_length=1024)
-    item_type: str = Field(max_length=255)
+    item_type: str | None = Field(default=None, max_length=255)
     quantity: Quantity
     unit: str = Field(max_length=32)
-    quality_document: str = Field(max_length=8)
-    procurement_deadline: date
-    planned_date: date
+    quality_document: str | None = Field(default=None, max_length=8)
+    procurement_deadline: date | None = None
+    planned_date: date | None = None
     project_reference: str | None = Field(default=None, max_length=128)
     category: str | None = Field(default=None, max_length=32)
     design_article: str | None = Field(default=None, max_length=512)
@@ -190,7 +191,7 @@ def request_schema(
         "units": list(UNITS),
         "categories": list(CATEGORIES),
         "item_types": list(ITEM_TYPES),
-        "item_type": {"mode": "combobox", "required": True},
+        "item_type": {"mode": "combobox", "required": False, "default": DEFAULT_ITEM_TYPE},
         "project_reference": {
             "required": False,
             "source": "projects-module",
@@ -205,7 +206,7 @@ def validate_request(
     today: Annotated[date, Depends(moscow_today)],
 ) -> dict:
     try:
-        normalized = validate_draft(payload.request.to_domain())
+        normalized = validate_draft(payload.request.to_domain(), today)
         line_sum = calculate_line_sum(normalized.price_with_vat, normalized.quantity)
     except ValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -216,6 +217,8 @@ def validate_request(
             "purpose": normalized.purpose,
             "project_reference": normalized.project_reference,
             "delivery_point": normalized.delivery_point,
+            "procurement_deadline": normalized.procurement_deadline,
+            "planned_date": normalized.planned_date,
             "name": normalized.name,
             "item_type": normalized.item_type,
             "unit": normalized.unit,

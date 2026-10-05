@@ -11,15 +11,16 @@ import {
   type KitsetLoadResult,
   type KitsetLot,
   type KitsetStockLot,
-  type KitsetSupplyLine,
   type KitsetTile,
   type Principal,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
+import { PendingLesson } from "./AssemblyDrafts";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { ProjectStatus } from "./ProjectStatus";
 import { ProjectTrack } from "./ProjectTrack";
+import { supplyApi, type SupplyLine } from "./supplyApi";
 
 /* «Проекты» — SUPPLYMAP erptechmap (PortalApp.html openKitsetHub / openKitsetCard). Проект заводится из расчёта:
    номер, заказчик, сборки с тиражом и состав каждой. Внутри — состав, снабжение, спецификация, генератор и
@@ -89,8 +90,9 @@ export function kitBatch(per: string, run: string, scrap: string, unit: string) 
 
 /** «Генератор» карточки проекта (SUPPLYMAP renderGen_ / mountGen_): сверху сборки проекта, ниже генератор выбранной.
     Карточку ТК сборки заводит открытие генератора (kitsetsApi.openTechcard). */
-function GenTab({ card, principal, index, pick, done }: {
+function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange }: {
   card: KitsetCard; principal: Principal; index: string; pick: (index: string) => void; done: (index: string) => void;
+  builtId: string; onBuiltChange: (draftId: string) => void;
 }) {
   const [cardId, setCardId] = useState("");
   const [error, setError] = useState("");
@@ -115,18 +117,22 @@ function GenTab({ card, principal, index, pick, done }: {
     {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
-    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
+    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange}
+      onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
   </div>;
 }
 
 /** «ТК КБn»: электронная ТК сборки (SUPPLYMAP renderTc_). «Пересобрать» ведёт в генератор этой сборки. */
-function TcTab({ assembly, principal, rebuild, changed }: { assembly: KitsetAssembly; principal: Principal; rebuild: () => void; changed: () => void }) {
+function TcTab({ assembly, principal, rebuild, changed, builtId }: { assembly: KitsetAssembly; principal: Principal; rebuild: () => void; changed: () => void; builtId?: string }) {
   const { card, setCard, error } = useTechcard(assembly.techcard?.card_id || "");
   if (error) return <div className="error-banner" role="alert">{error}</div>;
   if (!card) return <div className="empty">Загрузка техкарты…</div>;
-  return <EtkSheet card={card} principal={principal} onRebuild={rebuild}
+  return <>
+    {builtId && <PendingLesson draftId={builtId} />}
+    <EtkSheet card={card} principal={principal} onRebuild={rebuild}
     title={<><strong>{assembly.index}</strong> <span>{assembly.name}</span> <span className="muted">кол-во {assembly.run}</span></>}
-    onChange={(updated) => { setCard(updated); changed(); }} />;
+    onChange={(updated) => { setCard(updated); changed(); }} />
+  </>;
 }
 
 function openSection(section: string, extra: Record<string, string> = {}) {
@@ -342,6 +348,8 @@ type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | "track" | `tc:${st
 
 function KitsetCardView({ project, principal, canEdit, canRequest, back }: { project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: () => void }) {
   const [genIndex, setGenIndex] = useState("");
+  // Собрано по черновику с чертежа, урок не записан: по индексу сборки, переживает переход «Генератор» → «ТК КБn».
+  const [builtDrafts, setBuiltDrafts] = useState<Record<string, string>>({});
   const [card, setCard] = useState<KitsetCard | null>(null);
   const [tab, setTab] = useState<Tab>("sostav");
   const [error, setError] = useState("");
@@ -419,16 +427,17 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
       {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}
     </div>
     {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} />}
-    {tab === "supply" && <SupplyTab project={card.project} />}
+    {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline} />}
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} />}
-    {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex}
+    {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex} builtId={builtDrafts[genIndex] || ""}
+      onBuiltChange={(id) => setBuiltDrafts((current) => ({ ...current, [genIndex]: id }))}
       done={(index) => { void load(); setTab(`tc:${index}`); setNote(`Техкарта ${index} готова — открыта вкладка «ТК ${index}».`); }} />}
     {tab === "journal" && <JournalTab card={card} canEdit={canEdit} changed={setCard} />}
     {tab === "track" && <ProjectTrack project={card.project} />}
     {tab.startsWith("tc:") && (() => {
       const assembly = card.assemblies.find((item) => `tc:${item.index}` === tab);
       if (!assembly?.techcard) return <div className="empty">Сборка не найдена.</div>;
-      return <div className="kit-pane"><TcTab key={assembly.techcard.card_id} assembly={assembly} principal={principal} rebuild={() => openGen(assembly.index)} changed={() => void load()} /></div>;
+      return <div className="kit-pane"><TcTab key={assembly.techcard.card_id} assembly={assembly} principal={principal} rebuild={() => openGen(assembly.index)} changed={() => void load()} builtId={builtDrafts[assembly.index]} /></div>;
     })()}
   </section>;
 }
@@ -571,41 +580,96 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
   </div>;
 }
 
-function SupplyTab({ project }: { project: string }) {
-  const [lines, setLines] = useState<KitsetSupplyLine[] | null>(null);
+/* «Снабжение»: Нужно / Свободно / В закупке / Не хватает по каждой позиции. Позиции, где не хватает, отмечаются
+   галочкой, и одна кнопка «Заказать недостающее» оформляет на них заявки на закупку (ничего не отмечено — на все). */
+function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder: boolean; deadline?: string | null }) {
+  const [lines, setLines] = useState<SupplyLine[] | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
-    kitsetsApi.supply(project).then((result) => setLines(result.lines)).catch((reason) => setError(message(reason, "Сервер не ответил.")));
-  }, [project]);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [until, setUntil] = useState((deadline || "").slice(0, 10));
+  const [ordering, setOrdering] = useState(false);
+  const [result, setResult] = useState<{ text: string; bad: boolean } | null>(null);
+  function load() {
+    return supplyApi.lines(project).then((answer) => setLines(answer.lines)).catch((reason) => setError(message(reason, "Сервер не ответил.")));
+  }
+  useEffect(() => { void load(); }, [project]);  // eslint-disable-line react-hooks/exhaustive-deps
   if (error) return <div className="empty">{error}</div>;
   if (!lines) return <div className="empty">Считаю по заявкам и закупке…</div>;
   if (!lines.length) return <div className="empty">В спецификации проекта нет позиций с артикулом.</div>;
+  const isShort = (line: SupplyLine) => Number(line.short) > 0;
+  const shortLines = lines.filter(isShort);
+  const chosen = shortLines.filter((line) => picked.has(line.art));
+  const count = chosen.length || shortLines.length;
   const missing = lines.filter((line) => line.stage === "не заведено").length;
   const received = lines.filter((line) => line.received).length;
   const stock = lines.filter((line) => line.stage === "со склада").length;
-  const tone = (line: KitsetSupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : line.stage === "со склада" ? "info" : "warn";
+  const tone = (line: SupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : line.stage === "со склада" ? "info" : "warn";
+  const zeroDash = (value: string) => Number(value) ? value : "—";
+
+  function toggle(art: string, on: boolean) {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (on) next.add(art); else next.delete(art);
+      return next;
+    });
+  }
+
+  async function order() {
+    setOrdering(true);
+    setResult(null);
+    try {
+      const answer = await supplyApi.orderMissing(project, { articles: chosen.map((line) => line.art), deadline: until || undefined });
+      setResult({ text: answer.message, bad: false });
+      setPicked(new Set());
+      await load();
+    } catch (reason) {
+      setResult({ text: message(reason, "Заявки не созданы."), bad: true });
+    } finally {
+      setOrdering(false);
+    }
+  }
+
+  const columns: DataColumn<SupplyLine>[] = [
+    ...(canOrder ? [{ key: "pick", title: "Заказ", width: 56, value: (line: SupplyLine) => (picked.has(line.art) ? 1 : 0),
+      render: (line: SupplyLine) => isShort(line)
+        ? <label className="sel-hit"><input type="checkbox" aria-label={`Заказать ${line.art}`} checked={picked.has(line.art)} onChange={(event) => toggle(line.art, event.target.checked)} /></label>
+        : null }] : []),
+    { key: "art", title: "Артикул КД", width: 210, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
+    { key: "name", title: "Наименование", width: 300, value: (line) => line.name, wrap: true },
+    { key: "need", title: "Нужно", width: 84, value: (line) => line.need, numeric: true },
+    { key: "free", title: "Свободно", width: 90, value: (line) => zeroDash(line.free), numeric: true, hint: "Свободно на складе, с резервами самого проекта" },
+    { key: "ordered", title: "В закупке", width: 92, value: (line) => zeroDash(line.ordered), numeric: true, hint: "Заявки и строки закупки проекта, ещё не принятые" },
+    { key: "kitted", title: "В комплектации", width: 120, value: (line) => zeroDash(line.kitted), numeric: true, hint: "В резерве или выдано по комплектации проекта" },
+    { key: "short", title: "Не хватает", width: 100, value: (line) => zeroDash(line.short), numeric: true,
+      render: (line) => isShort(line) ? <strong className="tone-danger">{line.short}</strong> : <span className="muted">—</span> },
+    { key: "unit", title: "Ед.", width: 48, value: (line) => line.unit },
+    { key: "kbs", title: "КБ", wrap: true, value: (line) => line.kbs.join(" · ") },
+    { key: "stage", title: "Стадия", width: 210, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
+      {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
+    </span> },
+    { key: "rows", title: "Строк", width: 64, hidden: true, value: (line) => line.rows.length || "—", numeric: true },
+  ];
+
   return <div className="kit-pane">
     <div className="kit-supply-summary">
-      {([["Принято на склад", received, "ok"], ["В работе снабжения", lines.length - missing - received - stock, "warn"], ["Со склада, без закупки", stock, "info"], ["Не заведено", missing, "danger"]] as Array<[string, number, string]>).map(([label, value, toneName]) =>
+      {([["Принято на склад", received, "ok"], ["В работе снабжения", lines.length - missing - received - stock, "warn"], ["Со склада, без закупки", stock, "info"], ["Не заведено", missing, "danger"], ["Не хватает", shortLines.length, "danger"]] as Array<[string, number, string]>).map(([label, value, toneName]) =>
         <div key={label} className="panel kit-supply-count"><strong className={`tone-${toneName}`}>{value}</strong><span>{label}</span></div>)}
     </div>
+    {result && <div className={result.bad ? "error-banner" : "success-banner"} role={result.bad ? "alert" : "status"}>{result.text}</div>}
     <DataTable
       rows={lines}
-      columns={[
-        { key: "art", title: "Артикул КД", width: 260, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
-        { key: "name", title: "Наименование", width: 420, value: (line) => line.name, wrap: true },
-        { key: "need", title: "Нужно", width: 100, value: (line) => line.need, numeric: true },
-        { key: "unit", title: "Ед.", width: 56, value: (line) => line.unit },
-        { key: "kbs", title: "КБ", wrap: true, value: (line) => line.kbs.join(" · ") },
-        { key: "stage", title: "Стадия", width: 240, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
-          {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
-        </span> },
-        { key: "rows", title: "Строк", width: 72, value: (line) => line.rows.length || "—", numeric: true },
-      ] satisfies DataColumn<KitsetSupplyLine>[]}
+      columns={columns}
       rowKey={(line) => line.art}
       storageKey="kit-supply"
       label="Снабжение проекта"
       exportName={`Снабжение ${project}`}
+      toolbar={canOrder ? <>
+        <label className="check-inline">Срок закупки <input type="date" aria-label="Срок закупки" value={until} onChange={(event) => setUntil(event.target.value)} /></label>
+        <button type="button" className="primary small" disabled={ordering || !count || !until} onClick={() => void order()}
+          title={until ? undefined : "Укажи срок закупки"}>
+          {ordering ? "Оформляю заявки…" : `Заказать недостающее (${count})`}
+        </button>
+      </> : undefined}
     />
   </div>;
 }

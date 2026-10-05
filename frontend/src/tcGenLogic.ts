@@ -125,6 +125,21 @@ const CRIMP_CUT_MIN_WIRES_ = 300;
 const CRIMP_TIN_CUT_MIN_WIRES_ = 90;
 export const CRIMP_TIN_CODE_ = "CUT_WIRE+1crimp+tin";
 
+/** Русское название операции генератора по её `type` (как `OPERATION_TYPE_NAMES` на сервере): когда в конфиге нет `label`. */
+const OP_TYPE_NAMES: Record<string, string> = {
+  cutWire: "Резка", cutWireStrip: "Резка с разделкой", cutWireCrimp: "Резка с обжимом", cutTut: "Резка ТУТ",
+  prsTerm: "Опрессовка терминалов", prsTermA: "Опрессовка терминалов (А)", prsTermB: "Опрессовка терминалов (В)",
+  insTerm: "Монтаж терминалов", insTermA: "Монтаж терминалов (А)", insTermB: "Монтаж терминалов (В)",
+  insHousing: "Монтаж в корпус", insTut: "Надеть ТУТ", heatTut: "Усадка ТУТ", insWrap: "Обмотка", insMark: "Маркировка",
+  tin: "Лужение", twist: "Свивка", splice: "Сращивание", seal: "Герметизация", solderConn: "Пайка разъёма",
+  stripCable: "Разделка кабеля", foldCore: "Загибка жил", endCap: "Установка заглушек", coaxCut: "Резка кабеля",
+  coaxCutTut: "Резка ТУТ", coaxStrip: "Разделка коаксиала", coaxShield: "Опрессовка втулки экрана",
+  coaxSolderShield: "Пайка экрана", coaxPin: "Пайка центрального контакта", coaxCapCrimp: "Монтаж крышки (обжим)",
+  coaxCapScrew: "Монтаж крышки (винт)", coaxHousing: "Монтаж корпуса", coaxInsSleeve: "Монтаж втулки экрана",
+  coaxInsTut: "Монтаж ТУТ", coaxHeat: "Усадка ТУТ",
+};
+export const opTypeName = (type: string) => OP_TYPE_NAMES[type] || "Операция";
+
 const OP_CATEGORY_MAP: Record<string, string> = {
   cutWire: "Резка",
   prsTermA: "Опрессовка терминалов (А)",

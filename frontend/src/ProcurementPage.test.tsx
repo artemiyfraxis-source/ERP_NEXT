@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProcurementPage } from "./ProcurementPage";
+import { ProcurementPage, migrateHiddenBlocks } from "./ProcurementPage";
 import type { OrderDocumentRecognition, ProcurementLine, RecognizedOrderLine } from "./api";
 
 const line: ProcurementLine = {
@@ -172,9 +172,9 @@ async function openOrder(number: string, scope?: HTMLElement) {
   await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "true"));
 }
 
-/** «Оплачено» свёрнут по умолчанию: щелчок по заголовку блока раскрывает его заказы. */
-async function openPaidBlock() {
-  const toggle = within(await screen.findByRole("heading", { name: /^Оплачено/ })).getByRole("button");
+/** Раскрывает блок заказов (по умолчанию «В пути»; «Принято» свёрнут): щелчок по заголовку показывает его заказы. */
+async function openPaidBlock(title: RegExp = /^В пути/) {
+  const toggle = within(await screen.findByRole("heading", { name: title })).getByRole("button");
   if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
   await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "true"));
 }
@@ -603,7 +603,7 @@ it("lists unsorted lines with their supplier and says when a line has none", asy
   expect(within(second).getByText("нет (запрос не сформируется)")).toBeInTheDocument();
 });
 
-it("shows «Мои позиции» as separate blocks: В работе → Жду счёт → Ждёт оплаты → Оплачено → Дозавоз → Прочие позиции, newest orders first inside a block", async () => {
+it("shows «Мои позиции» as separate blocks: В работе → Жду счёт → Ждёт оплаты → В пути → Карантин → Принято → Дозавоз → Прочие позиции, newest orders first inside a block", async () => {
   const base: ProcurementLine = { ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт" };
   const at = (n: number, status: string, extra: Partial<ProcurementLine> = {}): ProcurementLine => ({
     ...base, id: `30000000-0000-0000-0000-0000000001${n}0`, legacy_id: `REQ-${n}`, status, ...extra,
@@ -618,6 +618,8 @@ it("shows «Мои позиции» as separate blocks: В работе → Жд
     at(7, "Карантин", { order_number: "PO-003", order_date: "2026-10-04", supplier: "ООО В", invoice_url: "https://files.test/j.pdf" }),
     at(8, "Согласование"),
     at(9, "Готово", { order_number: "PO-004", order_date: "2026-10-02", supplier: "ООО Г", actual_price_with_vat: "61", actual_sum: "122" }),
+    at(10, "В пути", { order_number: "PO-005", order_date: "2026-10-03", supplier: "ООО Д" }),
+    at(11, "Готово", { order_number: "PO-005", order_date: "2026-10-03", supplier: "ООО Д" }),
   ];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
@@ -629,7 +631,7 @@ it("shows «Мои позиции» as separate blocks: В работе → Жд
   const { container } = render(<ProcurementPage />);
   const work = await screen.findByRole("region", { name: "В работе" });
   await screen.findByRole("region", { name: "Прочие позиции" });
-  const blocks = ["В работе", "Жду счёт", "Ждёт оплаты", "Оплачено", "Дозавоз", "Прочие позиции"];
+  const blocks = ["В работе", "Жду счёт", "Ждёт оплаты", "В пути", "Карантин", "Принято", "Дозавоз", "Прочие позиции"];
   const headings = screen.getAllByRole("heading", { level: 2 })
     .map((heading) => blocks.find((name) => heading.textContent?.replace(/^[▸▾]/, "").startsWith(name))).filter(Boolean);
   // Блоки отдельные и идут в этом порядке; в «В работе» заказов нет — только строки и группы поставщиков.
@@ -638,7 +640,7 @@ it("shows «Мои позиции» as separate blocks: В работе → Жд
   expect(within(work).getByText("REQ-1")).toBeInTheDocument();
   expect(within(within(work).getByText("REQ-2").closest("tr")!).getByText("Готов к запросу")).toBeInTheDocument();
   expect(within(work).queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
-  const positions = blocks.map((name) => screen.getByRole("region", { name }));
+  const positions = blocks.map((name) => screen.getByRole("region", { name: name === "Принято" ? "Принято за 30 дней" : name }));
   positions.slice(1).forEach((block, index) => {
     expect(positions[index].compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING, blocks[index + 1]).toBeTruthy();
   });
@@ -656,32 +658,42 @@ it("shows «Мои позиции» as separate blocks: В работе → Жд
   expect(within(toPay).getByText("Ждёт оплаты", { selector: ".order-chip" })).toBeInTheDocument();
   expect(within(toPay).getByRole("button", { name: "Оплачено" })).toBeInTheDocument();
 
-  // «Оплачено» свёрнут по умолчанию: заказов не видно, пока не раскрыть заголовок.
-  expect(screen.queryByRole("region", { name: "Заказы: Оплачено" })).not.toBeInTheDocument();
+  // «В пути»: заказ с открытыми строками «В пути»; частично принятый остаётся здесь с «принято N из M».
   await openPaidBlock();
-  const paid = within(screen.getByRole("region", { name: "Заказы: Оплачено" }));
-  const groups = paid.getAllByRole("rowgroup").filter((group) => group.getAttribute("aria-label"));
-  // Свежие заказы сверху: PO-003 от 04.10, затем PO-004 от 02.10.
-  expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["PO-003 от 04.10 · ООО В", "PO-004 от 02.10 · ООО Г"]);
-  expect(groups.map((group) => group.querySelector(".order-chip")?.textContent)).toEqual(["Оплачено · в пути 1, карантин 1", "Принято"]);
+  const transit = within(screen.getByRole("region", { name: "Заказы: В пути" }));
+  expect(labelsOf(screen.getByRole("region", { name: "Заказы: В пути" }))).toEqual(["PO-005 от 03.10 · ООО Д"]);
+  expect(transit.getByRole("rowgroup", { name: "PO-005 от 03.10 · ООО Д" }).querySelector(".order-chip")?.textContent).toBe("В пути · принято 1 из 2");
+
+  // «Карантин»: заказ с любой строкой в карантине, хоть другие строки и в пути; в строке названо, какие именно.
+  const quarantine = within(screen.getByRole("region", { name: "Заказы: Карантин" }));
+  const quarantined = quarantine.getByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" });
+  expect(quarantined.querySelector(".order-chip")?.textContent).toBe("Карантин: Разъём");
+  expect(quarantined.querySelector(".order-chip")).toHaveClass("tone-warn");
+
+  // «Принято за 30 дней» свёрнут по умолчанию: заказов не видно, пока не раскрыть заголовок.
+  expect(screen.getByRole("heading", { name: /^Принято за 30 дней/ })).toHaveTextContent("Принято за 30 дней 1");
+  expect(screen.queryByRole("region", { name: "Заказы: Принято за 30 дней" })).not.toBeInTheDocument();
+  await openPaidBlock(/^Принято/);
+  const accepted = within(screen.getByRole("region", { name: "Заказы: Принято за 30 дней" }));
+  const groups = accepted.getAllByRole("rowgroup").filter((group) => group.getAttribute("aria-label"));
+  expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["PO-004 от 02.10 · ООО Г"]);
+  expect(groups[0].querySelector(".order-chip")?.textContent).toBe("Принято");
 
   // Заказ свёрнут; щелчок по заголовку раскрывает строки, второй — сворачивает.
-  expect(paid.queryByText("REQ-6")).not.toBeInTheDocument();
-  fireEvent.click(within(groups[0]).getByText("PO-003 от 04.10 · ООО В"));
-  expect(within(groups[0]).getByRole("button", { name: "PO-003 от 04.10 · ООО В" })).toHaveAttribute("aria-expanded", "true");
-  expect(within(within(groups[0]).getByText("REQ-6").closest("tr")!).getByText("В пути")).toBeInTheDocument();
-  expect(within(within(groups[0]).getByText("REQ-7").closest("tr")!).getByText("Карантин")).toHaveClass("tone-warn");
-  expect(within(groups[0]).getByText("12.10.2026")).toBeInTheDocument();
-  expect(paid.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+  fireEvent.click(within(quarantined).getByText("PO-003 от 04.10 · ООО В"));
+  expect(within(quarantined).getByRole("button", { name: "PO-003 от 04.10 · ООО В" })).toHaveAttribute("aria-expanded", "true");
+  expect(within(within(quarantined).getByText("REQ-6").closest("tr")!).getByText("В пути")).toBeInTheDocument();
+  expect(within(within(quarantined).getByText("REQ-7").closest("tr")!).getByText("Карантин")).toHaveClass("tone-warn");
+  expect(within(quarantined).getByText("12.10.2026")).toBeInTheDocument();
+  expect(quarantine.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
     "ID", "Наименование", "Кол-во факт", "Цена факт, ₽", "Сумма факт, ₽", "Расчёт, ₽", "Счёт", "Ожид. дата", "Факт. дата", "Статус", "Комментарий", "",
   ]);
-  fireEvent.click(within(groups[1]).getByRole("button", { name: "PO-004 от 02.10 · ООО Г" }));
+  fireEvent.click(within(groups[0]).getByRole("button", { name: "PO-004 от 02.10 · ООО Г" }));
   // Цена в строке только показана — её вносит окно «Вставить счёт» / «Вставить КП».
-  expect(within(within(groups[1]).getByText("REQ-9").closest("tr")!).getByText("61,00")).toBeInTheDocument();
+  expect(within(within(groups[0]).getByText("REQ-9").closest("tr")!).getByText("61,00")).toBeInTheDocument();
   expect(screen.queryByLabelText(/Цена факт REQ/)).not.toBeInTheDocument();
-  fireEvent.click(groups[0].querySelector("tr.order-head")!);
-  expect(paid.queryByText("REQ-6")).not.toBeInTheDocument();
-
+  fireEvent.click(quarantined.querySelector("tr.order-head")!);
+  expect(quarantine.queryByText("REQ-6")).not.toBeInTheDocument();
   // «Дозавоз» — только строки дозавоза, со своим решением; обычная строка «Согласование» — в «Прочих».
   const head = (name: string) => within(screen.getByRole("region", { name })).getAllByRole("columnheader").map((cell) => cell.textContent);
   expect(head("Дозавоз")).toEqual(["ID", "Наименование", "Поставщик", "Кол-во", "Основание", "Комментарий", "Решение", ""]);
@@ -690,9 +702,9 @@ it("shows «Мои позиции» as separate blocks: В работе → Жд
   expect(screen.queryByRole("button", { name: "Одобрено — продолжить" })).not.toBeInTheDocument();
 });
 
-it("keeps the blocks separate: «Оплачено» starts collapsed, a heading click collapses/expands its block and the choice is remembered", async () => {
+it("keeps the blocks separate: «Принято» starts collapsed, a heading click collapses/expands its block and the choice is remembered", async () => {
   const awaiting = { ...awaitingInvoice, order_number: "PO-001", order_date: "2026-10-01", supplier: "ООО А" };
-  const transit = { ...awaitingInvoice, id: "30000000-0000-0000-0000-000000000003", legacy_id: "REQ-3", status: "В пути", order_number: "PO-003", order_date: "2026-10-04", supplier: "ООО В", invoice_url: "https://files.test/i.pdf", pay_missing: [] };
+  const transit = { ...awaitingInvoice, id: "30000000-0000-0000-0000-000000000003", legacy_id: "REQ-3", status: "Готово", order_number: "PO-003", order_date: "2026-10-04", supplier: "ООО В", invoice_url: "https://files.test/i.pdf", pay_missing: [] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
@@ -705,29 +717,29 @@ it("keeps the blocks separate: «Оплачено» starts collapsed, a heading 
 
   const first = render(<ProcurementPage buyerName="Артемий" />);
   await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
-  // Блоки раздельные; «Жду счёт» открыт, «Оплачено» свёрнут (заголовок и счётчик на месте, заказов нет).
+  // Блоки раздельные; «Жду счёт» открыт, «Принято» свёрнут (заголовок и счётчик на месте, заказов нет).
   expect(toggleOf(/^Жду счёт/)).toHaveAttribute("aria-expanded", "true");
-  expect(toggleOf(/^Оплачено/)).toHaveAttribute("aria-expanded", "false");
-  expect(toggleOf(/^Оплачено/)).toHaveTextContent("Оплачено 1");
-  expect(screen.queryByRole("region", { name: "Заказы: Оплачено" })).not.toBeInTheDocument();
+  expect(toggleOf(/^Принято/)).toHaveAttribute("aria-expanded", "false");
+  expect(toggleOf(/^Принято/)).toHaveTextContent("Принято за 30 дней 1");
+  expect(screen.queryByRole("region", { name: "Заказы: Принято за 30 дней" })).not.toBeInTheDocument();
   expect(screen.queryByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" })).not.toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Показ заказов" })).not.toBeInTheDocument();
 
-  // Раскрыли «Оплачено», свернули «Жду счёт»: каждый блок сам по себе.
-  fireEvent.click(toggleOf(/^Оплачено/));
+  // Раскрыли «Принято», свернули «Жду счёт»: каждый блок сам по себе.
+  fireEvent.click(toggleOf(/^Принято/));
   expect(await screen.findByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" })).toBeInTheDocument();
   fireEvent.click(toggleOf(/^Жду счёт/));
   expect(screen.queryByRole("region", { name: "Заказы: Жду счёт" })).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: /^Жду счёт/ })).toBeInTheDocument();
-  expect(stored("orders-paid")).toBe("0");
+  expect(stored("orders-accepted")).toBe("0");
   expect(stored("orders-awaiting")).toBe("1");
   expect(stored("inwork")).toBeNull();
   first.unmount();
 
-  // Выбор помнится после перезагрузки: «Оплачено» открыт, «Жду счёт» свёрнут.
+  // Выбор помнится после перезагрузки: «Принято» открыт, «Жду счёт» свёрнут.
   const second = render(<ProcurementPage buyerName="Артемий" />);
   await screen.findByRole("rowgroup", { name: "PO-003 от 04.10 · ООО В" });
-  expect(toggleOf(/^Оплачено/)).toHaveAttribute("aria-expanded", "true");
+  expect(toggleOf(/^Принято/)).toHaveAttribute("aria-expanded", "true");
   expect(toggleOf(/^Жду счёт/)).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" })).not.toBeInTheDocument();
   // Раскрыли обратно — «Жду счёт» снова с заказом, ключ перезаписан.
@@ -737,7 +749,9 @@ it("keeps the blocks separate: «Оплачено» starts collapsed, a heading 
   second.unmount();
 });
 
-const BLOCK_NAMES = ["В работе", "Жду счёт", "Ждёт оплаты", "Оплачено", "Дозавоз", "Прочие позиции"];
+const BLOCK_NAMES = ["В работе", "Жду счёт", "Ждёт оплаты", "В пути", "Карантин", "Принято", "Дозавоз", "Прочие позиции"];
+// «Прочие позиции» прячутся, пока в них нет строк.
+const FLOW_BLOCK_NAMES = BLOCK_NAMES.slice(0, -1);
 
 function mockMine(lines: ProcurementLine[]) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -758,45 +772,91 @@ const orderLine = (n: number, status: string, extra: Partial<ProcurementLine> = 
 const headingNames = () => screen.getAllByRole("heading", { level: 2 })
   .map((heading) => BLOCK_NAMES.find((name) => heading.textContent?.replace(/^[▸▾]/, "").startsWith(name))).filter(Boolean);
 
-it("keeps every «Мои позиции» block on screen even with no data: six headings in order, each with 0 and one grey line", async () => {
+it("keeps every «Мои позиции» block on screen even with no data: seven headings in order, each with 0 and one grey line; «Прочие позиции» only with lines", async () => {
   mockMine([]);
 
   const { container } = render(<ProcurementPage />);
   await screen.findByText(/Нет строк в работе/);
-  expect(headingNames()).toEqual(BLOCK_NAMES);
-  for (const name of BLOCK_NAMES) expect(screen.getByRole("heading", { name: new RegExp(`^${name}`) })).toHaveTextContent(`${name} 0`);
+  expect(headingNames()).toEqual(FLOW_BLOCK_NAMES);
+  for (const name of FLOW_BLOCK_NAMES) expect(screen.getByRole("heading", { name: new RegExp(`^${name}`) })).toHaveTextContent(`${name === "Принято" ? "Принято за 30 дней" : name} 0`);
   expect(screen.getByText(/Нет строк в работе/)).toHaveClass("stage-empty");
-  expect(container.querySelectorAll(".stage-empty")).toHaveLength(6);
+  expect(container.querySelectorAll(".stage-empty")).toHaveLength(FLOW_BLOCK_NAMES.length);
+  expect(screen.queryByRole("region", { name: "Прочие позиции" })).not.toBeInTheDocument();
   expect(screen.queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
   expect(container.querySelectorAll("table")).toHaveLength(0);
+  // В «Блоках» «Прочие позиции» перечислены и тогда, когда строк нет.
+  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
+  expect(screen.getByRole("checkbox", { name: "Прочие позиции" })).toBeChecked();
 });
 
-it("«Блоки» hides blocks, the choice survives a remount, and a hidden block with data is named in the summary", async () => {
-  mockMine([orderLine(1, "Жду счет"), orderLine(2, "Готово"), orderLine(3, "Готово")]);
+it("shows «Прочие позиции» only with lines, and says in the heading hint what is inside", async () => {
+  mockMine([{ ...line, buyer: "Закупщик", status: "Согласование" }]);
 
-  const first = render(<ProcurementPage />);
-  await screen.findByRole("heading", { name: /^Оплачено/ });
-  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "Оплачено" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "Прочие позиции" }));
-  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "Дозавоз"]);
-  expect(screen.getByText("скрыто: Оплачено 2")).toBeInTheDocument();
-  first.unmount();
+  render(<ProcurementPage />);
+  await screen.findByRole("region", { name: "Прочие позиции" });
+  expect(screen.getByRole("note", { name: "Строки вне потока: новые, на согласовании" })).toBeInTheDocument();
+});
+
+it("puts an order with a Карантин line into «Карантин», a fully accepted one into «Принято», a partly accepted one stays in «В пути» with «принято 1 из 2»", async () => {
+  mockMine([
+    orderLine(1, "Карантин"),
+    orderLine(1, "В пути", { id: "30000000-0000-0000-0000-0000000000b1", legacy_id: "REQ-1b" }),
+    orderLine(2, "Готово"),
+    orderLine(2, "Готово", { id: "30000000-0000-0000-0000-0000000000b2", legacy_id: "REQ-2b" }),
+    orderLine(3, "Готово"),
+    orderLine(3, "В пути", { id: "30000000-0000-0000-0000-0000000000b3", legacy_id: "REQ-3b" }),
+  ]);
+
+  render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: /^Карантин/ });
+  const heading = (name: string) => screen.getByRole("heading", { name: new RegExp(`^${name}`) });
+  expect(heading("Карантин")).toHaveTextContent("Карантин 1");
+  expect(heading("Принято")).toHaveTextContent("Принято за 30 дней 1");
+  expect(heading("В пути")).toHaveTextContent("В пути 1");
+  const group = (block: string, number: string) => within(screen.getByRole("region", { name: `Заказы: ${block}` })).getByRole("rowgroup", { name: new RegExp(`^${number}`) });
+  expect(group("Карантин", "PO-001").querySelector(".order-chip")?.textContent).toBe("Карантин: Разъём");
+  expect(group("В пути", "PO-003").querySelector(".order-chip")?.textContent).toBe("В пути · принято 1 из 2");
+  await openPaidBlock(/^Принято/);
+  expect(group("Принято за 30 дней", "PO-002").querySelector(".order-chip")?.textContent).toBe("Принято");
+});
+
+it("migrates the old hidden «Оплачено» block key into the three new blocks", async () => {
+  window.localStorage.setItem("erp-table:procurement-blocks", JSON.stringify({ hidden: ["paid", "other"] }));
+  expect(migrateHiddenBlocks(["paid", "other"]).sort()).toEqual(["accepted", "other", "quarantine", "transit"]);
+  expect(migrateHiddenBlocks(["other"])).toEqual(["other"]);
+  mockMine([orderLine(1, "В пути"), orderLine(2, "Готово")]);
 
   render(<ProcurementPage />);
   await screen.findByRole("heading", { name: /^Жду счёт/ });
   expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "Дозавоз"]);
-  expect(screen.getByText("скрыто: Оплачено 2")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
-  expect(screen.getByRole("checkbox", { name: "Оплачено" })).not.toBeChecked();
-  expect(screen.getByRole("checkbox", { name: "Жду счёт" })).toBeChecked();
+  expect(screen.getByText("скрыто: В пути 1, Принято за 30 дней 1")).toBeInTheDocument();
 });
 
+it("«Блоки» hides blocks, the choice survives a remount, and a hidden block with data is named in the summary", async () => {
+  mockMine([orderLine(1, "Жду счет"), orderLine(2, "Готово"), orderLine(3, "Готово"), { ...line, buyer: "Закупщик", status: "Согласование" }]);
+
+  const first = render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: /^Принято/ });
+  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Принято за 30 дней" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Прочие позиции" }));
+  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "В пути", "Карантин", "Дозавоз"]);
+  expect(screen.getByText("скрыто: Принято за 30 дней 2, Прочие позиции 1")).toBeInTheDocument();
+  first.unmount();
+
+  render(<ProcurementPage />);
+  await screen.findByRole("heading", { name: /^Жду счёт/ });
+  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "В пути", "Карантин", "Дозавоз"]);
+  expect(screen.getByText("скрыто: Принято за 30 дней 2, Прочие позиции 1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
+  expect(screen.getByRole("checkbox", { name: "Принято за 30 дней" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Жду счёт" })).toBeChecked();
+});
 it("one search narrows every block and its counts (ID, name, supplier, order number, invoice number)", async () => {
   mockMine([
     orderLine(1, "Жду счет", { supplier: "ООО Альфа" }),
     orderLine(2, "В оплату", { supplier: "ООО Бета", invoice_number: "СЧ-777", invoice_url: "https://files.test/i.pdf", pay_missing: [] }),
-    orderLine(3, "Готово", { supplier: "ООО Альфа" }),
+    orderLine(3, "В пути", { supplier: "ООО Альфа" }),
     { ...line, id: "30000000-0000-0000-0000-000000000099", legacy_id: "REQ-99", status: "В работе", supplier: "ООО Альфа" },
   ]);
 
@@ -809,7 +869,7 @@ it("one search narrows every block and its counts (ID, name, supplier, order num
   expect(heading("В работе")).toHaveTextContent("В работе 1");
   expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 1");
   expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
-  expect(heading("Оплачено")).toHaveTextContent("Оплачено 1");
+  expect(heading("В пути")).toHaveTextContent("В пути 1");
 
   fireEvent.change(search, { target: { value: "сч-777" } });
   expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 1");
@@ -817,7 +877,7 @@ it("one search narrows every block and its counts (ID, name, supplier, order num
   expect(heading("В работе")).toHaveTextContent("В работе 0");
 
   fireEvent.change(search, { target: { value: "po-003" } });
-  expect(heading("Оплачено")).toHaveTextContent("Оплачено 1");
+  expect(heading("В пути")).toHaveTextContent("В пути 1");
   expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
 });
 
@@ -1165,7 +1225,7 @@ it("paid orders: offer to reconcile a hand-typed rate only for lines that have o
 
   render(<ProcurementPage />);
   await openPaidBlock();
-  const table = await screen.findByRole("region", { name: "Заказы: Оплачено" });
+  const table = await screen.findByRole("region", { name: "Заказы: В пути" });
   await openOrder("Без № заказа");
   expect(within(table).getByText(/вручную, сверьте/)).toBeInTheDocument();
   expect(within(table).getByText("100 USD")).toBeInTheDocument();
@@ -1414,10 +1474,9 @@ it("edits «Комментарий» on every stage from «В работе» and
   });
 
   render(<ProcurementPage />);
-  await openPaidBlock();
   const awaitingBlock = await screen.findByRole("region", { name: "Жду счёт" });
   const toPayBlock = screen.getByRole("region", { name: "Ждёт оплаты" });
-  const paidBlock = screen.getByRole("region", { name: "Оплачено" });
+  const paidBlock = screen.getByRole("region", { name: "Карантин" }); // PO-001: «В пути» + «Карантин» — заказ в «Карантине"
   await openOrder("PO-009", awaitingBlock);
   await openOrder("Без № заказа", toPayBlock);
   await openOrder("PO-001", paidBlock);
@@ -1432,7 +1491,7 @@ it("edits «Комментарий» on every stage from «В работе» and
   for (const id of ["REQ-1", "REQ-2", "REQ-5", "REQ-8"]) expect(dateOn(id), id).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Ожид. дата REQ-6" })).toHaveTextContent("12.10.2026");
   // «Факт. дата» — день приёмки, только показ. Заказ без № (REQ-4 «В оплату» + принятая REQ-8) целиком в «Ждёт оплаты»: блок — по стадии заказа.
-  const orders = within(screen.getByRole("region", { name: "Заказы: Оплачено" }));
+  const orders = within(screen.getByRole("region", { name: "Заказы: Карантин" }));
   expect(orders.getByText("03.10.2026")).toBeInTheDocument();
   expect(orders.getByText("04.10.2026")).toBeInTheDocument();
   expect(within(toPayBlock).getByText("02.10.2026")).toBeInTheDocument();
