@@ -1,0 +1,6 @@
+import {useRef} from "react";
+import {scaleFromDrag} from "./drawing-scale";
+export function DrawingResizeGrip({x,y,vx,vy,scale,preview,commit}:{x:number;y:number;vx:number;vy:number;scale:number;preview:(value:number|null)=>void;commit:(value:number)=>void}){
+ const drag=useRef<{x:number;y:number;vx:number;vy:number;scale:number;value:number}|null>(null);
+ return <button type="button" className="he-drawing-resize" aria-label="Пропорционально растянуть рисунок" title="Пропорционально растянуть рисунок" style={{left:x-6,top:y-6}} onPointerDown={e=>{if(e.button!==0)return;e.preventDefault();e.stopPropagation();e.currentTarget.setPointerCapture(e.pointerId);drag.current={x:e.clientX,y:e.clientY,vx,vy,scale,value:scale};}} onPointerMove={e=>{const d=drag.current;if(!d)return;e.stopPropagation();d.value=scaleFromDrag(d.scale,d.vx,d.vy,e.clientX-d.x,e.clientY-d.y);preview(d.value);}} onPointerUp={e=>{const d=drag.current;if(!d)return;e.stopPropagation();drag.current=null;preview(null);if(d.value!==d.scale)commit(d.value);e.currentTarget.releasePointerCapture(e.pointerId);}} onPointerCancel={()=>{drag.current=null;preview(null);}} onLostPointerCapture={()=>{if(drag.current){drag.current=null;preview(null);}}}/>;
+}
