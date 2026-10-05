@@ -42,6 +42,7 @@ import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
 import { StageOptionsPanel } from "./StageOptions";
+import { ThemeSwitch } from "./ThemeSwitch";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
 type Place = { section: Section; block: BlockId | null; user?: string | null };
@@ -203,6 +204,7 @@ export function App() {
           )}
           <ProfilePanel openCard={() => openCard()} />
           <StageOptionsPanel canSwitch={hasFullAccess(principal)} />
+          <ThemeSwitch />
           <button
             className="link-button"
             onClick={() => void signOut()}
