@@ -171,7 +171,9 @@ def test_a_project_lot_binds_fifo_across_kb_in_natural_order_and_tells_the_store
         ("FRX.26.0000100", Decimal("2"), Decimal("2")), (None, Decimal("2"), Decimal("0")),
     ]
     assert request(erp, kb2.id).version == kb2.version + 1  # one version step per request
-    assert request(erp, kb1.id).status.value == "Недоукомплектован"
+    # КБ1 закрыта целиком — «Укомплектован» ставится сам; у КБ2 ждёт ещё одна позиция.
+    assert request(erp, kb1.id).status.value == "Укомплектован"
+    assert request(erp, kb2.id).status.value == "Недоукомплектован"
     assert item_lines(request(erp, kb2.id), "КД-2") == [(None, Decimal("3"), Decimal("0"))]  # another item waits
     assert request(erp, other.id) == other  # another project's kit is not touched
     assert lot_now(erp, lot.id).reserved == Decimal("10")
