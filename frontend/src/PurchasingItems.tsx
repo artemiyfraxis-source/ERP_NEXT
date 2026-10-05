@@ -43,7 +43,7 @@ export function PurchasingItems({ readOnly = false }: { readOnly?: boolean } = {
   return (
     <section className="panel table-panel">
       <div className="panel-heading"><h2>Номенклатура</h2><span>позиции с артикулом, названиями у поставщиков и историей цен</span></div>
-      <div className="inline-action">
+      <div className="inline-action purchasing-toolbar">
         <input type="search" aria-label="Поиск по номенклатуре" placeholder="Слова в любом порядке: название, артикул, изготовитель" value={q} onChange={(event) => setQ(event.target.value)} />
         <label><input type="checkbox" checked={hasPrice} onChange={(event) => setHasPrice(event.target.checked)} /> Только с ценой</label>
         {!readOnly && <button type="button" className="primary" onClick={() => setCreating(true)}>+ Позиция</button>}

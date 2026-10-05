@@ -41,7 +41,8 @@ function daysText(section: string, days: number | null) {
   if (days === null) return "";
   if (section === "overdue") return `просрочка ${days} дн.`;
   if (section === "arriving") return days === 0 ? "сегодня" : "завтра";
-  return `${days} дн.`;
+  // A fresh card (0 days) carries no age: «0 дн.» reads like a deadline.
+  return days > 0 ? `ждёт ${days} дн.` : "";
 }
 
 export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }) {
@@ -88,7 +89,7 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
                     onClick={() => { setOpen(active ? null : { project: card.project, field: section.title }); setOnlyField(true); }}
                   >
                     <span className="today-card-head"><strong>{card.project}</strong><span>{card.count} поз.</span></span>
-                    {card.days !== null && <span className={`today-days${section.key === "overdue" ? " late" : ""}`}>{daysText(section.key, card.days)}</span>}
+                    {daysText(section.key, card.days) && <span className={`today-days${section.key === "overdue" ? " late" : ""}`}>{daysText(section.key, card.days)}</span>}
                     {card.suppliers.length > 0 && <small>{card.suppliers.slice(0, 3).join(", ")}{card.suppliers.length > 3 ? ` +${card.suppliers.length - 3}` : ""}</small>}
                   </button>
                 );

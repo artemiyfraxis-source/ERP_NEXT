@@ -151,7 +151,9 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
         <button type="button" className={`secondary small${tab === "sheet" ? " active" : ""}`} aria-pressed={tab === "sheet"} onClick={() => setTab("sheet")}>Весь лист</button>
         <button type="button" className={`secondary small${tab === "suppliers" ? " active" : ""}`} aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>По поставщикам</button>
         {kpiOn && <button type="button" className={`secondary small${tab === "kpi" ? " active" : ""}`} aria-pressed={tab === "kpi"} onClick={() => setTab("kpi")}>Показатели</button>}
+        {rfqOn && <span className="tab-sep" aria-hidden="true" />}
         {rfqOn && <button type="button" className={`secondary small${tab === "rfq" ? " active" : ""}`} aria-pressed={tab === "rfq"} onClick={() => setTab("rfq")}>Запросы КП</button>}
+        {(directoryOn || itemsOn) && <span className="tab-sep" aria-hidden="true" />}
         {directoryOn && <button type="button" className={`secondary small${tab === "directory" ? " active" : ""}`} aria-pressed={tab === "directory"} onClick={() => setTab("directory")}>Поставщики</button>}
         {itemsOn && <button type="button" className={`secondary small${tab === "items" ? " active" : ""}`} aria-pressed={tab === "items"} onClick={() => setTab("items")}>Номенклатура</button>}
         {settingsOn && <button type="button" className={`secondary small${tab === "settings" ? " active" : ""}`} aria-pressed={tab === "settings"} onClick={() => setTab("settings")}>Настройки</button>}

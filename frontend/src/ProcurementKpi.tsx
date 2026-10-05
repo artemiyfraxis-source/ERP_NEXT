@@ -66,7 +66,7 @@ export function ProcurementKpi() {
   return (
     <section className="panel table-panel">
       <div className="panel-heading"><h2>Показатели закупщика</h2><span>оплаченные позиции за период</span></div>
-      <div className="inline-action">
+      <div className="inline-action kpi-filters">
         <label>С<input type="date" aria-label="Период с" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
         <label>По<input type="date" aria-label="Период по" value={to} onChange={(event) => setTo(event.target.value)} /></label>
         <label>Закупщик
@@ -81,7 +81,7 @@ export function ProcurementKpi() {
       {result && (
         <>
           <DataTable label="Показатели закупщиков" rows={rows} columns={columns} rowKey={(row) => row.buyer} compactBelow={1000} emptyText="За период оплат нет." />
-          <p className="hint">«В срок» — дата приёмки не позже ожидаемой даты (она может сдвигаться до поступления). Экономия — (цена расчёта с НДС − цена факт с НДС) × количество факт, только где совпадают единицы.</p>
+          <p className="kpi-note">«В срок» — дата приёмки не позже ожидаемой даты (она может сдвигаться до поступления). Экономия — (цена расчёта с НДС − цена факт с НДС) × количество факт, только где совпадают единицы.</p>
         </>
       )}
     </section>

@@ -42,7 +42,8 @@ const GATE_PRESETS = ["Срочно", "Единственный производ
 const PRICIER_PRESETS = ["Срок", "Наличие", "Минимальная партия", "Качество или происхождение"];
 
 // Sticky first columns of the matrix: Позиция, Артикул, Кол-во, Бюджет с НДС, КП.
-const STICKY_WIDTHS = [230, 120, 80, 120, 64];
+// The article sits under the name: one sticky column less leaves room for the suppliers on a 16" screen.
+const STICKY_WIDTHS = [250, 76, 108, 64];
 const STICKY_LEFT = STICKY_WIDTHS.map((_, index) => STICKY_WIDTHS.slice(0, index).reduce((sum, width) => sum + width, 0));
 const sticky = (index: number, head = false): CSSProperties => ({
   position: "sticky", left: STICKY_LEFT[index], zIndex: head ? 3 : 1, minWidth: STICKY_WIDTHS[index],
@@ -86,11 +87,11 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
   useEffect(() => { void reload(); }, [reload]);
 
   return (
-    <section className="page" style={{ display: "grid", gridTemplateColumns: "250px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+    <section className="page" style={{ display: "grid", gridTemplateColumns: "210px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
       <aside className="panel" style={{ padding: 12, display: "grid", gap: 6 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <h2 style={{ margin: 0, fontSize: 16 }}>Запросы КП</h2>
-          {!readOnly && <button type="button" className="primary small" onClick={() => setCreating(true)}>Новый запрос</button>}
+          {!readOnly && <button type="button" className="primary small" onClick={() => setCreating(true)}>+ Запрос</button>}
         </div>
         {error && <div className="error-banner" role="alert">{error}</div>}
         {!error && rfqs === null && <div className="empty">Загрузка…</div>}
@@ -286,7 +287,7 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
             <form onSubmit={(event) => void addSupplier(event)} style={{ display: "flex", gap: 6 }}>
               <input
                 aria-label="Поставщик" list={`rfq-directory-${id}`} value={newSupplier} placeholder="Поставщик из справочника или новый"
-                onChange={(event) => setNewSupplier(event.target.value)} style={{ width: 240 }}
+                onChange={(event) => setNewSupplier(event.target.value)} style={{ width: 280 }}
               />
               <datalist id={`rfq-directory-${id}`}>
                 {directory.map((supplier) => <option key={supplier.supplier_id} value={supplier.name} />)}
@@ -309,7 +310,7 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
         <table className="inwork-table" aria-label={`Матрица ${rfq.number}`} style={{ borderCollapse: "separate", borderSpacing: 0 }}>
           <thead>
             <tr>
-              {["Позиция", "Артикул", "Кол-во", "Бюджет с НДС", "КП"].map((title, index) => (
+              {["Позиция", "Кол-во", "Бюджет с НДС", "КП"].map((title, index) => (
                 <th key={title} rowSpan={2} style={sticky(index, true)}>{title}</th>
               ))}
               {suppliers.map((supplier) => (
@@ -340,12 +341,11 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
                 <td style={sticky(0)}>
                   <strong>{line.name}</strong>
                   <small className="muted" style={{ display: "block" }}>
-                    {line.legacy_id ?? ""}{line.status ? ` · ${line.status}` : ""}{line.need_by ? ` · к ${formatDay(line.need_by)}` : ""}
+                    {line.article ? `${line.article} · ` : ""}{line.legacy_id ?? ""}{line.status ? ` · ${line.status}` : ""}{line.need_by ? ` · к ${formatDay(line.need_by)}` : ""}
                   </small>
                 </td>
-                <td style={sticky(1)}>{line.article ?? ""}</td>
-                <td style={sticky(2)}>{quantity(line.quantity)} {line.unit}</td>
-                <td style={sticky(3)}>
+                <td style={sticky(1)}>{quantity(line.quantity)} {line.unit}</td>
+                <td style={sticky(2)}>
                   {money(line.budget_unit_gross)}
                   {line.delta_pct !== null && (
                     <small className={Number(line.delta_pct) > 0 ? "tone-danger" : "tone-ok"} style={{ display: "block" }}>
@@ -353,7 +353,7 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
                     </small>
                   )}
                 </td>
-                <td style={sticky(4)}>
+                <td style={sticky(3)}>
                   <span style={chip(line.gate.passes ? "ok" : "warn")} title={gateHint(line)}>{gateText(line)}</span>
                   {line.decision && <small className="tone-ok" style={{ display: "block" }}>✓ решено</small>}
                 </td>
@@ -369,7 +369,7 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
           {suppliers.length > 0 && (
             <tfoot>
               <tr>
-                <td colSpan={5} style={{ ...sticky(0), maxWidth: undefined }}><strong>Выбрано у поставщика</strong></td>
+                <td colSpan={4} style={{ ...sticky(0), maxWidth: undefined }}><strong>Выбрано у поставщика</strong></td>
                 {suppliers.map((supplier) => (
                   <td key={supplier.supplier_id} colSpan={2} style={groupEdge}>{supplier.chosen_total ? money(supplier.chosen_total) : ""}</td>
                 ))}

@@ -86,7 +86,7 @@ export function PurchasingSettings({ readOnly = false }: { readOnly?: boolean } 
                 )}
               </label>
               <p className="page-sub">{row.hint}</p>
-              <span className="muted">по умолчанию: {shown(row.default)}</span>
+              <span className="purchasing-setting-default">по умолчанию: {shown(row.default)}</span>
             </div>
           ))}
           {canEdit && (

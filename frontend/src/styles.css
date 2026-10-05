@@ -1,6 +1,6 @@
 :root {
-  color: #001a18;
-  background: #f7fafa;
+  color: var(--foreground);
+  background: var(--background);
   font-family: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   font-synthesis: none;
   --background: #f7fafa;
@@ -3110,8 +3110,8 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .supplier-card-body h3 { margin: 8px 0 0; font-size: 13px; font-weight: 600; }
 .supplier-categories { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .supplier-stats { margin: 0; padding-left: 18px; font-size: 13px; }
-.purchasing-settings { display: grid; gap: 0; max-width: 760px; }
-.purchasing-setting { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 1.4fr) auto; align-items: center; gap: 4px 16px; padding: 10px 20px; border-bottom: 1px solid var(--border); }
+.purchasing-settings { display: grid; gap: 0; max-width: 1040px; }
+.purchasing-setting { display: grid; grid-template-columns: minmax(380px, 1.2fr) minmax(0, 1.3fr) auto; align-items: center; gap: 4px 16px; padding: 10px 20px; border-bottom: 1px solid var(--border); }
 .purchasing-setting label { grid-template-columns: 1fr 120px; align-items: center; gap: 12px; color: var(--foreground); }
 .purchasing-setting p { margin: 0; }
 .purchasing-settings .form-actions { padding: 12px 20px; }
@@ -3119,3 +3119,17 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
   .supplier-layout.with-card { grid-template-columns: minmax(0, 1fr); }
   .purchasing-setting { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Design pass (Витя): grouped procurement tabs, one-line toolbars, compact KPI filters. */
+.tab-sep { width: 1px; align-self: stretch; margin: 4px 6px; background: var(--border); }
+.purchasing-toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
+.purchasing-toolbar input[type="search"] { flex: 1 1 auto; min-width: 200px; }
+.purchasing-toolbar label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.purchasing-toolbar button { white-space: nowrap; }
+.kpi-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.kpi-filters label { display: grid; gap: 3px; font-size: 12px; color: var(--muted-foreground); }
+.kpi-filters input[type="date"] { width: 160px; }
+.kpi-filters select { width: 240px; }
+.kpi-note { margin: 8px 2px 0; font-size: 12px; color: var(--muted-foreground); line-height: 1.45; }
+.purchasing-setting-default { font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
+.table-panel > .purchasing-toolbar, .purchasing-toolbar + .calendar-chips { padding-left: 20px; padding-right: 20px; }

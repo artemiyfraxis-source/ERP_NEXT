@@ -70,11 +70,12 @@ _CATEGORY_WORDS = (
 
 def guess_category(name: str | None, item_type: str | None = None) -> str:
     """cable / connector / ekb by words of the name (the item type is the fallback), else other."""
+    # The word that comes first wins: «Разъём DB-9 вилка на кабель» is a connector, «Кабель с разъёмом» a cable.
     for text in (name, item_type):
         low = str(text or "").casefold()
-        for category, words in _CATEGORY_WORDS:
-            if any(word in low for word in words):
-                return category
+        hits = [(low.find(word), category) for category, words in _CATEGORY_WORDS for word in words if word in low]
+        if hits:
+            return min(hits)[1]
     return "other"
 
 
