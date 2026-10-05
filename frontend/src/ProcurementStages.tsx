@@ -213,7 +213,13 @@ export function nearestWorkingDay(from = new Date()): string {
 type GroupColumn = { key: string; title: string; numeric?: boolean; cell?: string; render: (line: ProcurementLine) => ReactNode };
 
 /** Правка «Цена факт» (с НДС) в ячейке: черновики по строкам, «Сохранить всё» — одним вызовом. */
-type PriceEdit = { valueOf: (line: ProcurementLine) => string; set: (line: ProcurementLine, value: string) => void; disabled: boolean };
+type PriceEdit = {
+  valueOf: (line: ProcurementLine) => string;
+  set: (line: ProcurementLine, value: string) => void;
+  /** «Сумма факт» строки: пока цена набрана, но не сохранена — кол-во факт × набранная цена. */
+  sumOf: (line: ProcurementLine) => string | null | undefined;
+  disabled: boolean;
+};
 
 /** Строки по заказам: заголовок группы (`tr.group-row`) с итогами и действиями, под ним строки заказа. */
 function OrderGroupTable({ label, groups, columns, headerActions, groupExtra, menu }: {
@@ -296,6 +302,13 @@ function useFactPrices(lines: ProcurementLine[], onSave: (rows: FactPriceRow[]) 
   const price: PriceEdit = {
     valueOf: (line) => edits[line.id] ?? base(line),
     set: (line, value) => setEdits((current) => ({ ...current, [line.id]: value })),
+    sumOf: (line) => {
+      const typed = edits[line.id];
+      if (typed === undefined || typed.trim() === base(line)) return line.actual_sum;
+      const price = Number(typed.trim().replace(/\s/g, "").replace(",", "."));
+      const quantity = Number(line.actual_quantity ?? line.calculated_quantity);
+      return typed.trim() && Number.isFinite(price) && Number.isFinite(quantity) ? String(Math.round(price * quantity * 100) / 100) : null;
+    },
     disabled: disabled || saving,
   };
   async function saveAll() {
@@ -425,7 +438,7 @@ export function AwaitingInvoiceStage({ lines, disabled, busyId, actionsOf, editi
     { key: "name", title: "Наименование", render: (line) => line.calculated_name },
     { key: "qty", title: "Кол-во (факт)", render: qtyOf },
     priceColumn(prices.price),
-    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(line.actual_sum) },
+    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(prices.price.sumOf(line)) },
     { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
     { key: "expected", title: "Ожид. дата", render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> },
     {
@@ -530,7 +543,7 @@ export function ToPayStage({ lines, disabled, busyId, actionsOf, editing, bulk, 
     { key: "name", title: "Наименование", render: (line) => line.calculated_name },
     { key: "qty", title: "Кол-во (факт)", render: qtyOf },
     priceColumn(prices.price),
-    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(line.actual_sum) },
+    { key: "sum", title: "Сумма факт, ₽", numeric: true, render: (line) => formatAmount(prices.price.sumOf(line)) },
     { key: "calc", title: "Расчёт, ₽", numeric: true, render: (line) => formatAmount(line.calculated_sum) },
     { key: "invoice", title: "Счёт", render: (line) => invoiceColumn.render!(line) },
     { key: "expected", title: "Ожид. дата", render: (line) => <ExpectedDateCell line={line} editing={editing} disabled={disabled} /> },

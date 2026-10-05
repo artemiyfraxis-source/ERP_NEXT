@@ -1516,6 +1516,8 @@ it("saves the typed «Цена факт» of «Жду счёт» in one call and
   const save = stage.closest("section")!.querySelector(".stage-head")!.querySelector("button")!;
   expect(save).toBeDisabled();
   fireEvent.change(await screen.findByLabelText("Цена факт REQ-1"), { target: { value: "12,5" } });
+  // «Сумма факт» пересчитывается сразу: кол-во факт 2 × 12,5.
+  expect(screen.getByLabelText("Цена факт REQ-1").closest("tr")).toHaveTextContent("25,00");
   fireEvent.change(screen.getByLabelText("Цена факт REQ-2"), { target: { value: "7" } });
   fireEvent.click(within(stage.closest("section")!).getByRole("button", { name: "Сохранить всё (2)" }));
 
