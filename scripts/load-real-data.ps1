@@ -1,4 +1,4 @@
-﻿# Чистая база ERP с реальными данными из Google (только чтение Google): справочники из зеркала SUPPLYMAP,
+﻿# Чистая база ERP с реальными данными из Google (только чтение Google): справочники из снимка backend\data\reference-mirror,
 # библиотека техкарт, склад ЦАР/ЖУК/СПИСАНИЕ. Проектов нет (владелец 30.09: заводит сам в ERP или по одному через
 # чат); один проект из Google по запросу — scripts\load-project.ps1 <№>.
 # Запуск из корня копии ERP_NEXT, API этой базы должен быть остановлен:
@@ -38,8 +38,7 @@ Run -m alembic upgrade head
 $env:ERP_NEW_USER_PASSWORD = $Password
 & $py -m app.identity_admin create-user --login $Login --email "$Login@example.com" --name 'Артемий' --department 'Руководство' --role admin
 Remove-Item Env:ERP_NEW_USER_PASSWORD
-$supplymap = if ($env:SUPPLYMAP_SOURCE_REPOSITORY) { $env:SUPPLYMAP_SOURCE_REPOSITORY } else { Join-Path $root '..\SUPPLYMAP' }
-Run -m app.modules.references.load_mirror --source $supplymap
+Run -m app.modules.references.load_mirror
 Run -m app.modules.techcards.seed_library
 Run -m app.modules.references.erp_corrections
 

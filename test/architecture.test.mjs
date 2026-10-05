@@ -1,10 +1,9 @@
+// Module boundaries of the ERP itself. SOURCE.json files are frozen provenance records (what each module was ported
+// from and which invariants it owns); nothing here reads the sibling SUPPLYMAP checkout (owner 05.10.2026).
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
-import { supplymapRoot } from "../scripts/sibling-paths.mjs";
 
 const root = join(import.meta.dirname, "..");
 const moduleMap = JSON.parse(await readFile(join(root, "module-map.json"), "utf8"));
@@ -34,26 +33,10 @@ test("System ID is retained only as a legacy identifier", () => {
   assert.equal(moduleMap.legacyIdField, "legacy_id");
 });
 
-test("techcards import records the exact source commit", async () => {
+test("techcards keeps its bundled library consistent and its dependencies in the central lock", async () => {
   const metadata = JSON.parse(
     await readFile(join(root, "backend", "app", "modules", "techcards", "SOURCE.json"), "utf8"),
   );
-  const repositoryRoot = supplymapRoot;
-  const currentSourceCommit = execFileSync(
-    "git",
-    ["-C", repositoryRoot, "rev-parse", metadata.sourceRef],
-    { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
-  assert.equal(
-    metadata.files.some(({ to }) => to === "backend/requirements.txt" || to === "backend/requirements.lock.txt"),
-    false,
-    "techcards sync must not own shared ERP dependencies",
-  );
-  for (const file of metadata.files) {
-    const content = await readFile(join(root, file.to));
-    assert.equal(createHash("sha256").update(content).digest("hex"), file.sha256);
-  }
   const techcardsRequirements = (await readFile(
     join(root, "backend", "app", "modules", "techcards", "requirements.source.txt"),
     "utf8",
@@ -74,30 +57,13 @@ test("techcards import records the exact source commit", async () => {
   );
   assert.equal(apiSource.includes("..services"), false);
 
-  const projectCardsBaseline = execFileSync(
-    "git",
-    ["-C", resolve(repositoryRoot, metadata.projectCardsSourceRepository || "."), "merge-base", "--is-ancestor", metadata.projectCardsSourceCommit, metadata.projectCardsSourceRef],
-    { encoding: "utf8" },
-  );
-  assert.equal(projectCardsBaseline, "");
-
   const operationLibrary = JSON.parse(await readFile(
     join(root, "backend", "data", "techcard-library.json"),
     "utf8",
   ));
-  const operationSourceCommit = execFileSync(
-    "git",
-    ["-C", resolve(repositoryRoot, metadata.operationLibrary.sourceRepository || "."), "rev-parse", metadata.operationLibrary.sourceRef],
-    { encoding: "utf8" },
-  ).trim();
-  const operationSource = execFileSync(
-    "git",
-    ["-C", resolve(repositoryRoot, metadata.operationLibrary.sourceRepository || "."), "ls-tree", "-r", "-z", operationSourceCommit, "--", metadata.operationLibrary.sourcePath, metadata.operationLibrary.categorySourcePath],
-    { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-  );
-  assert.equal(metadata.operationLibrary.sourceCommit, operationSourceCommit);
+  const operationSourceCommit = metadata.operationLibrary.sourceCommit;
   assert.equal(operationLibrary.sourceCommit, operationSourceCommit);
-  assert.equal(operationLibrary.sourceSha256, createHash("sha256").update(operationSource).digest("hex"));
+  assert.equal(operationLibrary.sourceSha256, metadata.operationLibrary.sourceSha256);
   assert.equal(operationLibrary.templates.length, metadata.operationLibrary.templateCount);
   const buildFixtures = JSON.parse(await readFile(
     join(root, "backend", "tests", "techcards", "fixtures", "current-etk.json"),
@@ -105,14 +71,6 @@ test("techcards import records the exact source commit", async () => {
   ));
   assert.equal(buildFixtures.sourceCommit, operationSourceCommit);
   assert.equal(Object.keys(buildFixtures.files).length, metadata.operationLibrary.buildFixtureCount);
-  for (const file of Object.values(buildFixtures.files)) {
-    const source = execFileSync(
-      "git",
-      ["-C", resolve(repositoryRoot, metadata.operationLibrary.sourceRepository || "."), "show", `${operationSourceCommit}:${file.sourcePath}`],
-      { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-    );
-    assert.equal(file.sourceSha256, createHash("sha256").update(source).digest("hex"));
-  }
   const techcardsModule = moduleMap.modules.find(({ id }) => id === "techcards");
   assert.equal(
     techcardsModule.implementedStage,
@@ -126,15 +84,10 @@ test("techcards import records the exact source commit", async () => {
   assert.equal(grapherSource.includes("def read_export"), true);
 });
 
-test("requests domain stays independent and records its SUPPLYMAP baseline", async () => {
+test("requests domain stays independent and records its port provenance", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "requests");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-  const currentSourceCommit = execFileSync(
-    "git",
-    ["-C", resolve(supplymapRoot, metadata.sourceRepository || "."), "rev-parse", metadata.sourceRef],
-    { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
+  assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
 
   const domainSource = await readFile(join(moduleRoot, "domain.py"), "utf8");
   for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient", "modules.projects"])
@@ -144,15 +97,10 @@ test("requests domain stays independent and records its SUPPLYMAP baseline", asy
   assert.equal(appSource.includes("requests_api.router"), true);
 });
 
-test("procurement owns its status machine and records its SUPPLYMAP baseline", async () => {
+test("procurement owns its status machine and records its port provenance", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "procurement");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-  const currentSourceCommit = execFileSync(
-    "git",
-    ["-C", resolve(supplymapRoot, metadata.sourceRepository || "."), "rev-parse", metadata.sourceRef],
-    { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
+  assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
 
   const requestsDomain = await readFile(
     join(root, "backend", "app", "modules", "requests", "domain.py"),
@@ -173,15 +121,10 @@ test("procurement owns its status machine and records its SUPPLYMAP baseline", a
   assert.match(procurementDomain, /revision(?:\s*:\s*str)?\s*=\s*"A"/);
 });
 
-test("identity records its SUPPLYMAP baseline and avoids legacy token storage", async () => {
+test("identity records its port provenance and avoids legacy token storage", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "identity");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-  const currentSourceCommit = execFileSync(
-    "git",
-    ["-C", supplymapRoot, "rev-parse", metadata.sourceRef],
-    { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
+  assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
 
   const middleware = await readFile(join(moduleRoot, "middleware.py"), "utf8");
   const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
@@ -195,11 +138,7 @@ test("receiving and warehouse own native traceability rules", async () => {
   for (const name of ["receiving", "warehouse"]) {
     const moduleRoot = join(root, "backend", "app", "modules", name);
     const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-    execFileSync(
-      "git",
-      ["-C", resolve(supplymapRoot, metadata.sourceRepository || "."), "merge-base", "--is-ancestor", metadata.sourceCommit, metadata.sourceRef],
-      { encoding: "utf8" },
-    );
+    assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
     const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
     for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
       assert.equal(domain.includes(forbidden), false, `${name} domain imports ${forbidden}`);
@@ -212,12 +151,7 @@ test("receiving and warehouse own native traceability rules", async () => {
 test("fulfillment records its source and stays independent of transport and persistence", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "fulfillment");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-  const currentSourceCommit = execFileSync(
-    "git",
-    ["-C", supplymapRoot, "rev-parse", metadata.sourceRef],
-    { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
+  assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
   assert.deepEqual(metadata.invariants, [
     "request-exists-without-stock",
     "human-binds-specific-lot",
@@ -235,15 +169,10 @@ test("fulfillment records its source and stays independent of transport and pers
   assert.equal(appSource.includes("fulfillment_api.router"), true);
 });
 
-test("production records its implemented SUPPLYMAP execution stage", async () => {
+test("production records its implemented execution stage", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "production");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-  const currentSourceCommit = execFileSync(
-    "git",
-    ["-C", resolve(supplymapRoot, metadata.sourceRepository || "."), "rev-parse", metadata.sourceRef],
-    { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
+  assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
   assert.equal(metadata.implementedStage, "production-traceability-stage-6-plan-manual-kit-marks-and-auto-scheduler-step-2");
 
   const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
@@ -280,10 +209,7 @@ test("production records its implemented SUPPLYMAP execution stage", async () =>
 test("shipping keeps finished goods and shipment gates in one native context", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "shipping");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-  const currentSourceCommit = execFileSync(
-    "git", ["-C", supplymapRoot, "rev-parse", metadata.sourceRef], { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
+  assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
   assert.equal(metadata.implementedStage, "finished-goods-and-shipment-workflow");
 
   const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
@@ -299,10 +225,7 @@ test("shipping keeps finished goods and shipment gates in one native context", a
 test("references separates editable maps from the versioned technology snapshot", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "references");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-  const currentSourceCommit = execFileSync(
-    "git", ["-C", supplymapRoot, "rev-parse", metadata.sourceRef], { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
+  assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
   assert.equal(metadata.invariants.includes("technology-catalog-is-a-versioned-snapshot"), true);
   assert.equal(metadata.implementedStage, "technology-schema-v14-operation-and-terminal-norm-kernel");
   assert.equal(metadata.invariants.includes("terminal-norm-prefers-exact-wire-section"), true);
@@ -323,10 +246,7 @@ test("references separates editable maps from the versioned technology snapshot"
 test("operations replaces the owner tick with append-only audit and reliable jobs", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "operations");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
-  const currentSourceCommit = execFileSync(
-    "git", ["-C", supplymapRoot, "rev-parse", metadata.sourceRef], { encoding: "utf8" },
-  ).trim();
-  assert.equal(metadata.sourceCommit, currentSourceCommit);
+  assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
   assert.equal(metadata.invariants.includes("minute-owner-tick-is-not-recreated"), true);
 
   const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");

@@ -1,6 +1,5 @@
-# The repo gate (`npm run check`) on every PR and every push to main, minus the architecture tests:
-# those pin SOURCE.json to the sibling SUPPLYMAP checkout (private repo, moves daily), so they stay
-# a local/thread check. Everything else runs here: backend pytest, frontend tests, build.
+# The repo gate (`npm run check`) on every PR and every push to main: architecture tests, backend pytest,
+# frontend tests, build. Nothing needs the sibling SUPPLYMAP checkout (owner 05.10.2026).
 name: check
 
 on:
@@ -38,11 +37,11 @@ jobs:
         working-directory: frontend
       - name: Script syntax
         run: |
-          node --check scripts/sync-techcards.mjs
-          node --check scripts/sync-techcard-library.mjs
           node --check scripts/run-backend-tests.mjs
       - name: Deploy scripts (update protocol)
         run: npm run test:deploy
+      - name: Architecture tests
+        run: npm test
       - name: Backend tests
         run: npm run test:backend
       - name: Frontend tests and build

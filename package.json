@@ -3,12 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sync:techcards": "node scripts/sync-techcards.mjs",
-    "sync:techcard-library": "node scripts/sync-techcard-library.mjs",
     "test": "node --test test/*.test.mjs",
     "test:deploy": "bash test/deploy/run.sh",
     "test:backend": "node scripts/run-backend-tests.mjs",
     "test:frontend": "npm --prefix frontend run check",
-    "check": "node --check scripts/sync-techcards.mjs && node --check scripts/sync-techcard-library.mjs && node --check scripts/run-backend-tests.mjs && npm test && npm run test:backend && npm run test:frontend"
+    "check": "node --check scripts/run-backend-tests.mjs && npm test && npm run test:backend && npm run test:frontend"
   }
 }
