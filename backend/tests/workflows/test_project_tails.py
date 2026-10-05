@@ -96,9 +96,12 @@ def erp():
 
 def _kit(state, purpose, *, reserve=Decimal("0"), status=None, issued=False):
     line = FulfillmentLine.create(article="43025-0400", name="Корпус Molex", unit="шт", requirement=Decimal("10"))
+    # A reserved kit still waits for one more position: binding the last open line would make it «Укомплектован»
+    # by itself (G1-T3), and a picked kit is kept by the purge.
+    waiting = (FulfillmentLine.create(article="43030-0001", name="Клемма Molex", unit="шт", requirement=Decimal("4")),)
     request = create_fulfillment(CreateFulfillmentCommand(
         idempotency_key=f"tails:{uuid4()}", purpose=purpose, deadline=date(2026, 10, 20),
-        lines=(line,), actor=ACTOR, now=NOW,
+        lines=(line, *(waiting if reserve else ())), actor=ACTOR, now=NOW,
     ), state.fulfillment_uow_factory())
     if reserve:
         request = bind_lot(BindLotCommand(

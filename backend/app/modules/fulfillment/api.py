@@ -53,12 +53,13 @@ from .application import (
     complete_return,
     create_fulfillment,
     delete_fulfillment,
+    handout_place,
     issue_fulfillment,
     mark_ready,
     mark_returned,
     unbind_lot,
 )
-from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentValidationError, project_of
+from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError, project_of
 
 
 router = APIRouter(prefix="/api/issues", tags=["fulfillment"])
@@ -224,10 +225,17 @@ def requests(
         if after is not None and uow.fulfillment.get(after) is None:
             raise HTTPException(status_code=404, detail="Курсор выдачи не найден")
         rows = list(uow.fulfillment.list(limit + 1, after))
-    page = rows[:limit]
+        page = rows[:limit]
+        # «Отправить на выдачу» in one click: a complete kit carries the place the screen offers (G1-T3).
+        places = {
+            request.id: handout_place(request, uow) for request in page if request.status is FulfillmentStatus.COMPLETE
+        }
     layout = configured_rack_layout()
     return {
-        "requests": [_result(request) for request in page],
+        "requests": [
+            {**_result(request), "handout_place": places[request.id]} if request.id in places else _result(request)
+            for request in page
+        ],
         "next_cursor": str(page[-1].id) if len(rows) > limit else None,
         # issueCardResp_ `places.config`: the rack layout for the handout address fields.
         "places": {

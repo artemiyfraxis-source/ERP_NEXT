@@ -470,6 +470,8 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
   const hasIssuedLines = request.lines.some((line) => Number(line.issued) > 0);
   const waiting = openLines(request);
   const canPick = canEdit && showPick && !closed && request.status !== "Готов к выдаче";
+  // G1-T3: the server offers the last place used at the kit's site, else «Зона выдачи» — sending is one click.
+  const offered = request.handout_place || DEFAULT_HANDOUT_PLACE;
   const meta: Array<[string, string]> = ([
     ["Дедлайн", day(request.deadline)],
     ["Создана", stamp(request.created_at)],
@@ -513,7 +515,10 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
       </tbody></table></div>
       <div className="fulfillment-actions">
         {canPick && ["Новая", "Недоукомплектован"].includes(request.status) && !waiting.length && <button className="secondary" disabled={busy} onClick={() => move("Укомплектован", "Комплект собран полностью. Отдать его в цех — отдельной кнопкой «Отправить на выдачу».", () => fulfillmentApi.complete(request.id, request.version))}>Укомплектован</button>}
-        {canPick && request.status === "Укомплектован" && !sending && <button className="secondary" disabled={busy} onClick={() => setSending(true)}>Отправить на выдачу</button>}
+        {canPick && request.status === "Укомплектован" && !sending && <>
+          <span className="handout-offer">Место выдачи: <b>{offered}</b> <button className="link-button table-link" disabled={busy} onClick={() => setSending(true)}>Другое место</button></span>
+          <button className="primary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.ready(request.id, request.version, offered))}>Отправить на выдачу</button>
+        </>}
         {canHandout && showGive && request.status === "Готов к выдаче" && <button className="primary" disabled={busy} onClick={() => move("КБ Выдана", "Количество спишется со склада (резерв → списано), заявка станет выданной. Отменить это можно только возвратом.", () => fulfillmentApi.issue(request.id, request.version))}>Выдать комплект</button>}
         {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => move("Готово", "Заявка закроется и уйдёт в архив.", () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
         {canEdit && !closed && <button className="link-button danger-link" disabled={busy} onClick={() => move("Отменена", "Резерв освободится, заявка уйдёт в архив.", () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
@@ -521,27 +526,35 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
         {hasIssuedLines && <button className="secondary small" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
         {isAdmin && <button className="link-button danger-link" disabled={busy} onClick={remove}>Удалить заявку</button>}
       </div>
-      {sending && <HandoutPlaceForm request={request} places={places} busy={busy} mutate={mutate} onCancel={() => setSending(false)} />}
+      {sending && <HandoutPlaceForm request={request} places={places} offered={offered} busy={busy} mutate={mutate} onCancel={() => setSending(false)} />}
       {printError && <div className="error-banner" role="alert">{printError}</div>}
       {canHandout && showGive && request.status === "КБ Возвращена" && <ReturnForm request={request} busy={busy} mutate={mutate} />}
     </article>
   );
 }
 
+/* «Отправить на выдачу» offers this place when the server sends none (same default as the backend). */
+const DEFAULT_HANDOUT_PLACE = "Зона выдачи";
+/* placeCode_ «12C7» / «12C7B» → its rack fields, so the offered rack address opens already picked. */
+const PLACE_CODE = /^(\d{1,2})([A-Z])(\d{1,3})([A-Z]?)$/;
+
 /* issSendToHandout_: the kit lies on a warehouse shelf, so the place is a rack address (rack / shelf / № / cell →
-   placeCode_ on the server). Free text stays as a fallback for a place outside the layout. */
-function HandoutPlaceForm({ request, places, busy, mutate, onCancel }: {
+   placeCode_ on the server). Free text stays as a fallback for a place outside the layout. Opens with the offered
+   place filled in: a rack code in the rack fields, anything else as text. */
+function HandoutPlaceForm({ request, places, offered, busy, mutate, onCancel }: {
   request: FulfillmentRequest;
   places?: FulfillmentPlaces;
+  offered: string;
   busy: boolean;
   mutate: Mutate;
   onCancel: () => void;
 }) {
-  const [rack, setRack] = useState("");
-  const [shelf, setShelf] = useState("");
-  const [num, setNum] = useState("");
-  const [slot, setSlot] = useState("");
-  const [text, setText] = useState("");
+  const offeredCode = places ? PLACE_CODE.exec(offered) : null;
+  const [rack, setRack] = useState(offeredCode?.[1] ?? "");
+  const [shelf, setShelf] = useState(offeredCode?.[2] ?? "");
+  const [num, setNum] = useState(offeredCode?.[3] ?? "");
+  const [slot, setSlot] = useState(offeredCode?.[4] ?? "");
+  const [text, setText] = useState(offeredCode ? "" : offered);
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const shelvesIn = rack && places ? places.per_rack[rack] ?? places.shelves : 0;
   const address = rack || shelf || num || slot;
@@ -555,7 +568,7 @@ function HandoutPlaceForm({ request, places, busy, mutate, onCancel }: {
 
   return <div className="return-form handout-place">
     <h3>Отправить на выдачу</h3>
-    <p>Укажи, куда положен комплект: заявитель получит уведомление с этим адресом, и заявка уйдёт в раздел «Выдача».</p>
+    <p>Укажи, куда положен комплект: заявитель и мастера площадки получат уведомление с этим адресом, и заявка уйдёт в раздел «Выдача».</p>
     {places && <div className="return-line">
       <label>Стеллаж<select aria-label="Стеллаж" value={rack} onChange={(event) => { setRack(event.target.value); setShelf(""); }}><option value="">—</option>{Array.from({ length: places.racks }, (_, index) => String(index + 1)).map((value) => <option key={value}>{value}</option>)}</select></label>
       <label>Полка<select aria-label="Полка" value={shelf} onChange={(event) => setShelf(event.target.value)}><option value="">—</option>{letters.slice(0, shelvesIn).split("").map((value) => <option key={value}>{value}</option>)}</select></label>

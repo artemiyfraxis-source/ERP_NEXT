@@ -362,6 +362,20 @@ class SupplyRow:
     status: str
     source_id: str = ""
     received: bool = False
+    # A row without an article (a manual request) is matched by its name within the project.
+    name: str = ""
+    # What the row still brings to the project (a request not yet in procurement, the live procurement line not yet
+    # accepted): «В закупке» of the position. Accepted goods are counted on the shelf or in the kit instead.
+    open_quantity: Decimal = Decimal("0")
+
+
+@dataclass(frozen=True)
+class SupplyStock:
+    """A quantity of the item the project already has: a free warehouse lot, or the project's kit lines."""
+
+    article: str
+    name: str
+    quantity: Decimal
 
 
 @dataclass(frozen=True)
@@ -375,6 +389,14 @@ class SupplyLine:
     received: bool
     rows: tuple[SupplyRow, ...] = field(default_factory=tuple)
     item_type: str = ""  # of the first spec line with this article: the unit follows it (шт / м)
+    ordered: Decimal = Decimal("0")  # «В закупке»: open requests and procurement lines of the project
+    free: Decimal = Decimal("0")  # «Свободно»: free stock (with the project's own reserves) under this item
+    kitted: Decimal = Decimal("0")  # reserved or issued to the project's kits
+
+    @property
+    def short(self) -> Decimal:
+        """«Не хватает»: need − free stock − in procurement − already in the kits, never below zero."""
+        return max(self.need - self.free - self.ordered - self.kitted, Decimal("0"))
 
 
 _SUPPLY_RANK = {"Запрос": 1, "Закупка": 2, "Приёмка": 3}
@@ -384,19 +406,35 @@ def _article_key(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
 
 
-def supply_lines(kitset: Kitset, rows: Iterable[SupplyRow]) -> tuple[SupplyLine, ...]:
+def _supply_match(lines: dict[str, dict[str, Any]], article: object, name: object) -> str | None:
+    """The spec position an item belongs to. With an article: the КД article, then the article actually used
+    (`kit_article`) — a description is never taken for an article. Without one (a manual request): its name
+    against the position's article or name."""
+    art = _article_key(article)
+    if art:
+        if art in lines:
+            return art
+        return next((key for key, line in lines.items() if art in line["used"]), None)
+    label = _article_key(name)
+    if not label:
+        return None
+    if label in lines:
+        return label
+    return next((key for key, line in lines.items() if label in line["names"] or label in line["used"]), None)
+
+
+def supply_lines(
+    kitset: Kitset, rows: Iterable[SupplyRow], stock: Iterable[SupplyStock] = (),
+    kitted: Iterable[SupplyStock] = (),
+) -> tuple[SupplyLine, ...]:
     """Positions of the spec against purchasing, keyed by the КД article (the one key calc and purchase share).
 
     A row replaced in the calc (`kit_article`: the wire in «Наименование» differs from the КД one) is bought as the
-    item actually used, so purchases under either article count for the position.
+    item actually used, so purchases under either article count for the position. A row without an article counts
+    by its name. Each row, lot and kit line counts for one position only.
     Stage = the LATEST row of the position (one bought, another still requested → it is on its way);
     no rows → «со склада» if the spec has a ГРН, else «не заведено».
     """
-    by_article: dict[str, list[SupplyRow]] = {}
-    for row in rows:
-        key = _article_key(row.article)
-        if key:
-            by_article.setdefault(key, []).append(row)
     lines: dict[str, dict[str, Any]] = {}
     for assembly in kitset.assemblies:
         for component in assembly.components:
@@ -407,16 +445,28 @@ def supply_lines(kitset: Kitset, rows: Iterable[SupplyRow]) -> tuple[SupplyLine,
             if line is None:
                 line = lines[key] = {
                     "article": component.article, "name": component.name, "type": component.type, "kbs": [],
-                    "need": Decimal("0"), "grn": "", "rows": tuple(by_article.get(key, ())),
+                    "need": Decimal("0"), "grn": "", "rows": (), "used": set(), "names": set(),
+                    "free": Decimal("0"), "kitted": Decimal("0"),
                 }
             used = _article_key(kit_article(component.article, component.name)["art"])
             if used != key:
-                line["rows"] += tuple(row for row in by_article.get(used, ()) if row not in line["rows"])
+                line["used"].add(used)
+            if _article_key(component.name):
+                line["names"].add(_article_key(component.name))
             if assembly.index and assembly.index not in line["kbs"]:
                 line["kbs"].append(assembly.index)
             line["need"] = (line["need"] + component.batch(assembly.run)).quantize(Decimal("0.01"))
             if component.lot and component.lot.grn and not line["grn"]:
                 line["grn"] = component.lot.grn
+    for row in rows:
+        key = _supply_match(lines, row.article, row.name)
+        if key is not None:
+            lines[key]["rows"] += (row,)
+    for items, field_name in ((stock, "free"), (kitted, "kitted")):
+        for item in items:
+            key = _supply_match(lines, item.article, item.name)
+            if key is not None and item.quantity > 0:
+                lines[key][field_name] += item.quantity
     result = []
     for line in lines.values():
         found = line["rows"]
@@ -432,6 +482,8 @@ def supply_lines(kitset: Kitset, rows: Iterable[SupplyRow]) -> tuple[SupplyLine,
             article=line["article"], name=line["name"], kbs=tuple(line["kbs"]), need=line["need"],
             grn=line["grn"], stage=stage, received=any(row.where == "Приёмка" and row.received for row in found),
             rows=found, item_type=line["type"],
+            ordered=sum((row.open_quantity for row in found), Decimal("0")),
+            free=line["free"], kitted=line["kitted"],
         ))
     return tuple(result)
 
