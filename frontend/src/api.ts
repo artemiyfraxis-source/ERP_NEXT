@@ -1703,8 +1703,11 @@ export const procurementApi = {
       method: "PATCH",
       body: JSON.stringify(facts),
     }),
-  buildSupplierRequests: () =>
-    api<SupplierRequestsResult>("/api/procurement/supplier-requests", { method: "POST" }),
+  /** Без списка — все свои строки «Готов к запросу»; со списком — только отмеченные. */
+  buildSupplierRequests: (lineIds?: string[]) =>
+    api<SupplierRequestsResult>("/api/procurement/supplier-requests", lineIds
+      ? { method: "POST", body: JSON.stringify({ line_ids: lineIds }) }
+      : { method: "POST" }),
   setReplacement: (
     lineId: string,
     version: number,
@@ -1794,11 +1797,8 @@ export const procurementApi = {
       method: "POST",
       body: JSON.stringify({ version, expected_arrival: expectedArrival }),
     }),
-  putOnApproval: (lineId: string, version: number) =>
-    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/approval`, {
-      method: "POST",
-      body: JSON.stringify({ version }),
-    }),
+  // Ручного «На согласование» нет (владелец, 04.10): сервер отвечает 422. Выход остаётся для строк,
+  // поставленных туда раньше.
   resumeFromApproval: (lineId: string, version: number) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/approval/resume`, {
       method: "POST",
@@ -2644,11 +2644,14 @@ export interface KitsetDeleteResult {
   erp: Record<string, number>;
   cards: { cards: number; revisions: number };
   gp: { deleted: number; kept: number };
-  /** Хвосты без движения: запросы на комплектацию, задания, заявки на закупку; `message` — итог по-русски. */
+  /** Записи журнала проекта в производственном плане, снесённые вместе с проектом. */
+  journal?: { deleted: number };
+  /** Хвосты без движения: журнал, запросы на комплектацию, задания, заявки на закупку; `message` — итог по-русски. */
   tails?: {
     fulfillment: { deleted: number; kept: number };
     production: { deleted: number; kept: number };
     requests: { deleted: number; kept: number };
+    journal?: { deleted: number; kept: number };
     freed: number;
     kept: { section: string; label: string; reason: string }[];
     message: string;

@@ -19,7 +19,7 @@ from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .application import Absence, Operator
 from .domain import DEFAULT_SHIFT, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, WorkShift
-from .plan import PlanEvent, PlanProjectSnapshot
+from .plan import PlanEvent, PlanProjectSnapshot, normalize_project_number
 from .genealogy import (
     BoxConsumptionSnapshot,
     BoxSnapshot,
@@ -616,7 +616,10 @@ class SqlAlchemyOperatorRepository:
 
     @staticmethod
     def _domain(row: IdentityUserRow) -> Operator:
-        return Operator(row.id, row.name, row.site or "", row.active, row.department or "", row.role)
+        return Operator(
+            row.id, row.name, row.site or "", row.active, row.department or "",
+            shop_worker=bool(row.shop_worker), site_master=bool(row.site_master),
+        )
 
     def get(self, operator_id: UUID) -> Operator | None:
         row = self.session.get(IdentityUserRow, operator_id)
@@ -739,6 +742,31 @@ class SqlAlchemyPlanEventRepository:
             statement.order_by(ProductionPlanEventRow.project, ProductionPlanEventRow.sequence).limit(limit)
         )
         return [self._domain(row) for row in rows]
+
+    def _names(self, project: str) -> list[str]:
+        """Names under which the journal holds the project: the rows keep the number as it was typed, readers
+        match by `normalize_project_number`, so the delete matches the same way."""
+        canon = normalize_project_number(project)
+        names = self.session.scalars(select(ProductionPlanEventRow.project).distinct())
+        return [name for name in names if normalize_project_number(name) == canon] if canon else []
+
+    def of_project(self, project: str) -> list[PlanEvent]:
+        names = self._names(project)
+        if not names:
+            return []
+        rows = self.session.scalars(
+            select(ProductionPlanEventRow).where(ProductionPlanEventRow.project.in_(names))
+            .order_by(ProductionPlanEventRow.occurred_at, ProductionPlanEventRow.project, ProductionPlanEventRow.sequence)
+        )
+        return [self._domain(row) for row in rows]
+
+    def delete_project(self, project: str) -> int:
+        names = self._names(project)
+        if not names:
+            return 0
+        return self.session.execute(
+            delete(ProductionPlanEventRow).where(ProductionPlanEventRow.project.in_(names))
+        ).rowcount or 0
 
     def add(self, event: PlanEvent) -> PlanEvent:
         sequence = self.session.scalar(select(func.max(ProductionPlanEventRow.sequence)).where(

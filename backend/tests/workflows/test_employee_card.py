@@ -14,7 +14,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.identity.domain import ROLE_SEED, AccessMode, IdentityUser, hash_password
-from app.modules.identity.infrastructure import SqlAlchemyIdentityUnitOfWork, provision_user, seed_role_matrix
+from app.modules.identity.infrastructure import (
+    IdentityUserRow,
+    SqlAlchemyIdentityUnitOfWork,
+    provision_user,
+    seed_role_matrix,
+)
 from app.modules.operations.domain import ProjectTask
 from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from app.modules.production.application import Absence, LaunchProductionCommand, launch_production
@@ -244,6 +249,43 @@ def test_other_roles_have_no_subordinates(erp):
     assert card(erp, ADMIN)["subordinates"] == []
 
 
+def _flag(erp, user_id, **flags):
+    with erp.sessions() as session:
+        row = session.get(IdentityUserRow, user_id)
+        for name, value in flags.items():
+            setattr(row, name, value)
+        session.commit()
+
+
+def test_a_fitter_without_the_shop_flag_is_not_a_subordinate(erp):
+    _flag(erp, FITTER_2, shop_worker=False)
+
+    assert [item["name"] for item in card(erp, MASTER)["subordinates"]] == ["Монтажник Анна"]
+
+
+def test_anyone_with_the_shop_flag_is_a_subordinate_whatever_the_level(erp):
+    engineer = UUID("60000000-0000-0000-0000-000000000009")
+    with erp.sessions() as session:
+        provision_user(session, replace(
+            _user(engineer, "engineer", "Инженер в цеху", "engineer", "Техотдел", "ЦАР"),
+            access_level="tech_lead", shop_worker=True,
+        ), hash_password(PASSWORD))
+        session.commit()
+
+    names = [item["name"] for item in card(erp, MASTER)["subordinates"]]
+
+    assert names == ["Инженер в цеху", "Монтажник Анна", "Монтажник Борис"]
+
+
+def test_subordinates_follow_the_site_master_flag_not_the_role(erp):
+    _flag(erp, MASTER, site_master=False)
+    _flag(erp, FITTER, site_master=True)
+
+    assert card(erp, MASTER)["subordinates"] == []
+    # A site master who works in the shop himself is not his own subordinate.
+    assert [item["name"] for item in card(erp, FITTER)["subordinates"]] == ["Монтажник Борис"]
+
+
 # ── Проекты ──────────────────────────────────────────────────────────────
 
 
@@ -418,7 +460,7 @@ def test_no_sessions_this_month_is_no_figure_not_zero_hours(erp):
 
 
 def test_requests_are_the_persons_open_ones_newest_first_ten_of_all(erp):
-    mine = file_requests(erp, FITTER, LIST_LIMIT + 2)
+    mine = file_requests(erp, FITTER, LIST_LIMIT + 2, project="")
     set_status(erp, mine[0], RequestStatus.CLOSED)
     set_status(erp, mine[1], RequestStatus.CANCELLED)
     set_status(erp, mine[2], RequestStatus.IN_WORK)
@@ -432,6 +474,18 @@ def test_requests_are_the_persons_open_ones_newest_first_ten_of_all(erp):
     assert all(item["name"].startswith("Разъём") and item["number"] for item in requests["items"])
     assert set(requests["items"][0]) == {"id", "number", "name", "status"}
     assert {item["id"] for item in requests["items"]} <= {str(item.id) for item in mine}
+
+
+def test_project_requests_are_not_personal(erp):
+    """Заявки, заведённые под номером проекта (из расчёта), — не личные: дают проект, но не «Мои заявки»."""
+    file_requests(erp, FITTER, 3)  # под номером проекта
+    personal = file_requests(erp, FITTER, 1, project="", purpose="RND", key="own")
+
+    result = card(erp, FITTER)
+
+    assert result["requests"]["count"] == 1
+    assert [item["id"] for item in result["requests"]["items"]] == [str(personal[0].id)]
+    assert result["projects"] == [{"project": PROJECT, "roles": ["Инициатор заявок"], "deadline": None}]
 
 
 def test_a_person_without_requests_has_a_real_zero(erp):
@@ -483,6 +537,7 @@ def test_missing_modules_leave_their_sections_empty_without_fake_zeros(erp):
 def test_each_module_is_optional_on_its_own(erp):
     launch(erp, PROJECT, [FITTER])
     file_requests(erp, FITTER, 2)
+    file_requests(erp, FITTER, 2, project="", key="own")
 
     no_production = card(erp, FITTER, production=True)
     assert no_production["projects"] == [{"project": PROJECT, "roles": ["Инициатор заявок"], "deadline": None}]

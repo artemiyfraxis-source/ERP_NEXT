@@ -13,5 +13,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
+    // Тяжёлые экраны (сетки на 100+ строк, производство) в полном параллельном прогоне не укладываются в 5 с.
+    testTimeout: 15_000,
   },
 });

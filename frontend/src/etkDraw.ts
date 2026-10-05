@@ -3,6 +3,7 @@
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
 import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, wireColor, type HousingBody } from "./connectorArt";
+import { wireEndArt } from "./etkDefectArt";
 
 type Row = Record<string, unknown>;
 
@@ -70,25 +71,97 @@ function svg(w: number, h: number, body: string): string {
 
 const LIGHT_TEXT = /#(222|2463c7|7a4a24|7b4bb3|d7322d|2e9e4f)/;
 
-/** Провода резки: полоса на провод, зачищенные концы медью, длина с допуском размером (etkDrawWires_). */
+/** Допуск «(+/-)1мм», «±5» → «±1 мм», «±5 мм»; другой текст технолога — как есть. */
+export function etkTolerance(value: unknown): string {
+  const s = str(value).trim();
+  const m = s.match(/^(?:\(\+\/-\)|±|\+\/-)\s*(\d+(?:[.,]\d+)?)\s*(?:мм)?$/i);
+  return m ? `±${m[1].replace(".", ",")} мм` : s;
+}
+
+export type CutEndKind = "none" | "strip" | "tin" | "crimp";
+export type CutEnd = { kind: CutEndKind; len: string; terminal: string };
+
+/** Концы провода в операции резки: без зачистки, зачищен (медь), облужен или с обжатым терминалом. Считается при показе
+ *  по типу, стороне и коду операции (CUT_WIRE+1crimp — обжим стороны операции, +2crimp — обеих, +tin — лудится свободный
+ *  конец, +2tin — оба), поэтому выданные ЭТК перевыпускать не нужно. Терминал — строка «Шт.» комплектующих. */
+export function etkCutEnds(operation: Row): { a: CutEnd; b: CutEnd } {
+  const st = obj(obj(operation.fields).strip), code = str(operation.code);
+  const crimpCode = code.match(/\+(\d)?crimp/i), tinCode = code.match(/\+(\d)?tin\b/i);
+  const crimps = crimpCode ? Number(crimpCode[1] || 1) : operation.type === "cutWireCrimp" ? 1 : 0;
+  const tins = tinCode ? Number(tinCode[1] || 1) : 0;
+  const crimpSide = operation.side === "B" ? "b" : "a";
+  const freeSide = crimps === 1 ? (crimpSide === "a" ? "b" : "a") : "b";
+  const terminals = list(operation.components).filter((row) => /^шт/i.test(str(row.unit))).map((row) => str(row.art || row.name)).filter(Boolean);
+  const kind = (key: "a" | "b"): CutEndKind => {
+    if (crimps >= 2 || (crimps === 1 && key === crimpSide)) return "crimp";
+    if (tins >= 2 || (tins === 1 && key === freeSide)) return "tin";
+    return st[key] ? "strip" : "none";
+  };
+  const end = (key: "a" | "b"): CutEnd => {
+    const k = kind(key);
+    return { kind: k, len: str(key === "a" ? st.lenA : st.lenB).trim(),
+      terminal: k === "crimp" ? terminals[key === "b" && terminals.length > 1 ? 1 : 0] || "" : "" };
+  };
+  return { a: end("a"), b: end("b") };
+}
+
+/** Зачистка конца: «A 1,2 мм», длины нет — «?»; с пометкой — лужёный «B 3 мм (лужение)» (в эскизе это подпись под проводом). */
+function endStrip(key: "A" | "B", end: CutEnd, note = false): string {
+  return `${key} ${mm(end.len) || "?"}${note && end.kind === "tin" ? " (лужение)" : ""}`;
+}
+
+/** Провода резки: полоса на провод, концы — как их отдаёт операция: зачищенная медь, лужёный конец, обжатый терминал
+ *  (рисунки библиотеки дефектов), длина реза от торца до торца жилы с допуском (etkDrawWires_). */
 export function etkDrawWires(operation: Row): string {
   const f = obj(operation.fields), ws = list(f.wires).slice(0, 8);
   if (!ws.length || !/^cutWire/.test(str(operation.type))) return "";
-  const st = obj(f.strip), W = 640, x0 = 40, x1 = W - 40, rowH = 26, top = 34;
+  const ends = etkCutEnds(operation);
+  const crimped = ends.a.kind === "crimp" || ends.b.kind === "crimp";
+  const W = 640, x0 = 40, x1 = W - 40, rowH = crimped ? 30 : 26, top = 34, S = 1, END = 26;
+  // Геометрия конца: где кончается изоляция, торец жилы и зона зачистки (под размер «A …» / «B …»).
+  const geo = (key: "a" | "b") => {
+    const e = ends[key], dir = key === "a" ? -1 : 1, edge = key === "a" ? x0 : x1;
+    if (e.kind === "crimp") {
+      const attach = edge - dir * 92 * S, at = (local: number) => attach + dir * local * S;
+      return { ins: at(18), tip: at(52), zone: [at(20), at(52)], attach, dir };
+    }
+    const inner = edge - dir * END;
+    return e.kind === "none" ? { ins: edge, tip: edge, zone: null, attach: 0, dir } : { ins: inner, tip: edge, zone: [inner, edge], attach: 0, dir };
+  };
+  const ga = geo("a"), gb = geo("b");
+  const endArt = (key: "a" | "b", cy: number) => {
+    const e = ends[key], g = key === "a" ? ga : gb, edge = key === "a" ? x0 : x1;
+    if (e.kind === "crimp") return `<g data-end="${key.toUpperCase()}:crimp" transform="translate(${g.attach.toFixed(1)},${cy}) scale(${g.dir * S},${S})">${wireEndArt.crimp(0)}</g>`;
+    if (e.kind === "strip") return `<g data-end="${key.toUpperCase()}:strip">${wireEndArt.copper(Math.min(edge, g.ins), Math.max(edge, g.ins), cy)}</g>`;
+    if (e.kind === "tin") {
+      const gap = g.ins + g.dir * 4; // у торца изоляции жила без припоя, как в рисунке лужения
+      return `<g data-end="${key.toUpperCase()}:tin">${wireEndArt.copper(Math.min(g.ins, gap), Math.max(g.ins, gap), cy)}` +
+        `${wireEndArt.tin(Math.min(gap, edge), Math.max(gap, edge), cy)}</g>`;
+    }
+    return "";
+  };
   let body = "";
   ws.forEach((w, i) => {
-    const y = top + i * rowH, c = etkWireColor(w.name || w.art);
-    const a = st.a ? 26 : 0, b = st.b ? 26 : 0;
-    if (a) body += `<rect x="${x0}" y="${y + 7}" width="${a}" height="6" fill="#c87533"/>`;
-    if (b) body += `<rect x="${x1 - b}" y="${y + 7}" width="${b}" height="6" fill="#c87533"/>`;
-    body += `<rect x="${x0 + a}" y="${y + 4}" width="${x1 - x0 - a - b}" height="12" rx="3" fill="${c}" stroke="#17272b" stroke-width=".8"/>` +
-      `<text x="${(x0 + x1) / 2}" y="${y + 13.5}" text-anchor="middle" font-size="10.5" fill="${LIGHT_TEXT.test(c) ? "#fff" : "#17272b"}">` +
+    const y = top + i * rowH, cy = y + rowH / 2 - 3, c = etkWireColor(w.name || w.art);
+    body += `<rect x="${ga.ins.toFixed(1)}" y="${cy - 6}" width="${(gb.ins - ga.ins).toFixed(1)}" height="12" rx="3" fill="${c}" stroke="#17272b" stroke-width=".8"/>` +
+      endArt("a", cy) + endArt("b", cy) +
+      `<text x="${((ga.ins + gb.ins) / 2).toFixed(1)}" y="${cy + 3.5}" text-anchor="middle" font-size="10.5" fill="${LIGHT_TEXT.test(c) ? "#fff" : "#17272b"}">` +
       `${esc(`${str(w.art || w.name)} × ${str(w.qty)}`)}</text>`;
   });
-  const yd = top + ws.length * rowH + 16, L = ws[0].length ? `${str(ws[0].length)} мм` : "по КД";
-  body += dim(x0, x1, yd, `L = ${L}${f.cutTolerance ? `  ${str(f.cutTolerance)}` : ""}`);
-  if (st.a) body += dim(x0, x0 + 26, top - 10, `A ${mm(st.lenA) || "?"}`);
-  if (st.b) body += dim(x1 - 26, x1, top - 10, `B ${mm(st.lenB) || "?"}`);
+  // Что с концом сделано — подписью под проводами: обжатый терминал и лужение.
+  const caption = (end: CutEnd) => end.kind === "crimp" ? `обжат терминал${end.terminal ? ` ${end.terminal}` : ""}` : end.kind === "tin" ? "лужение" : "";
+  const notes = [caption(ends.a), caption(ends.b)];
+  let yd = top + ws.length * rowH + 16;
+  if (notes.some(Boolean)) {
+    const yc = top + ws.length * rowH + 6;
+    if (notes[0]) body += `<text x="${x0}" y="${yc}" font-size="10.5" fill="#5f7470">${esc(notes[0])}</text>`;
+    if (notes[1]) body += `<text x="${x1}" y="${yc}" text-anchor="end" font-size="10.5" fill="#5f7470">${esc(notes[1])}</text>`;
+    yd = yc + 22;
+  }
+  const L = ws[0].length ? `${str(ws[0].length)} мм` : "по КД", tolerance = etkTolerance(f.cutTolerance);
+  body += dim(ga.tip, gb.tip, yd, `L = ${L}${tolerance ? ` ${tolerance}` : ""}`);
+  if (ga.zone) body += dim(Math.min(ga.zone[0], ga.zone[1]), Math.max(ga.zone[0], ga.zone[1]), top - 10, endStrip("A", ends.a));
+  if (gb.zone) body += dim(Math.min(gb.zone[0], gb.zone[1]), Math.max(gb.zone[0], gb.zone[1]), top - 10, endStrip("B", ends.b));
   return svg(W, yd + 14, body);
 }
 
@@ -166,7 +239,7 @@ export function etkDrawCrimp(operation: Row): string {
     call(356, cy + 38, 350, cy + 3, "выход жил") +
     `<line x1="326" y1="${cy - 20}" x2="326" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
     `<line x1="326" y1="${cy - 9}" x2="326" y2="${cy + 12}" stroke="${edge}" marker-start="url(#etkA)" marker-end="url(#etkA)"/>` +
-    `<text x="300" y="${cy + 62}" font-size="12" fill="${edge}">H обжима по жиле: ${esc(f.crimpHeight ? `${str(f.crimpHeight)} мм` : "⚠ нет в БД.ТЕР")}</text>` +
+    `<text x="300" y="${cy + 62}" font-size="12" fill="${edge}">Высота обжима по жиле: ${esc(f.crimpHeight ? `${str(f.crimpHeight)} мм` : "⚠ нет в БД.ТЕР")}</text>` +
     `<text x="24" y="${cy + 62}" font-size="12" fill="${edge}">Отрыв: ${esc(f.pullForce ? `${str(f.pullForce)} Н` : "—")}</text>`;
   return svg(560, cy + 72, body);
 }
@@ -386,18 +459,26 @@ export function etkDrawHarness(topo: EtkTopologyData | null | undefined, pins: R
   return svg(W, H, body);
 }
 
-/** Чипы полей операции над ходом операции (renderEtk_ chips): аппликатор, H обжима, отрыв, длина, допуск,
+/** Чипы полей операции над ходом операции (renderEtk_ chips): аппликатор, высота обжима, отрыв, длина, допуск,
  * зачистка, свивка и время из БД.ОП (на штуку — с, подготовка — мин). */
 export function etkChips(operation: Row): Array<[string, string]> {
   const f = obj(operation.fields), out: Array<[string, string]> = [];
   if (f.applicator) out.push(["Аппликатор", str(f.applicator)]);
-  if ("crimpHeight" in f) out.push(["H обжима", f.crimpHeight ? `${str(f.crimpHeight)} мм` : "⚠ нет данных"]);
+  if ("crimpHeight" in f) out.push(["Высота обжима", f.crimpHeight ? `${str(f.crimpHeight)} мм` : "⚠ нет данных"]);
   if (f.pullForce) out.push(["Отрыв", `${str(f.pullForce)} Н`]);
   if (f.lengthKd) out.push(["Длина по КД", str(f.lengthKd)]);
-  if (f.cutTolerance) out.push(["Допуск реза", str(f.cutTolerance)]);
+  if (f.cutTolerance) out.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
+  // Ручная сборка: сколько раз операция на одно изделие, параметры и примечание технолога.
+  if (f.perItem) out.push(["На изделие", `${str(f.perItem)} шт.`]);
+  if (f.params) out.push(["Параметры", str(f.params)]);
+  if (f.note) out.push(["Примечание", str(f.note)]);
   const strip = obj(f.strip);
-  if (strip.a || strip.b) {
-    out.push(["Зачистка", [strip.a ? `A ${mm(strip.lenA) || "?"}` : "", strip.b ? `B ${mm(strip.lenB) || "?"}` : ""].filter(Boolean).join(" · ")]);
+  // У резки концы — по операции (лужёный конец зачищен всегда); у прочих — как в поле зачистки.
+  const ends = /^cutWire/.test(str(operation.type)) ? etkCutEnds(operation) : null;
+  const shown = (key: "a" | "b") => ends ? ends[key].kind !== "none" : !!strip[key];
+  if (shown("a") || shown("b")) {
+    const end = (key: "a" | "b"): CutEnd => ends ? ends[key] : { kind: "strip", len: str(key === "a" ? strip.lenA : strip.lenB).trim(), terminal: "" };
+    out.push(["Зачистка", [shown("a") ? endStrip("A", end("a"), true) : "", shown("b") ? endStrip("B", end("b"), true) : ""].filter(Boolean).join(" · ")]);
   }
   if (f.twist) {
     const twist = obj(f.twist);

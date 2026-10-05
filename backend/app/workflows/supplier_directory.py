@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import (
+    SUPPLIER_BY_LINK,
     ReferenceEntry,
     ReferenceKind,
     ReferenceValidationError,
@@ -32,13 +33,16 @@ class ReferencesSupplierDirectory:
         self.references_uow_factory = references_uow_factory
 
     def supplier_map(self) -> dict[str, str]:
+        """`supplierMap_` (References.gs:68): the saved map, otherwise the Config SUPPLIER_BY_LINK seed — the same
+        list the «Соответствия» screen shows while the map was never saved (a fresh server has it empty)."""
         with self.references_uow_factory() as uow:
             entries = list(uow.references.list())
-        return {
+        saved = {
             entry.normalized_key: entry.value
             for entry in entries
             if entry.kind == ReferenceKind.SUPPLIER and entry.value.strip()
         }
+        return saved or {normalized_supplier_key(key): value for key, value in SUPPLIER_BY_LINK}
 
     def country_for_manufacturer(self, manufacturer: str) -> str:
         """`countryForManufacturer_` (References.gs:101): СТРАНА by ИЗГОТОВИТЕЛЬ from the map, otherwise ''."""

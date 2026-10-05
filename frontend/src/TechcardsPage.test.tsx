@@ -209,7 +209,7 @@ it("edits an issued ETK operation from the UI and shows the new revision (portal
 
   render(<TechcardsPage principal={engineer} view="projects" />);
   fireEvent.click(await screen.findByRole("button", { name: /Править/ }));
-  expect(screen.getByText(/поднимет ревизию до 2/)).toBeInTheDocument();
+  expect(screen.getByText("Сохранение — ревизия 2")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод по КД" } });
   fireEvent.click(screen.getByRole("button", { name: "＋ Контроль" }));
   fireEvent.change(screen.getByLabelText("Шаг 2"), { target: { value: "Измерить длину" } });
@@ -245,11 +245,11 @@ it("shows the operation field chips and the sketch on the ETK screen (renderEtk_
   render(<TechcardsPage principal={engineer} view="projects" />);
   const chips = await screen.findByLabelText("Параметры операции");
   expect(chips).toHaveTextContent("АппликаторAP-22");
-  expect(chips).toHaveTextContent("H обжима0,85 мм");
+  expect(chips).toHaveTextContent("Высота обжима0,85 мм");
   expect(chips).toHaveTextContent("Отрыв40 Н");
   expect(chips).toHaveTextContent("Время3,5 с на шт. · подгот. 3 мин");
   expect(screen.getByText("Эскиз")).toBeInTheDocument();
-  expect(screen.getByText("H обжима по жиле: 0,85 мм")).toBeInTheDocument();
+  expect(screen.getByText("Высота обжима по жиле: 0,85 мм")).toBeInTheDocument();
 });
 
 it("lays an ETK operation out in production order with the soldering mode and pictured defects", async () => {
@@ -411,7 +411,7 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   expect(screen.getByText("Перенесено из шаблона БД.ТК, в ERP не правилась")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /Править/ }));
-  expect(screen.getByLabelText("Требование безопасности")).toHaveValue("Работать в очках");
+  expect(screen.getByText("Работать в очках")).toHaveClass("tc-preview");
   fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод в размер" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 

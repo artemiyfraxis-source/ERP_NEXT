@@ -15,6 +15,9 @@ const EMPTY_DRAFT: Draft = {
   personnel_number: "", job_title: "", qualification: "", job_since: null, manager_id: null, active: true, managerText: "",
 };
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
+/** Tooltips that keep the two things apart: the access role drives permissions, the position is a personnel fact. */
+const ROLE_HINT = "что сотрудник может открывать и править в ERP; должность — в блоке «Кадры»";
+const SITE_HINT = "ЦАР / ЖУК — сотрудник цеха с площадкой считается монтажником";
 
 /** «ФИО · отдел» for every employee; equal labels get the login, so a label always names one person. */
 function personLabels(users: Employee[]): Map<string, string> {
@@ -195,7 +198,7 @@ export function StaffPage({ openCard, openUserId }: {
     {notice && <div className="success-banner">{notice}</div>}
     {data && <>
       <div className="table-wrap"><table aria-label="Сотрудники">
-        <thead><tr><th>ФИО</th><th>Таб. №</th><th>Должность</th><th>Логин / e-mail</th><th>Отдел</th><th>Место работы</th><th>Роль</th><th>Вход</th><th /></tr></thead>
+        <thead><tr><th>ФИО</th><th>Таб. №</th><th>Должность</th><th>Логин / e-mail</th><th>Отдел</th><th>Площадка</th><th title={ROLE_HINT}>Доступ</th><th>Вход</th><th /></tr></thead>
         <tbody>
           {shown.map((user) => <tr key={user.id} className={user.active ? "clickable" : "clickable muted"} onClick={() => startEdit(user)}>
             <td className="text"><strong>{user.name}</strong></td>
@@ -277,32 +280,40 @@ function EmployeeForm({ data, labels, editing, busy, onChange, onSave, onCancel 
   const setManager = (text: string) => onChange({ ...draft, managerText: text, manager_id: managerIdByLabel.get(text.trim()) ?? null });
   return <div className="panel" id="staff-edit-form">
     <h2>{creating ? "Новый сотрудник" : `Правка: ${draft.name}`}</h2>
-    <div className="form-grid staff-form">
-      <label>ФИО<input aria-label="ФИО" value={draft.name} onChange={(event) => set("name", event.target.value)} /></label>
-      <label>Табельный номер<input aria-label="Табельный номер" placeholder="например, FRX-0017" maxLength={32} value={draft.personnel_number} onChange={(event) => set("personnel_number", event.target.value)} /></label>
-      <label>Должность<input aria-label="Должность" value={draft.job_title} onChange={(event) => set("job_title", event.target.value)} /></label>
-      <label>Категория / квалификация<input aria-label="Категория / квалификация" value={draft.qualification} onChange={(event) => set("qualification", event.target.value)} /></label>
-      <label>Отдел<select aria-label="Отдел" value={draft.department} onChange={(event) => set("department", event.target.value)}>
-        <option value="">—</option>
-        {departments.map((name) => <option key={name} value={name}>{name}</option>)}
-      </select></label>
-      <label>Руководитель<SuggestInput aria-label="Руководитель" placeholder="ФИО, пусто — не назначен" options={[...managerIdByLabel.keys()]} value={draft.managerText} onChange={setManager} /></label>
-      <label>В должности с<input aria-label="В должности с" type="date" value={draft.job_since ?? ""} onChange={(event) => set("job_since", event.target.value || null)} /></label>
-      <label>Место работы<select aria-label="Место работы" value={draft.site} onChange={(event) => set("site", event.target.value)}>
-        <option value="">все площадки</option>
-        {data.sites.map((site) => <option key={site.code} value={site.code}>{site.code} · {site.city}</option>)}
-      </select></label>
-      {creating && <>
-        <label className="pair">E-mail<input aria-label="E-mail" type="email" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
-        <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
-      </>}
-      <label>Роль<select aria-label="Роль" value={draft.role} onChange={(event) => set("role", event.target.value)}>
-        {data.roles.map((role) => <option key={role.key} value={role.key}>{role.label}</option>)}
-      </select></label>
-      <label className={creating ? "half" : undefined}>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — сгенерируем и покажем" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
-      <label className={creating ? "half" : undefined}>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "необязательно, 8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
-      {!creating && <label className="check-inline staff-form-check"><input aria-label="Вход разрешён" type="checkbox" checked={draft.active} onChange={(event) => set("active", event.target.checked)} /> Вход разрешён</label>}
-    </div>
+    <section className="staff-form-block" aria-labelledby="staff-form-hr">
+      <h3 id="staff-form-hr">Кадры</h3>
+      <div className="form-grid staff-form">
+        <label className="pair">ФИО<input aria-label="ФИО" value={draft.name} onChange={(event) => set("name", event.target.value)} /></label>
+        <label>Должность<input aria-label="Должность" value={draft.job_title} onChange={(event) => set("job_title", event.target.value)} /></label>
+        <label>Категория / квалификация<input aria-label="Категория / квалификация" value={draft.qualification} onChange={(event) => set("qualification", event.target.value)} /></label>
+        <label>Отдел<select aria-label="Отдел" value={draft.department} onChange={(event) => set("department", event.target.value)}>
+          <option value="">—</option>
+          {departments.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select></label>
+        <label>Руководитель<SuggestInput aria-label="Руководитель" placeholder="ФИО, пусто — не назначен" options={[...managerIdByLabel.keys()]} value={draft.managerText} onChange={setManager} /></label>
+        <label>Табельный номер<input aria-label="Табельный номер" placeholder="например, FRX-0017" maxLength={32} value={draft.personnel_number} onChange={(event) => set("personnel_number", event.target.value)} /></label>
+        <label>В должности с<input aria-label="В должности с" type="date" value={draft.job_since ?? ""} onChange={(event) => set("job_since", event.target.value || null)} /></label>
+      </div>
+    </section>
+    <section className="staff-form-block" aria-labelledby="staff-form-access">
+      <h3 id="staff-form-access">Доступ в ERP</h3>
+      <div className="form-grid staff-form">
+        {creating && <>
+          <label className="pair">E-mail<input aria-label="E-mail" type="email" value={draft.email} onChange={(event) => set("email", event.target.value)} /></label>
+          <label>Логин<input aria-label="Логин" placeholder="пусто — e-mail" value={draft.login} onChange={(event) => set("login", event.target.value)} /></label>
+        </>}
+        <label title={ROLE_HINT}>Роль доступа<select aria-label="Роль доступа" value={draft.role} onChange={(event) => set("role", event.target.value)}>
+          {data.roles.map((role) => <option key={role.key} value={role.key}>{role.label}</option>)}
+        </select></label>
+        <label title={SITE_HINT}>Площадка<select aria-label="Площадка" value={draft.site} onChange={(event) => set("site", event.target.value)}>
+          <option value="">все площадки</option>
+          {data.sites.map((site) => <option key={site.code} value={site.code}>{site.code} · {site.city}</option>)}
+        </select></label>
+        <label>{creating ? "Пароль" : "Новый пароль"}<input aria-label={creating ? "Пароль" : "Новый пароль"} type="password" autoComplete="new-password" placeholder={creating ? "необязательно, 8–128 символов" : "пусто — не менять"} value={draft.password} onChange={(event) => set("password", event.target.value)} /></label>
+        <label className={creating ? "pair" : undefined}>{creating ? "PIN" : "Новый PIN"}<input aria-label={creating ? "PIN" : "Новый PIN"} inputMode="numeric" autoComplete="off" maxLength={8} placeholder={creating ? "6–8 цифр, пусто — сгенерируем и покажем" : "пусто — не менять"} value={draft.pin} onChange={(event) => set("pin", event.target.value)} /></label>
+        {!creating && <label className="check-inline staff-form-check"><input aria-label="Вход разрешён" type="checkbox" checked={draft.active} onChange={(event) => set("active", event.target.checked)} /> Вход разрешён</label>}
+      </div>
+    </section>
     <div className="form-actions">
       <button className="primary" disabled={busy} onClick={onSave}>{creating ? "Завести сотрудника" : "Сохранить сотрудника"}</button>{" "}
       <button className="secondary" onClick={onCancel}>Отмена</button>

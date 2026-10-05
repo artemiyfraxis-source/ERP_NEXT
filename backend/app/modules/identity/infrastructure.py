@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Uuid,
     delete,
+    false,
     func,
     select,
     text,
@@ -31,6 +32,22 @@ from app.shared.clock import as_utc
 
 from .application import IdentitySession, PinRecord
 from .domain import ROLE_SEED, AccessMode, IdentityUser, normalize_login
+from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
+
+
+# A row inserted without a level takes it from its role (and site / department for the installer flag), until the
+# screens edit the level directly — the gates still run on the role, so the two must not drift apart.
+def _default_level(context) -> str:
+    return level_for_role(context.get_current_parameters().get("role"))
+
+
+def _default_shop_worker(context) -> bool:
+    params = context.get_current_parameters()
+    return shop_worker_rule(params.get("role"), params.get("site"), params.get("department"))
+
+
+def _default_site_master(context) -> bool:
+    return site_master_rule(context.get_current_parameters().get("role"))
 
 
 class IdentityUserRow(Base):
@@ -60,6 +77,16 @@ class IdentityUserRow(Base):
         ForeignKey("identity_users.id", ondelete="SET NULL", name="fk_identity_users_manager_id"),
         index=True,
     )
+    # Уровень доступа и два флага (0086, docs/migration/access-levels-plan.md); `legacy_role` = the role at the
+    # transfer, kept one release.
+    access_level: Mapped[str] = mapped_column(String(16), nullable=False, index=True, default=_default_level)
+    shop_worker: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=_default_shop_worker, server_default=false(),
+    )
+    site_master: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=_default_site_master, server_default=false(),
+    )
+    legacy_role: Mapped[str | None] = mapped_column(String(64))
 
 
 class IdentityCredentialRow(Base):
@@ -97,6 +124,32 @@ class IdentityRoleAccessRow(Base):
 
 class IdentityUserAccessRow(Base):
     __tablename__ = "identity_user_access"
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    section: Mapped[str] = mapped_column(String(64), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(8), nullable=False)
+
+
+class IdentityLevelAccessRow(Base):
+    """The level matrix (0086): level × section, an absent cell is closed. The superadmin/admin rows are edit everywhere;
+    those levels are always full whatever is stored."""
+
+    __tablename__ = "identity_level_access"
+
+    level: Mapped[str] = mapped_column(String(16), primary_key=True)
+    section: Mapped[str] = mapped_column(String(64), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(8), nullable=False)
+
+
+class IdentityUserLevelAccessRow(Base):
+    """Personal exceptions on top of the person's level row (0086), `none` closes. `identity_user_access` keeps the
+    role-era exceptions the gates still read."""
+
+    __tablename__ = "identity_user_level_access"
 
     user_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -200,6 +253,9 @@ def _user_domain(row: IdentityUserRow) -> IdentityUser:
         qualification=row.qualification or "",
         job_since=row.job_since,
         manager_id=row.manager_id,
+        access_level=row.access_level or "",
+        shop_worker=bool(row.shop_worker),
+        site_master=bool(row.site_master),
     )
 
 
@@ -209,6 +265,19 @@ def _write_personnel(row: IdentityUserRow, user: IdentityUser) -> None:
     row.qualification = user.qualification
     row.job_since = user.job_since
     row.manager_id = user.manager_id
+
+
+def _follow_role(row: IdentityUserRow, user: IdentityUser, flags_as_given: bool) -> None:
+    """Until «Сотрудники» edits the level (access-levels plan, T6), changing the old role re-derives it, so it never
+    lags behind the role the gates still use. The two flags: `flags_as_given` — the caller decided them itself
+    («Сотрудники», T3) and they are written as carried; otherwise they follow the role, site and department unless set
+    against the rule by hand (`followed_flags`)."""
+    if row.role != user.role:
+        row.access_level = level_for_role(user.role)
+    if flags_as_given:
+        row.shop_worker, row.site_master = user.shop_worker, user.site_master
+    else:
+        row.shop_worker, row.site_master = followed_flags(row, user.role, user.site, user.department)
 
 
 def _session_domain(row: IdentitySessionRow) -> IdentitySession:
@@ -447,10 +516,11 @@ class SqlAlchemyIdentityRepository:
         )
         self.session.execute(delete(IdentityUserRow).where(IdentityUserRow.id == user_id))
 
-    def update_user(self, user: IdentityUser) -> None:
+    def update_user(self, user: IdentityUser, *, flags_as_given: bool = False) -> None:
         row = self.session.get(IdentityUserRow, user.id)
         if row is None:
             raise KeyError(f"Identity user not found: {user.id}")
+        _follow_role(row, user, flags_as_given)
         row.name = user.name
         row.department = user.department
         row.role = user.role
@@ -651,6 +721,11 @@ def provision_user(
 ) -> None:
     login = normalize_login(user.login)
     email = normalize_login(user.email)
+    # A user that carries its level writes it; otherwise the column defaults take it from the role.
+    level = (
+        {"access_level": user.access_level, "shop_worker": user.shop_worker, "site_master": user.site_master}
+        if user.access_level else {}
+    )
     row = IdentityUserRow(
         id=user.id,
         login=login,
@@ -660,6 +735,7 @@ def provision_user(
         role=user.role.strip(),
         site=user.site,
         active=user.active,
+        **level,
     )
     _write_personnel(row, user)
     session.add(row)

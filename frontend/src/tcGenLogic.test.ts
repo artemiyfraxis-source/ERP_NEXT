@@ -201,7 +201,18 @@ it("Open-End with tinned free ends: one cut + crimp + tin machine operation, no 
   expect(g.templateIdFor(ops[0])).toBe("cwct");
   const cfg = g.buildConfig() as Record<string, any>;
   expect(cfg.ops[0]).toMatchObject({ type: "cutWireCrimp", opNum: "CUT_WIRE+1crimp+tin", tPrep: "3600", tOp: "4", templateId: "cwct", tin: true });
+  expect(cfg.tin).toMatchObject({ enabled: true, stripLen: "3" });
   expect(g.crimpTinNoApplicator_()).toBe("");
+});
+
+it("Open-End: the tinned end keeps the tin strip length when «Зачистка свободных концов» is on without a length (719К.2 КБ1)", () => {
+  const { D, S } = openEndGen();
+  const strip = (state: typeof S) => makeGen(D, state).getActiveOps()[0].strip;
+  expect(strip({ ...S, freeStrip: { enabled: true, len: "" } })).toEqual({ a: true, lenA: "1,2", b: true, lenB: "3" });
+  // Длины под лужение нет — берётся длина свободной зачистки; нет обеих — «?» на ЭТК.
+  const noTinLen = { ...S, tin: { ...S.tin, stripLen: "" } };
+  expect(strip({ ...noTinLen, freeStrip: { enabled: true, len: "4" } })).toMatchObject({ b: true, lenB: "4" });
+  expect(strip(noTinLen)).toMatchObject({ b: true, lenB: "" });
 });
 
 it("keeps crimp and tinning separate when the machine cannot take them", () => {

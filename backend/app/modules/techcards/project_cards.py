@@ -26,11 +26,15 @@ def _positive_number(value: object) -> bool:
         return False
 
 
+# «Своя операция» ручной сборки (etk_builder): не из библиотеки, кода карты у неё нет — ключ держит её номер в списке.
+CUSTOM_OP = "customOp"
+
+
 def operation_key(operation: dict[str, Any]) -> str:
     code = str(operation.get("code") or "").strip()
     connector = str(operation.get("connector") or "").strip()
     side = str(operation.get("side") or "").strip()
-    if not code:
+    if not code and not (operation.get("type") == CUSTOM_OP and connector):
         raise TechcardValidationError("У операции ЭТК отсутствует код")
     return f"{code}::{connector}::{side}"
 

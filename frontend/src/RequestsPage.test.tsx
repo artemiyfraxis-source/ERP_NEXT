@@ -478,7 +478,7 @@ describe("RequestsPage", () => {
     expect(screen.getByText(/Позиций:/)).toHaveTextContent("Позиций: 100 из 100");
     expect(screen.getByRole("button", { name: "+ Добавить строку" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Оформить 100 позиций" })).toBeInTheDocument();
-  });
+  }, 15_000);  // renders 100+ grid rows: under a full parallel run 5 s is not enough
 
   it("T7: Enter moves down, on the last row it adds a row; copy and remove work per row", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

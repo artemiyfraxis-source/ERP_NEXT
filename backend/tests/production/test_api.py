@@ -34,8 +34,8 @@ def production_api():
     operator_id = UUID("10000000-0000-0000-0000-000000000002")
     with sessions() as session:
         session.add_all([
-            IdentityUserRow(id=master_id, login="master", email="master@example.test", name="Мастер", department="Производство", role="master", site="ЦАР", active=True),
-            IdentityUserRow(id=operator_id, login="operator", email="operator@example.test", name="Оператор", department="Производство", role="staff", site="ЦАР", active=True),
+            IdentityUserRow(id=master_id, login="master", email="master@example.test", name="Мастер", department="Производство", role="master", site="ЦАР", active=True, site_master=True),
+            IdentityUserRow(id=operator_id, login="operator", email="operator@example.test", name="Оператор", department="Производство", role="staff", site="ЦАР", active=True, shop_worker=True),
         ])
         session.commit()
     app.state.production_uow_factory = factory
@@ -113,6 +113,66 @@ def test_work_goes_only_to_installers(production_api):
 
     assert refused.status_code == 422, refused.text
     assert "Мастер не монтажник" in refused.json()["detail"]
+
+
+MASTER_ID = UUID("10000000-0000-0000-0000-000000000001")
+
+
+def _set_shop_worker(user_id, value):
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, user_id).shop_worker = value
+        uow.commit()
+
+
+def test_a_staff_member_without_the_shop_flag_gets_no_work(production_api):
+    # «Кто монтажник» — флаг карточки «Монтажник (работает в цеху)», не роль «Сотрудник» и не площадка.
+    client, operator_id = production_api
+    client.put(f"/api/production/skills/{operator_id}", json={"skills": [
+        {"operation_code": "OP-1", "allowed": True, "stars": 5, "coefficient": "1"},
+    ]})
+    task = launch_from_card(client, "no-flag", "591K.3", "КБ1", 10, [("OP-1", "Разделка", 60, 0)]).json()["task"]
+    _set_shop_worker(operator_id, False)
+
+    listed = client.get("/api/production/operators").json()["operators"]
+    refused = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(operator_id)]},
+    )
+    planned = client.post(f"/api/production/tasks/{task['id']}/schedule", json={
+        "version": task["version"], "replan": False, "max_crew": 2,
+    })
+
+    assert listed == []
+    assert refused.status_code == 422 and "Оператор не монтажник" in refused.json()["detail"]
+    # Авторасчёту некого ставить: монтажников с допуском нет.
+    assert planned.status_code == 422, planned.text
+
+
+def test_a_master_with_the_shop_flag_gets_work_like_a_fitter(production_api):
+    # Уровень доступа не важен: мастер (бригадир) с флагом «Монтажник» получает работу, сотрудник без флага — нет.
+    client, operator_id = production_api
+    _set_shop_worker(MASTER_ID, True)
+    _set_shop_worker(operator_id, False)
+    client.put(f"/api/production/skills/{MASTER_ID}", json={"skills": [
+        {"operation_code": "OP-1", "allowed": True, "stars": 5, "coefficient": "1"},
+    ]})
+    task = launch_from_card(client, "master-works", "591K.3", "КБ1", 10, [("OP-1", "Разделка", 60, 0)]).json()["task"]
+    operation = task["operations"][0]
+
+    listed = client.get("/api/production/operators").json()["operators"]
+    planned = client.post(f"/api/production/tasks/{task['id']}/schedule", json={
+        "version": task["version"], "replan": False, "max_crew": 2,
+    })
+    assigned = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{operation['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(MASTER_ID)]},
+    )
+
+    assert [item["name"] for item in listed] == ["Мастер"]
+    assert planned.status_code == 200, planned.text
+    assert all(item["operator_ids"] == [str(MASTER_ID)] for item in planned.json()["variants"][0]["operations"])
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["task"]["operations"][0]["operator_ids"] == [str(MASTER_ID)]
 
 
 def test_zhuk_staff_are_not_assigned_by_hours(production_api):
@@ -575,7 +635,7 @@ def test_assign_preview_warns_about_admission_and_applies_speed_coefficient(prod
     master_id = UUID("10000000-0000-0000-0000-000000000003")
     with app.state.production_uow_factory() as uow:
         uow.session.add(IdentityUserRow(id=master_id, login="novice", email="novice@example.test", name="Мастер",
-                                        department="Монтаж", role="staff", site="ЦАР", active=True))
+                                        department="Монтаж", role="staff", site="ЦАР", active=True, shop_worker=True))
         uow.commit()
     client.put(f"/api/production/skills/{operator_id}", json={"skills": [
         {"operation_code": "OP-1", "allowed": True, "stars": 5, "coefficient": "2"},

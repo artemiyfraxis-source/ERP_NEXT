@@ -18,7 +18,7 @@ import { etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRoute
 import { defectArt, defectGroupCode } from "./etkDefectArt";
 import { parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { openPrintDocument } from "./print";
-import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
+import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
 
 /* Электронная ТК сборки проекта и её генератор — вкладки «Генератор» и «ТК КБn» карточки проекта (SUPPLYMAP
    PortalApp kitCardRender_ → mountGen_ / renderTc_ → renderEtk_). */
@@ -372,6 +372,25 @@ export function ToolingBySection({ tooling }: { tooling: EtkTool[] }) {
   </div>)}</div>;
 }
 
+/** Что в операции считает генератор (чипы параметров, вход, эскиз, результат) — в форме правки на своих местах, без правки. */
+function editContext(operation: EtkOperation, batch: string, sketchUrl: string): EditContext {
+  const raw = operation as Record<string, unknown>;
+  const figure = etkFigure(raw);
+  const chips = etkChips(raw);
+  return {
+    chips: chips.length ? <div className="etk-chips" aria-label="Параметры операции">{chips.map(([label, value]) =>
+      <span key={label}><small>{label}</small>{value}</span>)}</div> : undefined,
+    input: operation.components?.length || operation.semis?.length
+      ? <div className="etk-flow"><PartRows rows={operation.components} /><Rows title="Полуфабрикат на входе" rows={operation.semis} /></div> : undefined,
+    sketch: figure || sketchUrl ? <div className="etk-fig-row">
+      {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
+      {sketchUrl && <div className="etk-sketch"><img src={sketchUrl} alt="Эскиз операции" /></div>}
+    </div> : undefined,
+    result: operation.result?.length || operation.time?.length
+      ? <ResultView label={String(raw.result_label || "") || "Результат"} result={operation.result} time={operation.time} batch={batch} /> : undefined,
+  };
+}
+
 export function editDraft(name: string, card: { safety?: string; defects?: string; revision?: string; steps?: EtkStep[]; tooling?: EtkTool[] }): OperationRecordEdit {
   return {
     name,
@@ -428,6 +447,7 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches }: {
   const operation = list[index];
   const next = list[index + 1];
   const route = etkRouteOf(card.document);
+  const uploaded = sketches.find((item) => item.operation_key === etkOperationKey(operation));
 
   /** Чип блока: открыть его первую операцию (1-based позиция в ЭТК) и подвести к ней экран. */
   function pick(position: number) {
@@ -454,10 +474,13 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches }: {
     </nav>
     <div className="etk-main" ref={main}>
       {editing && operation.card ? <TcCardEditForm
-        code={operation.code || ""}
+        code={opCode(operation)}
+        number={operation.position || index + 1}
         nameEditable={false}
         initial={editDraft(etkTitle(operation) + (operation.connector ? ` — ${operation.connector}` : ""), operation.card)}
-        hint={`Правка ТК проекта ${card.project} ${card.item_index}: сохранение поднимет ревизию до ${card.revision + 1} и запишется в журнал. Карточка операции в библиотеке не меняется; при пересборке эта правка сохранится. Комплектующие, нормы и время считает генератор — их меняют через конфигурацию сборки.`}
+        saveNote={`Сохранение — ревизия ${card.revision + 1}`}
+        context={editContext(operation, String(record(card.document?.kit).part_quantity ?? ""),
+          uploaded ? techcardsApi.sketchUrl(card.id, etkOperationKey(operation), uploaded.uploaded_at) : "")}
         onCancel={() => setEditing(false)}
         onSave={save}
       /> : <>

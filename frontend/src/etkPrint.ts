@@ -3,7 +3,7 @@
 // оснастка, ход операции, дефекты, эскиз, результат, время, подписи. Идёт через общий контракт print.ts.
 // Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*).
 import type { ProjectTechcard, TechcardRevision } from "./api";
-import { ETK_CONNECTION_COLUMNS, etkConnectionRows, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
+import { ETK_CONNECTION_COLUMNS, etkConnectionRows, etkDrawHarness, etkFigure, etkTolerance, type EtkTopologyData } from "./etkDraw";
 import { solderMode, toolingSections } from "./etkOperation";
 import { etkRouteLine, etkRouteOf } from "./etkRoute";
 import type { PrintBlock, PrintPage } from "./print";
@@ -49,10 +49,10 @@ function facts(fields: Row): string {
   const twist = object(fields.twist);
   return [
     fields.applicator && `Аппликатор: ${text(fields.applicator)}`,
-    "crimpHeight" in fields && `H обжима: ${fields.crimpHeight ? `${text(fields.crimpHeight)} мм` : "⚠ нет данных"}`,
+    "crimpHeight" in fields && `Высота обжима: ${fields.crimpHeight ? `${text(fields.crimpHeight)} мм` : "⚠ нет данных"}`,
     fields.pullForce && `Отрыв: ${text(fields.pullForce)} Н`,
     fields.lengthKd && `L по КД: ${text(fields.lengthKd)}`,
-    fields.cutTolerance && `Допуск реза: ${text(fields.cutTolerance)}`,
+    fields.cutTolerance && `Допуск реза: ${etkTolerance(fields.cutTolerance)}`,
     fields.twist && `Шаг свивки: ${twist.pitch ? `${text(twist.pitch)} мм` : "по КД"}`,
   ].filter(Boolean).join(" · ");
 }

@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProcurementInWorkTable, linkHref, LINK_HINT } from "./ProcurementInWorkTable";
+import { ProcurementInWorkTable, linkHost, linkHref, LINK_HINT } from "./ProcurementInWorkTable";
 import type { ProcurementLine } from "./api";
 
 function line(id: number, fields: Partial<ProcurementLine> = {}): ProcurementLine {
@@ -12,34 +12,55 @@ function line(id: number, fields: Partial<ProcurementLine> = {}): ProcurementLin
   } as ProcurementLine;
 }
 
-function renderTable(lines: ProcurementLine[], handlers: Partial<Parameters<typeof ProcurementInWorkTable>[0]> = {}) {
-  return render(
-    <ProcurementInWorkTable
-      lines={lines} units={["шт", "кг"]} disabled={false} busyId=""
-      onChanged={vi.fn()} onError={vi.fn()} onPutOnApproval={vi.fn()} onCancel={vi.fn()}
-      renderDetail={() => <span>детали</span>} {...handlers}
-    />,
-  );
+type Props = Parameters<typeof ProcurementInWorkTable>[0];
+
+function props(lines: ProcurementLine[], handlers: Partial<Props> = {}): Props {
+  return {
+    lines, units: ["шт", "кг"], disabled: false, busyId: "",
+    onChanged: vi.fn(), onError: vi.fn(), onCancel: vi.fn(), onCancelMany: vi.fn(async () => undefined),
+    onBuildRequests: vi.fn(async () => undefined), renderDetail: () => <span>детали</span>, ...handlers,
+  };
 }
+
+function renderTable(lines: ProcurementLine[], handlers: Partial<Props> = {}) {
+  return render(<ProcurementInWorkTable {...props(lines, handlers)} />);
+}
+
+const value = (label: string) => (screen.getByLabelText(label) as HTMLInputElement).value;
 
 afterEach(() => vi.restoreAllMocks());
 
-it("treats only http(s) and www as a link", () => {
+it("treats only http(s) and www as a link and labels it by the site", () => {
   expect(linkHref("https://chipdip.ru/p/1")).toBe("https://chipdip.ru/p/1");
   expect(linkHref("www.chipdip.ru")).toBe("https://www.chipdip.ru");
   expect(linkHref("Склад")).toBeNull();
   expect(linkHref("")).toBeNull();
+  expect(linkHost("https://www.molex.com/en-us/products/part-detail/430250800")).toBe("molex.com");
 });
 
-it("accepts free text in the link cell without a browser URL check, shows a hint and no clickable link", () => {
+it("shows a link as a short site label that opens it, and edits the link on a click in the cell", () => {
+  renderTable([line(1, { link: "https://www.molex.com/en-us/products/430250800" })]);
+  const open = screen.getByLabelText("Открыть ссылку SM-1");
+  expect(open).toHaveTextContent("molex.com ↗");
+  expect(open).toHaveAttribute("href", "https://www.molex.com/en-us/products/430250800");
+  expect(open).toHaveAttribute("target", "_blank");
+
+  fireEvent.click(screen.getByRole("button", { name: "Ссылка SM-1" }));
+  const input = screen.getByRole("textbox", { name: "Ссылка SM-1" }) as HTMLInputElement;
+  expect(input.value).toBe("https://www.molex.com/en-us/products/430250800");
+  fireEvent.change(input, { target: { value: "www.chipdip.ru/product/1" } });
+  fireEvent.blur(input);
+  expect(screen.getByLabelText("Открыть ссылку SM-1")).toHaveTextContent("chipdip.ru ↗");
+  expect(screen.getByText("изменено: 1")).toBeInTheDocument();
+});
+
+it("keeps free text in the link cell as amber text with the hint, without a clickable link", () => {
   renderTable([line(1, { link: "Склад" })]);
-  const input = screen.getByLabelText("Ссылка SM-1") as HTMLInputElement;
-  expect(input.type).toBe("text");
-  expect(screen.getByText(LINK_HINT)).toBeInTheDocument();
+  const cell = screen.getByRole("button", { name: "Ссылка SM-1" });
+  expect(cell).toHaveTextContent("Склад");
+  expect(cell).toHaveClass("soft-warn");
+  expect(cell.getAttribute("title")).toContain(LINK_HINT);
   expect(screen.queryByLabelText("Открыть ссылку SM-1")).not.toBeInTheDocument();
-  fireEvent.change(input, { target: { value: "https://chipdip.ru/p/1" } });
-  expect(screen.queryByText(LINK_HINT)).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Открыть ссылку SM-1")).toHaveAttribute("href", "https://chipdip.ru/p/1");
 });
 
 it("saves every edited row in one call and refuses a row without supplier", async () => {
@@ -52,10 +73,12 @@ it("saves every edited row in one call and refuses a row without supplier", asyn
   const onChanged = vi.fn();
   renderTable([line(1), line(2), line(3)], { onError, onChanged });
 
-  fireEvent.change(screen.getByLabelText("Ссылка SM-1"), { target: { value: "Склад" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ссылка SM-1" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Ссылка SM-1" }), { target: { value: "Склад" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
   expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("SM-1"));
   expect(screen.getByLabelText("Поставщик SM-1")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Поставщик SM-1").closest("td")).toHaveClass("invalid");
   expect(sent).toEqual([]);
 
   fireEvent.change(screen.getByLabelText("Поставщик SM-1"), { target: { value: "Фраксис" } });
@@ -63,32 +86,107 @@ it("saves every edited row in one call and refuses a row without supplier", asyn
   fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (2)" }));
   await waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0]).toEqual({ rows: [
-    expect.objectContaining({ line_id: line(1).id, supplier: "Фраксис", link: "Склад", version: 2 }),
+    {
+      line_id: line(1).id, legacy_id: "SM-1", version: 2, design_article: null, calculated_name: "Позиция 1",
+      site_name: null, link: "Склад", supplier: "Фраксис", actual_quantity: "2", actual_unit: "шт",
+    },
     expect.objectContaining({ line_id: line(2).id, supplier: "ЧипДип", link: null }),
   ] });
   await waitFor(() => expect(onChanged).toHaveBeenCalledWith("Сохранено строк: 2 · готовы к запросу: 2"));
+  expect(screen.getByRole("button", { name: "Сохранить всё" })).toBeDisabled();
 });
 
-it("spreads a block pasted from Excel over columns and rows", () => {
+it("counts changed rows in the header, highlights the save button and forgets a change typed back", () => {
   renderTable([line(1), line(2)]);
+  const save = () => screen.getByRole("button", { name: /^Сохранить всё/ });
+  expect(save()).toBeDisabled();
+  expect(save()).toHaveClass("secondary");
+  expect(screen.queryByText(/изменено:/)).not.toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Артикул SM-1"), { target: { value: "A-1" } });
+  fireEvent.change(screen.getByLabelText("Артикул SM-2"), { target: { value: "A-2" } });
+  expect(screen.getByText("изменено: 2")).toBeInTheDocument();
+  expect(save()).toBeEnabled();
+  expect(save()).toHaveClass("primary");
+  expect(screen.getByLabelText("Артикул SM-1").closest("td")).toHaveClass("dirty");
+
+  fireEvent.change(screen.getByLabelText("Артикул SM-2"), { target: { value: "" } });
+  expect(screen.getByText("изменено: 1")).toBeInTheDocument();
+  expect(screen.getByLabelText("Артикул SM-2").closest("td")).not.toHaveClass("dirty");
+});
+
+it("spreads a block pasted from Excel over columns and rows and skips rows ready for the request", () => {
+  renderTable([line(1), line(2, { status: "Готов к запросу", supplier: "Было" }), line(3)]);
   fireEvent.paste(screen.getByLabelText("Поставщик SM-1"), {
-    clipboardData: { getData: () => "ЧипДип\tЦАР\t5\tкг\nЭлитан\tЖУК\t7\tшт\n" },
+    clipboardData: { getData: () => "ЧипДип\tЦАР\t5\tкг\nЭлитан\tЖУК\t7\tшт\nВэлком\tМСК\t9\tшт\n" },
   });
-  expect((screen.getByLabelText("Поставщик SM-1") as HTMLInputElement).value).toBe("ЧипДип");
-  expect((screen.getByLabelText("Наименование на сайте SM-1") as HTMLInputElement).value).toBe("ЦАР");
-  expect((screen.getByLabelText("Факт. кол-во SM-1") as HTMLInputElement).value).toBe("5");
+  expect(value("Поставщик SM-1")).toBe("ЧипДип");
+  expect(value("Наименование на сайте SM-1")).toBe("ЦАР");
+  expect(value("Факт. кол-во SM-1")).toBe("5");
   expect((screen.getByLabelText("Ед. SM-1") as HTMLSelectElement).value).toBe("кг");
-  expect((screen.getByLabelText("Поставщик SM-2") as HTMLInputElement).value).toBe("Элитан");
+  // «Готов к запросу» сервер не правит: её строка блока пропущена, следующая легла на свою строку.
+  expect(screen.queryByLabelText("Поставщик SM-2")).not.toBeInTheDocument();
+  expect(screen.getByText("Было")).toBeInTheDocument();
+  expect(value("Поставщик SM-3")).toBe("Вэлком");
   expect(screen.getByRole("button", { name: "Сохранить всё (2)" })).toBeEnabled();
 });
 
-it("keeps rare actions in the row menu", () => {
+it("keeps typed cells over a fresh copy of the row and fills only the untouched ones", async () => {
+  const sent: Record<string, unknown>[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    sent.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify({ lines: [], saved: 1, ready: 0, skipped: [], failed: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  const { rerender } = renderTable([line(1)], { filling: new Set([line(1).id]) });
+  expect(screen.getByText("заполняется…")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Наименование на сайте SM-1"), { target: { value: "Моё название" } });
+
+  // Сервер дозаполнил строку в фоне: поставщик и наименование на сайте, версия выросла.
+  const filled = line(1, { version: 3, supplier: "ЧипДип", site_name: "С сайта" });
+  rerender(<ProcurementInWorkTable {...props([filled])} />);
+  expect(screen.queryByText("заполняется…")).not.toBeInTheDocument();
+  expect(value("Поставщик SM-1")).toBe("ЧипДип");
+  expect(value("Наименование на сайте SM-1")).toBe("Моё название");
+
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]).toEqual({ rows: [expect.objectContaining({ version: 3, supplier: "ЧипДип", site_name: "Моё название" })] });
+});
+
+it("folds the request context into the position cell and marks ready rows", () => {
+  renderTable([
+    line(1, { task_type: "Закупка", priority: "Срочный", category: "Общепром", item_type: "Комплектующие", calculated_quantity: "7", calculated_unit: "кг", site_name: "Разъём SMA на сайте" }),
+    line(2, { status: "Готов к запросу", task_type: "Пополнение", priority: "Обычный", category: "Провод", item_type: "Материалы", supplier: "Кабель.ру" }),
+  ]);
+  const head = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+  expect(head).toEqual([
+    "", "Позиция", "Поставщик", "Наим. на сайте", "Кол-во", "Ед.", "Артикул", "Уточн. наименование", "Ссылка", "Комментарий", "",
+  ]);
+  // Обязательные колонки — точкой (класс), а не «*» в тексте; полное название — в подсказке.
+  const required = screen.getAllByRole("columnheader").filter((cell) => cell.classList.contains("required")).map((cell) => cell.textContent);
+  expect(required).toEqual(["Поставщик", "Кол-во", "Ед."]);
+  expect(screen.getByRole("columnheader", { name: "Кол-во" }).getAttribute("title")).toContain("Факт. кол-во");
+
+  const first = screen.getByText("SM-1").closest("td")!;
+  expect(first).toHaveTextContent("Позиция 1");
+  expect(within(first).getByText("Срочный")).toHaveClass("tone-danger");
+  expect(first).toHaveTextContent("Закупка · Общепром · Комплектующие · расчёт 7 кг");
+  expect(value("Наименование на сайте SM-1")).toBe("Разъём SMA на сайте");
+
+  const ready = screen.getByText("SM-2").closest("tr")!;
+  expect(within(ready).getByText("готова к запросу")).toBeInTheDocument();
+  expect(within(ready).queryByText("Обычный")).not.toBeInTheDocument();
+  expect(within(ready).queryByRole("textbox")).not.toBeInTheDocument();
+  expect(within(ready).getByText("Кабель.ру")).toBeInTheDocument();
+});
+
+it("keeps rare actions in the row menu, without approval", () => {
   renderTable([line(1)]);
   expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
-  expect(screen.getByRole("menuitem", { name: "Со склада" })).toBeEnabled();
-  expect(screen.queryByRole("menuitem", { name: /Снять/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("menuitem", { name: /Замена/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+    "Со склада", "Прослеживаемость, раздробить…", "Отменить строку",
+  ]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Прослеживаемость, раздробить…" }));
   expect(screen.getByText("детали")).toBeInTheDocument();
 });
@@ -104,29 +202,56 @@ it("closes the row menu on an outside click and opens it again from the button",
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
 
-it("names the site field «Наименование на сайте» and shows the request context read-only", () => {
-  renderTable([line(1, {
-    task_type: "Закупка", priority: "Срочный", category: "Общепром", item_type: "Комплектующие",
-    calculated_quantity: "7", calculated_unit: "кг", site_name: "Разъём SMA на сайте",
-  })]);
-  const head = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-  expect(head).toEqual([
-    "Позиция", "Тип задачи", "Приоритет", "Категория", "Тип", "Кол-во (расчёт)", "Ед. (расчёт)",
-    "Поставщик *", "Наименование на сайте", "Факт. кол-во *", "Ед. *", "Артикул", "Уточнённое наименование", "Ссылка", "",
-  ]);
-  expect(head).not.toContain("Площадка");
-  const row = screen.getByText("Закупка").closest("tr")!;
-  expect(Array.from(row.querySelectorAll("td")).slice(1, 7).map((cell) => cell.textContent)).toEqual(["Закупка", "Срочный", "Общепром", "Комплектующие", "7", "кг"]);
-  expect(row.querySelectorAll("input[aria-label]")).toHaveLength(6);
-  expect((screen.getByLabelText("Наименование на сайте SM-1") as HTMLInputElement).value).toBe("Разъём SMA на сайте");
+it("selects all, a Shift range, and runs bulk actions on the chosen rows", async () => {
+  const onBuildRequests = vi.fn(async () => undefined);
+  const onCancelMany = vi.fn(async () => undefined);
+  const lines = [line(1), line(2), line(3, { status: "Готов к запросу" }), line(4, { status: "Готов к запросу" }), line(5)];
+  renderTable(lines, { onBuildRequests, onCancelMany });
+  expect(screen.queryByRole("toolbar", { name: "Действия с выбранными" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Выбрать SM-2"));
+  fireEvent.click(screen.getByLabelText("Выбрать SM-4"), { shiftKey: true });
+  const bar = screen.getByRole("toolbar", { name: "Действия с выбранными" });
+  expect(bar).toHaveTextContent("Выбрано: 3");
+  expect(["SM-1", "SM-2", "SM-3", "SM-4", "SM-5"].map((id) => (screen.getByLabelText(`Выбрать ${id}`) as HTMLInputElement).checked))
+    .toEqual([false, true, true, true, false]);
+
+  // Запросы — только по строкам «Готов к запросу» среди выбранных.
+  fireEvent.click(within(bar).getByRole("button", { name: "Сформировать запросы поставщикам (2)" }));
+  await waitFor(() => expect(onBuildRequests).toHaveBeenCalledWith([lines[2], lines[3]]));
+  await waitFor(() => expect(screen.queryByRole("toolbar", { name: "Действия с выбранными" })).not.toBeInTheDocument());
+
+  fireEvent.click(screen.getByLabelText("Выбрать все"));
+  expect(screen.getByText("Выбрано: 5")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Отменить строку" }));
+  await waitFor(() => expect(onCancelMany).toHaveBeenCalledWith(lines));
 });
 
-it("does not offer the retired substitution or quality-document fields", () => {
-  renderTable([line(1)], { renderDetail: () => <span>детали</span> });
-  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
-  expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-    "Со склада", "Прослеживаемость, раздробить…", "На согласование", "Отменить строку",
-  ]);
+it("opens «Со склада» under every chosen row at once", () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ line: line(1), query: "", lots: [], covers: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  renderTable([line(1), line(2), line(3)]);
+  fireEvent.click(screen.getByLabelText("Выбрать SM-1"));
+  fireEvent.click(screen.getByLabelText("Выбрать SM-3"));
+  fireEvent.click(within(screen.getByRole("toolbar", { name: "Действия с выбранными" })).getByRole("button", { name: "Со склада" }));
+  expect(screen.getAllByLabelText("Поиск на складе")).toHaveLength(2);
+});
+
+it("shows the progress and the per-line result of a bulk action under the header", () => {
+  const { rerender } = renderTable([line(1)], { bulk: { label: "Отменяем строки", done: 12, total: 40 } });
+  expect(screen.getByRole("status")).toHaveTextContent("Отменяем строки: 12 из 40");
+  const onCloseBulk = vi.fn();
+  rerender(<ProcurementInWorkTable {...props([line(1)], { onCloseBulk, bulk: { label: "Отменяем строки", done: 40, total: 40, summary: "Отменено: 39 из 40", failures: ["SM-7: Строка оплачена"] } })} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Отменено: 39 из 40");
+  expect(screen.getByText("SM-7: Строка оплачена")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
+  expect(onCloseBulk).toHaveBeenCalled();
+});
+
+it("says what to do when nothing is in work", () => {
+  renderTable([]);
+  expect(screen.getByRole("heading", { name: /В работе/ })).toHaveTextContent("В работе 0");
+  expect(screen.getByText(/Нет строк в работе/)).toBeInTheDocument();
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
 });
 
 const cover = { id: "c1", line_id: "x", label: "", lot_id: "lot-1", warehouse: "ЦАР", grn: "ГРН-7", package: "П1", storage_location: "A-1", unit: "шт", quantity: "2", consumed: "0", consumed_by: null, active: true, created_at: "", created_by: "Петров", released_at: null };

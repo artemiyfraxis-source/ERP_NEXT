@@ -168,6 +168,15 @@ function tinEnd(x1: number, x2: number, y = 34, h = 6, o: { dull?: boolean; lay?
 const TN = { ins: () => ins(4, 50), gap: () => cond(50, 55), end: (o: { dull?: boolean; lay?: boolean } = {}) => tinEnd(55, 104, 34, 6, o) };
 const tinOk = () => TN.ins() + TN.gap() + TN.end();
 
+/** Концы провода для эскиза операции резки (etkDraw.etkDrawWires) — те же рисунки, что в «Норма | Брак». crimp — обжатый
+ *  терминал, провод слева: крыло по изоляции от x = 0 (изоляция провода — до x = 20), жила до x = 52, торец контактной
+ *  части x = 92. tin / copper — лужёная и голая жила x1..x2. */
+export const wireEndArt = {
+  crimp: (y: number) => cond(20, 52, y, 6) + terminal(0, y),
+  tin: (x1: number, x2: number, y: number, h = 6) => tinEnd(x1, x2, y, h),
+  copper: (x1: number, x2: number, y: number, h = 6) => cond(x1, x2, y, h),
+};
+
 // ── сцены: каждая — рисунок «норма» и «брак» в поле 116×70 ─────────────────────────────────────────────
 /** view — окно рисунка (viewBox) для крупного плана, по умолчанию всё поле 0 0 116 70. */
 type Scene = { ok: string; ng: string; view?: string };

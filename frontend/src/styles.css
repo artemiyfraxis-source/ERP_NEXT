@@ -11,6 +11,30 @@
   --accent: #f0f1f5;
   --muted-foreground: #5f6b85;
   --border: #e2e4ea;
+  /* Лист в ячейках (Лист закупки → «В работе»): сетка, правимая ячейка, изменённая, выбранная строка. */
+  --sheet-row: 30px;
+  --sheet-line: #e7ebee;
+  --sheet-head: #f3f6f6;
+  --sheet-edit: #fbfcfc;
+  --sheet-hover: #b9c6c3;
+  --sheet-dirty: #e3f5f1;
+  --sheet-selected: #eef8f6;
+  --sheet-invalid: #b91c1c;
+  --sheet-invalid-bg: #fdf1f0;
+  /* Тоны статусов (те же, что у .tone-ok/.tone-warn/.tone-danger) и мягкие фоны; формы генератора. */
+  --tone-ok: #15803d;
+  --tone-warn: #a16207;
+  --tone-danger: #b91c1c;
+  --warn-soft: #fff7e6;
+  --warn-border: #f0b44c;
+  --seg-bg: #e9eeee;
+  --seg-fg: #4b5a58;
+  --switch-off: #cfd6d5;
+  --chip-box: #a9b3b1;
+  --table-head: #f3f6f6;
+  --table-head-fg: #3d4a5c;
+  --table-zebra: #f3f6f7;
+  --panel-soft: #f4f7f7;
 }
 
 * { box-sizing: border-box; }
@@ -469,12 +493,108 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tr-steps tr.ctl td { background: #f6f9ee; }
 .pre-line { white-space: pre-line; }
 .tr-foot { color: var(--muted-foreground); font-size: 12px; }
-.tr-erow { display: grid; gap: 6px; align-items: start; margin-bottom: 6px; }
-.tr-tool-e { grid-template-columns: 130px minmax(0, 2fr) 90px minmax(0, 1fr) 70px 60px auto; }
-.tr-step-e { grid-template-columns: 24px 110px minmax(0, 3fr) minmax(0, 1fr) auto; }
-.tr-step-e.ctl { background: #f6f9ee; }
-.tr-rowbtn { display: flex; gap: 2px; }
-.tr-rowbtn button { padding: 2px 6px; }
+/* Форма правки операции (TcCardEditForm): карточка ЭТК с теми же разделами; поля-ячейки 32 px без рамки, пока строку не
+   навели (читается как таблица, правится на месте); оснастка — таблица по разделам; шаги — список с переключателем
+   «Шаг | Контроль», контроль красной кромкой, как в просмотре; дефекты с рисунком; липкая полоса «Отмена / Сохранить». */
+:root { --ctl-line: #d93025; --ctl-bg: #fdf4f4; --ctl-text: #b91c1c; }
+.tc-edit { gap: 16px; padding-bottom: 0; }
+.tc-edit .etk-op-head { align-items: center; }
+.tc-edit .etk-op-head > div { gap: 0; }
+.tc-edit .etk-op-head small { font-size: 12px; }
+.tc-title { padding: 3px 8px; margin-left: -9px; border-color: transparent; font-size: 18px; font-weight: 600; }
+.tc-title:hover { border-color: var(--border); }
+.tc-cell, .tc-auto { display: block; width: 100%; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--foreground); font-size: 13px; line-height: 1.45; }
+.tc-auto { resize: none; overflow: hidden; }
+.tc-cell:hover, .tc-auto:hover, .tc-tools tr:hover .tc-cell, .tc-tools tr:hover .tc-auto, .tc-step:hover .tc-auto, .tc-def:hover .tc-auto { border-color: var(--border); background: var(--card); }
+.tc-cell:focus, .tc-auto:focus { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); background: var(--card); }
+.tc-auto::placeholder { color: var(--muted-foreground); }
+.tc-edit .row-menu > button { min-height: 30px; padding: 3px 9px; border-color: transparent; background: transparent; color: var(--muted-foreground); font-size: 15px; line-height: 1; }
+.tc-edit .row-menu > button:hover, .tc-edit .row-menu > button[aria-expanded="true"] { border-color: var(--border); background: var(--card); color: var(--foreground); }
+.tc-add { display: flex; gap: 8px; margin-top: 8px; }
+.tc-safety summary { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.tc-preview { flex: 1; min-width: 0; overflow: hidden; color: #8a5a00; font-weight: 400; opacity: .85; text-overflow: ellipsis; white-space: nowrap; }
+.tc-safety .tc-auto { margin-top: 6px; border-color: #f3d27a; background: var(--card); }
+.tc-ro-tag { margin-left: 2px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+details.tc-ro > summary { list-style: none; }
+details.tc-ro > summary::-webkit-details-marker { display: none; }
+details.tc-ro > summary h4 { margin: 0; }
+details.tc-ro > summary h4::after { content: "▸"; color: var(--muted-foreground); font-weight: 400; }
+details.tc-ro[open] > summary h4::after { content: "▾"; }
+details.tc-ro[open] > summary { margin-bottom: 8px; }
+/* 2 Оснастка: одна таблица, разделы — строками-заголовками со своей «＋ Позиция». */
+.tc-tools { table-layout: fixed; border: 1px solid var(--border); border-radius: 10px; border-collapse: separate; border-spacing: 0; overflow: hidden; }
+.tc-tools th, .tc-tools td { padding: 2px 4px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: normal; }
+.tc-tools thead th { padding: 7px 12px; background: var(--background); }
+.tc-tools tbody:last-child tr:last-child td { border-bottom: 0; }
+.tc-tools .tc-c-n { width: 40px; }
+.tc-tools .tc-c-inv { width: 128px; }
+.tc-tools .tc-c-param { width: 22%; }
+.tc-tools .tc-c-norm { width: 84px; }
+.tc-tools .tc-c-unit { width: 72px; }
+.tc-tools .tc-c-act { width: 48px; }
+.tc-tools th.num, .tc-tools .tc-cell.num { text-align: right; }
+.tc-tools thead th:first-child { padding-right: 6px; }
+.tc-tools .tc-n { padding: 8px 6px 0 0; color: var(--primary); font-size: 12px; font-weight: 700; text-align: right; }
+.tc-tools .tc-sec-row th { padding: 5px 12px; background: color-mix(in srgb, var(--primary) 6%, var(--card)); color: #00554f; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.tc-sec-row div { display: flex; align-items: center; gap: 8px; }
+.tc-sec-row small { padding: 0 7px; border-radius: 999px; background: var(--card); color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: 0; }
+.tc-sec-row .link-button { margin-left: auto; padding: 2px 4px; font-size: 12.5px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.tc-tools .tc-act { padding-top: 3px; text-align: center; }
+.tc-tool-name { font-weight: 500; }
+/* 3 Ход операции. */
+.tc-steps-head, .tc-step { display: grid; grid-template-columns: 28px 156px minmax(0, 1fr) minmax(150px, 22%) 40px; gap: 8px; align-items: start; }
+.tc-steps-head { padding: 0 8px 6px 11px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.tc-steps-head > span:first-child { text-align: right; }
+.tc-steps-head > span:nth-child(3), .tc-steps-head > span:nth-child(4), .tc-def-cols > span:nth-child(2), .tc-def-cols > span:nth-child(3) { padding-left: 9px; }
+.tc-steps ol { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; }
+.tc-step { padding: 3px 8px; border-left: 3px solid transparent; border-radius: 0 8px 8px 0; }
+.tc-step:hover { background: var(--background); }
+.tc-step.ctl { border-left-color: var(--ctl-line); background: var(--ctl-bg); }
+.tc-step .tc-n { padding-top: 6px; color: var(--primary); font-size: 13px; font-weight: 700; text-align: right; }
+.tc-step.ctl .tc-n { color: var(--ctl-text); }
+.tc-kind { display: inline-flex; justify-self: start; gap: 2px; margin-top: 2px; padding: 2px; border-radius: 8px; background: var(--accent); }
+.tc-kind button { min-height: 26px; padding: 3px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.tc-kind button:hover { color: var(--foreground); }
+.tc-kind button[aria-pressed="true"] { background: var(--card); color: var(--primary); box-shadow: 0 1px 2px rgba(0, 26, 24, .14); }
+.tc-step.ctl .tc-kind button[aria-pressed="true"] { color: var(--ctl-text); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.tc-tol { color: var(--muted-foreground); }
+.tc-step.ctl .tc-tol { color: var(--foreground); font-weight: 600; }
+/* 4 Типовые дефекты. */
+.tc-def-cols, .tc-def { display: grid; grid-template-columns: 150px minmax(200px, 28%) minmax(0, 1fr) 40px; gap: 8px; align-items: start; }
+.tc-def-cols { padding: 0 0 6px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.tc-def-group { display: grid; margin-top: 6px; }
+.tc-def-head { display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 8px; align-items: center; padding: 2px 0; }
+.tc-def-title { color: #00554f; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.tc-def-title:focus { text-transform: none; }
+.tc-def { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.tc-def-pic { padding-top: 2px; line-height: 0; }
+.tc-def-pic > svg { width: 150px; height: auto; }
+.tc-def-pic > svg[data-scene="generic"] { width: 40px; }
+.tc-def-name { font-weight: 600; }
+.tc-add-link { justify-self: start; padding: 6px 0 0; font-size: 12.5px; font-weight: 600; }
+.tc-def-raw { min-height: 120px; border-color: var(--border); }
+@media (min-width: 1900px) {
+  .tc-def-cols, .tc-def { grid-template-columns: 210px minmax(220px, 26%) minmax(0, 1fr) 40px; }
+  .tc-def-pic > svg { width: 210px; }
+}
+/* Липкая полоса действий внизу карточки. */
+.tc-bar { position: sticky; z-index: 5; display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 0 -18px; padding: 10px 18px; border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; background: var(--card); box-shadow: 0 -6px 16px rgba(0, 26, 24, .06); }
+.tc-note { margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
+.tc-bar .tc-error { margin: 0; padding: 6px 10px; }
+.tc-bar .primary, .tc-bar .secondary { min-width: 110px; padding: 8px 16px; }
+/* Липкая позиция считается от края прокрутки .workspace за вычетом её отступа — полоса опускается на этот отступ. */
+.tc-bar { bottom: -30px; }
+@media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) { .tc-bar { bottom: -20px; } }
+@media (pointer: coarse) {
+  .tc-cell, .tc-auto { min-height: 40px; border-color: var(--border); background: var(--card); }
+  .tc-kind button { min-height: 36px; }
+  .tc-edit .row-menu > button { min-width: 40px; min-height: 40px; }
+}
+@media (max-width: 720px) {
+  .tc-bar { bottom: 0; }
+  .tc-steps-head, .tc-def-cols { display: none; }
+  .tc-step, .tc-def { grid-template-columns: 1fr; }
+}
 
 /* NAV-1: home = block tiles, block page = section tiles (SUPPLYMAP .tiles/.tile). */
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
@@ -637,7 +757,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
   .operation-assign { grid-column: auto; }
   .operations-metrics, .operations-failures > div { grid-template-columns: 1fr; }
   .etk-flow { grid-template-columns: 1fr; }
-  .etk-wrap, .tr-head, .tr-tool-e, .tr-step-e { grid-template-columns: 1fr; }
+  .etk-wrap, .tr-head { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
   .plan-note-text { grid-column: auto; }
 }
@@ -817,87 +937,223 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .mo-time { margin-left: auto; color: var(--muted-foreground); }
 .mo-s, .mo-d { color: var(--muted-foreground); }
 .mo-fact { font-size: 13px; }
-/* Генератор техкарт (порт SUPPLYMAP TcGenInline.html) */
-.tcgen { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 6px; font-size: 13px; }
-.tcgen h3 { margin: 12px 0 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
-.tcgen .gcard, .tcgen .ep-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card); display: grid; gap: 8px; }
-.tcgen .gen-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-.tcgen .gen-tab-btn { border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 6px 12px; font-weight: 600; }
-.tcgen .gen-tab-btn.gactive { border-color: var(--primary); color: var(--primary); }
-.tcgen .field-label { display: grid; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
-.tcgen .field-label.inline { max-width: 220px; }
-.tcgen .info-kv { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 12px; }
-.tcgen .spy { width: 100%; font-size: 12px; }
-.tcgen .spy input { width: 100%; }
-.tcgen .gbadge { border-radius: 6px; padding: 1px 6px; font-size: 11px; background: #eef2f7; }
-.tcgen .badge-wire { background: #e0f2fe; } .tcgen .badge-term { background: #fef3c7; } .tcgen .badge-conn { background: #dcfce7; }
-.tcgen .section-hdr { display: flex; align-items: center; gap: 12px; }
-.tcgen .btn-link { border: 0; background: none; color: var(--primary); cursor: pointer; font-size: 12px; padding: 0; }
-.tcgen .btn-add { border: 1px dashed var(--border); background: var(--card); border-radius: 8px; padding: 5px 10px; font-size: 12px; font-weight: 600; justify-self: start; }
-.tcgen .btn-remove { border: 0; background: none; color: var(--muted-foreground); font-size: 16px; padding: 0 4px; cursor: pointer; }
-.tcgen .wire-entry { display: grid; grid-template-columns: minmax(0, 2fr) repeat(auto-fit, minmax(90px, 1fr)) auto; gap: 8px; align-items: end; }
-.tcgen .ter-row, .tcgen .op-times { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; align-items: end; }
-.tcgen .radio-row, .tcgen .chip-row, .tcgen .ep-route, .tcgen .ep-method { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; }
-.tcgen .toggle-row, .tcgen .ep-otp { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
-.tcgen .ep-head { display: flex; justify-content: space-between; align-items: center; }
-.tcgen .ep-badge { font-weight: 700; color: var(--primary); }
-.tcgen .ep-auto { font-size: 11px; color: var(--muted-foreground); }
-.tcgen .ep-sdr { font-size: 12px; } .tcgen .ep-sdr-warn { color: #b45309; }
-.tcgen .ep-pin, .tcgen .twist-pair-row { display: flex; gap: 6px; align-items: center; }
-.tcgen .ep-links { display: grid; gap: 4px; font-size: 12px; }
-.tcgen .ep-links b { font-variant-numeric: tabular-nums; }
-.tcgen .cut-info { padding: 6px 8px; border: 1px solid #bcd8d5; background: #f0f7f6; border-radius: 6px; font-size: 12px; }
-.tcgen .cut-info.warn { border-color: #fde68a; background: #fffbeb; }
-.tcgen .coax-add { border: 1px dashed #e0a800; background: #fff8e1; border-radius: 6px; padding: 8px; display: grid; gap: 6px; }
-.tcgen .coax-dims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.tcgen .grapher-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.tcgen .op-item { display: grid; grid-template-columns: 28px 1fr; gap: 8px; border-bottom: 1px solid var(--border); padding: 8px 0; }
-.tcgen .op-badge { width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
-.tcgen .op-title { font-weight: 600; }
-.tcgen .op-match.found, .tcgen .ok-text { color: #065f46; } .tcgen .op-match.not-found { color: #b45309; }
-.tcgen .f-ok { border-color: #34d399; } .tcgen .f-warn { border-color: #f59e0b; background: #fffbeb; } .tcgen .f-empty { border-color: #f87171; }
-.tcgen .muted { color: var(--muted-foreground); }
-/* Генератор компактный, как #tcgen SUPPLYMAP (TcGenInline.html): узкая колонка, поля по размеру значения, флажки и
-   радиокнопки в строку с подписью. Глобальные label{grid}/input{width:100%} здесь перекрыты. */
-.tcgen { max-width: 920px; }
-.tcgen label { font-weight: 600; font-size: 12px; }
-.tcgen input, .tcgen select { padding: 5px 8px; font-size: 13px; border-radius: 6px; }
-.tcgen input[type="checkbox"], .tcgen input[type="radio"] { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--primary); }
-.tcgen .radio-row label, .tcgen .ep-method label, .tcgen .chip-row label, .tcgen .ep-route label, .tcgen .toggle-row, .tcgen .ep-otp { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.tcgen .toggle-row, .tcgen .ep-otp { display: flex; }
-.tcgen .toggle-row { font-size: 13px; padding: 2px 0; }
-/* Подпись длиннее строки переносится внутри себя, а не уезжает под галочку целиком («Двойной обжим — …»). */
-.tcgen .ep-otp { font-weight: 500; flex-wrap: nowrap; }
+/* Генератор техкарт (порт SUPPLYMAP TcGenInline.html; дизайн — владелец 04.10). Слева ввод секциями (на широком —
+   в две колонки), справа липкий «Итог»: операции, схема полуфабрикатов, одна кнопка. На планшете и узком ноутбуке —
+   одна колонка, итог внизу, кнопка прилипает к низу экрана. Поля нейтральные: цвет — только у ошибки и пропуска. */
+.tcgen { --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235f6b85' stroke-width='1.5'/%3E%3C/svg%3E");
+  display: grid; gap: 10px; font-size: 13px; color: var(--foreground); }
+.tcgen .gen-modes { margin: 0; justify-self: start; }
+.tcgen .gen-layout { display: grid; grid-template-columns: minmax(0, 1fr) clamp(480px, 42%, 980px); gap: 14px; align-items: start; }
+.tcgen .gen-main { min-width: 0; container-type: inline-size; }
+.tcgen .gen-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+@container (min-width: 1000px) {
+  .tcgen .gen-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tcgen .gen-grid > .full { grid-column: 1 / -1; }
+}
 .project-etk .etk-empty { color: var(--muted-foreground); font-size: 13px; padding: 4px 0; }
-.tcgen .ep-otp input[type="number"] { width: 52px; }
-.tcgen .gen-tabs { gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 4px; }
-.tcgen .gen-tab-btn { border: 0; border-bottom: 2px solid transparent; margin-bottom: -2px; border-radius: 0; background: none; padding: 6px 14px; color: var(--muted-foreground); cursor: pointer; }
-.tcgen .gen-tab-btn.gactive { border-bottom-color: var(--primary); color: var(--primary); }
-.tcgen .spy th, .tcgen .spy td { padding: 3px 6px; }
-.tcgen .field-label.len { max-width: 200px; }
-.tcgen .wire-entry { grid-template-columns: minmax(0, 1fr) 90px auto; }
-.tcgen .wire-entry.cores { grid-template-columns: minmax(0, 1fr) 90px 70px 100px auto; }
-.tcgen .wire-entry.adv { grid-template-columns: minmax(0, 1fr) 130px 90px auto; }
-.tcgen .wire-entry.adv.cores { grid-template-columns: minmax(0, 1fr) 130px 90px 70px 100px auto; }
-.tcgen .ter-row { grid-template-columns: repeat(auto-fill, minmax(110px, 150px)); }
-.tcgen .op-times { grid-template-columns: repeat(3, 110px); }
-.tcgen .ep-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 10px; align-items: start; }
-.tcgen .ep-sides > div { display: grid; gap: 6px; }
-.tcgen .ep-sides h3 { margin-top: 4px; }
-.tcgen .gen-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
-.tcgen .gen-actions .toggle-row { margin-right: auto; }
 
-/* Схема полуфабрикатов (ARCH-TRACK-1): блоки слева направо, стрелки с числом штук, открытый блок — его операции. */
-.tcgen .route-editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+/* Секция — карточка с заголовком в строку: название, серая сводка, ссылки справа. */
+.tcgen .gsec { min-width: 0; display: grid; gap: 10px; align-content: start; padding: 12px 14px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.tcgen .gsec-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-height: 20px; }
+.tcgen .gsec-head .gsec-meta + *, .tcgen .gsec-head h3 + :not(.gsec-meta) { margin-left: auto; }
+.tcgen .gsec-head select { width: auto; }
+.tcgen h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--foreground); }
+.tcgen h4 { margin: 0 0 2px; color: var(--muted-foreground); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.tcgen .gsec-meta { display: inline-flex; flex-wrap: wrap; gap: 2px 12px; color: var(--muted-foreground); font-size: 12px; }
+.tcgen .gsec-meta .kv b { color: var(--foreground); font-weight: 600; }
+.tcgen .gempty { padding: 8px 0; color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .muted { color: var(--muted-foreground); }
+
+/* Поля: подпись над полем, единица внутри, без стрелок у чисел. */
+.tcgen input, .tcgen select, .tcgen textarea { min-width: 0; padding: 5px 8px; border-radius: 6px; font-size: 13px; }
+.tcgen input:not([type="checkbox"]):not([type="radio"]), .tcgen select { height: 32px; }
+.tcgen select, .tcgen .gpick-face { appearance: none; -webkit-appearance: none; padding-right: 28px; background: var(--card) var(--chevron) right 10px center / 10px 6px no-repeat; }
+.tcgen select:hover, .tcgen .gpick:hover .gpick-face { border-color: var(--chip-box); }
+.tcgen input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.tcgen input[type="number"]::-webkit-inner-spin-button, .tcgen input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.tcgen .gfield { display: grid; gap: 3px; align-content: start; min-width: 0; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.tcgen .gfield-label { display: flex; align-items: baseline; gap: 6px; min-height: 16px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tcgen .gfield-label small { overflow: hidden; color: var(--muted-foreground); font-size: 11.5px; font-weight: 400; text-overflow: ellipsis; }
+.tcgen .gfield.short { width: 170px; }
+.tcgen .gunit { position: relative; display: block; min-width: 0; }
+.tcgen .gunit > input { width: 100%; padding-right: 36px; }
+.tcgen .gunit::after { content: attr(data-unit); position: absolute; top: 50%; right: 8px; transform: translateY(-50%); color: var(--muted-foreground); font-size: 12px; font-weight: 400; pointer-events: none; }
+.tcgen input.is-warn { border-color: var(--warn-border); background: var(--warn-soft); }
+.tcgen .field-label { display: grid; gap: 3px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.tcgen .opt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 10px; align-items: end; }
+.tcgen .opt-grid > .span2 { grid-column: span 2; }
+.tcgen .opt-note { margin: 0; padding: 2px 0; color: var(--muted-foreground); font-size: 12px; }
+
+/* Сегменты — как .seg-tabs, мельче. */
+.tcgen .gseg { display: inline-flex; flex-wrap: wrap; gap: 2px; justify-self: start; max-width: 100%; padding: 3px; border-radius: 9px; background: var(--seg-bg); }
+.tcgen .gseg button { display: inline-flex; align-items: baseline; gap: 6px; border: 0; border-radius: 7px; padding: 5px 12px; background: transparent; color: var(--seg-fg); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.tcgen .gseg button small { color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+.tcgen .gseg button:hover { color: var(--foreground); }
+.tcgen .gseg button.on { background: var(--card); color: var(--primary); box-shadow: 0 1px 3px rgba(0, 26, 24, .12); }
+
+/* Обработка: переключатель с подписью и подсказкой; включённая раскрывает поля под собой. */
+.tcgen .gopt { display: grid; gap: 8px; padding: 7px 0; border-top: 1px solid var(--border); }
+.tcgen h4 + .gopt, .tcgen .gsec-head + .gopt, .tcgen .opt-grid + .gopt { border-top: 0; }
+.tcgen .gsw { display: flex; align-items: flex-start; gap: 10px; color: var(--foreground); font-size: 13px; font-weight: 500; cursor: pointer; }
+.tcgen .gsw input { appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 30px; height: 18px; min-height: 0; margin: 1px 0 0; padding: 0; border: 0; border-radius: 999px; background: var(--switch-off); cursor: pointer; transition: background .15s; }
+.tcgen .gsw input::before { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); transition: transform .15s; }
+.tcgen .gsw input:checked { background: var(--primary); }
+.tcgen .gsw input:checked::before { transform: translateX(12px); }
+.tcgen .gsw input:focus { box-shadow: none; }
+.tcgen .gsw input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.tcgen .gsw-text { display: grid; gap: 1px; min-width: 0; }
+.tcgen .gsw-text small { color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.tcgen .gopt-body { display: grid; gap: 8px; margin-left: 15px; padding: 4px 0 4px 24px; border-left: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); }
+.tcgen .proc-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 6px 24px; align-items: start; }
+.tcgen .proc-group { display: grid; min-width: 0; }
+
+/* Чип-флажок: провод, конец, параметр разъёма. */
+.tcgen .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.tcgen .gchip { position: relative; display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 11px 4px 27px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--foreground); font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.tcgen .gchip small { color: var(--muted-foreground); font-size: 11.5px; font-weight: 400; }
+.tcgen .gchip input { position: absolute; width: 1px; height: 1px; min-height: 0; opacity: 0; pointer-events: none; }
+.tcgen .gchip::before { content: ""; position: absolute; top: 50%; left: 9px; width: 11px; height: 11px; transform: translateY(-50%); border: 1.5px solid var(--chip-box); border-radius: 3px; background: var(--card); }
+.tcgen .gchip:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.tcgen .gchip.on { border-color: color-mix(in srgb, var(--primary) 55%, transparent); background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
+.tcgen .gchip.on::before { border-color: var(--primary); background: var(--primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 5.2l2 2 4-4.4' fill='none' stroke='white' stroke-width='1.7'/%3E%3C/svg%3E") center / 9px no-repeat; }
+.tcgen .gchip:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+/* Кнопки-ссылки, добавить, убрать. */
+.tcgen .btn-link { display: inline; border: 0; padding: 0; background: none; color: var(--primary); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.tcgen .btn-link:hover { text-decoration: underline; }
+.tcgen .btn-add { justify-self: start; border: 1px dashed var(--chip-box); border-radius: 8px; padding: 5px 12px; background: transparent; color: var(--primary); font-size: 12.5px; font-weight: 600; }
+.tcgen .btn-add:hover { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.tcgen .btn-remove { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; padding: 0; background: none; color: var(--muted-foreground); font-size: 17px; line-height: 1; cursor: pointer; }
+.tcgen .btn-remove:hover { background: var(--accent); color: var(--tone-danger); }
+.tcgen .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Данные из листа — плотная таблица как DataTable. */
+.tcgen .gtable-wrap { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.tcgen .gtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tcgen .gtable th { position: sticky; top: 0; z-index: 1; padding: 6px 10px; background: var(--table-head); color: var(--table-head-fg); font-weight: 600; border-bottom: 1px solid var(--border); }
+.tcgen .gtable td { height: 30px; padding: 4px 10px; white-space: normal; }
+.tcgen .gtable tbody tr:nth-child(even) td { background: var(--table-zebra); }
+.tcgen .gtable tbody tr:last-child td { border-bottom: 0; }
+.tcgen .gtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .gtable-empty { color: var(--muted-foreground); text-align: center; }
+.tcgen .gbadge { border-radius: 6px; padding: 1px 7px; background: #eef2f7; font-size: 11.5px; white-space: nowrap; }
+.tcgen .badge-wire { background: #e0f2fe; } .tcgen .badge-term { background: #fef3c7; } .tcgen .badge-conn { background: #dcfce7; }
+
+/* Кабели: длина и длина реза в строку, кабели — строками с общей шапкой. */
+.tcgen .cut-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 18px; }
+.tcgen .cut-result { display: grid; gap: 1px; padding-bottom: 2px; font-size: 13px; }
+.tcgen .cut-result b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.tcgen .cut-result small { color: var(--muted-foreground); font-size: 12px; }
+.tcgen .cut-result.warn small { color: var(--tone-warn); }
+.tcgen .wire-list { display: grid; gap: 6px; }
+.tcgen .wire-row { display: grid; grid-template-columns: minmax(0, 1fr) 76px 28px; gap: 8px; align-items: center; }
+.tcgen .wire-row.adv { grid-template-columns: minmax(0, 1fr) 112px 76px 28px; }
+.tcgen .wire-row.cores { grid-template-columns: minmax(0, 1fr) 76px 64px 100px 28px; }
+.tcgen .wire-row.adv.cores { grid-template-columns: minmax(0, 1fr) 112px 76px 64px 100px 28px; }
+.tcgen .wire-row.head { margin-bottom: -3px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+
+/* Сторона — разъёмы строками внутри секции (без рамки в рамке); пустая сторона — одна строка. */
+.tcgen .ep-side { container-type: inline-size; }
+.tcgen .ep-side.is-empty { padding-top: 10px; padding-bottom: 10px; }
+.tcgen .ep-card { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid var(--border); }
+.tcgen .gsec-head + .ep-card { padding-top: 2px; border-top: 0; }
+.tcgen .ep-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tcgen .ep-badge { flex: none; min-width: 30px; border-radius: 6px; padding: 1px 7px; background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); font-size: 12.5px; text-align: center; }
+.tcgen .ep-title { overflow: hidden; font-size: 13.5px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.tcgen .ep-kind { color: var(--muted-foreground); font-size: 12.5px; white-space: nowrap; }
+.tcgen .ep-head .btn-remove { margin-left: auto; }
+.tcgen .ep-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; align-items: end; max-width: 1040px; }
+.tcgen .ep-grid > .lead { grid-column: 1 / -1; }
+.tcgen .ep-grid.coax { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+@container (min-width: 600px) {
+  .tcgen .ep-grid:not(.coax) { grid-template-columns: minmax(0, 1.3fr) max-content minmax(0, 1.2fr); }
+  .tcgen .ep-grid > .lead:first-child { grid-column: auto; }
+  .tcgen .ep-grid > .lead:not(:first-child) { max-width: 420px; }
+}
+@container (min-width: 1000px) {
+  .tcgen .ep-grid:not(.coax) { grid-template-columns: minmax(0, 1.3fr) max-content minmax(0, 1.2fr) minmax(0, 1fr); }
+  .tcgen .ep-grid > .lead { grid-column: auto; }
+}
+.tcgen .ep-ter { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 10px; }
+.tcgen .ep-ter > .gfield { width: 92px; }
+.tcgen .ep-ter > .gfield.wide { width: 160px; }
+.tcgen .ep-ter > .gfield.mid { width: 150px; }
+.tcgen .ep-norm { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; color: var(--muted-foreground); font-size: 12px; }
+.tcgen .ep-per { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-size: 12.5px; font-weight: 500; }
+.tcgen .ep-per input { width: 54px; }
+.tcgen .ep-sdr { font-size: 12.5px; }
+.tcgen .op-code, .tcgen .code { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }
+.tcgen .ep-more summary { color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.tcgen .ep-more[open] > summary { margin-bottom: 8px; }
+.tcgen .ep-more > small { display: block; margin-top: 6px; }
+.tcgen .ep-pins { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; }
+.tcgen .ep-pin { display: grid; grid-template-columns: minmax(0, 1fr) 120px; align-items: center; gap: 8px; color: var(--foreground); font-size: 12.5px; font-weight: 500; }
+.tcgen .ep-links { gap: 4px; font-size: 12.5px; }
+.tcgen .ep-links b { font-variant-numeric: tabular-nums; }
+.tcgen .coax-info { color: var(--muted-foreground); font-size: 12px; }
+.tcgen .coax-add { display: grid; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); }
+.tcgen .coax-add > .secondary { justify-self: start; }
+.tcgen .twist-pairs { display: grid; gap: 6px; }
+.tcgen .twist-pair-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px; gap: 6px; align-items: center; max-width: 440px; }
+.tcgen .grapher-box table th, .tcgen .grapher-box table td { white-space: normal; }
+
+/* «Итог»: липкий справа; тело листается внутри, кнопка внизу всегда на экране. Отступы липких — за вычетом padding
+   .workspace (30 px; 20 px на планшете): липкое считается от края его содержимого, а прилипать надо к краю экрана. */
+.tcgen .gen-side { position: sticky; top: -18px; min-width: 0; max-height: calc(100dvh - 24px); display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; background: var(--card); container-type: inline-size; }
+.tcgen .gen-side-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; gap: 12px; align-content: start; padding: 12px 14px; }
+.tcgen .gen-side-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.tcgen .gen-side-head h3 { font-size: 15px; }
+.tcgen .gen-foot { position: sticky; bottom: -30px; z-index: 3; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; background: var(--card); }
+.tcgen .gen-foot > .primary { min-width: 180px; }
+.tcgen .gen-foot > .error-banner { flex: 1; margin: 0; padding: 8px 12px; }
+.tcgen .gen-status { flex: 1; color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .gen-foot-sum { display: none; margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .gen-more { margin: 0; display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.tcgen .gen-more > .secondary { justify-self: start; }
+.tcgen .gen-more .build-config { min-width: 0; }
+
+/* Операции — таблица: № · операция (код серым) · карточка · три времени. Узкий итог — карточка второй строкой. */
+.tcgen .op-list { display: grid; }
+.tcgen .op-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) repeat(3, 76px); grid-template-areas: "num name t1 t2 t3" ". card card card card"; gap: 4px 6px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.tcgen .op-row > .op-num { grid-area: num; }
+.tcgen .op-row > .op-name { grid-area: name; }
+.tcgen .op-row > .op-card { grid-area: card; }
+.tcgen .op-row.head { grid-template-areas: "num name t1 t2 t3"; padding: 0 0 5px; color: var(--muted-foreground); font-size: 11.5px; font-weight: 600; }
+.tcgen .op-row.head > :nth-child(3) { display: none; }
+.tcgen .op-row.head > :nth-child(n+4) { text-align: right; padding-right: 2px; }
+@container (min-width: 760px) {
+  .tcgen .op-row { grid-template-columns: 22px minmax(150px, 1fr) minmax(220px, 1.15fr) repeat(3, 82px); grid-template-areas: "num name card t1 t2 t3"; gap: 4px 8px; }
+  .tcgen .op-row.head { grid-template-areas: "num name card t1 t2 t3"; }
+  .tcgen .op-row.head > :nth-child(3) { display: block; grid-area: card; }
+}
+.tcgen .op-num { align-self: start; padding-top: 1px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .op-name { display: grid; gap: 1px; min-width: 0; }
+.tcgen .op-title { font-size: 12.5px; font-weight: 600; line-height: 1.3; }
+.tcgen .op-row.is-off .op-title { color: var(--muted-foreground); }
+.tcgen .op-card { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tcgen .op-card .gpick { flex: 1 1 auto; }
+.tcgen .op-nodb { flex: none; color: var(--tone-warn); font-size: 11.5px; white-space: nowrap; }
+.tcgen .op-row .gunit > input { padding-right: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen .op-badge { display: inline-grid; place-items: center; flex: none; min-width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 700; }
+/* Карточка: поле показывает русское название, под ним — обычный select (список «название · код»). */
+.tcgen .gpick { position: relative; display: block; min-width: 0; }
+.tcgen .gpick-face { display: block; height: 32px; padding-top: 7px; padding-left: 8px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); font-size: 12.5px; white-space: nowrap; text-overflow: ellipsis; }
+.tcgen .gpick select { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; opacity: 0; cursor: pointer; }
+.tcgen .gpick:focus-within .gpick-face { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.tcgen .gpick.warn .gpick-face { border-color: var(--warn-border); background-color: var(--warn-soft); color: var(--tone-warn); }
+.tcgen .gmark { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; }
+.tcgen .gmark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tcgen .gmark.ok { background: color-mix(in srgb, var(--tone-ok) 12%, transparent); color: var(--tone-ok); }
+
+/* Схема полуфабрикатов (ARCH-TRACK-1) — в итоге: блоки слева направо, стрелки с числом штук, открытый блок — его операции. */
+.tcgen .route-editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
 .tcgen .route-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
-.tcgen .route-head h3 { margin: 12px 0 4px; }
 .tcgen .route-toggle { margin-left: auto; }
 .tcgen .route-badge { border-radius: 999px; padding: 1px 8px; background: var(--accent); color: var(--muted-foreground); font-size: 11px; }
 .tcgen .route-badge.manual { background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
 .tcgen .route-summary { color: var(--muted-foreground); font-size: 12px; }
 .tcgen .route-summary strong { color: var(--foreground); }
-/* Генератор — колонка 920 px; схема берёт всю ширину панели (cqw — ширина .gen-pane) и листается внутри себя. */
-.tcgen .route-scroll { width: 100%; width: 100cqw; overflow-x: auto; padding: 2px 2px 8px; }
+.tcgen .route-scroll { width: 100%; overflow-x: auto; padding: 2px 2px 8px; }
 .tcgen .route-canvas { position: relative; }
 .tcgen .route-canvas svg { position: absolute; inset: 0; pointer-events: none; }
 .tcgen .route-edge-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.5; }
@@ -905,31 +1161,104 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .tcgen .route-cell { position: absolute; }
 .tcgen .route-edge-label { position: absolute; transform: translate(-50%, -50%); }
 .tcgen .route-per { width: 46px; padding: 2px 4px; text-align: center; background: var(--card); font-variant-numeric: tabular-nums; }
-.tcgen .route-block { width: 100%; height: 100%; min-height: 76px; display: grid; align-content: start; gap: 2px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 12px; overflow: hidden; }
+.tcgen .route-block { width: 100%; height: 100%; min-height: 72px; display: grid; align-content: start; gap: 2px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 12px; overflow: hidden; }
 .tcgen .route-block:hover { border-color: var(--primary); }
 .tcgen .route-block.is-final { border: 2px solid var(--primary); padding: 6px 9px; background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
 .tcgen .route-block.is-selected { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent); }
 .tcgen .route-block-tag { justify-self: start; border-radius: 999px; padding: 0 7px; background: color-mix(in srgb, var(--primary) 16%, transparent); font-size: 11px; font-weight: 700; }
-.tcgen .route-block-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 1.3; }
+.tcgen .route-block-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12.5px; font-weight: 600; line-height: 1.3; }
 .tcgen .route-block-meta, .tcgen .route-block-time { color: var(--muted-foreground); }
-.tcgen .route-chain { width: 100%; width: 100cqw; display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px 0; margin: 0; padding: 0; list-style: none; }
+.tcgen .route-chain { width: 100%; display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px 0; margin: 0; padding: 0; list-style: none; }
 .tcgen .route-chain li { display: flex; align-items: center; }
-.tcgen .route-chain .route-block { width: 184px; height: auto; }
+.tcgen .route-chain .route-block { width: 172px; height: auto; }
 .tcgen .route-link { display: flex; align-items: center; gap: 3px; padding: 0 6px; color: var(--muted-foreground); }
-.tcgen .route-panel { gap: 10px; }
-.tcgen .route-panel-head { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
-.tcgen .route-panel-head .field-label { flex: 1; min-width: 220px; max-width: 420px; }
+.tcgen .route-panel { display: grid; gap: 10px; padding: 10px 12px; border-radius: 8px; background: var(--panel-soft); }
+.tcgen .route-panel-head { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.tcgen .route-panel-head .field-label { flex: 1; min-width: 200px; max-width: 420px; }
 .tcgen .route-ops { display: grid; gap: 2px; }
-.tcgen .route-op { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 4px 12px; align-items: start; }
-.tcgen .route-op .op-item { border-bottom: 0; }
-.tcgen .route-op-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
-.tcgen .route-move { padding-top: 8px; }
-.tcgen .route-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px; align-items: end; border-top: 1px solid var(--border); padding-top: 8px; }
+.tcgen .route-op { display: grid; gap: 4px; }
+.tcgen .route-op .op-row { border-bottom: 0; }
+.tcgen .route-op-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 0; }
+.tcgen .route-move { max-width: 360px; padding-bottom: 6px; }
+.tcgen .route-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 16px; align-items: end; border-top: 1px solid var(--border); padding-top: 8px; }
 .tcgen .route-act { display: flex; align-items: end; gap: 8px; }
 .tcgen .route-act .field-label { flex: 1; min-width: 0; }
 .tcgen .route-inputs { display: grid; gap: 2px; font-size: 12px; }
 .tcgen .route-input-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+/* Ручная сборка (владелец 04.10): свой список операций — строка на операцию, поля сеткой, текст своей операции в три
+   колонки, выбор карточки — таблица библиотеки с категориями. */
+.tcgen .manual-hdr .manual-add { margin-left: auto; display: flex; gap: 6px; }
+.tcgen .manual-picker { display: grid; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--panel-soft); }
+.tcgen .manual-picker .section-hdr { display: flex; align-items: center; gap: 12px; }
+.tcgen .manual-picker .manual-close { margin-left: auto; }
+.tcgen .manual-picker .table-wrap { max-height: 360px; }
+.tcgen .manual-ops { display: grid; }
+.tcgen .manual-op { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+.tcgen .manual-op-head { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.tcgen .manual-op-head > .op-badge { margin-top: 5px; }
+.tcgen .manual-op-name { display: grid; gap: 2px; max-width: 560px; }
+.tcgen .manual-op-name input { font-size: 14px; font-weight: 600; }
+.tcgen .manual-op-name small { color: var(--muted-foreground); font-size: 11.5px; }
+.tcgen .manual-op-name .op-code { margin-right: 6px; }
+.tcgen .manual-op-tools { display: flex; gap: 4px; align-items: center; }
+.tcgen .manual-op-tools .small { min-width: 30px; padding: 3px 8px; }
+.tcgen .manual-grid { display: grid; grid-template-columns: 92px 112px 116px 112px minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; margin-left: 36px; align-items: end; }
+.tcgen .manual-grid .wide { grid-column: span 2; }
+.tcgen .manual-grid .result { grid-column: span 4; }
+.tcgen .manual-norm { display: grid; gap: 2px; padding-bottom: 5px; }
+.tcgen .manual-norm small { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.tcgen .manual-norm b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.tcgen .manual-text { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; margin-left: 36px; }
+.tcgen .manual-text .gfield-label { white-space: normal; }
+.tcgen .manual-text textarea { width: 100%; padding: 6px 8px; border-radius: 6px; font: inherit; font-size: 13px; font-weight: 400; color: var(--foreground); resize: vertical; }
+.tcgen .manual-comps { margin-left: 36px; font-size: 12px; }
+.tcgen .manual-comps summary { color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.tcgen .manual-comp-list { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
+.tcgen .manual-comp { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; }
+.tcgen .manual-comp.on { border-color: color-mix(in srgb, var(--primary) 55%, transparent); background: color-mix(in srgb, var(--primary) 8%, var(--card)); }
+.tcgen .manual-comp label { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.tcgen .manual-comp input[type="checkbox"] { width: 14px; height: 14px; min-height: 0; margin: 0; accent-color: var(--primary); }
+.tcgen .manual-comp input[inputmode] { width: 60px; height: 26px; padding: 2px 6px; }
+.tcgen .manual-comp small { color: var(--muted-foreground); }
+.tcgen .manual-card-name small { margin-left: 6px; color: var(--muted-foreground); font-size: 11px; }
+.tcgen .manual-card-detail { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; font-size: 12px; }
+@container (max-width: 900px) {
+  .tcgen .manual-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-left: 0; }
+  .tcgen .manual-grid .wide, .tcgen .manual-grid .result { grid-column: span 2; }
+  .tcgen .manual-grid > .wide:last-child { grid-column: 1 / -1; }
+  .tcgen .manual-text, .tcgen .manual-comps { margin-left: 0; }
+}
+@container (max-width: 600px) {
+  .tcgen .manual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tcgen .manual-grid .wide, .tcgen .manual-grid .result { grid-column: 1 / -1; }
+  .tcgen .manual-text { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Тон — после всех правил секций, чтобы перекрыть их цвет. */
+.tcgen .tone-ok { color: var(--tone-ok); }
+.tcgen .tone-warn { color: var(--tone-warn); }
+.tcgen .tone-danger { color: var(--tone-danger); }
+
+/* Узкий ноутбук и планшет — одна колонка: итог внизу, кнопка прилипает к низу экрана, пока виден генератор. */
+@media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) {
+  .tcgen .gen-layout { grid-template-columns: minmax(0, 1fr); }
+  .tcgen .gen-side { display: contents; }
+  .tcgen .gen-side-body { overflow: visible; border: 1px solid var(--border); border-radius: 10px; background: var(--card); container-type: inline-size; }
+  .tcgen .gen-foot { bottom: -20px; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 -6px 18px rgba(0, 26, 24, .1); }
+  .tcgen .gen-foot-sum { display: block; }
+}
 @media (pointer: coarse) {
+  .tcgen input:not([type="checkbox"]):not([type="radio"]), .tcgen select, .tcgen .gpick-face { height: 40px; }
+  .tcgen .gpick-face { padding-top: 11px; }
+  .tcgen .gseg button { align-items: center; min-height: 40px; padding: 7px 14px; }
+  .tcgen .gsw { align-items: center; min-height: 40px; }
+  .tcgen .gsw input { margin-top: 0; }
+  .tcgen .gchip { min-height: 40px; align-items: center; }
+  .tcgen .btn-link, .tcgen .btn-add { min-height: 40px; }
+  .tcgen .btn-remove { width: 40px; height: 40px; }
+  .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
+  .tcgen .manual-comp input[inputmode] { height: 36px; }
   .tcgen .route-per { min-height: 40px; width: 52px; }
   .tcgen .route-act .small, .tcgen .route-panel select, .tcgen .route-panel input { min-height: 40px; }
   .tcgen .route-toggle, .tcgen .route-head .btn-link, .tcgen .route-panel-head .btn-link { min-height: 40px; }
@@ -1065,17 +1394,31 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .stock-toolbar .inline-select select { width: auto; }
 .stock-toolbar > select { width: auto; }
 .stock-toolbar .toolbar-end { gap: 6px; }
-.stock-page .column-chooser { margin-bottom: 8px; padding: 4px 12px 8px; }
-.stock-page .column-chooser legend { padding: 0 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+/* «Колонки»: a list under the button (it must not push the table down on a 16" screen): tick = show, ↑/↓ = one step left/right. */
+.column-menu { position: relative; }
+.column-popover { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: grid; gap: 4px; width: 270px; padding: 8px 10px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .14); }
+.column-popover-head { color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.column-popover ul { display: grid; margin: 0; padding: 0; list-style: none; }
+.column-popover li { display: grid; grid-template-columns: 1fr 28px 28px; align-items: center; gap: 4px; min-height: 30px; }
+.column-popover li:hover { background: var(--accent); }
+.column-popover .check-inline { color: var(--foreground); font-size: 13px; padding: 0 4px; }
+.stock-toolbar .column-popover button.column-step { width: 28px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); background: var(--card); font-size: 14px; line-height: 1; }
+.stock-toolbar .column-popover button.column-step:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.stock-toolbar .column-popover button.column-step:disabled { cursor: default; opacity: .3; }
+.stock-toolbar .column-popover button.column-reset { height: auto; padding: 6px 0 2px; font-size: 13px; }
+@media (pointer: coarse) {
+  .column-popover li { grid-template-columns: 1fr 40px 40px; min-height: 40px; }
+  .stock-toolbar .column-popover button.column-step { width: 40px; height: 36px; }
+}
 .more-menu { position: relative; }
 .more-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: grid; min-width: 200px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .14); }
 .more-menu-list button { height: 34px; border: 0; border-radius: 6px; padding: 0 12px; color: var(--foreground); background: none; font-size: 13px; text-align: left; white-space: nowrap; }
 .more-menu-list button:hover:not(:disabled), .more-menu-list button:focus-visible { background: var(--accent); }
 .stock-table th .th-sort { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
-.stock-table .stock-grn { color: var(--muted-foreground); font-size: 12.5px; }
+.stock-table .stock-grn { font-variant-numeric: tabular-nums; font-weight: 500; }
 /* The table fits the box: fixed layout, fixed narrow columns, a few columns in percent so a 27" screen shares its
    extra width instead of leaving one huge name column; the name takes the rest. Below ~1040 px of box it scrolls
-   inside its own frame with the name column frozen. */
+   inside its own frame with the first column (ГРН, or Тип) frozen. */
 .stock-page > .table-wrap { max-height: max(360px, calc(100dvh - 172px)); overflow: auto; }
 .stock-table { table-layout: fixed; width: 100%; min-width: 1040px; }
 .stock-page .stock-table > thead > tr > th, .stock-page .stock-table > tbody > tr > td { padding: 6px 10px; white-space: nowrap; }
@@ -1086,17 +1429,17 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .stock-table td.stock-name .table-link:hover { color: var(--primary); }
 .stock-table .num { min-width: 0; }
 .stock-col-article { width: 15%; }
-.stock-col-grn { width: 128px; }
+.stock-col-grn { width: 150px; }
 .stock-col-balance { width: 98px; }
 .stock-col-lots { width: 76px; }
 .stock-col-available { width: 96px; }
 .stock-col-place { width: 12%; }
-.stock-col-warehouse { width: 64px; }
+.stock-col-warehouse { width: 92px; }
 .stock-col-purpose { width: 104px; }
 .stock-col-series { width: 12%; }
 .stock-col-type { width: 126px; }
-.stock-table td.stock-name, .stock-table th.stock-name { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 var(--border); }
-.stock-table > thead > tr > th.stock-name { z-index: 3; }
+.stock-table td.stock-pin, .stock-table th.stock-pin { position: sticky; left: 0; z-index: 1; box-shadow: inset -1px 0 var(--border); }
+.stock-table > thead > tr > th.stock-pin { z-index: 3; }
 .stock-table > tbody > tr.stock-group-row > td { background: #e9f0ef; color: #38504d; text-transform: none; letter-spacing: 0; font-size: 12.5px; }
 /* The group header stays in view when the table is scrolled sideways: its label is pinned, the band spans the row. */
 .stock-group-label { position: sticky; left: 10px; }
@@ -1281,8 +1624,6 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
 .seg-tabs.sub { margin-bottom: 8px; }
 .gen-pane { display: grid; gap: 10px; container-type: inline-size; }
-.tcgen .gen-actions { align-items: flex-start; margin-top: 10px; }
-.tcgen .gen-actions > .primary { min-width: 160px; }
 .gen-more { margin-right: auto; display: grid; gap: 8px; color: var(--muted-foreground); }
 .gen-more[open] { color: var(--foreground); }
 .gen-more > .secondary { justify-self: start; }
@@ -1427,10 +1768,16 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .staff-dep-heads .staff-dep-rename button { flex: none; }
 /* A табельный номер («FRX-0017») never breaks at its hyphen. */
 .staff-page td.tab-no { white-space: nowrap; }
-/* The employee form closes without holes: E-mail at creation takes two columns (half a row on 27", the whole row in
-   two columns); the «Вход разрешён» box sits on the inputs' line. */
+/* The employee form has two titled blocks, «Кадры» (personnel facts) and «Доступ в ERP» (what the person may open),
+   each on the shared .form-grid. ФИО, E-mail and the PIN at creation take two columns (half a row on 27", the whole
+   row in two columns), so both blocks close without holes. */
 @media (min-width: 721px) { .staff-form > .pair { grid-column: span 2; } }
-.staff-form > .staff-form-check { align-self: end; min-height: 38px; }
+.staff-form > .staff-form-check { align-self: center; min-height: 38px; }
+.staff-form-block > h3 { margin: 0; padding: 4px 20px 10px; color: var(--foreground); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.staff-form-block + .staff-form-block { margin: 0 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.staff-form-block + .staff-form-block > h3 { padding: 0 0 10px; }
+.staff-form-block + .staff-form-block > .form-grid { padding-left: 0; padding-right: 0; }
+#staff-edit-form > .form-actions { padding: 0 20px 18px; }
 .operations-queue { margin-left: auto; color: var(--muted-foreground); font-size: 13px; }
 
 /* ===== T7: «Оформить заявку» — таблица позиций (RequestGrid). Свой блок, чтобы не мешать соседним правкам. ===== */
@@ -1482,22 +1829,12 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 }
 /* ===== /T7 ===== */
 
-/* ── Лист закупки: «В работе» одной таблицей (ProcurementInWorkTable) ── */
-.inwork { display: grid; gap: 6px; }
-.inwork-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* ── Лист закупки: таблица партий «Со склада» (ProcurementStockPicker) ── */
 .inwork-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
 .inwork-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .inwork-table th { position: sticky; top: 0; background: var(--accent); text-align: left; padding: 4px 6px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid var(--border); }
-.inwork-table td { padding: 2px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-.inwork-table tbody tr:nth-child(odd):not(.inwork-detail) { background: color-mix(in srgb, var(--accent) 35%, transparent); }
-.inwork-table tr.edited { box-shadow: inset 3px 0 0 var(--primary); }
-.inwork-table input, .inwork-table select { width: 100%; height: 26px; padding: 0 6px; font-size: 13px; box-sizing: border-box; }
-.inwork-table input[aria-invalid="true"], .inwork-table select[aria-invalid="true"] { border-color: #c0392b; }
-.inwork-table input.soft-warn { border-color: #b7791f; }
-.inwork-cell { display: flex; align-items: center; gap: 4px; }
-.inwork-name { white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
-.inwork-menu { position: relative; width: 40px; }
-.inwork-detail td { background: var(--card); padding: 8px 12px; }
+.inwork-table td { padding: 1px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.inwork-table input, .inwork-table select { width: 100%; height: 24px; padding: 0 6px; font-size: 13px; box-sizing: border-box; }
 .stock-picker { display: grid; gap: 6px; }
 .stock-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .stock-search input { height: 26px; min-width: 260px; }
@@ -1507,14 +1844,127 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .stock-lots td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stock-note { color: var(--primary); }
 .inwork-table td small, .inwork-table td strong { display: inline; margin: 0; }
-.inwork-name { max-width: 340px; }
-.inwork-table td { padding: 1px 4px; }
-.inwork-table input, .inwork-table select { height: 24px; }
-.inwork-context { white-space: nowrap; color: var(--muted-foreground); }
+
+/* ── Лист закупки: «В работе» — лист, а не форма (ProcurementInWorkTable) ──
+   Ячейки без рамок на тонкой сетке; правимая ячейка — чуть светлее фона, рамка только при наведении и фокусе;
+   строки ровно --sheet-row; обязательные колонки — точкой в заголовке. На 16" (≈1190 px таблицы) колонки
+   влезают без прокрутки вбок. Ширина задана каждой <col> и в сумме ≈ ширине таблицы: колонку без ширины Chrome
+   при table-layout: fixed сжимает почти до нуля. */
+.buy-scroll { margin: 0 16px 16px; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.work-list > * { min-width: 0; }
+.buy-grid { width: 100%; min-width: 1000px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.buy-grid col.c-sel { width: 34px; }
+.buy-grid col.c-pos { width: 25%; }
+.buy-grid col.c-supplier { width: 124px; }
+.buy-grid col.c-site { width: 10.5%; }
+.buy-grid col.c-qty { width: 72px; }
+.buy-grid col.c-unit { width: 56px; }
+.buy-grid col.c-article { width: 96px; }
+.buy-grid col.c-name { width: 11%; }
+.buy-grid col.c-link { width: 108px; }
+.buy-grid col.c-note { width: 9%; }
+.buy-grid col.c-menu { width: 40px; }
+/* Планшет и узкий ноутбук с боковым меню (~1050 px таблицы). */
+@media (max-width: 1500px) {
+  .buy-grid col.c-pos { width: 23%; }
+  .buy-grid col.c-supplier { width: 110px; }
+  .buy-grid col.c-site { width: 10%; }
+  .buy-grid col.c-article { width: 84px; }
+  .buy-grid col.c-name { width: 10%; }
+  .buy-grid col.c-link { width: 96px; }
+}
+@media (min-width: 1900px) {
+  .buy-grid col.c-pos { width: 24%; }
+  .buy-grid col.c-supplier { width: 170px; }
+  .buy-grid col.c-site { width: 14%; }
+  .buy-grid col.c-qty { width: 80px; }
+  .buy-grid col.c-unit { width: 62px; }
+  .buy-grid col.c-article { width: 130px; }
+  .buy-grid col.c-name { width: 16%; }
+  .buy-grid col.c-link { width: 150px; }
+  .buy-grid col.c-note { width: 16%; }
+}
+.buy-grid th { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 8px; background: var(--sheet-head); color: #3d4a5c; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--border); border-right: 1px solid var(--sheet-line); }
+.buy-grid th.required::after { content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 5px; border-radius: 50%; background: var(--primary); vertical-align: middle; }
+.buy-grid td { height: var(--sheet-row); padding: 0; border-bottom: 1px solid var(--sheet-line); border-right: 1px solid var(--sheet-line); background: var(--card); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.buy-grid tr > :last-child { border-right: 0; }
+.buy-grid tbody tr:last-child > td { border-bottom: 0; }
+.buy-grid input[type="checkbox"] { display: block; width: 15px; height: 15px; margin: 0 auto; padding: 0; accent-color: var(--primary); cursor: pointer; }
+.buy-grid .sel { position: sticky; left: 0; z-index: 1; text-align: center; }
+.buy-grid .pos { position: sticky; left: 34px; z-index: 1; box-shadow: inset -1px 0 var(--border); }
+.buy-grid th.sel, .buy-grid th.pos { z-index: 3; }
+.buy-grid td.pos { padding: 0 8px; }
+.pos-main, .pos-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pos-main { font-size: 12.5px; line-height: 15px; }
+.pos-main strong { display: inline; font-weight: 700; }
+.pos-sub { color: var(--muted-foreground); font-size: 11px; line-height: 13px; }
+.pos-sub .chip { display: inline-block; margin-right: 5px; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 600; line-height: 13px; }
+.pos-sub .chip.tone-ok { background: #e3f5e8; }
+.pos-sub .chip.tone-danger { background: #fde8e8; }
+.pos-sub .filling { margin-right: 5px; font-style: italic; }
+.buy-grid td.edit { background: var(--sheet-edit); }
+.buy-grid td.edit:hover, .buy-grid td.note:hover { box-shadow: inset 0 0 0 1px var(--sheet-hover); }
+.buy-grid td.edit:focus-within, .buy-grid td.note:focus-within { box-shadow: inset 0 0 0 2px var(--primary); background: var(--card); }
+.buy-grid td.dirty { background: var(--sheet-dirty); }
+.buy-grid td.invalid { box-shadow: inset 0 0 0 1.5px var(--sheet-invalid); background: var(--sheet-invalid-bg); }
+.buy-grid tbody tr:hover > td:not(.edit):not(.dirty) { background: #f6fafa; }
+.buy-grid tr.selected > td, .buy-grid tr.selected:hover > td { background: var(--sheet-selected); }
+.buy-grid tr.edited > td.sel { box-shadow: inset 3px 0 0 var(--primary); }
+.cell-input, .cell-select { display: block; width: 100%; height: calc(var(--sheet-row) - 1px); margin: 0; padding: 0 8px; border: 0; border-radius: 0; background: transparent; color: var(--foreground); font-size: 13px; text-overflow: ellipsis; }
+.cell-input:focus, .cell-select:focus { border: 0; box-shadow: none; outline: none; }
+.buy-grid td.num .cell-input, .buy-grid td.num .cell-ro { text-align: right; font-variant-numeric: tabular-nums; }
+.cell-select { appearance: none; padding-right: 20px; cursor: pointer; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'%3E%3Cpath d='M1 1l3.5 3.5L8 1' fill='none' stroke='%235f6b85' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 7px center; }
+.cell-ro { display: block; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-cell { position: relative; display: block; height: calc(var(--sheet-row) - 1px); }
+.link-cell .cell-text { position: absolute; inset: 0; width: 100%; padding: 0 8px; border: 0; background: transparent; color: inherit; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.link-cell .cell-text:focus-visible { outline: none; }
+.link-cell .cell-text.soft-warn { color: #a16207; }
+.link-host { position: relative; z-index: 1; display: inline-block; max-width: calc(100% - 16px); margin: 0 8px; color: var(--primary); line-height: calc(var(--sheet-row) - 1px); text-decoration: none; vertical-align: top; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-host:hover { text-decoration: underline; }
+.buy-grid td.note .cell-edit { height: calc(var(--sheet-row) - 1px); padding: 0 8px; border: 0; border-radius: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.buy-grid td.note .cell-edit:hover, .buy-grid td.note .cell-edit:focus-visible { background: transparent; }
+.buy-grid td.note .cell-edit-input { min-width: 0; border-radius: 0; }
+.buy-grid td.note .cell-edit-empty { visibility: hidden; }
+.buy-grid td.menu { text-align: center; }
+.procurement-stage td .row-menu > button { padding: 0 8px; height: 24px; border: 0; background: transparent; color: var(--muted-foreground); font-size: 15px; line-height: 1; }
+.procurement-stage td .row-menu > button:hover { background: var(--accent); color: var(--foreground); }
+.buy-grid tr.buy-detail > td { height: auto; padding: 10px 14px; overflow: visible; white-space: normal; background: var(--background); }
+.buy-grid.order-lines { min-width: 0; table-layout: auto; }
+.buy-grid.order-lines td { padding: 0 8px; }
+@media (pointer: coarse) {
+  :root { --sheet-row: 40px; }
+  .buy-grid input[type="checkbox"] { width: 20px; height: 20px; }
+  .procurement-stage td .row-menu > button { height: 36px; min-width: 40px; }
+}
 
 /* ── Лист закупки: стадии «Мои позиции» (ProcurementStages) ── */
 .panel-heading h2 .stage-count { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
 .heading-actions { display: flex; align-items: center; gap: 12px; }
+/* Блок «Мои позиции»: одна строка заголовка — название с числом, «?» с подсказкой, действия справа; пустой блок —
+   одна серая строка; массовые действия — полосой над таблицей, она липнет к верху при прокрутке. */
+.work-list > .section-title { margin: 4px 0 -4px 2px; }
+.stage-head { align-items: center; justify-content: flex-start; gap: 10px; padding: 12px 16px 10px; }
+.stage-head h2 { white-space: nowrap; }
+.stage-head .stage-help { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 50%; color: var(--muted-foreground); font-size: 11px; font-weight: 600; cursor: help; }
+.stage-head .stage-help:hover, .stage-head .stage-help:focus-visible { border-color: var(--primary); color: var(--primary); outline: none; }
+.stage-head .heading-actions { margin-left: auto; gap: 8px; }
+.stage-head .dirty-note { color: #8a5a00; font-size: 12px; }
+.stage-empty { margin: 0; padding: 0 16px 14px; color: var(--muted-foreground); font-size: 13px; }
+.bulk-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 16px 10px; padding: 7px 12px; border-radius: 8px; background: var(--accent); font-size: 12.5px; }
+.bulk-status.failed { color: #852a24; background: #fbe7e4; }
+.bulk-status .bulk-failures { flex-basis: 100%; order: 2; margin: 0; padding-left: 18px; }
+.bulk-status .link-button { margin-left: auto; padding: 0; }
+.procurement-stage .bulk-bar { position: sticky; top: -30px; z-index: 9; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.stage-bulk { margin: 0 16px 8px; }
+/* Таблицы остальных блоков — тем же листом: заголовок обычным регистром 12 px, тонкая сетка без зебры. */
+.procurement-stage .data-table .filters { position: static; }
+.procurement-stage .data-table .filters .search { padding-top: 6px; padding-bottom: 6px; }
+.procurement-stage .data-table .table-wrap { border-radius: 8px; }
+.procurement-stage .data-table thead th { padding-top: 6px; padding-bottom: 6px; font-size: 12px; letter-spacing: 0; text-transform: none; border-right: 1px solid var(--sheet-line); }
+.procurement-stage .data-table tbody td { height: var(--sheet-row); padding-top: 3px; padding-bottom: 3px; border-bottom-color: var(--sheet-line); border-right: 1px solid var(--sheet-line); }
+.procurement-stage .data-table tr > :last-child { border-right: 0; }
+.procurement-stage .data-table tbody tr:nth-child(even):not(.group-row):not(.detail) td, .procurement-stage .data-table tbody tr:nth-child(even) td.key { background: var(--card); }
+.procurement-stage .data-table tbody tr:not(.group-row):not(.detail):hover td { background: #eaf6f4; }
 .row-menu { display: inline-block; }
 .row-menu-popup { z-index: 60; display: grid; min-width: 250px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 4px; }
 .row-menu-popup button { text-align: left; background: none; border: 0; padding: 6px 8px; font-size: 13px; cursor: pointer; }
@@ -1556,20 +2006,29 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 @media (pointer: coarse) { .data-table td .cell-edit, .cell-edit-input { min-height: 40px; } }
 
 /* ── Производственный план: лист «ЗАГРУЗ» (PlanLoadSheet.tsx) ─────────────────────────────────────────── */
+/* Слева — закреплённые колонки листа (узкие отметки ✓/—), справа — календарь: строка месяцев, дни с днём недели,
+   выходные серые, сегодня — цветом бренда. На 16" реже нужные колонки скрыты, чтобы календарь показал две недели. */
 :root {
   --zg-c0: #4f7cba; --zg-c1: #2e9e8f; --zg-c2: #c2782f; --zg-c3: #8a63b8; --zg-c4: #5d9c3f; --zg-c5: #c4566b;
   --zg-c6: #3c8fb5; --zg-c7: #a58a2c; --zg-c8: #6b74c9; --zg-c9: #b4613d; --zg-c10: #3f9f6e; --zg-c11: #9a5aa0;
-  --zg-day: 26px;
+  --zg-day: 24px;
   --zg-row: 28px;
-  --zg-head-h: 32px;
+  --zg-month-h: 18px;
+  --zg-days-h: 30px;
   --zg-font: 12px;
   --zg-font-sm: 10.5px;
   --zg-font-xs: 10px;
+  --zg-head-font: 11px;
   --zg-today-bg: color-mix(in srgb, var(--primary) 9%, transparent);
   --zg-today-head: color-mix(in srgb, var(--primary) 68%, black);
   --zg-head: #f6faf9;
   --zg-off: #eef1f1;
+  --zg-off-head: #e6ebea;
+  --zg-grid: #edf1f0;
   --zg-edge: #c9d3d1;
+  --zg-shadow: rgba(16, 42, 38, .16);
+  --zg-flag-off: #8a9593;
+  --zg-track: #e3e9e8;
   --zg-late: #c62828;
   --zg-late-bg: #fdecea;
   --zg-soon-bg: #fff4d6;
@@ -1581,59 +2040,77 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-panel .plan-section-head { display: flex; align-items: baseline; gap: 12px; }
 .zg-span { color: var(--muted-foreground); font-size: var(--zg-font); }
 .zg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 8px 0 6px; }
-.zg-toolbar > input { width: 220px; height: 26px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: var(--zg-font); }
-.zg-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: var(--zg-font); color: var(--muted-foreground); }
+.zg-toolbar > input { width: 220px; height: 28px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: var(--zg-font); }
+.zg-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: var(--zg-font); font-weight: 400; color: var(--muted-foreground); white-space: nowrap; }
+.zg-toggle input { width: 14px; height: 14px; margin: 0; }
 .zg-legend { display: inline-flex; flex-wrap: nowrap; gap: 10px; margin-left: auto; font-size: var(--zg-font-sm); color: var(--muted-foreground); white-space: nowrap; }
 .zg-legend > span { display: inline-flex; align-items: center; gap: 4px; }
 .zg-legend i { display: inline-block; font-style: normal; }
-.zg-key-bar { width: 16px; height: 8px; border-radius: 2px; background: var(--zg-c0); }
-.zg-key-qty { min-width: 16px; height: 12px; padding: 0 2px; border-radius: 2px; background: var(--zg-c0); color: var(--primary-foreground); font-size: var(--zg-font-xs); font-weight: 700; line-height: 12px; text-align: center; }
+.zg-key-bar { width: 16px; height: 8px; border-radius: 3px; background: var(--zg-c0); }
+.zg-key-qty { min-width: 16px; height: 12px; padding: 0 2px; border-radius: 3px; background: var(--zg-c0); color: var(--primary-foreground); font-size: var(--zg-font-xs); font-weight: 700; line-height: 12px; text-align: center; }
 .zg-key-arrival { width: 6px; height: 6px; border-radius: 50%; background: var(--zg-arrival); }
 .zg-key-deadline { width: 2px; height: 12px; background: var(--zg-late); }
 .zg-key-manual { width: 0; height: 0; border-top: 6px solid var(--primary); border-left: 6px solid transparent; }
+.zg-toolbar .zg-columns { padding: 4px 10px; font-size: var(--zg-font); }
+.zg-toolbar .zg-columns.active { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); color: var(--zg-today-head); }
+.zg-chooser { align-items: center; margin: 0 0 6px; padding: 6px 12px; border-radius: 8px; gap: 6px 14px; }
+.zg-chooser .check-inline { font-size: var(--zg-font); }
+.zg-chooser .link-button { padding: 0; font-size: var(--zg-font); }
+.zg-chooser .link-button:disabled { color: var(--muted-foreground); cursor: default; }
+
 .zg-wrap { overflow: auto; max-height: calc(100dvh - 210px); border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
-.zg-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: var(--zg-font); }
+/* Пустой лист — шапка календаря и одна строка-подсказка, без прокрутки вбок. */
+.zg-wrap-empty { overflow-x: hidden; }
+.zg-table { width: auto; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: var(--zg-font); }
 .zg-day-col { width: var(--zg-day); }
 .zg-table th, .zg-table td { height: var(--zg-row); padding: 0 4px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--card); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
-.zg-table thead th { position: sticky; top: 0; z-index: 4; height: var(--zg-head-h); padding: 0 4px; background: var(--zg-head); color: var(--foreground); font-size: var(--zg-font); font-weight: 600; line-height: 1.2; letter-spacing: 0; text-transform: none; white-space: nowrap; text-align: center; }
-.zg-table thead th.zg-left { text-align: left; }
+.zg-table thead th { position: sticky; top: 0; z-index: 4; height: auto; padding: 0 3px; background: var(--zg-head); color: var(--foreground); font-size: var(--zg-head-font); font-weight: 600; line-height: 1.15; letter-spacing: 0; text-transform: none; white-space: nowrap; text-align: center; }
+.zg-table thead th.zg-col-head { vertical-align: bottom; padding-bottom: 7px; border-bottom-color: var(--zg-edge); }
+.zg-table thead th.zg-left { text-align: left; padding-left: 6px; }
+.zg-table thead .zg-head-days th { top: var(--zg-month-h); height: var(--zg-days-h); border-bottom-color: var(--zg-edge); }
 .zg-freeze { position: sticky; left: var(--zg-left); z-index: 2; }
-.zg-freeze-wide { position: relative; }
-.zg-table thead th.zg-freeze, .zg-table thead th.zg-freeze-wide { z-index: 6; }
-.zg-edge-narrow { box-shadow: inset -2px 0 0 var(--zg-edge); }
-@media (min-width: 1900px) {
-  .zg-freeze-wide { position: sticky; left: var(--zg-left); z-index: 2; }
-  .zg-edge-narrow { box-shadow: none; }
-  .zg-edge-wide { box-shadow: inset -2px 0 0 var(--zg-edge); }
-}
-.zg-table thead th.zg-day-head { padding: 2px 0; font-size: var(--zg-font-xs); font-weight: 600; }
-.zg-day-head span { display: block; font-weight: 400; color: var(--muted-foreground); }
-.zg-table th.zg-off, .zg-table td.zg-off { background: var(--zg-off); }
-.zg-table .zg-month { border-left: 2px solid var(--zg-edge); }
+.zg-table thead th.zg-freeze { z-index: 6; }
+/* Граница закреплённой части — тонкая линия и мягкая тень над календарём. */
+.zg-table .zg-edge { border-right-color: var(--zg-edge); box-shadow: 5px 0 6px -4px var(--zg-shadow); }
+
+/* Шапка календаря: месяцы, под ними число и день недели. */
+.zg-table thead th.zg-month-head { height: var(--zg-month-h); padding: 0; overflow: visible; border-right-color: var(--zg-grid); border-bottom-color: var(--zg-grid); color: var(--muted-foreground); font-size: var(--zg-font-sm); font-weight: 600; text-align: left; }
+.zg-month-head span { position: sticky; left: calc(var(--zg-frozen, 0px) + 1px); display: inline-block; padding: 0 6px; line-height: calc(var(--zg-month-h) - 1px); }
+.zg-table thead th.zg-day-head { padding: 0; border-right-color: var(--zg-grid); line-height: 1.1; }
+.zg-day-head b { display: block; font-size: var(--zg-head-font); font-weight: 600; font-variant-numeric: tabular-nums; }
+.zg-day-head span { display: block; color: var(--muted-foreground); font-size: 9.5px; font-weight: 400; }
+.zg-table thead th.zg-day-head.zg-off { background: var(--zg-off-head); color: var(--muted-foreground); }
+.zg-table thead th.zg-day-head.zg-today { background: var(--zg-today-head); color: var(--primary-foreground); }
+.zg-table thead th.zg-day-head.zg-today span { color: var(--primary-foreground); opacity: .85; }
+.zg-table .zg-month { border-left: 1px solid var(--zg-edge); }
+
+.zg-table td.zg-off { background: var(--zg-off); }
 .zg-row:hover > td { background-color: #f3f8f7; }
 .zg-row:hover > td.zg-off { background-color: #e6ecec; }
 .zg-row-hold > td { color: #6b7280; background: #f4f5f6; }
-.zg-row-hold .zg-project { opacity: .7; }
+.zg-row-hold .zg-project { opacity: .75; }
 .zg-row-closed > td { color: var(--muted-foreground); }
-.zg-table .zg-group td { height: 24px; padding: 0; background: var(--accent); overflow: visible; }
-.zg-group-label { position: sticky; left: 0; display: inline-block; padding: 0 10px; font-size: var(--zg-font); font-weight: 700; color: var(--foreground); line-height: 24px; }
+.zg-table .zg-group td { height: 22px; padding: 0; background: var(--accent); overflow: visible; }
+.zg-group-label { position: sticky; left: 0; display: inline-block; padding: 0 10px; font-size: var(--zg-font-sm); font-weight: 700; color: var(--foreground); line-height: 22px; }
 .zg-group-hold .zg-group-label { color: #5f6368; }
 .zg-edit { cursor: pointer; }
 .zg-edit:hover { outline: 1px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -1px; }
 .zg-manual::after { content: ""; position: absolute; top: 0; right: 0; border-top: 7px solid var(--primary); border-left: 7px solid transparent; }
 .zg-center { text-align: center; }
-.zg-table td.zg-num { text-align: right; font-variant-numeric: tabular-nums; background-image: linear-gradient(90deg, color-mix(in srgb, var(--primary) 22%, transparent) var(--zg-ready, 0%), transparent var(--zg-ready, 0%)); }
+.zg-table td.zg-center { padding: 0 2px; }
 .zg-ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; }
 .zg-col-comment { color: #3a4250; }
 .zg-col-customer .zg-link { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; border: 0; padding: 0; background: none; color: var(--foreground); font-size: var(--zg-font); text-align: left; white-space: nowrap; }
 .zg-col-customer .zg-link:hover { color: var(--primary); text-decoration: underline; }
-.zg-table td.zg-col-project { padding: 0; background: color-mix(in srgb, var(--zg-color) 22%, white); }
-.zg-project { width: 100%; height: 100%; border: 0; background: none; padding: 0 4px 0 8px; color: var(--foreground); font-size: var(--zg-font); font-weight: 700; text-align: left; box-shadow: inset 4px 0 0 var(--zg-color); }
+.zg-table td.zg-col-project { padding: 0; background: color-mix(in srgb, var(--zg-color) 18%, white); }
+.zg-project { width: 100%; height: 100%; min-height: 0; border: 0; background: none; padding: 0 4px 0 9px; color: var(--foreground); font-size: var(--zg-font); font-weight: 700; text-align: left; box-shadow: inset 4px 0 0 var(--zg-color); }
 .zg-project:hover { text-decoration: underline; }
-.zg-chips { display: flex; gap: 3px; overflow: hidden; }
-.zg-chips .zg-chip { display: block; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
-.zg-chips .zg-chip:first-child { flex-shrink: 0; }
-.zg-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; border-radius: 4px; font-size: var(--zg-font-sm); font-weight: 700; line-height: 16px; white-space: nowrap; background: var(--accent); color: var(--muted-foreground); }
+
+/* Статус: один цветной чип и «+N», полный список — в подсказке. */
+.zg-chips { display: flex; align-items: center; gap: 3px; overflow: hidden; }
+.zg-chips .zg-chip { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.zg-more { flex: none; color: var(--muted-foreground); font-size: var(--zg-font-xs); font-weight: 600; }
+.zg-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; border-radius: 4px; font-size: var(--zg-font-sm); font-weight: 700; line-height: 17px; white-space: nowrap; background: var(--accent); color: var(--muted-foreground); }
 .zg-chip.t-hold { background: #e3e6ea; color: #3a4250; }
 .zg-chip.t-stop { background: #c62828; color: #fff; }
 .zg-chip.t-pause { background: #fde2c8; color: #8a4500; }
@@ -1645,30 +2122,58 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-chip.t-ship { background: #e0f0fb; color: #1a5f8a; }
 .zg-chip.t-ready { background: #2e7d32; color: #fff; }
 .zg-chip.t-shipped { background: #eceff1; color: #546e7a; }
-.zg-supplied { font-size: var(--zg-font); font-weight: 700; }
-select.zg-supplied { width: 100%; height: 20px; padding: 0 2px; border: 0; border-radius: 4px; background: transparent; text-align: center; text-align-last: center; cursor: pointer; appearance: none; -webkit-appearance: none; }
-select.zg-supplied:hover, select.zg-supplied:focus { outline: 1px solid color-mix(in srgb, var(--primary) 55%, transparent); }
+
+/* Готовность: тонкая полоса и число справа. */
+.zg-ready { display: flex; align-items: center; gap: 4px; }
+.zg-ready i { flex: 1; min-width: 0; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--primary) var(--zg-ready, 0%), var(--zg-track) var(--zg-ready, 0%)); }
+.zg-ready b { order: 1; min-width: 27px; font-size: var(--zg-font-sm); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.zg-ready.full i { background: var(--zg-ok); }
+.zg-ready.zero b { color: var(--muted-foreground); font-weight: 400; }
+
+/* Отметки да/нет: ✓ зелёным, «—» светло-серым; по клику — переключение. */
+.zg-flag { display: block; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; font-size: 13px; line-height: 1; }
+.zg-flag.on { color: var(--zg-ok); font-weight: 700; }
+.zg-flag.off { color: var(--zg-flag-off); font-weight: 400; }
+.zg-flag:not(:disabled):hover { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.zg-flag:disabled { cursor: default; opacity: 1; }
+.zg-table td.zg-col-in_plan, .zg-table td.zg-col-kit_checked, .zg-table td.zg-col-kit_present, .zg-table td.zg-col-zkp,
+.zg-table td.zg-col-tc_ready, .zg-table td.zg-col-test_sb, .zg-table td.zg-col-kit_picked { padding: 0; }
+
+.zg-supplied { font-size: var(--zg-font-sm); font-weight: 700; }
 .zg-supplied.s-yes { color: var(--zg-ok); }
 .zg-supplied.s-part { color: var(--zg-soon); }
-.zg-supplied.s-no { color: var(--muted-foreground); font-weight: 400; }
-.zg-table input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--primary); cursor: pointer; vertical-align: middle; }
+.zg-supplied.s-no { color: var(--zg-flag-off); font-weight: 400; }
+/* Невидимый список поверх отметки: в ячейке короткое значение, в списке — полные слова. */
+select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.zg-col-customer_supplied:has(select.zg-overlay:hover) { outline: 1px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -1px; }
+.zg-arrival-stock { color: var(--muted-foreground); }
+.zg-arrival-wait { color: var(--zg-soon); font-weight: 600; }
+.zg-arrival-unknown { color: var(--zg-late); font-weight: 600; }
 .zg-days { text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
 .zg-table td.zg-days.late { background: var(--zg-late-bg); color: var(--zg-late); }
 .zg-table td.zg-days.soon { background: var(--zg-soon-bg); color: var(--zg-soon); }
 .zg-table td.zg-days.ok { background: var(--zg-ok-bg); color: var(--zg-ok); }
+.zg-col-deadline { font-variant-numeric: tabular-nums; }
 .zg-late-text { color: var(--zg-late); font-weight: 700; }
-.zg-table td.zg-day { position: relative; padding: 0; text-align: center; font-size: var(--zg-font-sm); font-weight: 700; color: #3a4250; overflow: visible; text-overflow: clip; }
-.zg-table td.zg-work { background: var(--zg-color); color: var(--primary-foreground); box-shadow: inset 0 4px 0 var(--card), inset 0 -4px 0 var(--card); border-right-color: transparent; }
-.zg-table td.zg-work.zg-off { background: color-mix(in srgb, var(--zg-color) 55%, white); box-shadow: inset 0 4px 0 var(--zg-off), inset 0 -4px 0 var(--zg-off); }
-.zg-table td.zg-work-end { border-right-color: var(--border); }
+
+/* Календарь: тонкая сетка, полоса работ цветом проекта со скруглёнными концами. */
+.zg-table td.zg-day { position: relative; padding: 0; border-right-color: var(--zg-grid); text-align: center; font-size: var(--zg-font-sm); font-weight: 700; color: #3a4250; overflow: visible; text-overflow: clip; }
+.zg-bar { position: absolute; top: 6px; bottom: 6px; left: 0; right: -1px; background: var(--zg-color); }
+.zg-off > .zg-bar { background: color-mix(in srgb, var(--zg-color) 50%, white); }
+.zg-work-start > .zg-bar { left: 2px; border-radius: 4px 0 0 4px; }
+.zg-work-end > .zg-bar { right: 2px; border-radius: 0 4px 4px 0; }
+.zg-work-start.zg-work-end > .zg-bar { border-radius: 4px; }
+.zg-day-text { position: relative; z-index: 1; padding: 0 2px; }
+.zg-work > .zg-day-text { color: var(--primary-foreground); }
+.zg-work-start > .zg-day-text { position: absolute; top: 0; bottom: 0; left: 4px; display: flex; align-items: center; }
 /* Сегодня: колонка календаря с рамкой и лёгкой заливкой, шапка — цветом бренда. */
 .zg-table td.zg-today { border-left: 1px solid var(--primary); border-right-color: var(--primary); background-image: linear-gradient(var(--zg-today-bg), var(--zg-today-bg)); }
-.zg-table thead th.zg-today { border-left: 1px solid var(--primary); border-right-color: var(--primary); background: var(--zg-today-head); color: var(--primary-foreground); }
-.zg-table thead th.zg-today span { color: var(--primary-foreground); }
+.zg-table thead th.zg-today { border-left: 1px solid var(--primary); border-right-color: var(--primary); }
 .zg-deadline::before { content: ""; position: absolute; top: 0; bottom: 0; right: -1px; width: 3px; background: var(--zg-late); z-index: 1; }
-.zg-arrival::after { content: ""; position: absolute; left: 2px; bottom: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--zg-arrival); box-shadow: 0 0 0 1.5px #fff; z-index: 1; }
-.zg-table td.zg-empty { height: var(--zg-row); padding: 0; color: var(--muted-foreground); text-align: left; overflow: visible; }
-.zg-empty-text { position: sticky; left: 0; display: inline-block; padding: 0 10px; line-height: var(--zg-row); }
+.zg-arrival::after { content: ""; position: absolute; left: 2px; bottom: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--zg-arrival); box-shadow: 0 0 0 1.5px #fff; z-index: 1; }
+.zg-table td.zg-empty { height: calc(var(--zg-row) + 8px); padding: 0; color: var(--muted-foreground); text-align: left; overflow: visible; border-bottom: 0; }
+.zg-empty-text { position: sticky; left: 0; display: inline-block; padding: 0 12px; line-height: calc(var(--zg-row) + 8px); }
+
 .zg-scrim { position: fixed; inset: 0; z-index: 40; }
 .zg-pop { position: fixed; z-index: 41; display: grid; gap: 8px; width: 290px; padding: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 26, 24, .18); font-size: 13px; }
 .zg-pop-head { display: flex; align-items: baseline; gap: 8px; }
@@ -1684,8 +2189,11 @@ select.zg-supplied:hover, select.zg-supplied:focus { outline: 1px solid color-mi
 .zg-status-pick .zg-chip.on { opacity: 1; box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 35%, transparent); }
 .zg-status-pick input { width: 12px; height: 12px; margin: 0; }
 @media (pointer: coarse) {
-  :root { --zg-row: 36px; --zg-head-h: 40px; --zg-day: 30px; }
-  .zg-table input[type="checkbox"] { width: 20px; height: 20px; }
+  :root { --zg-row: 40px; --zg-day: 30px; --zg-days-h: 34px; }
+  .zg-table .zg-project, .zg-table .zg-link { min-height: 0; }
+  .zg-bar { top: 9px; bottom: 9px; }
+  .zg-toolbar > input { height: 40px; }
+  .zg-toggle input { width: 20px; height: 20px; }
   .zg-pop button { min-height: 40px; }
 }
 
@@ -1699,6 +2207,7 @@ select.zg-supplied:hover, select.zg-supplied:focus { outline: 1px solid color-mi
 .ec-id { flex: 1; min-width: 0; }
 .ec-id h1 { margin: 0 0 2px; }
 .ec-sub { margin: 0; font-size: 14px; }
+.ec-access { margin: 1px 0 0; color: var(--muted-foreground); font-size: 12px; }
 .ec-meta { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 2px 18px; color: var(--muted-foreground); font-size: 13px; }
 .ec-meta strong { color: var(--foreground); font-weight: 600; }
 .ec-badge { flex: none; border-radius: 999px; padding: 4px 12px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-weight: 600; white-space: nowrap; }

@@ -12,7 +12,7 @@ from app.shared.http_auth import Principal
 from app.shared.identity import Actor
 from app.shared.events import AuditEvent
 from app.shared.clock import as_utc
-from app.shared.notifications import notification_requested, publish_notification
+from app.shared.notifications import TECHNOLOGIST_AUDIENCE, notification_requested, publish_notification
 
 from .domain import (
     ROLE_LABELS,
@@ -115,7 +115,7 @@ class IdentityRepository(Protocol):
     def add_user(
         self, user: IdentityUser, password_hash: str, role_access: dict[str, AccessMode], pin_hash: str | None = None,
     ) -> None: ...
-    def update_user(self, user: IdentityUser) -> None: ...
+    def update_user(self, user: IdentityUser, *, flags_as_given: bool = False) -> None: ...
     def personnel_number_owner(self, number: str) -> UUID | None: ...
     def user_history(self, user_id: UUID) -> int: ...
     def delete_user(self, user_id: UUID) -> None: ...
@@ -316,7 +316,7 @@ def _record_failure(
                 "Вход заблокирован до конца окна. Записи — в системном журнале."
             ),
             kind="security",
-            roles=("admin",),
+            audiences=(TECHNOLOGIST_AUDIENCE,),
         ))
     uow.commit()
 

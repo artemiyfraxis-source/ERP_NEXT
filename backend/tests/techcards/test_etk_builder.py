@@ -74,7 +74,7 @@ def test_720_etk_keeps_supplymap_codes_material_norms_times_and_final_product():
         "PRS_TERMINAL_auto", "INS_terminal_1.00",
     ]
     assert [item["norm"] for item in operations[0]["components"]] == ["175", "175"]
-    assert operations[0]["fields"]["cutTolerance"] == "(+/-)2мм"
+    assert operations[0]["fields"]["cutTolerance"] == "±3 мм"
     assert operations[0]["fields"]["lengthKd"] == "250мм"
     assert operations[2]["components"][0] == {
         "art": "Molex 39012140", "name": "Molex 39012140", "norm": "100", "unit": "Шт.",
@@ -376,6 +376,53 @@ def test_cut_crimp_and_tin_uses_the_erp_template_with_tin_defects_and_the_machin
     assert "Подрезка жил:" in defects
     assert "Опрессовка — " in defects
     assert "Лужение — " in defects
+    assert operation["fields"]["strip"] == {"a": True, "b": True, "lenA": "1,2", "lenB": "3"}
+    assert operation["fields"]["cutTolerance"] == "±3 мм"
+
+
+def _crimp_tin_config(op_strip: dict, **config: object) -> dict:
+    wire = {"name": "Силиконовый 28AWG черный", "art": "ПВ28", "qty": 2, "length": 104}
+    return {
+        "assemblyName": "Кабельная сборка", "partQty": 50, "wires": [wire], **config,
+        "ops": [{
+            "type": "cutWireCrimp", "opNum": "CUT_WIRE+1crimp+tin", "side": "A", "tin": True, "wires": [wire],
+            "strip": op_strip, "ep": {"connArt": "SHR-02V-S-B", "termArt": "SSH-003T-P0.2-H"},
+        }],
+    }
+
+
+def test_tinned_free_end_of_the_cut_crimp_takes_the_tin_strip_length():
+    # 719К.2 КБ1: лужёный конец В без своей длины у операции («B ?») — длина зачистки под лужение из конфигурации.
+    def strip_of(config: dict) -> dict:
+        return build_etk(config, CARDS, operation_library_commit="x")["operations"][0]["fields"]["strip"]
+
+    empty_b = {"a": True, "lenA": "1,2", "b": True, "lenB": ""}
+    assert strip_of(_crimp_tin_config(empty_b, strip={"a": True, "lenA": "1,2", "b": True, "lenB": "3"}))["lenB"] == "3"
+    assert strip_of(_crimp_tin_config(empty_b, tin={"enabled": True, "stripLen": "2,5"}))["lenB"] == "2,5"
+    # Конец В лудится всегда — он зачищен, даже если генератор не отметил зачистку.
+    no_b = {"a": True, "lenA": "1,2", "b": False, "lenB": ""}
+    assert strip_of(_crimp_tin_config(no_b, tin={"stripLen": "3"})) == {"a": True, "b": True, "lenA": "1,2", "lenB": "3"}
+    # Своя длина операции главнее; без лужения ничего не подставляется.
+    assert strip_of(_crimp_tin_config({**empty_b, "lenB": "4"}, tin={"stripLen": "3"}))["lenB"] == "4"
+    plain = _crimp_tin_config(empty_b, tin={"stripLen": "3"})
+    plain["ops"][0].pop("tin")
+    assert strip_of(plain)["lenB"] == ""
+    assert strip_of(_crimp_tin_config(empty_b))["lenB"] == ""
+
+
+@pytest.mark.parametrize(("length", "tolerance"), [
+    (104, "±3 мм"), (428, "±3 мм"), (429, "±4 мм"), (500, "±4 мм"), (501, "±5 мм"), (714, "±5 мм"), (715, "±6 мм"), (1300, "±10 мм"), (2000, "±14 мм"), (0, ""),
+])
+def test_cut_length_tolerance_is_at_least_3_mm_up_to_500_mm_and_5_mm_above_else_0_7_percent(length: int, tolerance: str):
+    config = _crimp_tin_config({"a": True, "lenA": "1,2", "b": True, "lenB": "3"})
+    config["ops"][0]["wires"][0]["length"] = length
+    assert build_etk(config, CARDS, operation_library_commit="x")["operations"][0]["fields"]["cutTolerance"] == tolerance
+
+
+def test_cut_length_tolerance_entered_by_hand_stays_as_entered():
+    config = _crimp_tin_config({"a": True, "lenA": "1,2", "b": True, "lenB": "3"})
+    config["ops"][0]["cutTolerance"] = "(+/-)1мм"
+    assert build_etk(config, CARDS, operation_library_commit="x")["operations"][0]["fields"]["cutTolerance"] == "(+/-)1мм"
 
 
 def test_cut_cards_list_the_measuring_tools_their_steps_use():

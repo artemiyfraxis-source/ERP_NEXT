@@ -27,8 +27,15 @@ from app.modules.procurement.domain import ProcurementStatus
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
 from app.modules.procurement.money import FactMoney
 from app.modules.production.application import LaunchProductionCommand, launch_production
-from app.modules.production.domain import OperationShare, ProductionOperation
-from app.modules.production.infrastructure import ProductionBoxRow, SqlAlchemyProductionUnitOfWork
+from app.modules.production.domain import OperationShare, ProductionOperation, ProductionValidationError
+from app.modules.production.infrastructure import ProductionBoxRow, ProductionPlanEventRow, SqlAlchemyProductionUnitOfWork
+from app.modules.production.plan import PlanEvent
+from app.modules.production.plan_application import (
+    AddPlanEventCommand,
+    DeleteProjectPlanEventsCommand,
+    add_plan_event,
+    delete_project_plan_events,
+)
 from app.modules.requests.application import CreateRequestsCommand, HandoffRequestsCommand, create_requests, handoff_requests
 from app.modules.requests.domain import RequestDraft, RequestStatus
 from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork
@@ -542,3 +549,130 @@ def test_cli_main_over_a_database_file(tmp_path, monkeypatch, capsys):
     with SqlAlchemyFulfillmentUnitOfWork(sessionmaker(bind=engine, class_=Session)) as uow:
         assert uow.fulfillment.get(kit.id) is None
     engine.dispose()
+
+
+# ── Журнал проекта в производственном плане: уходит с проектом (owner 04.10) ──
+
+CALC_URL = "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit"
+
+
+def _journal(state, project, kind="note", **fields):
+    """A row of the project's journal, as the card and the plan write it."""
+    return add_plan_event(AddPlanEventCommand(
+        project=project, kind=kind, blocker=fields.pop("blocker", ""), text=fields.pop("text", ""),
+        deadline=fields.pop("deadline", None), known_projects=(project,), actor=ACTOR, now=NOW, **fields,
+    ), state.production_uow_factory())
+
+
+def _journal_rows(state, project=None):
+    """{project as stored: number of rows}."""
+    with state.sessions() as session:
+        counts: dict[str, int] = {}
+        for name in session.scalars(select(ProductionPlanEventRow.project)):
+            if project is None or name == project:
+                counts[name] = counts.get(name, 0) + 1
+        return counts
+
+
+def _audit_events(state, event_type):
+    with state.sessions() as session:
+        return [row.details for row in session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == event_type))]
+
+
+def test_deleting_the_project_takes_its_journal_and_a_recreated_project_starts_clean(client, erp):
+    assert client.post("/api/techcards/kitsets/load", json={"url": CALC_URL}).status_code == 200
+    # «30.09 Проверка ТК · КБ1 · проверена», блокер и дедлайн — всё, что видно в карточке и плане.
+    assert client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ1", "kind": "tcReview", "value": "проверена"}).status_code == 200
+    assert client.post("/api/techcards/kitsets/708К.4/status", json={"action": "block", "value": "ХОЛД", "text": "ждём оплату"}).status_code == 200
+    assert client.post("/api/techcards/kitsets/708К.4/journal", json={"kind": "deadline", "deadline": "2026-10-20"}).status_code == 200
+    _journal(erp, "708К.4", "mark", field="comment", text="Отметка мастера")
+    # Соседи: «…41» и другой проект — в журнал удаляемого проекта не входят.
+    _journal(erp, "708К.41", "note", text="чужое")
+    _journal(erp, "709К.1", "block", blocker="СТОП", text="чужой блокер")
+    assert _journal_rows(erp, "708К.4") == {"708К.4": 4}
+    card = client.get("/api/techcards/kitsets/708К.4").json()
+    assert card["blocker"] == "ХОЛД" and card["deadline"] == "2026-10-20" and len(card["journal"]) == 4
+
+    deleted = client.delete("/api/techcards/kitsets/708К.4")
+
+    assert deleted.status_code == 200, deleted.text
+    res = deleted.json()["res"]
+    assert res["tails_error"] == ""
+    assert res["journal"] == {"deleted": 4}
+    assert res["tails"]["journal"] == {"deleted": 4, "kept": 0}
+    assert "4 записи журнала проекта" in res["tails"]["message"]
+    assert _journal_rows(erp) == {"708К.41": 1, "709К.1": 1}
+    assert _audit_events(erp, "production.plan_events_deleted") == [{"project": "708К.4", "events": 4, "reason": "project_deleted"}]
+
+    # Тот же номер заводят снова — журнал пустой: ни блокера, ни дедлайна, ни «Проверка ТК».
+    assert client.post("/api/techcards/kitsets/load", json={"url": CALC_URL}).status_code == 200
+    again = client.get("/api/techcards/kitsets/708К.4").json()
+    assert again["journal"] == []
+    assert again["blocker"] == "" and again["blocker_info"] is None and again["deadline"] is None
+    assert all(item["stage"]["manual"] is False for item in again["assemblies"])
+    assert _journal_rows(erp, "708К.4") == {}
+    # Повторное удаление уже пустого журнала: ничего не удаляет и аудит не пишет.
+    second = client.delete("/api/techcards/kitsets/708К.4").json()["res"]
+    assert second["journal"] == {"deleted": 0}
+    assert len(_audit_events(erp, "production.plan_events_deleted")) == 1
+
+
+def test_journal_is_matched_after_normalisation_and_nothing_else_goes(erp):
+    # Запись, сделанная до нормализации номера (латинская K), — тот же проект, что и «719К.2».
+    with erp.production_uow_factory() as uow:
+        uow.plan_events.add(PlanEvent(project="719K.2", occurred_at=NOW, who="Мастер", kind="Комментарий", text="старая запись"))
+        uow.commit()
+    _journal(erp, "719К.2", "note", text="новая")
+    _journal(erp, "719К.21", "note", text="сосед")
+    _journal(erp, "719К.1", "note", text="«719К» ≡ «719К.1», не «719К.2»")
+
+    removed = delete_project_plan_events(DeleteProjectPlanEventsCommand("719К.2", ACTOR, NOW), erp.production_uow_factory())
+
+    assert sorted(event.text for event in removed) == ["новая", "старая запись"]
+    assert _journal_rows(erp) == {"719К.21": 1, "719К.1": 1}
+    assert [item["events"] for item in _audit_events(erp, "production.plan_events_deleted")] == [2]
+    with pytest.raises(ProductionValidationError):
+        delete_project_plan_events(DeleteProjectPlanEventsCommand("  ", ACTOR, NOW), erp.production_uow_factory())
+
+    short = delete_project_plan_events(DeleteProjectPlanEventsCommand("719К", ACTOR, NOW), erp.production_uow_factory())
+    assert len(short) == 1 and _journal_rows(erp) == {"719К.21": 1}
+
+
+def test_cli_dry_run_lists_journal_rows_then_yes_removes(erp):
+    _journal(erp, "719К.2", "tcReview", item_index="КБ1", value="проверена", text="")
+    _journal(erp, "719К.2", "block", blocker="ХОЛД", text="ждём оплату")
+    _journal(erp, "719К.21", "note", text="сосед")
+    before = _journal_rows(erp)
+
+    text, code = cli.run(["719К.2"], erp, ACTOR, NOW, apply=False)
+
+    assert code == 0
+    assert _journal_rows(erp) == before
+    assert _audit_events(erp, "production.plan_events_deleted") == []
+    assert text == "\n".join([
+        "Проект 719К.2: Будет удалено: 2 записи журнала проекта.",
+        "  Журнал проекта в производственном плане:",
+        "    удалить: 04.10.2026 · Проверка ТК · КБ1 · проверена",
+        "    удалить: 04.10.2026 · Блокер · ждём оплату",
+        "Проверка без записи. Удалить — та же команда с --yes.",
+    ])
+
+    text, code = cli.run(["719К.2"], erp, ACTOR, NOW, apply=True)
+
+    assert code == 0
+    assert "Проект 719К.2: Удалено: 2 записи журнала проекта." in text
+    assert "    удалено: 04.10.2026 · Проверка ТК · КБ1 · проверена" in text and "Проверка без записи" not in text
+    assert _journal_rows(erp) == {"719К.21": 1}
+    assert _audit_events(erp, "production.plan_events_deleted") == [{"project": "719К.2", "events": 2, "reason": "project_deleted"}]
+    again, code = cli.run(["719К.2"], erp, ACTOR, NOW, apply=True)
+    assert code == 0 and "Удалять нечего" in again
+
+
+def test_cli_leaves_the_journal_of_a_project_that_still_has_a_card(client, erp):
+    client.post("/api/techcards/kitsets/load", json={"url": CALC_URL})
+    _journal(erp, "708К.4", "note", text="живой проект")
+
+    text, code = cli.run(["708К.4"], erp, ACTOR, NOW, apply=True)
+
+    assert code == 1 and "карточка ещё есть" in text
+    assert _journal_rows(erp, "708К.4") == {"708К.4": 1}

@@ -56,9 +56,11 @@ from app.modules.production.plan import (
 )
 from app.modules.production.plan_application import (
     AddPlanEventCommand,
+    DeleteProjectPlanEventsCommand,
     PlanUnitOfWork,
     ReplacePlanProjectsCommand,
     add_plan_event,
+    delete_project_plan_events,
     replace_plan_projects,
 )
 from app.modules.requests.application import (
@@ -731,9 +733,11 @@ def delete_kitset(
 ) -> dict[str, Any]:
     """The card goes everywhere at once: composition and spec, the registry row, issued techcards with their
     revisions, finished-goods rows without movement, and the project's tails that never moved
-    (`purge_project_tails`: tasks without work, kit requests without issue, purchase requests with their
-    procurement lines while nothing was ordered, invoiced or paid). Anything with movement stays and is named in
-    ``tails.kept``. КД stays too, as in
+    (`purge_project_tails`: the project's whole journal in the production plan — blockers, deadlines, «Проверка ТК»,
+    «Отметка плана», so a project created again under the number starts clean; tasks without work, kit requests
+    without issue, purchase requests with their procurement lines while nothing was ordered, invoiced or paid).
+    Anything with movement stays and is named in ``tails.kept``; ``journal.deleted`` counts the removed journal
+    rows. КД stays too, as in
     `tcKitsetDelete`: its register rows (with the files) outlive the card and show up again when the project is
     loaded from the calculation anew."""
     project = str(project or "").strip()
@@ -772,19 +776,22 @@ def delete_kitset(
     # сбой здесь не валит удаление, а возвращается текстом; добить можно командой purge_project_tails.
     tails: dict[str, Any] | None = None
     tails_error = ""
+    journal = {"deleted": 0}
     if fulfillment_uow is not None or production_uow is not None or requests_uow is not None:
         try:
-            tails = purge_project_tails(
+            purged = purge_project_tails(
                 kitset.project, actor, now, fulfillment_uow=fulfillment_uow, production_uow=production_uow,
                 requests_uow=requests_uow, procurement_uow=procurement_uow,
-            ).payload()
+            )
+            tails = purged.payload()
+            journal = {"deleted": purged.count(purged.deleted, TAIL_JOURNAL)}
         except Exception as error:  # noqa: BLE001 — карточка уже снесена, ответ должен дойти
             _log.exception("Хвосты проекта %s не удалены", kitset.project)
-            tails_error = f"Задания, запросы на комплектацию и заявки проекта не удалены: {error}"
+            tails_error = f"Журнал, задания, запросы на комплектацию и заявки проекта не удалены: {error}"
     return {
         "project": kitset.project, "deleted": lines, "erp": erp,
         "cards": {"cards": cards, "revisions": revisions}, "gp": gp,
-        "tails": tails, "tails_error": tails_error,
+        "journal": journal, "tails": tails, "tails_error": tails_error,
     }
 
 
@@ -795,12 +802,14 @@ TAIL_FULFILLMENT = "fulfillment"
 TAIL_PRODUCTION = "production"
 TAIL_REQUESTS = "requests"
 TAIL_PROCUREMENT = "procurement"
-TAIL_SECTIONS = (TAIL_FULFILLMENT, TAIL_PRODUCTION, TAIL_REQUESTS, TAIL_PROCUREMENT)
+TAIL_JOURNAL = "journal"
+TAIL_SECTIONS = (TAIL_FULFILLMENT, TAIL_PRODUCTION, TAIL_REQUESTS, TAIL_PROCUREMENT, TAIL_JOURNAL)
 _TAIL_NOUNS = {
     TAIL_FULFILLMENT: ("запрос на комплектацию", "запроса на комплектацию", "запросов на комплектацию"),
     TAIL_PRODUCTION: ("производственное задание", "производственных задания", "производственных заданий"),
     TAIL_REQUESTS: ("заявка на закупку", "заявки на закупку", "заявок на закупку"),
     TAIL_PROCUREMENT: ("строка закупки", "строки закупки", "строк закупки"),
+    TAIL_JOURNAL: ("запись журнала проекта", "записи журнала проекта", "записей журнала проекта"),
 }
 # Заявка, по которой уже везут или привезли, остаётся при любых строках закупки.
 _REQUEST_DELIVERED = frozenset({RequestStatus.IN_TRANSIT, RequestStatus.CLOSED})
@@ -845,7 +854,7 @@ class ProjectTails:
         ]
         verb = "Удалено" if self.applied else "Будет удалено"
         text = f"{verb}: {', '.join(removed)}" if removed else (
-            "Удалять нечего: заданий, запросов на комплектацию и заявок без движения нет"
+            "Удалять нечего: журнала, заданий, запросов на комплектацию и заявок без движения нет"
         )
         if self.freed:
             text += f"; резерв снят по {self.freed} {'строке' if self.freed % 10 == 1 and self.freed % 100 != 11 else 'строкам'}"
@@ -880,6 +889,16 @@ def _pages(read: Callable[[UUID | None], list], size: int = 500) -> list:
         after = page[-1].id
 
 
+def _journal_label(event: PlanEvent) -> str:
+    """One journal row as the card's «Журнал» shows it: «30.09.2026 · Проверка ТК · КБ1 · проверена»."""
+    text = " ".join(str(event.text or "").split())
+    parts = (
+        f"{event.occurred_at:%d.%m.%Y}", event.kind, event.item_index, event.value,
+        text if len(text) <= 60 else text[:59] + "…",
+    )
+    return " · ".join(part for part in parts if part)
+
+
 def request_matches_project(canon: str, request: Request) -> bool:
     """Заявка проекта — по № проекта, по цели или по обозначению «проект.NNN», как `project_request_count`."""
     return canon in (
@@ -899,6 +918,8 @@ def purge_project_tails(
 ) -> ProjectTails:
     """Tails of a deleted project that never moved go; anything with movement stays and is named with a reason.
 
+    The project's journal in the production plan goes whole — blockers, deadlines, comments, «Проверка ТК»,
+    «Отметка плана» — so a project created again under the same number does not show the old one (owner 04.10).
     Production tasks without recorded work (no box, session, output, defect, «взял/закончил») and not handed to a
     site whole; kit requests with nothing issued and not picked — their reserve goes back to the lot; purchase
     requests together with all their procurement lines while nothing moved there (`removal_blocker`: no supplier
@@ -913,6 +934,11 @@ def purge_project_tails(
     busy_requests: set[UUID] = set()
 
     if production_uow is not None:
+        # Журнал — первым: от него зависит, покажет ли заново заведённый проект старую историю; остальное может сорваться.
+        events = delete_project_plan_events(
+            DeleteProjectPlanEventsCommand(project=canon, actor=actor, now=now, apply=apply), production_uow(),
+        )
+        tails.deleted.extend(TailEntry(TAIL_JOURNAL, _journal_label(event)) for event in events)
         with production_uow() as uow:
             tasks = sorted((task for task in _pages(lambda after: uow.production.list(limit=500, after_id=after))
                             if normalize_project_number(task.project) == canon), key=lambda task: task.number)
@@ -1120,5 +1146,5 @@ __all__ = [
     "ChangeProjectStatusCommand", "change_project_status",
     "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
     "assembly_calc_ops", "generator_bom", "issue_from_kitset", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
-    "supply_rows", "ProjectTails", "TailEntry", "purge_project_tails", "request_matches_project", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
+    "supply_rows", "ProjectTails", "TailEntry", "TAIL_JOURNAL", "TAIL_SECTIONS", "purge_project_tails", "request_matches_project", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
 ]

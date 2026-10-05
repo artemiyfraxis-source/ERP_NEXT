@@ -135,7 +135,7 @@ it("resets hand-typed times to БД.ОП on the next form change, as renderOpsCa
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
 
   expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
-  const prep = () => screen.getAllByLabelText("Вр.подг, сек")[0];
+  const prep = () => screen.getAllByLabelText(/^Подготовка, сек: /)[0];
   await waitFor(() => expect(prep()).toHaveValue(30));
   fireEvent.change(prep(), { target: { value: "45" } });
   expect(prep()).toHaveValue(45);
