@@ -1,28 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  addBlock,
   addCustomOp,
+  addInput,
   addLibraryOp,
+  blockOrder,
   cardLabel,
   emptyManual,
   manualConfig,
   manualFromConfig,
   manualProblem,
   moveOp,
+  orderedOps,
+  removeBlock,
+  removeInput,
   removeOp,
-  setParallel,
-  setRoute,
+  renameBlock,
+  selectBlock,
   stepsPayload,
   toolingPayload,
   updateOp,
   type LibraryCard,
   type ManualState,
 } from "./manualLogic";
-import type { Route } from "./routeLogic";
 
 const CUT: LibraryCard = { id: "cut", code: "CUT_WIRE_hand", side: "", title: "CUT_WIRE_hand | Резка", name: "Резка", category: "Резка" };
 const CRIMP: LibraryCard = { id: "prsA", code: "PRS_TERMINAL_auto", side: "A", title: "PRS_TERMINAL_auto | Опрессовка терминалов (A)", name: "", category: "" };
+const TUT: LibraryCard = { id: "tut", code: "CUT_TUT_short", side: "", title: "CUT_TUT_short | Резка ТУТ", name: "Резка ТУТ", category: "Резка" };
+const HEAT: LibraryCard = { id: "heat", code: "HEAT_TYT_short", side: "", title: "HEAT_TYT_short | Усадка", name: "Усадка", category: "Усадка" };
 const OPS = [{ opNumber: "CUT_WIRE_hand", opName: "Резка", tPrep: "120", tOp: "6", tMachine: "" }];
 
+/** Все три операции — в итоговом блоке, по порядку: резка, своя «Пайка экрана», опрессовка. */
 function three(): ManualState {
   let state = addLibraryOp(emptyManual(), CUT, OPS);
   state = addCustomOp(state);
@@ -30,48 +38,115 @@ function three(): ManualState {
   return addLibraryOp(state, CRIMP, OPS);
 }
 
-const base = { assemblyIndex: "КБ1", assemblyName: "Провод", partQty: 10 };
+/** Две ветки в изделие: «Провод» (резка, опрессовка) и «Трубка» (резка ТУТ) → итог (усадка, контроль). */
+function twoBranches(): ManualState {
+  let state = addLibraryOp(emptyManual(), HEAT, OPS); // seq 1 — в итог
+  state = addBlock(state, "Провод"); // b2 → b1, выбран b2
+  state = addLibraryOp(state, CUT, OPS); // seq 2
+  state = addLibraryOp(state, CRIMP, OPS); // seq 3
+  state = selectBlock(state, "b1");
+  state = addBlock(state, "Трубка"); // b3 → b1
+  state = addLibraryOp(state, TUT, OPS); // seq 4
+  state = addCustomOp(state, "b1"); // seq 5 — в итог после усадки
+  return updateOp(state, 5, { label: "Контроль" });
+}
 
-describe("manual assembly list", () => {
-  it("names library cards in Russian with their side and takes the norms from БД.ОП", () => {
+const base = { assemblyIndex: "КБ1", assemblyName: "Провод", partQty: 10 };
+const order = (state: ManualState) => orderedOps(state).map((op) => op.label);
+
+describe("manual assembly: diagram first", () => {
+  it("starts with the final block only, selected", () => {
+    const state = emptyManual();
+    expect(state.blocks).toEqual([{ key: "b1", name: "", final: true, ops: [] }]);
+    expect(state.selected).toBe("b1");
+    expect(manualProblem(state)).toBe("Ручная сборка: добавьте хотя бы одну операцию — из библиотеки или свою.");
+  });
+
+  it("names library cards in Russian with their side, takes the norms from БД.ОП and adds into the selected block", () => {
     expect(cardLabel(CRIMP)).toBe("Опрессовка терминалов (А)");
     const state = three();
     expect(state.ops.map((op) => [op.seq, op.kind, op.label, op.prepMin, op.opSec])).toEqual([
       [1, "library", "Резка", "2", "6"], [2, "custom", "Пайка экрана", "", "45"], [3, "library", "Опрессовка терминалов (А)", "", ""],
     ]);
+    expect(state.blocks[0].ops).toEqual([1, 2, 3]);
     expect(state.nextSeq).toBe(4);
   });
 
-  it("keeps a hand-edited scheme on its operations through a reorder, a removal and an addition", () => {
-    // Резка и пайка — один блок, опрессовка — итог.
-    const merged: Route = {
-      blocks: [{ key: "b2", name: "Провод с лепестком", ops: [1, 2], final: false, components: [] }, { key: "b3", name: "", ops: [3], final: true, components: [] }],
-      edges: [{ from: "b2", to: "b3", per_unit: 2 }],
-    };
-    let state = setRoute(three(), merged);
-    state = moveOp(state, 3, -1); // опрессовка — второй в списке, блоки при своих операциях
-    expect(state.route?.blocks.map((block) => [block.key, block.ops, block.final])).toEqual([["b2", [1, 3], false], ["b3", [2], true]]);
-    state = removeOp(state, 1); // резка ушла из блока, блок остался с пайкой
-    expect(state.route?.blocks.map((block) => [block.key, block.ops])).toEqual([["b3", [1]], ["b2", [2]]]);
-    expect(state.route?.edges).toEqual([{ from: "b2", to: "b3", per_unit: 2 }]);
-    state = addCustomOp(state); // новая — новым итоговым блоком после прежнего итога
-    expect(state.route?.blocks.map((block) => [block.key, block.ops, block.final])).toEqual([["b3", [1], false], ["b2", [2], false], ["b4", [3], true]]);
-    expect(state.route?.edges).toEqual([{ from: "b2", to: "b3", per_unit: 2 }, { from: "b3", to: "b4", per_unit: 1 }]);
-    expect(state.notice).toBe("");
+  it("adds a block feeding the selected block, selects it and puts the next operations into it", () => {
+    let state = addBlock(three(), "Заготовка");
+    expect(state.blocks.map((block) => block.key)).toEqual(["b1", "b2"]);
+    expect(state.edges).toEqual([{ from: "b2", to: "b1", per_unit: 1 }]);
+    expect(state.selected).toBe("b2");
+    state = addLibraryOp(state, TUT, OPS);
+    expect(state.blocks[1].ops).toEqual([4]);
+    // Блок-вход идёт раньше итога: резка ТУТ — операция 1.
+    expect(order(state)).toEqual(["Резка ТУТ", "Резка", "Пайка экрана", "Опрессовка терминалов (А)"]);
   });
 
-  it("drops the hand edits it cannot carry over and says so", () => {
-    // Итог с двумя входами: убрать его — схема не сходится, снова цепочка.
-    const route: Route = {
-      blocks: [{ key: "b1", name: "", ops: [1], final: false, components: [] }, { key: "b2", name: "", ops: [2], final: false, components: [] }, { key: "b3", name: "", ops: [3], final: true, components: [] }],
-      edges: [{ from: "b1", to: "b3", per_unit: 1 }, { from: "b2", to: "b3", per_unit: 1 }],
-    };
-    const state = removeOp(setRoute(three(), route), 3);
-    expect(state.route).toBeNull();
-    expect(state.notice).toMatch(/схема снова цепочкой по списку/);
+  it("numbers operations by the diagram: inputs before consumers, ties by block creation order, then the order in a block", () => {
+    const state = twoBranches();
+    expect(blockOrder(state)).toEqual(["b2", "b3", "b1"]);
+    expect(order(state)).toEqual(["Резка", "Опрессовка терминалов (А)", "Резка ТУТ", "Усадка", "Контроль"]);
+    // «Зачистка» — вход «Провода», создана последней: «Трубка» готова раньше и создана раньше — идёт первой.
+    let deeper = addBlock(selectBlock(state, "b2"), "Зачистка");
+    deeper = addCustomOp(deeper);
+    deeper = updateOp(deeper, 6, { label: "Зачистка" });
+    expect(blockOrder(deeper)).toEqual(["b3", "b4", "b2", "b1"]);
+    expect(order(deeper)).toEqual(["Резка ТУТ", "Зачистка", "Резка", "Опрессовка терминалов (А)", "Усадка", "Контроль"]);
   });
 
-  it("builds the payload: seconds, own steps with controls, tooling by section, the chain scheme with block components", () => {
+  it("moves an operation only inside its block and removes it from its block", () => {
+    let state = moveOp(twoBranches(), 3, -1);
+    expect(order(state).slice(0, 2)).toEqual(["Опрессовка терминалов (А)", "Резка"]);
+    expect(moveOp(state, 3, -1)).toEqual(state); // уже первая в блоке
+    state = removeOp(state, 3);
+    expect(state.blocks.find((block) => block.key === "b2")?.ops).toEqual([2]);
+    expect(state.ops.some((op) => op.seq === 3)).toBe(false);
+  });
+
+  it("deletes a block with its operations, hands its inputs to its consumer and keeps the final block", () => {
+    let state = addBlock(selectBlock(twoBranches(), "b2"), "Зачистка"); // b4 → b2
+    state = addCustomOp(state);
+    state = { ...state, edges: state.edges.map((edge) => (edge.from === "b4" ? { ...edge, per_unit: 2 } : edge.from === "b2" ? { ...edge, per_unit: 3 } : edge)) };
+    const removed = removeBlock(state, "b2");
+    expect(removed.blocks.map((block) => block.key)).toEqual(["b1", "b3", "b4"]);
+    expect(removed.ops.map((op) => op.seq)).toEqual([1, 4, 5, 6]);
+    expect(removed.edges).toEqual([{ from: "b3", to: "b1", per_unit: 1 }, { from: "b4", to: "b1", per_unit: 6 }]);
+    expect(removeBlock(removed, "b1")).toBe(removed);
+    // Удалён выбранный блок — выбран тот, что он питал.
+    expect(removeBlock(selectBlock(state, "b2"), "b2").selected).toBe("b1");
+  });
+
+  it("edits inputs only so that the diagram stays a tree into the product", () => {
+    const state = twoBranches();
+    const cycle = addInput(state, "b2", "b3"); // «Провод» → «Трубка»: можно, обе дальше идут в итог
+    expect(cycle.problem).toBeNull();
+    expect(cycle.state.edges).toContainEqual({ from: "b2", to: "b3", per_unit: 1 });
+    const back = addInput(cycle.state, "b3", "b2");
+    expect(back.problem).toMatch(/схема зациклена/);
+    expect(back.state).toBe(cycle.state);
+    const lost = removeInput(state, "b3", "b1");
+    expect(lost.problem).toBe("блок «Трубка» не доходит до итогового блока");
+    expect(removeInput(cycle.state, "b2", "b3").problem).toBeNull();
+  });
+
+  it("will not build an empty block and says which one", () => {
+    const state = addBlock(three(), "Трубка");
+    expect(manualProblem(state)).toBe("Ручная сборка: блок «Трубка» без операций — добавьте операцию или удалите блок.");
+    expect(manualProblem(renameBlock(state, "b2", ""))).toBe("Ручная сборка: блок «Блок 2» без операций — добавьте операцию или удалите блок.");
+    expect(manualProblem(addCustomOp(updateOp(state, 2, {}), "b2"))).toBe("Ручная сборка: операция 1 — укажите название своей операции.");
+  });
+
+  it("says in Russian what keeps the operations from being built, numbered by the diagram", () => {
+    const state = three();
+    expect(manualProblem(state)).toBeNull();
+    expect(manualProblem(updateOp(state, 2, { label: " " }))).toBe("Ручная сборка: операция 2 — укажите название своей операции.");
+    expect(manualProblem(updateOp(state, 1, { opSec: "шесть" }))).toBe("Ручная сборка: операция 1 «Резка» — время на штуку должно быть числом секунд не меньше нуля.");
+    expect(manualProblem(updateOp(state, 1, { prepMin: "-1" }))).toBe("Ручная сборка: операция 1 «Резка» — подготовка должна быть числом минут не меньше нуля.");
+    expect(manualProblem(updateOp(state, 3, { qty: "0" }))).toBe("Ручная сборка: операция 3 «Опрессовка терминалов (А)» — количество на изделие должно быть числом больше нуля.");
+  });
+
+  it("builds the payload: seconds, own steps with controls, tooling by section, one final block", () => {
     let state = three();
     state = updateOp(state, 1, { prepMin: "2,5", qty: "2", components: [{ id: "kit-0", art: "МГТФ 0,35", name: "МГТФ", qty: "0,6", unit: "М." }] });
     state = updateOp(state, 2, {
@@ -94,71 +169,95 @@ describe("manual assembly list", () => {
       { section: "Инструмент", name: "Пинцет" }, { section: "Оборудование", name: "паяльная станция" }, { section: "Расходники", name: "припой" },
     ]);
     expect(ops[2]).toMatchObject({ type: "libraryOp", side: "A", label: "Опрессовка терминалов (А)" });
+    expect(ops.some((op) => "parallel" in op)).toBe(false);
+    expect(config.route).toEqual({
+      blocks: [{ key: "b1", ops: [1, 2, 3], final: true, components: [{ id: "kit-0", art: "МГТФ 0,35", name: "МГТФ", qty: "0.6" }] }],
+      edges: [],
+    });
+  });
+
+  it("sends a two-branch diagram: ops in diagram order, blocks by positions, components on their blocks", () => {
+    let state = twoBranches();
+    state = updateOp(state, 4, { components: [{ id: "kit-2", art: "ТУТ 3/1,5", name: "Трубка", qty: "0,04", unit: "М." }] });
+    state = { ...state, edges: state.edges.map((edge) => (edge.from === "b3" ? { ...edge, per_unit: 2 } : edge)) };
+    const config = manualConfig(state, base);
+    expect((config.ops as Array<Record<string, unknown>>).map((op) => [op.seq, op.label])).toEqual([
+      [2, "Резка"], [3, "Опрессовка терминалов (А)"], [4, "Резка ТУТ"], [1, "Усадка"], [5, "Контроль"],
+    ]);
     expect(config.route).toEqual({
       blocks: [
-        { key: "b1", ops: [1], final: false, components: [{ id: "kit-0", art: "МГТФ 0,35", name: "МГТФ", qty: "0.6" }] },
-        { key: "b2", ops: [2], final: false }, { key: "b3", ops: [3], final: true },
+        { key: "b2", name: "Провод", ops: [1, 2], final: false },
+        { key: "b3", name: "Трубка", ops: [3], final: false, components: [{ id: "kit-2", art: "ТУТ 3/1,5", name: "Трубка", qty: "0.04" }] },
+        { key: "b1", ops: [4, 5], final: true },
       ],
-      edges: [{ from: "b1", to: "b2", per_unit: 1 }, { from: "b2", to: "b3", per_unit: 1 }],
+      edges: [{ from: "b2", to: "b1", per_unit: 1 }, { from: "b3", to: "b1", per_unit: 2 }],
     });
+    expect(manualProblem(state, "Провод")).toBeNull();
   });
 
-  it("comes back from the saved build config with the same list, numbers and hand-edited scheme", () => {
-    let state = updateOp(three(), 2, { steps: "Зачистить", controls: "Пайка | IPC", tooling: "Оборудование: станция", prepMin: "5" });
-    state = setRoute(state, {
-      blocks: [{ key: "b1", name: "Заготовка", ops: [1, 2], final: false, components: [] }, { key: "b3", name: "", ops: [3], final: true, components: [] }],
-      edges: [{ from: "b1", to: "b3", per_unit: 3 }],
-    });
-    const restored = manualFromConfig(manualConfig(state, base));
-    expect(restored?.ops).toEqual(state.ops);
-    expect(restored?.nextSeq).toBe(4);
-    expect(restored?.route).toEqual(state.route);
-    // Без правок схема — цепочка, ручной не считается.
-    expect(manualFromConfig(manualConfig(three(), base))?.route).toBeNull();
+  it("comes back from its own payload with the same blocks, operations and numbers", () => {
+    let state = updateOp(twoBranches(), 5, { steps: "Осмотреть", controls: "Пайка | IPC", tooling: "Оборудование: лупа", prepMin: "5" });
+    state = { ...state, edges: state.edges.map((edge) => (edge.from === "b3" ? { ...edge, per_unit: 2 } : edge)) };
+    const restored = manualFromConfig(manualConfig(state, base))!;
+    expect(order(restored)).toEqual(order(state));
+    expect(orderedOps(restored)).toEqual(orderedOps(state));
+    expect(restored.nextSeq).toBe(6);
+    expect(restored.blocks.map((block) => [block.key, block.name, block.final, block.ops])).toEqual([
+      ["b2", "Провод", false, [2, 3]], ["b3", "Трубка", false, [4]], ["b1", "", true, [1, 5]],
+    ]);
+    expect(restored.edges).toEqual([{ from: "b2", to: "b1", per_unit: 1 }, { from: "b3", to: "b1", per_unit: 2 }]);
+    expect(restored.selected).toBe("b1");
+    expect(manualConfig(restored, base)).toEqual(manualConfig(state, base));
+    expect(stepsPayload(restored.ops.find((op) => op.seq === 5)!)).toHaveLength(2);
+    expect(toolingPayload(restored.ops.find((op) => op.seq === 5)!)).toEqual([{ section: "Оборудование", name: "лупа" }]);
     expect(manualFromConfig({ ops: [] })).toBeNull();
-    expect(stepsPayload(state.ops[1])).toHaveLength(2);
-    expect(toolingPayload(state.ops[1])).toEqual([{ section: "Оборудование", name: "станция" }]);
   });
 
-  it("says in Russian what keeps the list from being built", () => {
-    expect(manualProblem(emptyManual())).toBe("Ручная сборка: добавьте хотя бы одну операцию — из библиотеки или свою.");
-    const state = three();
-    expect(manualProblem(state)).toBeNull();
-    expect(manualProblem(updateOp(state, 2, { label: " " }))).toBe("Ручная сборка: операция 2 — укажите название своей операции.");
-    expect(manualProblem(updateOp(state, 1, { opSec: "шесть" }))).toBe("Ручная сборка: операция 1 «Резка» — время на штуку должно быть числом секунд не меньше нуля.");
-    expect(manualProblem(updateOp(state, 1, { prepMin: "-1" }))).toBe("Ручная сборка: операция 1 «Резка» — подготовка должна быть числом минут не меньше нуля.");
-    expect(manualProblem(updateOp(state, 3, { qty: "0" }))).toBe("Ручная сборка: операция 3 «Опрессовка терминалов (А)» — количество на изделие должно быть числом больше нуля.");
+  it("loads an old list without a scheme as a chain of blocks, one per operation", () => {
+    const old = {
+      mode: "manual", partQty: 10,
+      ops: [
+        { type: "libraryOp", templateId: "cut", opNum: "CUT_WIRE_hand", seq: 4, label: "Резка", qty: "1", tPrep: "120", tOp: "6" },
+        { type: "customOp", seq: 7, label: "Пайка", qty: "1", tPrep: "", tOp: "45", steps: [], tooling: [] },
+      ],
+    };
+    const state = manualFromConfig(old)!;
+    expect(state.blocks).toEqual([{ key: "b1", name: "", final: false, ops: [4] }, { key: "b2", name: "", final: true, ops: [7] }]);
+    expect(state.edges).toEqual([{ from: "b1", to: "b2", per_unit: 1 }]);
+    expect(state.selected).toBe("b2");
+    expect(order(state)).toEqual(["Резка", "Пайка"]);
+    // Схема, которая не сходится со списком, — тоже цепочкой.
+    expect(manualFromConfig({ ...old, route: { blocks: [{ key: "x", ops: [1], final: true }], edges: [] } })!.blocks).toHaveLength(2);
   });
 
-  it("puts operations marked «одновременно с предыдущей» on their own branches and joins them in the next operation", () => {
-    // Резка, затем пайка и опрессовка одновременно, затем контроль — собирает обе ветки.
-    let state = addCustomOp(three());
-    state = updateOp(state, 4, { label: "Контроль" });
-    state = setParallel(state, 3, true);
-    const config = manualConfig(state, base);
-    expect((config.ops as Array<Record<string, unknown>>).map((op) => op.parallel ?? false)).toEqual([false, false, true, false]);
-    expect(config.route).toEqual({
-      blocks: [{ key: "b1", ops: [1], final: false }, { key: "b2", ops: [2], final: false }, { key: "b3", ops: [3], final: false }, { key: "b4", ops: [4], final: true }],
-      edges: [{ from: "b1", to: "b2", per_unit: 1 }, { from: "b2", to: "b4", per_unit: 1 }, { from: "b3", to: "b4", per_unit: 1 }],
-    });
-    // Сохранённая схема с ветками — не ручная правка: при открытии снова «по списку», флаг на месте.
-    const restored = manualFromConfig(config);
-    expect(restored?.ops.map((op) => op.parallel)).toEqual([false, false, true, false]);
-    expect(restored?.route).toBeNull();
-    // У первой операции флаг не действует.
-    expect((manualConfig(setParallel(three(), 1, true), base).ops as Array<Record<string, unknown>>)[0].parallel).toBeUndefined();
+  it("turns old «одновременно с предыдущей» flags into branches that the next operation joins", () => {
+    const old = {
+      mode: "manual", partQty: 10,
+      ops: [
+        { type: "libraryOp", templateId: "cut", opNum: "CUT_WIRE_hand", seq: 1, label: "Резка", qty: "1" },
+        { type: "customOp", seq: 2, label: "Пайка", qty: "1", steps: [], tooling: [] },
+        { type: "libraryOp", templateId: "heat", opNum: "HEAT_TYT_short", seq: 3, label: "Усадка", qty: "1", parallel: true },
+        { type: "customOp", seq: 4, label: "Контроль", qty: "1", steps: [], tooling: [] },
+      ],
+    };
+    const state = manualFromConfig(old)!;
+    expect(state.edges).toEqual([{ from: "b1", to: "b2", per_unit: 1 }, { from: "b2", to: "b4", per_unit: 1 }, { from: "b3", to: "b4", per_unit: 1 }]);
+    expect(order(state)).toEqual(["Резка", "Пайка", "Усадка", "Контроль"]);
+    expect(state.ops.some((op) => "parallel" in op)).toBe(false);
+    expect((manualConfig(state, base).ops as Array<Record<string, unknown>>).some((op) => "parallel" in op)).toBe(false);
   });
 
-  it("will not end the list with a simultaneous operation and resets a hand-edited scheme when the flag changes", () => {
-    const state = setParallel(three(), 3, true);
-    expect(manualProblem(state)).toBe("Ручная сборка: операция 3 «Опрессовка терминалов (А)» идёт одновременно с предыдущей и завершает список — "
-      + "добавьте после одновременных операций итоговую (например, контроль), которая соберёт их результат.");
-    const edited = setRoute(three(), {
-      blocks: [{ key: "b1", name: "", ops: [1, 2], final: false, components: [] }, { key: "b3", name: "", ops: [3], final: true, components: [] }],
-      edges: [{ from: "b1", to: "b3", per_unit: 1 }],
-    });
-    const reset = setParallel(edited, 2, true);
-    expect(reset.route).toBeNull();
-    expect(reset.notice).toMatch(/схема снова по списку/);
+  it("loads a saved hand-edited scheme as its blocks", () => {
+    const saved = {
+      mode: "manual", partQty: 10,
+      ops: [
+        { type: "libraryOp", templateId: "cut", opNum: "CUT_WIRE_hand", seq: 4, label: "Резка", qty: "1" },
+        { type: "customOp", seq: 7, label: "Пайка экрана", qty: "1", steps: [], tooling: [] },
+      ],
+      route: { blocks: [{ key: "b1", name: "Провод с лепестком", ops: [1, 2], final: true }], edges: [] },
+    };
+    const state = manualFromConfig(saved)!;
+    expect(state.blocks).toEqual([{ key: "b1", name: "Провод с лепестком", final: true, ops: [4, 7] }]);
+    expect(manualConfig(state, base).route).toEqual(saved.route);
   });
 });

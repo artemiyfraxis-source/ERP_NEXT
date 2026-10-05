@@ -1,12 +1,14 @@
-/* «Ручная сборка» (владелец 04.10) — четвёртый режим генератора для кастомных и нетиповых проводов: технолог сам
-   набирает список операций — карточки из библиотеки и свои (название, норма, ход операции, контроль с допуском,
-   оснастка), а схема полуфабрикатов из них — по блоку на операцию цепочкой (отмеченные «одновременно с предыдущей» —
-   параллельными ветками), правится как обычно и уходит на сервер
-   всегда как ручная (`build_config.route`), чтобы производство шло по ней. Сервер — `etk_builder._build_manual`. */
+/* «Ручная сборка» (владелец 04.10, схема-первой — 05.10: «собрать просто блок схему и из нее вести порядок и привязывать
+   операции к блокам») — четвёртый режим генератора для кастомных и нетиповых проводов. Технолог рисует схему сборки:
+   итоговый блок (изделие) и блоки-полуфабрикаты, которые в него входят, и кладёт в каждый блок операции — карточки из
+   библиотеки и свои (название, норма, ход операции, контроль с допуском, оснастка). Номера операций — по схеме: сначала
+   блоки-входы, потом те, что их берут (при равенстве — в порядке создания блоков), внутри блока — по порядку в блоке.
+   На сервер схема уходит всегда как ручная (`build_config.route`), чтобы производство шло по ней. Сервер —
+   `etk_builder._build_manual`. */
 
 import type { OperationCardSummary } from "./api";
 import { recordCategory } from "./etkOperation";
-import { parseRoute, routePayload, routeProblem, type Route, type RouteBlock, type RouteOp } from "./routeLogic";
+import { addEdge, blockTitle, parseRoute, removeEdge, routePayload, routeProblem, type Route, type RouteEdge, type RouteOp } from "./routeLogic";
 import type { Comp, OpRec } from "./tcGenLogic";
 
 export const MANUAL_MODE = "manual";
@@ -45,15 +47,7 @@ export type ManualOp = {
   /** Своя операция: оснастка строкой, «Оборудование: …» / «Расходники: …», без раздела — инструмент. */
   tooling: string;
   components: ManualComponent[];
-  /** «Одновременно с предыдущей» (владелец 05.10): операция идёт в то же время, что и предыдущая, — начинает свою ветку
-      схемы без входа от неё; следующая обычная операция забирает все ветки. У первой операции не действует. */
-  parallel: boolean;
 };
-
-/** route: ручная правка схемы (null — цепочка по списку); notice — почему правки схемы сброшены. */
-export type ManualState = { ops: ManualOp[]; nextSeq: number; route: Route | null; notice: string };
-
-export const emptyManual = (): ManualState => ({ ops: [], nextSeq: 1, route: null, notice: "" });
 
 const SIDES: Record<string, string> = { A: "А", B: "В", "А": "А", "В": "В" };
 
@@ -94,7 +88,7 @@ export function cardNorms(card: LibraryCard, opRecs: OpRec[]): { prep: number; o
 function blank(seq: number): ManualOp {
   return {
     seq, kind: "custom", templateId: "", code: "", side: "", label: "", qty: "1", prepMin: "", opSec: "",
-    params: "", note: "", result: "", steps: "", controls: "", tooling: "", components: [], parallel: false,
+    params: "", note: "", result: "", steps: "", controls: "", tooling: "", components: [],
   };
 }
 
@@ -106,62 +100,190 @@ export function libraryOp(seq: number, card: LibraryCard, opRecs: OpRec[]): Manu
   };
 }
 
-const freeKey = (blocks: RouteBlock[]) => `b${Math.max(0, ...blocks.map((block) => Number(/^b(\d+)$/.exec(block.key)?.[1] ?? 0))) + 1}`;
+/** Блок схемы ручной сборки: свои операции (по seq, в порядке внутри блока). Итоговый — изделие, он один. */
+export type ManualBlock = { key: string; name: string; final: boolean; ops: number[] };
 
-function sortBlocks(route: Route): Route {
-  const first = (block: RouteBlock) => (block.ops.length ? Math.min(...block.ops) : 0);
+/** Операции (по seq, порядок массива не важен — номера даёт схема), блоки в порядке создания, стрелки и выбранный блок. */
+export type ManualState = { ops: ManualOp[]; nextSeq: number; blocks: ManualBlock[]; edges: RouteEdge[]; selected: string };
+
+const FINAL_KEY = "b1";
+
+export const emptyManual = (): ManualState => ({
+  ops: [], nextSeq: 1, blocks: [{ key: FINAL_KEY, name: "", final: true, ops: [] }], edges: [], selected: FINAL_KEY,
+});
+
+const freeKey = (blocks: ManualBlock[]) => `b${Math.max(0, ...blocks.map((block) => Number(/^b(\d+)$/.exec(block.key)?.[1] ?? 0))) + 1}`;
+
+/** Порядок блоков: блок идёт после всех своих входов; из готовых — тот, что создан раньше. */
+export function blockOrder(state: Pick<ManualState, "blocks" | "edges">): string[] {
+  const index = new Map(state.blocks.map((block, place) => [block.key, place]));
+  const waiting = new Map(state.blocks.map((block) => [block.key, 0]));
+  state.edges.forEach((edge) => waiting.set(edge.to, (waiting.get(edge.to) ?? 0) + 1));
+  const ready = state.blocks.filter((block) => !waiting.get(block.key)).map((block) => block.key);
+  const order: string[] = [];
+  while (ready.length) {
+    ready.sort((a, b) => index.get(a)! - index.get(b)!);
+    const key = ready.shift()!;
+    order.push(key);
+    state.edges.filter((edge) => edge.from === key).forEach((edge) => {
+      waiting.set(edge.to, (waiting.get(edge.to) ?? 0) - 1);
+      if (!waiting.get(edge.to)) ready.push(edge.to);
+    });
+  }
+  // Цикла быть не может (стрелки проверяются при правке); если он есть — оставшиеся блоки по порядку создания.
+  return order.concat(state.blocks.map((block) => block.key).filter((key) => !order.includes(key)));
+}
+
+/** Операции в порядке номеров: блоки по схеме, внутри блока — по порядку в нём. */
+export function orderedOps(state: ManualState): ManualOp[] {
+  const bySeq = new Map(state.ops.map((op) => [op.seq, op]));
+  const byKey = new Map(state.blocks.map((block) => [block.key, block]));
+  return blockOrder(state).flatMap((key) => byKey.get(key)!.ops.map((seq) => bySeq.get(seq)).filter((op): op is ManualOp => !!op));
+}
+
+/** Номер операции (1..N) по её seq. */
+export function opPositions(state: ManualState): Map<number, number> {
+  return new Map(orderedOps(state).map((op, index) => [op.seq, index + 1]));
+}
+
+/** Норма операции, минут на партию: подготовка + сек/шт × на изделие × партия (как сервер). */
+export function opMinutes(op: ManualOp, partQty: number): number {
+  const ok = (value: number | null, fallback: number) => (value == null || Number.isNaN(value) || value < 0 ? fallback : value);
+  const batch = partQty > 0 ? partQty : 1;
+  return (ok(num(op.prepMin), 0) * 60 + ok(num(op.opSec), 0) * ok(num(op.qty), 1) * batch) / 60;
+}
+
+export function opTitle(op: ManualOp, position: number): string {
+  return op.label.trim() || (op.kind === "custom" ? "Своя операция" : `Операция ${position}`);
+}
+
+/** Операции для схемы (в порядке номеров): номер, название, норма — из полей формы. */
+export function routeOps(ops: ManualOp[], partQty: number): RouteOp[] {
+  return ops.map((op, index) => ({
+    position: index + 1, key: String(op.seq), type: op.kind === "library" ? LIBRARY_OP : CUSTOM_OP, code: op.code,
+    label: opTitle(op, index + 1), minutes: opMinutes(op, partQty), number: index + 1,
+  }));
+}
+
+/** Схема в номерах операций (то, что рисуется и уходит на сервер) и операции для неё. Блок без операций — с пустым списком. */
+export function manualRoute(state: ManualState, partQty: number): { route: Route; ops: RouteOp[] } {
+  const ordered = orderedOps(state);
+  const position = new Map(ordered.map((op, index) => [op.seq, index + 1]));
   return {
-    blocks: route.blocks.map((block) => ({ ...block, ops: [...block.ops].sort((a, b) => a - b) }))
-      .sort((a, b) => first(a) - first(b) || a.key.localeCompare(b.key)),
-    edges: route.edges,
+    route: {
+      blocks: state.blocks.map((block) => ({
+        key: block.key, name: block.name, final: block.final, components: [],
+        ops: block.ops.map((seq) => position.get(seq)).filter((value): value is number => !!value),
+      })),
+      edges: state.edges.map((edge) => ({ ...edge })),
+    },
+    ops: routeOps(ordered, partQty),
   };
 }
 
-/** Схема, правленная под старый список, — под новый: операции в блоках идут за своей операцией (по seq); блок, оставшийся
-    без операций, убирается, его входы переходят к его выходам; новая операция — новым итоговым блоком после прежнего.
-    Не сходится — null (цепочка по списку). */
-function remapRoute(route: Route | null, before: ManualOp[], after: ManualOp[]): { route: Route | null; reset: boolean } {
-  if (!route) return { route: null, reset: false };
-  const position = new Map(after.map((op, index) => [op.seq, index + 1]));
-  let blocks: RouteBlock[] = route.blocks.map((block) => ({
-    ...block, ops: block.ops.map((pos) => position.get(before[pos - 1]?.seq ?? -1)).filter((pos): pos is number => !!pos),
-  }));
-  let edges = route.edges.map((edge) => ({ ...edge }));
-  for (const gone of blocks.filter((block) => !block.ops.length)) {
-    const ins = edges.filter((edge) => edge.to === gone.key), outs = edges.filter((edge) => edge.from === gone.key);
-    edges = edges.filter((edge) => edge.to !== gone.key && edge.from !== gone.key);
-    ins.forEach((input) => outs.forEach((output) => {
-      const same = edges.find((edge) => edge.from === input.from && edge.to === output.to);
-      if (same) same.per_unit += input.per_unit * output.per_unit;
-      else edges.push({ from: input.from, to: output.to, per_unit: input.per_unit * output.per_unit });
-    }));
-    blocks = blocks.filter((block) => block.key !== gone.key);
-    if (gone.final && ins.length === 1) blocks = blocks.map((block) => (block.key === ins[0].from ? { ...block, final: true } : block));
-  }
-  const covered = new Set(blocks.flatMap((block) => block.ops));
-  after.forEach((_, index) => {
-    if (covered.has(index + 1)) return;
-    const previous = blocks.find((block) => block.final);
-    const key = freeKey(blocks);
-    blocks = blocks.map((block) => (block.final ? { ...block, final: false } : block)).concat({ key, name: "", ops: [index + 1], final: true, components: [] });
-    if (previous) edges.push({ from: previous.key, to: key, per_unit: 1 });
+/** Название блока на экране: своё; итоговый — наименование изделия; иначе — по последней операции, пустой — «Блок N». */
+export function manualBlockTitle(state: ManualState, key: string, finalName = ""): string {
+  const { route, ops } = manualRoute(state, 1);
+  const block = route.blocks.find((item) => item.key === key);
+  return block ? blockTitle(block, ops, finalName) : key;
+}
+
+/** Что не так со стрелками (цикл, блок не доходит до изделия, …); пустые блоки здесь не мешают — их ловит manualProblem. */
+function edgeProblem(state: ManualState, finalName = ""): string | null {
+  const { route, ops } = manualRoute(state, 1);
+  // Пустому блоку — временная операция с его названием, чтобы проверка схемы смотрела только на стрелки.
+  const extra: RouteOp[] = [];
+  const blocks = route.blocks.map((block) => {
+    if (block.ops.length) return block;
+    const position = ops.length + extra.length + 1;
+    extra.push({ position, key: `empty-${block.key}`, type: CUSTOM_OP, code: "", label: blockTitle(block, ops, finalName), minutes: 0 });
+    return { ...block, ops: [position] };
   });
-  const next = sortBlocks({ blocks, edges });
-  if (!after.length || routeProblem(next, routeOps(after, 1))) return { route: null, reset: true };
-  return { route: next, reset: false };
+  return routeProblem({ blocks, edges: route.edges }, [...ops, ...extra], finalName);
 }
 
-function withOps(state: ManualState, ops: ManualOp[], nextSeq = state.nextSeq): ManualState {
-  const { route, reset } = remapRoute(state.route, state.ops, ops);
-  return { ops, nextSeq, route, notice: reset ? "Список операций изменился — схема снова цепочкой по списку, ручные правки схемы сброшены." : state.notice };
+export function selectBlock(state: ManualState, key: string): ManualState {
+  return state.blocks.some((block) => block.key === key) ? { ...state, selected: key } : state;
 }
 
-export function addLibraryOp(state: ManualState, card: LibraryCard, opRecs: OpRec[]): ManualState {
-  return withOps(state, [...state.ops, libraryOp(state.nextSeq, card, opRecs)], state.nextSeq + 1);
+/** Новый блок-полуфабрикат — вход выбранного блока (по умолчанию — итогового); выбирается сразу. */
+export function addBlock(state: ManualState, name = ""): ManualState {
+  const target = state.blocks.find((block) => block.key === state.selected) ?? state.blocks.find((block) => block.final);
+  const key = freeKey(state.blocks);
+  return {
+    ...state, blocks: [...state.blocks, { key, name, final: false, ops: [] }],
+    edges: target ? [...state.edges, { from: key, to: target.key, per_unit: 1 }] : state.edges, selected: key,
+  };
 }
 
-export function addCustomOp(state: ManualState): ManualState {
-  return withOps(state, [...state.ops, blank(state.nextSeq)], state.nextSeq + 1);
+/** Убрать блок вместе с его операциями; его входы переходят к блокам, которые он питал (штуки перемножаются). */
+export function removeBlock(state: ManualState, key: string): ManualState {
+  const gone = state.blocks.find((block) => block.key === key);
+  if (!gone || gone.final) return state;
+  const ins = state.edges.filter((edge) => edge.to === key), outs = state.edges.filter((edge) => edge.from === key);
+  const edges = state.edges.filter((edge) => edge.to !== key && edge.from !== key).map((edge) => ({ ...edge }));
+  ins.forEach((input) => outs.forEach((output) => {
+    const same = edges.find((edge) => edge.from === input.from && edge.to === output.to);
+    if (same) same.per_unit += input.per_unit * output.per_unit;
+    else edges.push({ from: input.from, to: output.to, per_unit: input.per_unit * output.per_unit });
+  }));
+  const dropped = new Set(gone.ops);
+  const selected = state.selected === key ? outs[0]?.to ?? state.blocks.find((block) => block.final)!.key : state.selected;
+  return { ...state, ops: state.ops.filter((op) => !dropped.has(op.seq)), blocks: state.blocks.filter((block) => block.key !== key), edges, selected };
+}
+
+export function renameBlock(state: ManualState, key: string, name: string): ManualState {
+  return { ...state, blocks: state.blocks.map((block) => (block.key === key ? { ...block, name } : block)) };
+}
+
+/** Блоки, которые можно сделать входом `key`: не итоговые, ещё не входы и не идущие после него. */
+export function inputCandidates(state: ManualState, key: string): ManualBlock[] {
+  const downstream = new Set<string>([key]);
+  const queue = [key];
+  while (queue.length) {
+    const next = queue.shift()!;
+    state.edges.filter((edge) => edge.from === next && !downstream.has(edge.to)).forEach((edge) => { downstream.add(edge.to); queue.push(edge.to); });
+  }
+  return state.blocks.filter((block) => !block.final && !downstream.has(block.key) && !state.edges.some((edge) => edge.from === block.key && edge.to === key));
+}
+
+export type EdgeEdit = { state: ManualState; problem: string | null };
+
+function withEdges(state: ManualState, edges: RouteEdge[], finalName: string): EdgeEdit {
+  const next = { ...state, edges };
+  const problem = edgeProblem(next, finalName);
+  return problem ? { state, problem } : { state: next, problem: null };
+}
+
+/** Добавить вход `from` в блок `to`; не годится (цикл и т. п.) — схема прежняя и слова почему. */
+export function addInput(state: ManualState, from: string, to: string, finalName = ""): EdgeEdit {
+  return withEdges(state, addEdge(manualRoute(state, 1).route, from, to).edges, finalName);
+}
+
+/** Убрать вход; блок, который после этого не доходит до изделия, — нельзя. */
+export function removeInput(state: ManualState, from: string, to: string, finalName = ""): EdgeEdit {
+  return withEdges(state, removeEdge(manualRoute(state, 1).route, from, to).edges, finalName);
+}
+
+export function setPerUnit(state: ManualState, from: string, to: string, perUnit: number): ManualState {
+  return { ...state, edges: state.edges.map((edge) => (edge.from === from && edge.to === to ? { ...edge, per_unit: perUnit } : edge)) };
+}
+
+function withOp(state: ManualState, op: ManualOp, blockKey: string): ManualState {
+  const key = state.blocks.some((block) => block.key === blockKey) ? blockKey : state.blocks.find((block) => block.final)!.key;
+  return {
+    ...state, ops: [...state.ops, op], nextSeq: Math.max(state.nextSeq, op.seq + 1),
+    blocks: state.blocks.map((block) => (block.key === key ? { ...block, ops: [...block.ops, op.seq] } : block)),
+  };
+}
+
+/** Карточка из библиотеки — в конец блока (по умолчанию выбранного). */
+export function addLibraryOp(state: ManualState, card: LibraryCard, opRecs: OpRec[], blockKey = state.selected): ManualState {
+  return withOp(state, libraryOp(state.nextSeq, card, opRecs), blockKey);
+}
+
+export function addCustomOp(state: ManualState, blockKey = state.selected): ManualState {
+  return withOp(state, blank(state.nextSeq), blockKey);
 }
 
 export function updateOp(state: ManualState, seq: number, patch: Partial<ManualOp>): ManualState {
@@ -169,30 +291,26 @@ export function updateOp(state: ManualState, seq: number, patch: Partial<ManualO
 }
 
 export function removeOp(state: ManualState, seq: number): ManualState {
-  return withOps(state, state.ops.filter((op) => op.seq !== seq));
+  return {
+    ...state, ops: state.ops.filter((op) => op.seq !== seq),
+    blocks: state.blocks.map((block) => ({ ...block, ops: block.ops.filter((item) => item !== seq) })),
+  };
 }
 
-/** Сдвинуть операцию на `delta` мест (−1 — выше). Ручная схема остаётся при своих блоках. */
+/** Сдвинуть операцию внутри её блока на `delta` мест (−1 — выше). */
 export function moveOp(state: ManualState, seq: number, delta: number): ManualState {
-  const from = state.ops.findIndex((op) => op.seq === seq);
-  const to = from + delta;
-  if (from < 0 || to < 0 || to >= state.ops.length) return state;
-  const ops = [...state.ops];
-  const [item] = ops.splice(from, 1);
-  ops.splice(to, 0, item);
-  return withOps(state, ops);
-}
-
-/** Отметить / снять «одновременно с предыдущей». Ручные правки схемы при этом сбрасываются — схема снова по списку. */
-export function setParallel(state: ManualState, seq: number, on: boolean): ManualState {
-  const next = updateOp(state, seq, { parallel: on });
-  return state.route
-    ? { ...next, route: null, notice: "Одновременность операций изменилась — схема снова по списку, ручные правки схемы сброшены." }
-    : next;
-}
-
-export function setRoute(state: ManualState, route: Route | null): ManualState {
-  return { ...state, route, notice: "" };
+  return {
+    ...state,
+    blocks: state.blocks.map((block) => {
+      const from = block.ops.indexOf(seq);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= block.ops.length) return block;
+      const ops = [...block.ops];
+      const [item] = ops.splice(from, 1);
+      ops.splice(to, 0, item);
+      return { ...block, ops };
+    }),
+  };
 }
 
 /** Состав КБ на операции: отметить строку — со своим количеством из состава, снять — убрать. */
@@ -207,32 +325,8 @@ export function toggleComponent(state: ManualState, seq: number, comp: Comp): Ma
   });
 }
 
-/** Норма операции, минут на партию: подготовка + сек/шт × на изделие × партия (как сервер). */
-export function opMinutes(op: ManualOp, partQty: number): number {
-  const ok = (value: number | null, fallback: number) => (value == null || Number.isNaN(value) || value < 0 ? fallback : value);
-  const batch = partQty > 0 ? partQty : 1;
-  return (ok(num(op.prepMin), 0) * 60 + ok(num(op.opSec), 0) * ok(num(op.qty), 1) * batch) / 60;
-}
-
-export function opTitle(op: ManualOp, position: number): string {
-  return op.label.trim() || (op.kind === "custom" ? "Своя операция" : `Операция ${position}`);
-}
-
-/** Операции для схемы: номер = место в списке, норма — из полей формы. */
-export function routeOps(ops: ManualOp[], partQty: number): RouteOp[] {
-  return ops.map((op, index) => ({
-    position: index + 1, key: String(op.seq), type: op.kind === "library" ? LIBRARY_OP : CUSTOM_OP, code: op.code,
-    label: opTitle(op, index + 1), minutes: opMinutes(op, partQty), number: index + 1,
-  }));
-}
-
-/** Номера операций (места в списке), отмеченных «одновременно с предыдущей»; первая не считается. */
-export function togetherPositions(ops: ManualOp[]): Set<number> {
-  return new Set(ops.flatMap((op, index) => (op.parallel && index > 0 ? [index + 1] : [])));
-}
-
-/** Схема без правок: по блоку на операцию, цепочкой по списку, последняя — изделие. Операция из `together` идёт
-    одновременно с предыдущей — начинает свою ветку без входа; следующая обычная забирает все открытые ветки. */
+/** Старый список без схемы: по блоку на операцию цепочкой, последняя — изделие. Операция из `together` («одновременно с
+    предыдущей», флаг до 05.10) начинает свою ветку без входа; следующая обычная забирает все открытые ветки. */
 export function chainRoute(ops: RouteOp[], together: ReadonlySet<number> = new Set()): Route {
   const key = (op: RouteOp) => `b${op.position}`;
   const edges: Route["edges"] = [];
@@ -248,10 +342,11 @@ export function chainRoute(ops: RouteOp[], together: ReadonlySet<number> = new S
   };
 }
 
-/** Что мешает собрать список, словами для технолога (сервер проверяет то же); null — можно собирать. */
-export function manualProblem(state: ManualState): string | null {
-  if (!state.ops.length) return "Ручная сборка: добавьте хотя бы одну операцию — из библиотеки или свою.";
-  for (const [index, op] of state.ops.entries()) {
+/** Что мешает собрать, словами для технолога (сервер проверяет то же); null — можно собирать. */
+export function manualProblem(state: ManualState, finalName = ""): string | null {
+  const ordered = orderedOps(state);
+  if (!ordered.length) return "Ручная сборка: добавьте хотя бы одну операцию — из библиотеки или свою.";
+  for (const [index, op] of ordered.entries()) {
     const position = index + 1;
     if (op.kind === "custom" && !op.label.trim()) return `Ручная сборка: операция ${position} — укажите название своей операции.`;
     const named = `Ручная сборка: операция ${position} «${opTitle(op, position)}»`;
@@ -266,12 +361,12 @@ export function manualProblem(state: ManualState): string | null {
       if (amount != null && !(amount > 0)) return `${named} — количество «${comp.art || comp.name}» должно быть числом больше нуля.`;
     }
   }
-  const last = state.ops.length;
-  if (!state.route && togetherPositions(state.ops).has(last)) {
-    return `Ручная сборка: операция ${last} «${opTitle(state.ops[last - 1], last)}» идёт одновременно с предыдущей и завершает список — `
-      + "добавьте после одновременных операций итоговую (например, контроль), которая соберёт их результат.";
-  }
-  return null;
+  const known = new Set(state.ops.map((op) => op.seq));
+  const empty = state.blocks.find((block) => !block.ops.some((seq) => known.has(seq)));
+  if (empty) return `Ручная сборка: блок «${manualBlockTitle(state, empty.key, finalName)}» без операций — добавьте операцию или удалите блок.`;
+  const { route, ops } = manualRoute(state, 1);
+  const wrong = routeProblem(route, ops, finalName);
+  return wrong ? `Схема сборки: ${wrong}` : null;
 }
 
 const lines = (value: string) => value.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -304,10 +399,10 @@ export function toolingPayload(op: ManualOp) {
   });
 }
 
-/** Тело сборки ручного режима: операции списком + схема (всегда ручная; на блоке — комплектующие его операций). */
+/** Тело сборки ручного режима: операции в порядке номеров + схема (всегда ручная; на блоке — комплектующие его операций). */
 export function manualConfig(state: ManualState, base: Record<string, unknown>): Record<string, unknown> {
-  const partQty = Number(base.partQty) || 1;
-  const ops = state.ops.map((op, index) => {
+  const ordered = orderedOps(state);
+  const ops = ordered.map((op, index) => {
     const common = {
       seq: op.seq, label: op.label.trim() || opTitle(op, index + 1), qty: plain(op.qty) || "1",
       tPrep: seconds(op.prepMin), tOp: plain(op.opSec),
@@ -315,18 +410,17 @@ export function manualConfig(state: ManualState, base: Record<string, unknown>):
       ...(op.note.trim() ? { note: op.note.trim() } : {}),
       ...(op.result.trim() ? { result: op.result.trim() } : {}),
       ...(op.components.length ? { components: op.components.map((comp) => ({ ...comp, qty: plain(comp.qty) || "1" })) } : {}),
-      ...(op.parallel && index > 0 ? { parallel: true } : {}),
     };
     return op.kind === "library"
       ? { type: LIBRARY_OP, templateId: op.templateId, opNum: op.code, side: op.side, ...common }
       : { type: CUSTOM_OP, ...common, steps: stepsPayload(op), tooling: toolingPayload(op) };
   });
-  const scheme = state.route ?? chainRoute(routeOps(state.ops, partQty), togetherPositions(state.ops));
+  const { route: scheme } = manualRoute(state, Number(base.partQty) || 1);
   const route = routePayload({
     ...scheme,
     blocks: scheme.blocks.map((block) => ({
       ...block,
-      components: block.ops.flatMap((position) => (state.ops[position - 1]?.components || []).map((comp) => ({ id: comp.id, art: comp.art, name: comp.name, qty: plain(comp.qty) || "1" }))),
+      components: block.ops.flatMap((position) => (ordered[position - 1]?.components || []).map((comp) => ({ id: comp.id, art: comp.art, name: comp.name, qty: plain(comp.qty) || "1" }))),
     })),
   });
   return { mode: MANUAL_MODE, assemblyIndex: base.assemblyIndex, assemblyName: base.assemblyName, partQty: base.partQty, ops, route };
@@ -340,12 +434,14 @@ function list(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>> : [];
 }
 
-/** Список ручной сборки из сохранённого `build_config` карты (режим запоминается за КБ); не ручная — null. */
+/** Схема ручной сборки из сохранённого `build_config` карты (режим запоминается за КБ); не ручная — null. Сохранённая схема
+    — блоками; без схемы (или она не сходится со списком) — старая цепочка по списку с отметками «одновременно с предыдущей». */
 export function manualFromConfig(config: unknown): ManualState | null {
   const saved = config && typeof config === "object" ? config as Record<string, unknown> : null;
   if (!saved || saved.mode !== MANUAL_MODE) return null;
   const used = new Set<number>();
-  const ops = list(saved.ops).map((item, index): ManualOp => {
+  const items = list(saved.ops);
+  const ops = items.map((item, index): ManualOp => {
     let seq = Number(item.seq);
     if (!Number.isInteger(seq) || seq <= 0 || used.has(seq)) seq = Math.max(index + 1, ...used) + 1;
     used.add(seq);
@@ -361,13 +457,16 @@ export function manualFromConfig(config: unknown): ManualState | null {
       controls: steps.filter(control).map((step) => [str(step.text), str(step.tolerance)].filter(Boolean).join(" | ")).join("\n"),
       tooling: list(item.tooling).map((tool) => (str(tool.section) && str(tool.section) !== TOOL_SECTIONS[0] ? `${str(tool.section)}: ${str(tool.name)}` : str(tool.name))).join("\n"),
       components: list(item.components).map((comp) => ({ id: str(comp.id), art: str(comp.art), name: str(comp.name), qty: str(comp.qty || "1").replace(".", ","), unit: str(comp.unit) || "Шт." })),
-      parallel: item.parallel === true,
     };
   });
+  const nextSeq = Math.max(0, ...ops.map((op) => op.seq)) + 1;
+  if (!ops.length) return { ...emptyManual(), nextSeq };
+  const positioned = routeOps(ops, Number(saved.partQty) || 1);
   const parsed = parseRoute(saved.route);
-  const ops1 = routeOps(ops, Number(saved.partQty) || 1);
-  const chain = JSON.stringify(routePayload(chainRoute(ops1, togetherPositions(ops))));
-  const plainRoute = parsed ? { ...parsed, blocks: parsed.blocks.map((block) => ({ ...block, components: [] })) } : null;
-  const route = plainRoute && !routeProblem(plainRoute, ops1) && JSON.stringify(routePayload(plainRoute)) !== chain ? plainRoute : null;
-  return { ops, nextSeq: Math.max(0, ...ops.map((op) => op.seq)) + 1, route, notice: "" };
+  const together = new Set(items.flatMap((item, index) => (item.parallel === true && index > 0 ? [index + 1] : [])));
+  const route = parsed && !routeProblem(parsed, positioned) ? parsed : chainRoute(positioned, together);
+  const blocks: ManualBlock[] = route.blocks.map((block) => ({
+    key: block.key, name: block.name, final: block.final, ops: [...block.ops].sort((a, b) => a - b).map((position) => ops[position - 1].seq),
+  }));
+  return { ops, nextSeq, blocks, edges: route.edges.map((edge) => ({ ...edge })), selected: blocks.find((block) => block.final)!.key };
 }
