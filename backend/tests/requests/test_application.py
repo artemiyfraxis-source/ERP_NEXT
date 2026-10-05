@@ -159,7 +159,35 @@ def test_handoff_is_idempotent_and_writes_procurement_audit_and_outbox_atomicall
     assert first[0].payload["calculated_name"] == "Разъём"
     assert first[0].payload["calculated_quantity"] == "2"
     assert "procurement_deadline" not in first[0].payload
+    # Owner, 05.10: the one who pressed «В закупку» gets the line «В работе» — the event carries them.
+    buyer = command.actor
+    assert {key: first[0].payload[key] for key in ("buyer_id", "buyer_name", "buyer_department")} == {
+        "buyer_id": str(buyer.id), "buyer_name": "Петров", "buyer_department": "Закупки",
+    }
     assert uow.commits == 2, "create and first handoff each commit exactly once; retry is read-only"
+
+
+def test_handoff_event_without_a_known_buyer_carries_nobody():
+    from dataclasses import replace
+
+    from app.modules.requests.application import _procurement_requested_payload
+    from app.modules.requests.domain import build_procurement_requested_snapshot
+
+    uow = FakeUnitOfWork()
+    request = create_requests(
+        CreateRequestsCommand(
+            creation_key="web-form:nobody", drafts=(draft(),), actor=Actor(name="Иванов", department="РНД"),
+            now=datetime(2026, 9, 15, 10, 30),
+        ),
+        uow,
+    )[0]
+    started = request.start_procurement(Actor(name="Петров", department="Закупки"))
+    # A row saved before the buyer's id was kept: name only, no id — the line stays «Новый» in Procurement.
+    legacy = replace(started, procurement_actor=replace(started.procurement_actor, id=None))
+
+    payload = _procurement_requested_payload(build_procurement_requested_snapshot(legacy, today=date(2026, 9, 15)))
+
+    assert (payload["buyer_id"], payload["buyer_name"], payload["buyer_department"]) == (None, None, None)
 
 
 def test_create_rejects_reusing_idempotency_key_for_different_payload():

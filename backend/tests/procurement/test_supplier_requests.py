@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -15,6 +16,7 @@ from app.main import app
 from app.modules.procurement.application import (
     BuildSupplierRequestsCommand,
     SaveProcurementFactsCommand,
+    SkippedLine,
     TakeProcurementInWorkCommand,
     build_supplier_requests,
     consume_procurement_requested,
@@ -174,8 +176,54 @@ def test_build_skips_the_group_with_open_replacement_and_forms_the_others():
     result = build_supplier_requests(BuildSupplierRequestsCommand(actor=BUYER, now=now), uow)
 
     assert [order.supplier for order in result.orders] == ["ООО Б"]
-    assert result.skipped == ["ООО А (Закупка): есть незакрытая замена (нет решения «Разрешено») — не сформирован"]
+    reason = "ООО А (Закупка): есть незакрытая замена (нет решения «Разрешено») — не сформирован"
+    assert result.skipped == [
+        SkippedLine(lines[0].id, lines[0].legacy_id, reason), SkippedLine(lines[1].id, lines[1].legacy_id, reason),
+    ]
     assert {uow.procurement.get(line.id).status for line in lines[:2]} == {ProcurementStatus.READY}
+
+
+def test_ticked_lines_that_cannot_go_are_skipped_with_the_reason_and_the_rest_are_formed():
+    """Owner, 05.10: ticking an incomplete line does not fail the call — it comes back in `skipped`."""
+    uow = FakeUnitOfWork()
+    now = datetime(2026, 9, 22, 10, 0)
+    ready = make_ready(uow, 1, supplier="ООО А")
+    foreign = make_ready(uow, 2, buyer=OTHER)
+    incomplete = take_procurement_in_work(
+        TakeProcurementInWorkCommand(line_ids=(consume_procurement_requested(requested_message(3), uow).id,),
+                                     actor=BUYER, now=now),
+        uow,
+    )[0]
+    fresh = consume_procurement_requested(requested_message(4), uow)
+    missing = uuid4()
+
+    result = build_supplier_requests(
+        BuildSupplierRequestsCommand(
+            actor=BUYER, now=now, line_ids=(incomplete.id, ready.id, fresh.id, missing, foreign.id),
+        ),
+        uow,
+    )
+
+    assert [(order.supplier, order.line_ids) for order in result.orders] == [("ООО А", (ready.id,))]
+    assert result.skipped == [
+        SkippedLine(incomplete.id, incomplete.legacy_id, "не заполнены: ПОСТАВЩИК"),
+        SkippedLine(fresh.id, fresh.legacy_id, "строка не взята в работу"),
+        SkippedLine(missing, "", "строка не найдена"),
+        SkippedLine(foreign.id, foreign.legacy_id, "строка другого закупщика — запрос формирует тот, кто взял её в работу"),
+    ]
+    assert result.other_buyer == 1
+    assert uow.procurement.get(incomplete.id).status is ProcurementStatus.IN_WORK
+
+    commits = uow.commits
+    nothing = build_supplier_requests(
+        BuildSupplierRequestsCommand(actor=BUYER, now=now, line_ids=(ready.id, incomplete.id)), uow,
+    )
+    assert nothing.orders == [] and uow.commits == commits  # nothing to form is not an error, nothing written
+    assert [item.reason for item in nothing.skipped] == [
+        "запрос уже сформирован (PO-001), статус «Жду счет»", "не заполнены: ПОСТАВЩИК",
+    ]
+    with pytest.raises(ProcurementValidationError, match="Нет ваших строк"):
+        build_supplier_requests(BuildSupplierRequestsCommand(actor=BUYER, now=now), uow)
 
 
 def test_delivery_point_is_the_first_non_empty_of_the_group():

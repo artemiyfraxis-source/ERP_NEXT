@@ -140,7 +140,14 @@ def test_supplier_requests_are_formed_only_for_the_ticked_ready_lines(procuremen
     assert [line["id"] for line in picked.json()["lines"]] == [str(second.id)]
     statuses = {line["id"]: line["status"] for line in client.get("/api/procurement/mine").json()["lines"]}
     assert statuses == {str(first.id): "Готов к запросу", str(second.id): "Жду счет"}
-    assert nothing.status_code == 422
+    # Owner, 05.10: a ticked line that cannot go is reported with the reason, the call does not fail.
+    assert nothing.status_code == 200, nothing.text
+    assert nothing.json()["orders"] == []
+    assert nothing.json()["skipped"] == [{
+        "line_id": str(second.id),
+        "legacy_id": second.legacy_id,
+        "reason": "запрос уже сформирован (PO-001), статус «Жду счет»",
+    }]
     assert empty.status_code == 422
 
 
@@ -211,22 +218,25 @@ def test_other_buyer_cannot_edit_claimed_line(procurement_api):
     assert "только свои" in response.json()["detail"]
 
 
-def test_explicit_empty_or_oversized_supplier_is_rejected(procurement_api):
+def test_explicit_empty_supplier_clears_it_and_oversized_is_rejected(procurement_api):
     client, line, _ = procurement_api
     taken = client.post("/api/procurement/take", json={"line_ids": [str(line.id)]})
     version = taken.json()["lines"][0]["version"]
+    ready = client.patch(f"/api/procurement/{line.id}/facts", json={"version": version, "supplier": "ООО А"})
+    assert ready.json()["line"]["status"] == "Готов к запросу"  # КОЛ-ВО / ЕД.ИЗМ (факт) were prefilled by the take
 
-    empty = client.patch(
-        f"/api/procurement/{line.id}/facts",
-        json={"version": version, "supplier": "   "},
-    )
     oversized = client.patch(
         f"/api/procurement/{line.id}/facts",
-        json={"version": version, "supplier": "x" * 513},
+        json={"version": ready.json()["line"]["version"], "supplier": "x" * 513},
+    )
+    empty = client.patch(
+        f"/api/procurement/{line.id}/facts",
+        json={"version": ready.json()["line"]["version"], "supplier": "   "},
     )
 
-    assert empty.status_code == 422
     assert oversized.status_code == 422
+    assert empty.status_code == 200, empty.text
+    assert (empty.json()["line"]["supplier"], empty.json()["line"]["status"]) == (None, "В работе")
 
 
 @pytest.mark.parametrize(
@@ -495,9 +505,11 @@ def test_open_replacement_blocks_supplier_request_until_allowed(procurement_api)
     blocked = client.post("/api/procurement/supplier-requests")
     assert blocked.status_code == 200, blocked.text
     assert blocked.json()["orders"] == []
-    assert blocked.json()["skipped"] == [
-        "ООО Поставка (Закупка): есть незакрытая замена (нет решения «Разрешено») — не сформирован"
-    ]
+    assert blocked.json()["skipped"] == [{
+        "line_id": str(line.id),
+        "legacy_id": line.legacy_id,
+        "reason": "ООО Поставка (Закупка): есть незакрытая замена (нет решения «Разрешено») — не сформирован",
+    }]
 
     garbage = client.patch(
         f"/api/procurement/{line.id}/replacement",
@@ -937,3 +949,221 @@ def test_take_fills_the_supplier_from_the_link_domain_and_queues_the_page_fields
         ).all()
     assert [row.payload["line_id"] for row in queued] == [str(linked.id)]
     assert [row.details["fields"] for row in autofilled] == [["supplier"]]
+
+
+# --- Заказ целиком (owner, 05.10): «Цена факт» по строкам, счёт и оплата один раз на заказ ------------------------
+
+MOSCOW = "г. Москва, ул. 6-я Радиальная, д. 17"
+
+
+def formed_order(client, sessions, count: int = 2) -> tuple[str, dict[str, dict]]:
+    """`count` lines of one supplier order «Жду счет», formed through the API (the Moscow point: Receiving takes it)."""
+    factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    created = [
+        consume_procurement_requested(
+            OutboxMessage(**{**message(n).__dict__, "payload": {**message(n).payload, "delivery_point": MOSCOW}}),
+            factory(),
+        )
+        for n in range(2, 2 + count)
+    ]
+    ids = [str(line.id) for line in created]
+    taken = client.post("/api/procurement/take", json={"line_ids": ids}).json()["lines"]
+    saved = client.post("/api/procurement/facts", json={"rows": [
+        {"line_id": item["id"], "version": item["version"], "supplier": "ООО Поставка"} for item in taken
+    ]}).json()
+    assert saved["ready"] == count, saved
+    formed = client.post("/api/procurement/supplier-requests", json={"line_ids": ids}).json()
+    (order,) = formed["orders"]
+    return order["order_number"], {line["id"]: line for line in formed["lines"]}
+
+
+def price_rows(client, lines: dict[str, dict], price: str = "1220") -> dict[str, dict]:
+    body = client.post("/api/procurement/fact-prices", json={"rows": [
+        {"line_id": line["id"], "version": line["version"], "legacy_id": line["legacy_id"], "price_with_vat": price}
+        for line in lines.values()
+    ]}).json()
+    assert body["saved"] == len(lines), body
+    return {line["id"]: line for line in body["lines"]}
+
+
+def refs(lines: dict[str, dict]) -> list[dict]:
+    return [{"line_id": line["id"], "version": line["version"]} for line in lines.values()]
+
+
+def audit_types(sessions) -> list[str]:
+    with sessions() as session:
+        return list(session.scalars(select(AuditEventRow.event_type)))
+
+
+def test_fact_prices_are_saved_row_by_row_and_a_stale_row_is_skipped(procurement_api):
+    client, _, sessions = procurement_api
+    _, lines = formed_order(client, sessions)
+    first, second = lines.values()
+
+    response = client.post("/api/procurement/fact-prices", json={"rows": [
+        {"line_id": first["id"], "version": first["version"], "legacy_id": first["legacy_id"], "price_with_vat": "1 220,00"},
+        {"line_id": second["id"], "version": 99, "legacy_id": second["legacy_id"], "price_with_vat": "500"},
+    ]})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["saved"], body["skipped"], body["failed"]) == (1, [second["legacy_id"]], [])
+    priced = body["lines"][0]
+    assert (priced["status"], priced["currency"], priced["actual_vat_rate"]) == ("Жду счет", "RUB", "22")
+    assert (priced["actual_price"], priced["actual_price_with_vat"], priced["actual_sum"]) == ("1000", "1220", "2440")
+    with sessions() as session:
+        (event,) = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "procurement.fact_price_saved")
+        ).all()
+    assert (event.details["previous_price_with_vat"], event.details["price_with_vat"]) == ("", "1220.00")
+    assert event.details["order_reference"] == priced["order_number"]
+
+    # The same price on the version the form was loaded with is a read-only retry, not «пропущено».
+    retry = client.post("/api/procurement/fact-prices", json={"rows": [
+        {"line_id": first["id"], "version": first["version"], "price_with_vat": "1220"},
+    ]}).json()
+    assert (retry["saved"], retry["skipped"], retry["lines"][0]["version"]) == (1, [], priced["version"])
+    cleared = client.post("/api/procurement/fact-prices", json={"rows": [
+        {"line_id": first["id"], "version": priced["version"], "price_with_vat": None},
+    ]}).json()["lines"][0]
+    assert (cleared["actual_price"], cleared["actual_price_with_vat"], cleared["actual_sum"]) == (None, None, None)
+    assert client.post("/api/procurement/fact-prices", json={"rows": []}).status_code == 422
+
+
+def test_order_invoice_moves_every_awaiting_row_to_payment_and_then_replaces_it(procurement_api):
+    client, _, sessions = procurement_api
+    number, lines = formed_order(client, sessions)
+    lines = price_rows(client, lines)
+    first_id = next(iter(lines))
+    invoice = {"invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25"}
+
+    partial = client.post(f"/api/procurement/orders/{number}/invoice", json={**invoice, "lines": refs(lines)[:1]})
+    stale_refs = [{**ref, "version": ref["version"] - 1} if ref["line_id"] == first_id else ref for ref in refs(lines)]
+    stale = client.post(f"/api/procurement/orders/{number}/invoice", json={**invoice, "lines": stale_refs})
+    unknown = client.post("/api/procurement/orders/PO-404/invoice", json={**invoice, "lines": refs(lines)})
+    twice = client.post(f"/api/procurement/orders/{number}/invoice", json={**invoice, "lines": refs(lines) * 2})
+
+    assert partial.status_code == 409 and "«Жду счет» (2)" in partial.json()["detail"]
+    assert stale.status_code == 409 and "изменилась" in stale.json()["detail"]
+    assert unknown.status_code == 404
+    assert twice.status_code == 422
+    assert {line["status"] for line in client.get("/api/procurement/mine").json()["lines"] if line["id"] in lines} == {
+        "Жду счет"
+    }
+
+    recorded = client.post(f"/api/procurement/orders/{number}/invoice", json={
+        **invoice, "invoice_number": "СЧ-5", "invoice_date": "2026-09-16", "lines": refs(lines),
+    })
+
+    assert recorded.status_code == 200, recorded.text
+    invoiced = {line["id"]: line for line in recorded.json()["lines"]}
+    assert set(invoiced) == set(lines)
+    for line in invoiced.values():
+        assert (line["status"], line["invoice_url"], line["invoice_number"], line["invoice_date"]) == (
+            "В оплату", "https://files.test/invoice.pdf", "СЧ-5", "2026-09-16",
+        )
+        # НАИМЕНОВАНИЕ (Счет) took the calculated name (no site name on these rows); ОЖИД. ДАТА is the form's.
+        assert (line["invoice_item_name"], line["expected_arrival"], line["pay_missing"]) == ("Разъём", "2026-09-25", [])
+        assert line["version"] == lines[line["id"]]["version"] + 1
+
+    replaced = client.post(f"/api/procurement/orders/{number}/invoice", json={
+        "invoice_url": "https://files.test/invoice-2.pdf", "expected_arrival": "2026-09-28", "lines": refs(invoiced),
+    })
+
+    assert replaced.status_code == 200, replaced.text
+    for line in replaced.json()["lines"]:
+        assert (line["status"], line["invoice_url"], line["invoice_number"], line["expected_arrival"]) == (
+            "В оплату", "https://files.test/invoice-2.pdf", "СЧ-5", "2026-09-28",
+        )
+    events = audit_types(sessions)
+    assert [events.count(kind) for kind in (
+        "procurement.invoice_recorded", "procurement.invoice_replaced", "procurement.expected_arrival_set",
+    )] == [2, 2, 2]
+
+
+def test_order_invoice_is_all_or_none_and_names_the_row_the_pay_gate_refuses(procurement_api):
+    client, _, sessions = procurement_api
+    number, lines = formed_order(client, sessions)
+    first, second = lines.values()
+    priced = price_rows(client, {first["id"]: first})
+
+    response = client.post(f"/api/procurement/orders/{number}/invoice", json={
+        "invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25",
+        "lines": refs({**priced, second["id"]: second}),
+    })
+
+    assert response.status_code == 422
+    assert response.json()["detail"].startswith(f"{second['legacy_id']}: Нельзя загрузить счёт — сначала заполните: ")
+    assert "ЦЕНА (факт)" in response.json()["detail"]
+    mine = {line["id"]: line for line in client.get("/api/procurement/mine").json()["lines"]}
+    assert (mine[first["id"]]["status"], mine[first["id"]]["invoice_url"]) == ("Жду счет", None)
+    assert mine[first["id"]]["invoice_item_name"] is None  # nothing written, the default name included
+    assert "procurement.invoice_recorded" not in audit_types(sessions)
+
+
+def test_order_is_paid_once_for_every_row_in_payment(procurement_api):
+    client, _, sessions = procurement_api
+    number, lines = formed_order(client, sessions)
+    lines = price_rows(client, lines)
+    invoiced = client.post(f"/api/procurement/orders/{number}/invoice", json={
+        "invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25", "lines": refs(lines),
+    }).json()["lines"]
+    invoiced = {line["id"]: line for line in invoiced}
+    first_id = next(iter(invoiced))
+
+    partial = client.post(f"/api/procurement/orders/{number}/paid", json={"lines": refs(invoiced)[:1]})
+    stale = client.post(f"/api/procurement/orders/{number}/paid", json={
+        "lines": [{**ref, "version": 1} if ref["line_id"] == first_id else ref for ref in refs(invoiced)],
+    })
+    assert partial.status_code == 409 and "«В оплату» (2)" in partial.json()["detail"]
+    assert stale.status_code == 409
+
+    paid = client.post(f"/api/procurement/orders/{number}/paid", json={"lines": refs(invoiced)})
+
+    assert paid.status_code == 200, paid.text
+    assert {(line["status"], line["paid_at"] is not None) for line in paid.json()["lines"]} == {("В пути", True)}
+    with sessions() as session:
+        expected = session.scalars(select(OutboxMessageRow).where(OutboxMessageRow.topic == "receiving.expected")).all()
+        paid_events = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "procurement.paid")
+        ).all()
+    assert sorted(row.payload["procurement_line_id"] for row in expected) == sorted(invoiced)
+    assert {row.payload["order_number"] for row in expected} == {number}
+    assert [event.details["order_reference"] for event in paid_events] == [number, number]
+    again = client.post(f"/api/procurement/orders/{number}/paid", json={"lines": refs(invoiced)})
+    assert again.status_code == 409  # nothing «В оплату» any more
+
+
+def test_order_payment_asks_for_a_manual_rate_like_the_single_row_payment(procurement_api, rates):
+    client, _, sessions = procurement_api
+    number, lines = formed_order(client, sessions, count=1)
+    (line,) = lines.values()
+    rates.rates[("USD", "2026-09-16")] = Decimal("90")
+    usd = client.patch(f"/api/procurement/{line['id']}/money", json={
+        "version": line["version"], "currency": "USD", "price": "10", "vat_rate": "22",
+        "invoice_item_name": "Разъём", "invoice_date": "2026-09-16",
+    }).json()["line"]
+
+    refused = client.post("/api/procurement/fact-prices", json={"rows": [
+        {"line_id": usd["id"], "version": usd["version"], "legacy_id": usd["legacy_id"], "price_with_vat": "100"},
+    ]}).json()
+    assert refused["saved"] == 0
+    assert refused["failed"] == [{"legacy_id": usd["legacy_id"], "error": "Счёт в USD: цену меняйте через «Внести КП»"}]
+
+    (invoiced,) = client.post(f"/api/procurement/orders/{number}/invoice", json={
+        "invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25",
+        "lines": [{"line_id": usd["id"], "version": usd["version"]}],
+    }).json()["lines"]
+    ref = [{"line_id": invoiced["id"], "version": invoiced["version"]}]
+
+    asked = client.post(f"/api/procurement/orders/{number}/paid", json={"lines": ref})
+    assert asked.status_code == 409
+    assert asked.json()["detail"] == {
+        "code": "manual_rate_required", "currency": "USD", "date": "2026-09-15",
+        "message": "ЦБ не отдал курс USD на 15.09.2026 — введите курс вручную",
+    }
+
+    paid = client.post(f"/api/procurement/orders/{number}/paid", json={"lines": ref, "manual_exchange_rate": "95"})
+    assert paid.status_code == 200, paid.text
+    (done,) = paid.json()["lines"]
+    assert (done["status"], done["exchange_rate"], done["exchange_rate_manual"]) == ("В пути", "95", True)

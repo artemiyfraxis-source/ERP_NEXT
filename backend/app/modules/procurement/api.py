@@ -83,6 +83,13 @@ from .application import (
     FactsBatchRow,
     buyer_in_work_lines,
     save_procurement_facts_batch,
+    FactPriceRow,
+    InvoiceSupplierOrderCommand,
+    OrderLineRef,
+    PaySupplierOrderCommand,
+    invoice_supplier_order,
+    pay_supplier_order,
+    save_fact_prices_batch,
     CoverFromStockCommand,
     ReleaseStockCoverCommand,
     cover_from_stock,
@@ -392,6 +399,44 @@ class KpInput(BaseModel):
         if normalized is None:
             raise ValueError("Счёт обязателен")
         return normalized
+
+
+class FactPriceRowInput(BaseModel):
+    line_id: UUID
+    version: int = Field(ge=1)
+    legacy_id: str = Field(default="", max_length=64)
+    # «Цена факт» = ЦЕНА С НДС (факт) per unit in roubles, typed as in invoices («1 234,56»); null clears it.
+    price_with_vat: UnitPrice = None
+
+
+class FactPricesInput(BaseModel):
+    rows: list[FactPriceRowInput] = Field(min_length=1, max_length=200)
+
+
+class OrderLineInput(BaseModel):
+    line_id: UUID
+    version: int = Field(ge=1)
+
+
+class OrderInvoiceInput(BaseModel):
+    invoice_url: str = Field(min_length=1, max_length=4096)
+    invoice_number: str | None = Field(default=None, max_length=128)
+    invoice_date: date | None = None
+    expected_arrival: date
+    lines: list[OrderLineInput] = Field(min_length=1, max_length=200)
+
+    @field_validator("invoice_url")
+    @classmethod
+    def validate_invoice_url(cls, value: str) -> str:
+        normalized = normalize_invoice_url(value)
+        if normalized is None:
+            raise ValueError("Счёт обязателен")
+        return normalized
+
+
+class OrderPaidInput(BaseModel):
+    lines: list[OrderLineInput] = Field(min_length=1, max_length=200)
+    manual_exchange_rate: Rate = None
 
 
 class KpFileInput(BaseModel):
@@ -774,8 +819,13 @@ def update_facts(
 
 
 def _transition(operation) -> dict:
+    return {"line": _line_result(_command_errors(operation))}
+
+
+def _command_errors(operation):
+    """Run a write command (retried once on a lost race) and map its errors to HTTP."""
     try:
-        line = _retry_transaction(operation)
+        return _retry_transaction(operation)
     except ProcurementValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentProcurementUpdate as error:
@@ -794,7 +844,6 @@ def _transition(operation) -> dict:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return {"line": _line_result(line)}
 
 
 def _kp_errors(operation):
@@ -947,7 +996,8 @@ def supplier_requests(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
     payload: SupplierRequestsInput | None = None,
 ) -> dict:
-    line_ids = frozenset(payload.line_ids) if payload else None
+    """Ticked lines: what cannot go is listed in `skipped` ({line_id, legacy_id, reason}), the rest are formed."""
+    line_ids = tuple(dict.fromkeys(payload.line_ids)) if payload else None
     try:
         result = _retry_transaction(
             lambda: build_supplier_requests(
@@ -960,9 +1010,93 @@ def supplier_requests(
     return {
         "orders": [_order_result(order) for order in result.orders],
         "lines": [_line_result(line) for line in result.lines],
-        "skipped": result.skipped,
+        "skipped": [
+            {"line_id": str(item.line_id), "legacy_id": item.legacy_id, "reason": item.reason}
+            for item in result.skipped
+        ],
         "other_buyer": result.other_buyer,
     }
+
+
+@router.post("/fact-prices")
+def save_fact_prices(
+    payload: FactPricesInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """«Цена факт» of order rows (gross unit price, RUB), row by row like `/facts`: stale rows are skipped."""
+    try:
+        result = _retry_transaction(
+            lambda: save_fact_prices_batch(
+                [FactPriceRow(row.line_id, row.version, row.price_with_vat, row.legacy_id) for row in payload.rows],
+                principal.actor,
+                now,
+                uow_factory,
+            )
+        )
+    except ProcurementValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {
+        "lines": [_line_result(line) for line in result.lines],
+        "saved": len(result.lines),
+        "skipped": result.skipped,
+        "failed": [{"legacy_id": legacy_id, "error": error} for legacy_id, error in result.failed],
+    }
+
+
+@router.post("/orders/{order_number}/invoice")
+def invoice_order(
+    order_number: str,
+    payload: OrderInvoiceInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """One invoice for the order: all its «Жду счет» rows go «В оплату», or all its «В оплату» rows get it
+    replaced; all or none (409 when the rows sent are not that set or a row is stale, 422 on the pay gate)."""
+    lines = _command_errors(
+        lambda: invoice_supplier_order(
+            InvoiceSupplierOrderCommand(
+                order_number=order_number,
+                invoice_url=payload.invoice_url,
+                expected_arrival=payload.expected_arrival,
+                lines=[OrderLineRef(row.line_id, row.version) for row in payload.lines],
+                actor=principal.actor,
+                now=now,
+                invoice_number=payload.invoice_number,
+                invoice_date=payload.invoice_date,
+            ),
+            uow_factory(),
+        )
+    )
+    return {"lines": [_line_result(line) for line in lines]}
+
+
+@router.post("/orders/{order_number}/paid")
+def pay_order(
+    order_number: str,
+    payload: OrderPaidInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    rates: Annotated[ExchangeRates, Depends(procurement_exchange_rates)],
+) -> dict:
+    """«Оплачено» once for the order: all its «В оплату» rows go «В пути», all or none."""
+    lines = _command_errors(
+        lambda: pay_supplier_order(
+            PaySupplierOrderCommand(
+                order_number=order_number,
+                lines=[OrderLineRef(row.line_id, row.version) for row in payload.lines],
+                actor=principal.actor,
+                now=now,
+                manual_rate=payload.manual_exchange_rate,
+            ),
+            uow_factory(),
+            rates,
+        )
+    )
+    return {"lines": [_line_result(line) for line in lines]}
 
 
 @router.get("/supplier-requests/{order_number}")
