@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  ApiError,
   fulfillmentApi,
   type FulfillmentCalcLine,
   type FulfillmentLine,
@@ -11,6 +12,7 @@ import {
 import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
+import { BulkLotsPanel, bindPosition, bulkApi, isOffBook, type BulkPosition } from "./FulfillmentBulkLots";
 
 /* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
    only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» is the joint: for
@@ -52,8 +54,9 @@ function picked(line: FulfillmentLine) {
   return Number(line.issued) > 0 ? Number(line.issued) : Number(line.reserved);
 }
 
+/** A line is closed by a lot that covers it, or by «есть, не заведено» (the part is there, not entered yet). */
 function closedLine(line: FulfillmentLine) {
-  return Boolean(line.lot) && picked(line) >= Number(line.requirement);
+  return isOffBook(line) || (Boolean(line.lot) && picked(line) >= Number(line.requirement));
 }
 
 function openLines(request: FulfillmentRequest) {
@@ -241,6 +244,8 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
       if (result && typeof result === "object" && "message" in result) setNotice(String((result as { message: string }).message));
       await reload();
     } catch (reason) {
+      // A stale version: show what is there now, then say why the action did not go through.
+      if (reason instanceof ApiError && reason.status === 409) await reload();
       setError(reason instanceof Error ? reason.message : "Операция выдачи не выполнена");
     } finally {
       setBusy("");
@@ -377,24 +382,41 @@ function ProjectPanel({ project, requests, onClose, busyId, ...cardProps }: Card
   const [tab, setTab] = useState("all");
   const current = requests.find((request) => request.id === tab);
   const positions = useMemo(() => {
-    const groups = new Map<string, { article: string; name: string; unit: string; need: number; got: number; kb: Map<string, { request: FulfillmentRequest; need: number; got: number }> }>();
+    const groups = new Map<string, { article: string; name: string; unit: string; need: number; got: number; off: number; remaining: number; kb: Map<string, { request: FulfillmentRequest; need: number; got: number; off: number; remaining: number }> }>();
     for (const request of requests) {
       for (const line of request.lines ?? []) {
         const key = `${line.article}|${line.name}`.trim().toLocaleLowerCase("ru");
-        if (!groups.has(key)) groups.set(key, { article: line.article, name: line.name, unit: line.unit, need: 0, got: 0, kb: new Map() });
+        if (!groups.has(key)) groups.set(key, { article: line.article, name: line.name, unit: line.unit, need: 0, got: 0, off: 0, remaining: 0, kb: new Map() });
         const group = groups.get(key)!;
+        const off = isOffBook(line) ? Math.max(Number(line.requirement) - picked(line), 0) : 0;
+        const open = closedLine(line) ? 0 : Math.max(Number(line.requirement) - picked(line), 0);
         group.need += Number(line.requirement);
         group.got += picked(line);
-        const kb = group.kb.get(request.id) ?? { request, need: 0, got: 0 };
+        group.off += off;
+        group.remaining += open;
+        const kb = group.kb.get(request.id) ?? { request, need: 0, got: 0, off: 0, remaining: 0 };
         kb.need += Number(line.requirement);
         kb.got += picked(line);
+        kb.off += off;
+        kb.remaining += open;
         group.kb.set(request.id, kb);
       }
     }
     return [...groups.values()];
   }, [requests]);
   const round = (value: number) => Math.round(value * 100) / 100;
-  const done = positions.filter((position) => round(position.got) >= round(position.need)).length;
+  const done = positions.filter((position) => round(position.got + position.off) >= round(position.need)).length;
+  const [bulkKey, setBulkKey] = useState<string | null>(null);
+  const canBulk = cardProps.canEdit && cardProps.showPick;
+  const versionKey = requests.map((request) => `${request.id}:${request.version}`).join(",");
+  const bulkOf = (position: (typeof positions)[number]): BulkPosition => ({
+    article: position.article, name: position.name, unit: position.unit,
+    kbs: [...position.kb.values()].filter((kb) => kb.remaining > 0.0001)
+      .map((kb) => ({ request: kb.request, label: kbOf(kb.request), remaining: round(kb.remaining) }))
+      .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true })),
+  });
+  // Both actions go through the page's mutate: one busy lock, the banner, the reload; a 409 reloads and says so.
+  const runBulk = (operation: () => Promise<{ message: string }>) => void cardProps.mutate(`project:${project}`, operation);
 
   return <div className="panel fulfillment-project">
     <div className="procurement-title">
@@ -412,13 +434,27 @@ function ProjectPanel({ project, requests, onClose, busyId, ...cardProps }: Card
     </div>
     {current
       ? <FulfillmentCard key={`${current.id}:${current.version}`} request={current} busy={busyId === current.id} {...cardProps} />
-      : <div className="table-wrap"><table className="grid wide"><thead><tr><th>Артикул КД</th><th>Наименование</th><th>По КБ (набрано / нужно)</th><th className="num">Нужно</th><th className="num">Набрано</th></tr></thead><tbody>
-        {positions.map((position) => <tr key={`${position.article}|${position.name}`}>
-          <td><strong>{position.article || "—"}</strong></td><td>{position.name}</td>
-          <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got)} / {round(kb.need)}</button>)}</td>
-          <td className="num">{round(position.need)} {position.unit}</td><td className="num">{round(position.got)}</td>
-        </tr>)}
-        {!positions.length && <tr><td colSpan={5} className="empty">Позиций нет.</td></tr>}
+      : <div className="table-wrap"><table className="grid wide"><thead><tr><th>Артикул КД</th><th>Наименование</th><th>По КБ (набрано / нужно)</th><th className="num">Нужно</th><th className="num">Набрано</th>{canBulk && <th />}</tr></thead><tbody>
+        {positions.map((position) => {
+          const key = `${position.article}|${position.name}`;
+          const open = canBulk && position.remaining > 0.0001;
+          return <Fragment key={key}>
+            <tr>
+              <td><strong>{position.article || "—"}</strong></td><td>{position.name}</td>
+              <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got)} / {round(kb.need)}{kb.off > 0 ? " · не заведено" : ""}</button>)}</td>
+              <td className="num">{round(position.need)} {position.unit}</td>
+              <td className="num">{round(position.got)}{position.off > 0 && <small>{round(position.off)} есть, не заведено</small>}</td>
+              {canBulk && <td>{open && <>
+                <button type="button" className="secondary small" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} onClick={() => setBulkKey(bulkKey === key ? null : key)}>ГРН на все КБ</button>{" "}
+                <button type="button" className="secondary small" disabled={Boolean(busyId)} aria-label={`Есть, не заведено: ${position.name}`} onClick={() => runBulk(() => bindPosition(project, bulkOf(position), [], true))}>Есть, не заведено</button>
+              </>}</td>}
+            </tr>
+            {open && bulkKey === key && <tr className="detail"><td colSpan={6}>
+              <BulkLotsPanel project={project} position={bulkOf(position)} versionKey={versionKey} busy={Boolean(busyId)} run={runBulk} onClose={() => setBulkKey(null)} />
+            </td></tr>}
+          </Fragment>;
+        })}
+        {!positions.length && <tr><td colSpan={canBulk ? 6 : 5} className="empty">Позиций нет.</td></tr>}
       </tbody></table></div>}
   </div>;
 }
@@ -544,15 +580,21 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
   mutate: Mutate;
 }) {
   const [picking, setPicking] = useState(false);
+  const off = isOffBook(line);
   return <>
     <tr>
       <td className="text"><strong>{line.article || "—"}</strong><small>{line.name}</small></td>
       <td className="num">{line.requirement} {line.unit}</td><td className="num">{line.reserved}</td><td className="num">{line.issued}</td>
-      <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}` : "Ждём поставки"}</td>
+      <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}` : off ? <span className="status">есть, не заведено</span> : "Ждём поставки"}</td>
       <td>{line.lot ? line.lot.storage_location || "без места" : "—"}</td>
       <td>{canEdit && Number(line.issued) <= 0 && (line.lot
         ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.unbind(request.id, line.id, request.version))}>Снять резерв</button>
-        : <button className="secondary small" disabled={busy} aria-expanded={picking} onClick={() => setPicking((value) => !value)}>Выбрать ГРН</button>)}</td>
+        : off
+          ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, false))}>Снять отметку</button>
+          : <>
+            <button className="secondary small" disabled={busy} aria-expanded={picking} onClick={() => setPicking((value) => !value)}>Выбрать ГРН</button>{" "}
+            <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, true))}>Есть, не заведено</button>
+          </>)}</td>
     </tr>
     {picking && !line.lot && <tr className="detail"><td colSpan={7}>
       <LotPicker line={line} lots={lots} busy={busy} onPick={(lotId) => void mutate(request.id, () => fulfillmentApi.bind(request.id, line.id, request.version, lotId))} />
