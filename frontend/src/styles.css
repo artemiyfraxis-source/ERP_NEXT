@@ -2570,3 +2570,24 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .token-secret p { margin: 0 0 8px; }
 .token-secret-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .token-secret-value { flex: 1 1 360px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+/* «Принять поставку»: «Ожидаются» над очередью и таблица поставки одной панелью. */
+.expected-block, .delivery-panel { padding: 10px 14px 12px; }
+.expected-list { margin: 6px 0 0; padding: 0; list-style: none; }
+.expected-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.expected-list li:first-child { border-top: 0; }
+.expected-text { min-width: 0; }
+.queue-chips { margin: 12px 0 8px; }
+.delivery-head { margin-bottom: 4px; }
+.delivery-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.delivery-table th { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; font-weight: 600; white-space: nowrap; }
+.delivery-table td { padding: 3px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.delivery-table td.name { min-width: 200px; font-weight: 600; }
+.delivery-table td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.delivery-table input, .delivery-table select { padding: 4px 7px; font-size: 13px; }
+.delivery-table input.qty { width: 110px; }
+.delivery-table input.place { width: 80px; }
+.delivery-table td.deviation { white-space: nowrap; }
+.delivery-table td.deviation input { margin-left: 6px; }
+.delivery-table tr.off td:not(:first-child) { opacity: .5; }
+.delivery-panel .header-actions { margin-top: 10px; }
+@media (pointer: coarse) { .delivery-table input, .delivery-table select { min-height: 40px; } }
