@@ -3137,3 +3137,4 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 
 /* Номенклатура под наименованием партии / строки приёмки (option references.items). */
 .lot-item-chip { display: block; font-size: 12px; white-space: normal; }
+.lot-item-mark { margin-left: 6px; font-size: 10px; color: var(--primary); cursor: help; vertical-align: 1px; }

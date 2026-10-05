@@ -490,7 +490,7 @@ function cutCell(key: ColumnKey, text: string, pinned: boolean, className = "") 
 /** One lot of «Таблица склада», cell by cell in the order of the visible columns. */
 function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: ItemBrief) {
   switch (key) {
-    case "name": return <td key={key} className={classes("stock-name", pinned && "stock-pin")} title={lot.name || undefined}>{lot.name || "—"}{brief && <small className="muted lot-item-chip" title={`Позиция номенклатуры, связь: ${VIA_LABELS[brief.via]}`}>{brief.name}</small>}</td>;
+    case "name": return <td key={key} className={classes("stock-name", pinned && "stock-pin")} title={lot.name || undefined}>{lot.name || "—"}{brief && itemMark(lot.name || "", brief.name, `Позиция номенклатуры (связь: ${VIA_LABELS[brief.via]})`)}</td>;
     case "article": return cutCell(key, lot.article || "—", pinned);
     case "grn": return cutCell(key, `${lot.grn}${lot.package ? ` · ${lot.package}` : ""}`, pinned, "stock-grn");
     case "balance": return <td key={key} className={classes("num", pinned && "stock-pin")}><strong>{lot.balance} {lot.unit}</strong></td>;
@@ -504,12 +504,25 @@ function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: It
   }
 }
 
+/** The nomenclature item next to a lot or article name: a full second line only when it is named differently,
+ *  otherwise a quiet ◆ — the same words twice is noise. */
+function itemMark(name: string, itemName: string | undefined, title: string) {
+  if (!itemName) return null;
+  const same = itemName.trim().toLocaleLowerCase("ru") === name.trim().toLocaleLowerCase("ru");
+  return same
+    ? <span className="lot-item-mark" title={`${title}: ${itemName}`} aria-label={`${title}: ${itemName}`}>◆</span>
+    : <small className="muted lot-item-chip" title={title}>{itemName}</small>;
+}
+
 /** One article (all its lots) of the grouped table, cell by cell in the order of the visible columns. */
-function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, toggle: () => void, pinned: boolean) {
+function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, toggle: () => void, pinned: boolean, briefs: Record<string, ItemBrief> = {}) {
   switch (key) {
     case "name": {
       const name = distinct(item.lots, "name") || item.article || "Без наименования";
-      return <td key={key} className={classes("stock-name", pinned && "stock-pin")}><button className="link-button table-link" title={name} aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(); }}>{name}</button></td>;
+      // Nomenclature item(s) of the article's lots (option «Номенклатура»): one name, or «N позиций» when they differ.
+      const items = [...new Set(item.lots.map((lot) => briefs[lot.id]?.name).filter(Boolean))];
+      const chip = items.length === 1 ? items[0] : items.length > 1 ? `${items.length} позиции номенклатуры` : "";
+      return <td key={key} className={classes("stock-name", pinned && "stock-pin")}><button className="link-button table-link" title={name} aria-expanded={open} aria-label={`${open ? "Скрыть" : "Показать"} партии (${item.lots.length})`} onClick={(event) => { event.stopPropagation(); toggle(); }}>{name}</button>{chip && itemMark(name, chip, "Позиция номенклатуры")}</td>;
     }
     case "article": return cutCell(key, item.article || "—", pinned);
     case "grn": return cutCell(key, distinct(item.lots, "grn"), pinned, "stock-grn");
@@ -539,13 +552,14 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   history: boolean;
   readOnly: boolean;
 }) {
+  const lotItems = useContext(LotItems);
   return <>
     {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {group.articles.length}</span></td></tr>}
     {group.articles.map((item) => {
       const open = expanded.has(item.key);
       return <Fragment key={item.key}>
         <tr className={open ? "stock-article-row open" : "stock-article-row"} title="Партии карточками" onClick={() => toggle(item.key)}>
-          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned))}
+          {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned, lotItems.on ? lotItems.items : {}))}
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={columns.length}><div className="lot-cards">
           {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} />)}
