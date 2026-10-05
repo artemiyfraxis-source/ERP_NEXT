@@ -15,7 +15,6 @@ import {
   type SkippedRequestLine,
   type SupplierOrder,
 } from "./api";
-import { printStoredDocument } from "./print";
 import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
@@ -47,19 +46,14 @@ type BulkBlock = "inwork" | "awaiting" | "topay" | "paid";
 /** «Мои позиции» читаются все страницы подряд, чтобы заказ не разрезало границей страницы; не больше стольких. */
 const MAX_MINE_PAGES = 50;
 
-const FILE_NAME_FORBIDDEN = /[\\/:*?"<>|]/g;
-
-/** Скачивает текст запроса поставщику файлом «Запрос PO-012 — Поставщик.txt». */
-function downloadRequestLetter(order: SupplierOrder) {
-  const name = `Запрос ${order.order_number} — ${order.supplier}.txt`.replace(FILE_NAME_FORBIDDEN, "_");
-  const url = URL.createObjectURL(new Blob([order.letter], { type: "text/plain;charset=utf-8" }));
+/** Скачивает PDF запроса поставщику файлом «Запрос PO-012.pdf» (сервер отдаёт его вложением по `?download=1`). */
+function downloadRequestDocument(order: SupplierOrder) {
   const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
+  link.href = `/api/procurement/supplier-requests/${encodeURIComponent(order.order_number)}/document?download=1`;
+  link.download = `Запрос ${order.order_number}.pdf`;
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 /** Свежие строки встают на место старых, новые — в конец; строк, которых в ответе нет, это не касается. */
@@ -381,8 +375,8 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     return runMany("paid", "Сверяем курс с ЦБ", lines, (line) => procurementApi.reconcileRate(line.id, line.version), "Курс сверен");
   }
 
-  /** Запросы поставщикам по строкам «Готов к запросу» (группа поставщика): заказ на поставщика, текст каждого
-   *  запроса скачивается файлом «Запрос PO-012 — Поставщик.txt»; пропущенные строки — списком с причиной. */
+  /** Запросы поставщикам по строкам «Готов к запросу» (группа поставщика): заказ на поставщика, PDF каждого
+   *  запроса скачивается файлом «Запрос PO-012.pdf»; пропущенные строки — списком с причиной. */
   async function buildRequests(lines?: ProcurementLine[]) {
     if (interactionLocked) return;
     setBusyId("supplier-requests");
@@ -392,10 +386,10 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
       const result = await procurementApi.buildSupplierRequests(lines?.map((line) => line.id));
       const notSaved: string[] = [];
       for (const order of result.orders) {
-        try { downloadRequestLetter(order); } catch { notSaved.push(order.order_number); }
+        try { downloadRequestDocument(order); } catch { notSaved.push(order.order_number); }
       }
       const parts = [`Сформировано запросов: ${result.orders.length}`];
-      if (result.orders.length) parts.push(notSaved.length ? `файл не сохранился: ${notSaved.join(", ")}` : "тексты запросов скачаны файлами");
+      if (result.orders.length) parts.push(notSaved.length ? `файл не сохранился: ${notSaved.join(", ")}` : "PDF запросов скачаны файлами");
       if (result.other_buyer) parts.push(`строк других закупщиков не тронуто: ${result.other_buyer}`);
       setNotice(parts.join("; "));
       const names = new Map([...mine, ...(lines ?? [])].map((line) => [line.id, line.legacy_id]));
@@ -594,7 +588,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
         />
         <AwaitingInvoiceStage
           {...stageProps} {...bulkOf("awaiting")} lines={awaiting} actionsOf={awaitingActions}
-          onOpenKp={openKp} onPrint={printStoredDocument} onSavePrices={saveFactPrices} onUploadInvoice={uploadInvoice} onSubmitInvoice={submitOrderInvoice}
+          onOpenKp={openKp} onSavePrices={saveFactPrices} onUploadInvoice={uploadInvoice} onSubmitInvoice={submitOrderInvoice}
         />
         {kpReference && (
           <KpForm
@@ -612,9 +606,9 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
         )}
         <ToPayStage
           {...stageProps} {...bulkOf("topay")} lines={toPay} actionsOf={toPayActions}
-          onPrint={printStoredDocument} onSavePrices={saveFactPrices} onUploadInvoice={uploadInvoice} onSubmitInvoice={submitOrderInvoice} onPaidOrder={paidOrder}
+          onSavePrices={saveFactPrices} onUploadInvoice={uploadInvoice} onSubmitInvoice={submitOrderInvoice} onPaidOrder={paidOrder}
         />
-        <PaidStage {...stageProps} {...bulkOf("paid")} lines={paid} actionsOf={paidActions} onReconcile={reconcileMany} onPrint={printStoredDocument} />
+        <PaidStage {...stageProps} {...bulkOf("paid")} lines={paid} actionsOf={paidActions} onReconcile={reconcileMany} />
         {backorders.length > 0 && (
           <BackorderStage
             {...stageProps}

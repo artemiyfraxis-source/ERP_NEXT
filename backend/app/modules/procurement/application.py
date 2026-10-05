@@ -49,13 +49,13 @@ from .domain import (
     next_system_id,
     supplier_reference,
     supplier_request_blockers,
-    supplier_request_document_html,
     supplier_request_document_title,
     supplier_request_folder,
     supplier_request_letter,
     split_line,
     stage_from_receipts,
 )
+from .request_pdf import render_request_pdf
 from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate_day
 
 
@@ -300,7 +300,7 @@ class SupplierOrderDocument:
     created_at: datetime
 
 
-SUPPLIER_ORDER_DOCUMENT_TYPE = "text/html; charset=utf-8"
+SUPPLIER_ORDER_DOCUMENT_TYPE = "application/pdf"
 
 
 @dataclass(frozen=True)
@@ -1182,10 +1182,10 @@ def _issue_order(
     ]
     letter = supplier_request_letter(group, number)
     title = supplier_request_document_title(number, order_date)
-    content = supplier_request_document_html(title, letter).encode("utf-8")
+    content = render_request_pdf(f"Запрос {title}", letter)
     document = SupplierOrderDocument(
         order_number=number,
-        file_name=f"{title}.html",
+        file_name=f"{title}.pdf",
         folder=supplier_request_folder(order_date, group.supplier),
         content_type=SUPPLIER_ORDER_DOCUMENT_TYPE,
         size=len(content),
@@ -1218,12 +1218,19 @@ def supplier_order(order_number: str, uow: UnitOfWork) -> SupplierOrder:
 
 
 def supplier_order_document(order_number: str, uow: UnitOfWork) -> tuple[SupplierOrderDocument, bytes]:
-    """Файл документа запроса (ссылка «ЗАКАЗ» строк заказа)."""
+    """PDF документа запроса (ссылка «ЗАКАЗ» строк заказа). Заказы, выданные до PDF, хранят HTML-письмо —
+    для них PDF собирается из текста письма заказа."""
     with uow:
         found = uow.procurement.get_order_document(order_number)
-    if found is None:
+        order = uow.procurement.get_order(order_number) if found is not None else None
+    if found is None or order is None:
         raise KeyError(f"Supplier order document not found: {order_number}")
-    return found
+    meta, content = found
+    if content.startswith(b"%PDF"):
+        return meta, content
+    title = supplier_request_document_title(order.order_number, order.order_date)
+    pdf = render_request_pdf(f"Запрос {title}", order.letter)
+    return replace(meta, file_name=f"{title}.pdf", content_type=SUPPLIER_ORDER_DOCUMENT_TYPE, size=len(pdf)), pdf
 
 
 def procurement_line(line_id: UUID, uow: UnitOfWork) -> ProcurementLine:
