@@ -38,3 +38,13 @@ export {
   type HarnessEditorCatalogApi,
 } from "./editor/HarnessDesignEditor";
 export type { HarnessDesignDocument } from "./editor/model";
+// ERP reference books (H-T4): our БД.ТЕР, БД.ПРОВ, СПР.КАБ, БД.КОАКС, БД.МАТ and connector base.
+export {
+  createErpHarnessEditorCatalog,
+  createErpReferenceCatalog,
+  fetchErpHarnessCatalog,
+  findMissingReferences,
+  NOT_IN_REFERENCES,
+  type ErpHarnessCatalog,
+  type MissingReference,
+} from "./erpCatalog";
