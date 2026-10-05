@@ -2570,3 +2570,31 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .token-secret p { margin: 0 0 8px; }
 .token-secret-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .token-secret-value { flex: 1 1 360px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+/* ── «Мои позиции»: действия на виду, без меню «⋯» (владелец, 05.10) ── */
+.row-actions { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 0; max-width: 100%; }
+.row-actions-main { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.row-actions-main button { height: 24px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
+.row-actions-more { display: flex; flex-wrap: wrap; gap: 0 10px; max-height: 0; overflow: hidden; }
+.row-actions-more .link-button { padding: 0; font-size: 12px; color: var(--primary); white-space: nowrap; }
+tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 60px; margin-top: 3px; }
+.buy-grid td.menu, .procurement-stage td.menu { text-align: left; }
+.order-doc-links { gap: 12px; margin-right: 4px; font-size: 13px; }
+.order-doc-links .doc-link { color: var(--primary); text-decoration: none; }
+.order-doc-links a.doc-link:hover { text-decoration: underline; }
+.order-doc-links .doc-link.off { color: var(--muted-foreground); cursor: not-allowed; }
+.invoice-pop { position: relative; }
+.invoice-pop summary { cursor: pointer; color: var(--primary); list-style: none; }
+.invoice-pop summary::-webkit-details-marker { display: none; }
+.invoice-pop-list { position: absolute; z-index: 20; top: 100%; right: 0; display: grid; gap: 4px; min-width: 200px; padding: 8px 10px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.15); white-space: nowrap; }
+.order-lines small.invoice-name { display: block; color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+/* Правка в ячейке выглядит правкой: светлое поле со сплошной рамкой, пустая — подсказка «добавить» / «дд.мм.гггг». */
+.cell-edit { border: 1px solid var(--border); border-bottom-style: solid; background: var(--card); min-height: 26px; }
+.cell-edit-empty { color: var(--muted-foreground); font-style: italic; }
+.cell-edit:hover, .cell-edit:focus-visible { border-style: solid; }
+@media (pointer: coarse) {
+  .row-actions-more { max-height: none; margin-top: 4px; }
+  .row-actions-main button, .row-actions-more .link-button { min-height: 40px; }
+  .cell-edit { min-height: 40px; }
+  .order-doc-links a, .invoice-pop summary, .order-doc-links .doc-link { display: inline-flex; align-items: center; min-height: 40px; }
+  .group-actions .small { min-height: 40px; }
+}

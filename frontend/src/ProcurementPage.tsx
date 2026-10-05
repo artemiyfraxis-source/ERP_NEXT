@@ -466,7 +466,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     run(line, () => procurementApi.cancelLine(line.id, line.version), `${line.legacy_id}: строка отменена`);
   };
 
-  // Редкие действия строки — в её меню «⋯»; формы раскрываются под таблицей стадии.
+  // Действия строки видны на ней (без меню «⋯»); формы раскрываются под таблицей стадии.
   const form = (line: ProcurementLine) => ({ line, busy: busyId === line.id, disabled: interactionLocked, onAdvance: advance });
   const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", panel: () => <TraceabilityForm {...form(line)} /> });
   const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", panel: () => <SplitAction {...form(line)} /> });

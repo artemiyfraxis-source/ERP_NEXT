@@ -844,6 +844,8 @@ def create_line_from_expected(message: OutboxMessage) -> ReceivingLine:
             quality_document_type=str(payload.get("quality_document_type") or "").strip(),
             quality_document_number=str(payload.get("quality_document_number") or "").strip(),
             standard=str(payload.get("standard") or "").strip(),
+            # «Наименование по УПД» starts as the invoice name from procurement; the receiver edits it.
+            document_name=str(payload.get("invoice_item_name") or "").strip(),
             quality_document_date=(
                 date.fromisoformat(str(payload["quality_document_date"]))
                 if payload.get("quality_document_date")

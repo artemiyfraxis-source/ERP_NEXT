@@ -5,7 +5,7 @@ export type MenuItem = { label: string; title?: string; disabled?: boolean; run:
 
 const MENU_ITEM_HEIGHT = 30;
 
-/** Меню «⋯» строки. Список вынесен в body и позиционируется по кнопке (fixed): ни прокрутка таблицы, ни её
+/** Меню «⋯» (осталось только в карточке техкарты; «Закупка» его не использует). Список вынесен в body и позиционируется по кнопке (fixed): ни прокрутка таблицы, ни её
  *  stacking context (раскрытая строка, залипающая шапка соседней таблицы) его не обрезают и не перекрывают. */
 export function RowMenu({ label, items, disabled }: { label: string; items: MenuItem[]; disabled?: boolean }) {
   const [place, setPlace] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
@@ -52,6 +52,33 @@ export function RowMenu({ label, items, disabled }: { label: string; items: Menu
           ))}
         </div>,
         document.body,
+      )}
+    </span>
+  );
+}
+
+/** Сколько действий строки видны сразу кнопками; остальные — текстовыми ссылками второй строкой. */
+const PRIMARY_ACTIONS = 2;
+
+/** Действия строки — всё на виду, без меню «⋯» (владелец, 05.10: «не нужно вот эти скрытые кнопки»).
+ *  Первые два — кнопки, остальные — текстовые ссылки под ними: на десктопе раскрываются при наведении или фокусе
+ *  на строке, на планшете (pointer: coarse) видны всегда. Все лежат в DOM и доступны с клавиатуры. */
+export function RowActions({ label, items, disabled }: { label: string; items: MenuItem[]; disabled?: boolean }) {
+  const primary = items.slice(0, PRIMARY_ACTIONS);
+  const rest = items.slice(PRIMARY_ACTIONS);
+  return (
+    <span className="row-actions" role="group" aria-label={label} onClick={(event) => event.stopPropagation()}>
+      <span className="row-actions-main">
+        {primary.map((item) => (
+          <button key={item.label} type="button" className="secondary small" disabled={disabled || item.disabled} title={item.title} onClick={() => item.run()}>{item.label}</button>
+        ))}
+      </span>
+      {rest.length > 0 && (
+        <span className="row-actions-more">
+          {rest.map((item) => (
+            <button key={item.label} type="button" className="link-button" disabled={disabled || item.disabled} title={item.title} onClick={() => item.run()}>{item.label}</button>
+          ))}
+        </span>
       )}
     </span>
   );

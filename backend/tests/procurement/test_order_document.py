@@ -130,6 +130,26 @@ def test_applied_invoice_prices_every_row_and_moves_the_order_to_payment_atomica
     assert len(events(sessions, "procurement.invoice_recorded")) == 3
 
 
+def test_empty_invoice_name_defaults_to_the_site_name_and_a_typed_one_is_stored(procurement_api):
+    client, _, sessions = procurement_api
+    number, lines = order(client, sessions, PARTS)
+    found = recognize(client, number, ELITAN_PDF).json()
+    rows = apply_rows(found)
+    rows[0]["invoice_item_name"] = ""  # the buyer cleared the recognised name
+    rows[1]["invoice_item_name"] = "  Molex 51047-1000 (наш счёт)  "
+
+    applied = client.post(f"/api/procurement/orders/{number}/apply-document", json={
+        "kind": "invoice", "file_url": found["file"]["url"], "expected_arrival": "2026-10-12", "lines": rows,
+    })
+
+    assert applied.status_code == 200, applied.text
+    result = {line["id"]: line for line in applied.json()["lines"]}
+    first, second = (result[line_id] for line_id in list(lines)[:2])
+    assert first["invoice_item_name"] == (first["site_name"] or first["calculated_name"])
+    assert second["invoice_item_name"] == "Molex 51047-1000 (наш счёт)"
+    assert found["lines"][1]["matched_name"]  # recognition offers the document's row name for prefill
+
+
 def test_offer_prices_without_vat_keep_rows_awaiting_invoice(procurement_api):
     client, _, sessions = procurement_api
     number, lines = order(client, sessions, WIRES)

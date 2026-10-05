@@ -273,26 +273,17 @@ it("does not send an empty supplier that was not touched", async () => {
   expect(row).toMatchObject({ design_article: "A-1", actual_quantity: "2", actual_unit: "шт" });
 });
 
-it("keeps rare actions in the row menu, without approval", () => {
+it("keeps every row action visible on the row (no «⋯» menu), without approval", () => {
   renderTable([line(1)]);
-  expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
-  expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+  expect(screen.queryByText("⋯")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Действия SM-1" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  const actions = within(screen.getByRole("group", { name: "Действия SM-1" }));
+  expect(actions.getAllByRole("button").map((item) => item.textContent)).toEqual([
     "Со склада", "Прослеживаемость, раздробить…", "Отменить строку",
   ]);
-  fireEvent.click(screen.getByRole("menuitem", { name: "Прослеживаемость, раздробить…" }));
+  fireEvent.click(actions.getByRole("button", { name: "Прослеживаемость, раздробить…" }));
   expect(screen.getByText("детали")).toBeInTheDocument();
-});
-
-it("closes the row menu on an outside click and opens it again from the button", () => {
-  renderTable([line(1)]);
-  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
-  expect(screen.getByRole("menu")).toBeInTheDocument();
-  fireEvent.mouseDown(document.body);
-  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
-  fireEvent.keyDown(document, { key: "Escape" });
-  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
 
 it("selects all, a Shift range, and runs bulk actions on the chosen rows", async () => {
@@ -316,7 +307,7 @@ it("selects all, a Shift range, and runs bulk actions on the chosen rows", async
 
   fireEvent.click(screen.getByLabelText("Выбрать все"));
   expect(screen.getByText("Выбрано: 5")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Отменить строку" }));
+  fireEvent.click(within(screen.getByRole("toolbar", { name: "Действия с выбранными" })).getByRole("button", { name: "Отменить строку" }));
   await waitFor(() => expect(onCancelMany).toHaveBeenCalledWith(lines));
 });
 
@@ -370,8 +361,7 @@ it("reserves a lot from stock with min(available, to_buy) as the default quantit
   const onChanged = vi.fn();
   renderTable([line(1)], { onChanged });
 
-  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Со склада" }));
+  fireEvent.click(within(screen.getByRole("group", { name: "Действия SM-1" })).getByRole("button", { name: "Со склада" }));
   expect(await screen.findByLabelText("Партия ГРН-1")).toBeInTheDocument();
   expect((screen.getByLabelText("Поиск на складе") as HTMLInputElement).value).toBe("A-9");
   expect(screen.getByLabelText("Партия ГРН-2")).toBeDisabled();
@@ -390,8 +380,7 @@ it("shows the server's refusal text when the reserve is rejected", async () => {
     throw new Error("unexpected");
   });
   renderTable([line(1)]);
-  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Со склада" }));
+  fireEvent.click(within(screen.getByRole("group", { name: "Действия SM-1" })).getByRole("button", { name: "Со склада" }));
   fireEvent.click(await screen.findByLabelText("Партия ГРН-1"));
   fireEvent.click(screen.getByRole("button", { name: "Зарезервировать" }));
   expect(await screen.findByText("Больше доступного остатка")).toBeInTheDocument();
@@ -406,8 +395,7 @@ it("shows the covered quantity on the row and releases it from the menu", async 
   const onChanged = vi.fn();
   renderTable([line(1, { stock_covered: "1", to_buy: "1" } as Partial<ProcurementLine>)], { onChanged });
   expect(screen.getByText(/со склада: 1 шт · к закупке: 1/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Действия SM-1" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Снять «Со склада»" }));
+  fireEvent.click(within(screen.getByRole("group", { name: "Действия SM-1" })).getByRole("button", { name: "Снять «Со склада»" }));
   await waitFor(() => expect(onChanged).toHaveBeenCalledWith("SM-1: «Со склада» снято"));
   expect(posted).toEqual([`POST /api/procurement/${line(1).id}/stock-cover/release`]);
 });
