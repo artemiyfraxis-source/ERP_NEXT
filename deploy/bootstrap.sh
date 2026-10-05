@@ -52,7 +52,14 @@ for f in "$ERP_HOME"/config/secrets/*.json; do [ -f "$f" ] && chown 10001 "$f" &
 [ -f "$ERP_HOME/config/secrets/google-service-account.json" ] || \
   echo "!! Положи ключ Google в $ERP_HOME/config/secrets/google-service-account.json (без него «Из расчёта» ответит 503)"
 
-"$here/erp.sh" up -d --build
+# First install (no database volume yet): the API creates the schema itself on its first start. On a machine that
+# already has a database the API never migrates on start — new migrations go through update.sh (backup → rehearsal).
+if docker volume inspect erp_pgdata >/dev/null 2>&1; then
+  echo "База уже есть: миграции не накатываются при старте (только через update.sh)"
+  "$here/erp.sh" up -d --build
+else
+  ERP_AUTO_MIGRATE=1 "$here/erp.sh" up -d --build
+fi
 "$here/erp.sh" ps
 if grep -q '^ERP_DOMAIN=:80' "$ERP_HOME/config/.env"; then
   echo "Сайт в сети цеха: http://$(hostname -I | awk '{print $1}')"
