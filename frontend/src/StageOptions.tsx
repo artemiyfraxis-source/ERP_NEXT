@@ -15,15 +15,22 @@ function publish(next: Payload) {
   listeners.forEach((listener) => listener());
 }
 
+let generation = 0;
+
 function load() {
-  loading ??= api<Payload>("/api/stage-options")
-    .then(publish)
-    .catch(() => publish({ available: false, options: [] }));
+  if (!loading) {
+    const mine = generation;
+    // An answer that lands after a reset belongs to the previous generation and is dropped.
+    loading = api<Payload>("/api/stage-options")
+      .then((payload) => { if (mine === generation) publish(payload); })
+      .catch(() => { if (mine === generation) publish({ available: false, options: [] }); });
+  }
   return loading;
 }
 
 /** Test hook: forget the cached answer. */
 export function resetStageOptions() {
+  generation += 1;
   current = null;
   loading = null;
 }

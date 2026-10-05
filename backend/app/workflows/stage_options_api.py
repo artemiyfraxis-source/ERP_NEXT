@@ -8,10 +8,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.shared import stage_options
-from app.shared.http_auth import Principal, authenticated_principal, require_full_access
+from app.shared.http_auth import Principal, authenticated_principal
 
 router = APIRouter(prefix="/api/stage-options", tags=["stage-options"])
-admin_principal = require_full_access("Опции стенда переключает администратор.")
+
+
+def admin_principal(principal: Annotated[Principal, Depends(authenticated_principal)]) -> Principal:
+    """Stage-only switch, kept out of the identity gate contract (GATES) on purpose: superadmin / admin, no tokens."""
+    if principal.service or not principal.full_access:
+        raise HTTPException(status_code=403, detail="Опции стенда переключает администратор.")
+    return principal
 
 
 class Toggle(BaseModel):

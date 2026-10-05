@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProcurementPage } from "./ProcurementPage";
 import { resetStageOptions } from "./StageOptions";
@@ -33,6 +33,7 @@ function mockServer(enabled: boolean, requests: string[] = []) {
 afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
+  cleanup(); // unmount before the reset: a live tree would refetch the options without the mock
   resetStageOptions();
 });
 

@@ -33,7 +33,7 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
     let live = true;
     api<{ sections: TodaySection[] }>("/api/procurement/today")
       .then((result) => { if (live) setSections(result.sections); })
-      .catch((reason) => { if (live) setError(failureText(reason)); });
+      .catch((reason) => { if (live) setError(failureText(reason, "«Сегодня» не загрузилось")); });
     return () => { live = false; };
   }, []);
 

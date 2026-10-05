@@ -58,7 +58,7 @@ export function ProcurementKpi() {
     setError("");
     api<KpiResult>(`/api/procurement/kpi?${query}`)
       .then((next) => { if (!live) return; setResult(next); setBuyers(next.buyers); })
-      .catch((reason) => { if (live) setError(failureText(reason)); });
+      .catch((reason) => { if (live) setError(failureText(reason, "Показатели не загрузились")); });
     return () => { live = false; };
   }, [from, to, buyer]);
 
