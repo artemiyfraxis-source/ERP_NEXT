@@ -18,6 +18,9 @@ import {
 import { DataTable, readSaved, writeSaved, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
+import { ProcurementKpi } from "./ProcurementKpi";
+import { ProcurementToday } from "./ProcurementToday";
+import { useStageOption } from "./StageOptions";
 import {
   BackorderStage, COMPACT_BELOW, OrderStageBlock, OtherStage, StageHeading, orderGroups, orderStage,
   type BulkState, type OrderGroup, type RowAction,
@@ -29,7 +32,7 @@ import type { LineEditing } from "./ProcurementCellEdit";
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 
-type ProcurementTab = "queues" | "sheet" | "suppliers";
+type ProcurementTab = "today" | "queues" | "sheet" | "suppliers" | "kpi";
 
 // «Мои позиции» (владелец, 05.10) — один блок «В работе»: строки к запросу (с «Готов к запросу») по поставщикам,
 // под ними лента заказов — заказ не переезжает между блоками, его статус (Жду счёт → Ждёт оплаты → В пути →
@@ -124,14 +127,23 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
 export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly?: boolean; buyerName?: string } = {}) {
-  const [tab, setTab] = useState<ProcurementTab>("queues");
+  // Stage options: «Сегодня» (first, and the default only when on; the buyer's own list, so not in view mode)
+  // and «Показатели».
+  const todayOn = useStageOption("procurement.today") && !readOnly;
+  const kpiOn = useStageOption("procurement.kpi");
+  const [picked, setTab] = useState<ProcurementTab | null>(null);
+  const tab: ProcurementTab = picked === "today" && !todayOn ? "queues" : picked === "kpi" && !kpiOn ? "queues" : picked ?? (todayOn ? "today" : "queues");
   return (
     <>
       <nav className="shipping-tabs" aria-label="Разделы закупки">
+        {todayOn && <button type="button" className={`secondary small${tab === "today" ? " active" : ""}`} aria-pressed={tab === "today"} onClick={() => setTab("today")}>Сегодня</button>}
         <button type="button" className={`secondary small${tab === "queues" ? " active" : ""}`} aria-pressed={tab === "queues"} onClick={() => setTab("queues")}>Очереди</button>
         <button type="button" className={`secondary small${tab === "sheet" ? " active" : ""}`} aria-pressed={tab === "sheet"} onClick={() => setTab("sheet")}>Весь лист</button>
         <button type="button" className={`secondary small${tab === "suppliers" ? " active" : ""}`} aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>По поставщикам</button>
+        {kpiOn && <button type="button" className={`secondary small${tab === "kpi" ? " active" : ""}`} aria-pressed={tab === "kpi"} onClick={() => setTab("kpi")}>Показатели</button>}
       </nav>
+      {tab === "today" && <ProcurementToday onOpenQueues={() => setTab("queues")} />}
+      {tab === "kpi" && <ProcurementKpi />}
       {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} />}
       {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
       {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}
