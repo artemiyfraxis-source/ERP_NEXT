@@ -1,7 +1,7 @@
 # Fraxis ERP Next — working rules for Claude Code
 
-The successor to SUPPLYMAP (Google Apps Script). Owner leaves Google within ~6 months of 2026-09-14;
-this repo is where the product moves. Modular monolith: FastAPI + SQLAlchemy/Alembic backend,
+The production ERP of the shop, running on its own server since the 05.10.2026 launch. SUPPLYMAP (Google Apps
+Script) is legacy: the work has fully moved here. Modular monolith: FastAPI + SQLAlchemy/Alembic backend,
 React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and local preview.
 
 ## Read first
@@ -16,13 +16,10 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
   on anything that plans, dense Google-like tables and forms, fixed ETK block order, before/after shots via
   `scripts/demo/run-demo.sh` + `scripts/demo/shoot.mjs`, then `design-critique` on the after-shots.
 
-## Sibling repos (expected next to this one in `Projects\`)
-- `../SUPPLYMAP` — live GAS system and the **source of domain rules**. Read-only from here: port the
-  rules, not the GAS files or the sheet layout. `SUPPLYMAP_SOURCE_REPOSITORY` overrides the path.
-- SUPPLYMAP keeps changing (the owner maintains it in VS Code; this repo is worked on in Claude Desktop).
-  The SessionStart hook `.claude/hooks/supplymap-drift.mjs` prints how many SUPPLYMAP code commits each
-  ported module is behind, plus the latest ones — start a session by checking whether any of them change
-  a rule that is already ported.
+## SUPPLYMAP is legacy (owner, 05.10.2026)
+- Do not consult `../SUPPLYMAP` to decide how a fix or a feature works: the ERP's own data, code and the owner's
+  words decide. Don't brief workers with «check SUPPLYMAP». The sibling checkout is still needed only by the
+  architecture tests (`SOURCE.json` pins); the drift hook is off.
 
 ## Cloud sessions (claude.ai/code)
 - `.claude/hooks/cloud-siblings.mjs` (SessionStart, only when `CLAUDE_CODE_REMOTE=true`) clones `../SUPPLYMAP` and
@@ -33,9 +30,8 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 - **Project threads (claude.ai project «ERP NEXT") are different:** the cwd is the parent dir holding all three
   repos (`ERP_NEXT`, `SUPPLYMAP`, `claude-brain` side by side, already cloned by the platform), so this repo's
   `.claude/settings.json` does NOT apply there — no SessionStart hooks, no `enabledPlugins`. `.claude/skills`,
-  `.claude/agents` and this file still load. Before porting a rule run both hooks by hand (the first unshallows
-  the platform's SUPPLYMAP clone and prints the owner's global rules):
-  `node ERP_NEXT/.claude/hooks/cloud-siblings.mjs && node ERP_NEXT/.claude/hooks/supplymap-drift.mjs`.
+  `.claude/agents` and this file still load. Run `node ERP_NEXT/.claude/hooks/cloud-siblings.mjs` by hand: it prints the
+  owner's global rules.
   Plugins for threads are enabled only in the project's settings (Plugins tab), by the owner.
 
 ## Commands
@@ -43,11 +39,9 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
   Run it after every slice. Backend alone: `npm run test:backend`; frontend: `npm run test:frontend`.
 - GitHub CI (`.github/workflows/check.yml`) runs the same gate on every PR and push to `main`, minus the
   architecture tests (they need the sibling SUPPLYMAP checkout). Don't merge a PR whose `check` is red.
-- Known red: architecture tests pin each module's `SOURCE.json` to a SUPPLYMAP commit, so they fail
-  whenever SUPPLYMAP `main` moves on. Only techcards and the operation library
-  have a `npm run sync:*` script; run it for those. For every other module, re-baseline by hand, and
-  only after reviewing the SUPPLYMAP commits since the pin: port any rule change first, then move
-  `sourceCommit`/`sourceRef` in its `SOURCE.json`. Never edit file hashes in `SOURCE.json` by hand.
+- Architecture tests pin each module's `SOURCE.json` to a SUPPLYMAP commit; SUPPLYMAP is frozen, so they
+  stay green. If they go red because SUPPLYMAP moved, re-baseline the pin (`npm run sync:*` for techcards and
+  the operation library) — don't port anything. Never edit file hashes in `SOURCE.json` by hand.
 - Local preview: `.claude/launch.json` (`erp-api` on 8021 over `backend/preview.db`, `erp-web` on 5176).
   Preview login: `preview` / `Preview-2026!` (local SQLite only).
 - Python 3.12 venv in `backend/.venv` (`pip install -r requirements.lock.txt`); schema changes only via
@@ -55,9 +49,8 @@ React/TypeScript (Vite) frontend, PostgreSQL in production, SQLite for tests and
 
 ## Choosing mode, model and depth — decide yourself, don't ask
 - **Plan first** (locally: `erp-planner` via the `orchestrate` skill; elsewhere plan mode) when starting
-  a new module, porting a drift commit that touches a status machine or money/stock quantities, or any
-  change across 3+ files. Small fixes: act.
-- **Delegate by model:** wide SUPPLYMAP reading → `supplymap-scout` (haiku). Grading → `erp-verifier`
+  a new module, touching a status machine or money/stock quantities, or any change across 3+ files. Small fixes: act.
+- **Delegate by model:** wide code reading → `Explore`. Grading → `erp-verifier`
   (sonnet), before saying a slice is done and before every commit. Mechanical bulk edits (renames,
   fixtures, lint) → a general-purpose subagent with `model: haiku`, then check its diff yourself.
   Architecture and domain decisions stay in the main session; a migration is written by one worker per

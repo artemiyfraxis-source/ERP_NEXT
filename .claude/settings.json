@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node scripts/setup-env.mjs && node .claude/hooks/cloud-siblings.mjs && node .claude/hooks/supplymap-drift.mjs",
+            "command": "node scripts/setup-env.mjs && node .claude/hooks/cloud-siblings.mjs",
             "timeout": 600
           }
         ]

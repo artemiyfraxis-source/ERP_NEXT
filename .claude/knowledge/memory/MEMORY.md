@@ -4,6 +4,7 @@
 - [Launch plan](launch-plan.md) — server 01.10, five blocks by 05.10, second wave 05–09.10, cutover
 - [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, LAN + Tailscale, push.ps1
 - [Staff and sites](staff-and-sites.md) — ЦАР/ЖУК fitters, masters, full-access roles, PIN
+- [SUPPLYMAP left](supplymap-left.md) — owner 05.10: don't consult SUPPLYMAP for fixes/new rules anymore
 - [SUPPLYMAP parity](supplymap-parity.md) — «всё как в SUPPLYMAP», deliberate differences, out of scope
 - [SUPPLYMAP domain decisions](supplymap-domain-decisions.md) — owner decisions that bind the port live in SUPPLYMAP memory; which note to read per area
 - Modules: [projects](module-projects.md) · [techcards](module-techcards.md) · [reference DB](module-reference-db.md) · [warehouse](module-warehouse.md) · [fulfillment](module-fulfillment.md) · [production](module-production.md) · [shipping](module-shipping.md) · [procurement](module-procurement.md)

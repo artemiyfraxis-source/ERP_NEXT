@@ -5,6 +5,8 @@ metadata:
   type: feedback
 ---
 
+> Superseded for new work by [[supplymap-left]] (owner 05.10).
+
 - Owner 2026-09-29: ERP repeats SUPPLYMAP behaviour and look. Agent decisions that diverge are reverted to SUPPLYMAP. Exceptions: obvious SUPPLYMAP bugs, and storage (everything in SQL, nothing on Drive → [[google-wiring]]).
 - Deliberate differences: FIFO by ПТ number; UPD file limit 20 MB; invoice recognition only for PDFs with a text layer; fixed bug «возврат поставщику = возврат на склад»; defects keep nature + description. Procurement buyer flow (owner 05.10): «В закупку» lands the row «В работе» for whoever pressed it (no «Неразобранные» step), «В работе» grouped by supplier with a request per group, invoice and «Оплачено» once per order (PO), only «Цена факт» per row — SUPPLYMAP does these per row.
 - Out of scope: commercial «Проекты» and «Расчёт и КП» of the old ERP — another block, another programmer (removed, PR PK-4).
