@@ -2890,6 +2890,24 @@ export interface KitsetDocument {
   url: string | null;
   uploaded_at: string;
   who: string;
+  /** «harness» — чертёж жгута, правится в ERP (`kitsetsApi.harness`); «file» — вложенный файл. */
+  kind?: "harness" | "file";
+}
+
+/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — одна строка КД, сохраняется поверх себя.
+ *  `version` — с чем сохранять: чужое сохранение после неё даёт 409. Чертежа нет — всё null. */
+export interface HarnessDrawing {
+  document: KitsetDocument | null;
+  design: Record<string, unknown> | null;
+  version: string | null;
+  warnings: string[];
+}
+
+/** «Ручная сборка» из чертежа: build_config (операции с `origin` = `harness:<объект>:<код>`, блоки по маршруту КД) —
+ *  экран сливает её со схемой мастера через `rederive`. Ничего не сохраняется. */
+export interface HarnessDerived {
+  build_config: Record<string, unknown>;
+  warnings: string[];
 }
 
 export interface KitsetAssembly {
@@ -3010,6 +3028,7 @@ export interface KitsetDeleteResult {
 }
 
 const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
+const harnessPath = (project: string, index: string) => `${kitsetPath(project)}/harness/${encodeURIComponent(index)}`;
 
 /** Запись трека проекта: что создано в одном из модулей. `at` — ISO-время; null — события ещё нет (такие идут в конце). */
 export type ProjectTrackEntry = {
@@ -3072,6 +3091,17 @@ export const kitsetsApi = {
   documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
   removeDocument: (project: string, id: string) =>
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  harness: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
+  /** Сохранить чертёж: `version` — из последнего чтения (null — чертежа ещё нет). */
+  saveHarness: (project: string, index: string, design: Record<string, unknown>, version: string | null) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, version }) }),
+  /** «Ручная сборка» из чертежа: переданного (несохранённого в редакторе) или сохранённого. */
+  deriveHarness: (project: string, index: string, design?: Record<string, unknown>) =>
+    api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
+  harnessExportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
+  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — ложится поверх прежнего (та же проверка версии). */
+  importHarness: (project: string, index: string, payload: { file_name: string; content_b64: string; version: string | null }) =>
+    api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),
   openTechcard: (project: string, index: string) =>
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
 };
