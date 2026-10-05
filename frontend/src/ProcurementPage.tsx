@@ -21,6 +21,10 @@ import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import { ProcurementKpi } from "./ProcurementKpi";
 import { ProcurementToday } from "./ProcurementToday";
 import { useStageOption } from "./StageOptions";
+import { PurchasingItems } from "./PurchasingItems";
+import { PurchasingRfq } from "./PurchasingRfq";
+import { PurchasingSettings } from "./PurchasingSettings";
+import { PurchasingSuppliers } from "./PurchasingSuppliers";
 import {
   BackorderStage, COMPACT_BELOW, OrderStageBlock, OtherStage, StageHeading, orderGroups, orderStage,
   type BulkState, type OrderGroup, type RowAction,
@@ -32,7 +36,7 @@ import type { LineEditing } from "./ProcurementCellEdit";
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 
-type ProcurementTab = "today" | "queues" | "sheet" | "suppliers" | "kpi";
+type ProcurementTab = "today" | "queues" | "sheet" | "suppliers" | "kpi" | "rfq" | "directory" | "items" | "settings";
 
 // «Мои позиции» (владелец, 05.10) — один блок «В работе»: строки к запросу (с «Готов к запросу») по поставщикам,
 // под ними лента заказов — заказ не переезжает между блоками, его статус (Жду счёт → Ждёт оплаты → В пути →
@@ -132,7 +136,13 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   const todayOn = useStageOption("procurement.today") && !readOnly;
   const kpiOn = useStageOption("procurement.kpi");
   const [picked, setTab] = useState<ProcurementTab | null>(null);
-  const tab: ProcurementTab = picked === "today" && !todayOn ? "queues" : picked === "kpi" && !kpiOn ? "queues" : picked ?? (todayOn ? "today" : "queues");
+  // Purchasing hybrid (Roller_Buyer): requests for quotes, the supplier and item directories, their settings.
+  const rfqOn = useStageOption("procurement.rfq");
+  const directoryOn = useStageOption("references.suppliers");
+  const itemsOn = useStageOption("references.items");
+  const settingsOn = rfqOn || directoryOn || itemsOn;
+  const shown: Record<string, boolean> = { today: todayOn, kpi: kpiOn, rfq: rfqOn, directory: directoryOn, items: itemsOn, settings: settingsOn };
+  const tab: ProcurementTab = picked && shown[picked] === false ? "queues" : picked ?? (todayOn ? "today" : "queues");
   return (
     <>
       <nav className="shipping-tabs" aria-label="Разделы закупки">
@@ -141,9 +151,17 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
         <button type="button" className={`secondary small${tab === "sheet" ? " active" : ""}`} aria-pressed={tab === "sheet"} onClick={() => setTab("sheet")}>Весь лист</button>
         <button type="button" className={`secondary small${tab === "suppliers" ? " active" : ""}`} aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>По поставщикам</button>
         {kpiOn && <button type="button" className={`secondary small${tab === "kpi" ? " active" : ""}`} aria-pressed={tab === "kpi"} onClick={() => setTab("kpi")}>Показатели</button>}
+        {rfqOn && <button type="button" className={`secondary small${tab === "rfq" ? " active" : ""}`} aria-pressed={tab === "rfq"} onClick={() => setTab("rfq")}>Запросы КП</button>}
+        {directoryOn && <button type="button" className={`secondary small${tab === "directory" ? " active" : ""}`} aria-pressed={tab === "directory"} onClick={() => setTab("directory")}>Поставщики</button>}
+        {itemsOn && <button type="button" className={`secondary small${tab === "items" ? " active" : ""}`} aria-pressed={tab === "items"} onClick={() => setTab("items")}>Номенклатура</button>}
+        {settingsOn && <button type="button" className={`secondary small${tab === "settings" ? " active" : ""}`} aria-pressed={tab === "settings"} onClick={() => setTab("settings")}>Настройки</button>}
       </nav>
       {tab === "today" && <ProcurementToday onOpenQueues={() => setTab("queues")} />}
       {tab === "kpi" && <ProcurementKpi />}
+      {tab === "rfq" && <PurchasingRfq readOnly={readOnly} />}
+      {tab === "directory" && <PurchasingSuppliers readOnly={readOnly} />}
+      {tab === "items" && <PurchasingItems readOnly={readOnly} />}
+      {tab === "settings" && <PurchasingSettings readOnly={readOnly} />}
       {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} />}
       {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
       {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}
