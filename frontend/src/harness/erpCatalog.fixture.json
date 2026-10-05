@@ -1,0 +1,461 @@
+{
+ "contractVersion": 1,
+ "capturedUtc": "2026-09-29T09:23:00+00:00",
+ "snapshots": [
+  {
+   "snapshotId": "d5c4ca21-3f3e-591c-abbb-43c443b2a63d",
+   "sourceId": "technology-wires",
+   "contractVersion": 1,
+   "capturedUtc": "2026-09-29T09:23:00+00:00",
+   "sourceKind": "erp-references",
+   "versionFingerprint": "79e42a3d67f56344",
+   "sourceUri": null,
+   "sha256": "79e42a3d67f56344d44c96e14c23faf9838927abc6dc431d1f865ccaf2af21bf",
+   "records": [
+    {
+     "recordId": "c03aa785c9ad33e5ea548cd2a9c880b6c3b2118dfd3f5b2a865b79819c94225d",
+     "entityType": "cable",
+     "sourceKey": "ПВВС 4×0,35",
+     "payload": {
+      "Марка": "ПВВС 4×0,35",
+      "wireType": "многожильный кабель",
+      "manufacturer": "семейство кабелей сигнализации/блокировки (кандидаты: ГОСТ 31995-2012 / ГОСТ Р 56292-2014, точный номер для этой маркировки не подтверждён)",
+      "Core": "4",
+      "Сечение C": "0,35",
+      "colors": "чёрный (оболочка)",
+      "insulation": "полиэтилен (изоляция жил) / оболочка — источники расходятся: rfopt.ru/pvvs-4h035 указывает свинцовую оболочку (нетипично), общее описание серии rfopt.ru/pvvs — пластмассовую — решено агентом — проверить"
+     },
+     "sourceLocation": "БД.ПРОВ"
+    },
+    {
+     "recordId": "057c9b56598a064e09a9e4091066a3ab8bc238702bed1284a2049f0f8c501f29",
+     "entityType": "wire",
+     "sourceKey": "RG316",
+     "payload": {
+      "Марка": "RG316",
+      "wireType": "коаксиальный",
+      "manufacturer": "MIL-DTL-17 RG-316/U; реселлер baltic-signal.ru",
+      "conductor": "7×0,17 (посеребр. медь)",
+      "outerDiameterMm": 2.45,
+      "insulation": "ПТФЭ (диэлектрик) / ФЭП (оболочка)",
+      "shield": "посеребрённая медная оплетка 80×0,1 мм",
+      "impedanceOhm": 50.0
+     },
+     "sourceLocation": "БД.ПРОВ"
+    },
+    {
+     "recordId": "f2030898c34636462ae26f77ae0647a490b6d3264d5fa1b6624fae145c3b2b2e",
+     "entityType": "wire",
+     "sourceKey": "UL1061 28AWG",
+     "payload": {
+      "Марка": "UL1061 28AWG",
+      "wireType": "монтажный",
+      "manufacturer": "UL AWM Style 1061, SR-PVC, 300V/80°C",
+      "sectionMm2": "0,08",
+      "awg": "28",
+      "conductor": "7×0,127 (луж. медь, 7/36AWG)",
+      "colors": "чёрный, красный, белый, синий, жёлтый, зелёный, оранжевый, коричневый, серый, фиолетовый",
+      "outerDiameterMm": 0.89,
+      "insulation": "полутвёрдый ПВХ (SR-PVC)"
+     },
+     "sourceLocation": "БД.ПРОВ"
+    }
+   ],
+   "diagnostics": []
+  },
+  {
+   "snapshotId": "9648affd-a4b7-5d20-b4d2-63ea064b1ddd",
+   "sourceId": "technology-terminals",
+   "contractVersion": 1,
+   "capturedUtc": "2026-09-29T09:23:00+00:00",
+   "sourceKind": "erp-references",
+   "versionFingerprint": "bea554a7df83e940",
+   "sourceUri": null,
+   "sha256": "bea554a7df83e9407f4f0827274e88d91185ae5dfe22112d915f0076869ace08",
+   "records": [
+    {
+     "recordId": "ff1da964e55f3709f313fef45fde790b22f6b1e700f228b2acd67ee493dadad8",
+     "entityType": "terminal",
+     "sourceKey": "08701039",
+     "payload": {
+      "reelArticle": "08701039",
+      "bagArticle": "8701040",
+      "manufacturer": "Molex",
+      "series": "5264",
+      "productName": "Mini-SPOX",
+      "connectorType": "Обжимной контакт",
+      "contactType": "Female",
+      "pitchMm": 2.5,
+      "stripLengthMm": "2,50 - 3,00",
+      "lengthPlusMm": 5.0,
+      "crimpHeight": "28 AWG: 0,61 - 0,67\n26 AWG: 0,63 - 0,69\n24 AWG: 0,67 - 0,74\n22 AWG: 0,73 - 0,80",
+      "insulationCrimpHeight": "28 AWG: 1,42\n26 AWG: 1,42\n24 AWG: 1,57\n22 AWG: 1,68",
+      "pullForce": "28 AWG: 11,12\n26 AWG: 17,79\n24 AWG: 28,91\n22 AWG: 44,48",
+      "awgFrom": 28.0,
+      "awgTo": 22.0,
+      "sectionFromMm2": 0.08,
+      "sectionToMm2": 0.35,
+      "insulationDiameterFromMm": 1.2,
+      "insulationDiameterToMm": 1.8,
+      "material": "Phosphor Bronze / Tin",
+      "datasheetUrl": "https://www.molex.com/en-us/products/part-detail/08701039"
+     },
+     "sourceLocation": "БД.ТЕР"
+    },
+    {
+     "recordId": "2da7e7ff8f656444e9b6491f100b6a3d67d140705c3b2b2f2c9f7387085a2c6e",
+     "entityType": "terminal",
+     "sourceKey": "SSHL-002T-P0.2",
+     "payload": {
+      "reelArticle": "SSHL-002T-P0.2",
+      "manufacturer": "JST",
+      "series": "GHDR, GHR",
+      "productName": "GHD, GH",
+      "connectorType": "Обжимной контакт",
+      "contactType": "Female",
+      "applicator": "S4/M4/A4",
+      "pitchMm": 1.25,
+      "stripLengthMm": 1.7,
+      "lengthPlusMm": 5.0,
+      "lengthMinusMm": 10.0,
+      "crimpHeight": "30 AWG: 0,44 - 0,48\n28 AWG: 0,48 - 0,52\n26 AWG: 0,52 - 0,56",
+      "pullForce": "30 AWG: 5\n28 AWG: 10\n26 AWG: 20",
+      "awgFrom": 30.0,
+      "awgTo": 26.0,
+      "sectionFromMm2": 0.05,
+      "sectionToMm2": 0.12,
+      "insulationDiameterFromMm": 0.8,
+      "insulationDiameterToMm": 1.0,
+      "material": "Phosphor Bronze / Tin",
+      "datasheetUrl": "https://www.jst.com/products/crimp_style/sshl-002t-p0-2/"
+     },
+     "sourceLocation": "БД.ТЕР"
+    }
+   ],
+   "diagnostics": []
+  },
+  {
+   "snapshotId": "419c1051-13f1-57b9-9fb2-52e0ff9f48af",
+   "sourceId": "technology-coax-cables",
+   "contractVersion": 1,
+   "capturedUtc": "2026-09-29T09:23:00+00:00",
+   "sourceKind": "erp-references",
+   "versionFingerprint": "350b1d97decf0187",
+   "sourceUri": null,
+   "sha256": "350b1d97decf0187ac8f51773834dfea12ba06bbd82fa270ebd4f2e1259262de",
+   "records": [
+    {
+     "recordId": "a63167a9aae2b54d4e3b27d8d66cbc24cbeb5871f1afeae96e579f6f1572aa61",
+     "entityType": "coax-cable",
+     "sourceKey": "RF 1.13",
+     "payload": {
+      "name": "RF 1.13",
+      "layers": [
+       {
+        "index": 1,
+        "diameterMm": 0.24
+       },
+       {
+        "index": 2,
+        "diameterMm": 0.7
+       },
+       {
+        "index": 3,
+        "diameterMm": 0.92
+       }
+      ],
+      "outerDiameterMm": 0.92
+     },
+     "sourceLocation": "СПР.КАБ"
+    }
+   ],
+   "diagnostics": []
+  },
+  {
+   "snapshotId": "944d4668-8461-5fca-a17e-e13b60897c03",
+   "sourceId": "technology-coax-terminations",
+   "contractVersion": 1,
+   "capturedUtc": "2026-09-29T09:23:00+00:00",
+   "sourceKind": "erp-references",
+   "versionFingerprint": "ae5b2eef19882503",
+   "sourceUri": null,
+   "sha256": "ae5b2eef19882503a330ce445aae3a167516f886a7b0a94f43263e6e26c1dd04",
+   "records": [
+    {
+     "recordId": "fc798c83df616839752f538a7467137073de06570aa6855049c91d8c2029fc92",
+     "entityType": "coax-termination",
+     "sourceKey": "BNC-C58P",
+     "payload": {
+      "article": "BNC-C58P",
+      "connectorType": "BNC-male",
+      "manufacturer": "RUICHI",
+      "cable": "RG58",
+      "pinType": "пайка",
+      "shieldType": "обжим",
+      "layers": [
+       {
+        "index": 1,
+        "diameterMm": 1.0,
+        "stripLengthMm": 5.0
+       },
+       {
+        "index": 2,
+        "diameterMm": 2.95,
+        "stripLengthMm": 2.5
+       },
+       {
+        "index": 3,
+        "diameterMm": 3.5,
+        "stripLengthMm": 12.0
+       }
+      ]
+     },
+     "sourceLocation": "БД.КОАКС"
+    },
+    {
+     "recordId": "0b6db63a06e09aae88176f1b2a12d1bcff5cb9c1e581ed1a4b4b5962886949eb",
+     "entityType": "coax-termination",
+     "sourceKey": "MCX-female RG-174",
+     "payload": {
+      "article": "MCX-female RG-174",
+      "connectorType": "MCX-female",
+      "manufacturer": "LenoRF",
+      "cable": "RG-174",
+      "layers": [
+       {
+        "index": 1,
+        "diameterMm": 0.48,
+        "stripLengthMm": null
+       },
+       {
+        "index": 2,
+        "diameterMm": 1.52,
+        "stripLengthMm": null
+       },
+       {
+        "index": 3,
+        "diameterMm": 1.9,
+        "stripLengthMm": null
+       }
+      ]
+     },
+     "sourceLocation": "БД.КОАКС"
+    },
+    {
+     "recordId": "31e4e627da6c6c0f48c89463f20f77a86643560b1fde4ad461b22ea6a9e8c92d",
+     "entityType": "coax-termination",
+     "sourceKey": "MCX-male RG-174",
+     "payload": {
+      "article": "MCX-male RG-174",
+      "connectorType": "MCX-male",
+      "manufacturer": "LenoRF",
+      "cable": "RG-174",
+      "pinType": "пайка",
+      "shieldType": "обжим",
+      "layers": [
+       {
+        "index": 1,
+        "diameterMm": 0.48,
+        "stripLengthMm": 2.0
+       },
+       {
+        "index": 2,
+        "diameterMm": 1.52,
+        "stripLengthMm": 4.0
+       },
+       {
+        "index": 3,
+        "diameterMm": 1.9,
+        "stripLengthMm": 10.5
+       }
+      ]
+     },
+     "sourceLocation": "БД.КОАКС"
+    }
+   ],
+   "diagnostics": []
+  },
+  {
+   "snapshotId": "987bd1ff-7aa9-507e-941d-5c4b5973d91b",
+   "sourceId": "technology-database",
+   "contractVersion": 1,
+   "capturedUtc": "2026-09-29T09:23:00+00:00",
+   "sourceKind": "erp-references",
+   "versionFingerprint": "48589ed5d75e3a56",
+   "sourceUri": null,
+   "sha256": "48589ed5d75e3a56b426365ca88b4c839f09849a784e6e18cee9247606b37944",
+   "records": [
+    {
+     "recordId": "c03aa785c9ad33e5ea548cd2a9c880b6c3b2118dfd3f5b2a865b79819c94225d",
+     "entityType": "cable",
+     "sourceKey": "ПВВС 4×0,35",
+     "payload": {
+      "Марка": "ПВВС 4×0,35",
+      "wireType": "многожильный кабель",
+      "manufacturer": "семейство кабелей сигнализации/блокировки (кандидаты: ГОСТ 31995-2012 / ГОСТ Р 56292-2014, точный номер для этой маркировки не подтверждён)",
+      "Core": "4",
+      "Сечение C": "0,35",
+      "colors": "чёрный (оболочка)",
+      "insulation": "полиэтилен (изоляция жил) / оболочка — источники расходятся: rfopt.ru/pvvs-4h035 указывает свинцовую оболочку (нетипично), общее описание серии rfopt.ru/pvvs — пластмассовую — решено агентом — проверить"
+     },
+     "sourceLocation": "БД.ПРОВ"
+    },
+    {
+     "recordId": "a63167a9aae2b54d4e3b27d8d66cbc24cbeb5871f1afeae96e579f6f1572aa61",
+     "entityType": "coax-cable",
+     "sourceKey": "RF 1.13",
+     "payload": {
+      "name": "RF 1.13",
+      "layers": [
+       {
+        "index": 1,
+        "diameterMm": 0.24
+       },
+       {
+        "index": 2,
+        "diameterMm": 0.7
+       },
+       {
+        "index": 3,
+        "diameterMm": 0.92
+       }
+      ],
+      "outerDiameterMm": 0.92
+     },
+     "sourceLocation": "СПР.КАБ"
+    },
+    {
+     "recordId": "d5e41380de07e056187048e49deed08d336badcfe8194d7f740333e5580cdd87",
+     "entityType": "protective-covering",
+     "sourceKey": "ТУТнг 4/2 черная",
+     "payload": {
+      "name": "ТУТнг 4/2 черная",
+      "group": "ТУТ",
+      "coveringKind": "heat-shrink",
+      "manufacturer": "КВТ Калуга",
+      "series": "ТУТнг-LS",
+      "size": "4/2 мм",
+      "diameterBeforeMm": 4.0,
+      "diameterAfterMm": 2.0,
+      "shrinkRatio": "2:1",
+      "color": "черный",
+      "adhesive": "нет",
+      "material": "полиолефин нг-LS (низкое дымо- и газовыделение)",
+      "unit": "м"
+     },
+     "sourceLocation": "БД.МАТ"
+    },
+    {
+     "recordId": "f2030898c34636462ae26f77ae0647a490b6d3264d5fa1b6624fae145c3b2b2e",
+     "entityType": "wire",
+     "sourceKey": "UL1061 28AWG",
+     "payload": {
+      "Марка": "UL1061 28AWG",
+      "wireType": "монтажный",
+      "manufacturer": "UL AWM Style 1061, SR-PVC, 300V/80°C",
+      "sectionMm2": "0,08",
+      "awg": "28",
+      "conductor": "7×0,127 (луж. медь, 7/36AWG)",
+      "colors": "чёрный, красный, белый, синий, жёлтый, зелёный, оранжевый, коричневый, серый, фиолетовый",
+      "outerDiameterMm": 0.89,
+      "insulation": "полутвёрдый ПВХ (SR-PVC)"
+     },
+     "sourceLocation": "БД.ПРОВ"
+    }
+   ],
+   "diagnostics": []
+  },
+  {
+   "snapshotId": "8c9c246e-5cc5-55db-8ca0-2eae7a19140e",
+   "sourceId": "technology-connectors",
+   "contractVersion": 1,
+   "capturedUtc": "2026-09-29T09:23:00+00:00",
+   "sourceKind": "erp-references",
+   "versionFingerprint": "27b6edb68c729aa4",
+   "sourceUri": null,
+   "sha256": "27b6edb68c729aa43ce4c345771f4ce71e2b0e95df4eaaa8127f82100454210d",
+   "records": [
+    {
+     "recordId": "a48265553b9d568e3e62bcdd231fa875d79ebb401c8674d29891bb76d5e37f08",
+     "entityType": "connector-alias",
+     "sourceKey": "LP-12",
+     "payload": {
+      "pattern": "^LP\\-12$",
+      "replacement": "LP-12-C02PE"
+     },
+     "sourceLocation": "База разъёмов ERP"
+    },
+    {
+     "recordId": "a755882b7b6380cd4d2a32da858a8882cd18c69ec57a22c58e0460748282d546",
+     "entityType": "connector-alias",
+     "sourceKey": "^BL2018P-0*(\\d+)",
+     "payload": {
+      "pattern": "^BL2018P-0*(\\d+)",
+      "replacement": "SMP-0$1V-BC"
+     },
+     "sourceLocation": "База разъёмов ERP"
+    },
+    {
+     "recordId": "84610230886bf073ddca0650254f0af212180839cc7afcb642233d52d26f47d3",
+     "entityType": "connector-family",
+     "sourceKey": "CNLINKO LP-12",
+     "payload": {
+      "familyId": "cnlinko-lp12",
+      "name": "CNLINKO LP-12",
+      "sampleArticle": "LP-12-C04PE",
+      "contactCount": 4,
+      "rows": 1,
+      "pattern": "^LP-12-[CJ]0?(\\d)([PS])",
+      "confidence": "medium"
+     },
+     "sourceLocation": "База разъёмов ERP"
+    },
+    {
+     "recordId": "040c5c0363bdf1d0179c315cea018768197b4ccf63ba2d428fa5eff3c6a690e4",
+     "entityType": "connector-family",
+     "sourceKey": "JST SM (вилка)",
+     "payload": {
+      "familyId": "jst-sm-p",
+      "name": "JST SM (вилка)",
+      "sampleArticle": "SMP-04V-BC",
+      "contactCount": 4,
+      "pitchMm": 2.5,
+      "rows": 1,
+      "latch": "lever",
+      "pattern": "^SMP-0*(\\d+)V",
+      "confidence": "high",
+      "note": "по общему правилу JST: со стороны проводов контакт 1 слева"
+     },
+     "sourceLocation": "База разъёмов ERP"
+    },
+    {
+     "recordId": "c9e551c957659579544cad78137bbef64b94984a0bef6e4e2937fa3b2dc60d9b",
+     "entityType": "connector-family",
+     "sourceKey": "JST XH",
+     "payload": {
+      "familyId": "jst-xh",
+      "name": "JST XH",
+      "sampleArticle": "XHP-4",
+      "contactCount": 4,
+      "pitchMm": 2.5,
+      "rows": 1,
+      "latch": "ramp",
+      "pattern": "^XHP-(\\d+)",
+      "confidence": "high",
+      "note": "по чертежу JST eXH: защёлка сверху, контакт 1 слева"
+     },
+     "sourceLocation": "База разъёмов ERP"
+    }
+   ],
+   "diagnostics": []
+  }
+ ],
+ "counts": {
+  "technology-wires": 3,
+  "technology-terminals": 2,
+  "technology-coax-cables": 1,
+  "technology-coax-terminations": 3,
+  "technology-database": 4,
+  "technology-connectors": 5
+ }
+}
