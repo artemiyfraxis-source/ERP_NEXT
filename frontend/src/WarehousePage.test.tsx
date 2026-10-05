@@ -189,6 +189,59 @@ it("returns a write-off to the lot with where it comes back from", async () => {
   await waitFor(() => expect(screen.queryByLabelText("Откуда возврат")).not.toBeInTheDocument());
 });
 
+function returnStock(destinations: unknown[] | null) {
+  const written = { ...lot, written_off: "4", balance: "6", available: "6" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/stock") return json({ lots: [written], total: 1, truncated: 0, next_cursor: null });
+    if (path === `/api/stock/batches/${lot.id}/issued-to`) {
+      if (destinations === null) throw new Error("no history");
+      return json({ destinations });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+async function openReturn() {
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Вернуть на склад" }));
+}
+
+const out = (name: string, outstanding: string) => ({ name, written_off: "4", returned: "0", outstanding, unit: "шт", last_date: "2026-09-21T12:00:00" });
+
+it("lists where the lot was issued to and caps the return by the chosen destination", async () => {
+  returnStock([out("FRX.001", "3"), out("Иванов", "1")]);
+  await openReturn();
+
+  const group = await screen.findByRole("group", { name: "Куда выдавали" });
+  expect(within(group).getAllByRole("button").map((button) => button.textContent)).toEqual(["FRX.001 · осталось 3 шт", "Иванов · осталось 1 шт"]);
+  expect(screen.getByLabelText("Откуда возврат")).toHaveValue("");
+  fireEvent.click(within(group).getByRole("button", { name: /Иванов/ }));
+
+  expect(screen.getByLabelText("Откуда возврат")).toHaveValue("Иванов");
+  expect(screen.getByLabelText("Количество возврата")).toHaveAttribute("max", "1");
+  expect(screen.getByLabelText("Количество возврата")).toHaveAttribute("placeholder", "не больше 1");
+});
+
+it("preselects the only destination of the lot", async () => {
+  returnStock([out("FRX.001", "3")]);
+  await openReturn();
+
+  await waitFor(() => expect(screen.getByLabelText("Откуда возврат")).toHaveValue("FRX.001"));
+  expect(screen.getByLabelText("Количество возврата")).toHaveAttribute("max", "3");
+});
+
+it("keeps «Откуда» free text over the whole lot when it has no issue history", async () => {
+  returnStock([]);
+  await openReturn();
+
+  await waitFor(() => expect(screen.getByLabelText("Откуда возврат")).toBeRequired());
+  expect(screen.queryByRole("group", { name: "Куда выдавали" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Откуда возврат")).toHaveValue("");
+  expect(screen.getByLabelText("Количество возврата")).toHaveAttribute("max", "4");
+});
+
 it("offers no return on a lot that was never written off", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);

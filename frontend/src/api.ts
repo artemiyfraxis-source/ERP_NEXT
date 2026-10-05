@@ -341,6 +341,16 @@ export interface SupplierReturnPayload {
   comment?: string;
 }
 
+/** One place a lot was written off to: a project number or a surname, with what is still out there. */
+export interface WarehouseDestination {
+  name: string;
+  written_off: string;
+  returned: string;
+  outstanding: string;
+  unit: string;
+  last_date: string;
+}
+
 export interface WarehouseLot {
   id: string;
   version: number;
@@ -1972,6 +1982,8 @@ export const warehouseApi = {
       method: "POST",
       body: JSON.stringify({ version, quantity, purpose, reason, ...(date ? { date } : {}) }),
     }),
+  /** Where the lot was written off to, with what is still there («Откуда» of a return), newest first. */
+  issuedTo: (lotId: string) => api<{ destinations: WarehouseDestination[] }>(`/api/stock/batches/${lotId}/issued-to`),
   returnWriteOff: (lotId: string, version: number, quantity: string, source: string, reason: string) =>
     api<{ lot: WarehouseLot }>(`/api/stock/batches/${lotId}/return`, {
       method: "POST",

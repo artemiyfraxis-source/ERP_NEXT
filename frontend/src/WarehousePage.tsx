@@ -5,6 +5,7 @@ import {
   requestsApi,
   warehouseApi,
   type WarehouseAddResult,
+  type WarehouseDestination,
   type WarehouseJournal,
   type WarehouseLot,
   type WarehouseLotPassport,
@@ -1076,9 +1077,26 @@ function ReturnDialog({ lot, disabled, mutate, onClose }: {
   onClose: () => void;
 }) {
   const projects = useProjectChoices();
+  const [destinations, setDestinations] = useState<WarehouseDestination[]>([]);
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState(RETURN_REASONS[0]);
   const [source, setSource] = useState("");
+
+  // «Откуда» offers where this very lot went; one destination is taken at once. No history (a lot imported
+  // from SUPPLYMAP) → the field stays free text over the project list.
+  useEffect(() => {
+    let cancelled = false;
+    warehouseApi.issuedTo(lot.id).then((result) => {
+      const list = Array.isArray(result?.destinations) ? result.destinations : [];
+      if (cancelled) return;
+      setDestinations(list);
+      if (list.length === 1) setSource((current) => current || list[0].name);
+    }, () => undefined);
+    return () => { cancelled = true; };
+  }, [lot.id]);
+  const chosen = destinations.find((item) => item.name.trim().toLocaleLowerCase("ru") === source.trim().toLocaleLowerCase("ru"));
+  const limit = chosen ? String(Math.min(Number(chosen.outstanding), Number(lot.written_off))) : lot.written_off;
+  const sourceOptions = [...destinations.map((item) => item.name), ...projects.filter((name) => !destinations.some((item) => item.name.toLocaleLowerCase("ru") === name.toLocaleLowerCase("ru")))];
   const [error, setError] = useState("");
 
   function submit(event: FormEvent) {
@@ -1091,10 +1109,13 @@ function ReturnDialog({ lot, disabled, mutate, onClose }: {
   return <LotDialog title="Вернуть на склад" lot={lot} onClose={onClose}>
     <form className="dialog-form" aria-label="Возврат на склад" onSubmit={submit}>
       <div className="move-grid two">
-        <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={lot.written_off} step="any" required autoFocus placeholder={`не больше ${lot.written_off}`} title={`Списано ${lot.written_off} ${lot.unit}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+        <label>Вернуть, {lot.unit || "кол-во"}<input aria-label="Количество возврата" type="number" min="0.000001" max={limit} step="any" required autoFocus placeholder={`не больше ${limit}`} title={chosen ? `Ушло на ${chosen.name}: ${limit} ${lot.unit}` : `Списано ${lot.written_off} ${lot.unit}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Основание<select aria-label="Основание возврата" value={reason} onChange={(event) => setReason(event.target.value)}>{RETURN_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Откуда<SuggestInput aria-label="Откуда возврат" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" value={source} onChange={setSource} /></label>
+        <label>Откуда<SuggestInput aria-label="Откуда возврат" options={sourceOptions} placeholder="проект или фамилия" required pattern=".*\S.*" value={source} onChange={setSource} /></label>
       </div>
+      {destinations.length > 0 && <div className="return-from" role="group" aria-label="Куда выдавали">
+        {destinations.map((item) => <button type="button" key={item.name} className={`secondary small${item === chosen ? " on" : ""}`} aria-pressed={item === chosen} onClick={() => setSource(item.name)}>{item.name} · осталось {item.outstanding} {item.unit || lot.unit}</button>)}
+      </div>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       <div className="move-actions">
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
