@@ -27,8 +27,8 @@ from .modules.requests import api as requests_api
 from .modules.techcards import api as techcards_api
 from .modules.techcards import kitset_api as kitsets_api
 from .modules.techcards import assembly_api
-from .modules.techcards import harness_api
 from .modules.techcards import harness_catalog_api
+from .modules.techcards import harness_api
 from .shared.http_auth import techcards_router_principal
 from .workflows import employee_card_api
 
