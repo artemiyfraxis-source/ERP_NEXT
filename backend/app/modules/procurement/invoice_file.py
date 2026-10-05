@@ -110,6 +110,19 @@ def invoice_file_name(info: InvoiceInfo, supplier: str, designation: str, order_
     return " ".join(parts) + invoice_extension(original)
 
 
+def kp_file_name(info: InvoiceInfo, supplier: str, order_number: str, original: str) -> str:
+    """«КП № <№> от <дата> <поставщик> <№ заказа>.ext» — the offer kept next to the order's invoices."""
+    parts = ["КП"]
+    if info.number:
+        parts.append("№ " + info.number)
+    if info.date:
+        parts.append("от " + info.date)
+    for part in (supplier, order_number):
+        if str(part or "").strip():
+            parts.append(str(part).strip())
+    return " ".join(parts) + invoice_extension(original)
+
+
 def recognise_invoice(content: bytes) -> tuple[InvoiceInfo, str]:
     """Text of the file and what it says; the hint is the one SUPPLYMAP shows when nothing was found."""
     text = pdf_text(content)

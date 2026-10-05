@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
   failureText,
   manualRatePrompt,
   procurementApi,
-  type FactPriceRow,
+  type ApplyOrderDocumentInput,
   type InvoiceUpload,
   type KpRowInput,
   type ManualRatePrompt,
   type MoneyDriver,
-  type OrderInvoiceInput,
+  type OrderDocumentKind,
   type ProcurementLine,
   type ProcurementTraceabilityInput,
   type SkippedRequestLine,
@@ -19,7 +19,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import {
-  AwaitingInvoiceStage, BackorderStage, COMPACT_BELOW, OtherStage, PaidStage, StageHeading, ToPayStage,
+  BackorderStage, COMPACT_BELOW, OrderList, OrdersToggle, OtherStage, StageHeading, orderGroups, useOrdersView, visibleOrders,
   type BulkState, type OrderGroup, type RowAction,
 } from "./ProcurementStages";
 import { runInPool } from "./bulk";
@@ -31,17 +31,19 @@ const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 
 type ProcurementTab = "queues" | "sheet" | "suppliers";
 
-// Статусы, у которых есть свой блок «Мои позиции» (владелец, 04.10): В работе (с «Готов к запросу») → Жду счёт →
-// Ждёт оплаты → Оплачено (в пути и карантин). «Согласование» — только дозавоз; обычная строка, поставленная туда
+// «Мои позиции» (владелец, 05.10) — один блок «В работе»: строки к запросу (с «Готов к запросу») по поставщикам,
+// под ними лента заказов — заказ не переезжает между блоками, его статус (Жду счёт → Ждёт оплаты → Оплачено ·
+// в пути / карантин / принято) меняется на месте. «Согласование» — только дозавоз; обычная строка, поставленная туда
 // до отключения этапа, и любой новый статус — в «Прочие позиции».
-const BLOCK_STATUSES = new Set(["В работе", "Готов к запросу", "Жду счет", "В оплату", "В пути", "Карантин"]);
+const IN_WORK_STATUSES = new Set(["В работе", "Готов к запросу"]);
+const ORDER_STATUSES = new Set(["Жду счет", "В оплату", "В пути", "Карантин", "Готово"]);
 const APPROVAL = "Согласование";
 const isBackorderLine = (line: ProcurementLine) => line.status === APPROVAL && line.is_backorder;
 
 // После «Взять в работу» сервер дозаполняет пустые поля в фоне (~3 с): очередь перечитывается дважды.
 const AUTOFILL_REFRESH_MS = [4000, 10000];
 
-type BulkBlock = "inwork" | "awaiting" | "topay" | "paid";
+type BulkBlock = "inwork" | "orders";
 
 /** «Мои позиции» читаются все страницы подряд, чтобы заказ не разрезало границей страницы; не больше стольких. */
 const MAX_MINE_PAGES = 50;
@@ -97,15 +99,17 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
         <button type="button" className={`secondary small${tab === "sheet" ? " active" : ""}`} aria-pressed={tab === "sheet"} onClick={() => setTab("sheet")}>Весь лист</button>
         <button type="button" className={`secondary small${tab === "suppliers" ? " active" : ""}`} aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>По поставщикам</button>
       </nav>
-      {tab === "queues" && <ProcurementQueues readOnly={readOnly} />}
+      {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} />}
       {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
       {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}
     </>
   );
 }
 
-function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
+function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerName: string }) {
   const [units, setUnits] = useState<string[]>(DEFAULT_UNITS);
+  // «Заказы: Все · Активные · Скрыть» — у каждого закупщика свой выбор в этом браузере.
+  const [ordersView, setOrdersView] = useOrdersView(`procurement-orders-view:${buyerName || "me"}`);
   // Только что взятые строки → их версия при взятии: пока сервер не дозаполнил строку, на ней «заполняется…».
   const [autofill, setAutofill] = useState<Map<string, number>>(new Map());
   const timers = useRef<number[]>([]);
@@ -240,44 +244,27 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }
   }
 
-  /** «Цена факт» строк «Жду счёт» и «Ждёт оплаты»; вернёт строки, которые сервер не принял (набранное в них остаётся). */
-  async function saveFactPrices(rows: FactPriceRow[]): Promise<string[]> {
-    if (interactionLocked || !rows.length) return rows.map((row) => row.legacy_id);
-    setBusyId("fact-prices");
-    setError("");
-    try {
-      const result = await procurementApi.saveFactPrices(rows);
-      const parts = [`Цена факт сохранена: ${result.saved}`];
-      if (result.skipped.length) parts.push(`пропущено (строка изменилась): ${result.skipped.join(", ")}`);
-      setNotice(parts.join(" · "));
-      await reload(true);
-      if (result.failed.length) setError(result.failed.map((item) => `${item.legacy_id}: ${item.error}`).join("; "));
-      return [...result.skipped, ...result.failed.map((item) => item.legacy_id)];
-    } catch (reason) {
-      setError(failureText(reason, "Цена факт не сохранена"));
-      return rows.map((row) => row.legacy_id);
-    } finally {
-      setBusyId("");
-    }
+  /** Окно документа: файл счёта или КП → распознанные № и дата, цены строк заказа (сервер ничего не пишет). */
+  function recognizeDocument(group: OrderGroup, file: File, kind: OrderDocumentKind) {
+    return procurementApi.recognizeOrderDocument(group.number, file, kind);
   }
 
-  /** Файл счёта → ссылка, № и дата (распознаются на сервере); привязка к первой строке заказа. */
-  async function uploadInvoice(file: File, lineId: string): Promise<InvoiceUpload> {
-    return procurementApi.uploadInvoiceFile(lineId, { name: file.name, type: file.type || "application/octet-stream", base64: await readBase64(file) });
-  }
-
-  /** «Вставить счёт» / «Заменить счёт» по заказу: все строки или ни одной. 409 — набор строк устарел: очередь перечитывается. */
-  async function submitOrderInvoice(group: OrderGroup, invoice: OrderInvoiceInput): Promise<void> {
+  /** «Вставить счёт» / «Вставить КП» / «Заменить счёт»: проверенные цены — все строки заказа или ни одной.
+   *  409 — набор строк устарел: очередь перечитывается, окно остаётся открытым со свежими версиями строк. */
+  async function applyDocument(group: OrderGroup, input: ApplyOrderDocumentInput, replace: boolean): Promise<void> {
     setBusyId(`order:${group.number}`);
     setError("");
     try {
-      await procurementApi.orderInvoice(group.number, invoice);
-      setNotice(`${group.number}: счёт передан в оплату, строк: ${invoice.lines.length}`);
+      await procurementApi.applyOrderDocument(group.number, input);
+      const count = input.lines.length;
+      setNotice(input.kind === "kp"
+        ? `${group.number}: цены из КП внесены, строк: ${count}`
+        : replace ? `${group.number}: счёт заменён, строк: ${count}` : `${group.number}: счёт передан в оплату, строк: ${count}`);
       await reload(true);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409) {
         await reload(true);
-        throw new Error("Строки заказа изменились — список обновлён. Проверьте заказ и вставьте счёт ещё раз");
+        throw new Error("Строки заказа изменились — список обновлён. Проверьте цены и подтвердите ещё раз");
       }
       throw reason;
     } finally {
@@ -285,14 +272,15 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }
   }
 
-  /** «Оплачено» по заказу: все строки → «В пути». Вернёт вопрос про курс, если ЦБ не ответил. */
+  /** «Оплачено» по заказу: все его строки «В оплату» → «В пути». Вернёт вопрос про курс, если ЦБ не ответил. */
   async function paidOrder(group: OrderGroup, manualRate?: string): Promise<ManualRatePrompt | null> {
     if (interactionLocked) return null;
     setBusyId(`order:${group.number}`);
     setError("");
+    const rows = group.lines.filter((line) => line.status === "В оплату");
     try {
-      await procurementApi.orderPaid(group.number, group.lines.map((line) => ({ line_id: line.id, version: line.version })), manualRate);
-      setNotice(`${group.number}: оплачено, строк в пути: ${group.lines.length}`);
+      await procurementApi.orderPaid(group.number, rows.map((line) => ({ line_id: line.id, version: line.version })), manualRate);
+      setNotice(`${group.number}: оплачено, строк в пути: ${rows.length}`);
       await reload(true);
       return null;
     } catch (reason) {
@@ -372,7 +360,7 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   }
 
   function reconcileMany(lines: ProcurementLine[]) {
-    return runMany("paid", "Сверяем курс с ЦБ", lines, (line) => procurementApi.reconcileRate(line.id, line.version), "Курс сверен");
+    return runMany("orders", "Сверяем курс с ЦБ", lines, (line) => procurementApi.reconcileRate(line.id, line.version), "Курс сверен");
   }
 
   /** Запросы поставщикам по строкам «Готов к запросу» (группа поставщика): заказ на поставщика, PDF каждого
@@ -409,11 +397,12 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
   const stage = (status: string) => mine.filter((line) => line.status === status);
   // «В работе» — сначала строки в работе, под ними «Готов к запросу» (они ждут запроса поставщику).
   const inWorkBlock = [...stage("В работе"), ...stage("Готов к запросу")];
-  const awaiting = stage("Жду счет");
-  const toPay = stage("В оплату");
-  const paid = [...stage("В пути"), ...stage("Карантин")];
+  // Заказы — одной лентой под строками к запросу: ждущие действия сверху, оплаченные ниже, свежие первыми.
+  const orders = useMemo(() => orderGroups(mine.filter((line) => ORDER_STATUSES.has(line.status))), [mine]);
+  const shownOrders = visibleOrders(orders, ordersView);
+  const hiddenOrders = orders.length - shownOrders.length;
   const backorders = mine.filter(isBackorderLine);
-  const other = mine.filter((line) => !BLOCK_STATUSES.has(line.status) && !isBackorderLine(line));
+  const other = mine.filter((line) => !IN_WORK_STATUSES.has(line.status) && !ORDER_STATUSES.has(line.status) && !isBackorderLine(line));
 
   const run = (line: ProcurementLine, operation: () => Promise<unknown>, message: string) => {
     void advance(line, operation, message).catch(() => undefined);
@@ -475,6 +464,9 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
     }] : []),
     ...replaceInvoice(line), split(line),
   ];
+  const orderActions = (line: ProcurementLine): RowAction[] => (
+    line.status === "Жду счет" ? awaitingActions(line) : line.status === "В оплату" ? toPayActions(line) : paidActions(line)
+  );
   // Строка, поставленная на согласование до отключения этапа (владелец, 04.10), продолжает закупку отсюда.
   const otherActions = (line: ProcurementLine): RowAction[] => line.status === APPROVAL
     ? [
@@ -585,11 +577,23 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
               <SplitAction {...form(line)} />
             </>
           )}
-        />
-        <AwaitingInvoiceStage
-          {...stageProps} {...bulkOf("awaiting")} lines={awaiting} actionsOf={awaitingActions}
-          onOpenKp={openKp} onSavePrices={saveFactPrices} onUploadInvoice={uploadInvoice} onSubmitInvoice={submitOrderInvoice}
-        />
+          headingExtra={orders.length > 0 ? <OrdersToggle groups={orders} view={ordersView} onChange={setOrdersView} /> : undefined}
+        >
+          {orders.length > 0 ? (
+            <OrderList
+              {...stageProps} {...bulkOf("orders")}
+              lines={shownOrders.flatMap((group) => group.lines)}
+              groups={shownOrders}
+              hiddenNote={hiddenOrders ? (ordersView === "none" ? `Заказы скрыты: ${hiddenOrders}` : `Оплаченные заказы скрыты: ${hiddenOrders}`) : undefined}
+              actionsOf={orderActions}
+              onOpenKp={openKp}
+              onPaidOrder={paidOrder}
+              onReconcile={reconcileMany}
+              onRecognize={recognizeDocument}
+              onApplyDocument={applyDocument}
+            />
+          ) : null}
+        </ProcurementInWorkTable>
         {kpReference && (
           <KpForm
             key={kpReference}
@@ -604,11 +608,6 @@ function ProcurementQueues({ readOnly }: { readOnly: boolean }) {
             }}
           />
         )}
-        <ToPayStage
-          {...stageProps} {...bulkOf("topay")} lines={toPay} actionsOf={toPayActions}
-          onSavePrices={saveFactPrices} onUploadInvoice={uploadInvoice} onSubmitInvoice={submitOrderInvoice} onPaidOrder={paidOrder}
-        />
-        <PaidStage {...stageProps} {...bulkOf("paid")} lines={paid} actionsOf={paidActions} onReconcile={reconcileMany} />
         {backorders.length > 0 && (
           <BackorderStage
             {...stageProps}

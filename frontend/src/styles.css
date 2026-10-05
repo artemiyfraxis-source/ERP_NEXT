@@ -2271,7 +2271,48 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .ec-now { margin-left: 8px; border-radius: 999px; padding: 1px 8px; background: #fdf3d8; color: #8a5a00; font-size: 11px; font-weight: 600; }
 .ec-body .link-button { padding: 0; font-size: 13px; font-weight: 600; }
 .ec-body > .link-button { justify-self: start; margin-top: 4px; }
-/* «Цена факт» в строках заказа — правка прямо в ячейке, плотно, как в листе «В работе». */
-.procurement-stage td.cell-edit { padding: 0; }
-.procurement-stage td.cell-edit .cell-input { height: 29px; text-align: right; font-variant-numeric: tabular-nums; box-shadow: inset 0 -1px 0 var(--sheet-hover); }
-.procurement-stage td.cell-edit .cell-input:focus { box-shadow: inset 0 0 0 2px var(--primary); background: var(--card); }
+/* «Мои позиции»: лента заказов под группами поставщиков (OrderList) — заголовок заказа свёрнут, щелчок раскрывает
+   строки; плашка статуса меняется на месте. Переключатель «Заказы: Все · Активные · Скрыть» — в заголовке блока. */
+:root { --chip-info-bg: #e5edfb; --chip-warn-bg: #fdf3d8; --chip-ok-bg: #e3f5e8; --chip-neutral-bg: #eceff0; }
+.orders-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
+.orders-toggle .seg-tabs { margin: 0; padding: 2px; border-radius: 9px; }
+.orders-toggle .seg-tabs button { padding: 4px 10px; border-radius: 7px; font-size: 12px; }
+.orders-toggle .seg-tabs button small { margin-left: 2px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+.order-block { margin: 0 16px 16px; }
+.buy-scroll + .order-block { margin-top: -4px; }
+.order-block .bulk-status { margin: 0 0 10px; }
+.order-block .stage-empty { padding: 8px 0 0; }
+.order-block .table-wrap { border-radius: 8px; }
+.order-lines tr.order-head { cursor: pointer; }
+.order-lines tr.order-head:hover > td.group-cell { background: color-mix(in srgb, var(--primary) 8%, var(--accent)); }
+.order-lines tbody.order-open tr.order-head > td.group-cell { border-bottom-color: var(--border); }
+.group-toggle { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.group-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.group-toggle .caret { flex: none; width: 12px; color: var(--muted-foreground); font-size: 12px; }
+.order-chip { flex: none; padding: 1px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.order-chip.tone-info { background: var(--chip-info-bg); }
+.order-chip.tone-warn { background: var(--chip-warn-bg); }
+.order-chip.tone-ok { background: var(--chip-ok-bg); }
+.order-chip.tone-neutral { background: var(--chip-neutral-bg); }
+.order-lines td small { display: block; color: var(--muted-foreground); font-size: 11.5px; line-height: 1.3; }
+.order-lines td small.tone-warn { color: #a16207; }
+.order-lines td.name-cell { min-width: 180px; max-width: 320px; white-space: normal; }
+.order-lines td.status-cell { min-width: 110px; max-width: 200px; white-space: normal; }
+/* Окно «Вставить счёт» / «Вставить КП»: файл, № и даты сверху, строки заказа с распознанной ценой — плотно. */
+.order-doc-dialog .doc-note { margin: 0; color: var(--muted-foreground); font-size: 12px; }
+.order-doc-dialog .doc-lines { max-height: 52vh; overflow: auto; border-radius: 8px; }
+.order-doc-dialog .doc-lines td { padding-top: 3px; padding-bottom: 3px; vertical-align: middle; }
+.order-doc-dialog .doc-lines td small { display: block; color: var(--muted-foreground); font-size: 11.5px; }
+.order-doc-dialog .doc-lines td small.tone-warn { color: #a16207; }
+.order-doc-dialog .doc-lines tr.doc-warn > td { background: var(--chip-warn-bg); }
+.order-doc-dialog .doc-price input { width: 110px; height: 28px; padding: 0 8px; text-align: right; font-variant-numeric: tabular-nums; }
+.order-doc-dialog .doc-price input[aria-invalid="true"] { border-color: #b91c1c; }
+.order-doc-dialog tfoot td { padding-top: 7px; padding-bottom: 7px; border-top: 1px solid var(--border); font-weight: 600; }
+.order-doc-dialog .doc-unmatched ul { margin: 4px 0 0; padding-left: 18px; }
+.order-doc-dialog .move-actions { align-items: center; }
+.order-doc-dialog .doc-blocker { margin-right: auto; color: var(--muted-foreground); font-size: 12px; }
+@media (max-width: 1100px) { .order-doc-dialog .move-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (pointer: coarse) {
+  .group-toggle { min-height: 40px; }
+  .order-doc-dialog .doc-price input { height: 40px; }
+}

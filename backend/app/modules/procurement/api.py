@@ -120,6 +120,16 @@ from .exchange_rates import CbrExchangeRates
 from .invoice_file import invoice_date as invoice_day
 from .kp import MAX_FILE_BYTES, KpFileError, extract_kp_items, match_kp_items, read_kp_grid
 from .money import MoneyInput, parse_number_loose
+from .application import (
+    ApplyOrderDocumentCommand,
+    DocumentPriceRow,
+    RecognisedOrderDocument,
+    RecogniseOrderDocumentCommand,
+    apply_order_document,
+    foreign_document_message,
+    recognise_order_document,
+)
+from .document_items import unit_key
 
 
 router = APIRouter(prefix="/api/procurement", tags=["procurement"])
@@ -1312,6 +1322,163 @@ def download_invoice(
         raise HTTPException(status_code=404, detail="Файл не найден")
     meta, content = found
     return file_response(content, meta.content_type, meta.file_name)
+
+
+# --- «Вставить КП» / «Вставить счёт» (owner, 05.10): prices read from the supplier's document --------------------
+
+
+class DocumentRecognizeInput(BaseModel):
+    kind: Literal["invoice", "kp"]
+    file_name: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(default="", max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
+
+
+class DocumentPriceRowInput(BaseModel):
+    line_id: UUID
+    version: int = Field(ge=1)
+    # ЦЕНА С НДС per unit in roubles; null — the document does not price this row, the stored price stays.
+    price_with_vat: UnitPrice = None
+    price: UnitPrice = None
+    vat_rate: VatRate = None
+    invoice_item_name: str | None = Field(default=None, max_length=1024)
+
+
+class ApplyDocumentInput(BaseModel):
+    kind: Literal["invoice", "kp"]
+    file_url: str = Field(min_length=1, max_length=4096)
+    invoice_number: str | None = Field(default=None, max_length=128)
+    invoice_date: date | None = None
+    expected_arrival: date | None = None
+    lines: list[DocumentPriceRowInput] = Field(min_length=1, max_length=200)
+
+
+def _plain_decimal(value: Decimal | None) -> str | None:
+    return format(value.normalize(), "f") if value is not None else None
+
+
+def _recognised_result(found: RecognisedOrderDocument) -> dict:
+    document = found.document
+    by_key = {str(line.id): line for line in found.lines}
+    lines = []
+    for match in found.matches:
+        line = by_key[match.key]
+        item = document.items[match.item_index]
+        warnings = []
+        if item.quantity is not None and line.actual_quantity is not None and item.quantity != line.actual_quantity:
+            warnings.append(f"Кол-во в документе {_plain_decimal(item.quantity)}, в строке {_plain_decimal(line.actual_quantity)}")
+        if item.unit and line.actual_unit and unit_key(item.unit) != unit_key(line.actual_unit):
+            warnings.append(f"Ед. в документе «{item.unit}», в строке «{line.actual_unit}»")
+        lines.append({
+            "line_id": str(line.id),
+            "legacy_id": line.legacy_id,
+            "version": line.version,
+            "status": line.status.value,
+            "price_with_vat": _plain_decimal(item.price_with_vat),
+            "price": _plain_decimal(item.price),
+            "vat_rate": _plain_decimal(item.vat_rate),
+            "quantity": _plain_decimal(item.quantity),
+            "unit": item.unit,
+            "sum": _plain_decimal(item.sum),
+            "matched_name": item.name,
+            "article": item.article,
+            "confidence": match.confidence,
+            "source": item.source,
+            "warnings": warnings,
+        })
+    parsed_date = invoice_day(document.date)
+    auto = document.currency == "RUB"
+    hint = document.hint or ("" if auto else foreign_document_message(document.currency))
+    return {
+        "file": {"url": found.url, "name": found.file.file_name},
+        "kind": found.kind,
+        "invoice_number": document.number,
+        "invoice_date": parsed_date.isoformat() if parsed_date else "",
+        "currency": document.currency,
+        "auto": auto,
+        "vat_mode": document.vat_mode,
+        "vat_rate": _plain_decimal(document.vat_rate),
+        "hint": hint,
+        "lines": lines,
+        "unmatched_items": [
+            {
+                "name": document.items[index].name,
+                "article": document.items[index].article,
+                "quantity": _plain_decimal(document.items[index].quantity),
+                "unit": document.items[index].unit,
+                "price_with_vat": _plain_decimal(document.items[index].price_with_vat),
+            }
+            for index in found.unmatched_items
+        ],
+        "unmatched_lines": [line.legacy_id for line in found.unmatched_lines],
+        "totals": {
+            "sum": _plain_decimal(document.totals.sum),
+            "vat": _plain_decimal(document.totals.vat),
+            "sum_with_vat": _plain_decimal(document.totals.sum_with_vat),
+        },
+    }
+
+
+@router.post("/orders/{order_number}/recognize")
+def recognize_order_document(
+    order_number: str,
+    payload: DocumentRecognizeInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """The КП or the invoice dropped on the order: stored, its items read and matched to the order lines in «Жду счет»
+    / «В оплату». Nothing on the lines changes; `auto` is false for a foreign-currency document («Внести КП»)."""
+    content = decode_upload(payload.content_base64, "Файл повреждён")
+    try:
+        found = recognise_order_document(
+            RecogniseOrderDocumentCommand(
+                order_number=order_number, kind=payload.kind, file_name=payload.file_name,
+                content_type=payload.content_type, content=content, actor=principal.actor, now=now,
+            ),
+            uow_factory(),
+        )
+    except ProcurementValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error).strip("'\"")) from error
+    return _recognised_result(found)
+
+
+@router.post("/orders/{order_number}/apply-document")
+def apply_document(
+    order_number: str,
+    payload: ApplyDocumentInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """Prices from the document in one transaction, all rows or none; an invoice also goes on every order row
+    («Жду счет» → «В оплату», or the invoice of «В оплату» rows is replaced). 409 — the order moved on or a row is
+    stale; 422 — a row refused (stage, pay gate) or a foreign-currency document."""
+    lines = _command_errors(
+        lambda: apply_order_document(
+            ApplyOrderDocumentCommand(
+                order_number=order_number,
+                kind=payload.kind,
+                file_url=payload.file_url.strip(),
+                rows=[
+                    DocumentPriceRow(
+                        line_id=row.line_id, expected_version=row.version, price_with_vat=row.price_with_vat,
+                        price=row.price, vat_rate=row.vat_rate, invoice_item_name=row.invoice_item_name,
+                    )
+                    for row in payload.lines
+                ],
+                actor=principal.actor,
+                now=now,
+                invoice_number=payload.invoice_number,
+                invoice_date=payload.invoice_date,
+                expected_arrival=payload.expected_arrival,
+            ),
+            uow_factory(),
+        )
+    )
+    return {"kind": payload.kind, "lines": [_line_result(line) for line in lines]}
 
 
 @router.post("/{line_id}/invoice/replace")
