@@ -342,3 +342,64 @@ it("adds an input from the list at once, selects a block from the summary and fo
   expect(screen.getByRole("region", { name: "Блок «Провод нетиповой 300мм»" })).toBeInTheDocument();
   expect(blockButton(/Провод нетиповой 300мм/)).toHaveAttribute("aria-pressed", "true");
 });
+
+/* UML-схема порядка операций (H-T3): блоки трёх видов, «проверено мастером», операции из КД — «нет в КД» и «было → стало». */
+const fromKd = {
+  mode: "manual", assemblyIndex: "КБ7", assemblyName: "Провод нетиповой", partQty: 10,
+  ops: [
+    { type: "libraryOp", templateId: "cut", opNum: "CUT_WIRE_hand", side: "", seq: 1, label: "Резка в размер", qty: "1", tPrep: "120", tOp: "8",
+      origin: "harness:w1:CUT", edited: ["label"], kdBase: { label: "\"Резка\"" },
+      kdChanges: [{ field: "opSec", was: "6", now: "8" }, { field: "label", was: "Резка", now: "Резка провода" }] },
+    { type: "customOp", seq: 2, label: "Пайка экрана", qty: "1", tPrep: "", tOp: "45", steps: [], tooling: [], origin: "harness:w1:SOLDER", kdGone: true },
+    { type: "customOp", seq: 3, label: "Контроль", qty: "1", tPrep: "", tOp: "30", steps: [], tooling: [] },
+  ],
+  route: {
+    blocks: [
+      { key: "b3", name: "Провод W1", ops: [1], final: false, checked: true, refs: ["w1"] },
+      { key: "b2", name: "Провод с экраном", ops: [2], final: false, kind: "assembly", quantity: 2 },
+      { key: "b1", ops: [3], final: true },
+    ],
+    edges: [{ from: "b3", to: "b2", per_unit: 1 }, { from: "b2", to: "b1", per_unit: 1 }],
+  },
+};
+
+it("shows block kinds, the master's check and the КД marks of operations, and keeps them on build", async () => {
+  const onBuild = mount({ card: { ...builtCard, document: { ...builtCard.document!, build_config: fromKd } } });
+  expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
+  expect(blockButton(/Провод W1/)).toHaveTextContent("п/ф");
+  expect(within(blockButton(/Провод W1/)).getByTitle("Проверено мастером")).toBeInTheDocument();
+  expect(blockButton(/Провод с экраном/)).toHaveTextContent("сборка");
+  expect(blockButton(/Провод с экраном/)).toHaveTextContent("2 шт · 1 оп.");
+  expect(blockButton(/Провод нетиповой/)).toHaveTextContent("итог");
+  // «нет в КД» — в «Итоге» у операции, ключа которой больше нет в КД.
+  expect(within(screen.getByRole("group", { name: "Порядок операций" })).getAllByText("нет в КД")).toHaveLength(1);
+
+  fireEvent.click(blockButton(/Провод W1/));
+  const panel = screen.getByRole("region", { name: "Блок «Провод W1»" });
+  expect(within(panel).getByText(/Название: в КД было «Резка» → стало «Резка провода» \(оставлено значение мастера\)/)).toBeInTheDocument();
+  expect(within(panel).getByText(/Операция, с\/шт: в КД было «6» → стало «8»/)).toBeInTheDocument();
+  expect(within(panel).getByText("Объекты КД: 1")).toBeInTheDocument();
+  expect(within(panel).getByLabelText("Вид блока")).toHaveValue("semiFinished");
+  fireEvent.change(within(panel).getByLabelText("Вид блока"), { target: { value: "assembly" } });
+  expect(blockButton(/Провод W1/)).toHaveTextContent("сборка");
+  fireEvent.click(within(panel).getByLabelText("Проверено мастером"));
+  expect(within(blockButton(/Провод W1/)).queryByTitle("Проверено мастером")).not.toBeInTheDocument();
+
+  fireEvent.click(blockButton(/Провод с экраном/));
+  expect(within(screen.getByRole("region", { name: "Блок «Провод с экраном»" })).getByText("нет в КД")).toBeInTheDocument();
+  fireEvent.click(blockButton(/Провод нетиповой/));
+  expect(screen.queryByLabelText("Вид блока")).not.toBeInTheDocument(); // итог — всегда изделие
+
+  vi.spyOn(window, "confirm").mockImplementation(() => true);
+  fireEvent.click(screen.getByRole("button", { name: "Пересобрать" }));
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  const config = onBuild.mock.calls[0][0];
+  expect(config.route.blocks).toEqual([
+    { key: "b3", name: "Провод W1", ops: [1], final: false, kind: "assembly", refs: ["w1"] },
+    { key: "b2", name: "Провод с экраном", ops: [2], final: false, kind: "assembly", quantity: 2 },
+    { key: "b1", ops: [3], final: true },
+  ]);
+  expect(config.ops[0]).toMatchObject({ origin: "harness:w1:CUT", edited: ["label"], label: "Резка в размер" });
+  expect(config.ops[1]).toMatchObject({ origin: "harness:w1:SOLDER", kdGone: true });
+  expect(config.ops[2]).not.toHaveProperty("origin");
+});
