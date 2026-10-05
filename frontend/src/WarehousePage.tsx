@@ -255,6 +255,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       {adding && <ManualStockForm
         busy={Boolean(busy) || loading}
         knownLots={lots}
+        columnOrder={layout.order}
         typeChoices={typeChoices}
         onCancel={() => setAdding(false)}
         onAdded={async (items) => {
@@ -530,9 +531,18 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   </>;
 }
 
-function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
+// Quick-entry fields follow the stock table's column order from «Колонки» (hidden columns keep their place).
+function orderedFields(order: ColumnKey[], fields: Partial<Record<ColumnKey, ReactNode>>) {
+  const rank = (key: string) => { const at = order.indexOf(key as ColumnKey); return at < 0 ? order.length : at; };
+  return Object.entries(fields)
+    .sort(([a], [b]) => rank(a) - rank(b))
+    .map(([key, node]) => <Fragment key={key}>{node}</Fragment>);
+}
+
+function ManualStockForm({ busy, knownLots, columnOrder, typeChoices, onCancel, onAdded }: {
   busy: boolean;
   knownLots: WarehouseLot[];
+  columnOrder: ColumnKey[];
   typeChoices: string[];
   onCancel: () => void;
   onAdded: (items: WarehouseManualItem[]) => Promise<WarehouseAddResult | null>;
@@ -559,6 +569,15 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
   const [storageLocation, setStorageLocation] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [articleSource, setArticleSource] = useState("");
+  // Already entered positions by article: pick one to copy its name/series/type, then change the article.
+  const knownArticles = useMemo(() => {
+    const byKey = new Map<string, WarehouseLot>();
+    for (const lot of knownLots) {
+      const key = lot.article.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
+      if (key && !byKey.has(key)) byKey.set(key, lot);
+    }
+    return new Map([...byKey.values()].map((lot) => [lot.article.trim(), lot.name]));
+  }, [knownLots]);
 
   useEffect(() => {
     const currentArticle = article.trim();
@@ -659,20 +678,22 @@ function ManualStockForm({ busy, knownLots, typeChoices, onCancel, onAdded }: {
       }
     }}>
       <div className="manual-stock-head"><h2>Быстрый ввод</h2><button type="button" className="link-button" onClick={onCancel}>Отмена</button></div>
-      <div className="manual-stock-grid">
-        <label>Артикул<input value={article} onChange={(event) => {
+      <div className="manual-stock-grid">{orderedFields(columnOrder, {
+        article: <label className="span-2">Артикул<SuggestInput options={[...knownArticles.keys()]} describe={(option) => knownArticles.get(option) ?? ""} minLength={2} value={article} onChange={(value) => {
           setArticleSource("");
-          setArticle(event.target.value);
-        }} /></label>
-        <label>Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>
-        <label>Тип<SuggestInput options={typeChoices} value={itemType} onChange={setItemType} /></label>
-        <label>Количество<input aria-label="Количество для внесения" type="number" min="0.000001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-        <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
-        <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>
-        <label>Назначение<input value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>
-        <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" className={placeHint.busy ? "place-busy" : undefined} title={placeHint.busy ? BUSY_TITLE : undefined} value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>
-      </div>
+          setArticle(value);
+        }} /></label>,
+        name: <label className="span-2">Наименование<input value={name} onChange={(event) => setName(event.target.value)} /></label>,
+        series: <label>Серия<input value={series} onChange={(event) => setSeries(event.target.value)} /></label>,
+        type: <label>Тип<SuggestInput options={typeChoices} value={itemType} onChange={setItemType} /></label>,
+        balance: <>
+          <label>Количество<input aria-label="Количество для внесения" type="number" min="0.000001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
+        </>,
+        warehouse: <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>,
+        purpose: <label>Назначение<input value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>,
+        place: <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" className={placeHint.busy ? "place-busy" : undefined} title={placeHint.busy ? BUSY_TITLE : undefined} value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>,
+      })}</div>
       <PlaceHint {...placeHint} place={storageLocation} onPick={setStorageLocation} />
       <details className="manual-stock-passport">
         <summary>Паспорт партии — необязательно</summary>

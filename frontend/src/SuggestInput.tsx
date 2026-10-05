@@ -7,12 +7,16 @@ type Props = Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | 
   options: readonly string[];
   value: string;
   onChange: (value: string) => void;
+  /** Grey second part of an option (e.g. the name next to an article); typed text matches it too. */
+  describe?: (option: string) => string;
+  /** The list opens only after this many typed characters (long lists like articles). */
+  minLength?: number;
 };
 
 /** A text field with the ERP's own suggestion list — free text stays allowed. Replaces `<datalist>`, whose popup is
     drawn by the browser (dark in Chrome/Edge) and ignores the app's style. The list is portalled with fixed
     coordinates so a dialog that scrolls (`.move-dialog`) does not clip it. */
-export function SuggestInput({ options, value, onChange, onFocus, onBlur, onKeyDown, ...rest }: Props) {
+export function SuggestInput({ options, value, onChange, describe, minLength = 0, onFocus, onBlur, onKeyDown, ...rest }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
   const [open, setOpen] = useState(false);
@@ -22,7 +26,9 @@ export function SuggestInput({ options, value, onChange, onFocus, onBlur, onKeyD
   const typed = value.trim().toLocaleLowerCase("ru");
   // A value that already is one of the options shows the whole list — the user reopens it to pick another.
   const exact = options.some((option) => option.toLocaleLowerCase("ru") === typed);
-  const shown = (typed && !exact ? options.filter((option) => option.toLocaleLowerCase("ru").includes(typed)) : options).slice(0, LIMIT);
+  const matches = (option: string) =>
+    option.toLocaleLowerCase("ru").includes(typed) || (describe?.(option) ?? "").toLocaleLowerCase("ru").includes(typed);
+  const shown = typed.length < minLength ? [] : (typed && !exact ? options.filter(matches) : options).slice(0, LIMIT);
   const visible = open && shown.length > 0;
 
   useLayoutEffect(() => {
@@ -90,7 +96,8 @@ export function SuggestInput({ options, value, onChange, onFocus, onBlur, onKeyD
         role="listbox"
         aria-label={rest["aria-label"] ? `Варианты: ${rest["aria-label"]}` : "Варианты"}
         className="suggest-list"
-        style={{ left: box.left, width: box.width, ...(box.up ? { bottom: window.innerHeight - box.top } : { top: box.top }) }}
+        // At least as wide as the field, wider when an option needs it (article + name), never past the window.
+        style={{ left: box.left, minWidth: box.width, maxWidth: Math.max(box.width, window.innerWidth - box.left - 16), ...(box.up ? { bottom: window.innerHeight - box.top } : { top: box.top }) }}
       >
         {shown.map((option, index) => <li
           key={option}
@@ -101,7 +108,7 @@ export function SuggestInput({ options, value, onChange, onFocus, onBlur, onKeyD
           // mousedown, not click: the input's blur would close the list before a click lands.
           onMouseDown={(event) => { event.preventDefault(); pick(option); }}
           onMouseEnter={() => setActive(index)}
-        >{option}</li>)}
+        >{option}{describe?.(option) ? <span className="suggest-desc"> — {describe(option)}</span> : null}</li>)}
       </ul>,
       document.body,
     )}

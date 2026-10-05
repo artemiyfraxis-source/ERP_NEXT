@@ -1184,3 +1184,28 @@ it("a long name is cut to its column and carries the full text as a tooltip", as
   expect(name).toHaveAttribute("title", long);
   expect(screen.getByText("GHR-04V-S").closest("td")).toHaveAttribute("title", "GHR-04V-S");
 });
+
+it("quick entry suggests already entered articles by article or name and copies the position", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/stock" && !init?.method) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.startsWith("/api/stock/article-info")) return json({ info: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Внести позиции" }));
+  const article = screen.getByRole("combobox", { name: "Артикул" });
+  fireEvent.focus(article);
+  expect(screen.queryByRole("listbox")).toBeNull();
+
+  fireEvent.change(article, { target: { value: lot.name.slice(0, 4) } });
+  const option = await screen.findByRole("option", { name: new RegExp(lot.article) });
+  expect(option).toHaveTextContent(`${lot.article} — ${lot.name}`);
+  fireEvent.mouseDown(option);
+  expect(article).toHaveValue(lot.article);
+  await waitFor(() => expect(screen.getByLabelText("Наименование")).toHaveValue(lot.name));
+
+  fireEvent.change(article, { target: { value: `${lot.article}-NEW` } });
+  expect(screen.getByLabelText("Наименование")).toHaveValue(lot.name);
+});
