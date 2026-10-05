@@ -1209,10 +1209,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .manual-op-name .op-code { margin-right: 6px; }
 .tcgen .manual-op-tools { display: flex; gap: 4px; align-items: center; }
 .tcgen .manual-op-tools .small { min-width: 30px; padding: 3px 8px; }
-/* «Одновременно с предыдущей»: операция идёт параллельно — карточка прижата к предыдущей и отмечена полосой слева. */
-.tcgen .manual-together { display: inline-flex; gap: 6px; align-items: center; margin-right: 8px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 12.5px; color: var(--muted-foreground); cursor: pointer; white-space: nowrap; }
-.tcgen .manual-together.on { border-color: var(--primary); color: var(--foreground); background: var(--accent); }
-.tcgen .manual-op.together { border-top-style: dashed; padding-left: 12px; box-shadow: inset 3px 0 0 var(--primary); }
+/* Связь с предыдущей: «Тот же процесс» — карточка прижата к предыдущей одной полосой, «Одновременно» — двойной (∥). */
+.tcgen .manual-link { display: inline-flex; gap: 2px; margin-right: 8px; padding: 2px; border-radius: 8px; background: #e9eeee; }
+.tcgen .manual-link button { border: 0; border-radius: 6px; padding: 3px 10px; background: transparent; color: #4b5a58; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.tcgen .manual-link button:hover { color: var(--foreground); }
+.tcgen .manual-link button.on { background: var(--card); color: var(--primary); box-shadow: 0 1px 3px rgba(0, 26, 24, .12); }
+.tcgen .manual-op.link-same { border-top-style: dashed; padding-left: 12px; box-shadow: inset 3px 0 0 var(--primary); }
+.tcgen .manual-op.link-parallel { border-top-style: dashed; padding-left: 16px; box-shadow: inset 3px 0 0 var(--primary), inset 6px 0 0 var(--card), inset 9px 0 0 var(--primary); }
 .tcgen .manual-grid { display: grid; grid-template-columns: 92px 112px 116px 112px minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; margin-left: 36px; align-items: end; }
 .tcgen .manual-grid .wide { grid-column: span 2; }
 .tcgen .manual-grid .result { grid-column: span 4; }
@@ -1268,6 +1271,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen .btn-link, .tcgen .btn-add { min-height: 40px; }
   .tcgen .btn-remove { width: 40px; height: 40px; }
   .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
+  .tcgen .manual-link button { min-height: 40px; }
   .tcgen .manual-comp input[inputmode] { height: 36px; }
   .tcgen .route-per { min-height: 40px; width: 52px; }
   .tcgen .route-act .small, .tcgen .route-panel select, .tcgen .route-panel input { min-height: 40px; }

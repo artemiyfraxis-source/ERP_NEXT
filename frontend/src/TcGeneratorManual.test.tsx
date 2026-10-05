@@ -53,7 +53,7 @@ function mount(props: Partial<Parameters<typeof TcGenerator>[0]> = {}) {
 
 async function openManual() {
   fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
-  expect(screen.getByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
+  expect(await screen.findByRole("tab", { name: "Ручная сборка", selected: true }, { timeout: 5000 })).toBeInTheDocument();
 }
 
 function addFromLibrary(name: RegExp, label: string) {
@@ -186,25 +186,28 @@ it("opens a card built by hand on its tab with its list and scheme, keeps them a
   expect(onBuild.mock.calls[0][0].route).toEqual({ blocks: [{ key: "b1", name: "Провод с лепестком", ops: [1, 2], final: true }], edges: [] });
 });
 
-it("marks an operation «одновременно с предыдущей»: the scheme branches and the next operation joins the branches", async () => {
+it("links an operation to the previous one: «Тот же процесс» joins its block, «Одновременно» branches off", async () => {
   const onBuild = mount();
   await openManual();
   fireEvent.click(screen.getByRole("button", { name: "+ Операция из библиотеки" }));
   addFromLibrary(/^Резка$/, "Резка");
   addFromLibrary(/^Усадка$/, "Усадка");
-  // У первой операции отметки нет.
-  expect(screen.queryByLabelText("Одновременно с предыдущей: Резка")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByLabelText("Одновременно с предыдущей: Усадка"));
+  // У первой операции выбора связи нет, у второй по умолчанию «Следом».
+  expect(screen.queryByRole("group", { name: "Связь с предыдущей: Резка" })).not.toBeInTheDocument();
+  const link = screen.getByRole("group", { name: "Связь с предыдущей: Усадка" });
+  expect(within(link).getByRole("button", { name: "Следом" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(within(link).getByRole("button", { name: "Одновременно" }));
   vi.spyOn(window, "confirm").mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("идёт одновременно с предыдущей и завершает список");
+  expect(await screen.findByRole("alert")).toHaveTextContent("одновременные операции в конце списка");
   expect(onBuild).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: "+ Своя операция" }));
-  fireEvent.change(screen.getByLabelText("Название операции 3"), { target: { value: "Сборка" } });
+  // Тем же процессом — один блок «Резка + Усадка».
+  fireEvent.click(within(link).getByRole("button", { name: "Тот же процесс" }));
+  expect(screen.getByText(/1 блок · 2 оп\./)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   const config = onBuild.mock.calls[0][0];
-  expect(config.ops.map((op: Record<string, unknown>) => op.parallel ?? false)).toEqual([false, true, false]);
-  expect(config.route.edges).toEqual([{ from: "b1", to: "b3", per_unit: 1 }, { from: "b2", to: "b3", per_unit: 1 }]);
+  expect(config.ops.map((op: Record<string, unknown>) => op.link ?? "after")).toEqual(["after", "same"]);
+  expect(config.route).toEqual({ blocks: [{ key: "b1", ops: [1, 2], final: true }], edges: [] });
 });

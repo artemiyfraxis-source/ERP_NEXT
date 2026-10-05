@@ -149,13 +149,13 @@ def test_hand_drawn_scheme_feeds_blocks_with_their_quantities_and_names_the_prod
 
 
 def test_simultaneous_operations_are_branches_the_next_operation_joins():
-    # «Одновременно с предыдущей» (owner 05.10): the generator marks the op and draws it as its own branch.
+    # Link «одновременно» (owner 05.10): the generator marks the op and draws it as its own branch.
     config = manual(route={
         "blocks": [{"key": "b1", "ops": [1], "final": False}, {"key": "b2", "ops": [2], "final": False},
                    {"key": "b3", "ops": [3], "final": True}],
         "edges": [{"from": "b1", "to": "b3", "per_unit": 1}, {"from": "b2", "to": "b3", "per_unit": 1}],
     })
-    config["ops"][1]["parallel"] = True
+    config["ops"][1]["link"] = "parallel"
     document = build(config)
     cut, solder, crimp = document["operations"]
     assert solder["semis"] == []

@@ -49,7 +49,7 @@ import { RouteEditor } from "./RouteEditor";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 import { ManualAssembly, ManualOpSummary } from "./ManualAssembly";
 import {
-  MANUAL_MODE, cardCategory, cardLabel, chainRoute, emptyManual, togetherPositions, manualConfig, manualFromConfig, manualProblem, routeOps as manualRouteOps, setRoute,
+  MANUAL_MODE, cardCategory, cardLabel, chainRoute, emptyManual, opLinks, manualConfig, manualFromConfig, manualProblem, routeOps as manualRouteOps, setRoute,
   type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
@@ -208,8 +208,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const partQty = Number((config as Record<string, unknown>).partQty) || 1;
   const manualOps = useMemo(() => manualRouteOps(manual.ops, partQty), [manual.ops, partQty]);
   const manualDerive = useMemo(() => {
-    const together = togetherPositions(manual.ops);
-    return (ops: RouteOp[]) => chainRoute(ops, together);
+    const links = opLinks(manual.ops);
+    return (ops: RouteOp[]) => chainRoute(ops, links);
   }, [manual.ops]);
   const manualCfg = useMemo(() => ({ ...manualConfig(manual, config), materialsSheet: S.materialsSheet }), [manual, config, S.materialsSheet]);
   useEffect(() => { onConfig?.(manualTab ? manualCfg : config); }, [config, manualCfg, manualTab]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -1,7 +1,7 @@
 /* «Ручная сборка» (владелец 04.10) — четвёртый режим генератора для кастомных и нетиповых проводов: технолог сам
    набирает список операций — карточки из библиотеки и свои (название, норма, ход операции, контроль с допуском,
-   оснастка), а схема полуфабрикатов из них — по блоку на операцию цепочкой (отмеченные «одновременно с предыдущей» —
-   параллельными ветками), правится как обычно и уходит на сервер
+   оснастка), а схема полуфабрикатов из них — по блоку на операцию цепочкой (связь с предыдущей: «тот же процесс» —
+   в её блок, «одновременно» — параллельной веткой), правится как обычно и уходит на сервер
    всегда как ручная (`build_config.route`), чтобы производство шло по ней. Сервер — `etk_builder._build_manual`. */
 
 import type { OperationCardSummary } from "./api";
@@ -19,6 +19,11 @@ export type LibraryCard = Pick<OperationCardSummary, "id" | "code" | "side" | "t
 
 /** Строка состава КБ на операции: сколько на одно изделие. */
 export type ManualComponent = { id: string; art: string; name: string; qty: string; unit: string };
+
+/** Связь операции с предыдущей (владелец 05.10, вопрос Василия «в один блок несколько операций»): after — следом,
+    своим процессом (блоком схемы); same — в том же процессе, что и предыдущая (один блок, один полуфабрикат);
+    parallel — одновременно с предыдущей, своей веткой без входа от неё, следующая операция «следом» собирает ветки. */
+export type OpLink = "after" | "same" | "parallel";
 
 export type ManualOp = {
   /** Номер, данный операции при добавлении: не меняется при перестановке и не переиспользуется (ключ операции ЭТК). */
@@ -45,9 +50,8 @@ export type ManualOp = {
   /** Своя операция: оснастка строкой, «Оборудование: …» / «Расходники: …», без раздела — инструмент. */
   tooling: string;
   components: ManualComponent[];
-  /** «Одновременно с предыдущей» (владелец 05.10): операция идёт в то же время, что и предыдущая, — начинает свою ветку
-      схемы без входа от неё; следующая обычная операция забирает все ветки. У первой операции не действует. */
-  parallel: boolean;
+  /** Связь с предыдущей операцией; у первой не действует. */
+  link: OpLink;
 };
 
 /** route: ручная правка схемы (null — цепочка по списку); notice — почему правки схемы сброшены. */
@@ -94,7 +98,7 @@ export function cardNorms(card: LibraryCard, opRecs: OpRec[]): { prep: number; o
 function blank(seq: number): ManualOp {
   return {
     seq, kind: "custom", templateId: "", code: "", side: "", label: "", qty: "1", prepMin: "", opSec: "",
-    params: "", note: "", result: "", steps: "", controls: "", tooling: "", components: [], parallel: false,
+    params: "", note: "", result: "", steps: "", controls: "", tooling: "", components: [], link: "after",
   };
 }
 
@@ -183,11 +187,11 @@ export function moveOp(state: ManualState, seq: number, delta: number): ManualSt
   return withOps(state, ops);
 }
 
-/** Отметить / снять «одновременно с предыдущей». Ручные правки схемы при этом сбрасываются — схема снова по списку. */
-export function setParallel(state: ManualState, seq: number, on: boolean): ManualState {
-  const next = updateOp(state, seq, { parallel: on });
+/** Сменить связь операции с предыдущей. Ручные правки схемы при этом сбрасываются — схема снова по списку. */
+export function setLink(state: ManualState, seq: number, link: OpLink): ManualState {
+  const next = updateOp(state, seq, { link });
   return state.route
-    ? { ...next, route: null, notice: "Одновременность операций изменилась — схема снова по списку, ручные правки схемы сброшены." }
+    ? { ...next, route: null, notice: "Связь операций изменилась — схема снова по списку, ручные правки схемы сброшены." }
     : next;
 }
 
@@ -226,26 +230,32 @@ export function routeOps(ops: ManualOp[], partQty: number): RouteOp[] {
   }));
 }
 
-/** Номера операций (места в списке), отмеченных «одновременно с предыдущей»; первая не считается. */
-export function togetherPositions(ops: ManualOp[]): Set<number> {
-  return new Set(ops.flatMap((op, index) => (op.parallel && index > 0 ? [index + 1] : [])));
+/** Связи операций по номерам (места в списке), кроме «следом»; у первой связь не считается. */
+export function opLinks(ops: ManualOp[]): Map<number, OpLink> {
+  return new Map(ops.flatMap((op, index): Array<[number, OpLink]> => (index > 0 && op.link !== "after" ? [[index + 1, op.link]] : [])));
 }
 
-/** Схема без правок: по блоку на операцию, цепочкой по списку, последняя — изделие. Операция из `together` идёт
-    одновременно с предыдущей — начинает свою ветку без входа; следующая обычная забирает все открытые ветки. */
-export function chainRoute(ops: RouteOp[], together: ReadonlySet<number> = new Set()): Route {
-  const key = (op: RouteOp) => `b${op.position}`;
+/** Схема без правок: процесс (блок) на операцию, цепочкой по списку, блок последней — изделие. «Тот же процесс» —
+    операция идёт в блок предыдущей; «одновременно» — свой блок без входа, следующая «следом» забирает все ветки. */
+export function chainRoute(ops: RouteOp[], links: ReadonlyMap<number, OpLink> = new Map()): Route {
+  const blocks: RouteBlock[] = [];
   const edges: Route["edges"] = [];
   let heads: string[] = [];
+  let previous: RouteBlock | undefined;
   ops.forEach((op, index) => {
-    if (index > 0 && together.has(op.position)) { heads.push(key(op)); return; }
-    heads.forEach((from) => edges.push({ from, to: key(op), per_unit: 1 }));
-    heads = [key(op)];
+    const link = index > 0 ? links.get(op.position) ?? "after" : "after";
+    if (link === "same" && previous) { previous.ops.push(op.position); return; }
+    const block: RouteBlock = { key: `b${op.position}`, name: "", ops: [op.position], final: false, components: [] };
+    blocks.push(block);
+    if (link === "parallel") heads.push(block.key);
+    else {
+      heads.forEach((from) => edges.push({ from, to: block.key, per_unit: 1 }));
+      heads = [block.key];
+    }
+    previous = block;
   });
-  return {
-    blocks: ops.map((op, index) => ({ key: key(op), name: "", ops: [op.position], final: index === ops.length - 1, components: [] })),
-    edges,
-  };
+  if (previous) previous.final = true;
+  return { blocks, edges };
 }
 
 /** Что мешает собрать список, словами для технолога (сервер проверяет то же); null — можно собирать. */
@@ -266,10 +276,11 @@ export function manualProblem(state: ManualState): string | null {
       if (amount != null && !(amount > 0)) return `${named} — количество «${comp.art || comp.name}» должно быть числом больше нуля.`;
     }
   }
-  const last = state.ops.length;
-  if (!state.route && togetherPositions(state.ops).has(last)) {
-    return `Ручная сборка: операция ${last} «${opTitle(state.ops[last - 1], last)}» идёт одновременно с предыдущей и завершает список — `
-      + "добавьте после одновременных операций итоговую (например, контроль), которая соберёт их результат.";
+  const ops1 = routeOps(state.ops, 1);
+  if (!state.route && routeProblem(chainRoute(ops1, opLinks(state.ops)), ops1)) {
+    const index = state.ops.map((op) => op.link).lastIndexOf("parallel");
+    return `Ручная сборка: одновременные операции в конце списка (операция ${index + 1} «${opTitle(state.ops[index], index + 1)}») — `
+      + "добавьте после них итоговую операцию (например, контроль), которая соберёт их результат.";
   }
   return null;
 }
@@ -315,13 +326,13 @@ export function manualConfig(state: ManualState, base: Record<string, unknown>):
       ...(op.note.trim() ? { note: op.note.trim() } : {}),
       ...(op.result.trim() ? { result: op.result.trim() } : {}),
       ...(op.components.length ? { components: op.components.map((comp) => ({ ...comp, qty: plain(comp.qty) || "1" })) } : {}),
-      ...(op.parallel && index > 0 ? { parallel: true } : {}),
+      ...(index > 0 && op.link !== "after" ? { link: op.link } : {}),
     };
     return op.kind === "library"
       ? { type: LIBRARY_OP, templateId: op.templateId, opNum: op.code, side: op.side, ...common }
       : { type: CUSTOM_OP, ...common, steps: stepsPayload(op), tooling: toolingPayload(op) };
   });
-  const scheme = state.route ?? chainRoute(routeOps(state.ops, partQty), togetherPositions(state.ops));
+  const scheme = state.route ?? chainRoute(routeOps(state.ops, partQty), opLinks(state.ops));
   const route = routePayload({
     ...scheme,
     blocks: scheme.blocks.map((block) => ({
@@ -361,12 +372,12 @@ export function manualFromConfig(config: unknown): ManualState | null {
       controls: steps.filter(control).map((step) => [str(step.text), str(step.tolerance)].filter(Boolean).join(" | ")).join("\n"),
       tooling: list(item.tooling).map((tool) => (str(tool.section) && str(tool.section) !== TOOL_SECTIONS[0] ? `${str(tool.section)}: ${str(tool.name)}` : str(tool.name))).join("\n"),
       components: list(item.components).map((comp) => ({ id: str(comp.id), art: str(comp.art), name: str(comp.name), qty: str(comp.qty || "1").replace(".", ","), unit: str(comp.unit) || "Шт." })),
-      parallel: item.parallel === true,
+      link: item.link === "same" || item.link === "parallel" ? item.link : "after",
     };
   });
   const parsed = parseRoute(saved.route);
   const ops1 = routeOps(ops, Number(saved.partQty) || 1);
-  const chain = JSON.stringify(routePayload(chainRoute(ops1, togetherPositions(ops))));
+  const chain = JSON.stringify(routePayload(chainRoute(ops1, opLinks(ops))));
   const plainRoute = parsed ? { ...parsed, blocks: parsed.blocks.map((block) => ({ ...block, components: [] })) } : null;
   const route = plainRoute && !routeProblem(plainRoute, ops1) && JSON.stringify(routePayload(plainRoute)) !== chain ? plainRoute : null;
   return { ops, nextSeq: Math.max(0, ...ops.map((op) => op.seq)) + 1, route, notice: "" };

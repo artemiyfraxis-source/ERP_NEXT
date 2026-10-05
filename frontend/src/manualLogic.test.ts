@@ -9,7 +9,7 @@ import {
   manualProblem,
   moveOp,
   removeOp,
-  setParallel,
+  setLink,
   setRoute,
   stepsPayload,
   toolingPayload,
@@ -130,34 +130,40 @@ describe("manual assembly list", () => {
     expect(manualProblem(updateOp(state, 3, { qty: "0" }))).toBe("Ручная сборка: операция 3 «Опрессовка терминалов (А)» — количество на изделие должно быть числом больше нуля.");
   });
 
-  it("puts operations marked «одновременно с предыдущей» on their own branches and joins them in the next operation", () => {
-    // Резка, затем пайка и опрессовка одновременно, затем контроль — собирает обе ветки.
+  it("puts «тот же процесс» into the previous operation's block and «одновременно» on its own branch", () => {
+    // Резка; пайка — тем же процессом (один блок «резка+пайка»); опрессовка — одновременно, своей веткой; контроль собирает.
     let state = addCustomOp(three());
     state = updateOp(state, 4, { label: "Контроль" });
-    state = setParallel(state, 3, true);
+    state = setLink(setLink(state, 2, "same"), 3, "parallel");
     const config = manualConfig(state, base);
-    expect((config.ops as Array<Record<string, unknown>>).map((op) => op.parallel ?? false)).toEqual([false, false, true, false]);
+    expect((config.ops as Array<Record<string, unknown>>).map((op) => op.link ?? "after")).toEqual(["after", "same", "parallel", "after"]);
     expect(config.route).toEqual({
-      blocks: [{ key: "b1", ops: [1], final: false }, { key: "b2", ops: [2], final: false }, { key: "b3", ops: [3], final: false }, { key: "b4", ops: [4], final: true }],
-      edges: [{ from: "b1", to: "b2", per_unit: 1 }, { from: "b2", to: "b4", per_unit: 1 }, { from: "b3", to: "b4", per_unit: 1 }],
+      blocks: [{ key: "b1", ops: [1, 2], final: false }, { key: "b3", ops: [3], final: false }, { key: "b4", ops: [4], final: true }],
+      edges: [{ from: "b1", to: "b4", per_unit: 1 }, { from: "b3", to: "b4", per_unit: 1 }],
     });
-    // Сохранённая схема с ветками — не ручная правка: при открытии снова «по списку», флаг на месте.
+    // Сохранённая схема по связям — не ручная правка: при открытии снова «по списку», связи на месте.
     const restored = manualFromConfig(config);
-    expect(restored?.ops.map((op) => op.parallel)).toEqual([false, false, true, false]);
+    expect(restored?.ops.map((op) => op.link)).toEqual(["after", "same", "parallel", "after"]);
     expect(restored?.route).toBeNull();
-    // У первой операции флаг не действует.
-    expect((manualConfig(setParallel(three(), 1, true), base).ops as Array<Record<string, unknown>>)[0].parallel).toBeUndefined();
+    // У первой операции связь не действует; последняя тем же процессом — в итоговый блок.
+    expect((manualConfig(setLink(three(), 1, "same"), base).ops as Array<Record<string, unknown>>)[0].link).toBeUndefined();
+    expect(manualConfig(setLink(three(), 3, "same"), base).route).toEqual({
+      blocks: [{ key: "b1", ops: [1], final: false }, { key: "b2", ops: [2, 3], final: true }],
+      edges: [{ from: "b1", to: "b2", per_unit: 1 }],
+    });
   });
 
-  it("will not end the list with a simultaneous operation and resets a hand-edited scheme when the flag changes", () => {
-    const state = setParallel(three(), 3, true);
-    expect(manualProblem(state)).toBe("Ручная сборка: операция 3 «Опрессовка терминалов (А)» идёт одновременно с предыдущей и завершает список — "
-      + "добавьте после одновременных операций итоговую (например, контроль), которая соберёт их результат.");
+  it("will not end the list with simultaneous operations and resets a hand-edited scheme when a link changes", () => {
+    const message = "Ручная сборка: одновременные операции в конце списка (операция 3 «Опрессовка терминалов (А)») — "
+      + "добавьте после них итоговую операцию (например, контроль), которая соберёт их результат.";
+    expect(manualProblem(setLink(three(), 3, "parallel"))).toBe(message);
+    // Ветка, продолженная тем же процессом до конца списка, — тоже не собрана.
+    expect(manualProblem(setLink(setLink(three(), 2, "parallel"), 3, "same"))).toMatch(/одновременные операции в конце списка \(операция 2/);
     const edited = setRoute(three(), {
       blocks: [{ key: "b1", name: "", ops: [1, 2], final: false, components: [] }, { key: "b3", name: "", ops: [3], final: true, components: [] }],
       edges: [{ from: "b1", to: "b3", per_unit: 1 }],
     });
-    const reset = setParallel(edited, 2, true);
+    const reset = setLink(edited, 2, "parallel");
     expect(reset.route).toBeNull();
     expect(reset.notice).toMatch(/схема снова по списку/);
   });
