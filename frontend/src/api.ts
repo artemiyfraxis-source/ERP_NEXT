@@ -1696,6 +1696,8 @@ export interface RecognizedOrderLine {
   sum: string | null;
   matched_name: string | null;
   confidence: MatchConfidence;
+  /** Кол-во или ед. в документе расходятся со строкой. */
+  warnings?: string[];
 }
 
 export interface OrderDocumentRecognition {
@@ -1704,6 +1706,9 @@ export interface OrderDocumentRecognition {
   invoice_number: string | null;
   invoice_date: string | null;
   currency: string | null;
+  /** false — цены не читаются автоматически (скан без текста, валюта); `hint` говорит, что делать. */
+  auto?: boolean;
+  hint?: string;
   lines: RecognizedOrderLine[];
   unmatched_items: { name: string; quantity: string | null; price_with_vat: string | null }[];
   unmatched_lines: string[];
@@ -1788,11 +1793,18 @@ export const procurementApi = {
       failed: { legacy_id: string; error: string }[];
     }>("/api/procurement/facts", { method: "POST", body: JSON.stringify({ rows }) }),
   /** Файл счёта или КП по заказу → цены строк, № и дата, распознанные сервером (ничего в строки не пишет). */
-  recognizeOrderDocument: (orderNumber: string, file: File, kind: OrderDocumentKind) => {
-    const form = new FormData();
-    form.append("file", file);
-    form.append("kind", kind);
-    return api<OrderDocumentRecognition>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/recognize`, { method: "POST", body: form });
+  recognizeOrderDocument: async (orderNumber: string, file: File, kind: OrderDocumentKind) => {
+    // Файл — base64 в JSON, как у загрузки счёта строки (сервер без multipart).
+    const content = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+      reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
+      reader.readAsDataURL(file);
+    });
+    return api<OrderDocumentRecognition>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/recognize`, {
+      method: "POST",
+      body: JSON.stringify({ kind, file_name: file.name, content_type: file.type || "application/octet-stream", content_base64: content }),
+    });
   },
   /** Проверенные цены документа — все строки заказа или ни одной (409 — набор устарел, 422 — сервер называет строку).
    *  КП: цены, строки остаются «Жду счет»; счёт: цены и счёт, строки уходят «В оплату». */

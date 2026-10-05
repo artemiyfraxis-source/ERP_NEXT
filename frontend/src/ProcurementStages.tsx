@@ -719,6 +719,7 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
                     <td className="num">
                       {qtyOf(line)}
                       {otherQuantity && <small className="tone-warn">в документе {match?.quantity} {match?.unit ?? ""}</small>}
+                      {!otherQuantity && match?.warnings?.map((text) => <small key={text} className="tone-warn">{text}</small>)}
                     </td>
                     <td className="num doc-price">
                       <input
@@ -741,6 +742,7 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
             </tfoot>
           </table>
         </div>
+        {result?.hint && <div className="warning-inline" role="status">{result.hint}</div>}
         {result && result.unmatched_items.length > 0 && (
           <div className="warning-inline doc-unmatched">
             <strong>В документе, но не найдено в заказе: {result.unmatched_items.length}</strong>

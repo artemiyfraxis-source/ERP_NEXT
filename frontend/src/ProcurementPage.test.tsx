@@ -1494,7 +1494,7 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
   const third = { ...first, id: "30000000-0000-0000-0000-000000000003", legacy_id: "REQ-3", calculated_name: "Болт", version: 6 };
   let bump = 0;
   let paid = false;
-  let recognizeBody: FormData | undefined;
+  let recognizeBody: { kind?: string; file_name?: string; content_base64?: string } | undefined;
   let recognizeType: string | null = "";
   const bodies: Record<string, unknown>[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -1505,7 +1505,7 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
       return json({ lines: [first, second, third].map((item) => ({ ...item, status, version: item.version + bump })), next_cursor: null });
     }
     if (path === "/api/procurement/orders/PO-001/recognize" && init?.method === "POST") {
-      recognizeBody = init.body as FormData;
+      recognizeBody = JSON.parse(String(init.body));
       recognizeType = new Headers(init.headers).get("Content-Type");
       return json(recognized("invoice", [
         { line_id: first.id, legacy_id: "REQ-1", version: 3, price_with_vat: "122", matched_name: "Разъём SMA-J", confidence: "article" },
@@ -1539,9 +1539,10 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
 
   fireEvent.change(within(dialog).getByLabelText("Файл счёта"), { target: { files: [new File(["%PDF"], "счёт.pdf", { type: "application/pdf" })] } });
   expect(await within(dialog).findByText(/Счёт № 58\.pdf · распознано: № 58 от 14\.09\.2026 · найдено строк 2 из 3/)).toBeInTheDocument();
-  expect(recognizeBody?.get("kind")).toBe("invoice");
-  expect((recognizeBody?.get("file") as File).name).toBe("счёт.pdf");
-  expect(recognizeType).toBeNull();
+  expect(recognizeBody?.kind).toBe("invoice");
+  expect(recognizeBody?.file_name).toBe("счёт.pdf");
+  expect(recognizeBody?.content_base64).toBeTruthy();
+  expect(recognizeType).toBe("application/json");
   expect(within(dialog).getByLabelText("№ счёта")).toHaveValue("58");
   expect(within(dialog).getByLabelText("Дата счёта")).toHaveValue("2026-09-14");
   expect(within(dialog).getByLabelText("Цена с НДС REQ-1")).toHaveValue("122");
