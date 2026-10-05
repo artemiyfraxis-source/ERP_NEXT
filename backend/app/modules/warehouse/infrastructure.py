@@ -13,11 +13,13 @@ from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, S
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared import stage_options
 from app.shared.events import AuditEvent
 from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_layout_from_config, storage_location_has_slot
 
 from .domain import WAREHOUSES, StockLot, WriteOffEntry
 from .journal import MIRRORED_BY_WRITEOFFS, JournalEvent
+from .word_search import matches_words
 
 
 class StockLotRow(Base):
@@ -370,6 +372,8 @@ class SqlAlchemyWarehouseRepository:
 
     @staticmethod
     def _matches(lot: StockLot, query: str) -> bool:
+        if stage_options.enabled("warehouse.word_search"):
+            return matches_words(lot, query)
         words = search_text(query).split()
         haystack = search_text(" ".join((
             lot.grn,

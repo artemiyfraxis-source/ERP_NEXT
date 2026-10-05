@@ -11,6 +11,7 @@ from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
+from app.shared import stage_options
 from app.shared.clock import MOSCOW
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
@@ -1133,6 +1134,13 @@ def edit_lot_row(command: EditLotRowCommand, uow: UnitOfWork) -> tuple[StockLot,
         changes = lot_row_changes(current, updated)
         if not changes:
             return current, []
+        # Stage option: quantities move only through write-off, return and transfer, never by hand.
+        if stage_options.enabled("warehouse.strict_quantities") and any(
+            getattr(current, name) != getattr(updated, name) for name in ("inbound", "written_off", "reserved")
+        ):
+            raise WarehouseValidationError(
+                "Количества меняются только движениями: списание, возврат, перемещение"
+            )
         details = {
             "grn": updated.grn,
             "package": updated.package,
