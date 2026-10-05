@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+import re
 from uuid import UUID, uuid4
 
 
@@ -29,6 +30,27 @@ def project_of(purpose: str) -> str:
     without « · » has no project → ''."""
     parts = str(purpose or "").split(" · ")
     return parts[0].strip() if len(parts) > 1 else ""
+
+
+_KB = re.compile(r"КБ\s*-?\s*(\d+)", re.IGNORECASE)
+
+
+def kb_number(purpose: str) -> int | None:
+    """The КБ of a kit from НАЗНАЧЕНИЕ «728К.2 · КБ1 · …» (also «… / КБ-1»): 1; no КБ in the text → None."""
+    match = _KB.search(str(purpose or ""))
+    return int(match.group(1)) if match else None
+
+
+def kb_of(purpose: str) -> str:
+    """«КБ1» — the item index a kit's reserves are keyed by; '' when НАЗНАЧЕНИЕ names no КБ."""
+    number = kb_number(purpose)
+    return f"КБ{number}" if number is not None else ""
+
+
+def item_index_key(value: str | None) -> str:
+    """«кб 1», «КБ-1», «КБ1» → «КБ1»: how two item indexes compare."""
+    number = kb_number(str(value or ""))
+    return f"КБ{number}" if number is not None else re.sub(r"[\s\-]+", "", str(value or "")).upper()
 
 
 def _positive(value: Decimal, label: str) -> Decimal:
@@ -72,6 +94,9 @@ class FulfillmentLine:
     returned_good: Decimal = Decimal("0")
     defective_returned: Decimal = Decimal("0")
     defective_missing: Decimal = Decimal("0")
+    # «есть, но не заведено» (owner 05.10.2026): the goods are on the shelf but on no lot — the position passes
+    # without a lot, no reserve, no stock movement and no СПИСАНИЕ row at issue.
+    off_book: bool = False
 
     @classmethod
     def create(
@@ -96,7 +121,16 @@ class FulfillmentLine:
 
     @property
     def covered(self) -> bool:
-        return bool(self.lot and self.reserved == self.requirement and self.issued == 0)
+        if self.issued != 0:
+            return False
+        if self.off_book:
+            return self.lot is None and self.reserved == 0
+        return bool(self.lot and self.reserved == self.requirement)
+
+    @property
+    def waiting(self) -> bool:
+        """No lot, no «есть, но не заведено», nothing issued: the position still waits for stock."""
+        return self.lot is None and not self.off_book and self.reserved == 0 and self.issued == 0
 
     def bind(
         self,
@@ -106,6 +140,10 @@ class FulfillmentLine:
     ) -> tuple[FulfillmentLine, FulfillmentLine | None]:
         if self.issued > 0:
             raise FulfillmentValidationError("Выданную позицию нельзя перепривязать")
+        if self.off_book:
+            raise FulfillmentValidationError(
+                "Позиция отмечена «есть, но не заведено» — сначала сними отметку"
+            )
         if self.lot is not None or self.reserved > 0:
             raise FulfillmentValidationError("Сначала снимите прежнюю привязку партии")
         amount = _positive(quantity, "Резерв")
@@ -130,9 +168,27 @@ class FulfillmentLine:
             raise FulfillmentValidationError("Выданную позицию нельзя перепривязать")
         return replace(self, reserved=Decimal("0"), lot=None)
 
+    def mark_off_book(self) -> FulfillmentLine:
+        if self.issued > 0:
+            raise FulfillmentValidationError("Выданную позицию нельзя менять")
+        if self.off_book:
+            raise FulfillmentValidationError("Позиция уже отмечена «есть, но не заведено»")
+        if self.lot is not None or self.reserved > 0:
+            raise FulfillmentValidationError("У позиции выбрана партия — сначала сними её")
+        return replace(self, off_book=True)
+
+    def clear_off_book(self) -> FulfillmentLine:
+        if self.issued > 0:
+            raise FulfillmentValidationError("Выданную позицию нельзя менять")
+        if not self.off_book:
+            raise FulfillmentValidationError("Позиция не отмечена «есть, но не заведено»")
+        return replace(self, off_book=False)
+
     def mark_issued(self) -> FulfillmentLine:
         if not self.covered:
             raise FulfillmentValidationError("Нельзя выдать неполностью зарезервированную позицию")
+        if self.off_book:  # handed over from the shelf as it is: the whole need, nothing reserved
+            return replace(self, issued=self.requirement, reserved=Decimal("0"))
         return replace(self, issued=self.reserved, reserved=Decimal("0"))
 
     def settle_return(
@@ -143,6 +199,11 @@ class FulfillmentLine:
     ) -> FulfillmentLine:
         if self.issued <= 0:
             raise FulfillmentValidationError("Невыданную позицию нельзя принимать обратно")
+        if self.off_book and Decimal(returned_good) > 0:
+            raise FulfillmentValidationError(
+                f"«{self.name}» выдана как «есть, не заведено» — без партии годное на склад не вернуть; "
+                "заведи приход отдельно"
+            )
         good = _nonnegative(returned_good, "Возвращённое количество")
         defect_back = _nonnegative(defective_returned, "Возвращённый брак")
         defect_missing = _nonnegative(defective_missing, "Невозвращённый брак")
@@ -293,6 +354,8 @@ class FulfillmentRequest:
 
         parts = []
         for line in self.lines:
+            if line.off_book:
+                continue
             picked = line.issued if line.issued > 0 else line.reserved
             if picked >= line.requirement:
                 continue
@@ -355,39 +418,34 @@ class FulfillmentRequest:
                 updated.append(line)
         if not released:
             raise FulfillmentValidationError("Позиция заявки не найдена")
-        # FF-6, Issue.gs issueMergeFreePlan_: after a lot is removed, every FREE row (no lot, no reserve, no issue) of
-        # one article + name + unit folds into the first such row — also rows that came from different positions of
-        # the composition; the need is summed. A row with a lot, reserve or issue keeps its own quantity.
-        def free_key(line: FulfillmentLine) -> tuple[str, str, str]:
-            return tuple(str(value or "").strip().casefold() for value in (line.article, line.name, line.unit))
-
-        merged: list[FulfillmentLine] = []
-        for line in updated:
-            if line.lot is not None or line.reserved > 0 or line.issued > 0:
-                merged.append(line)
-                continue
-            existing_index = next(
-                (
-                    index
-                    for index, candidate in enumerate(merged)
-                    if candidate.lot is None
-                    and candidate.reserved == 0
-                    and candidate.issued == 0
-                    and free_key(candidate) == free_key(line)
-                ),
-                None,
-            )
-            if existing_index is None:
-                merged.append(line)
-            else:
-                existing = merged[existing_index]
-                merged[existing_index] = replace(
-                    existing,
-                    requirement=existing.requirement + line.requirement,
-                )
         return replace(
             self,
-            lines=tuple(merged),
+            lines=_merged_free(updated),
+            status=FulfillmentStatus.UNDERFILLED,
+            handout_location=None,
+            version=self.version + 1,
+            shortfall_note=None,
+        )
+
+    def mark_off_book(self, line_id: UUID, *, touch: bool = True) -> FulfillmentRequest:
+        """«есть, но не заведено»: the waiting position counts as covered without a lot. Like the first bound lot it
+        moves «Новая» → «Недоукомплектован» and rewrites НЕДОБОР from the lines (issueHeadSync_)."""
+        self._require_editable()
+        if not any(line.id == line_id for line in self.lines):
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        lines = tuple(line.mark_off_book() if line.id == line_id else line for line in self.lines)
+        status = FulfillmentStatus.UNDERFILLED if touch and self.status is FulfillmentStatus.NEW else self.status
+        return replace(self, lines=lines, status=status, version=self.version + 1, shortfall_note=None)
+
+    def clear_off_book(self, line_id: UUID) -> FulfillmentRequest:
+        """The mark removed: the position waits again, exactly as after a lot is removed (FF-6 fold included)."""
+        self._require_editable()
+        if not any(line.id == line_id for line in self.lines):
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        lines = [line.clear_off_book() if line.id == line_id else line for line in self.lines]
+        return replace(
+            self,
+            lines=_merged_free(lines),
             status=FulfillmentStatus.UNDERFILLED,
             handout_location=None,
             version=self.version + 1,
@@ -469,3 +527,87 @@ class FulfillmentRequest:
             FulfillmentStatus.CANCELLED,
         }:
             raise FulfillmentValidationError("Заявка закрыта для изменения партий")
+
+
+def _merged_free(lines) -> tuple[FulfillmentLine, ...]:
+    """FF-6, Issue.gs issueMergeFreePlan_: after a lot is removed, every FREE row (no lot, no reserve, no issue, not
+    «есть, но не заведено») of one article + name + unit folds into the first such row — also rows that came from
+    different positions of the composition; the need is summed. Any other row keeps its own quantity."""
+
+    def free_key(line: FulfillmentLine) -> tuple[str, ...]:
+        return tuple(str(value or "").strip().casefold() for value in (line.article, line.name, line.unit))
+
+    merged: list[FulfillmentLine] = []
+    for line in lines:
+        if not line.waiting:
+            merged.append(line)
+            continue
+        existing_index = next(
+            (
+                index
+                for index, candidate in enumerate(merged)
+                if candidate.waiting and free_key(candidate) == free_key(line)
+            ),
+            None,
+        )
+        if existing_index is None:
+            merged.append(line)
+        else:
+            existing = merged[existing_index]
+            merged[existing_index] = replace(existing, requirement=existing.requirement + line.requirement)
+    return tuple(merged)
+
+
+@dataclass(frozen=True)
+class KitReserve:
+    """A techcard reserve: one КБ of a project holds part of one warehouse lot before its kit request exists.
+
+    It sits in the lot's РЕЗЕРВ like a procurement «Со склада» cover. The kit request of the same project and КБ takes
+    it over first after the project's covers (`consume`): the reserve moves to the kit line without leaving the lot,
+    `consumed`/`consumed_by` keep the trace."""
+
+    id: UUID
+    project: str
+    item_index: str
+    article: str
+    lot_id: UUID
+    warehouse: str
+    grn: str
+    package: str
+    unit: str
+    quantity: Decimal
+    created_at: datetime
+    created_by: str
+    consumed: Decimal = Decimal("0")
+    consumed_by: str = ""
+    released_at: datetime | None = None
+    version: int = 1
+
+    @property
+    def active(self) -> bool:
+        return self.quantity > 0
+
+    @property
+    def label(self) -> str:
+        """«728К.2 · КБ1» — who holds the reserve, as the lot shows it."""
+        return f"{self.project} · {self.item_index}" if self.item_index else self.project
+
+    def release(self, now: datetime) -> KitReserve:
+        if not self.active:
+            raise FulfillmentValidationError("Резерв техкарты уже снят")
+        return replace(self, quantity=Decimal("0"), released_at=now, version=self.version + 1)
+
+    def consume(self, quantity: Decimal, request_number: str) -> KitReserve:
+        amount = _positive(quantity, "Количество из резерва техкарты")
+        if amount > self.quantity:
+            raise FulfillmentValidationError("Комплектация берёт больше, чем держит резерв техкарты")
+        numbers = [item for item in self.consumed_by.split(", ") if item]
+        if request_number and request_number not in numbers:
+            numbers.append(request_number)
+        return replace(
+            self,
+            quantity=self.quantity - amount,
+            consumed=self.consumed + amount,
+            consumed_by=", ".join(numbers),
+            version=self.version + 1,
+        )

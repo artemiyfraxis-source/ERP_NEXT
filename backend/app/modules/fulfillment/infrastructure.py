@@ -6,14 +6,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, func, select
+from sqlalchemy import (
+    Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, false, func, select,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.modules.procurement.infrastructure import SqlAlchemyStockCoverRepository
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
-from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, LotSnapshot
+from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, KitReserve, LotSnapshot
 
 
 class FulfillmentRequestRow(Base):
@@ -73,6 +75,95 @@ class FulfillmentLineRow(Base):
     lot_grn: Mapped[str | None] = mapped_column(String(32), nullable=True)
     lot_package: Mapped[str | None] = mapped_column(String(32), nullable=True)
     lot_storage_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # «есть, но не заведено»: passes without a lot and without a stock movement (migration 0087).
+    off_book: Mapped[bool] = mapped_column(Boolean(), nullable=False, default=False, server_default=false())
+
+
+_OPEN_STATUSES = (FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED, FulfillmentStatus.COMPLETE)
+
+
+class FulfillmentKitReserveRow(Base):
+    """A techcard reserve of one project КБ on one warehouse lot (KitReserve)."""
+
+    __tablename__ = "fulfillment_kit_reserves"
+    __table_args__ = (
+        Index("ix_fulfillment_kit_reserves_lot_quantity", "lot_id", "quantity"),
+        Index("ix_fulfillment_kit_reserves_project_item", "project", "item_index"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    project: Mapped[str] = mapped_column(String(128), nullable=False)
+    item_index: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    article: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    lot_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False)
+    package: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    consumed: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0")
+    consumed_by: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+_KIT_RESERVE_FIELDS = (
+    "version", "project", "item_index", "article", "lot_id", "warehouse", "grn", "package", "unit", "quantity",
+    "consumed", "consumed_by", "created_at", "created_by", "released_at",
+)
+
+
+def _kit_reserve(row: FulfillmentKitReserveRow) -> KitReserve:
+    return KitReserve(id=row.id, **{field: getattr(row, field) for field in _KIT_RESERVE_FIELDS})
+
+
+class SqlAlchemyKitReserveRepository:
+    """Techcard reserves. A kit request of the same project + КБ takes them over (`_reserve_for_kit`); the warehouse
+    row edit counts them in the kitting floor (`reserved_on_lot`)."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get(self, reserve_id: UUID) -> KitReserve | None:
+        row = self.session.get(FulfillmentKitReserveRow, reserve_id)
+        return _kit_reserve(row) if row is not None else None
+
+    def active_on_lots(self, lot_ids) -> list[KitReserve]:
+        if not lot_ids:
+            return []
+        rows = self.session.scalars(
+            select(FulfillmentKitReserveRow)
+            .where(FulfillmentKitReserveRow.lot_id.in_(tuple(lot_ids)), FulfillmentKitReserveRow.quantity > 0)
+            .order_by(FulfillmentKitReserveRow.created_at, FulfillmentKitReserveRow.id)
+        )
+        return [_kit_reserve(row) for row in rows]
+
+    def for_project(self, project: str) -> list[KitReserve]:
+        rows = self.session.scalars(
+            select(FulfillmentKitReserveRow)
+            .where(FulfillmentKitReserveRow.project == project)
+            .order_by(FulfillmentKitReserveRow.created_at, FulfillmentKitReserveRow.id)
+        )
+        return [_kit_reserve(row) for row in rows]
+
+    def reserved_on_lot(self, lot_id: UUID) -> Decimal:
+        total = self.session.scalar(
+            select(func.coalesce(func.sum(FulfillmentKitReserveRow.quantity), 0))
+            .where(FulfillmentKitReserveRow.lot_id == lot_id)
+        )
+        return Decimal(str(total or 0))
+
+    def add(self, reserve: KitReserve) -> None:
+        stored = self.session.get(FulfillmentKitReserveRow, reserve.id)
+        if stored is None:
+            stored = FulfillmentKitReserveRow(id=reserve.id)
+            self.session.add(stored)
+        for field in _KIT_RESERVE_FIELDS:
+            setattr(stored, field, getattr(reserve, field))
 
 
 def _line(row: FulfillmentLineRow) -> FulfillmentLine:
@@ -98,6 +189,7 @@ def _line(row: FulfillmentLineRow) -> FulfillmentLine:
         returned_good=row.returned_good,
         defective_returned=row.defective_returned,
         defective_missing=row.defective_missing,
+        off_book=bool(row.off_book),
     )
 
 
@@ -155,11 +247,21 @@ class SqlAlchemyFulfillmentRepository:
         ))
 
     def reserved_on_lot(self, lot_id: UUID) -> Decimal:
-        """What kitting lines hold in reserve on one warehouse lot (the warehouse row edit may not go under it)."""
+        """What kitting holds in reserve on one warehouse lot — kit lines plus techcard reserves (the warehouse row
+        edit may not go under it)."""
         total = self.session.scalar(
             select(func.coalesce(func.sum(FulfillmentLineRow.reserved), 0)).where(FulfillmentLineRow.lot_id == lot_id)
         )
-        return Decimal(str(total or 0))
+        return Decimal(str(total or 0)) + SqlAlchemyKitReserveRepository(self.session).reserved_on_lot(lot_id)
+
+    def open_requests(self) -> list[FulfillmentRequest]:
+        """Requests whose lots can still change («Новая», «Недоукомплектован», «Укомплектован»), creation order."""
+        rows = self.session.scalars(
+            select(FulfillmentRequestRow)
+            .where(FulfillmentRequestRow.status.in_(tuple(status.value for status in _OPEN_STATUSES)))
+            .order_by(FulfillmentRequestRow.created_at, FulfillmentRequestRow.number)
+        )
+        return [self._domain(row) for row in rows]
 
     def list(self, limit: int = 200, after_id: UUID | None = None) -> list[FulfillmentRequest]:
         # Creation order, as SUPPLYMAP reads the ВЫДАЧА sheet top to bottom; ids are random, so the page cursor
@@ -227,6 +329,7 @@ class SqlAlchemyFulfillmentRepository:
             line_row.lot_grn = line.lot.grn if line.lot else None
             line_row.lot_package = line.lot.package if line.lot else None
             line_row.lot_storage_location = line.lot.storage_location if line.lot else None
+            line_row.off_book = line.off_book
         for stale in existing.values():
             self.session.delete(stale)
 
@@ -258,6 +361,8 @@ class SqlAlchemyFulfillmentUnitOfWork:
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         # «Со склада» of procurement lines: a kit of the same project takes those reserves over.
         self.stock_covers = SqlAlchemyStockCoverRepository(self.session)
+        # Techcard reserves of a project КБ: its kit request takes them over after the project's covers.
+        self.kit_reserves = SqlAlchemyKitReserveRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
