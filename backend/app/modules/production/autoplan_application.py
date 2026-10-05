@@ -181,7 +181,8 @@ def _prepare(
     for task in eligible:
         for operation in task.operations:
             done = progress.by_operation.get(operation.id, Decimal(0))
-            if done >= task.quantity:
+            # Сдано в штуках операции: ветка «2 на изделие» сделана, когда сдано вдвое больше тиража.
+            if done >= task.operation_units(operation.id):
                 continue
             if not operation.shares:
                 if done > 0:

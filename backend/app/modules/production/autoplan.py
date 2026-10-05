@@ -348,6 +348,8 @@ class _Planner:
         self.tasks = {task.id: task for task in data.tasks}
         self.task_of = {operation.id: task for task in data.tasks for operation in task.operations}
         self.ops = {operation.id: operation for task in data.tasks for operation in task.operations}
+        # Штук полуфабриката на изделие («2 на изделие» на стрелке схемы): время операции — на её штуки.
+        self.factors = {operation_id: factor for task in data.tasks for operation_id, factor in task.unit_factors.items()}
         self.topo = {
             operation.id: index for task in data.tasks for index, operation in enumerate(network_order(task.operations))
         }
@@ -447,6 +449,7 @@ class _Planner:
             lower = max(lower, chain_start(
                 source, scheduled, source_rate, replace(operation, setup_seconds=Decimal(0)), rate,
                 task.quantity, edge_batch(edge, task.quantity), self.data.holidays, self.data.shift,
+                previous_factor=self.factors[edge.input_operation_id], current_factor=self.factors[operation.id],
             ))
         return lower
 
@@ -458,7 +461,7 @@ class _Planner:
         items = self.streams.get(self._stream(key, operator_id), [])
         capacity = self._capacity(key)
         start = self._next(earliest)
-        unit = operation.seconds_per_unit * task.quantity / (rate if rate > 0 else Decimal(1))
+        unit = operation.seconds_per_unit * task.operation_units(operation.id) / (rate if rate > 0 else Decimal(1))
         for _ in range(_SLOT_ATTEMPTS):
             if start >= data.end:
                 return None
