@@ -41,6 +41,8 @@ jobs:
           node --check scripts/sync-techcards.mjs
           node --check scripts/sync-techcard-library.mjs
           node --check scripts/run-backend-tests.mjs
+      - name: Deploy scripts (update protocol)
+        run: npm run test:deploy
       - name: Backend tests
         run: npm run test:backend
       - name: Frontend tests and build
