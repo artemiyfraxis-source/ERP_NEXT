@@ -696,3 +696,73 @@ it("asks for nothing of the planning board without a view on production", async 
   expect(requested).not.toContain("/api/production/boxes");
   expect(screen.queryByRole("button", { name: "+ Запустить задание" })).not.toBeInTheDocument();
 });
+
+// Вид сотрудника: планировщик выбирает монтажника и видит его очередь без кнопок действий; сотрудник выбора не видит.
+function viewAsFetch(requested: string[]) {
+  const fitterId = "10000000-0000-0000-0000-000000000002";
+  const returned = {
+    id: "74000000-0000-0000-0000-000000000009", number: "000009-6", version: 1, task_id: task.id, operation_id: task.operations[0].id,
+    item: task.item, operation_position: 2, operator_id: fitterId, quantity: "10", consumed: "0", reserved: "0", rejected: "0",
+    available: "10", status: "Возвращена", created_at: "2026-09-22T09:00:00+03:00", closed_at: null, closed_by: null,
+    confirmed_at: null, confirmed_by: null, return_reason: "Пересчитать",
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    requested.push(path);
+    if (path.startsWith("/api/production/my/execution")) return json({ session: null, boxes: path.includes("operator_id") ? [returned] : [] });
+    if (path.startsWith("/api/production/my")) return json({ tasks: path.includes("operator_id") ? [task] : [] });
+    if (path === "/api/production/operators") return json({ viewer_site: "ЦАР", operators: [
+      { id: fitterId, name: "Оператор", site: "ЦАР" }, { id: "x2", name: "Жуковский", site: "ЖУК" },
+    ] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  return fitterId;
+}
+
+it("lets a planner view a fitter's queue read-only", async () => {
+  const requested: string[] = [];
+  const fitterId = viewAsFetch(requested);
+  render(<ProductionPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { production: "view", myops: "view" } }} mine />);
+
+  const select = await screen.findByRole("combobox", { name: "Сотрудник" });
+  // Мастер площадки ЦАР видит только монтажников своей площадки.
+  expect(within(select).queryByRole("option", { name: "Жуковский" })).not.toBeInTheDocument();
+  fireEvent.change(select, { target: { value: fitterId } });
+
+  expect(await screen.findByText("Вид сотрудника Оператор — только просмотр")).toBeInTheDocument();
+  expect(await screen.findByText("Ещё не сдавали")).toBeInTheDocument();
+  expect(requested).toContain(`/api/production/my?operator_id=${fitterId}`);
+  expect(screen.getByText("000009-6")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "▶ Начать" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Исправить" })).not.toBeInTheDocument();
+  // Заголовки не говорят «Мои», пока смотрим чужое; кнопка возвращает к своим заданиям.
+  expect(screen.getByRole("heading", { level: 1, name: "Задания" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Коробки: Оператор" })).toBeInTheDocument();
+  expect(screen.queryByText("Мои коробки")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Вернуться к моим заданиям" }));
+  await waitFor(() => expect(screen.queryByText("Вид сотрудника Оператор — только просмотр")).not.toBeInTheDocument());
+  expect(select).toHaveValue("");
+  expect(screen.getByRole("heading", { level: 1, name: "Мои задания" })).toBeInTheDocument();
+});
+
+it("tells a planner with the selector to pick an employee when their own view is empty", async () => {
+  viewAsFetch([]);
+  render(<ProductionPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { production: "view", myops: "view" } }} mine />);
+  expect(await screen.findByText("Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания.")).toBeInTheDocument();
+});
+
+it("keeps the old empty text for staff without the selector", async () => {
+  viewAsFetch([]);
+  render(<ProductionPage principal={{ ...principal, roles: ["operator"], access_level: "operator", permissions: { myops: "edit" } }} mine />);
+  expect(await screen.findByText(/Операции вам пока не назначены/)).toBeInTheDocument();
+});
+
+it("shows no employee selector to ordinary staff", async () => {
+  const requested: string[] = [];
+  viewAsFetch(requested);
+  render(<ProductionPage principal={{ ...principal, roles: ["operator"], access_level: "operator", permissions: { myops: "edit" } }} mine />);
+
+  await waitFor(() => expect(requested).toContain("/api/production/my"));
+  expect(screen.queryByRole("combobox", { name: "Сотрудник" })).not.toBeInTheDocument();
+  expect(requested).not.toContain("/api/production/operators");
+});

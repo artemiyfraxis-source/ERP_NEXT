@@ -14,7 +14,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, production_view_work_principal, shipping_warehouse_principal
+from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, production_view_work_principal, section_allowed, shipping_warehouse_principal
 
 from .application import (
     Absence,
@@ -465,30 +465,48 @@ def traceability(
     }
 
 
+def _viewed_operator(uow: UnitOfWork, principal: Principal, operator_id: UUID | None) -> UUID:
+    """Чьи задания показываем. Без operator_id — свои. Чужие (вид сотрудника, только чтение) — тому, кто видит
+    «Ресурсное планирование»; мастер площадки — только монтажников своей площадки, полный доступ — любых."""
+    if operator_id is None or operator_id == principal.actor.id:
+        return principal.actor.id
+    if not section_allowed(principal, ("production",), "view"):
+        raise HTTPException(status_code=403, detail="Смотреть задания другого сотрудника может только планировщик.")
+    target = uow.operators.get(operator_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    viewer = uow.operators.get(principal.actor.id)
+    if not principal.full_access and viewer is not None and viewer.site and target.site != viewer.site:
+        raise HTTPException(status_code=403, detail="Задания сотрудника другой площадки недоступны.")
+    return operator_id
+
+
 @router.get("/my")
 def my_operations(
     principal: Annotated[Principal, Depends(production_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    operator_id: UUID | None = None,
 ) -> dict:
     with uow_factory() as uow:
+        viewed = _viewed_operator(uow, principal, operator_id)
         rows = [task for task in uow.production.list(limit=10_000) if task.status.value != "Отменено"]
-        mine = [task for task in rows if any(principal.actor.id in operation.operator_ids for operation in task.operations)]
+        mine = [task for task in rows if any(viewed in operation.operator_ids for operation in task.operations)]
         facts = _facts(uow, mine)
         names = {item.id: item.name for item in uow.operators.list()}
     operations = []
     for task in mine:
         result = _result(task, facts)
         for index, operation in enumerate(task.operations):
-            if principal.actor.id in operation.operator_ids:
+            if viewed in operation.operator_ids:
                 # prodMyOps_: напарники по операции и первый ли это этап (вход без коробок). Сетевой график:
                 # без коробок начинается любая операция без входов (начало ветки), в цепочке — только этап 1.
-                share = operation.share_of(principal.actor.id)
+                share = operation.share_of(viewed)
                 operations.append({**result, "operations": [{
                     **result["operations"][index],
                     # Своя доля монтажника: у раздробленной операции своё окно и свои штуки.
                     "my_share": next(item for item in result["operations"][index]["shares"] if item["operator_id"] == str(share.operator_id)) if share else None,
                     "first": not operation.inputs,
-                    "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != principal.actor.id],
+                    "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != viewed],
                 }]})
     operations.sort(key=lambda item: (
         (item["operations"][0]["my_share"] or {}).get("planned_start") or item["operations"][0]["planned_start"] or "9999",
@@ -541,10 +559,12 @@ def available_inputs(
 def my_execution(
     principal: Annotated[Principal, Depends(production_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    operator_id: UUID | None = None,
 ) -> dict:
     with uow_factory() as uow:
-        current = uow.work.current(principal.actor.id)
-        boxes = uow.boxes.list(operator_id=principal.actor.id)
+        viewed = _viewed_operator(uow, principal, operator_id)
+        current = uow.work.current(viewed)
+        boxes = uow.boxes.list(operator_id=viewed)
     return {
         "session": _session_result(current) if current else None,
         "boxes": [_box_result(box) for box in boxes],

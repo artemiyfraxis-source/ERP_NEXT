@@ -19,10 +19,11 @@ import {
   type ProductionTask,
   type ProductionWorkSession,
 } from "./api";
-import { canAct, canSee } from "./navigation";
+import { canAct, canSee, hasFullAccess } from "./navigation";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay } from "./format";
 import { MasterBoard } from "./MasterBoard";
+import { AutoplanPanel } from "./AutoplanPanel";
 import { feedsText, isFirst, isNetwork, previousStage, requiredNote, requiredOf } from "./productionGraph";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
@@ -36,6 +37,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [showLaunch, setShowLaunch] = useState(false);
+  const [showAutoplan, setShowAutoplan] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [holidays, setHolidays] = useState<string[]>([]);
@@ -45,6 +47,10 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedOperationId, setSelectedOperationId] = useState("");
   const [week, setWeek] = useState(0);
+  // Вид сотрудника (только просмотр): планировщик выбирает монтажника и видит его очередь и коробки как он сам.
+  const [viewAs, setViewAs] = useState("");
+  const [staff, setStaff] = useState<ProductionOperator[]>([]);
+  const [staffSite, setStaffSite] = useState("");
   const canEdit = canAct(principal, "production");
   const canOverview = canSee(principal, "production");
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -53,12 +59,12 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     setError("");
     try {
       const [taskResult, operatorResult, executionResult] = await Promise.all([
-        mine ? productionApi.mine() : productionApi.list(),
+        mine ? productionApi.mine(viewAs) : productionApi.list(),
         mine
           ? Promise.resolve({ operators: [{ id: principal.user.id, name: principal.user.name, site: "" }] })
           : canOverview ? productionApi.operators() : Promise.resolve({ operators: [] }),
         mine
-          ? productionApi.execution()
+          ? productionApi.execution(viewAs)
           : canOverview ? productionApi.boxes() : Promise.resolve({ boxes: [] }),
       ]);
       setTasks(taskResult.tasks);
@@ -84,7 +90,16 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     }
   }
 
-  useEffect(() => { void reload(); }, [mine]);
+  useEffect(() => { void reload(); }, [mine, viewAs]);
+  useEffect(() => {
+    if (!mine || !canOverview) return;
+    productionApi.operators().then((result) => { setStaff(result.operators); setStaffSite(result.viewer_site ?? ""); }).catch(() => undefined);
+  }, [mine, canOverview]);
+  // Мастер площадки видит монтажников своей площадки, полный доступ — всех.
+  const viewable = staff.filter((item) => hasFullAccess(principal) || !staffSite || item.site === staffSite);
+  const viewedName = viewable.find((item) => item.id === viewAs)?.name ?? "";
+  const readOnly = mine && Boolean(viewAs);
+  const canPick = mine && canOverview && viewable.length > 0;
 
   async function mutate(key: string, operation: () => Promise<unknown>) {
     if (busy) return;
@@ -109,19 +124,27 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
 
   return <section className="page production-page">
     <header className="page-head">
-      <h1>{mine ? "Мои задания" : "Ресурсное планирование"}</h1>
+      <h1>{readOnly ? "Задания" : mine ? "Мои задания" : "Ресурсное планирование"}</h1>
       <span className="page-count">{tasks.length}</span>
-      {canEdit && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></div>}
+      {canPick && <label className="view-as">Сотрудник
+        <select aria-label="Сотрудник" style={{ width: "auto" }} value={viewAs} onChange={(event) => setViewAs(event.target.value)}>
+          <option value="">Мои задания</option>
+          {viewable.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </label>}
+      {canEdit && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></div>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+    {readOnly && <div className="view-strip" role="status"><span>Вид сотрудника {viewedName} — только просмотр</span><button type="button" className="secondary" onClick={() => setViewAs("")}>Вернуться к моим заданиям</button></div>}
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
     {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
+    {showAutoplan && canEdit && <AutoplanPanel tasks={tasks} close={() => setShowAutoplan(false)} onApplied={(count) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций`); void reload(); }} />}
     {showLaunch && canEdit && <LaunchForm tasks={tasks} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
-    {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} />}
+    {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={readOnly ? viewedName : ""} />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-    {mine && <MyQueue tasks={tasks} session={execution.session} busy={busy} mutate={mutate} />}
+    {mine && <MyQueue tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} />}
     {!mine && selectedTask && <TaskDetail
       key={`${selectedTask.id}:${selectedTask.version}`}
       task={selectedTask}
@@ -143,7 +166,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       canEdit={canEdit} busy={busy} mutate={mutate}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
-    {mine && loaded && !tasks.length && <div className="empty">Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании».</div>}
+    {mine && loaded && !tasks.length && <div className="empty">{readOnly ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
   </section>;
 }
 
@@ -630,10 +653,11 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
 
 // Очередь оператора (myOpsRender_): операции по дням плана — «Сегодня / Завтра / Начато ранее», факт «сдано X из N»,
 // «вместе с», «план истёк»; «Начать» нет у выполненных и недоступно, пока есть начатая работа.
-function MyQueue({ tasks, session, busy, mutate }: {
+function MyQueue({ tasks, session, busy, mutate, readOnly = false }: {
   tasks: ProductionTask[];
   session: ProductionWorkSession | null;
   busy: string;
+  readOnly?: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [starting, setStarting] = useState("");
@@ -677,10 +701,10 @@ function MyQueue({ tasks, session, busy, mutate }: {
         {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
         <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatDate(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatDate(share.finished_at)}` : ""}</div>
-        {!running && !done && <div className="mo-act">
+        {!readOnly && !running && !done && <div className="mo-act">
           <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>
         </div>}
-        {!running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} />}
+        {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} />}
       </div>
     </div>;
   };
@@ -698,10 +722,12 @@ function MyQueue({ tasks, session, busy, mutate }: {
   </div>;
 }
 
-function OperatorExecution({ execution, tasks, busy, mutate }: {
+function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, ownerName = "" }: {
   execution: { session: ProductionWorkSession | null; boxes: ProductionBox[] };
   tasks: ProductionTask[];
   busy: boolean;
+  readOnly?: boolean;
+  ownerName?: string;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [good, setGood] = useState("");
@@ -716,7 +742,7 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
   return <>
     {session && <div className="panel execution-current">
       <div className="manual-stock-head"><div><h2>Идёт работа</h2><small>{task?.number ?? session.task_id} · этап {operation?.position ?? "—"} {operation?.stage ?? ""} · с {formatDate(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}{session.status === "Пауза" ? " · на паузе" : ""}</small></div><span className="status">{session.status}</span></div>
-      <div className="execution-actions">
+      {!readOnly && <div className="execution-actions">
         {session.status === "В работе" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "pause"))}>Пауза</button>}
         {session.status === "Пауза" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "resume"))}>Продолжить</button>}
         <label>Годные<input aria-label="Годные изделия" type="number" min="0" step="any" value={good} onChange={(event) => setGood(event.target.value)} /></label>
@@ -729,18 +755,18 @@ function OperatorExecution({ execution, tasks, busy, mutate }: {
           return result;
         })}>Сдать</button>
         <button className="link-button danger-link" disabled={busy} onClick={() => { if (window.confirm("Отменить начало? Время не запишется.")) void mutate(session.id, () => productionApi.workAction(session.id, "cancel")); }}>Отменить начало</button>
-      </div>
+      </div>}
     </div>}
     {execution.boxes.length > 0 && <div className="panel execution-boxes">
-      <h2>Мои коробки</h2>
+      <h2>{ownerName ? `Коробки: ${ownerName}` : "Мои коробки"}</h2>
       <div className="box-grid">{execution.boxes.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
         <strong>{box.number ?? "Номер после закрытия"}</strong>
         <span>{box.item} · этап {box.operation_position}</span>
         <span>{box.quantity} шт · доступно {box.available}</span>
         <span className="status">{box.status}</span>
         {box.return_reason && <small className="danger-text">{box.return_reason}</small>}
-        {box.status === "Возвращена" && <button className="secondary small" disabled={busy} onClick={() => setCorrecting(correcting === box.id ? "" : box.id)}>Исправить</button>}
-        {box.status === "Возвращена" && correcting === box.id && <BoxCorrection box={box} busy={busy} mutate={mutate} onDone={(number) => setShown({ number, fixed: true })} />}
+        {!readOnly && box.status === "Возвращена" && <button className="secondary small" disabled={busy} onClick={() => setCorrecting(correcting === box.id ? "" : box.id)}>Исправить</button>}
+        {!readOnly && box.status === "Возвращена" && correcting === box.id && <BoxCorrection box={box} busy={busy} mutate={mutate} onDone={(number) => setShown({ number, fixed: true })} />}
       </div>)}</div>
     </div>}
     {shown && <BoxNumberDialog number={shown.number} fixed={shown.fixed} close={() => setShown(null)} />}
