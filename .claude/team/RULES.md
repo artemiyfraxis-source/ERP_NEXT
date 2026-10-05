@@ -18,8 +18,8 @@ GitHub plan can't protect it — so `main` changes only through a merged PR with
 - Locally first: `npm run check`, then the app itself — `.claude/launch.json` (`erp-api` on 8021 over
   `backend/preview.db`, `erp-web` on 5176, login `preview` / `Preview-2026!`) or `scripts/demo/run-demo.ps1`
   (seeded `backend/demo.db`). Screens: before/after shots with `scripts/demo/shoot.mjs`.
-- On the server after a release: the shop LAN or Tailscale (the owner adds Витя to the tailnet). Production holds real
-  stock and orders — test with real-looking actions you can undo, never bulk edits or deletions.
+- On the server after a release: https://erp-server.tail811f20.ts.net (public via Tailscale Funnel, own login).
+  Production holds real stock and orders — test with actions you can undo, never bulk edits or deletions.
 
 ## Releasing (both developers)
 1. PR ready (see the end of this file), CI `check` green, rebased on fresh `main`.
@@ -27,7 +27,7 @@ GitHub plan can't protect it — so `main` changes only through a merged PR with
 3. `gh pr merge <N> --merge --delete-branch`.
 4. `gh workflow run update-server.yml` — the server backs up the DB, takes `main`, checks health within ~2–5 min.
    Without it the release goes out by itself at 02:00 / 06:00 MSK.
-5. Check the screen you changed on the server; if it broke, say so in the chat at once — the owner rolls back.
+5. Check the screen you changed on https://erp-server.tail811f20.ts.net; if it broke, say so in the chat at once — the owner rolls back.
 Direct push to `main`, `deploy/push.ps1` and ssh to the server stay the owner's (`guard-danger.mjs` enforces it for
 other identities).
 
