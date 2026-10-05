@@ -775,3 +775,67 @@ def test_assigning_operations_one_by_one_keeps_one_time_form(production_api):
     assert task["assigned"] == 2
     assert task["planned_start"] == task["operations"][0]["planned_start"]
     assert task["planned_finish"] == task["operations"][1]["planned_finish"]
+
+
+def _as(user_id, name, roles, permissions):
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=user_id, name=name, department="Производство"),
+        email=f"{name}@example.test", roles=frozenset(roles), permissions=permissions,
+    )
+
+
+def _two_op_task(client, operator_id):
+    task = launch_from_card(client, "view-as", "802К.1", "КБ1", 10, [("", "Подготовка", 0, 0)]).json()["task"]
+    mate = UUID("10000000-0000-0000-0000-000000000003")
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(IdentityUserRow(id=mate, login="mate", email="mate@example.test", name="Напарник", department="Производство", role="staff", site="ЦАР", active=True, shop_worker=True))
+        uow.commit()
+    return client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(operator_id), str(mate)]},
+    ).json()["task"]
+
+
+def test_planner_views_the_queue_of_a_chosen_fitter(production_api):
+    client, operator_id = production_api
+    _two_op_task(client, operator_id)
+    # Мастер сам операций не имеет, а у выбранного монтажника очередь есть; напарник считается для выбранного.
+    assert client.get("/api/production/my").json()["tasks"] == []
+    own_boxes = client.get("/api/production/my/execution")
+    viewed = client.get("/api/production/my", params={"operator_id": str(operator_id)})
+    viewed_execution = client.get("/api/production/my/execution", params={"operator_id": str(operator_id)})
+
+    assert own_boxes.status_code == 200
+    assert viewed.status_code == 200, viewed.text
+    operation = viewed.json()["tasks"][0]["operations"][0]
+    assert operation["mates"] == ["Напарник"]
+    assert operation["my_share"] is None or operation["my_share"]["operator_id"] == str(operator_id)
+    assert viewed_execution.status_code == 200 and viewed_execution.json()["session"] is None
+
+
+def test_master_cannot_view_a_fitter_of_another_site(production_api):
+    client, operator_id = production_api
+    other = UUID("10000000-0000-0000-0000-000000000004")
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(IdentityUserRow(id=other, login="zhuk", email="z@example.test", name="Жуковский", department="Производство", role="staff", site="ЖУК", active=True, shop_worker=True))
+        uow.commit()
+
+    refused = client.get("/api/production/my", params={"operator_id": str(other)})
+    refused_execution = client.get("/api/production/my/execution", params={"operator_id": str(other)})
+    _as(MASTER_ID, "full", {"admin"}, {})
+    allowed = client.get("/api/production/my", params={"operator_id": str(other)})
+
+    assert refused.status_code == 403 and refused_execution.status_code == 403
+    assert allowed.status_code == 200, allowed.text
+
+
+def test_staff_cannot_pass_operator_id(production_api):
+    client, operator_id = production_api
+    _as(operator_id, "operator", {"operator"}, {"myops": "edit"})
+
+    own = client.get("/api/production/my", params={"operator_id": str(operator_id)})
+    foreign = client.get("/api/production/my", params={"operator_id": str(MASTER_ID)})
+    foreign_execution = client.get("/api/production/my/execution", params={"operator_id": str(MASTER_ID)})
+
+    assert own.status_code == 200
+    assert foreign.status_code == 403 and foreign_execution.status_code == 403

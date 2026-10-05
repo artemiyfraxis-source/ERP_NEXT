@@ -2184,7 +2184,7 @@ export const fulfillmentApi = {
 
 export const productionApi = {
   list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
-  mine: () => api<{ tasks: ProductionTask[] }>("/api/production/my"),
+  mine: (operatorId = "") => api<{ tasks: ProductionTask[] }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
@@ -2237,7 +2237,7 @@ export const productionApi = {
     api<{ task: ProductionTask; variant: ProductionScheduleVariant }>(`/api/production/tasks/${taskId}/schedule/apply`, {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew, transfer_batch: transferBatch }),
     }),
-  execution: () => api<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>("/api/production/my/execution"),
+  execution: (operatorId = "") => api<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>(`/api/production/my/execution${operatorId ? `?operator_id=${operatorId}` : ""}`),
   inputs: (taskId: string, operationId: string) =>
     api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
