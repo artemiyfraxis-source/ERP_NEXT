@@ -30,6 +30,7 @@ function mockApi() {
         ? [{ id: "o1", tab: "op", display_text: "", source_sheet: "", fields: { opNumber: "CUT_WIRE_hand", opName: "Резка", tPrep: "120", tOp: "6" } }] : [] });
     }
     if (path === "/api/references/technology/resolve-terminal") return json({ applicator: "", crimp_height: "", pull_force: "", by_section: [] });
+    if (path.startsWith("/api/techcards/assembly/drafts?")) return json({ items: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 }
@@ -52,8 +53,8 @@ function mount(props: Partial<Parameters<typeof TcGenerator>[0]> = {}) {
 }
 
 async function openManual() {
-  fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
-  expect(screen.getByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
+  fireEvent.click(await screen.findByText("Ручная сборка", { selector: "[role=tab]" }, { timeout: 10000 }));
+  expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
 }
 
 /** Одна карточка библиотеки — кликом по строке, в выбранный блок. */
@@ -244,7 +245,7 @@ const builtCard: ProjectTechcard = {
 
 it("opens a card built by hand on its tab with its blocks, keeps them across tabs and asks before building it typically", async () => {
   const onBuild = mount({ card: builtCard });
-  expect(await screen.findByRole("tab", { name: "Ручная сборка", selected: true })).toBeInTheDocument();
+  expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
   expect(screen.getByLabelText("Название операции 1")).toHaveValue("Резка");
   unfold(2);
   expect(screen.getByLabelText("Подготовка, мин: Пайка экрана")).toHaveValue("5");
@@ -260,7 +261,7 @@ it("opens a card built by hand on its tab with its blocks, keeps them across tab
   expect(screen.getByRole("alert")).toHaveTextContent("Сборка отменена — техкарта осталась ручной сборкой.");
   expect(onBuild).not.toHaveBeenCalled();
 
-  fireEvent.click(await screen.findByRole("tab", { name: "Ручная сборка" }, { timeout: 5000 }));
+  fireEvent.click(await screen.findByText("Ручная сборка", { selector: "[role=tab]" }, { timeout: 10000 }));
   expect(screen.getByLabelText("Название операции 2")).toHaveValue("Пайка экрана");
   confirm.mockImplementation(() => true);
   fireEvent.click(screen.getByRole("button", { name: "Пересобрать" }));

@@ -13,6 +13,7 @@ import {
   cardCategory,
   cardLabel,
   cardNorms,
+  genParams,
   inputCandidates,
   manualRoute,
   moveOp,
@@ -97,9 +98,13 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
       <button type="button" className="manual-op-fold" aria-expanded={open} aria-label={`${open ? "Свернуть" : "Развернуть"} операцию ${position}: ${title}`}
         title={open ? "Свернуть" : "Открыть: норма, параметры, результат"} onClick={toggle}><span className="op-badge">{position}</span></button>
       <div className="manual-op-name">
-        <input aria-label={`Название операции ${position}`} value={op.label} placeholder={op.kind === "custom" ? "Название своей операции" : ""}
-          className={op.kind === "custom" && !op.label.trim() ? "f-empty" : undefined} onChange={(event) => set({ label: event.target.value })} />
-        <small>{op.kind === "library" ? <>из библиотеки{op.code && <> · <span className="op-code">{op.code}</span></>}</> : "своя операция"}</small>
+        {op.gen
+          ? <b className="manual-op-title" aria-label={`Название операции ${position}`}>{title}</b>
+          : <input aria-label={`Название операции ${position}`} value={op.label} placeholder={op.kind === "custom" ? "Название своей операции" : ""}
+            className={op.kind === "custom" && !op.label.trim() ? "f-empty" : undefined} onChange={(event) => set({ label: event.target.value })} />}
+        {op.gen
+          ? <small className="manual-op-params" title={genParams(op.gen)}>{genParams(op.gen)}{op.code && <>{genParams(op.gen) && " · "}<span className="op-code">{op.code}</span></>}</small>
+          : <small>{op.kind === "library" ? <>из библиотеки{op.code && <> · <span className="op-code">{op.code}</span></>}</> : "своя операция"}</small>}
       </div>
       <div className="manual-op-tools">
         {!open && <button type="button" className="manual-op-norm" aria-label={`Норма: ${title}`} title="Открыть" onClick={toggle}>{normLabel(minutes)}</button>}
@@ -110,20 +115,22 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
     </div>
     {open && <>
     <div className="manual-grid">
-      {field("qty", "На изделие", "шт", "На изделие", "1")}
+      {!op.gen && field("qty", "На изделие", "шт", "На изделие", "1")}
       {field("prepMin", "Подготовка", "мин", "Подготовка, мин", "0")}
       {field("opSec", "Операция", "с/шт", "Операция, сек/шт", "0")}
       <div className="manual-norm" aria-label={`Норма на партию: ${title}`}><small>На партию {partQty} шт.</small>{normLabel(minutes)}</div>
+      {!op.gen && <>
       <Field label="Параметры" className="wide"><input aria-label={`Параметры: ${title}`} value={op.params} placeholder="напр. L = 300 мм, зачистка 5 мм" onChange={(event) => set({ params: event.target.value })} /></Field>
       <Field label="Результат — полуфабрикат" className="result"><input aria-label={`Результат: ${title}`} value={op.result} placeholder={`Полуфабрикат после «${title}»`} onChange={(event) => set({ result: event.target.value })} /></Field>
       <Field label="Примечание" className="wide"><input aria-label={`Примечание: ${title}`} value={op.note} onChange={(event) => set({ note: event.target.value })} /></Field>
+      </>}
     </div>
-    {op.kind === "custom" && <div className="manual-text">
+    {op.kind === "custom" && !op.gen && <div className="manual-text">
       <label className="gfield"><span className="gfield-label">Ход операции<small>шаг на строку</small></span><textarea aria-label={`Ход операции: ${title}`} rows={4} value={op.steps} onChange={(event) => set({ steps: event.target.value })} /></label>
       <label className="gfield"><span className="gfield-label">Контроль<small>«что проверить | допуск» на строку</small></span><textarea aria-label={`Контроль: ${title}`} rows={4} value={op.controls} placeholder="Пайка без наплывов | IPC-A-620, разд. 4" onChange={(event) => set({ controls: event.target.value })} /></label>
       <label className="gfield"><span className="gfield-label">Оснастка<small>строкой; «Оборудование: …», «Расходники: …»</small></span><textarea aria-label={`Оснастка: ${title}`} rows={4} value={op.tooling} placeholder={"Пинцет\nОборудование: паяльная станция\nРасходники: припой ПОС-61"} onChange={(event) => set({ tooling: event.target.value })} /></label>
     </div>}
-    {components.length > 0 && <details className="manual-comps" open={op.components.length > 0}>
+    {components.length > 0 && !op.gen && <details className="manual-comps" open={op.components.length > 0}>
       <summary>Комплектующие из КБ{op.components.length ? ` · ${op.components.length}` : ""}</summary>
       <div className="manual-comp-list">{components.map((comp) => {
         const item = picked.get(comp.id);

@@ -567,8 +567,10 @@ export function EtkSheet({ card, principal, title, onChange, onRebuild }: {
 /** «Генератор» сборки: форма и ОДНА кнопка. Нет ТК — «Создать» (сборка ЭТК и выдача сразу, как файл техкарты в
     SUPPLYMAP: отдельного шага утверждения там нет). ТК уже выдана — «Пересобрать» с подтверждением, новой ревизией.
     Служебное — свод материалов, удаление черновика, JSON-конфигурация — свёрнуто в «Ещё». */
-export function GeneratorPane({ card, principal, onChange, onDone }: {
+export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBuiltChange }: {
   card: ProjectTechcard; principal: Principal; onChange: (card: ProjectTechcard) => void; onDone?: (card: ProjectTechcard) => void;
+  /** Черновик, по которому собрали и чей урок ещё не записан (хранит владелец вкладок). */
+  builtId?: string; onBuiltChange?: (draftId: string) => void;
 }) {
   const [configText, setConfigText] = useState("{}");
   const generatedConfig = useRef<Record<string, unknown> | null>(null);
@@ -589,26 +591,29 @@ export function GeneratorPane({ card, principal, onChange, onDone }: {
     return () => { live = false; };
   }, [card.project, card.item_index]);
 
-  async function build(config: Record<string, unknown>) {
-    if (busy) return;
+  /** true — техкарта собрана (в том числе черновиком), false — нет; от этого зависит, завершён ли черновик с чертежа. */
+  async function build(config: Record<string, unknown>, draftId?: string): Promise<boolean> {
+    if (busy) return false;
     setBusy(true); setError(""); setNotice("");
     try {
-      let updated = await techcardsApi.autoBuild(card.id, card.version, config);
+      let updated = await techcardsApi.autoBuild(card.id, card.version, config, draftId);
       const rebuilt = updated.status === "Выдана";
       if (!rebuilt && canIssue) {
         try { updated = await techcardsApi.issue(updated.id, updated.version); }
         catch (reason) {
           onChange(updated);
           setError(`Техкарта собрана черновиком, но не выдана: ${reason instanceof Error ? reason.message : "ошибка"}`);
-          return;
+          return true;
         }
       }
       onChange(updated);
       const warningCount = warnings(updated.document).length;
       setNotice(`${rebuilt ? `Техкарта пересобрана · ревизия ${updated.revision}` : updated.status === "Выдана" ? "Техкарта создана" : "Черновик ЭТК собран — выдаёт технолог"}${warningCount ? ` · предупреждений: ${warningCount}` : ""}`);
       onDone?.(updated);
+      return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "ЭТК не собрана");
+      return false;
     } finally { setBusy(false); }
   }
 
@@ -635,7 +640,7 @@ export function GeneratorPane({ card, principal, onChange, onDone }: {
   }
 
   return <div className="gen-pane">
-    <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft}
+    <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} builtId={builtId} onBuiltChange={onBuiltChange}
       onConfig={(config) => { generatedConfig.current = config; }}
       /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
       more={!hasFullAccess(principal) ? undefined : <div className="build-config">
