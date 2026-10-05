@@ -60,6 +60,9 @@ export interface DataTableProps<T> {
   /** Раскрытая строка: форма, карточка, история. */
   renderDetail?: (row: T) => ReactNode;
   rowClassName?: (row: T) => string;
+  /** Клик по строке целиком — действие (вместо раскрытия строки); rowTitle — подсказка строки. */
+  onRowClick?: (row: T) => void;
+  rowTitle?: (row: T) => string;
   /** Имя файла выгрузки без расширения; без него кнопки «Excel» нет. */
   exportName?: string;
   emptyText?: string;
@@ -158,6 +161,8 @@ export function DataTable<T>({
   bulkActions = [],
   renderDetail,
   rowClassName,
+  onRowClick,
+  rowTitle,
   exportName,
   emptyText = "Ничего не найдено.",
   pageSize = 200,
@@ -301,8 +306,9 @@ export function DataTable<T>({
     return (
       <Fragment key={key}>
         <tr
-          className={[rowClassName?.(row) ?? "", renderDetail ? "clickable" : "", open ? "open" : ""].join(" ").trim() || undefined}
-          onClick={renderDetail ? () => setExpanded(open ? null : key) : undefined}
+          className={[rowClassName?.(row) ?? "", renderDetail || onRowClick ? "clickable" : "", open ? "open" : ""].join(" ").trim() || undefined}
+          title={rowTitle?.(row) || undefined}
+          onClick={onRowClick ? () => onRowClick(row) : renderDetail ? () => setExpanded(open ? null : key) : undefined}
         >
           {selectable && (
             <td onClick={(event) => event.stopPropagation()}>

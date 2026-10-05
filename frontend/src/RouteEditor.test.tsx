@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { RouteEditor } from "./RouteEditor";
+import { numberRange } from "./RouteDiagram";
 import { deriveRoute, type Route, type RouteOp } from "./routeLogic";
 
 /* Жгут с пайкой: резка провода (1) и резка ТУТ (2) сходятся в «Надеть ТУТ» (3), дальше пайка (4) и усадка (5) — изделие.
@@ -39,8 +40,8 @@ it("draws the blocks and arrows of a branched scheme with time and inputs", () =
   expect(screen.getByText(/5 блоков/)).toHaveTextContent("5 блоков · 5 оп. · на изделие 4 мин");
   // «Надеть ТУТ» берёт два входа: 0,6 мин на штуку, со входами 3 мин (0,6 + 2 + 0,4).
   const insTut = screen.getByRole("button", { name: /Надеть ТУТ/ });
-  expect(insTut).toHaveTextContent("1 оп. · входов 2");
-  expect(insTut).toHaveTextContent("0,6 мин/шт · с входами 3");
+  expect(insTut).toHaveTextContent("1 оп. · 0,6 мин/шт · с входами 3");
+  expect(insTut.querySelector(".route-block-no")).toHaveTextContent("3");
   expect(screen.getByRole("button", { name: /Жгут XH/ })).toHaveTextContent("итог");
   // стрелки: резка → надеть, резка ТУТ → надеть, надеть → пайка, пайка → усадка
   expect(screen.getAllByRole("textbox")).toHaveLength(4);
@@ -189,4 +190,11 @@ it("numbers operations the way the generator list does when an operation above h
   expect(within(panel).getByLabelText("Перенести операцию 3 в блок")).toBeInTheDocument();
   expect(within(panel).getByLabelText("Перенести операцию 4 в блок")).toBeInTheDocument();
   expect(within(within(panel).getByLabelText("Разделить после операции")).getByRole("option", { name: "3. Резка ТУТ" })).toBeInTheDocument();
+});
+
+it("numbers a block by the range of its operations", () => {
+  expect(numberRange([3, 1, 2])).toBe("1–3");
+  expect(numberRange([4])).toBe("4");
+  expect(numberRange([2, 5])).toBe("2, 5");
+  expect(numberRange([])).toBe("");
 });

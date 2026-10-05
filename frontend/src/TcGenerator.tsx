@@ -47,9 +47,9 @@ import {
 } from "./tcGenLogic";
 import { RouteEditor } from "./RouteEditor";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
-import { ManualAssembly, ManualOpSummary } from "./ManualAssembly";
+import { ManualAssembly, ManualSummary } from "./ManualAssembly";
 import {
-  MANUAL_MODE, cardCategory, cardLabel, chainRoute, emptyManual, opLinks, manualConfig, manualFromConfig, manualProblem, routeOps as manualRouteOps, setRoute,
+  MANUAL_MODE, cardCategory, cardLabel, emptyManual, manualConfig, manualFromConfig, manualProblem,
   type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
@@ -206,11 +206,6 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const config = useMemo(() => gen.buildConfig(), [gen]);
   const manualTab = S.tab === "manual";
   const partQty = Number((config as Record<string, unknown>).partQty) || 1;
-  const manualOps = useMemo(() => manualRouteOps(manual.ops, partQty), [manual.ops, partQty]);
-  const manualDerive = useMemo(() => {
-    const links = opLinks(manual.ops);
-    return (ops: RouteOp[]) => chainRoute(ops, links);
-  }, [manual.ops]);
   const manualCfg = useMemo(() => ({ ...manualConfig(manual, config), materialsSheet: S.materialsSheet }), [manual, config, S.materialsSheet]);
   useEffect(() => { onConfig?.(manualTab ? manualCfg : config); }, [config, manualCfg, manualTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -359,12 +354,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     }
   }
 
-  /** Ручная сборка: свой список операций и схема — всегда ручной (`build_config.route`), производство идёт по ней. */
+  /** Ручная сборка: схема и операции в её блоках — всегда ручная схема (`build_config.route`), производство идёт по ней. */
   function manualPayload(): Record<string, unknown> | null {
-    const problem = manualProblem(manual);
+    const problem = manualProblem(manual, finalName);
     if (problem) { setStatus({ text: problem, error: true }); return null; }
-    const wrong = manual.route ? routeProblem(manual.route, manualOps, finalName) : null;
-    if (wrong) { setRouteError(`Схема полуфабрикатов: ${wrong}`); return null; }
     setRouteError("");
     return manualCfg;
   }
@@ -826,7 +819,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {sheet}
         {typical && typicalSections}
         {S.tab === "coax" && coaxSections}
-        {manualTab && <ManualAssembly state={manual} onChange={setManual} library={refs.library} opRecs={D.ops} components={components} partQty={partQty} />}
+        {manualTab && <ManualAssembly state={manual} onChange={(next) => { setRouteError(""); setManual(next); }} library={refs.library} opRecs={D.ops} components={components}
+          partQty={partQty} finalName={finalName} error={routeError} />}
       </div></div>
 
       {/* Итог (владелец 04.10): операции, схема и одна кнопка — справа и всегда на виду; на планшете — внизу. */}
@@ -835,13 +829,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <div className="gen-side-head"><h3>Итог</h3><span className="gsec-meta">{summary}</span></div>
           {warning && <div className="warning-inline">{warning}</div>}
           {manualTab
-            ? <RouteEditor key="manual" ops={manualOps} finalName={finalName} quantity={partQty} value={manual.route} derive={manualDerive} defaultOpen
-              timeSource="по нормам операций" error={routeError} notice={manual.notice}
-              onChange={(route) => { setRouteError(""); setManual((current) => setRoute(current, route)); }}
-              renderOp={(position) => {
-                const op = manual.ops[position - 1];
-                return op ? <ManualOpSummary op={op} position={position} partQty={partQty} /> : null;
-              }} />
+            ? <ManualSummary state={manual} partQty={partQty} finalName={finalName} />
             : <>
               <div className="op-list" role="group" aria-label="Операции">
                 {ops.length > 0 && <div className="op-row head" aria-hidden="true"><span>№</span><span>Операция</span><span>Карточка</span>{OP_TIMES.map(([key, label]) => <span key={key}>{label}</span>)}</div>}

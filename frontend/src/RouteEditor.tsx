@@ -1,59 +1,26 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { formatMinutes, pluralBlocks } from "./etkRoute";
+import { RouteDiagram, numberRange } from "./RouteDiagram";
 import {
   addEdge,
   blockTitle,
   deriveRoute,
-  formatPerUnit,
   inputCandidates,
   mergeBlocks,
   moveOp,
   neighbours,
-  parsePositive,
   removeEdge,
   renameBlock,
   routeChain,
-  routeLayout,
   routeProblem,
   routeTotals,
   setPerUnit,
   splitBlock,
-  type BlockTotals,
   type Route,
   type RouteBlock,
   type RouteEdge,
   type RouteOp,
 } from "./routeLogic";
-
-/* Размеры схемы: блок W×H, между слоями GX, между строками GY. Стрелка идёт горизонтально из блока, а в последнем
-   промежутке перед целью изгибается; число штук на стрелке стоит по центру этого промежутка. */
-const W = 184, H = 92, GX = 66, GY = 14;
-
-/** Штук полуфабриката на одну штуку следующего блока — число больше нуля, правится на стрелке. */
-function PerUnit({ value, label, onChange }: { value: number; label: string; onChange: (value: number) => void }) {
-  const [text, setText] = useState(formatPerUnit(value));
-  useEffect(() => { if (parsePositive(text) !== value) setText(formatPerUnit(value)); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
-  const bad = text.trim() !== "" && parsePositive(text) === null;
-  return <input className={bad ? "route-per f-empty" : "route-per"} inputMode="decimal" aria-label={label} title={label} value={text}
-    onChange={(event) => {
-      setText(event.target.value);
-      const next = parsePositive(event.target.value);
-      if (next !== null) onChange(next);
-    }}
-    onBlur={() => setText(formatPerUnit(value))} />;
-}
-
-function BlockBox({ block, title, totals, selected, onSelect }: {
-  block: RouteBlock; title: string; totals?: BlockTotals; selected: boolean; onSelect: () => void;
-}) {
-  const classes = ["route-block", block.final ? "is-final" : "", selected ? "is-selected" : ""].filter(Boolean).join(" ");
-  return <button type="button" className={classes} aria-pressed={selected} onClick={onSelect}>
-    {block.final && <span className="route-block-tag">итог</span>}
-    <span className="route-block-name">{title}</span>
-    <span className="route-block-meta">{block.ops.length} оп. · {totals && totals.inputs > 0 ? `входов ${formatPerUnit(totals.inputs)}` : "без входов"}</span>
-    {totals?.unit != null && <span className="route-block-time">{formatMinutes(totals.unit)} мин/шт{totals.inputs > 0 && totals.rolled != null ? ` · с входами ${formatMinutes(totals.rolled)}` : ""}</span>}
-  </button>;
-}
 
 /**
  * Схема полуфабрикатов сборки (ARCH-TRACK-1): блоки-квадратики слева направо и стрелки между ними, число штук на
@@ -93,14 +60,12 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
 
   const route = useMemo(() => value ?? derive(ops), [value, ops, derive]);
   const totals = useMemo(() => routeTotals(route, ops, quantity), [route, ops, quantity]);
-  const chain = useMemo(() => routeChain(route), [route]);
-  const layout = useMemo(() => routeLayout(route), [route]);
   const title = (block: RouteBlock) => blockTitle(block, ops, finalName);
   const numberOf = (position: number) => ops.find((op) => op.position === position)?.number ?? position;
   const byKey = new Map(route.blocks.map((block) => [block.key, block]));
   const finalBlock = route.blocks.find((block) => block.final);
   const total = finalBlock ? totals.get(finalBlock.key) : undefined;
-  const open = shown ?? (defaultOpen || !chain || value !== null || !!error);
+  const open = shown ?? (defaultOpen || !routeChain(route) || value !== null || !!error);
   const block = byKey.get(selected);
 
   function apply(next: Route): boolean {
@@ -116,53 +81,8 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     const from = byKey.get(edge.from), to = byKey.get(edge.to);
     return `Штук из «${from ? title(from) : edge.from}» на один «${to ? title(to) : edge.to}»`;
   };
-  const perUnit = (edge: RouteEdge) => <PerUnit key={`${edge.from}>${edge.to}`} value={edge.per_unit} label={edgeLabel(edge)}
-    onChange={(next) => edit(setPerUnit(route, edge.from, edge.to, next))} />;
-  const box = (item: RouteBlock) => <BlockBox block={item} title={title(item)} totals={totals.get(item.key)} selected={selected === item.key} onSelect={() => select(item.key)} />;
-
-  function diagram() {
-    if (chain) {
-      return <ol className="route-chain" aria-label="Блоки схемы">
-        {chain.map((key, index) => {
-          const item = byKey.get(key)!;
-          const edge = route.edges.find((candidate) => candidate.to === key);
-          return <li key={key}>
-            {index > 0 && <span className="route-link"><span aria-hidden>→</span>{edge && perUnit(edge)}</span>}
-            {box(item)}
-          </li>;
-        })}
-      </ol>;
-    }
-    const x = (layer: number) => layer * (W + GX);
-    const y = (row: number) => row * (H + GY);
-    const width = layout.layers * (W + GX) - GX, height = layout.rows * (H + GY) - GY;
-    return <div className="route-scroll">
-      <div className="route-canvas" role="group" aria-label="Блоки схемы" style={{ width, height }}>
-        <svg width={width} height={height} aria-hidden>
-          <defs><marker id="route-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
-            <path className="route-arrowhead" d="M0,0 L8,4 L0,8 z" />
-          </marker></defs>
-          {route.edges.map((edge) => {
-            const from = layout.cells.get(edge.from), to = layout.cells.get(edge.to);
-            if (!from || !to) return null;
-            const x1 = x(from.layer) + W, y1 = y(from.row) + H / 2, x2 = x(to.layer), y2 = y(to.row) + H / 2, xs = x2 - GX;
-            return <path key={`${edge.from}>${edge.to}`} className="route-edge-line" markerEnd="url(#route-arrow)"
-              d={`M${x1},${y1} H${Math.max(x1, xs)} C${Math.max(x1, xs) + GX / 2},${y1} ${x2 - GX / 2},${y2} ${x2},${y2}`} />;
-          })}
-        </svg>
-        {route.blocks.map((item) => {
-          const cell = layout.cells.get(item.key)!;
-          return <div key={item.key} className="route-cell" style={{ left: x(cell.layer), top: y(cell.row), width: W, height: H }}>{box(item)}</div>;
-        })}
-        {route.edges.map((edge) => {
-          const from = layout.cells.get(edge.from), to = layout.cells.get(edge.to);
-          if (!from || !to) return null;
-          const cx = x(to.layer) - GX / 2, cy = (y(from.row) + y(to.row)) / 2 + H / 2;
-          return <span key={`${edge.from}>${edge.to}`} className="route-edge-label" style={{ left: cx, top: cy }}>{perUnit(edge)}</span>;
-        })}
-      </div>
-    </div>;
-  }
+  const diagram = () => <RouteDiagram route={route} title={title} numbers={(item) => numberRange(item.ops.map(numberOf))} totals={totals}
+    selected={selected} onSelect={select} edgeLabel={edgeLabel} onPerUnit={(edge, next) => edit(setPerUnit(route, edge.from, edge.to, next))} />;
 
   function panel(item: RouteBlock) {
     const { before, after } = neighbours(route, item.key);

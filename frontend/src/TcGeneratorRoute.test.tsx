@@ -113,8 +113,7 @@ it("picks up the hand-edited scheme saved with the card, with times from its las
   expect(within(screen.getByRole("list", { name: "Блоки схемы" })).getAllByRole("button")).toHaveLength(2);
   const final = screen.getByRole("button", { name: /Жгут готов/ });
   // операции 2 и 3 — 2 + 3 мин на партию из одной штуки; вход — две штуки резки по 1 мин
-  expect(final).toHaveTextContent("2 оп. · входов 2");
-  expect(final).toHaveTextContent("5 мин/шт · с входами 7");
+  expect(final).toHaveTextContent("2 оп. · 5 мин/шт · с входами 7");
   expect(screen.getByText(/на изделие/)).toHaveTextContent("на изделие 7 мин");
   await build("Пересобрать");
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
