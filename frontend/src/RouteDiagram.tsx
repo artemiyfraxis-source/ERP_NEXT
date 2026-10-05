@@ -24,12 +24,14 @@ export function PerUnit({ value, label, unit, onChange }: { value: number; label
 
 /** Блок: номера его операций, название (до двух строк, целиком — в подсказке), «N оп. · M мин/шт».
     Блок без операций — одна компактная строка: название и «нет операций». */
-export function BlockBox({ block, title, numbers, totals, selected, linking, onSelect }: {
-  block: RouteBlock; title: string; numbers: string; totals?: BlockTotals; selected: boolean; linking?: boolean; onSelect: () => void;
+export function BlockBox({ block, title, numbers, totals, inputs = [], selected, linking, onSelect }: {
+  block: RouteBlock; title: string; numbers: string; totals?: BlockTotals; /** Названия блоков-входов: «входы: Блок 5, Блок 7»; нет входов — строки нет. */ inputs?: string[];
+  selected: boolean; linking?: boolean; onSelect: () => void;
 }) {
   const empty = block.ops.length === 0;
   const classes = ["route-block", block.final ? "is-final" : "", selected ? "is-selected" : "", linking ? "is-linking" : "", empty ? "is-empty" : ""].filter(Boolean).join(" ");
-  const time = totals?.unit != null ? ` · ${formatMinutes(totals.unit)} мин/шт${totals.inputs > 0 && totals.rolled != null ? ` · с входами ${formatMinutes(totals.rolled)}` : ""}` : "";
+  const time = totals?.unit != null ? ` · ${formatMinutes(totals.unit)} мин/шт${totals.inputs > 0 && totals.rolled != null && totals.rolled > 0 ? ` · с входами ${formatMinutes(totals.rolled)}` : ""}` : "";
+  const meta = `${block.ops.length} оп.${time}`, from = inputs.length ? `входы: ${inputs.join(", ")}` : "";
   if (empty) {
     return <button type="button" className={classes} aria-pressed={selected} title={title} onClick={onSelect}>
       <span className="route-block-name">{title}</span>
@@ -43,7 +45,8 @@ export function BlockBox({ block, title, numbers, totals, selected, linking, onS
     </span>
     <span className="route-block-body">
       <span className="route-block-name">{title}</span>
-      <span className="route-block-meta">{`${block.ops.length} оп.${time}`}</span>
+      <span className="route-block-meta">{meta}</span>
+      {from && <span className="route-block-meta route-block-from" aria-hidden>{from}</span>}
     </span>
   </button>;
 }
@@ -84,9 +87,9 @@ function EdgePill({ edge, label, onEdit, onQuantity, onRemove }: {
   </span>;
 }
 
-/* Размеры рисунка: карточка 84 px; пустой блок — строка 38 px (на планшете 44, чтобы влезли кнопки 40 px); между строками
+/* Размеры рисунка: карточка 68 px (84 со строкой входов); пустой блок — строка 38 px (на планшете 44, чтобы влезли кнопки 40 px); между строками
    56 px (на планшете 72) — в нём «N шт» и ход стрелки. */
-const CARD = 84;
+const CARD = 68, CARD_IN = 84; // карточка по содержимому: со строкой «входы: …» выше на одну строку
 
 export type DiagramSizes = { line: number; gap: number };
 export const sizesFor = (coarse: boolean): DiagramSizes => (coarse ? { line: 44, gap: 72 } : { line: 38, gap: 56 });
@@ -130,11 +133,12 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
     }
     onSelect(key);
   };
+  const inputsOf = (item: RouteBlock) => route.edges.filter((edge) => edge.to === item.key && byKey.has(edge.from)).map((edge) => title(byKey.get(edge.from)!));
   const node = (item: RouteBlock) => {
     const name = title(item);
     const tools = !!(onAddInput || onConnect);
     return <div className={[tools ? "route-node has-tools" : "route-node", item.ops.length === 0 ? "is-empty-node" : ""].filter(Boolean).join(" ")}>
-      <BlockBox block={item} title={name} numbers={numbers(item)} totals={totals.get(item.key)} selected={selected === item.key}
+      <BlockBox block={item} title={name} numbers={numbers(item)} totals={totals.get(item.key)} inputs={inputsOf(item)} selected={selected === item.key}
         linking={linking === item.key} onSelect={() => pick(item.key)} />
       {tools && <span className="route-tools">
         {onAddInput && <button type="button" className="route-tool" aria-label={`Добавить вход в блок «${name}»`} title="Добавить вход" onClick={() => onAddInput(item.key)}>+</button>}
@@ -170,14 +174,16 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
   const { line: LINE, gap: GAP } = sizesFor(coarse);
   const compact = (item: RouteBlock) => item.ops.length === 0;
   const rowHeight = Array.from({ length: layout.layers }, () => LINE);
-  route.blocks.forEach((item) => { const at = layout.cells.get(item.key)!.layer; if (!compact(item)) rowHeight[at] = CARD; });
+  const hasInputs = new Set(route.edges.map((edge) => edge.to));
+  const tall = (item: RouteBlock) => (compact(item) ? LINE : hasInputs.has(item.key) ? CARD_IN : CARD);
+  route.blocks.forEach((item) => { const at = layout.cells.get(item.key)!.layer; rowHeight[at] = Math.max(rowHeight[at], tall(item)); });
   const rowTop: number[] = [];
   rowHeight.reduce((top, height, index) => { rowTop[index] = top; return top + height + GAP; }, 0);
   const height = rowTop[rowTop.length - 1] + rowHeight[rowHeight.length - 1];
   const percent = (x: number) => `${(((x + 0.5) / layout.cols) * 100).toFixed(3)}%`;
   // Настоящее место блока: пустой блок стоит по центру строки, поэтому низ считаем от его верха и высоты, а не от строки.
   const box = (item: RouteBlock) => {
-    const h = compact(item) ? LINE : CARD, layer = layout.cells.get(item.key)!.layer;
+    const h = tall(item), layer = layout.cells.get(item.key)!.layer;
     const top = rowTop[layer] + (rowHeight[layer] - h) / 2;
     return { top, height: h, bottom: top + h };
   };

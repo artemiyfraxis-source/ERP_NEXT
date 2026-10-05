@@ -50,22 +50,13 @@ function LibraryPicker({ library, opRecs, target, added, onAdd, onClose }: {
   library: LibraryCard[]; opRecs: OpRec[]; target: string; added: string; onAdd: (cards: LibraryCard[]) => void; onClose: () => void;
 }) {
   const categories = useMemo(() => [...new Set(library.map(cardCategory))].sort((a, b) => (a === "Прочее" ? 1 : b === "Прочее" ? -1 : a.localeCompare(b, "ru"))), [library]);
-  // Одинаковые русские названия («Литье пластика» ×3) различаются серой строкой: код карточки и её первый шаг.
-  const sameName = useMemo(() => {
-    const count = new Map<string, number>();
-    library.forEach((card) => count.set(cardLabel(card), (count.get(cardLabel(card)) ?? 0) + 1));
-    return count;
-  }, [library]);
   const columns: DataColumn<LibraryCard>[] = [
     { key: "name", title: "Операция", value: (card) => `${cardLabel(card)} ${card.code}`,
-      render: (card) => {
-        const twin = (sameName.get(cardLabel(card)) ?? 0) > 1 && card.first_step;
-        return <span className="manual-card-name"><b>{cardLabel(card)}</b>
-          {(card.code || twin) && <small>{[card.code, twin ? card.first_step : ""].filter(Boolean).join(" · ")}</small>}</span>;
-      } },
-    { key: "category", title: "Категория", value: cardCategory, width: 110 },
-    { key: "norm", title: "Норма БД.ОП", value: (card) => normText(card, opRecs), width: 150 },
-    { key: "step", title: "Первый шаг", value: (card) => card.first_step || "", render: (card) => <span className="manual-card-step">{card.first_step}</span> },
+      render: (card) => <span className="manual-card-name"><b>{cardLabel(card)}</b>{card.code && <small>{card.code}</small>}</span> },
+    { key: "category", title: "Категория", value: cardCategory, width: 100 },
+    { key: "norm", title: "Норма БД.ОП", value: (card) => normText(card, opRecs), render: (card) => normText(card, opRecs) || "—", width: 120 },
+    { key: "step", title: "Первый шаг", value: (card) => card.first_step || "", width: "28%",
+      render: (card) => <span className="manual-card-step" title={card.first_step || undefined}>{card.first_step}</span> },
   ];
   return <div className="manual-picker" role="region" aria-label="Библиотека операций">
     <div className="section-hdr"><strong>Операция из библиотеки → в блок «{target}»</strong>

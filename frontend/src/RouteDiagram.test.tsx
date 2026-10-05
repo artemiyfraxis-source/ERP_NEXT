@@ -99,3 +99,10 @@ it("starts the edge and puts the «N шт» pill below the real bottom of an emp
   fireEvent.click(screen.getByTitle("Блок b4"));
   expect(props.onSelect).toHaveBeenCalledWith("b4");
 });
+
+it("lists the linked inputs on a block card and shows nothing for a block without inputs", () => {
+  mount();
+  expect(screen.getByTitle("Блок b3")).toHaveTextContent("входы: Блок b1, Блок b2, Блок b4");
+  expect(screen.getByTitle("Блок b1").textContent).not.toMatch(/вход/);
+  expect(document.body.textContent).not.toContain("с входами 0");
+});
