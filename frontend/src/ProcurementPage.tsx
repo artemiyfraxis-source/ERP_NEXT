@@ -32,8 +32,8 @@ const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 type ProcurementTab = "queues" | "sheet" | "suppliers";
 
 // «Мои позиции» (владелец, 05.10) — один блок «В работе»: строки к запросу (с «Готов к запросу») по поставщикам,
-// под ними лента заказов — заказ не переезжает между блоками, его статус (Жду счёт → Ждёт оплаты → Оплачено ·
-// в пути / карантин / принято) меняется на месте. «Согласование» — только дозавоз; обычная строка, поставленная туда
+// под ними лента заказов — заказ не переезжает между блоками, его статус (Жду счёт → Ждёт оплаты → В пути →
+// Карантин → Принято) меняется на месте. «Согласование» — только дозавоз; обычная строка, поставленная туда
 // до отключения этапа, и любой новый статус — в «Прочие позиции».
 const IN_WORK_STATUSES = new Set(["В работе", "Готов к запросу"]);
 const ORDER_STATUSES = new Set(["Жду счет", "В оплату", "В пути", "Карантин", "Готово"]);
@@ -50,22 +50,32 @@ const BLOCKS = [
   { key: "inwork", title: "В работе" },
   { key: "awaiting", title: "Жду счёт" },
   { key: "topay", title: "Ждёт оплаты" },
-  { key: "paid", title: "Оплачено" },
+  { key: "transit", title: "В пути" },
+  { key: "quarantine", title: "Карантин" },
+  { key: "accepted", title: "Принято за 30 дней" },
   { key: "backorder", title: "Дозавоз" },
   { key: "other", title: "Прочие позиции" },
 ] as const;
 const BLOCKS_KEY = "procurement-blocks";
+
+/** Прежний блок «Оплачено» (ключ `paid`) разделён на три: скрытый ранее — скрываются все три. */
+export function migrateHiddenBlocks(hidden: string[]): string[] {
+  if (!hidden.includes("paid")) return hidden;
+  return [...new Set([...hidden.filter((key) => key !== "paid"), "transit", "quarantine", "accepted"])];
+}
 
 /** Строка подходит под поиск по секции: ID, наименование, поставщик, № заказа, № счёта. */
 const lineMatches = (line: ProcurementLine, query: string) =>
   [line.legacy_id, line.calculated_name, line.supplier, line.order_number, line.invoice_number]
     .some((value) => (value ?? "").toLowerCase().includes(query));
 
-/** Блоки заказов «Моих позиций» по стадии; «Оплачено» сначала свёрнут — он для справки. */
+/** Блоки заказов «Моих позиций» по стадии; «Принято» сначала свёрнут — он для справки. */
 const ORDER_BLOCKS = [
   { stage: "awaiting", title: "Жду счёт", hint: "Запрос поставщику отправлен — вставьте счёт или КП", initiallyCollapsed: false },
   { stage: "topay", title: "Ждёт оплаты", hint: "Счёт есть — отметьте «Оплачено», когда заплатили", initiallyCollapsed: false },
-  { stage: "paid", title: "Оплачено", hint: "В пути, на карантине или принято на склад", initiallyCollapsed: true },
+  { stage: "transit", title: "В пути", hint: "Оплачено, едет к нам; частично принятые заказы остаются здесь", initiallyCollapsed: false },
+  { stage: "quarantine", title: "Карантин", hint: "Приёмка нашла несоответствие по строке — ждёт решения", initiallyCollapsed: false },
+  { stage: "accepted", title: "Принято за 30 дней", hint: "Все строки заказа приняты на склад; показаны принятые за последние 30 дней", initiallyCollapsed: true },
 ] as const;
 
 /** «Мои позиции» читаются все страницы подряд, чтобы заказ не разрезало границей страницы; не больше стольких. */
@@ -150,7 +160,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const [skippedRequests, setSkippedRequests] = useState<{ text: string }[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [sectionQuery, setSectionQuery] = useState("");
-  const [hiddenBlocks, setHiddenBlocks] = useState<string[]>(() => readSaved(BLOCKS_KEY).hidden ?? []);
+  const [hiddenBlocks, setHiddenBlocks] = useState<string[]>(() => migrateHiddenBlocks(readSaved(BLOCKS_KEY).hidden ?? []));
   const [choosingBlocks, setChoosingBlocks] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState<"available" | "mine" | "">("");
@@ -426,7 +436,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const stage = (status: string) => mine.filter((line) => line.status === status && found(line));
   // «В работе» — сначала строки в работе, под ними «Готов к запросу» (они ждут запроса поставщику).
   const inWorkBlock = [...stage("В работе"), ...stage("Готов к запросу")];
-  // Заказы — раздельными блоками по стадии: «Жду счёт», «Ждёт оплаты», «Оплачено» (свёрнут сначала).
+  // Заказы — раздельными блоками по стадии: «Жду счёт», «Ждёт оплаты», «В пути», «Карантин», «Принято» (свёрнут сначала).
   const orders = useMemo(() => orderGroups(mine.filter((line) => ORDER_STATUSES.has(line.status))), [mine]);
   const shownOrders = useMemo(
     () => (needle ? orders.filter((group) => group.lines.some((line) => lineMatches(line, needle))) : orders),
@@ -436,7 +446,8 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const backorders = mine.filter((line) => isBackorderLine(line) && found(line));
   const other = mine.filter((line) => !IN_WORK_STATUSES.has(line.status) && !ORDER_STATUSES.has(line.status) && !isBackorderLine(line) && found(line));
   const blockCount: Record<string, number> = {
-    inwork: inWorkBlock.length, awaiting: ordersAt("awaiting").length, topay: ordersAt("topay").length, paid: ordersAt("paid").length,
+    inwork: inWorkBlock.length, awaiting: ordersAt("awaiting").length, topay: ordersAt("topay").length,
+    transit: ordersAt("transit").length, quarantine: ordersAt("quarantine").length, accepted: ordersAt("accepted").length,
     backorder: backorders.length, other: other.length,
   };
   const hiddenWithData = BLOCKS.filter((block) => hiddenBlocks.includes(block.key) && blockCount[block.key] > 0);
@@ -647,7 +658,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
           return showBlock(stage) && (
             <OrderStageBlock
               key={stage} stage={stage}
-              {...stageProps} {...(stage === "paid" ? bulkOf("orders") : {})}
+              {...stageProps} {...(stage === "transit" ? bulkOf("orders") : {})}
               title={title} hint={hint} block={`orders-${stage}`} initiallyCollapsed={initiallyCollapsed}
               lines={groups.flatMap((group) => group.lines)}
               groups={groups}

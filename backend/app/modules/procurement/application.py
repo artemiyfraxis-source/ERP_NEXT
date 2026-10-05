@@ -74,7 +74,11 @@ class ProcurementRepository(Protocol):
         self, limit: int, after_id: UUID | None = None
     ) -> Sequence[ProcurementLine]: ...
     def by_buyer(
-        self, actor: Actor, limit: int, after_id: UUID | None = None
+        self,
+        actor: Actor,
+        limit: int,
+        after_id: UUID | None = None,
+        accepted_since: date | None = None,
     ) -> Sequence[ProcurementLine]: ...
     def in_work(
         self, limit: int, after_id: UUID | None = None
@@ -2319,11 +2323,12 @@ def buyer_procurement(
     *,
     limit: int = 100,
     after_id: UUID | None = None,
+    accepted_since: date | None = None,
 ) -> list[ProcurementLine]:
     with uow:
         if after_id is not None and uow.procurement.get(after_id) is None:
             raise KeyError(f"Procurement cursor not found: {after_id}")
-        return list(uow.procurement.by_buyer(actor, limit, after_id))
+        return list(uow.procurement.by_buyer(actor, limit, after_id, accepted_since))
 
 
 def procurement_lines(

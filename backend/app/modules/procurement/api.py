@@ -3,7 +3,7 @@
 import base64
 import binascii
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 from urllib.parse import quote
@@ -133,6 +133,9 @@ from .document_items import unit_key
 
 
 router = APIRouter(prefix="/api/procurement", tags=["procurement"])
+
+# «Мои позиции»: принятые («Готово») строки показываются за столько дней.
+ACCEPTED_DAYS = 30
 Quantity = Annotated[Decimal, Field(max_digits=18, decimal_places=6)]
 
 
@@ -612,12 +615,18 @@ def my_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    now: Annotated[datetime, Depends(moscow_now)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     after: UUID | None = None,
 ) -> dict:
+    """The buyer's open lines plus those accepted («Готово») in the last 30 days; «Отменено» never."""
     try:
         lines = buyer_procurement(
-            principal.actor, uow_factory(), limit=limit + 1, after_id=after
+            principal.actor,
+            uow_factory(),
+            limit=limit + 1,
+            after_id=after,
+            accepted_since=now.date() - timedelta(days=ACCEPTED_DAYS),
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
