@@ -1,10 +1,11 @@
-import { Fragment, useRef, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
 import { ApiError, failureText, procurementApi, type ProcurementLine } from "./api";
 import { selectRange } from "./bulk";
 import { readSaved, writeSaved, type Saved } from "./DataTable";
 import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
 import { RowActions } from "./ProcurementRowMenu";
+import { PriceHint, usePriceHistory } from "./PriceHistoryHint";
 import { formatMoney } from "./ProcurementSheetColumns";
 import { BulkStatus, StageHeading, stageSummary, useCollapsed, type BulkState } from "./ProcurementStages";
 
@@ -350,6 +351,8 @@ export function ProcurementInWorkTable({
     } catch { /* итог показывает блок, выбор остаётся */ }
   }
 
+  const priceHistory = usePriceHistory(useMemo(() => lines.map((line) => line.id), [lines]));
+
   function stockToggle(id: string) {
     setOpen(null);
     setStockFor((current) => {
@@ -367,7 +370,7 @@ export function ProcurementInWorkTable({
     }
     if (field.key === "price") {
       const price = calculatedPriceOf(line);
-      return <span className="cell-ro" title={price}>{price}</span>;
+      return <span className="cell-ro" title={price}>{price}<PriceHint info={priceHistory[line.id]} /></span>;
     }
     const key = field.key;
     const value = draftOf(line)[key];
