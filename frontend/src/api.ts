@@ -298,6 +298,8 @@ export interface ReceivingLine {
   disposition: string | null;
   verdict: string | null;
   nonconformities: string[];
+  /** «УПД не приложен — придёт по ЭДО»: ВК прошёл без УПД, не блокирует; null после «Внести УПД». */
+  shipping_document_note?: string | null;
   accepted_quantity: string | null;
   backorder_quantity: string;
   grn: string | null;
@@ -538,6 +540,8 @@ export interface FulfillmentRequest {
   deadline: string | null;
   status: string;
   handout_location: string | null;
+  /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
+  handout_place?: string;
   return_location: string | null;
   fully_reserved: boolean;
   /** НЕДОБОР (issueShortText_): what a lot does not close yet. */

@@ -48,17 +48,7 @@ def test_schema_exposes_supplymap_required_fields_and_fixed_purposes():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["required"] == [
-        "purpose",
-        "delivery_point",
-        "name",
-        "item_type",
-        "quantity",
-        "unit",
-        "quality_document",
-        "procurement_deadline",
-        "planned_date",
-    ]
+    assert body["required"] == ["purpose", "name", "quantity", "unit"]
     assert "RND" in body["purposes"]
     assert body["project_reference"]["required"] is False
 
@@ -80,6 +70,22 @@ def test_validate_returns_normalized_derived_values_without_creating_data():
         },
         "derived": {"priority": "Очень срочно", "line_sum": "2001.00", "task_type": "Закупка"},
     }
+
+
+def test_validate_minimal_payload_gets_defaults():
+    response = client.post(
+        "/api/requests/validate",
+        json={"request": {"purpose": "RND", "name": "Болт М3", "quantity": "10", "unit": "шт"}},
+    )
+
+    assert response.status_code == 200, response.text
+    normalized = response.json()["normalized"]
+    assert normalized["quality_document"] == "Нет"
+    assert normalized["delivery_point"] == "г. Москва, ул. 6-я Радиальная, д. 17"
+    assert normalized["item_type"] == "Комплектующие"
+    assert normalized["procurement_deadline"] == "2026-09-22"
+    assert normalized["planned_date"] == "2026-09-29"
+    assert response.json()["derived"]["priority"] == "Срочно"
 
 
 def test_validate_rejects_unknown_purpose():

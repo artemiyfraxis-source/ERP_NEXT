@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from app.modules.warehouse.application import (
+    LOT_ARRIVED_TOPIC,
     AddManualStockCommand,
     CorrectLotLocationCommand,
     ManualStockItem,
@@ -98,6 +99,13 @@ class Outbox:
         self.message = message
         self.published = False
         self.failed = None
+        self.added = []
+
+    def add(self, message):
+        self.added.append(message)
+
+    def by_idempotency_key(self, key):
+        return next((item for item in self.added if item.idempotency_key == key), None)
 
     def next_unpublished(self, topic, now):
         return None if self.published or self.message.topic != topic else self.message
@@ -407,6 +415,24 @@ def _first_lot(uow, **changes):
     first = replace(dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), Uow(message())), **changes)
     uow.warehouse.add(first)
     return first
+
+
+def test_an_arrival_is_announced_once_per_receipt_for_a_new_lot_and_a_top_up():
+    uow = Uow(message())
+    lot = dispatch_next_warehouse_received(datetime(2026, 9, 21, 12, 1), uow)
+    (new,) = uow.outbox.added
+    assert (new.topic, new.payload["lot_id"], new.payload["quantity"]) == (LOT_ARRIVED_TOPIC, str(lot.id), "10")
+    assert new.payload["receiving_line_id"] == message().payload["receiving_line_id"]
+
+    uow = Uow(_repeat())
+    first = _first_lot(uow)
+    dispatch_next_warehouse_received(datetime(2026, 9, 22, 12, 0), uow)
+    (top_up,) = uow.outbox.added
+    assert (top_up.payload["lot_id"], top_up.payload["receipt_id"]) == (str(first.id), "receiving:two")
+
+    uow.outbox.published = False  # the same receipt once more: the lot does not change, nothing is announced
+    dispatch_next_warehouse_received(datetime(2026, 9, 22, 12, 1), uow)
+    assert uow.outbox.added == [top_up]
 
 
 def test_repeated_receipt_updates_place_and_purpose_and_audits_old_and_new():

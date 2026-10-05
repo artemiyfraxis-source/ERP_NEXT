@@ -8,6 +8,8 @@ techcards, the side effects report their own errors (`erpError`, `shipError`, �
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -72,14 +74,19 @@ from app.modules.requests.application import (
     extract_from_calc,
 )
 from app.modules.requests.domain import (
+    DEFAULT_CATEGORY,
+    DELIVERY_POINTS,
     CalcImport,
     CalcImportItem,
     Request,
+    RequestDraft,
     RequestStatus,
     ValidationError as RequestValidationError,
     build_import_drafts,
     parse_calc_number,
+    project_reference_valid,
     spreadsheet_id_from_url,
+    unit_for_type,
 )
 from app.modules.shipping.application import (
     DropProjectCommand,
@@ -101,7 +108,9 @@ from app.modules.techcards.kitsets import (
     Kitset,
     KitsetNotFound,
     KitsetValidationError,
+    SupplyLine,
     SupplyRow,
+    SupplyStock,
     issue_tasks,
     item_id,
     project_key,
@@ -609,36 +618,258 @@ def supply_rows(
 ) -> list[SupplyRow]:
     """The purchase chain of the project: Запрос → Закупка → Приёмка. SUPPLYMAP ties it by ЦЕЛЬ (project number)
     and АРТИКУЛ КД; here by the request's project reference (or purpose) and design article. A procurement line
-    in transit, quarantine or done is at acceptance; «Готово» means it was accepted with a ГРН."""
+    in transit, quarantine or done is at acceptance; «Готово» means it was accepted with a ГРН.
+
+    `open_quantity` («В закупке»): a live request with no procurement line yet brings its КОЛ-ВО; once handed over,
+    only the newest live revision of its line brings what is still to buy (КОЛ-ВО − «Со склада») until it is
+    accepted. Accepted goods lie on the shelf or sit in the kit — counted there, not twice."""
     canon = normalize_project_number(project)
-    by_request: dict[UUID, str] = {}
-    rows = []
+    by_request: dict[UUID, Request] = {}
     for request in requests:
         target = (
             normalize_project_number(request.project_reference)
             if request.project_reference else project_from_purpose(request.purpose)
         )
-        if target != canon:
-            continue
-        article = str(request.design_article or "").strip()
-        by_request[request.id] = article
-        rows.append(SupplyRow(article=article, where="Запрос", status=request.status.value,
-                              source_id=request.legacy_id or str(request.id)))
+        if target == canon:
+            by_request[request.id] = request
+    lines = []
     for line in procurement:
         target = normalize_project_number(line.project_reference) if line.project_reference else ""
-        if line.source_request_id not in by_request and target != canon:
+        if line.source_request_id in by_request or target == canon:
+            lines.append(line)
+    handed = {line.source_request_id for line in lines}
+    newest: dict[UUID, ProcurementLine] = {}
+    for line in lines:
+        if line.status.value == "Отменено":
             continue
-        # Артикул мог остаться только в заявке — тянем его вперёд по связи строки с заявкой.
-        article = str(line.design_article or "").strip() or by_request.get(line.source_request_id, "")
+        current = newest.get(line.source_request_id)
+        if current is None or (line.created_at, line.revision) > (current.created_at, current.revision):
+            newest[line.source_request_id] = line
+    rows = []
+    for request in by_request.values():
+        live = request.status not in (RequestStatus.CANCELLED, RequestStatus.CLOSED) and request.id not in handed
+        rows.append(SupplyRow(
+            article=str(request.design_article or "").strip(), where="Запрос", status=request.status.value,
+            source_id=request.legacy_id or str(request.id), name=request.name,
+            open_quantity=request.quantity if live else Decimal("0"),
+        ))
+    for line in lines:
         status = line.status.value
         if status == "Отменено":
             continue
+        request = by_request.get(line.source_request_id)
+        # Артикул мог остаться только в заявке — тянем его вперёд по связи строки с заявкой.
+        article = str(line.design_article or "").strip() or (str(request.design_article or "").strip() if request else "")
         where = "Приёмка" if status in _RECEIVING_STATUSES else "Закупка"
+        live = newest.get(line.source_request_id) is line and status != "Готово"
         rows.append(SupplyRow(
             article=article, where=where, status=status, source_id=line.legacy_id or str(line.id),
-            received=status == "Готово",
+            received=status == "Готово", name=line.calculated_name or (request.name if request else ""),
+            open_quantity=line.to_buy if live else Decimal("0"),
         ))
     return rows
+
+
+def supply_stock(project: str, fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None) -> list[SupplyStock]:
+    """«Свободно»: what a kit of the project can take from each lot (ДОСТУПНО + the project's own reserves on it —
+    «Со склада» covers and techcard reserves, the same number the spec's lot picker shows)."""
+    if fulfillment_uow is None:
+        return []
+    with fulfillment_uow() as uow:
+        lots = list(uow.warehouse.list(limit=10_000, query="", include_zero=False))
+        held = project_reserve_by_lot(uow, lots, project)
+    stock = []
+    for lot in lots:
+        free = free_for_project(lot, held)
+        if free <= 0:
+            continue
+        # A lot accepted without an article carries its name there: then it is matched by name, like a manual request.
+        article = "" if _same_text(lot.article, lot.name) else lot.article
+        stock.append(SupplyStock(article=article, name=lot.name, quantity=free))
+    return stock
+
+
+def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list[SupplyStock]:
+    """Already in the project's kits: reserved on a lot or issued (less what came back good) — that need is covered
+    and leaves the shelf, so it is counted here and not as free stock."""
+    canon = normalize_project_number(project)
+    kitted = []
+    for request in requests:
+        if request.status is FulfillmentStatus.CANCELLED or project_from_purpose(request.purpose) != canon:
+            continue
+        for line in request.lines:
+            quantity = line.reserved + max(line.issued - line.returned_good, Decimal("0"))
+            if quantity > 0:
+                kitted.append(SupplyStock(article=line.article, name=line.name, quantity=quantity))
+    return kitted
+
+
+def _same_text(left: object, right: object) -> bool:
+    return " ".join(str(left or "").split()).casefold() == " ".join(str(right or "").split()).casefold()
+
+
+def project_supply(
+    kitset: Kitset,
+    requests_uow: Callable[[], RequestsUnitOfWork] | None,
+    procurement_uow: Callable[[], ProcurementUnitOfWork] | None,
+    fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None,
+) -> tuple[tuple[SupplyLine, ...], tuple[Request, ...]]:
+    """The «Снабжение» tab: every spec position with Нужно / Свободно / В закупке / Не хватает and its stage.
+    A module without a factory reads empty. Also returns the project's requests (the order reads their point)."""
+    def read(factory, reader):
+        if factory is None:
+            return ()
+        with factory() as uow:
+            return tuple(reader(uow))
+
+    requests = read(requests_uow, lambda uow: uow.requests.recent(10_000))
+    procurement = read(procurement_uow, lambda uow: uow.procurement.list(limit=10_000))
+    kits = read(fulfillment_uow, lambda uow: uow.fulfillment.list(limit=10_000))
+    rows = supply_rows(kitset.project, requests, procurement)
+    lines = supply_lines(
+        kitset, rows, supply_stock(kitset.project, fulfillment_uow), supply_kitting(kitset.project, kits),
+    )
+    return lines, requests
+
+
+# ── Заказать недостающее (Снабжение → заявки на закупку) ────────────────
+
+
+ORDER_PURPOSE = "Обеспечение производства"
+ORDER_ITEM_TYPE = "Комплектующие"
+
+
+@dataclass(frozen=True)
+class OrderMissingCommand:
+    """«Заказать недостающее»: `articles` — the picked spec positions (КД article), empty — every position short.
+    `deadline` / `delivery_point` override the project's own (its deadline, the point of its latest request)."""
+
+    project: str
+    articles: tuple[str, ...]
+    actor: Actor
+    now: datetime
+    deadline: date | None = None
+    delivery_point: str = ""
+
+
+@dataclass
+class OrderMissingResult:
+    created: list[dict[str, Any]] = field(default_factory=list)
+    skipped: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def message(self) -> str:
+        if not self.created and not self.skipped:
+            return "Не хватающих позиций нет — заказывать нечего."
+        text = f"Заявки созданы: {len(self.created)}"
+        if self.skipped:
+            reasons = list(dict.fromkeys(item["kind"] for item in self.skipped))
+            text += f", пропущено {len(self.skipped)} ({', '.join(reasons)})"
+        return text + "."
+
+
+def _skip_reason(line: SupplyLine) -> tuple[str, str]:
+    """(kind, reason) of a picked position with nothing to order."""
+    if line.need <= 0:
+        return "нет потребности", "нет потребности"
+    if line.ordered > 0:
+        return "уже в закупке", f"уже в закупке: {kit_number_payload(line.ordered)}"
+    if line.kitted > 0:
+        return "уже в комплектации", f"уже в комплектации: {kit_number_payload(line.kitted)}"
+    return "хватает на складе", f"свободно на складе: {kit_number_payload(line.free)}"
+
+
+def project_deadline(project: str, production_uow: Callable[[], PlanUnitOfWork] | None) -> date | None:
+    """The project's deadline as its card shows it: the journal's latest ДЛ, else the registry's."""
+    if production_uow is None:
+        return None
+    canon = normalize_project_number(project)
+    with production_uow() as uow:
+        journal = summarize_journal(uow.plan_events.list(project=canon)).get(canon)
+        snapshot = next(
+            (item for item in uow.plan_projects.list() if normalize_project_number(item.project) == canon), None,
+        )
+    return (journal.deadline if journal is not None else None) or (snapshot.deadline if snapshot else None)
+
+
+def order_missing(
+    command: OrderMissingCommand,
+    techcards_uow: Callable[[], TechcardsUnitOfWork],
+    requests_uow: Callable[[], RequestsUnitOfWork],
+    *,
+    procurement_uow: Callable[[], ProcurementUnitOfWork] | None = None,
+    fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None = None,
+    production_uow: Callable[[], PlanUnitOfWork] | None = None,
+) -> OrderMissingResult:
+    """Purchase requests for what the project lacks: per position Нужно − Свободно − В закупке − в комплектации.
+
+    Idempotent by construction: the requests it files count «В закупке» at once, so a repeat finds nothing short;
+    the creation key (project + what is ordered + the chain it saw) also turns a double click into one batch.
+    The project's earlier requests do not block it — they are subtracted."""
+    with techcards_uow() as uow:
+        kitset = uow.kitsets.get(command.project)
+    if kitset is None:
+        raise KitsetNotFound(f"Карточка набора «{command.project}» не найдена")
+    if not project_reference_valid(kitset.project):
+        raise KitsetValidationError(
+            f"Номер проекта «{kitset.project}» не в формате 591К.3 — заявку к нему не привязать"
+        )
+    lines, requests = project_supply(kitset, requests_uow, procurement_uow, fulfillment_uow)
+    by_key = {_supply_key(line.article): line for line in lines}
+    wanted = [_supply_key(article) for article in command.articles if _supply_key(article)]
+    result = OrderMissingResult()
+    picked: list[SupplyLine] = []
+    for key in dict.fromkeys(wanted) if wanted else by_key:
+        line = by_key.get(key)
+        if line is None:
+            result.skipped.append({"art": key, "kind": "нет в спецификации", "reason": "нет в спецификации"})
+        elif line.short > 0:
+            picked.append(line)
+        elif wanted:
+            kind, reason = _skip_reason(line)
+            result.skipped.append({"art": line.article, "kind": kind, "reason": reason})
+        elif line.need > 0:
+            # Без выбора пропущенными считаются только покрытые позиции — чтобы баннер сказал, почему их нет.
+            kind, reason = _skip_reason(line)
+            result.skipped.append({"art": line.article, "kind": kind, "reason": reason})
+    if not picked:
+        return result
+    deadline = command.deadline or project_deadline(kitset.project, production_uow)
+    if deadline is None:
+        raise KitsetValidationError("У проекта нет дедлайна — укажи срок закупки")
+    canon = normalize_project_number(kitset.project)
+    point = command.delivery_point.strip() or next((
+        request.delivery_point for request in sorted(requests, key=lambda item: item.created_at, reverse=True)
+        if (normalize_project_number(request.project_reference) if request.project_reference
+            else project_from_purpose(request.purpose)) == canon and request.delivery_point
+    ), DELIVERY_POINTS[0])
+    drafts = []
+    for line in picked:
+        item_type = line.item_type.strip() or ORDER_ITEM_TYPE
+        drafts.append(RequestDraft(
+            purpose=ORDER_PURPOSE, delivery_point=point, name=line.name.strip() or line.article,
+            item_type=item_type, quantity=line.short, unit=unit_for_type(item_type), quality_document="Нет",
+            procurement_deadline=deadline, planned_date=deadline, project_reference=kitset.project,
+            category=DEFAULT_CATEGORY, design_article=line.article,
+            comment=f"{kitset.project} · {', '.join(line.kbs)}" if line.kbs else kitset.project,
+        ))
+    seen = sorted(f"{row.source_id}:{row.status}" for line in lines for row in line.rows)
+    digest = hashlib.sha256(json.dumps(
+        [canon, seen, [(draft.design_article, str(draft.quantity)) for draft in drafts]], ensure_ascii=False,
+    ).encode()).hexdigest()[:32]
+    created = create_requests(CreateRequestsCommand(
+        creation_key=f"kitset-missing:{canon}:{digest}", drafts=tuple(drafts), actor=command.actor,
+        now=command.now, designation_base=kitset.project.strip(), source="kitset-missing",
+    ), requests_uow())
+    result.created = [{
+        "art": request.design_article or "", "name": request.name, "quantity": kit_number_payload(request.quantity),
+        "unit": request.unit, "legacy_id": request.legacy_id,
+    } for request in created]
+    return result
+
+
+def _supply_key(value: object) -> str:
+    return " ".join(str(value or "").split()).casefold()
 
 
 # ── Отправить на комплектацию (portalIssueFromKitset) ────────────────────

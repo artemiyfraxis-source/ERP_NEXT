@@ -84,6 +84,39 @@ it("submits document URLs and optimistic version without browser-owned presence 
   expect(inspection).toEqual(expect.objectContaining({ historical: false, document_date: null }));
 });
 
+it("submits the incoming control without a УПД — it can come later by ЭДО", async () => {
+  let inspection: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/receiving") return json({ lines: [line] });
+    if (path.endsWith("/inspect") && init?.method === "POST") {
+      inspection = JSON.parse(String(init.body));
+      return json({ line });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReceivingPage />);
+  await openRow();
+  const upd = await screen.findByLabelText("Документ УПД/М-15") as HTMLInputElement;
+  expect(upd.required).toBe(false);
+  expect(screen.getByText("УПД по ЭДО можно внести позже — «Внести УПД» в списке.")).toBeTruthy();
+  expect(screen.queryByText(/уйдёт в «Ожидание»/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
+
+  await waitFor(() => expect(inspection).toEqual(expect.objectContaining({ version: 2, shipping_document_url: null })));
+});
+
+it("shows the «УПД не приложен» note on an accepted line", async () => {
+  const accepted = { ...line, status: "Принято", verdict: "Годен", grn: "FRX.26.0000001", shipping_document_note: "УПД не приложен — придёт по ЭДО" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [accepted], next_cursor: null }));
+
+  render(<ReceivingPage />);
+  expect(await screen.findByText("ждём по ЭДО")).toBeTruthy();
+  await openRow();
+  expect(await screen.findByText("УПД не приложен — придёт по ЭДО")).toBeTruthy();
+});
+
 it("sends the УПД date for a historical receipt so the verdict uses it", async () => {
   let inspection: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -481,9 +514,21 @@ it("groups by order by default and applies one УПД to the ticked rows of a gr
   expect(await screen.findByText("УПД № УПД-7 от 20.09.2026 внесён: 2 позиции")).toBeTruthy();
 });
 
-it("disables «Внести УПД» when an accepted row is selected", async () => {
+it("enables «Внести УПД» for accepted rows, also on stock — УПД по ЭДО comes after acceptance", async () => {
   const accepted = { ...orderLines[1], status: "Принято" };
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [orderLines[0], accepted], next_cursor: null }));
+  const onStock = { ...orderLines[2], status: "Принято", warehouse_event_emitted: true };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [orderLines[0], accepted, onStock], next_cursor: null }));
+  render(<ReceivingPage />);
+
+  await screen.findByText(/^Заказ PO-001/, { selector: "strong" });
+  fireEvent.click(screen.getByLabelText("Выбрать группу"));
+
+  expect((screen.getByRole("button", { name: "Внести УПД" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("disables «Внести УПД» when an archived ВК row is selected", async () => {
+  const archived = { ...orderLines[1], status: "Архив ВК" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [orderLines[0], archived], next_cursor: null }));
   render(<ReceivingPage />);
 
   await screen.findByText(/^Заказ PO-001/, { selector: "strong" });

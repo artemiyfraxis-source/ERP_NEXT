@@ -6,6 +6,7 @@ import pytest
 
 from app.modules.receiving.domain import (
     QUARANTINE_WORKDAYS,
+    SHIPPING_DOCUMENT_PENDING_NOTE,
     InspectionInput,
     ReceivingStatus,
     ReceivingValidationError,
@@ -116,8 +117,18 @@ def test_returned_line_cannot_be_reinspected():
         )
 
 
+def test_missing_upd_no_longer_blocks_the_line():
+    # Owner 05.10.2026: УПД comes later by ЭДО — no nonconformity, the line is accepted.
+    result = inspect_delivery(inspection(has_shipping_document=False))
+
+    assert result.status is ReceivingStatus.ACCEPTED
+    assert result.verdict == "Годен"
+    assert result.nonconformities == ()
+    assert result.missing_documents is False
+
+
 def test_documents_wait_and_confirmed_defect_goes_to_quarantine():
-    documents = inspect_delivery(inspection(has_shipping_document=False))
+    documents = inspect_delivery(inspection(quality_document_required=True, quality_document_present=False))
     defect = inspect_delivery(
         inspection(
             manual_nonconformities=("Механическое повреждение / брак",),
@@ -315,7 +326,7 @@ def test_quarantine_notify_targets_follow_the_nature(nature, expected):
 
 def waiting_line(inspected_on=date(2026, 9, 24)):
     line = create_line_from_expected(expected_message()).inspect(
-        inspection(has_shipping_document=False, inspection_date=inspected_on),
+        inspection(quality_document_required=True, inspection_date=inspected_on),
         Actor(name="Приёмщик", department="ОТК"),
         existing_grns=(),
     )
@@ -341,7 +352,7 @@ def test_waiting_without_decision_goes_to_quarantine_after_two_workdays():
 def test_timer_restarts_on_reinspection_and_ignores_other_statuses():
     line = waiting_line(date(2026, 9, 21))
     again = line.inspect(
-        inspection(has_shipping_document=False, inspection_date=date(2026, 9, 24)),
+        inspection(quality_document_required=True, inspection_date=date(2026, 9, 24)),
         Actor(name="Приёмщик", department="ОТК"),
         existing_grns=(line.grn,),
     )
@@ -461,3 +472,47 @@ def test_archived_vk_line_is_closed_for_inspection_and_placement():
     with pytest.raises(ReceivingValidationError, match="только принятую"):
         archived.place("1F4")
     assert archived.ready_for_warehouse is False
+
+
+def test_vk_without_upd_is_accepted_with_a_pending_note_and_a_grn():
+    line = _inspected(has_shipping_document=False, shipping_document_url=None)
+
+    assert line.status is ReceivingStatus.ACCEPTED
+    assert line.grn
+    assert line.nonconformities == ()
+    assert line.shipping_document_pending is True
+    assert SHIPPING_DOCUMENT_PENDING_NOTE == "УПД не приложен — придёт по ЭДО"
+
+
+def test_vk_with_upd_file_or_number_has_no_pending_note():
+    assert _inspected(shipping_document_url="https://files.test/upd.pdf").shipping_document_pending is False
+    assert _inspected(document_number="УПД-17").shipping_document_pending is False
+    assert create_line_from_expected(expected_message()).shipping_document_pending is False  # not inspected yet
+
+
+def test_upd_attached_to_accepted_line_on_stock_clears_the_note():
+    accepted = _inspected(shipping_document_url=None).place("1F4")
+    on_stock = accepted.mark_warehouse_event_emitted()
+    assert on_stock.shipping_document_pending is True
+
+    attached = on_stock.attach_shipping_document(
+        url="https://files.test/edo.pdf", number="ЭДО-5", document_date=date(2026, 9, 22)
+    )
+
+    assert attached.version == on_stock.version + 1
+    assert attached.status is ReceivingStatus.ACCEPTED
+    assert attached.warehouse_event_emitted is True
+    assert (attached.grn, attached.accepted_quantity, attached.storage_location) == (
+        on_stock.grn, on_stock.accepted_quantity, on_stock.storage_location,
+    )
+    assert attached.shipping_document_pending is False
+    assert attached.document_number == "ЭДО-5"
+
+
+@pytest.mark.parametrize("status", [ReceivingStatus.VK_ARCHIVE, ReceivingStatus.RETURN])
+def test_upd_is_refused_for_archived_and_returned_lines(status):
+    line = replace(_inspected(shipping_document_url=None), status=status)
+
+    assert line.shipping_document_pending is False
+    with pytest.raises(ReceivingValidationError, match=status.value):
+        line.attach_shipping_document(url=None, number="ЭДО-5", document_date=None)
