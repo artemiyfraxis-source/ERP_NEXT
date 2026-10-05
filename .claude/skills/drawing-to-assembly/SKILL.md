@@ -21,7 +21,7 @@ Reference (read the parts you need, don't paste them back):
 
 ## 0. Auth and calls
 
-- Token: env `ERP_API_TOKEN` (an API token with the area «Схемы сборки» = scope `assembly`; README «Как прислать
+- Token: env `ERP_API_TOKEN` (an API token with the area «Черновики сборки» = scope `assembly`; README «Как прислать
   чертёж» says how the owner issues one). Base URL: env `ERP_BASE_URL`, default
   `https://erp-server.tail811f20.ts.net` (production — real data; only the calls below).
 - **Never print, echo, log or commit the token.** Refer to it only as `$ERP_API_TOKEN` / `os.environ[...]`. No `set -x`,
