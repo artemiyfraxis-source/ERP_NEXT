@@ -298,6 +298,8 @@ export interface ReceivingLine {
   disposition: string | null;
   verdict: string | null;
   nonconformities: string[];
+  /** «УПД не приложен — придёт по ЭДО»: ВК прошёл без УПД, не блокирует; null после «Внести УПД». */
+  shipping_document_note?: string | null;
   accepted_quantity: string | null;
   backorder_quantity: string;
   grn: string | null;

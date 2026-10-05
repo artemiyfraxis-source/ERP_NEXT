@@ -60,7 +60,7 @@ def test_receipt_without_mass_or_expiry_sends_them_empty():
 def test_reinspection_without_a_usable_mass_keeps_the_weighed_one(again):
     uow = Uow()
     line = consume_receiving_expected(message(), uow)
-    waiting = _inspect(uow, line, shipping_document_url=None, mass_1="2,5")
+    waiting = _inspect(uow, line, fact_quantity=Decimal("9"), mass_1="2,5")  # short fact -> «Ожидание»
     assert (waiting.status, waiting.unit_mass_g) == (ReceivingStatus.WAITING, Decimal("2.50000"))
 
     accepted = _inspect(uow, waiting, **again)
@@ -71,7 +71,7 @@ def test_reinspection_without_a_usable_mass_keeps_the_weighed_one(again):
 def test_reinspection_with_a_new_mass_replaces_it():
     uow = Uow()
     line = consume_receiving_expected(message(), uow)
-    waiting = _inspect(uow, line, shipping_document_url=None, mass_1="2,5")
+    waiting = _inspect(uow, line, fact_quantity=Decimal("9"), mass_1="2,5")  # short fact -> «Ожидание»
 
     assert _inspect(uow, waiting, mass_100="245").unit_mass_g == Decimal("2.45000")
 

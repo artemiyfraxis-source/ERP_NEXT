@@ -48,6 +48,7 @@ from .domain import (
     InspectionInput,
     ReceivingLine,
     ReceivingValidationError,
+    SHIPPING_DOCUMENT_PENDING_NOTE,
     SUPPLIER_RETURN_REASONS,
     grn_prefix_for,
     normalize_document_url,
@@ -219,6 +220,8 @@ def _result(line: ReceivingLine) -> dict:
         "disposition": line.disposition,
         "verdict": line.verdict,
         "nonconformities": list(line.nonconformities),
+        # Non-blocking: accepted without УПД (ЭДО later); gone once «Внести УПД» adds it.
+        "shipping_document_note": SHIPPING_DOCUMENT_PENDING_NOTE if line.shipping_document_pending else None,
         "accepted_quantity": _decimal(line.accepted_quantity),
         "backorder_quantity": _decimal(line.backorder_quantity),
         "grn": line.grn,
