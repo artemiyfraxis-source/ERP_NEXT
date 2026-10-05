@@ -234,6 +234,21 @@ def test_cut_and_crimp_operation_tracks_terminal_material_strip_and_applicator()
     assert "Несоответствие высоты опрессовки или усилия на разрыв:" in defects
 
 
+def test_drawing_cut_length_with_end_allowances_reaches_the_etk_unchanged():
+    """Owner 06.10: the TECHMAP-GRAPHER end corrections are the contact allowance. The generator passes the export's
+    cut_mm as the wire length (measure mode «длина реза», no L+/L− on top), and the ETK cuts exactly that."""
+    from app.modules.techcards.grapher_import import read_export
+    from . import grapher_fixture as fx
+
+    wire_view = read_export(json.dumps(fx.snapshot()).encode(), "snapshot.json")["harnesses"][0]["wires"][0]
+    assert (wire_view["length_mm"], wire_view["correction_from_mm"], wire_view["correction_to_mm"]) == (300, 8, 4)
+    wire = {"name": "ПВАМ 0,35", "art": "ПВАМ 0,35", "qty": 1, "length": wire_view["cut_mm"]}
+    config = {"assemblyName": "Жгут", "partQty": 1, "wires": [wire],
+              "ops": [{"type": "cutWire", "opNum": "CUT_WIRE_auto", "wires": [wire]}]}
+    operation = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+    assert operation["result"][0]["name"].startswith("ПВАМ 0,35 312мм")
+
+
 def test_splice_topology_and_strip_cable_do_not_advance_main_chain():
     config = {
         "assemblyName": "Жгут", "partQty": 1,
