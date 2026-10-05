@@ -2578,8 +2578,8 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .row-actions-main { display: flex; flex-wrap: nowrap; gap: 4px; max-width: 100%; }
 td .row-actions .row-actions-main button { flex: 0 1 auto; min-width: 0; height: 24px; padding: 0 7px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; line-height: 22px; white-space: nowrap; }
 .row-actions-more { display: flex; flex-wrap: wrap; gap: 0 10px; max-height: 0; overflow: hidden; }
-td .row-actions .row-actions-more .link-button { padding: 0; font-size: 12px; color: var(--primary); white-space: nowrap; }
-tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 60px; margin-top: 3px; }
+td .row-actions .row-actions-more .link-button { padding: 0; font-size: 12px; color: var(--primary); white-space: normal; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
+tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px; margin-top: 3px; }
 .buy-grid td.menu, .procurement-stage td.menu { text-align: left; }
 .order-doc-links { gap: 12px; margin-right: 4px; font-size: 13px; }
 .order-doc-links .doc-link { color: var(--primary); text-decoration: none; }
