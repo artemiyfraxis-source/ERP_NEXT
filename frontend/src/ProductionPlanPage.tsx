@@ -5,14 +5,13 @@ import {
   type Principal,
   type ProductionAbsence,
   type ProductionOperator,
+  type ProductionShift,
   type ProductionPlanResult,
   type ProductionPlanRow,
   type ProductionTask,
 } from "./api";
 import { canAct } from "./navigation";
-import { Gantt, deadlineEnd, parseMoment, type GanttBar, type GanttRow } from "./Gantt";
-import { sharesOf } from "./MasterBoard";
-import { feedsText } from "./productionGraph";
+import { PeopleLoadGrid } from "./PeopleLoad";
 import { PlanLoadSheet, markText, type SheetMark } from "./PlanLoadSheet";
 
 const emptyPlan: ProductionPlanResult = { blockers: [], stages: [], review_values: [], rows: [] };
@@ -40,76 +39,6 @@ function daysTag(row: ProductionPlanRow) {
   return <span className={`plan-tag ${tone}`} title={`Дедлайн ${shortDate(row.deadline)}`}>{text}</span>;
 }
 
-// Изделие задания, как в SUPPLYMAP (tcKitItemId_): проект + индекс КБ.
-function itemId(task: ProductionTask) {
-  return task.item.toUpperCase().startsWith(task.project.toUpperCase()) ? task.item : `${task.project}${task.item.toUpperCase()}`;
-}
-
-function hours(seconds: number) {
-  const value = seconds / 3600;
-  return `${(value < 10 ? value.toFixed(1) : String(Math.round(value))).replace(".", ",")} ч`;
-}
-
-/** Загрузка по людям: строка — сотрудник, полосы — назначенные ему операции заданий и отсутствия. */
-export function operatorLoadRows(
-  operators: ProductionOperator[],
-  tasks: ProductionTask[],
-  absences: ProductionAbsence[],
-  span: { from: Date; to: Date },
-): GanttRow[] {
-  const live = tasks.filter((task) => task.status !== "Отменено");
-  return [...operators].sort((a, b) => a.name.localeCompare(b.name, "ru")).map((operator) => {
-    let count = 0;
-    let seconds = 0;
-    const bars: GanttBar[] = [];
-    for (const task of live) {
-      for (const operation of task.operations) {
-        // По долям: у раздробленной по штукам операции у каждого своё окно и своя норма.
-        for (const share of sharesOf(operation, operator.id)) {
-          if (!share.planned_start || !share.planned_finish) continue;
-          const start = parseMoment(share.planned_start);
-          const finish = parseMoment(share.planned_finish);
-          const done = operation.state === "выполнена" || Boolean(share.finished_at);
-          const end = deadlineEnd(task.deadline);
-          const late = Boolean(!done && end && finish && finish > end);
-          bars.push({
-            start: share.planned_start, finish: share.planned_finish,
-            tone: done ? "done" : late ? "late" : "default",
-            text: `${task.number} · ${itemId(task)}`,
-            title: `${task.number} · ${itemId(task)} × ${task.quantity} · этап ${operation.position} ${operation.stage}${feedsText(task, operation) ? ` (${feedsText(task, operation)})` : ""}${share.quantity != null ? ` · ${share.quantity} шт` : ""}${task.deadline ? ` · дедлайн ${shortDate(task.deadline)}` : ""}${done ? " · выполнена" : ""}`,
-          });
-          if (start && finish && finish > span.from && start < span.to) {
-            count += 1;
-            seconds += share.quantity != null
-              ? Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * share.quantity
-              : operation.norm_seconds / Math.max(1, operation.operator_ids.length);
-          }
-        }
-      }
-    }
-    for (const absence of absences.filter((item) => item.operator_id === operator.id)) {
-      bars.push({ start: absence.from_date, finish: nextDay(absence.to_date), tone: "absent", text: absence.kind, title: `${absence.kind}: ${shortDate(absence.from_date)} – ${shortDate(absence.to_date)}` });
-    }
-    return {
-      key: operator.id,
-      label: <strong>{operator.name}</strong>,
-      sublabel: count ? `${count} опер. · ${hours(seconds)} по норме` : "свободен",
-      dim: !count,
-      bars,
-    };
-  });
-}
-
-function nextDay(value: string) {
-  const day = parseMoment(value);
-  if (!day) return value;
-  const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
-}
-
-const LOAD_DAYS = 21;
-
 export function ProductionPlanPage({ principal, openProjectCard }: {
   principal: Principal;
   /** Opens the project's techcard card (SUPPLYMAP planAct_ 'card' → openKitsetCard); absent without access. */
@@ -117,6 +46,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
 }) {
   const [data, setData] = useState(emptyPlan);
   const [holidays, setHolidays] = useState<string[]>([]);
+  const [shift, setShift] = useState<ProductionShift | undefined>(undefined);
   const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
@@ -144,7 +74,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   useEffect(() => {
     void reload();
     // Календарь только затеняет шкалу и даёт отсутствия: без него план работает.
-    productionApi.calendar().then((result) => { setHolidays(result.holidays ?? []); setAbsences(result.absences ?? []); }).catch(() => setHolidays([]));
+    productionApi.calendar().then((result) => { setHolidays(result.holidays ?? []); setAbsences(result.absences ?? []); setShift(result.shift); }).catch(() => setHolidays([]));
     // Загрузка по людям — из заданий «Ресурсного планирования»; без доступа к ним блок говорит об этом.
     Promise.all([productionApi.list(), productionApi.operators()])
       .then(([taskResult, operatorResult]) => { setTasks(taskResult.tasks ?? []); setOperators(operatorResult.operators ?? []); })
@@ -161,12 +91,6 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   const activeCount = data.rows.filter((row) => (row.group ?? (row.terminal ? "closed" : "active")) !== "closed").length;
   const selected = data.rows.find((row) => row.project === selectedProject) ?? null;
 
-  const span = useMemo(() => {
-    const today = new Date();
-    const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7) + 7 * week);
-    return { from, to: new Date(from.getFullYear(), from.getMonth(), from.getDate() + LOAD_DAYS) };
-  }, [week]);
-  const loadRows = useMemo(() => operatorLoadRows(operators, tasks, absences, span), [operators, tasks, absences, span]);
   const unassigned = useMemo(() => {
     const live = tasks.filter((task) => task.status !== "Отменено");
     const operations = live.flatMap((task) => task.operations.filter((operation) => !operation.operator_ids.length && operation.state !== "выполнена"));
@@ -230,10 +154,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
       </div>
       {loadError
         ? <div className="empty">Загрузка людей недоступна: {loadError}</div>
-        : <Gantt labelHead="Сотрудник" holidays={holidays} days={LOAD_DAYS} mergeDay week={week} onWeekChange={setWeek}
-          empty={<div className="empty">Сотрудников цеха пока нет.</div>}
-          rows={loadRows} />}
-      <div className="plan-legend"><span className="gantt-bar">операция</span><span className="gantt-bar late">позже дедлайна</span><span className="gantt-bar done">выполнена</span><span className="gantt-bar absent">отсутствие</span></div>
+        : <PeopleLoadGrid operators={operators} tasks={tasks} absences={absences} holidays={holidays} shift={shift} week={week} onWeekChange={setWeek} />}
     </section>
   </section>;
 }

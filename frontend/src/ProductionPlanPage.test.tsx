@@ -383,86 +383,94 @@ it("keeps sheet helpers stable", () => {
   expect(markText({ field: "comment", value: "", text: "" })).toBe("Комментарий: очищено");
 });
 
-it("shows people load under the projects: operations per operator, late, done, absence and unassigned", async () => {
+const loadOperation = (id: string, position: number, stage: string, operators: string[], start: string | null, finish: string | null, state = "не начата") => ({
+  id, position, code: "", stage, description: "", seconds_per_unit: 60, setup_seconds: 0,
+  norm_seconds: 7200, operator_ids: operators, planned_start: start, planned_finish: finish, state,
+});
+const loadTask = (operations: unknown[], deadline: string | null = "2026-09-22") => ({
+  id: "t1", number: "ПЗ-0001", version: 1, created_at: "2026-09-21T09:00:00", project: "708К.4", item: "КБ1", name: "Жгут",
+  quantity: 10, fulfillment_request_id: null, deadline, status: "В работе", launched_by: "Мастер",
+  planned_start: null, planned_finish: null, assigned: 2, operations,
+});
+function mockLoad(tasks: unknown[], operators: unknown[], absences: unknown[] = []) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/calendar") return json({ holidays: [], absences, shift: {} });
+    if (path === "/api/production/tasks") return json({ tasks, next_cursor: null });
+    if (path === "/api/production/operators") return json({ operators });
+    return json(plan);
+  });
+}
+
+it("shows people load as hours per shift: tone by load, late marker, absence, free people compact, unassigned", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 8, 22, 10));
   try {
-    const operation = (id: string, position: number, operators: string[], start: string | null, finish: string | null, state = "не начата") => ({
-      id, position, code: "", stage: `Этап ${position}`, description: "", seconds_per_unit: 60, setup_seconds: 0,
-      norm_seconds: 7200, operator_ids: operators, planned_start: start, planned_finish: finish, state,
-    });
-    const tasks = [{
-      id: "t1", number: "ПЗ-0001", version: 1, created_at: "2026-09-21T09:00:00", project: "708К.4", item: "КБ1", name: "Жгут",
-      quantity: 10, fulfillment_request_id: null, deadline: "2026-09-22", status: "В работе", launched_by: "Мастер",
-      planned_start: null, planned_finish: null, assigned: 2,
-      operations: [
-        operation("o1", 1, ["a"], "2026-09-22T09:00:00", "2026-09-22T12:00:00", "выполнена"),
-        operation("o2", 2, ["a"], "2026-09-23T09:00:00", "2026-09-23T15:00:00"),
-        operation("o3", 3, [], null, null),
-      ],
-    }];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const path = String(input);
-      if (path === "/api/production/calendar") return json({ holidays: [], absences: [{ operator_id: "b", from_date: "2026-09-24", to_date: "2026-09-25", kind: "Отпуск" }], shift: {} });
-      if (path === "/api/production/tasks") return json({ tasks, next_cursor: null });
-      if (path === "/api/production/operators") return json({ operators: [{ id: "b", name: "Борисов Б.", site: "" }, { id: "a", name: "Алексеева А.", site: "" }] });
-      return json(plan);
-    });
-    const { container } = render(<ProductionPlanPage principal={principal} />);
+    mockLoad([loadTask([
+      loadOperation("o1", 1, "Резка", ["a"], "2026-09-22T09:00:00", "2026-09-22T10:30:00", "выполнена"),
+      loadOperation("o2", 2, "Опрессовка", ["a"], "2026-09-23T09:00:00", "2026-09-23T17:30:00"),
+      loadOperation("o3", 3, "Сборка", [], null, null),
+    ])], [{ id: "b", name: "Борисов Б.", site: "ЦАР" }, { id: "a", name: "Алексеева А.", site: "ЦАР" }],
+    [{ operator_id: "b", from_date: "2026-09-24", to_date: "2026-09-25", kind: "Отпуск" }]);
+    render(<ProductionPlanPage principal={principal} />);
     const load = await screen.findByRole("region", { name: "Загрузка по людям" });
 
-    await waitFor(() => expect(Array.from(load.querySelectorAll('[data-testid="gantt-row"] .gantt-label strong')).map((item) => item.textContent)).toEqual(["Алексеева А.", "Борисов Б."]));
-    const bars = Array.from(load.querySelectorAll('[data-testid="gantt-row"] .gantt-bar'));
-    expect(bars.map((bar) => [bar.textContent, bar.className])).toEqual([
-      ["ПЗ-0001 · 708К.4КБ1 · 3 ч", "gantt-bar done"],
-      ["ПЗ-0001 · 708К.4КБ1 · 6 ч", "gantt-bar late"],
-      ["Отпуск", "gantt-bar absent"],
-    ]);
-    expect(screen.getByText("2 опер. · 4,0 ч по норме")).toBeInTheDocument();
-    expect(screen.getByText("свободен")).toBeInTheDocument();
+    await waitFor(() => expect(load.querySelector(".pl-table")).not.toBeNull());
+    expect(load.textContent).toContain("21.09–04.10");
+    const rows = Array.from(load.querySelectorAll(".pl-table tbody tr"));
+    expect(rows.map((row) => row.querySelector("th b")?.textContent)).toEqual(["Алексеева А.", "Борисов Б."]);
+    const mon = rows[0].querySelectorAll("td");
+    expect(mon[1].textContent).toBe("1,3/7");
+    expect(mon[1].className).toContain("low");
+    expect(mon[1].className).not.toContain("late");
+    expect(mon[2].textContent).toBe("7/7!");
+    expect(mon[2].className).toContain("full");
+    expect(mon[2].className).toContain("late");
+    expect(mon[5].className).toContain("off");
+    expect(rows[1].querySelectorAll("td")[3].className).toContain("absent");
+    expect(rows[1].querySelectorAll("td")[3].textContent).toBe("отпуск");
+    expect(rows[0].textContent).toContain("8,3 ч за 2 нед.");
+    expect(rows[1].textContent).toContain("свободен");
     expect(screen.getByText("Без исполнителя: 1 опер. в 1 зад. — назначить в «Ресурсном планировании»")).toBeInTheDocument();
-    expect(container.querySelector(".plan-projects")).not.toBeNull();
   } finally {
     vi.useRealTimers();
   }
 });
 
-it("names the inputs of a branched operation in the people-load tooltip and says nothing about a chain", async () => {
+it("marks overload and lists the day's operations with ПЗ, hours and deadline on click", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 8, 22, 10));
   try {
-    const operation = (id: string, position: number, stage: string, start: string, finish: string, inputs: Array<{ operation_id: string; position: number; per_unit: string; transfer_batch: null }>) => ({
-      id, position, code: "", stage, description: "", seconds_per_unit: 60, setup_seconds: 0, norm_seconds: 3600,
-      operator_ids: ["a"], planned_start: `2026-09-22T${start}:00`, planned_finish: `2026-09-22T${finish}:00`,
-      state: "не начата", inputs,
-    });
-    const edge = (id: string, position: number, per_unit = "1") => ({ operation_id: id, position, per_unit, transfer_batch: null as null });
-    const tasks = [{
-      id: "t1", number: "ПЗ-0001", version: 1, created_at: "2026-09-21T09:00:00", project: "708К.4", item: "КБ1", name: "Жгут",
-      quantity: 10, fulfillment_request_id: null, deadline: null, status: "В работе", launched_by: "Мастер",
-      planned_start: null, planned_finish: null, assigned: 4,
-      operations: [
-        operation("o1", 1, "Нарезка А", "09:00", "10:00", []),
-        operation("o2", 2, "Нарезка Б", "10:00", "11:00", []),
-        operation("o3", 3, "Сборка", "11:00", "12:00", [edge("o1", 1), edge("o2", 2, "2")]),
-        operation("o4", 4, "Упаковка", "12:00", "13:00", [edge("o3", 3)]),
-      ],
-    }];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const path = String(input);
-      if (path === "/api/production/calendar") return json({ holidays: [], absences: [], shift: {} });
-      if (path === "/api/production/tasks") return json({ tasks, next_cursor: null });
-      if (path === "/api/production/operators") return json({ operators: [{ id: "a", name: "Алексеева А.", site: "" }] });
-      return json(plan);
-    });
+    mockLoad([loadTask([
+      loadOperation("o1", 1, "Нарезка А", ["a"], "2026-09-22T09:00:00", "2026-09-22T17:30:00"),
+      loadOperation("o2", 2, "Сборка", ["a"], "2026-09-22T09:00:00", "2026-09-22T17:30:00"),
+    ], "2026-09-30")], [{ id: "a", name: "Алексеева А.", site: "" }]);
     render(<ProductionPlanPage principal={principal} />);
-    const load = await screen.findByRole("region", { name: "Загрузка по людям" });
-    await waitFor(() => expect(load.querySelectorAll(".gantt-bar").length).toBeGreaterThan(0));
-    // Один день одного человека склеен в плашку; точные окна и откуда взяты детали — в её подсказке.
-    const titles = Array.from(load.querySelectorAll(".gantt-bar")).map((bar) => bar.getAttribute("title") ?? "").join("\n");
-    expect(titles).toContain("этап 3 Сборка (из этапов 1 «Нарезка А», 2 «Нарезка Б» ×2)");
-    expect(titles).not.toContain("этап 1 Нарезка А (");
-    expect(titles).not.toContain("этап 4 Упаковка (");
+    const cellButton = await screen.findByRole("button", { name: "Загрузка Алексеева А. 22.09" });
+    expect(cellButton.closest("td")!.className).toContain("over");
+    fireEvent.click(cellButton);
+    const detail = screen.getByRole("group", { name: "Что в дне: Алексеева А., 22.09" });
+    expect(detail.textContent).toContain("ПЗ-0001 · 708К.4КБ1");
+    expect(detail.textContent).toContain("1. Нарезка А");
+    expect(detail.textContent).toContain("дедлайн 30.09");
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть день" }));
+    expect(screen.queryByRole("group", { name: /Что в дне/ })).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("«Только занятые» hides free people", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 8, 22, 10));
+  try {
+    mockLoad([loadTask([loadOperation("o1", 1, "Резка", ["a"], "2026-09-22T09:00:00", "2026-09-22T12:00:00")])],
+      [{ id: "a", name: "Алексеева А.", site: "" }, { id: "b", name: "Борисов Б.", site: "" }]);
+    render(<ProductionPlanPage principal={principal} />);
+    await screen.findByText("Борисов Б.");
+    fireEvent.click(screen.getByLabelText("Только занятые"));
+    expect(screen.queryByText("Борисов Б.")).toBeNull();
+    expect(screen.getByText("Алексеева А.")).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }
