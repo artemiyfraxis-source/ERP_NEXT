@@ -54,6 +54,14 @@ other identities).
   add a new one after the head. One head: right before merge, rebase on fresh `main`; if `main` gained a
   migration meanwhile, re-parent/renumber yours (not on `main` yet, so allowed) and rerun the gate
   (`backend/tests/test_alembic_single_head.py`).
+- **Live-data protocol (proposed, owner reviews):** backup → rehearsal on a copy of the prod DB → integrity/row-count
+  check → only then prod.
+- A PR with an Alembic migration is rehearsed on a copy of prod first; its description carries the row-count
+  reconciliation from that run (before/after per table plus the invariants) and links the log.
+- Migrations are applied by the update script (`deploy/update.sh`), never on container start. A migration declaring
+  `DESTRUCTIVE = True` runs only after the owner approves its revision id via the «Обновить сервер» button.
+- New code: constraints, not rollbacks — protect data with CHECK, UNIQUE, FK, NOT NULL and version checks that make bad
+  states impossible, instead of relying on rollbacks or compensating scripts afterwards.
 - Repo stays private. No secrets in git. Never write to live Google data (SUPPLYMAP warehouse sheets).
 - Commits are authored by the human whose session it is, under their own git identity. **No
   `Co-Authored-By: Claude`, no "Generated with Claude Code"** in commits or PRs.
