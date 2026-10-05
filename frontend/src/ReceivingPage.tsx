@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { receivingApi, type ReceivingLine } from "./api";
-import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ApiError, failureText, receivingApi, type DeliveryDeviation, type DeliveryLinePayload, type ReceivingLine, type ReceivingQuery } from "./api";
+import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { openPrintSheet } from "./print";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
@@ -12,12 +12,12 @@ const MANUAL_CHECKS = [
 ];
 
 const COLUMNS: DataColumn<ReceivingLine>[] = [
-  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id },
+  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, hidden: true },
   { key: "name", title: "Наименование", value: (line) => itemTitle(line), wrap: true, width: 210 },
   { key: "supplier", title: "Поставщик", value: (line) => line.supplier, filter: true },
   { key: "order", title: "№ заказа", value: (line) => line.order_number ?? "" },
   { key: "expected", title: "Ожид. дата", value: (line) => line.expected_arrival ?? "" },
-  { key: "purpose", title: "Назначение", value: (line) => line.purpose, filter: true, wrap: true, width: 140 },
+  { key: "purpose", title: "Назначение", value: (line) => line.purpose, filter: true, wrap: true, width: 140, hidden: true },
   { key: "ordered", title: "Заказано", value: (line) => line.ordered_quantity, numeric: true, render: (line) => `${line.ordered_quantity} ${line.unit}` },
   { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <span className="status">{line.status}</span> },
   { key: "document", title: "УПД", value: (line) => [line.document_number, formatDate(line.document_date)].filter(Boolean).join(" от ") || (line.shipping_document_note ? "ждём по ЭДО" : ""), wrap: true, width: 100 },
@@ -96,14 +96,15 @@ function DocumentField({ lineId, kind, label, value, required, disabled, hint, i
   );
 }
 
-const PRESETS: DataPreset<ReceivingLine>[] = [
-  { label: "В пути", test: (line) => line.status === "В пути" },
-  { label: "Ожидание", test: (line) => line.status === "Ожидание" },
-  { label: "Карантин", test: (line) => line.status === "Карантин" },
-  { label: "Принято, не разложено", test: (line) => line.status === "Принято" && !line.warehouse_event_emitted },
-  { label: "На складе", test: (line) => line.warehouse_event_emitted },
-  { label: "Возврат", test: (line) => line.status === "Возврат" },
-  { label: "Архив ВК", test: (line) => line.status === "Архив ВК" },
+/** Быстрый отбор очереди — на сервере (`preset` / `status`), чтобы отбор работал дальше первой страницы. */
+const QUEUE_CHIPS: { label: string; query: ReceivingQuery }[] = [
+  { label: "В пути", query: { status: ["В пути"] } },
+  { label: "Ожидание", query: { status: ["Ожидание"] } },
+  { label: "Карантин", query: { status: ["Карантин"] } },
+  { label: "Принято, не разложено", query: { preset: "to_stock" } },
+  { label: "На складе", query: { preset: "done" } },
+  { label: "Возврат", query: { status: ["Возврат"] } },
+  { label: "Архив ВК", query: { preset: "archive" } },
 ];
 
 /** «Внести УПД»: all but «Архив ВК» and «Возврат» — УПД по ЭДО приходит и после приёмки. */
@@ -163,6 +164,223 @@ function UpdPanel({ rows, busy, onSubmit, onClose }: {
   );
 }
 
+interface ExpectedGroup {
+  key: string;
+  supplier: string;
+  warehouse: string;
+  orders: string[];
+  lines: ReceivingLine[];
+  from: string | null;
+  to: string | null;
+  /** Склад показывается, только когда у поставщика позиции на двух складах. */
+  showWarehouse: boolean;
+}
+
+/** «Ожидаются»: открытые «В пути» / «Ожидание», по поставщику (и складу — одна поставка идёт на один склад),
+ *  ближайшая дата ожидания первой. */
+export function expectedGroups(lines: ReceivingLine[]): ExpectedGroup[] {
+  const groups = new Map<string, ExpectedGroup>();
+  for (const line of lines) {
+    if (line.status !== "В пути" && line.status !== "Ожидание") continue;
+    const supplier = line.supplier || "Без поставщика";
+    const key = `${supplier}\u0000${line.warehouse}`;
+    const group = groups.get(key) ?? { key, supplier, warehouse: line.warehouse, orders: [], lines: [], from: null, to: null, showWarehouse: false };
+    group.lines.push(line);
+    if (line.order_number && !group.orders.includes(line.order_number)) group.orders.push(line.order_number);
+    if (line.expected_arrival) {
+      if (!group.from || line.expected_arrival < group.from) group.from = line.expected_arrival;
+      if (!group.to || line.expected_arrival > group.to) group.to = line.expected_arrival;
+    }
+    groups.set(key, group);
+  }
+  const result = [...groups.values()];
+  for (const group of result) {
+    group.orders.sort();
+    group.showWarehouse = result.filter((other) => other.supplier === group.supplier).length > 1;
+  }
+  return result.sort((a, b) => (a.from ?? "9999").localeCompare(b.from ?? "9999") || a.supplier.localeCompare(b.supplier, "ru"));
+}
+
+function expectedText(group: ExpectedGroup) {
+  if (!group.from) return "срок не указан";
+  return group.to && group.to !== group.from ? `ждём ${formatDate(group.from)} – ${formatDate(group.to)}` : `ждём ${formatDate(group.from)}`;
+}
+
+function ExpectedBlock({ groups, readOnly, loading, onAccept }: {
+  groups: ExpectedGroup[];
+  readOnly: boolean;
+  loading: boolean;
+  onAccept: (group: ExpectedGroup) => void;
+}) {
+  if (!groups.length) return null;
+  return (
+    <section className="panel expected-block" aria-label="Ожидаются">
+      <div className="upd-head"><h2>Ожидаются</h2><span className="upd-ids">{groups.length} {groups.length === 1 ? "поставщик" : "поставщиков"}</span></div>
+      <ul className="expected-list">
+        {groups.map((group) => (
+          <li key={group.key}>
+            <span className="expected-text">
+              <strong>{group.supplier}</strong>{group.showWarehouse ? ` (${group.warehouse})` : ""}
+              {group.orders.length > 0 && <> · {group.orders.join(", ")}</>}
+              {" · "}{group.lines.length} поз. · {expectedText(group)}
+            </span>
+            {!readOnly && <button type="button" className="primary small" disabled={loading} onClick={() => onAccept(group)}>Принять поставку</button>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+interface DeliveryRow {
+  line: ReceivingLine;
+  ticked: boolean;
+  document: string;
+  fact: string;
+  place: string;
+  deviation: DeliveryDeviation;
+  deviationQuantity: string;
+  expiry: string;
+}
+
+const DEVIATIONS: { value: DeliveryDeviation; label: string }[] = [
+  { value: "none", label: "—" },
+  { value: "brak", label: "Брак" },
+  { value: "peresort", label: "Пересорт" },
+  { value: "no_quality_doc", label: "Нет документа качества" },
+  { value: "expired", label: "Истёк срок" },
+];
+
+/** «Принять поставку»: все позиции поставщика отмечены, количества — только при расхождении, УПД — по желанию. */
+function DeliveryPanel({ group, onClose, onDone }: {
+  group: ExpectedGroup;
+  onClose: () => void;
+  onDone: (lines: ReceivingLine[]) => void;
+}) {
+  const [rows, setRows] = useState<DeliveryRow[]>(() => group.lines.map((line) => ({
+    line, ticked: true, document: "", fact: "", place: line.storage_location ?? "", deviation: "none", deviationQuantity: "", expiry: "",
+  })));
+  const [url, setUrl] = useState("");
+  const [number, setNumber] = useState("");
+  const [date, setDate] = useState("");
+  const [commonPlace, setCommonPlace] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [results, setResults] = useState<Map<string, ReceivingLine> | null>(null);
+  const placeHint = usePlaceHint(group.warehouse, commonPlace, rows.map((row) => row.place).filter(Boolean));
+  const chosen = rows.filter((row) => row.ticked);
+  const done = results !== null;
+
+  function edit(id: string, patch: Partial<DeliveryRow>) {
+    setRows((current) => current.map((row) => row.line.id === id ? { ...row, ...patch } : row));
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (busy || done || !chosen.length) return;
+    setBusy(true);
+    setError("");
+    try {
+      const lines: DeliveryLinePayload[] = chosen.map((row) => {
+        const place = row.place.trim() || commonPlace.trim();
+        return {
+          id: row.line.id,
+          version: row.line.version,
+          ...(row.document.trim() ? { document_quantity: row.document.trim() } : {}),
+          ...(row.fact.trim() ? { fact_quantity: row.fact.trim() } : {}),
+          ...(place ? { storage_location: place } : {}),
+          ...(row.deviation !== "none" ? { deviation: row.deviation } : {}),
+          ...(row.deviation === "brak" && row.deviationQuantity.trim() ? { deviation_quantity: row.deviationQuantity.trim() } : {}),
+          ...(row.deviation === "expired" && row.expiry ? { expiry_date: row.expiry } : {}),
+        };
+      });
+      const result = await receivingApi.acceptDelivery({
+        lines,
+        shipping_document_url: url.trim() || null,
+        document_number: number.trim(),
+        document_date: date || null,
+        warehouse: group.warehouse,
+      });
+      setResults(new Map(result.lines.map((line) => [line.id, line])));
+      onDone(result.lines);
+    } catch (reason) {
+      setError(reason instanceof ApiError && reason.status === 409
+        ? "Строки изменились — обновите список"
+        : failureText(reason, "Поставка не проведена"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="panel delivery-panel" onSubmit={(event) => void submit(event)}>
+      <div className="upd-head">
+        <h2>Поставка: {group.supplier}{group.showWarehouse ? ` (${group.warehouse})` : ""}</h2>
+        <span className="upd-ids">{group.warehouse} · {expectedText(group)}</span>
+      </div>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="upd-row delivery-head">
+        <DocumentField lineId={group.lines[0].id} kind="upd" label="Документ УПД" value={url} disabled={busy || done} inline onChange={setUrl} />
+        <label>УПД №<input value={number} disabled={busy || done} onChange={(event) => setNumber(event.target.value)} /></label>
+        <label>от<input type="date" value={date} disabled={busy || done} onChange={(event) => setDate(event.target.value)} /></label>
+        <label>Место для всех<input placeholder="1F4" title={placeHint.busy ? BUSY_TITLE : undefined} value={commonPlace} disabled={busy || done} onChange={(event) => setCommonPlace(event.target.value)} /></label>
+      </div>
+      <p className="page-sub">УПД по ЭДО можно внести позже — «Внести УПД».</p>
+      {/* После проведения место уже занято этой же поставкой — подсказка «здесь лежит другая позиция» ложная. */}
+      {!done && <PlaceHint {...placeHint} place={commonPlace} onPick={setCommonPlace} />}
+      <div className="table-wrap">
+        <table className="delivery-table">
+          <thead><tr><th /><th>Наименование</th><th>Заказ</th><th>Ждём</th><th>По УПД</th><th>Факт</th><th>Место</th><th>Отклонение</th>{done && <th>ГРН</th>}</tr></thead>
+          <tbody>
+            {rows.map((row) => {
+              const result = results?.get(row.line.id);
+              const locked = busy || done || !row.ticked;
+              return (
+                <tr key={row.line.id} className={row.ticked ? "" : "off"}>
+                  <td><input type="checkbox" aria-label={`Пришло: ${itemTitle(row.line)}`} checked={row.ticked} disabled={busy || done} onChange={(event) => edit(row.line.id, { ticked: event.target.checked })} /></td>
+                  <td className="name">{itemTitle(row.line)}</td>
+                  <td>{row.line.order_number ?? ""}</td>
+                  <td className="num">{row.line.ordered_quantity} {row.line.unit}</td>
+                  <td><input type="number" min="0.000001" step="any" className="qty" placeholder="как заказано" aria-label={`По УПД: ${itemTitle(row.line)}`} value={row.document} disabled={locked} onChange={(event) => edit(row.line.id, { document: event.target.value })} /></td>
+                  <td><input type="number" min="0.000001" step="any" className="qty" placeholder="как по УПД" aria-label={`Факт: ${itemTitle(row.line)}`} value={row.fact} disabled={locked} onChange={(event) => edit(row.line.id, { fact: event.target.value })} /></td>
+                  <td><input className="place" placeholder={commonPlace || "1F4"} aria-label={`Место: ${itemTitle(row.line)}`} value={row.place} disabled={locked} onChange={(event) => edit(row.line.id, { place: event.target.value })} /></td>
+                  <td className="deviation">
+                    <select aria-label={`Отклонение: ${itemTitle(row.line)}`} value={row.deviation} disabled={locked} onChange={(event) => edit(row.line.id, { deviation: event.target.value as DeliveryDeviation })}>
+                      {DEVIATIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                    </select>
+                    {row.deviation === "brak" && <input type="number" min="0.000001" step="any" className="qty" placeholder={`N ${row.line.unit}`} aria-label={`Брак, ${row.line.unit}: ${itemTitle(row.line)}`} value={row.deviationQuantity} disabled={locked} onChange={(event) => edit(row.line.id, { deviationQuantity: event.target.value })} />}
+                    {row.deviation === "expired" && <input type="date" aria-label={`Срок годности: ${itemTitle(row.line)}`} value={row.expiry} disabled={locked} onChange={(event) => edit(row.line.id, { expiry: event.target.value })} />}
+                  </td>
+                  {done && <td className="num">{row.ticked ? (result?.grn ? <strong>{result.grn}</strong> : <span className="status">{result?.status ?? "—"}</span>) : ""}{result && Number(result.backorder_quantity) > 0 && <span className="delivery-short">недовоз {result.backorder_quantity} {result.unit} → дозавоз</span>}</td>}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="header-actions">
+        {!done && <button type="submit" className="primary" disabled={busy || !chosen.length}>{busy ? "Проводим…" : `Провести поставку (${chosen.length} поз.)`}</button>}
+        <button type="button" className="secondary" disabled={busy} onClick={onClose}>{done ? "Закрыть" : "Отмена"}</button>
+      </div>
+    </form>
+  );
+}
+
+/** «Принято N позиций, ГРН присвоены; недовоз → дозавоз: …»; не принятые (брак, возврат) называются отдельно;
+ *  без УПД — пометка «УПД не приложен — придёт по ЭДО». */
+export function deliveryDoneText(lines: ReceivingLine[]) {
+  const accepted = lines.filter((line) => line.status === "Принято");
+  const rest = lines.filter((line) => line.status !== "Принято");
+  const backorders = lines.filter((line) => Number(line.backorder_quantity) > 0);
+  const parts = [`Принято ${pluralLines(accepted.length)}, ГРН присвоены`];
+  if (backorders.length) parts.push(`недовоз → дозавоз: ${backorders.map((line) => `${itemTitle(line)} ${line.backorder_quantity} ${line.unit}`).join(", ")}`);
+  if (rest.length) parts.push(`не приняты: ${rest.map((line) => `${itemTitle(line)} — ${line.status}`).join(", ")}`);
+  // Тот же вычисляемый `shipping_document_note`, что у одиночного ВК без УПД.
+  const pending = lines.find((line) => line.shipping_document_note)?.shipping_document_note;
+  if (pending) parts.push(`${pending} (внесите кнопкой «Внести УПД»)`);
+  return parts.join("; ");
+}
+
 /** `readOnly` — «режим просмотра» (ID-6): the queue is read; no inspection, placement or new ВК
  *  (SUPPLYMAP: «Приёмка — просмотр» has no canReceive). */
 export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {}) {
@@ -175,25 +393,64 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
   const [group, setGroup] = useState("order");
   const [updRows, setUpdRows] = useState<ReceivingLine[] | null>(null);
   const [notice, setNotice] = useState("");
+  const [chip, setChip] = useState("");
+  const [waiting, setWaiting] = useState<ReceivingLine[]>([]);
+  const [delivery, setDelivery] = useState<ExpectedGroup | null>(null);
+  const chipRef = useRef("");
+  chipRef.current = chip;
+  const requestSeq = useRef(0);
+
+  function queueQuery(after?: string): ReceivingQuery {
+    const chosen = QUEUE_CHIPS.find((item) => item.label === chipRef.current);
+    return { ...(chosen?.query ?? {}), ...(after ? { after } : {}) };
+  }
+
+  /** «Ожидаются» не зависит от отбора очереди: всё открытое, до 10 страниц по 200. */
+  async function loadWaiting() {
+    try {
+      const collected: ReceivingLine[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 10; page += 1) {
+        const result = await receivingApi.list({ preset: "open", limit: 200, after: cursor });
+        collected.push(...result.lines);
+        if (!result.next_cursor) break;
+        cursor = result.next_cursor;
+      }
+      setWaiting(collected);
+    } catch {
+      /* «Ожидаются» — подсказка над очередью: ошибка очереди ниже остаётся единственной */
+    }
+  }
+
+  /** Очередь и «Ожидаются» заново — после любого действия. */
+  async function refreshAll() {
+    const result = await receivingApi.list(queueQuery());
+    setLines(result.lines);
+    setNextCursor(result.next_cursor);
+    void loadWaiting();
+  }
 
   async function reload(after?: string) {
-    if (loading || busy) return;
+    if (after && (loading || busy)) return;
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError("");
     try {
-      const result = await receivingApi.list(after);
+      const result = await receivingApi.list(queueQuery(after));
+      if (seq !== requestSeq.current) return;
       setLines((current) => after
         ? [...new Map([...current, ...result.lines].map((line) => [line.id, line])).values()]
         : result.lines);
       setNextCursor(result.next_cursor);
+      if (!after) void loadWaiting();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось загрузить приёмку");
+      if (seq === requestSeq.current) setError(reason instanceof Error ? reason.message : "Не удалось загрузить приёмку");
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }
 
-  useEffect(() => { void reload(); }, []);
+  useEffect(() => { void reload(); }, [chip]);
 
   async function inspect(line: ReceivingLine, payload: Record<string, unknown>) {
     if (busy || loading) return;
@@ -203,9 +460,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       const done = await receivingApi.inspect(line.id, { version: line.version, ...payload });
       const assigned = (done.lines ?? [done.line]).filter((item) => item.grn);
       if (assigned.length) setNotice(`Присвоены ГРН: ${assigned.map((item) => `${item.legacy_id} — ${item.grn}`).join("; ")}`);
-      const result = await receivingApi.list();
-      setLines(result.lines);
-      setNextCursor(result.next_cursor);
+      await refreshAll();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Входной контроль не выполнен");
       throw reason;
@@ -220,9 +475,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     setError("");
     try {
       await receivingApi.place(line.id, line.version, location);
-      const result = await receivingApi.list();
-      setLines(result.lines);
-      setNextCursor(result.next_cursor);
+      await refreshAll();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Размещение не выполнено");
       throw reason;
@@ -238,9 +491,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     try {
       const result = await receivingApi.unpack(line.id, line.version, quantities);
       setNotice(`Разукомплектовано: ${result.lines.map((item) => `${item.legacy_id} — пакет ${item.package}, ${item.fact_quantity} ${item.unit}`).join("; ")}`);
-      const fresh = await receivingApi.list();
-      setLines(fresh.lines);
-      setNextCursor(fresh.next_cursor);
+      await refreshAll();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Разукомплектовка не выполнена");
       throw reason;
@@ -272,9 +523,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       setBusy("");
       setNotice(updDoneText(payload, selected.length));
       setUpdRows(null);
-      const result = await receivingApi.list();
-      setLines(result.lines);
-      setNextCursor(result.next_cursor);
+      await refreshAll();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "УПД не внесён");
     } finally {
@@ -289,9 +538,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     setError("");
     try {
       await receivingApi.openVkRevision(line.id, line.version);
-      const result = await receivingApi.list();
-      setLines(result.lines);
-      setNextCursor(result.next_cursor);
+      await refreshAll();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Новый ВК не открыт");
     } finally {
@@ -311,15 +558,22 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       {readOnly && <p className="page-sub">Приёмка открыта вам только на просмотр.</p>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {returning && <SupplierReturnPanel onDone={() => void reload()} onClose={() => setReturning(false)} />}
+      <ExpectedBlock groups={expectedGroups(waiting)} readOnly={readOnly} loading={loading || Boolean(busy)} onAccept={(group) => { setNotice(""); setUpdRows(null); setDelivery(group); }} />
+      {delivery && !readOnly && <DeliveryPanel key={delivery.key} group={delivery} onClose={() => setDelivery(null)} onDone={(done) => { setNotice(deliveryDoneText(done)); void refreshAll().catch(() => undefined); }} />}
       {updRows && <UpdPanel rows={updRows} busy={Boolean(busy)} onSubmit={(payload) => void attachDocuments(updRows, payload)} onClose={() => setUpdRows(null)} />}
       {notice && <div className="success-banner" role="status">{notice}</div>}
+      <div className="calendar-chips queue-chips" role="group" aria-label="Быстрый отбор">
+        <button type="button" className={`calendar-chip${chip ? "" : " active"}`} aria-pressed={!chip} onClick={() => setChip("")}>Все</button>
+        {QUEUE_CHIPS.map((item) => (
+          <button type="button" key={item.label} className={`calendar-chip${chip === item.label ? " active" : ""}`} aria-pressed={chip === item.label} onClick={() => setChip(chip === item.label ? "" : item.label)}>{item.label}</button>
+        ))}
+      </div>
       <DataTable
         rows={lines}
         columns={COLUMNS}
         rowKey={(line) => line.id}
-        storageKey="receiving-v2"
+        storageKey="receiving-v3"
         label="Очередь приёмки"
-        presets={PRESETS}
         groupBy={GROUPS[group]}
         groupLabel={group === "order" ? orderGroupLabel : undefined}
         exportName="Приёмка"

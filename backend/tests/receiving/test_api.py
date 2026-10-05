@@ -210,11 +210,16 @@ def test_new_vk_archives_line_and_queue_shows_both_rows(receiving_api):
     assert again.status_code == 422
     assert stale.status_code == 409
 
+    # «Архив ВК» is history: hidden from the work queue unless asked for, and last when shown.
     queue = client.get("/api/receiving").json()["lines"]
-    assert [(row["legacy_id"], row["status"]) for row in queue] == [
-        ("SM-20260921-01", "Архив ВК"),
+    assert [(row["legacy_id"], row["status"]) for row in queue] == [("SM-20260921-01-В2", "В пути")]
+    everything = client.get("/api/receiving?preset=all").json()["lines"]
+    assert [(row["legacy_id"], row["status"]) for row in everything] == [
         ("SM-20260921-01-В2", "В пути"),
+        ("SM-20260921-01", "Архив ВК"),
     ]
+    archived = client.get("/api/receiving", params={"status": "Архив ВК"}).json()["lines"]
+    assert [row["legacy_id"] for row in archived] == ["SM-20260921-01"]
 
 
 def test_historical_receipt_uses_document_date_for_verdict_but_today_for_grn(receiving_api):

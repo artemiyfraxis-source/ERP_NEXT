@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -20,6 +21,13 @@ from app.shared.print_sheet import PrintSheet
 
 from .domain import (
     ACT_KINDS,
+    DELIVERY_DEVIATIONS,
+    EXPIRED,
+    MANUAL_NONCONFORMITIES,
+    MISSING_QUALITY_DOCUMENT,
+    QUEUE_DEFAULT,
+    QUEUE_PRESETS,
+    WARNING_NONCONFORMITIES,
     InspectionInput,
     ReceivingLine,
     ReceivingStatus,
@@ -37,6 +45,7 @@ from .domain import (
     NOTIFY_TECHNOLOGIST,
     RECEIVING_FILE_PATH,
     SHIPPING_DOCUMENT_PENDING_NOTE,
+    refuse_backorder_remainder,
 )
 
 
@@ -49,10 +58,11 @@ def _notify_audiences(line: ReceivingLine) -> tuple[str, ...]:
 
 
 def _notify_nonconformity(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> None:
-    """Receiving.gs:757-788 `notifyNonconformityAlerts_`: a BLOCKING nonconformity after ВК (the line
-    is not «Принято»; «Излишек» alone does not block) goes at once to the technologist (брак) and/or
-    supply (everything else). One event per inspected line; SUPPLYMAP grouped a sheet run per person."""
-    if line.status is ReceivingStatus.ACCEPTED or not line.nonconformities:
+    """Receiving.gs:757-788 `notifyNonconformityAlerts_`: a nonconformity after ВК goes at once to the
+    technologist (брак) and/or supply (everything else). One event per inspected line; SUPPLYMAP grouped a
+    sheet run per person. A shortfall alerts although the line is «Принято» (owner, 05.10.2026); the
+    warnings alone («Излишек», no quality document) alert nobody."""
+    if not any(item not in WARNING_NONCONFORMITIES for item in line.nonconformities):
         return
     nature = ", ".join(line.nonconformities)
     waiting = (
@@ -81,6 +91,14 @@ class ReceivingRepository(Protocol):
         self,
         limit: int = 200,
         after_id: UUID | None = None,
+    ) -> Sequence[ReceivingLine]: ...
+    def work_queue(
+        self,
+        limit: int,
+        after_id: UUID | None,
+        *,
+        ranks: frozenset[int],
+        statuses: Sequence[ReceivingStatus] = (),
     ) -> Sequence[ReceivingLine]: ...
     def waiting_inspected_by(self, day: date, limit: int = 200) -> Sequence[ReceivingLine]: ...
     def awaiting_placement(self, limit: int = 500) -> Sequence[ReceivingLine]: ...
@@ -450,35 +468,99 @@ def inspect_receiving(command: InspectReceivingCommand, uow: UnitOfWork) -> Rece
                 str(command.inspection.quality_document_url or "").strip()
             ),
         )
-        inspected = current.inspect(
+        inspected = _inspect_line(
+            current,
             inspection,
-            command.actor,
+            uow,
+            actor=command.actor,
+            now=command.now,
             existing_grns=uow.receiving.all_grns(),
             existing_act_numbers=_act_numbers_for(inspection, uow),
             manual_grn_prefix=command.manual_grn_prefix,
         )
-        uow.receiving.add(inspected)
-        uow.audit.add(
-            AuditEvent(
-                id=uuid4(),
-                aggregate_id=inspected.id,
-                event_type="receiving.inspected",
-                actor=command.actor,
-                occurred_at=command.now,
-                details={
-                    "legacy_id": inspected.legacy_id,
-                    "from_status": current.status.value,
-                    "to_status": inspected.status.value,
-                    "verdict": inspected.verdict,
-                },
-            )
-        )
-        if current.status is ReceivingStatus.IN_TRANSIT:
-            _request_backorder(inspected, uow, command.now)
-        _notify_nonconformity(inspected, uow, command.now)
         result = _emit_warehouse_if_ready(inspected, uow, command.actor, command.now)
         uow.commit()
         return result
+
+
+def _inspect_line(
+    current: ReceivingLine,
+    inspection: InspectionInput,
+    uow: UnitOfWork,
+    *,
+    actor: Actor,
+    now: datetime,
+    existing_grns: Iterable[str],
+    existing_act_numbers: Iterable[str],
+    manual_grn_prefix: str | None,
+    audit_details: Mapping[str, object] | None = None,
+) -> ReceivingLine:
+    """One line's ВК inside the caller's transaction: verdict, ГРН and acts, the `-Д` backorder of a first
+    inspection, the nonconformity alert. The hand-over to the warehouse is the caller's."""
+    _guard_backorder_remainder(current, inspection, uow)
+    inspected = current.inspect(
+        inspection,
+        actor,
+        existing_grns=existing_grns,
+        existing_act_numbers=existing_act_numbers,
+        manual_grn_prefix=manual_grn_prefix,
+    )
+    uow.receiving.add(inspected)
+    uow.audit.add(
+        AuditEvent(
+            id=uuid4(),
+            aggregate_id=inspected.id,
+            event_type="receiving.inspected",
+            actor=actor,
+            occurred_at=now,
+            details={
+                "legacy_id": inspected.legacy_id,
+                "from_status": current.status.value,
+                "to_status": inspected.status.value,
+                "verdict": inspected.verdict,
+                **(audit_details or {}),
+            },
+        )
+    )
+    if current.status is ReceivingStatus.IN_TRANSIT:
+        _request_backorder(inspected, uow, now)
+    _notify_nonconformity(inspected, uow, now)
+    return inspected
+
+
+def _backorder_key(line: ReceivingLine) -> str:
+    # A `-ВN` revision re-inspects the same physical delivery: one backorder per lineage, never twice.
+    return f"receiving:{line.lineage_root_id}:backorder"
+
+
+def _guard_backorder_remainder(current: ReceivingLine, inspection: InspectionInput, uow: UnitOfWork) -> None:
+    """Once the `-Д` backorder of a delivery is ordered, its remainder is received on the `-Д` line: a
+    re-inspection (or a `-ВN` revision) may not take more than the УПД the backorder was computed from."""
+    message = uow.outbox.by_idempotency_key(_backorder_key(current))
+    if message is None:
+        return
+    source: ReceivingLine | None = current
+    while source is not None and source.document_quantity is None and source.revision_of_id is not None:
+        source = uow.receiving.get(source.revision_of_id)
+    if source is None or source.document_quantity is None:
+        return
+    document_cap = source.document_quantity
+    fact_cap = max(document_cap, source.fact_quantity or document_cap)
+    base = current.base_legacy_id
+    pattern = re.compile(rf"{re.escape(base)}-Д\d*")
+    backorders = sorted(
+        value for value in uow.receiving.legacy_ids_starting_with(f"{base}-Д") if pattern.fullmatch(value)
+    )
+    refuse_backorder_remainder(
+        legacy_id=current.legacy_id,
+        unit=current.unit,
+        backorder_quantity=Decimal(str(message.payload.get("backorder_quantity") or "0")),
+        backorder_legacy_ids=backorders,
+        document_cap=document_cap,
+        fact_cap=fact_cap,
+        document_quantity=inspection.document_quantity,
+        fact_quantity=inspection.fact_quantity,
+    )
 
 
 def _request_backorder(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> None:
@@ -486,8 +568,7 @@ def _request_backorder(line: ReceivingLine, uow: UnitOfWork, now: datetime) -> N
     # re-inspections of «Ожидание»/«Карантин» never do. Procurement turns it into the paid `-Д` line.
     if line.backorder_quantity <= 0:
         return
-    # A `-ВN` revision re-inspects the same physical delivery: one backorder per lineage, never twice.
-    key = f"receiving:{line.lineage_root_id}:backorder"
+    key = _backorder_key(line)
     if uow.outbox.by_idempotency_key(key) is not None:
         return
     uow.outbox.add(
@@ -546,6 +627,15 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
         if current.version != command.expected_version:
             raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
         quantities = [batch_quantity(batch) for batch in command.batches]
+        _guard_backorder_remainder(
+            current,
+            replace(
+                command.batches[0],
+                document_quantity=sum(quantities, Decimal("0")),
+                fact_quantity=sum((batch.fact_quantity for batch in command.batches), Decimal("0")),
+            ),
+            uow,
+        )
         parts = current.split_into_batches(
             quantities,
             existing_legacy_ids=uow.receiving.legacy_ids_starting_with(current.legacy_id),
@@ -835,6 +925,25 @@ def attach_shipping_documents(command: AttachShippingDocumentsCommand, uow: Unit
         return results
 
 
+def _place_line(
+    current: ReceivingLine, location: str, uow: UnitOfWork, actor: Actor, now: datetime
+) -> ReceivingLine:
+    placed = current.place(location)
+    if placed != current:
+        uow.receiving.add(placed)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=placed.id,
+                event_type="receiving.placed",
+                actor=actor,
+                occurred_at=now,
+                details={"grn": placed.grn, "storage_location": placed.storage_location},
+            )
+        )
+    return placed
+
+
 def place_receiving(command: PlaceReceivingCommand, uow: UnitOfWork) -> ReceivingLine:
     with uow:
         current = uow.receiving.get(command.line_id)
@@ -842,24 +951,209 @@ def place_receiving(command: PlaceReceivingCommand, uow: UnitOfWork) -> Receivin
             raise KeyError(f"Receiving line not found: {command.line_id}")
         if current.version != command.expected_version:
             raise ConcurrentReceivingUpdate("Строка приёмки изменилась после загрузки формы")
-        placed = current.place(command.storage_location)
-        if placed != current:
-            uow.receiving.add(placed)
-            uow.audit.add(
-                AuditEvent(
-                    id=uuid4(),
-                    aggregate_id=placed.id,
-                    event_type="receiving.placed",
-                    actor=command.actor,
-                    occurred_at=command.now,
-                    details={"grn": placed.grn, "storage_location": placed.storage_location},
-                )
-            )
+        placed = _place_line(current, command.storage_location, uow, command.actor, command.now)
         result = _emit_warehouse_if_ready(placed, uow, command.actor, command.now)
         if result == current:
             return result
         uow.commit()
         return result
+
+
+MAX_DELIVERY_LINES = 200
+DELIVERY_STATUSES = frozenset({ReceivingStatus.IN_TRANSIT, ReceivingStatus.WAITING})
+
+
+@dataclass(frozen=True)
+class DeliveryLineInput:
+    """One position of a delivery. Quantities are typed only on a discrepancy (owner, 05.10.2026): no УПД
+    quantity → the ordered one, no fact → the УПД one."""
+
+    line_id: UUID
+    expected_version: int
+    document_quantity: Decimal | None = None
+    fact_quantity: Decimal | None = None
+    storage_location: str | None = None
+    deviation: str = "none"
+    deviation_quantity: Decimal | None = None
+    expiry_date: date | None = None
+    series: str = ""
+    manual_grn_prefix: str | None = None
+
+
+@dataclass(frozen=True)
+class AcceptDeliveryCommand:
+    """«Провести поставку»: one УПД of one supplier to one warehouse, any number of its orders' positions."""
+
+    lines: tuple[DeliveryLineInput, ...]
+    document_number: str
+    document_date: date | None
+    actor: Actor
+    now: datetime
+    shipping_document_url: str | None = None
+    warehouse: str | None = None
+
+
+@dataclass(frozen=True)
+class DeliveryResult:
+    delivery_id: UUID
+    lines: tuple[ReceivingLine, ...]
+
+
+def _delivery_inspection(
+    current: ReceivingLine, item: DeliveryLineInput, command: AcceptDeliveryCommand
+) -> InspectionInput:
+    nature = DELIVERY_DEVIATIONS.get(str(item.deviation or "none"))
+    if nature is None:
+        raise ReceivingValidationError("Неизвестный вид отклонения")
+    has_upd = bool(command.document_number or command.document_date or command.shipping_document_url or current.shipping_document_url or current.document_number)
+    document = item.document_quantity if item.document_quantity is not None else current.ordered_quantity
+    fact = item.fact_quantity if item.fact_quantity is not None else document
+    today = command.now.date()
+    expiry = item.expiry_date or current.expiry_date
+    if nature == EXPIRED and (expiry is None or expiry >= today):
+        raise ReceivingValidationError("Отклонение «срок годности истёк» — укажите истёкший срок годности")
+    description = ""
+    if item.deviation_quantity is not None:
+        if not nature:
+            raise ReceivingValidationError("Количество отклонения указано без вида отклонения")
+        if item.deviation_quantity <= 0 or item.deviation_quantity > fact:
+            raise ReceivingValidationError("Количество отклонения — больше нуля и не больше факта")
+        description = f"{nature}: {format(item.deviation_quantity.normalize(), 'f')} {current.unit}"
+    return InspectionInput(
+        fact_quantity=fact,
+        document_quantity=document,
+        ordered_quantity=current.ordered_quantity,
+        # Optional, as in a single ВК: without a УПД the line is «Принято» with SHIPPING_DOCUMENT_PENDING_NOTE
+        # (ReceivingLine.shipping_document_pending) until «Внести УПД» adds it.
+        has_shipping_document=has_upd,
+        quality_document_required=current.quality_document_required,
+        # The receiver marks a missing certificate; otherwise it came with the goods.
+        quality_document_present=nature != MISSING_QUALITY_DOCUMENT,
+        expiry_date=expiry,
+        inspection_date=today,
+        manual_nonconformities=(nature,) if nature in MANUAL_NONCONFORMITIES else (),
+        disposition=current.disposition,
+        shipping_document_url=command.shipping_document_url or current.shipping_document_url,
+        quality_document_url=current.quality_document_url,
+        series=item.series,
+        document_number=command.document_number,
+        document_date=command.document_date,
+        note=current.inspection_note,
+        manufacture_date=current.manufacture_date,
+        nonconformity_description=description,
+    )
+
+
+def accept_delivery(command: AcceptDeliveryCommand, uow: UnitOfWork) -> DeliveryResult:
+    """«Провести поставку» in one transaction, all or nothing: every position gets its own ВК (acts, ГРН, the
+    `-Д` backorder of a недовоз, the alert), the place on the shelf when given, and the hand-over to the
+    warehouse under its own idempotency key. A stale version anywhere refuses the whole delivery, so a
+    repeated request changes nothing."""
+    if not command.lines:
+        raise ReceivingValidationError("Выберите позиции поставки")
+    if len(command.lines) > MAX_DELIVERY_LINES:
+        raise ReceivingValidationError(f"В одной поставке не более {MAX_DELIVERY_LINES} позиций")
+    if len({item.line_id for item in command.lines}) != len(command.lines):
+        raise ReceivingValidationError("Позиция указана в поставке дважды")
+    command = replace(command, document_number=str(command.document_number or "").strip())
+    with uow:
+        loaded: list[ReceivingLine] = []
+        for item in command.lines:
+            current = uow.receiving.get(item.line_id)
+            if current is None:
+                raise KeyError(f"Receiving line not found: {item.line_id}")
+            if current.version != item.expected_version:
+                raise ConcurrentReceivingUpdate(
+                    f"Позиция {current.legacy_id} изменилась после загрузки формы — обновите поставку"
+                )
+            loaded.append(current)
+        for current in loaded:
+            if current.status not in DELIVERY_STATUSES or current.warehouse_event_emitted:
+                raise ReceivingValidationError(
+                    f"{current.legacy_id}: статус «{current.status.value}» — поставкой проводятся только "
+                    "позиции «В пути» и «Ожидание»"
+                )
+            if command.warehouse and current.warehouse != command.warehouse:
+                raise ReceivingValidationError(
+                    f"{current.legacy_id}: склад «{current.warehouse}», а поставка — на «{command.warehouse}»"
+                )
+        warehouses = sorted({current.warehouse for current in loaded})
+        if len(warehouses) > 1:
+            raise ReceivingValidationError(f"В одной поставке позиции разных складов: {', '.join(warehouses)}")
+        suppliers = {current.supplier.strip().casefold(): current.supplier.strip() for current in loaded}
+        if len(suppliers) > 1:
+            raise ReceivingValidationError(
+                f"В одной поставке позиции разных поставщиков: {', '.join(sorted(suppliers.values()))}"
+            )
+        delivery_id = uuid4()
+        today = command.now.date()
+        grns = list(uow.receiving.all_grns())
+        acts = list(uow.receiving.act_numbers_with_prefixes(act_number_prefix(kind, today) for kind in ACT_KINDS))
+        results: list[ReceivingLine] = []
+        placed = 0
+        for current, item in zip(loaded, command.lines):
+            try:
+                inspected = _inspect_line(
+                    current,
+                    _delivery_inspection(current, item, command),
+                    uow,
+                    actor=command.actor,
+                    now=command.now,
+                    existing_grns=grns,
+                    existing_act_numbers=acts,
+                    manual_grn_prefix=item.manual_grn_prefix,
+                    audit_details={"delivery_id": str(delivery_id)},
+                )
+                grns.append(inspected.grn)
+                acts.extend(number for number, _ in (inspected.act(kind) for kind in ACT_KINDS) if number)
+                line = inspected
+                # A line held back (брак → «Ожидание», пересорт → «Возврат») is not placed: its place waits.
+                if item.storage_location and inspected.status is ReceivingStatus.ACCEPTED:
+                    line = _place_line(inspected, item.storage_location, uow, command.actor, command.now)
+                    placed += 1
+            except ReceivingValidationError as error:
+                text = str(error)
+                raise ReceivingValidationError(
+                    text if text.startswith(current.legacy_id) else f"{current.legacy_id}: {text}"
+                ) from error
+            results.append(_emit_warehouse_if_ready(line, uow, command.actor, command.now))
+        counts: dict[str, int] = {}
+        for line in results:
+            counts[line.status.value] = counts.get(line.status.value, 0) + 1
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=delivery_id,
+                event_type="receiving.delivery_accepted",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={
+                    "document_number": command.document_number,
+                    "document_date": command.document_date.isoformat() if command.document_date else None,
+                    "shipping_document_url": command.shipping_document_url,
+                    "supplier": next(iter(suppliers.values())),
+                    "warehouse": warehouses[0],
+                    "lines": [
+                        {
+                            "id": str(line.id),
+                            "legacy_id": line.legacy_id,
+                            "status": line.status.value,
+                            "grn": line.grn,
+                            "accepted_quantity": str(line.accepted_quantity),
+                        }
+                        for line in results
+                    ],
+                    "counts": {
+                        "lines": len(results),
+                        "statuses": counts,
+                        "placed": placed,
+                        "sent_to_warehouse": sum(1 for line in results if line.warehouse_event_emitted),
+                    },
+                },
+            )
+        )
+        uow.commit()
+    return DeliveryResult(delivery_id=delivery_id, lines=tuple(results))
 
 
 def quarantine_overdue_waiting(now: datetime, uow: UnitOfWork, *, limit: int = 200) -> list[ReceivingLine]:
@@ -963,11 +1257,25 @@ def receiving_queue(
     *,
     limit: int = 200,
     after_id: UUID | None = None,
+    preset: str | None = None,
+    statuses: Sequence[str] = (),
 ) -> list[ReceivingLine]:
+    """The receiver's work queue: open deliveries first (В пути, Ожидание, Карантин), then «Принято» not yet
+    on stock, then the rest; «Архив ВК» only when a preset or a status asks for it."""
+    if preset is not None and preset not in QUEUE_PRESETS:
+        raise ReceivingValidationError("Неизвестный отбор очереди")
+    try:
+        wanted = tuple(ReceivingStatus(str(value).strip()) for value in statuses if str(value).strip())
+    except ValueError as error:
+        raise ReceivingValidationError("Неизвестный статус приёмки") from error
+    if preset is not None:
+        ranks = QUEUE_PRESETS[preset]
+    else:
+        ranks = QUEUE_PRESETS["all"] if wanted else QUEUE_DEFAULT
     with uow:
         if after_id is not None and uow.receiving.get(after_id) is None:
             raise KeyError(f"Receiving cursor not found: {after_id}")
-        return list(uow.receiving.queue(limit, after_id))
+        return list(uow.receiving.work_queue(limit, after_id, ranks=ranks, statuses=wanted))
 
 
 def _display_number(value: Decimal) -> str:
