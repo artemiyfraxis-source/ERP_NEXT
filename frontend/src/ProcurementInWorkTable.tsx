@@ -1,6 +1,7 @@
 import { Fragment, useRef, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
 import { ApiError, failureText, procurementApi, type ProcurementLine } from "./api";
 import { selectRange } from "./bulk";
+import { readSaved, writeSaved, type Saved } from "./DataTable";
 import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
 import { RowMenu } from "./ProcurementRowMenu";
@@ -79,6 +80,11 @@ export function inWorkDraftOf(line: ProcurementLine): InWorkDraft {
 }
 
 const READY = "Готов к запросу";
+/** Группа открыта сама, пока в ней не больше стольких строк; больше — свёрнута, в ней нет полей ввода. */
+export const OPEN_GROUP_LIMIT = 20;
+export const GROUPS_KEY = "procurement-inwork-groups";
+type GroupChoice = Record<string, boolean>;
+const readChoice = (): GroupChoice => (readSaved(GROUPS_KEY) as Saved & { groups?: GroupChoice }).groups ?? {};
 export const NO_SUPPLIER = "Без поставщика";
 const URGENT = /сроч/i;
 
@@ -214,10 +220,18 @@ export function ProcurementInWorkTable({
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const anchor = useRef<string | null>(null);
+  // Выбор человека «открыта / свёрнута» по группе; без выбора — по числу строк.
+  const [choice, setChoice] = useState<GroupChoice>(readChoice);
 
   const groups = groupBySupplier(lines);
-  // Строки в порядке на экране: по ним идут вставка из Excel и выбор Shift-диапазоном.
-  const ordered = groups.flatMap((group) => group.lines);
+  const isOpenGroup = (group: Group) => choice[group.key] ?? group.lines.length <= OPEN_GROUP_LIMIT;
+  function toggleGroup(group: Group) {
+    const next = { ...choice, [group.key]: !isOpenGroup(group) };
+    setChoice(next);
+    writeSaved(GROUPS_KEY, { ...readSaved(GROUPS_KEY), groups: next } as Saved);
+  }
+  // Строки в порядке на экране (только открытых групп): по ним идут вставка из Excel и выбор Shift-диапазоном.
+  const ordered = groups.filter(isOpenGroup).flatMap((group) => group.lines);
   const ids = new Set(ordered.map((line) => line.id));
   const chosen = ordered.filter((line) => selected.has(line.id));
   const chosenReady = chosen.filter((line) => line.status === READY);
@@ -442,20 +456,26 @@ export function ProcurementInWorkTable({
               {groups.map((group) => {
                 const groupDirty = group.lines.some((line) => dirtyFields(line).length > 0);
                 const groupReady = group.lines.filter((line) => line.status === READY);
+                const groupOpen = isOpenGroup(group);
+                const groupEdited = group.lines.filter((line) => dirtyFields(line).length > 0).length;
                 const requestTitle = groupDirty
                   ? "Есть несохранённые правки — нажмите «Сохранить всё»"
                   : groupReady.length ? undefined : "В группе нет строк «Готов к запросу» — заполните поставщика, кол-во и ед.";
                 return (
                   <Fragment key={group.key || "none"}>
-                    <tr className="group-row">
+                    <tr className="group-row fold-head" onClick={() => toggleGroup(group)}>
                       <td className="group-cell" colSpan={COLUMN_COUNT}>
                         <div className="group-line">
-                          <span className="group-title">{group.title}</span>
+                          <button type="button" className="group-toggle" aria-expanded={groupOpen} aria-label={`Группа ${group.title}`} onClick={(event) => { event.stopPropagation(); toggleGroup(group); }}>
+                            <span className="caret" aria-hidden="true">{groupOpen ? "▾" : "▸"}</span>
+                            <span className="group-title">{group.title}</span>
+                          </button>
                           <span className="group-meta">
                             {positionsWord(group.lines.length)}{group.key ? ` · ${groupSum(group)} по расчёту` : ""}
+                            {groupEdited > 0 && ` · изменено: ${groupEdited}`}
                           </span>
                           {group.key && (
-                            <span className="group-actions">
+                            <span className="group-actions" onClick={(event) => event.stopPropagation()}>
                               <button
                                 type="button" className="primary small" title={requestTitle}
                                 disabled={disabled || saving || groupDirty || !groupReady.length}
@@ -468,7 +488,7 @@ export function ProcurementInWorkTable({
                         </div>
                       </td>
                     </tr>
-                    {group.lines.map((line) => {
+                    {groupOpen && group.lines.map((line) => {
                 const rowIndex = ordered.indexOf(line);
                 const covered = coveredOf(line);
                 const dirty = new Set(dirtyFields(line));

@@ -1987,6 +1987,8 @@ td.group-cell { height: 32px; padding: 0 10px; background: var(--accent); color:
 .group-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .group-title { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .group-meta { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.buy-grid tr.fold-head { cursor: pointer; }
+.buy-grid tr.fold-head:hover > td.group-cell { background: color-mix(in srgb, var(--primary) 8%, var(--accent)); }
 .group-actions { margin-left: auto; display: inline-flex; gap: 6px; flex: none; }
 .buy-grid tbody tr.group-row:hover > td.group-cell:not(.edit):not(.dirty) { background: var(--accent); }
 .buy-grid td.num.ro { text-align: right; font-variant-numeric: tabular-nums; }
