@@ -143,7 +143,8 @@ def test_documents_wait_and_confirmed_defect_goes_to_quarantine():
     assert defect.nonconformity_act_required is True
 
 
-def test_shortage_creates_backorder_and_supplier_complaint():
+def test_shortage_is_accepted_by_fact_with_backorder_and_supplier_complaint():
+    # Owner, 05.10.2026: недовоз and недостача no longer hold the good quantity back.
     result = inspect_delivery(
         inspection(
             fact_quantity=Decimal("7"),
@@ -152,10 +153,40 @@ def test_shortage_creates_backorder_and_supplier_complaint():
         )
     )
 
-    assert result.status is ReceivingStatus.WAITING
+    assert result.status is ReceivingStatus.ACCEPTED
+    assert result.verdict == "Годен"
+    assert result.accepted_quantity == Decimal("7")
+    assert result.nonconformities == ("Недостача (факт < УПД)", "Недовоз (УПД < заказ)")
     assert result.backorder_quantity == Decimal("2")
     assert result.complaint_required is True
     assert result.nonconformity_act_required is True
+
+
+def test_missing_quality_document_is_a_warning_not_a_block():
+    # Owner, 05.10.2026: the certificate is not mandatory — the line is accepted, the gap stays on it and the act.
+    result = inspect_delivery(inspection(quality_document_required=True, quality_document_present=False))
+
+    assert result.status is ReceivingStatus.ACCEPTED
+    assert result.nonconformities == ("Отсутствие / несоответствие документа по качеству",)
+    assert result.nonconformity_act_required is False and result.complaint_required is False
+    # Together with a real block the line still waits — for the other reason.
+    defect = inspect_delivery(
+        inspection(
+            quality_document_required=True,
+            manual_nonconformities=("Механическое повреждение / брак",),
+        )
+    )
+    assert defect.status is ReceivingStatus.WAITING
+
+
+def test_shortfall_with_a_defect_still_waits_and_expiry_only_with_a_date():
+    defect = inspect_delivery(
+        inspection(fact_quantity=Decimal("8"), manual_nonconformities=("Механическое повреждение / брак",))
+    )
+    no_date = inspect_delivery(inspection(expiry_date=None))
+
+    assert defect.status is ReceivingStatus.WAITING
+    assert no_date.status is ReceivingStatus.ACCEPTED
 
 
 def test_invalid_quantities_are_rejected():

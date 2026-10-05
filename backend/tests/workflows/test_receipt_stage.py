@@ -57,8 +57,9 @@ def test_receipt_moves_a_paid_line_forward_only(db):
 def test_a_nonconformity_is_quarantine_and_an_offline_line_is_left_alone(db):
     _, line = paid_procurement_line(db)
     expected = dispatch_next_receiving_expected(NOW, db.receiving())
-    short = inspect(db, expected, "7.5")
-    assert short.status is ReceivingStatus.WAITING
+    # A missing УПД still holds the line in «Ожидание» (a shortfall no longer does, owner 05.10.2026).
+    waiting = inspect(db, expected, "10", shipping_document_url=None, has_shipping_document=False)
+    assert waiting.status is ReceivingStatus.WAITING
 
     assert sync(db) == 1
     assert procurement_status(db, line.id) is ProcurementStatus.QUARANTINE
@@ -68,7 +69,7 @@ def test_a_nonconformity_is_quarantine_and_an_offline_line_is_left_alone(db):
         current = uow.procurement.get(line.id)
         uow.procurement.add(replace(current, status=ProcurementStatus.APPROVAL, version=current.version + 1))
         uow.commit()
-    inspect(db, short, "10")
+    inspect(db, waiting, "10")
     assert sync(db) == 0
     assert procurement_status(db, line.id) is ProcurementStatus.APPROVAL
 

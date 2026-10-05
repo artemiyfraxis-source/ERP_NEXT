@@ -4,18 +4,29 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, func, or_, select, text
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, case, func, or_, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.identity import Actor
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
 from .application import StoredReceivingFile
-from .domain import EXPECTED_ARRIVAL_FOLLOWS, ReceivingLine, ReceivingStatus
+from .domain import (
+    EXPECTED_ARRIVAL_FOLLOWS,
+    QUEUE_ARCHIVE,
+    QUEUE_DONE,
+    QUEUE_IN_TRANSIT,
+    QUEUE_QUARANTINE,
+    QUEUE_TO_STOCK,
+    QUEUE_WAITING,
+    ReceivingLine,
+    ReceivingStatus,
+    queue_rank,
+)
 
 
 class ReceivingLineRow(Base):
@@ -294,6 +305,25 @@ class SqlAlchemyReceivingFileRepository:
         ), row.content
 
 
+def _queue_rank_sql():
+    """SQL twin of domain.queue_rank."""
+    status = ReceivingLineRow.status
+    return case(
+        (status == ReceivingStatus.IN_TRANSIT.value, QUEUE_IN_TRANSIT),
+        (status == ReceivingStatus.WAITING.value, QUEUE_WAITING),
+        (status == ReceivingStatus.QUARANTINE.value, QUEUE_QUARANTINE),
+        (
+            and_(
+                status == ReceivingStatus.ACCEPTED.value,
+                ReceivingLineRow.warehouse_event_emitted.is_(False),
+            ),
+            QUEUE_TO_STOCK,
+        ),
+        (status == ReceivingStatus.VK_ARCHIVE.value, QUEUE_ARCHIVE),
+        else_=QUEUE_DONE,
+    )
+
+
 class SqlAlchemyReceivingRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -329,6 +359,40 @@ class SqlAlchemyReceivingRepository:
             )
         rows = self.session.scalars(
             statement.order_by(ReceivingLineRow.created_at, ReceivingLineRow.id).limit(limit)
+        )
+        return [_domain(row) for row in rows]
+
+    def work_queue(
+        self,
+        limit: int,
+        after_id: UUID | None,
+        *,
+        ranks: frozenset[int],
+        statuses: Sequence[ReceivingStatus] = (),
+    ) -> list[ReceivingLine]:
+        """Keyset pages over (queue rank, created_at, id); the rank of the cursor is the cursor line's now."""
+        rank = _queue_rank_sql()
+        statement = select(ReceivingLineRow).where(rank.in_(sorted(ranks)))
+        if statuses:
+            statement = statement.where(ReceivingLineRow.status.in_([status.value for status in statuses]))
+        if after_id is not None:
+            cursor = self.session.get(ReceivingLineRow, after_id)
+            if cursor is None:
+                return []
+            cursor_rank = queue_rank(ReceivingStatus(cursor.status), cursor.warehouse_event_emitted)
+            statement = statement.where(
+                or_(
+                    rank > cursor_rank,
+                    and_(rank == cursor_rank, ReceivingLineRow.created_at > cursor.created_at),
+                    and_(
+                        rank == cursor_rank,
+                        ReceivingLineRow.created_at == cursor.created_at,
+                        ReceivingLineRow.id > cursor.id,
+                    ),
+                )
+            )
+        rows = self.session.scalars(
+            statement.order_by(rank, ReceivingLineRow.created_at, ReceivingLineRow.id).limit(limit)
         )
         return [_domain(row) for row in rows]
 

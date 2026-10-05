@@ -43,21 +43,30 @@ def test_clean_delivery_gets_only_the_incoming_act(erp):
     assert not first.nc_act_number and not first.complaint_act_number and not first.use_permit_number
 
 
-def test_shortage_issues_nonconformity_and_complaint_then_release_issues_use_permit(erp):
+def test_shortage_is_accepted_with_nonconformity_and_complaint_acts(erp):
+    # Owner, 05.10.2026: недостача no longer holds the 8 that came — «Принято» by fact, АН and РК issued.
     receiving, _, _ = erp
     line = consume_receiving_expected(expected_message(), receiving())
     short = run(receiving, line, inspection("8"))
 
-    assert short.status.value == "Ожидание"
+    assert short.status.value == "Принято"
+    assert short.accepted_quantity == 8
     assert short.nc_act_number == "АН-20260921-01"
     assert short.complaint_act_number == "РК-20260921-01"
+    assert not short.use_permit_number
 
-    # Довезли: повторный контроль без несоответствий — выход из «Ожидания» в «Принято» с РИ.
-    released = run(receiving, short, inspection())
+
+def test_release_from_waiting_issues_use_permit(erp):
+    receiving, _, _ = erp
+    line = consume_receiving_expected(expected_message(), receiving())
+    waiting = run(receiving, line, replace(inspection(), shipping_document_url=None))
+    assert waiting.status.value == "Ожидание"
+
+    # УПД принесли: повторный контроль без несоответствий — выход из «Ожидания» в «Принято» с РИ.
+    released = run(receiving, waiting, inspection())
     assert released.status.value == "Принято"
     assert released.use_permit_number == "РИ-20260921-01"
-    assert released.vk_act_number == short.vk_act_number
-    assert released.nc_act_number == short.nc_act_number
+    assert released.vk_act_number == waiting.vk_act_number
 
 
 def test_historical_receipt_dates_acts_by_the_upd(erp):

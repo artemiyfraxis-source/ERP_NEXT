@@ -17,7 +17,9 @@ from app.shared.http_auth import Principal, receiving_edit_principal, receiving_
 from app.shared.unit_mass import mass_fields_from
 
 from .application import (
+    AcceptDeliveryCommand,
     AttachReceivingFileCommand,
+    DeliveryLineInput,
     AttachShippingDocumentsCommand,
     ConcurrentReceivingUpdate,
     InspectBatchesCommand,
@@ -29,6 +31,7 @@ from .application import (
     SupplierReturnItem,
     UnitOfWork,
     UnpackCommand,
+    accept_delivery,
     attach_receiving_file,
     attach_shipping_documents,
     inspect_receiving,
@@ -130,6 +133,33 @@ class DocumentsPayload(BaseModel):
     shipping_document_url: str | None = Field(default=None, max_length=4096)
     document_number: str = Field(default="", max_length=128)
     document_date: date | None = None
+
+    @field_validator("shipping_document_url")
+    @classmethod
+    def validate_document_url(cls, value: str | None) -> str | None:
+        return normalize_document_url(value)
+
+
+class DeliveryLinePayload(BaseModel):
+    id: UUID
+    version: int = Field(ge=1)
+    # Typed only on a discrepancy: no УПД quantity → the ordered one, no fact → the УПД one.
+    document_quantity: Quantity | None = None
+    fact_quantity: Quantity | None = None
+    storage_location: str | None = Field(default=None, max_length=16)
+    deviation: Literal["none", "brak", "peresort", "no_quality_doc", "expired"] = "none"
+    deviation_quantity: Quantity | None = None
+    expiry_date: date | None = None
+    series: str = Field(default="", max_length=255)
+    manual_grn_prefix: str | None = Field(default=None, max_length=8)
+
+
+class DeliveryPayload(BaseModel):
+    lines: list[DeliveryLinePayload] = Field(min_length=1, max_length=200)
+    shipping_document_url: str | None = Field(default=None, max_length=4096)
+    document_number: str = Field(min_length=1, max_length=128)
+    document_date: date
+    warehouse: Literal["ЦАР", "ЖУК"] | None = None
 
     @field_validator("shipping_document_url")
     @classmethod
@@ -275,9 +305,15 @@ def queue(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     after: UUID | None = None,
+    preset: Literal["open", "to_stock", "done", "archive", "all"] | None = None,
+    status: Annotated[list[str] | None, Query(max_length=6)] = None,
 ) -> dict:
+    """Open deliveries first; `preset` (open / to_stock / done / archive / all) or `status` (repeatable,
+    the Russian status) filter on the server. «Архив ВК» only on request."""
     lines = _run(
-        lambda: receiving_queue(uow_factory(), limit=limit + 1, after_id=after)
+        lambda: receiving_queue(
+            uow_factory(), limit=limit + 1, after_id=after, preset=preset, statuses=tuple(status or ())
+        )
     )
     page = lines[:limit]
     return {
@@ -472,6 +508,45 @@ def attach_documents(
         )
     )
     return {"lines": [_result(line) for line in lines]}
+
+
+@router.post("/deliveries")
+def accept_delivery_endpoint(
+    payload: DeliveryPayload,
+    principal: Annotated[Principal, Depends(receiving_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(receiving_uow_factory)],
+) -> dict:
+    """«Провести поставку»: one УПД, its positions inspected, placed and handed to the warehouse at once."""
+    result = _run(
+        lambda: accept_delivery(
+            AcceptDeliveryCommand(
+                lines=tuple(
+                    DeliveryLineInput(
+                        line_id=item.id,
+                        expected_version=item.version,
+                        document_quantity=item.document_quantity,
+                        fact_quantity=item.fact_quantity,
+                        storage_location=(item.storage_location or "").strip() or None,
+                        deviation=item.deviation,
+                        deviation_quantity=item.deviation_quantity,
+                        expiry_date=item.expiry_date,
+                        series=item.series.strip(),
+                        manual_grn_prefix=item.manual_grn_prefix,
+                    )
+                    for item in payload.lines
+                ),
+                document_number=payload.document_number,
+                document_date=payload.document_date,
+                shipping_document_url=payload.shipping_document_url,
+                warehouse=payload.warehouse,
+                actor=principal.actor,
+                now=now,
+            ),
+            uow_factory(),
+        )
+    )
+    return {"delivery_id": str(result.delivery_id), "lines": [_result(line) for line in result.lines]}
 
 
 @router.post("/{line_id}/unpack")
