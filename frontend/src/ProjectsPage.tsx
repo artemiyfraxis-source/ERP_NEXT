@@ -18,6 +18,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { PendingLesson } from "./AssemblyDrafts";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
+import { openHarness } from "./HarnessPage";
 import { ProjectStatus } from "./ProjectStatus";
 import { ProjectTrack } from "./ProjectTrack";
 import { supplyApi, type SupplyLine } from "./supplyApi";
@@ -114,7 +115,7 @@ function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange }: 
     <div className="seg-tabs sub" role="tablist" aria-label="Сборка">{card.assemblies.map((item) =>
       <button key={item.index} role="tab" aria-selected={item.index === index} className={item.index === index ? "on" : ""} onClick={() => pick(item.index)}>{item.index}</button>)}</div>
     {!index && <div className="empty">Выбери сборку — генератор откроется здесь.</div>}
-    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}</p>}
+    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}{assembly.kd.some((document) => document.kind === "harness") && <> · <button className="link-button" onClick={() => openHarness(card.project, assembly.index)}>Чертёж жгута</button></>}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
     {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange}
@@ -525,15 +526,22 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
     catch (reason) { setError(message(reason, "КД не отвязана")); }
   }
 
-  const kdCell = (assembly: KitsetAssembly) => <>
-    {assembly.kd.map((document) => <div key={document.id} className="kit-kd">
+  const kdCell = (assembly: KitsetAssembly) => {
+    const harness = assembly.kd.find((document) => document.kind === "harness");
+    return <>
+    {harness && <div className="kit-kd">
+      <button className="link-button" onClick={() => openHarness(card.project, assembly.index)}>Чертёж жгута</button>
+    </div>}
+    {assembly.kd.filter((document) => document.kind !== "harness").map((document) => <div key={document.id} className="kit-kd">
       {document.stored || !document.url
         ? <a href={kitsetsApi.documentUrl(card.project, document.id)} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
         : <><a href={document.url} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a> <span className="muted">на Диске (архив)</span></>}
       {canEdit && <button className="link-button" title="Отвязать" onClick={() => void detach(document.id)}>✕</button>}
     </div>)}
+    {canEdit && !harness && <button className="kit-file" onClick={() => openHarness(card.project, assembly.index)}>Создать в редакторе</button>}
     {canEdit && <button className="kit-file" onClick={() => { setKdIndex(assembly.index); fileRef.current?.click(); }}>＋ файл</button>}
   </>;
+  };
 
   const stageCell = (assembly: KitsetAssembly) => canEdit
     ? <select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => void markKb(assembly, "stage", event.target.value)}>

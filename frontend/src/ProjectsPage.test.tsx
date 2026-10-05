@@ -465,6 +465,38 @@ describe("ProjectsPage", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/techcards/kitsets/708%D0%9A.4/documents/d1", expect.objectContaining({ method: "DELETE" })));
   });
 
+  it("КД-ячейка: «Создать в редакторе» без чертежа, «Чертёж жгута» с чертежом (не файл), ссылка в генераторе", async () => {
+    const drawing = { id: "h1", index: "КБ1", name: "708К.4КБ1 — Чертёж жгута.harness.json", size: 900, stored: true, url: null, uploaded_at: "2026-09-29T10:00:00", who: "Технолог", kind: "harness" as const };
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    let current: typeof card = card;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(current);
+      return base(input, init);
+    });
+    const view = render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    expect(await screen.findByRole("button", { name: "Создать в редакторе" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "＋ файл" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Чертёж жгута" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Создать в редакторе" }));
+    expect(window.location.search).toContain("harness=%D0%9A%D0%911");
+    expect(window.location.search).toContain("section=projects");
+    view.unmount();
+
+    window.history.replaceState({}, "", "/?section=projects");
+    current = { ...card, assemblies: [{ ...card.assemblies[0], kd: [drawing] }] };
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    const open = await screen.findByRole("button", { name: "Чертёж жгута" });
+    expect(screen.queryByRole("button", { name: "Создать в редакторе" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /harness/ })).toBeNull(); // не файл для скачивания
+    expect(screen.getByRole("button", { name: "＋ файл" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Генератор" }));
+    expect(screen.getAllByRole("button", { name: "Чертёж жгута" }).length).toBeGreaterThan(0);
+    expect(open).toBeTruthy();
+  });
+
   it("opens the track of the project only on the «Трек» tab", async () => {
     const trackCalls: string[] = [];
     const base = vi.mocked(fetch).getMockImplementation()!;
