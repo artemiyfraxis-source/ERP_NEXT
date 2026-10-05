@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Screenshots of the running ERP at the owner's two screens (27" monitor, 12.7" tablet) + a text lint.
+// Screenshots of the running ERP at the owner's three screens (27" monitor, 16" laptop, 12.7" tablet) + a text lint.
 //   node scripts/demo/shoot.mjs projects stock "card=?section=projects&project=614К.1"
 //   env: ERP_URL (default http://127.0.0.1:8021), ERP_LOGIN/ERP_PASSWORD (preview), SHOTS_DIR (default /tmp/erp-shots)
-// An argument is a section id (see frontend/src/navigation.ts) or name=?query. Writes <name>-27.png and
-// <name>-tablet.png, then prints what the lint found on the visible text: English identifiers, raw codes,
+// An argument is a section id (see frontend/src/navigation.ts) or name=?query. Writes <name>-27.png,
+// <name>-16.png, <name>-tablet.png, then prints what the lint found on the visible text: English identifiers, raw codes,
 // «БЕЗ КОДА», undefined/NaN, and a «Загрузка…» that never went away. Read the PNGs — exit 0 is not a verdict.
 import { execSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -22,6 +22,8 @@ const BASE = process.env.ERP_URL || "http://127.0.0.1:8021";
 const OUT = process.env.SHOTS_DIR || "/tmp/erp-shots";
 const VIEWPORTS = [
   { tag: "27", viewport: { width: 2560, height: 1440 }, hasTouch: false },
+  // 16" laptop at 125% scaling: ~1536×864 CSS px (owner, 04.10: «на 16 дюймах склад не читаемый»).
+  { tag: "16", viewport: { width: 1536, height: 864 }, hasTouch: false },
   // 12.7" tablet in landscape: ~1400 CSS px, touch → the app's (pointer: coarse) layout.
   { tag: "tablet", viewport: { width: 1400, height: 900 }, hasTouch: true, isMobile: false },
 ];
