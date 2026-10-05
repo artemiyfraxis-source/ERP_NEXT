@@ -1973,6 +1973,9 @@ td.group-cell { height: 32px; padding: 0 10px; background: var(--accent); color:
 .work-list > .section-title { margin: 4px 0 -4px 2px; }
 .stage-head { align-items: center; justify-content: flex-start; gap: 10px; padding: 12px 16px 10px; }
 .stage-head h2 { white-space: nowrap; }
+.stage-head .stage-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.stage-head .stage-toggle .caret { width: 12px; color: var(--muted-foreground); font-size: 12px; }
+.stage-head .stage-toggle:hover .caret, .stage-head .stage-toggle:focus-visible .caret { color: var(--primary); }
 .stage-head .stage-help { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 50%; color: var(--muted-foreground); font-size: 11px; font-weight: 600; cursor: help; }
 .stage-head .stage-help:hover, .stage-head .stage-help:focus-visible { border-color: var(--primary); color: var(--primary); outline: none; }
 .stage-head .heading-actions { margin-left: auto; gap: 8px; }
@@ -2277,10 +2280,6 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 /* «Мои позиции»: лента заказов под группами поставщиков (OrderList) — заголовок заказа свёрнут, щелчок раскрывает
    строки; плашка статуса меняется на месте. Переключатель «Заказы: Все · Активные · Скрыть» — в заголовке блока. */
 :root { --chip-info-bg: #e5edfb; --chip-warn-bg: #fdf3d8; --chip-ok-bg: #e3f5e8; --chip-neutral-bg: #eceff0; }
-.orders-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
-.orders-toggle .seg-tabs { margin: 0; padding: 2px; border-radius: 9px; }
-.orders-toggle .seg-tabs button { padding: 4px 10px; border-radius: 7px; font-size: 12px; }
-.orders-toggle .seg-tabs button small { margin-left: 2px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .order-block { margin: 0 16px 16px; }
 .buy-scroll + .order-block { margin-top: -4px; }
 .order-block .bulk-status { margin: 0 0 10px; }
@@ -2302,6 +2301,13 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .order-lines td.name-cell { min-width: 180px; max-width: 320px; white-space: normal; }
 .order-lines td.status-cell { min-width: 110px; max-width: 200px; white-space: normal; }
 /* Окно «Вставить счёт» / «Вставить КП»: файл, № и даты сверху, строки заказа с распознанной ценой — плотно. */
+.order-doc-dialog .doc-file { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; min-width: 0; }
+.order-doc-dialog .doc-file-chip { display: flex; min-width: 0; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); font-weight: 500; font-size: 14px; }
+.order-doc-dialog .doc-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order-doc-dialog .doc-file-pick { position: relative; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); font-size: 14px; font-weight: 600; cursor: pointer; }
+.order-doc-dialog .doc-file-pick:hover { border-color: var(--primary); }
+.order-doc-dialog .doc-file-pick.disabled { opacity: .6; cursor: default; }
+.order-doc-dialog .doc-file-pick input { position: absolute; inset: 0; opacity: 0; cursor: inherit; }
 .order-doc-dialog .doc-note { margin: 0; color: var(--muted-foreground); font-size: 12px; }
 .order-doc-dialog .doc-lines { max-height: 52vh; overflow: auto; border-radius: 8px; }
 .order-doc-dialog .doc-lines td { padding-top: 3px; padding-bottom: 3px; vertical-align: middle; }

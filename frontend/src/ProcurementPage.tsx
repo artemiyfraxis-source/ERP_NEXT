@@ -19,7 +19,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import {
-  BackorderStage, COMPACT_BELOW, OrderList, OrdersToggle, OtherStage, StageHeading, orderGroups, useOrdersView, visibleOrders,
+  BackorderStage, COMPACT_BELOW, OrderStageBlock, OtherStage, StageHeading, orderGroups, orderStage,
   type BulkState, type OrderGroup, type RowAction,
 } from "./ProcurementStages";
 import { runInPool } from "./bulk";
@@ -44,6 +44,13 @@ const isBackorderLine = (line: ProcurementLine) => line.status === APPROVAL && l
 const AUTOFILL_REFRESH_MS = [4000, 10000];
 
 type BulkBlock = "inwork" | "orders";
+
+/** Блоки заказов «Моих позиций» по стадии; «Оплачено» сначала свёрнут — он для справки. */
+const ORDER_BLOCKS = [
+  { stage: "awaiting", title: "Жду счёт", hint: "Запрос поставщику отправлен — вставьте счёт или КП", initiallyCollapsed: false },
+  { stage: "topay", title: "Ждёт оплаты", hint: "Счёт есть — отметьте «Оплачено», когда заплатили", initiallyCollapsed: false },
+  { stage: "paid", title: "Оплачено", hint: "В пути, на карантине или принято на склад", initiallyCollapsed: true },
+] as const;
 
 /** «Мои позиции» читаются все страницы подряд, чтобы заказ не разрезало границей страницы; не больше стольких. */
 const MAX_MINE_PAGES = 50;
@@ -109,7 +116,6 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
 function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerName: string }) {
   const [units, setUnits] = useState<string[]>(DEFAULT_UNITS);
   // «Заказы: Все · Активные · Скрыть» — у каждого закупщика свой выбор в этом браузере.
-  const [ordersView, setOrdersView] = useOrdersView(`procurement-orders-view:${buyerName || "me"}`);
   // Только что взятые строки → их версия при взятии: пока сервер не дозаполнил строку, на ней «заполняется…».
   const [autofill, setAutofill] = useState<Map<string, number>>(new Map());
   const timers = useRef<number[]>([]);
@@ -397,10 +403,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const stage = (status: string) => mine.filter((line) => line.status === status);
   // «В работе» — сначала строки в работе, под ними «Готов к запросу» (они ждут запроса поставщику).
   const inWorkBlock = [...stage("В работе"), ...stage("Готов к запросу")];
-  // Заказы — одной лентой под строками к запросу: ждущие действия сверху, оплаченные ниже, свежие первыми.
+  // Заказы — раздельными блоками по стадии: «Жду счёт», «Ждёт оплаты», «Оплачено» (свёрнут сначала).
   const orders = useMemo(() => orderGroups(mine.filter((line) => ORDER_STATUSES.has(line.status))), [mine]);
-  const shownOrders = visibleOrders(orders, ordersView);
-  const hiddenOrders = orders.length - shownOrders.length;
+  const ordersAt = (stage: string) => orders.filter((group) => orderStage(group) === stage);
   const backorders = mine.filter(isBackorderLine);
   const other = mine.filter((line) => !IN_WORK_STATUSES.has(line.status) && !ORDER_STATUSES.has(line.status) && !isBackorderLine(line));
 
@@ -577,14 +582,16 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
               <SplitAction {...form(line)} />
             </>
           )}
-          headingExtra={orders.length > 0 ? <OrdersToggle groups={orders} view={ordersView} onChange={setOrdersView} /> : undefined}
-        >
-          {orders.length > 0 ? (
-            <OrderList
-              {...stageProps} {...bulkOf("orders")}
-              lines={shownOrders.flatMap((group) => group.lines)}
-              groups={shownOrders}
-              hiddenNote={hiddenOrders ? (ordersView === "none" ? `Заказы скрыты: ${hiddenOrders}` : `Оплаченные заказы скрыты: ${hiddenOrders}`) : undefined}
+        />
+        {ORDER_BLOCKS.map(({ stage, title, hint, initiallyCollapsed }) => {
+          const groups = ordersAt(stage);
+          return groups.length > 0 && (
+            <OrderStageBlock
+              key={stage}
+              {...stageProps} {...(stage === "paid" ? bulkOf("orders") : {})}
+              title={title} hint={hint} block={`orders-${stage}`} initiallyCollapsed={initiallyCollapsed}
+              lines={groups.flatMap((group) => group.lines)}
+              groups={groups}
               actionsOf={orderActions}
               onOpenKp={openKp}
               onPaidOrder={paidOrder}
@@ -592,8 +599,8 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
               onRecognize={recognizeDocument}
               onApplyDocument={applyDocument}
             />
-          ) : null}
-        </ProcurementInWorkTable>
+          );
+        })}
         {kpReference && (
           <KpForm
             key={kpReference}

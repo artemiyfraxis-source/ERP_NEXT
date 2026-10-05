@@ -9,12 +9,12 @@ import { ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellE
 import { RowMenu, type MenuItem } from "./ProcurementRowMenu";
 import { formatAmount } from "./ProcurementSheetColumns";
 
-/* «Мои позиции» листа закупки (владелец, 05.10): один блок «В работе» (ProcurementInWorkTable) — сверху группы
-   поставщиков к запросу, под ними лента заказов (`OrderList`): «PO-012 от 05.10 · поставщик · N поз. · факт … ₽ /
-   расчёт … ₽» и плашка статуса (Жду счёт → Ждёт оплаты → Оплачено · в пути / карантин). Заказ не переезжает
-   между блоками — меняется его статус; строки заказа раскрываются щелчком по заголовку. Цену вносит окно
-   «Вставить счёт» / «Вставить КП» (файл → распознанные цены). «Дозавоз» — только когда он есть, «Прочие позиции»
-   внизу. Ручного этапа «Согласование» нет (владелец, 04.10: «сразу запрос и всё»).
+/* «Мои позиции» листа закупки — раздельные блоки, каждый сворачивается щелчком по заголовку (владелец, 05.10:
+   «блоки раздельные и их можно сворачивать, чтобы не засран был экран»; выбор помнится в браузере):
+   «В работе» (ProcurementInWorkTable, группы поставщиков к запросу) → «Жду счёт» → «Ждёт оплаты» → «Оплачено»
+   (`OrderStageBlock`: заказы «PO-012 от 05.10 · поставщик · N поз. · факт … ₽ / расчёт … ₽», строки заказа
+   раскрываются щелчком по заголовку) → «Дозавоз» (когда есть) → «Прочие позиции». Цену вносит окно
+   «Вставить счёт» / «Вставить КП» (файл → распознанные цены). Ручного этапа «Согласование» нет (владелец, 04.10).
    Таблицы показывают; что делать со строкой, решает страница (`actionsOf`, колбэки): редкие действия лежат в
    меню «⋯» строки, формы открываются под таблицей, массовые — над таблицей, когда выбрана хоть одна строка.
    Две колонки правятся прямо в ячейке (`editing`): «Комментарий» и «Ожид. дата» от «Жду счет» до «Карантин»;
@@ -74,11 +74,38 @@ function useLinePanel(
   return { menu, node };
 }
 
-/** Одна строка заголовка блока: название и число, подсказка — знаком «?», справа действия. */
-export function StageHeading({ title, count, hint, children }: { title: string; count: number; hint?: string; children?: ReactNode }) {
+/** Свёрнут ли блок «Моих позиций»; помнится в браузере по ключу блока. */
+export function useCollapsed(block: string, initially = false): [boolean, () => void] {
+  const key = `procurement-block-collapsed:${block}`;
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      const saved = window.localStorage.getItem(key);
+      return saved === null ? initially : saved === "1";
+    } catch {
+      return initially;
+    }
+  });
+  const toggle = () => setCollapsed((current) => {
+    try { window.localStorage.setItem(key, current ? "0" : "1"); } catch { /* приватное окно: до перезагрузки */ }
+    return !current;
+  });
+  return [collapsed, toggle];
+}
+
+/** Одна строка заголовка блока: название и число, подсказка — знаком «?», справа действия. С `onToggle`
+ *  название — кнопка «▾ / ▸»: блок сворачивается до заголовка. */
+export function StageHeading({ title, count, hint, collapsed, onToggle, children }: {
+  title: string; count: number; hint?: string; collapsed?: boolean; onToggle?: () => void; children?: ReactNode;
+}) {
   return (
     <div className="panel-heading stage-head">
-      <h2>{title} <span className="stage-count">{count}</span></h2>
+      {onToggle ? (
+        <h2>
+          <button type="button" className="stage-toggle" aria-expanded={!collapsed} onClick={onToggle}>
+            <span className="caret" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>{title} <span className="stage-count">{count}</span>
+          </button>
+        </h2>
+      ) : <h2>{title} <span className="stage-count">{count}</span></h2>}
       {hint && <span className="stage-help" tabIndex={0} role="note" aria-label={hint} title={hint}>?</span>}
       <div className="heading-actions">{children}</div>
     </div>
@@ -313,55 +340,10 @@ export function orderStatus(group: OrderGroup): { label: string; tone: string; t
   };
 }
 
-/** Заказы ленты: сначала те, что ждут действия (счёт, оплата), потом оплаченные; внутри — свежие сверху. */
+/** Заказы блока: свежие сверху. */
 export function orderGroups(lines: ProcurementLine[]): OrderGroup[] {
-  const rank = (group: OrderGroup) => (orderStage(group) === "paid" ? 1 : 0);
-  return groupByOrder(lines).sort((a, b) => rank(a) - rank(b)
-    || (b.date ?? "").localeCompare(a.date ?? "")
+  return groupByOrder(lines).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")
     || b.number.localeCompare(a.number, "ru", { numeric: true }));
-}
-
-/** «Заказы: Все · Активные · Скрыть» над лентой; выбор помнится в браузере для каждого закупщика. */
-export type OrdersView = "all" | "active" | "none";
-
-export function visibleOrders(groups: OrderGroup[], view: OrdersView): OrderGroup[] {
-  if (view === "none") return [];
-  return view === "active" ? groups.filter((group) => orderStage(group) !== "paid") : groups;
-}
-
-function readOrdersView(key: string): OrdersView {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value === "active" || value === "none" ? value : "all";
-  } catch {
-    return "all";
-  }
-}
-
-export function useOrdersView(storageKey: string): [OrdersView, (view: OrdersView) => void] {
-  const [view, setView] = useState<OrdersView>(() => readOrdersView(storageKey));
-  const change = (next: OrdersView) => {
-    setView(next);
-    try { window.localStorage.setItem(storageKey, next); } catch { /* приватное окно: выбор живёт до перезагрузки */ }
-  };
-  return [view, change];
-}
-
-export function OrdersToggle({ groups, view, onChange }: { groups: OrderGroup[]; view: OrdersView; onChange: (view: OrdersView) => void }) {
-  const active = groups.filter((group) => orderStage(group) !== "paid").length;
-  const options: [OrdersView, string, number | undefined][] = [["all", "Все", groups.length], ["active", "Активные", active], ["none", "Скрыть", undefined]];
-  return (
-    <div className="orders-toggle" role="group" aria-label="Показ заказов">
-      <span>Заказы:</span>
-      <div className="seg-tabs">
-        {options.map(([value, label, amount]) => (
-          <button key={value} type="button" className={view === value ? "on" : undefined} aria-pressed={view === value} onClick={() => onChange(value)}>
-            {label}{amount !== undefined && <> <small>{amount}</small></>}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 const LINE_STATUS: Record<string, string> = { [AWAITING]: "Жду счёт", [TO_PAY]: "Ждёт оплаты", "Готово": "Принято" };
@@ -450,18 +432,15 @@ export type OrderDocumentHandlers = {
   onApplyDocument: (group: OrderGroup, input: ApplyOrderDocumentInput, replace: boolean) => Promise<void>;
 };
 
-/** Заказы под «В работе» одной лентой (владелец, 05.10: «позиции в работе просто скрываются, а не перетекают»):
- *  заказ не переезжает между блоками, его статус меняется на месте. Заголовок заказа свёрнут; в нём действия
+/** Заказы одного блока («Жду счёт» / «Ждёт оплаты» / «Оплачено»). Заголовок заказа свёрнут; в нём действия
  *  стадии — «Вставить счёт» / «Вставить КП» (окно), «Оплачено», меню «⋯». Строки заказа только показывают цену:
  *  её вносит окно документа. */
 export function OrderList({
-  groups, hiddenNote, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onOpenKp, onPaidOrder, onReconcile,
+  label = "Заказы", groups, disabled, busyId, actionsOf, editing, bulk, onCloseBulk, onOpenKp, onPaidOrder, onReconcile,
   onRecognize, onApplyDocument,
 }: StageProps & OrderDocumentHandlers & {
-  /** Заказы, которые показывает переключатель, в порядке ленты. */
+  label?: string;
   groups: OrderGroup[];
-  /** «Скрыто заказов: 3» — когда переключатель что-то спрятал. */
-  hiddenNote?: string;
   /** «Внести КП в валюте» — прежняя форма КП по строкам (курс, НДС, суммы). */
   onOpenKp: (references: string[]) => void;
   /** «Оплачено» по заказу; вернёт вопрос про курс, если ЦБ не ответил. */
@@ -539,11 +518,10 @@ export function OrderList({
       <BulkStatus bulk={bulk} onClose={onCloseBulk} />
       {groups.length > 0 && (
         <OrderGroupTable
-          label="Заказы" groups={groups} columns={columns} expanded={expanded} onToggle={toggle}
+          label={label} groups={groups} columns={columns} expanded={expanded} onToggle={toggle}
           headerActions={headerActions} menu={panel.menu}
         />
       )}
-      {hiddenNote && <p className="stage-empty orders-hidden">{hiddenNote}</p>}
       {panel.node}
       {doc && docGroup && docLines.length > 0 && (
         <OrderDocumentDialog
@@ -558,6 +536,29 @@ export function OrderList({
         />
       )}
     </div>
+  );
+}
+
+export type OrderBlockProps = StageProps & OrderDocumentHandlers & {
+  onOpenKp: (references: string[]) => void;
+  onPaidOrder: (group: OrderGroup, manualRate?: string) => Promise<ManualRatePrompt | null>;
+  onReconcile: (lines: ProcurementLine[]) => Promise<unknown>;
+};
+
+/** Блок заказов одной стадии со своим заголовком; сворачивается, выбор помнится (`useCollapsed`). */
+export function OrderStageBlock({ title, hint, block, initiallyCollapsed = false, groups, ...props }: OrderBlockProps & {
+  title: string;
+  hint?: string;
+  block: string;
+  initiallyCollapsed?: boolean;
+  groups: OrderGroup[];
+}) {
+  const [collapsed, toggle] = useCollapsed(block, initiallyCollapsed);
+  return (
+    <section className="panel table-panel procurement-stage stage-block" aria-label={title}>
+      <StageHeading title={title} count={groups.length} hint={hint} collapsed={collapsed} onToggle={toggle} />
+      {!collapsed && <OrderList {...props} label={`Заказы: ${title}`} groups={groups} />}
+    </section>
   );
 }
 
@@ -591,7 +592,8 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
   const heading = groupHeading(group);
   const first = lines[0];
   const [result, setResult] = useState<OrderDocumentRecognition | null>(null);
-  const [prices, setPrices] = useState<Record<string, string>>(() => Object.fromEntries(lines.map((line) => [line.id, line.actual_price_with_vat ?? ""])));
+  const startPrices = () => Object.fromEntries(lines.map((line) => [line.id, line.actual_price_with_vat ?? ""]));
+  const [prices, setPrices] = useState<Record<string, string>>(startPrices);
   const [number, setNumber] = useState(replace ? first?.invoice_number ?? "" : "");
   const [date, setDate] = useState(replace ? first?.invoice_date ?? "" : "");
   const [expected, setExpected] = useState(replace && group.expected ? group.expected : nearestWorkingDay());
@@ -646,6 +648,15 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
     }
   }
 
+  /** «Убрать»: вставили не тот файл — окно возвращается к началу, можно выбрать другой. */
+  function removeFile() {
+    setResult(null);
+    setPrices(startPrices());
+    setNumber(replace ? first?.invoice_number ?? "" : "");
+    setDate(replace ? first?.invoice_date ?? "" : "");
+    setError("");
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!result || blocker) return;
@@ -676,9 +687,22 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
         <h2>{title} · {group.number}</h2>
         <div className="move-lot"><strong>{heading.title}</strong><span>{heading.meta}</span></div>
         <div className={invoice ? "move-grid" : "move-grid two"}>
-          <label>Файл {invoice ? "счёта" : "КП"}
-            <input type="file" accept=".pdf,.xlsx,.xls,.csv,image/*" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void read(file); }} />
-          </label>
+          {result ? (
+            <div className="doc-file">
+              <span>Файл {invoice ? "счёта" : "КП"}</span>
+              <span className="doc-file-chip">
+                <span className="doc-file-name" title={result.file.name}>{result.file.name}</span>
+                <button type="button" className="link-button" disabled={busy} onClick={removeFile}>Убрать</button>
+              </span>
+            </div>
+          ) : (
+            <label>Файл {invoice ? "счёта" : "КП"}
+              <span className={busy ? "doc-file-pick secondary disabled" : "doc-file-pick secondary"}>
+                {reading ? "Читаем…" : "Выбрать файл"}
+                <input type="file" aria-label={`Файл ${invoice ? "счёта" : "КП"}`} accept=".pdf,.xlsx,.xls,.csv,image/*" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void read(file); }} />
+              </span>
+            </label>
+          )}
           {invoice && <>
             <label>№ счёта<input value={number} disabled={busy} onChange={(event) => setNumber(event.target.value)} /></label>
             <label>Дата счёта<input type="date" value={date} disabled={busy} onChange={(event) => setDate(event.target.value)} /></label>
@@ -808,10 +832,11 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
       render: (line) => <BackorderAction line={line} disabled={disabled || busyId === line.id} onConfirm={onConfirmBackorder} />,
     },
   ];
+  const [collapsed, toggle] = useCollapsed("backorder");
   return (
     <section className="panel table-panel procurement-stage">
-      <StageHeading title="Дозавоз" count={lines.length} hint="Недовоз уже оплачен: подтвердите досыл с новой датой или отмените дозавоз в меню строки" />
-      <DataTable
+      <StageHeading title="Дозавоз" count={lines.length} hint="Недовоз уже оплачен: подтвердите досыл с новой датой или отмените дозавоз в меню строки" collapsed={collapsed} onToggle={toggle} />
+      {!collapsed && <><DataTable
         label="Дозавоз"
         rows={lines}
         columns={[...columns, menuColumn(panel.menu)]}
@@ -820,7 +845,7 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
         compactBelow={COMPACT_BELOW}
         emptyText="Дозавоза нет"
       />
-      {panel.node}
+      {panel.node}</>}
     </section>
   );
 }
@@ -829,10 +854,11 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
 
 export function OtherStage({ lines, disabled, busyId, actionsOf, editing }: StageProps) {
   const panel = useLinePanel(lines, actionsOf, disabled, busyId);
+  const [collapsed, toggle] = useCollapsed("other");
   return (
     <section className="panel table-panel procurement-stage">
-      <StageHeading title="Прочие позиции" count={lines.length} />
-      <DataTable
+      <StageHeading title="Прочие позиции" count={lines.length} collapsed={collapsed} onToggle={toggle} />
+      {!collapsed && <><DataTable
         label="Прочие позиции"
         rows={lines}
         columns={[
@@ -845,7 +871,7 @@ export function OtherStage({ lines, disabled, busyId, actionsOf, editing }: Stag
         storageKey="procurement-other"
         compactBelow={COMPACT_BELOW}
       />
-      {panel.node}
+      {panel.node}</>}
     </section>
   );
 }
