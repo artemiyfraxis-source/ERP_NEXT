@@ -17,3 +17,4 @@
 - [Windows Python CRLF](windows-python-crlf.md) — Python text-mode writes CRLF into the LF-only repo; use newline=""
 - [Techcards per project](techcards-bulk.md) — projects wiped 30.09 (migration 0078); owner creates them, one project from Google only on request
 - [Parallel sessions and worktrees](parallel-sessions-worktrees.md) — never remove a worktree or commit on a branch another session owns
+- [Resume at limit reset](resume-at-limit-reset.md) — on «session limit» schedule a cron at the reset time and resume workers
