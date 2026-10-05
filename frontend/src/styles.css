@@ -2738,11 +2738,11 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .procurement-stage .data-table td.menu { min-width: 150px; }
 
 /* Чертёж жгута на весь экран: шапка в одну строку, редактор занимает остальную высоту. */
-.harness-page { display: flex; flex-direction: column; height: 100vh; padding: 8px 12px 0; background: var(--background); }
+.harness-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; padding: 8px 12px 0; background: var(--background); }
 .harness-page-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 8px; }
 .harness-page-head h1 { margin: 0; font-size: 16px; font-weight: 600; }
 .harness-page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .harness-page .button-link { display: inline-flex; align-items: center; text-decoration: none; }
 .harness-save { font-size: 13px; font-weight: 600; }
 .harness-page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.harness-page-body > .harness-root { flex: 1; min-height: 0; }
+.harness-page-body > .harness-root { flex: 1; min-height: 0; overflow: auto; }

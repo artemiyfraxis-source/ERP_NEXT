@@ -1,32 +1,9 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { failureText, kitsetsApi } from "./api";
-import { HarnessEditorLazy, type HarnessEditorCatalogApi } from "./harness";
+import { HarnessEditorLazy, loadHarnessAdapters, type HarnessEditorCatalogApi } from "./harness";
 import type { ServerHarnessDesignApi, ServerSaveState } from "./harness/serverApi";
+import { closeHarness } from "./harnessNav";
 import { readFileBase64 } from "./ProjectsPage";
-
-/** Адрес полноэкранного чертежа жгута позиции проекта. */
-export function harnessHref(project: string, index: string) {
-  const url = new URL(window.location.href);
-  for (const key of ["section", "block", "project", "user", "harness"]) url.searchParams.delete(key);
-  url.searchParams.set("section", "projects");
-  url.searchParams.set("project", project);
-  url.searchParams.set("harness", index);
-  return `${url.pathname}${url.search}`;
-}
-
-function go(href: string) {
-  window.history.pushState({}, "", href);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
-
-export const openHarness = (project: string, index: string) => go(harnessHref(project, index));
-export const closeHarness = (project: string) => {
-  const url = new URL(window.location.href);
-  url.searchParams.delete("harness");
-  url.searchParams.set("section", "projects");
-  url.searchParams.set("project", project);
-  go(`${url.pathname}${url.search}`);
-};
 
 const STATE_TEXT: Record<ServerSaveState, string> = {
   saved: "Сохранено",
@@ -42,6 +19,7 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
 }) {
   const [title, setTitle] = useState("");
   const [api, setApi] = useState<ServerHarnessDesignApi | null>(null);
+  const [erpCatalog, setErpCatalog] = useState<HarnessEditorCatalogApi | undefined>(undefined);
   const [state, setState] = useState<ServerSaveState>("saved");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -61,8 +39,11 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
     if (!canEdit) return;
     let live = true;
     setApi(null); setState("saved");
-    void import("./harness/serverApi").then(({ createServerHarnessDesignApi }) => {
-      if (live) setApi(createServerHarnessDesignApi({ onState: (next) => { if (live) setState(next); } }));
+    void Promise.all([import("./harness/serverApi"), loadHarnessAdapters()]).then(([{ createServerHarnessDesignApi }, adapters]) => {
+      if (!live) return;
+      // Справочники ERP (провода, терминалы, разъёмы…) — по умолчанию; `catalog` подменяет их.
+      setErpCatalog(catalog ?? adapters.createErpHarnessEditorCatalog());
+      setApi(createServerHarnessDesignApi({ onState: (next) => { if (live) setState(next); } }));
     }).catch((reason) => { if (live) setError(failureText(reason, "Редактор не загрузился")); });
     return () => { live = false; };
   }, [canEdit, generation]);
@@ -100,7 +81,7 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
         : !api ? <div className="empty">Загрузка…</div>
         : <Suspense fallback={<div className="empty">Загрузка редактора…</div>}>
           <HarnessEditorLazy key={generation} projectId={project} harnessId={index} harnessDesignation={heading} initialView="e4"
-            apiOverride={api} catalogOverride={catalog} />
+            apiOverride={api} catalogOverride={erpCatalog} />
         </Suspense>}
     </div>
   </section>;

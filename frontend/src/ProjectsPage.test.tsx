@@ -468,7 +468,7 @@ describe("ProjectsPage", () => {
   it("КД-ячейка: «Создать в редакторе» без чертежа, «Чертёж жгута» с чертежом (не файл), ссылка в генераторе", async () => {
     const drawing = { id: "h1", index: "КБ1", name: "708К.4КБ1 — Чертёж жгута.harness.json", size: 900, stored: true, url: null, uploaded_at: "2026-09-29T10:00:00", who: "Технолог", kind: "harness" as const };
     const base = vi.mocked(fetch).getMockImplementation()!;
-    let current: typeof card = card;
+    let current: unknown = card;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = decodeURIComponent(String(input));
       if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(current);
@@ -493,7 +493,8 @@ describe("ProjectsPage", () => {
     expect(screen.queryByRole("link", { name: /harness/ })).toBeNull(); // не файл для скачивания
     expect(screen.getByRole("button", { name: "＋ файл" })).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Генератор" }));
-    expect(screen.getAllByRole("button", { name: "Чертёж жгута" }).length).toBeGreaterThan(0);
+    fireEvent.click(await screen.findByRole("tab", { name: "КБ1" }));
+    expect((await screen.findAllByRole("button", { name: "Чертёж жгута" })).length).toBeGreaterThan(0);
     expect(open).toBeTruthy();
   });
 

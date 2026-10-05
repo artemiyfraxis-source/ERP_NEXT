@@ -18,7 +18,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { PendingLesson } from "./AssemblyDrafts";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
-import { openHarness } from "./HarnessPage";
+import { openHarness } from "./harnessNav";
 import { ProjectStatus } from "./ProjectStatus";
 import { ProjectTrack } from "./ProjectTrack";
 import { supplyApi, type SupplyLine } from "./supplyApi";

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   AUTH_REQUIRED_EVENT,
   ApiError,
@@ -37,7 +37,8 @@ import { NotificationBell } from "./NotificationBell";
 import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
 import { ProjectsPage } from "./ProjectsPage";
-import { HarnessPage } from "./HarnessPage";
+// Экран чертежа жгута грузится отдельным куском — вместе с редактором, главный пакет не растёт.
+const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
 import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
@@ -169,7 +170,9 @@ export function App() {
   // The level's name under the user (the backend adds «· режим» while the admin mode is on).
   // Чертёж жгута — на весь экран, без меню: редактору нужна вся площадь.
   if (place.harness && visibleNav.some(({ id }) => id === "projects")) {
-    return <HarnessPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />;
+    return <Suspense fallback={<div className="screen-center muted">Загрузка редактора…</div>}>
+      <HarnessPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
+    </Suspense>;
   }
   const levelName = principal.role_label || (accessLevelOf(principal) ? accessLevelLabel(accessLevelOf(principal)) : "");
 

@@ -69,6 +69,7 @@ export const remoteEditorCatalogSources: readonly RemoteCatalogSource[] = [
     entityTypes: ["coax-termination"],
     accent: "#6d5b78",
   },
+  { id: "technology-connectors", label: "Разъёмы", description: "База разъёмов ERP", entityTypes: ["connector-family"], accent: "#3f718b" },
 ];
 
 export const editorCatalogSources: readonly EditorCatalogSource[] = [

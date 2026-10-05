@@ -1,21 +1,23 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HarnessDesignEditorProps } from "./harness";
+import { createEmptyHarnessDesign } from "./harness/editor/model";
 import { HarnessPage } from "./HarnessPage";
 
 // Настоящий редактор тяжёлый (его проверяет harness/HarnessEditor.smoke.test): здесь он заменён кнопкой «Правка»,
 // которая читает и сохраняет чертёж через переданный адаптер так же, как автосохранение редактора.
 vi.mock("./harness", () => ({
-  HarnessEditorLazy: ({ apiOverride, projectId, harnessId, harnessDesignation }: HarnessDesignEditorProps) => {
+  loadHarnessAdapters: async () => ({ createErpHarnessEditorCatalog: () => ({ erp: true }) }),
+  HarnessEditorLazy: ({ apiOverride, projectId, harnessId, harnessDesignation, catalogOverride }: HarnessDesignEditorProps) => {
     const edit = async () => {
       const resource = await apiOverride!.get(projectId, harnessId);
       await apiOverride!.save(projectId, harnessId, resource.revision, resource.content).catch(() => undefined);
     };
-    return <div data-testid="editor"><span>{harnessDesignation}</span><button onClick={() => void edit()}>Правка</button></div>;
+    return <div data-testid="editor" data-erp-catalog={String(Boolean((catalogOverride as unknown as { erp?: boolean })?.erp))}><span>{harnessDesignation}</span><button onClick={() => void edit()}>Правка</button></div>;
   },
 }));
 
-const design = { schemaVersion: 1, connectors: [], wires: [], graphics: [], texts: [], dimensions: [] };
+const design = JSON.parse(JSON.stringify(createEmptyHarnessDesign()));
 const drawing = (version: string) => ({ document: { id: "h1", index: "КБ1", name: "Чертёж", size: 1, stored: true, url: null, uploaded_at: "2026-10-06T10:00:00", who: "Т", kind: "harness" }, design, version, warnings: [] });
 
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status }); }
@@ -42,6 +44,7 @@ describe("HarnessPage", () => {
     render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
     expect(await screen.findByRole("heading", { name: "КБ1 Жгут питания" })).toBeTruthy();
     expect(await screen.findByTestId("editor")).toBeTruthy();
+    expect(screen.getByTestId("editor").getAttribute("data-erp-catalog")).toBe("true");
     expect(screen.getByRole("status").textContent).toBe("Сохранено");
     expect(screen.getByRole("link", { name: "Скачать для TECHMAP-GRAPHER" }).getAttribute("href"))
       .toBe("/api/techcards/kitsets/708%D0%9A.4/harness/%D0%9A%D0%911/export");
