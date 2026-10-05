@@ -1,0 +1,8 @@
+.he-connection-settings { gap:8px; }
+.he-settings-help { margin:0; color:#6f818b; font-size:10px; line-height:1.4; }
+.he-connection-settings-list { display:grid; gap:4px; }
+.he-connection-setting-row { display:flex; align-items:center; gap:6px; min-height:30px; padding:4px 7px; border:1px solid #d7e4e9; border-radius:5px; background:#fff; color:#315a6d; cursor:grab; }
+.he-connection-setting-row:active { cursor:grabbing; }
+.he-connection-setting-row label { display:flex; align-items:center; gap:7px; min-width:0; font-size:11px; cursor:pointer; }
+.he-connection-setting-row input { width:14px; height:14px; margin:0; accent-color:#087bad; }
+.he-connection-drag { color:#90a5af; font-size:14px; line-height:1; }

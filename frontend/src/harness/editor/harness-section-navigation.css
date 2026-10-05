@@ -1,0 +1,115 @@
+.harness-section-navigation {
+  box-sizing: border-box;
+  min-width: 0;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px 14px;
+  background: #193d50;
+  border-bottom: 1px solid #2a5367;
+}
+
+.harness-section-links {
+  min-width: max-content;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.harness-section-navigation::-webkit-scrollbar {
+  display: none;
+}
+
+.harness-section-navigation button {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  height: 30px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: #bdd2db !important;
+  font: 700 11px/1.25 "Segoe UI", Arial, sans-serif !important;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.harness-section-navigation button:hover:not(:disabled) {
+  border-color: #527889 !important;
+  background: #244d60 !important;
+  color: #fff !important;
+}
+
+.harness-section-navigation button.active,
+.harness-section-navigation button[aria-current="page"] {
+  border-color: #00a0b7 !important;
+  background: #00a0b7 !important;
+  color: #fff !important;
+}
+
+.harness-section-navigation button:disabled {
+  cursor: default !important;
+  opacity: 1 !important;
+}
+
+.harness-section-navigation button[aria-current="page"]:disabled {
+  opacity: 1 !important;
+}
+
+.harness-section-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  border-color: #527889 !important;
+  background: #244d60 !important;
+  color: #d8edf2 !important;
+}
+
+.harness-section-home > span:first-child {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.harness-editor .harness-section-navigation {
+  width: calc(100% + 28px);
+  margin-inline: -14px;
+  padding: 4px 14px;
+  border-bottom: 0;
+}
+
+.harness-editor .harness-section-navigation button {
+  color: #b9d0da;
+}
+
+.harness-editor .harness-section-navigation button.active,
+.harness-editor .harness-section-navigation button[aria-current="page"] {
+  color: #fff;
+}
+
+.manufacturing-route-panel > .harness-section-navigation {
+  margin: -28px clamp(-52px, -3vw, -20px) 16px;
+  padding-inline: 14px;
+}
+
+.route-v2-panel > .harness-section-navigation,
+.uml-panel > .harness-section-navigation {
+  margin: -18px -22px 18px;
+  padding-inline: 14px;
+}
+
+.he-save-state-utility {
+  align-self: flex-start;
+  width: max-content;
+  min-height: 29px;
+  padding: 5px 8px;
+  border: 1px solid #c8dbe3;
+  background: #fff;
+  color: #2a596d;
+}

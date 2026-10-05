@@ -1,0 +1,2 @@
+.anchored-popover[popover] { position: fixed; inset: auto; margin: 0; box-sizing: border-box; overflow: auto; }
+.anchored-popover[popover]:not(:popover-open) { display: none; }
