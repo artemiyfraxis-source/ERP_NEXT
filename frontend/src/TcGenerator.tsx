@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  assemblyApi,
   referencesApi,
   techcardsApi,
+  type AssemblyDraft,
   type GrapherImportResult,
   type KitsetBom,
   type ProjectTechcard,
@@ -48,6 +50,7 @@ import {
 import { RouteEditor } from "./RouteEditor";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 import { ManualAssembly, ManualSummary } from "./ManualAssembly";
+import { AssemblyDrafts } from "./AssemblyDrafts";
 import {
   MANUAL_MODE, cardCategory, cardLabel, emptyManual, manualConfig, manualFromConfig, manualProblem, selectBlock,
   type LibraryCard, type ManualState,
@@ -134,16 +137,20 @@ async function readRefs(): Promise<Refs> {
  * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
  * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange }: {
   card: ProjectTechcard;
   kit?: KitsetBom | null;
   kitError?: string;
   busy: boolean;
-  onBuild: (config: Record<string, unknown>) => Promise<void> | void;
+  /** draftId — «Ручная сборка» открыта из черновика с чертежа: сборка завершает его. */
+  onBuild: (config: Record<string, unknown>, draftId?: string) => Promise<boolean | void> | boolean | void;
   onDiscard: () => Promise<void> | void;
   /** Экспертное (JSON-конфигурация) — под «Ещё», рядом со сводом материалов. */
   more?: ReactNode;
   onConfig?: (config: Record<string, unknown>) => void;
+  /** Собранный по черновику, но ещё без урока: живёт у владельца вкладок, чтобы переживать переход на «ТК КБn». */
+  builtId?: string;
+  onBuiltChange?: (draftId: string) => void;
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
   const [S, setS] = useState<GenState>(emptyState);
@@ -186,8 +193,31 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const [manual, setManual] = useState<ManualState>(emptyManual);
   const savedManual = (card.document?.build_config as { mode?: unknown } | undefined)?.mode === MANUAL_MODE;
 
-  // init(): каждый монтаж засевает форму из состава набора и строк расчёта (autoFillAllWires, applyCalcTin_).
+  // «Черновики с чертежей» по позиции: список читается один раз за карту и после загрузки/сборки; открытый черновик
+  // (draftId) уходит в сборку, собранный (builtId) ждёт «Что поправили и почему».
+  const [drafts, setDrafts] = useState<{ items: AssemblyDraft[]; error: string }>({ items: [], error: "" });
+  const [draftId, setDraftId] = useState("");
+  const errorBanner = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (status.error && status.text) errorBanner.current?.scrollIntoView?.({ block: "nearest" }); }, [status]);
+  const [builtOwn, setBuiltOwn] = useState("");
+  const builtId = builtProp ?? builtOwn;
+  const setBuiltId = (id: string) => { setBuiltOwn(id); onBuiltChange?.(id); };
+  const reloadDrafts = (live: () => boolean = () => true) =>
+    assemblyApi.drafts(card.project, card.item_index)
+      .then((result) => { if (live()) setDrafts({ items: result?.items ?? [], error: "" }); })
+      .catch((reason) => { if (live()) setDrafts({ items: [], error: reason instanceof Error ? reason.message : "Черновики не прочитаны" }); });
   useEffect(() => {
+    let alive = true;
+    setDraftId(""); setDrafts({ items: [], error: "" });
+    void reloadDrafts(() => alive);
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.project, card.item_index]);
+
+  // init(): каждый монтаж засевает форму из состава набора и строк расчёта (autoFillAllWires, applyCalcTin_).
+  // Layout-эффект: вкладки появляются в том же коммите, что и справочники; обычный эффект стартует позже, и клик по
+  // вкладке в этом окне затирался бы засевом (под нагрузкой тесты «Ручной сборки» теряли клик).
+  useLayoutEffect(() => {
     if (!refs || !kit) return;
     const restored = manualFromConfig(card.document?.build_config);
     setManual(restored ?? emptyManual());
@@ -381,17 +411,45 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     return routeOverride ? { ...cfg, route: routePayload(routeOverride) } : cfg;
   }
 
+  /** «Поправить вручную»: текущая типовая сборка уходит на сервер как есть и возвращается блоками с операциями. */
+  async function editByHand() {
+    const { cfg, error } = gen.validate();
+    if (error) { setStatus({ text: error, error: true }); return; }
+    // Русское название операции — как её назвал генератор (в конфиге его нет); порядок тот же, что у операций с шаблоном.
+    const ops = (cfg.ops as Array<Record<string, unknown>>).map((op, index) => (routeSpecs[index]?.label ? { ...op, label: routeSpecs[index].label } : op));
+    setStatus({ text: "Открываю в ручной сборке…", error: false });
+    try {
+      const restored = manualFromConfig(await assemblyApi.fromGenerator({ ...cfg, ops }));
+      if (!restored) throw new Error("Сборку не удалось открыть в ручной сборке");
+      setManual(restored); setDraftId(""); setBuiltId(""); setRouteError("");
+      update((current) => switchGenTab(current, "manual"));
+      setStatus({ text: "", error: false });
+    } catch (reason) {
+      setStatus({ text: reason instanceof Error ? reason.message : "Сборку не удалось открыть в ручной сборке", error: true });
+    }
+  }
+
+  function openDraft(draft: AssemblyDraft) {
+    const restored = manualFromConfig(draft.draft_config);
+    if (!restored) { setStatus({ text: "Черновик не открыт: в нём нет ручной сборки.", error: true }); return; }
+    setManual(restored); setDraftId(draft.id); setBuiltId(""); setRouteError("");
+    update((current) => switchGenTab(current, "manual"));
+    setStatus({ text: "", error: false });
+  }
+
   async function generate() {
     const payload = manualTab ? manualPayload() : typicalPayload();
     if (!payload) return;
+    const fromDraft = manualTab ? draftId : "";
     if (card.status === "Выдана" && !window.confirm(`Техкарта ${card.item_index} уже выдана.\n\nПересобрать? ЭТК пересоберётся новой ревизией.`)) {
       setStatus({ text: "Пересборка отменена.", error: true });
       return;
     }
     setStatus({ text: card.status === "Выдана" ? "Пересобираю техкарты…" : "Создаю техкарты…", error: false });
     try {
-      await onBuild(payload);
+      const built = await onBuild(payload, fromDraft || undefined);
       setStatus({ text: "", error: false });
+      if (fromDraft && built !== false) { setDraftId(""); setBuiltId(fromDraft); void reloadDrafts(); }
     } catch (reason) {
       const text = reason instanceof Error ? reason.message : "ЭТК не собрана";
       if (text.startsWith("Схема полуфабрикатов")) { setRouteError(text); setStatus({ text: "", error: false }); }
@@ -814,11 +872,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "on" : ""}
         onClick={() => { setRouteError(""); update((current) => switchGenTab(current, tab)); }}>{label}</button>)}</div>
 
+    {status.text && status.error && <div className="error-banner gen-error" role="alert" ref={errorBanner}>{status.text}</div>}
+
     <div className="gen-layout">
       <div className="gen-main"><div className="gen-grid">
         {sheet}
         {typical && typicalSections}
         {S.tab === "coax" && coaxSections}
+        {manualTab && <AssemblyDrafts project={card.project} itemIndex={card.item_index} items={drafts.items} error={drafts.error}
+          openId={draftId} builtId={builtId} onOpen={openDraft} onUploaded={() => void reloadDrafts()}
+          onChanged={(changed) => setDrafts((current) => ({ ...current, items: current.items.map((item) => (item.id === changed.id ? changed : item)) }))} />}
         {manualTab && <ManualAssembly state={manual} onChange={(next) => { setRouteError(""); setManual(next); }} library={refs.library} opRecs={D.ops} components={components}
           partQty={partQty} finalName={finalName} error={routeError} />}
       </div></div>
@@ -851,8 +914,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         </div>
         {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». */}
         <div className="gen-foot">
-          {status.text ? <div className={status.error ? "error-banner" : "gen-status"} role={status.error ? "alert" : undefined}>{status.text}</div>
+          {status.text && !status.error ? <div className="gen-status">{status.text}</div>
             : <span className="gen-foot-sum">{summary}</span>}
+          {!manualTab && <button className="secondary" disabled={busy || !ops.length} onClick={() => void editByHand()}>Поправить вручную</button>}
           <button className="primary" disabled={busy} onClick={() => void generate()}>{busy ? "Собираю…" : card.status === "Выдана" ? "Пересобрать" : "Создать"}</button>
         </div>
       </aside>

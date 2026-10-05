@@ -9,7 +9,7 @@
 import type { OperationCardSummary } from "./api";
 import { recordCategory } from "./etkOperation";
 import { addEdge, blockTitle, parseRoute, removeEdge, routePayload, routeProblem, type Route, type RouteEdge, type RouteOp } from "./routeLogic";
-import type { Comp, OpRec } from "./tcGenLogic";
+import { opTypeName, type Comp, type OpRec } from "./tcGenLogic";
 
 export const MANUAL_MODE = "manual";
 const LIBRARY_OP = "libraryOp";
@@ -47,6 +47,9 @@ export type ManualOp = {
   /** Своя операция: оснастка строкой, «Оборудование: …» / «Расходники: …», без раздела — инструмент. */
   tooling: string;
   components: ManualComponent[];
+  /** Типовая операция генератора (есть `type`): её поля как пришли с сервера (провода, длины, зачистка, терминал, коакс…) —
+      на экране только строкой, в конфиг уходят как есть; правятся норма, блок и место. */
+  gen?: Record<string, unknown>;
 };
 
 const SIDES: Record<string, string> = { A: "А", B: "В", "А": "А", "В": "В" };
@@ -104,7 +107,11 @@ export function libraryOp(seq: number, card: LibraryCard, opRecs: OpRec[]): Manu
 export type ManualBlock = { key: string; name: string; final: boolean; ops: number[] };
 
 /** Операции (по seq, порядок массива не важен — номера даёт схема), блоки в порядке создания, стрелки и выбранный блок. */
-export type ManualState = { ops: ManualOp[]; nextSeq: number; blocks: ManualBlock[]; edges: RouteEdge[]; selected: string };
+export type ManualState = {
+  ops: ManualOp[]; nextSeq: number; blocks: ManualBlock[]; edges: RouteEdge[]; selected: string;
+  /** Данные сборки, нужные операциям генератора (провода, свивка, лужение, зачистка, соединения, коакс…) — как пришли. */
+  extra?: Record<string, unknown>;
+};
 
 const FINAL_KEY = "b1";
 
@@ -153,6 +160,38 @@ export function opMinutes(op: ManualOp, partQty: number): number {
   return (ok(num(op.prepMin), 0) * 60 + ok(num(op.opSec), 0) * ok(num(op.qty), 1) * batch) / 60;
 }
 
+/** Параметры операции генератора одной строкой для экрана: длины, зачистка, терминал, разъём, ТУТ, коакс — только то, что задано. */
+export function genParams(gen: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const side = str(gen.side) === "A" ? "А" : str(gen.side) === "B" ? "Б" : "";
+  if (side) parts.push(`сторона ${side}`);
+  const wires = list(gen.wires);
+  if (wires.length) {
+    const lengths = [...new Set(wires.map((wire) => str(wire.length)).filter((value) => value && value !== "0"))];
+    parts.push(`${wires.length} пров.${lengths.length ? ` · L ${lengths.join(" / ")} мм` : ""}`);
+  }
+  const strip = gen.strip && typeof gen.strip === "object" ? gen.strip as Record<string, unknown> : null;
+  if (strip) {
+    // Пустая длина не показывается.
+    const a = strip.a ? str(strip.lenA) : "", b = strip.b ? str(strip.lenB) : "";
+    const ends = [a && `А ${a}`, b && `Б ${b}`].filter(Boolean);
+    if (ends.length) parts.push(`зачистка ${ends.join(", ")} мм`);
+  }
+  const ep = gen.ep && typeof gen.ep === "object" ? gen.ep as Record<string, unknown> : null;
+  if (ep) {
+    if (str(ep.termArt)) parts.push(`терминал ${str(ep.termArt)}`);
+    if (str(ep.connArt)) parts.push(`разъём ${str(ep.connArt)}`);
+  }
+  if (str(gen.tutArt)) parts.push(`ТУТ ${str(gen.tutArt)}${str(gen.tutCount) ? ` × ${str(gen.tutCount)}` : ""}`);
+  if (str(gen.wrapArt)) parts.push(`обмотка ${str(gen.wrapArt)}${str(gen.wrapLen) ? ` ${str(gen.wrapLen)} мм` : ""}`);
+  if (str(gen.sealArt)) parts.push(`герметик ${str(gen.sealArt)}`);
+  const marks = list(gen.marks);
+  if (marks.length) parts.push(`маркировка: ${marks.map((mark) => str(mark.art || mark.name)).filter(Boolean).join(", ")}`);
+  if (gen.tin) parts.push("с лужением");
+  if (Number(gen.units) > 1) parts.push(`${str(gen.units)} шт.`);
+  return parts.join(" · ");
+}
+
 export function opTitle(op: ManualOp, position: number): string {
   return op.label.trim() || (op.kind === "custom" ? "Своя операция" : `Операция ${position}`);
 }
@@ -160,7 +199,7 @@ export function opTitle(op: ManualOp, position: number): string {
 /** Операции для схемы (в порядке номеров): номер, название, норма — из полей формы. */
 export function routeOps(ops: ManualOp[], partQty: number): RouteOp[] {
   return ops.map((op, index) => ({
-    position: index + 1, key: String(op.seq), type: op.kind === "library" ? LIBRARY_OP : CUSTOM_OP, code: op.code,
+    position: index + 1, key: String(op.seq), type: op.gen ? str(op.gen.type) : op.kind === "library" ? LIBRARY_OP : CUSTOM_OP, code: op.code,
     label: opTitle(op, index + 1), minutes: opMinutes(op, partQty), number: index + 1,
   }));
 }
@@ -429,6 +468,10 @@ export function manualConfig(state: ManualState, base: Record<string, unknown>):
       ...(op.result.trim() ? { result: op.result.trim() } : {}),
       ...(op.components.length ? { components: op.components.map((comp) => ({ ...comp, qty: plain(comp.qty) || "1" })) } : {}),
     };
+    // Операция генератора: свои поля как есть, правятся номер, название и норма; «на изделие» у неё нет.
+    if (op.gen) {
+      return { ...op.gen, seq: op.seq, label: op.label.trim() || opTitle(op, index + 1), tPrep: seconds(op.prepMin), tOp: plain(op.opSec) };
+    }
     return op.kind === "library"
       ? { type: LIBRARY_OP, templateId: op.templateId, opNum: op.code, side: op.side, ...common }
       : { type: CUSTOM_OP, ...common, steps: stepsPayload(op), tooling: toolingPayload(op) };
@@ -441,7 +484,7 @@ export function manualConfig(state: ManualState, base: Record<string, unknown>):
       components: block.ops.flatMap((position) => (ordered[position - 1]?.components || []).map((comp) => ({ id: comp.id, art: comp.art, name: comp.name, qty: plain(comp.qty) || "1" }))),
     })),
   });
-  return { mode: MANUAL_MODE, assemblyIndex: base.assemblyIndex, assemblyName: base.assemblyName, partQty: base.partQty, ops, route };
+  return { ...state.extra, mode: MANUAL_MODE, assemblyIndex: base.assemblyIndex, assemblyName: base.assemblyName, partQty: base.partQty, ops, route };
 }
 
 function str(value: unknown): string {
@@ -466,6 +509,15 @@ export function manualFromConfig(config: unknown): ManualState | null {
     const steps = list(item.steps);
     const control = (step: Record<string, unknown>) => /контрол/i.test(str(step.kind));
     const prep = num(item.tPrep);
+    const kindOf = str(item.type);
+    if (kindOf && kindOf !== LIBRARY_OP && kindOf !== CUSTOM_OP) {
+      const { seq: _seq, label: _label, tPrep: _tPrep, tOp: _tOp, ...rest } = item;
+      return {
+        ...blank(seq), kind: "custom", templateId: str(item.templateId), code: str(item.opNum), side: str(item.side),
+        label: str(item.label) || opTypeName(kindOf), qty: "1",
+        prepMin: prep == null || Number.isNaN(prep) ? "" : text(prep / 60), opSec: str(item.tOp).replace(".", ","), gen: rest,
+      };
+    }
     return {
       ...blank(seq), kind: item.type === LIBRARY_OP ? "library" : "custom", templateId: str(item.templateId), code: str(item.opNum),
       side: str(item.side), label: str(item.label), qty: str(item.qty || "1").replace(".", ","),
@@ -478,7 +530,9 @@ export function manualFromConfig(config: unknown): ManualState | null {
     };
   });
   const nextSeq = Math.max(0, ...ops.map((op) => op.seq)) + 1;
-  if (!ops.length) return { ...emptyManual(), nextSeq };
+  const { mode: _mode, ops: _ops, route: _route, assemblyIndex: _index, assemblyName: _name, partQty: _qty, materialsSheet: _sheet, ...extra } = saved;
+  const withExtra = Object.keys(extra).length ? { extra } : {};
+  if (!ops.length) return { ...emptyManual(), nextSeq, ...withExtra };
   const positioned = routeOps(ops, Number(saved.partQty) || 1);
   const parsed = parseRoute(saved.route);
   const together = new Set(items.flatMap((item, index) => ((item.parallel === true || item.link === "parallel") && index > 0 ? [index + 1] : [])));
@@ -486,5 +540,5 @@ export function manualFromConfig(config: unknown): ManualState | null {
   const blocks: ManualBlock[] = route.blocks.map((block) => ({
     key: block.key, name: block.name, final: block.final, ops: [...block.ops].sort((a, b) => a - b).map((position) => ops[position - 1].seq),
   }));
-  return { ops, nextSeq, blocks, edges: route.edges.map((edge) => ({ ...edge })), selected: blocks.find((block) => block.final)!.key };
+  return { ops, nextSeq, blocks, edges: route.edges.map((edge) => ({ ...edge })), selected: blocks.find((block) => block.final)!.key, ...withExtra };
 }

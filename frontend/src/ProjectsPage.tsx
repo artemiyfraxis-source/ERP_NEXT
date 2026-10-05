@@ -17,6 +17,7 @@ import {
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
+import { PendingLesson } from "./AssemblyDrafts";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { ProjectStatus } from "./ProjectStatus";
 import { ProjectTrack } from "./ProjectTrack";
@@ -89,8 +90,9 @@ export function kitBatch(per: string, run: string, scrap: string, unit: string) 
 
 /** «Генератор» карточки проекта (SUPPLYMAP renderGen_ / mountGen_): сверху сборки проекта, ниже генератор выбранной.
     Карточку ТК сборки заводит открытие генератора (kitsetsApi.openTechcard). */
-function GenTab({ card, principal, index, pick, done }: {
+function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange }: {
   card: KitsetCard; principal: Principal; index: string; pick: (index: string) => void; done: (index: string) => void;
+  builtId: string; onBuiltChange: (draftId: string) => void;
 }) {
   const [cardId, setCardId] = useState("");
   const [error, setError] = useState("");
@@ -115,18 +117,22 @@ function GenTab({ card, principal, index, pick, done }: {
     {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
-    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
+    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange}
+      onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
   </div>;
 }
 
 /** «ТК КБn»: электронная ТК сборки (SUPPLYMAP renderTc_). «Пересобрать» ведёт в генератор этой сборки. */
-function TcTab({ assembly, principal, rebuild, changed }: { assembly: KitsetAssembly; principal: Principal; rebuild: () => void; changed: () => void }) {
+function TcTab({ assembly, principal, rebuild, changed, builtId }: { assembly: KitsetAssembly; principal: Principal; rebuild: () => void; changed: () => void; builtId?: string }) {
   const { card, setCard, error } = useTechcard(assembly.techcard?.card_id || "");
   if (error) return <div className="error-banner" role="alert">{error}</div>;
   if (!card) return <div className="empty">Загрузка техкарты…</div>;
-  return <EtkSheet card={card} principal={principal} onRebuild={rebuild}
+  return <>
+    {builtId && <PendingLesson draftId={builtId} />}
+    <EtkSheet card={card} principal={principal} onRebuild={rebuild}
     title={<><strong>{assembly.index}</strong> <span>{assembly.name}</span> <span className="muted">кол-во {assembly.run}</span></>}
-    onChange={(updated) => { setCard(updated); changed(); }} />;
+    onChange={(updated) => { setCard(updated); changed(); }} />
+  </>;
 }
 
 function openSection(section: string, extra: Record<string, string> = {}) {
@@ -342,6 +348,8 @@ type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | "track" | `tc:${st
 
 function KitsetCardView({ project, principal, canEdit, canRequest, back }: { project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: () => void }) {
   const [genIndex, setGenIndex] = useState("");
+  // Собрано по черновику с чертежа, урок не записан: по индексу сборки, переживает переход «Генератор» → «ТК КБn».
+  const [builtDrafts, setBuiltDrafts] = useState<Record<string, string>>({});
   const [card, setCard] = useState<KitsetCard | null>(null);
   const [tab, setTab] = useState<Tab>("sostav");
   const [error, setError] = useState("");
@@ -421,14 +429,15 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
     {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} />}
     {tab === "supply" && <SupplyTab project={card.project} />}
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} />}
-    {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex}
+    {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex} builtId={builtDrafts[genIndex] || ""}
+      onBuiltChange={(id) => setBuiltDrafts((current) => ({ ...current, [genIndex]: id }))}
       done={(index) => { void load(); setTab(`tc:${index}`); setNote(`Техкарта ${index} готова — открыта вкладка «ТК ${index}».`); }} />}
     {tab === "journal" && <JournalTab card={card} canEdit={canEdit} changed={setCard} />}
     {tab === "track" && <ProjectTrack project={card.project} />}
     {tab.startsWith("tc:") && (() => {
       const assembly = card.assemblies.find((item) => `tc:${item.index}` === tab);
       if (!assembly?.techcard) return <div className="empty">Сборка не найдена.</div>;
-      return <div className="kit-pane"><TcTab key={assembly.techcard.card_id} assembly={assembly} principal={principal} rebuild={() => openGen(assembly.index)} changed={() => void load()} /></div>;
+      return <div className="kit-pane"><TcTab key={assembly.techcard.card_id} assembly={assembly} principal={principal} rebuild={() => openGen(assembly.index)} changed={() => void load()} builtId={builtDrafts[assembly.index]} /></div>;
     })()}
   </section>;
 }

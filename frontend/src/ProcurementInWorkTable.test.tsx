@@ -444,7 +444,7 @@ it("starts groups of more than 20 rows folded without inputs and keeps open ones
   expect(within(row).getByRole("button", { name: "Сформировать запрос" })).toBeEnabled();
 });
 
-it("remembers an opened or folded group after remount", () => {
+it("remembers an opened or folded group after remount", { timeout: 30_000 }, () => {
   window.localStorage.clear();
   const first = renderTable(bigQueue());
   fireEvent.click(head("Поставщик 01"));

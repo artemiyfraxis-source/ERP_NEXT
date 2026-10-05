@@ -1,6 +1,7 @@
 - [ERP_NEXT hub](erp-next-hub.md) — START HERE: map of every note below (Obsidian graph root)
 - [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, batch access asks
 - [Owner request queue](owner-request-queue.md) — owner piles requests mid-turn: numbered visible queue, dispatch each via orchestrator at once
+- [Owner goals 05.10](owner-goals-1005.md) — goal 1: minimal chain закупка→приёмка→выдача; goal 2: debug production; receiving answers
 - [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
 - [Launch plan](launch-plan.md) — server 01.10, five blocks by 05.10, second wave 05–09.10, cutover
 - [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, LAN + Tailscale, push.ps1
