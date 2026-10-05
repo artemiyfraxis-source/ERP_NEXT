@@ -92,7 +92,7 @@ from app.modules.shipping.application import (
 )
 from app.modules.shipping.domain import FinishedGood, ProjectAssembly
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
-from app.modules.techcards.etk_parts import use_article
+from app.modules.techcards.etk_parts import kit_article
 from app.modules.techcards.kitset_calc import PROJECT_SHEET, SPEC_SHEET, parse_calc_sheets
 from app.modules.techcards.kitsets import (
     CalcKitset,
@@ -249,11 +249,13 @@ def calc_ops_from_grid(grid: list[list[str]]) -> list[dict[str, str]]:
 
 def generator_bom(kitset: Kitset, assembly: KitAssembly, calc_ops: list[dict[str, str]]) -> dict[str, Any]:
     """`tcLoadBomFromKit`: состав сборки для генератора — из сохранённой карточки, с правками оператора.
-    Аналог по КД → оригинал к применению (kitUseArt_): генератор ищет контакт по артикулу к применению.
+    Аналог по КД → оригинал к применению (kitUseArt_), заменённый в расчёте провод → провод из «Наименования»
+    (`kit_article`): генератор подбирает контакт и сечение по тому, что применяется; артикул КД — в `kd`.
+    Состав читается из карточки при каждом открытии, так что правка расчёта доходит до генератора без пересборки.
     `calc_ops` — строки листа КБn расчёта (`calc_ops_by_link`). Тот же ответ читает пакетная генерация."""
     components = []
     for position, component in enumerate(assembly.components):
-        use = use_article(component.article, component.name)
+        use = kit_article(component.article, component.name)
         components.append({
             "id": f"kit-{position}", "type": component.type,
             "name": use["art"] if use["kd"] else (component.name or component.article),

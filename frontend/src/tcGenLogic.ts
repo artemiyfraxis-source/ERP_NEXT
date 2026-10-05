@@ -8,7 +8,8 @@
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
 
-export type Comp = { id: string; type: string; name: string; art: string; qty: number | string; length?: number };
+/** `art` — what the row actually uses (selects, gauge, terminals, ETK); `kd` — the КД article it replaced, display only. */
+export type Comp = { id: string; type: string; name: string; art: string; kd?: string; qty: number | string; length?: number };
 export type TerRec = {
   id?: string; article: string; step: string; strip: string; lPlus: string; lMinus: string; applicator: string;
   awgFrom: string; awgTo: string; mm2From: string; mm2To: string; fields?: Record<string, string>;

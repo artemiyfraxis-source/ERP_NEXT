@@ -170,7 +170,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   }, [refs]);
 
   const components = useMemo<Comp[]>(() => (kit?.components || []).map((item) => ({
-    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", qty: item.qty,
+    id: item.id, type: item.type || "", name: item.name || "", art: item.art || "", kd: item.kd || "", qty: item.qty,
   })), [kit]);
   // tcLoadBomFromKit: «Кол-во» — тираж сборки, партию генератор берёт отсюда.
   const assemblyInfo = useMemo<Record<string, string>>(() => ({
@@ -586,7 +586,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     <div className="gsec-head"><h3>Данные из листа</h3>
       <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span></div>
     <div className="gtable-wrap"><table className="gtable"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th className="num">Кол-во</th></tr></thead><tbody>
-      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}</td><td className="muted">{c.art}</td><td className="num">{String(c.qty)}</td></tr>)}
+      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}</td><td className="muted">{c.art}{c.kd && <small>по КД: {c.kd}</small>}</td><td className="num">{String(c.qty)}</td></tr>)}
       {!components.length && <tr><td colSpan={4} className="gtable-empty">СПЯ не найдена</td></tr>}
     </tbody></table></div>
   </section>;

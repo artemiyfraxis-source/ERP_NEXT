@@ -35,7 +35,7 @@ function mockApi(extra?: (path: string, init?: RequestInit) => Response | undefi
 
 afterEach(() => vi.restoreAllMocks());
 
-function kitOf(name: string, components: Array<{ type: string; name: string; art: string; qty: number }>, calc_ops: KitsetBom["calc_ops"] = []): KitsetBom {
+function kitOf(name: string, components: Array<{ type: string; name: string; art: string; kd?: string; qty: number }>, calc_ops: KitsetBom["calc_ops"] = []): KitsetBom {
   return {
     project: "P-100", index: "КБ1", name, run: "1", part_qty: "1", calc_source: "https://docs.google.com/spreadsheets/d/calc/edit",
     components: components.map((item, i) => ({ id: `kit-${i}`, kd: "", ...item })), calc_ops,
@@ -119,6 +119,30 @@ it("takes cut lengths and tinning from the КБn sheet of the calculation (tcCal
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0].wires[0].length).toBe(160);
+});
+
+it("works off the wire replaced in the calc and shows the КД article under it", async () => {
+  const resolved: unknown[] = [];
+  mockApi((path, init) => {
+    if (path === "/api/references/technology/resolve-terminal") resolved.push(JSON.parse(String(init?.body)));
+    return undefined;
+  });
+  const onBuild = vi.fn();
+  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", [
+    { type: "Провод", name: "Силиконовый 30AWG черный", art: "Силиконовый 30AWG черный", kd: "Силиконовый 28AWG черный", qty: 0.3 },
+    ...XH.slice(1),
+  ])} />);
+
+  const sheet = await screen.findByRole("region", { name: "Данные из листа" });
+  expect(sheet).toHaveTextContent("Силиконовый 30AWG черныйпо КД: Силиконовый 28AWG черный");
+  expect(await screen.findByText("Резка — Силиконовый 30AWG черный")).toBeInTheDocument();
+  await waitFor(() => expect(resolved.length).toBeGreaterThan(0));
+  expect(resolved.map((body) => (body as { wires: string[] }).wires)).toContainEqual(["Силиконовый 30AWG черный"]);
+  expect(JSON.stringify(resolved)).not.toContain("28AWG");
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  expect(onBuild.mock.calls[0][0].wires[0]).toMatchObject({ name: "Силиконовый 30AWG черный", art: "Силиконовый 30AWG черный" });
 });
 
 it("shows the kit error instead of a hand-made composition", async () => {
