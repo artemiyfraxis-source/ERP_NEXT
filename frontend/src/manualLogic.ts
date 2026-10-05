@@ -216,6 +216,24 @@ export function addBlock(state: ManualState, name = ""): ManualState {
   };
 }
 
+/** «+» на блоке: новый пустой блок — вход блока `to`; он выбирается сразу. */
+export function addInputBlock(state: ManualState, to: string): ManualState {
+  if (!state.blocks.some((block) => block.key === to)) return state;
+  return addBlock({ ...state, selected: to });
+}
+
+/** Блок без своего названия или с «Блок N» — его можно назвать по первой операции. */
+export function hasDefaultName(block: Pick<ManualBlock, "name">): boolean {
+  return !block.name.trim() || /^Блок \d+$/.test(block.name.trim());
+}
+
+/** Назвать блок по операции, если у него ещё название по умолчанию; своё название не трогаем. */
+export function nameBlockAfter(state: ManualState, key: string, label: string): ManualState {
+  const block = state.blocks.find((item) => item.key === key);
+  if (!block || !label.trim() || !hasDefaultName(block)) return state;
+  return renameBlock(state, key, label.trim());
+}
+
 /** Убрать блок вместе с его операциями; его входы переходят к блокам, которые он питал (штуки перемножаются). */
 export function removeBlock(state: ManualState, key: string): ManualState {
   const gone = state.blocks.find((block) => block.key === key);

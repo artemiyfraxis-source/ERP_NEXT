@@ -3,6 +3,7 @@ import {
   addBlock,
   addCustomOp,
   addInput,
+  addInputBlock,
   addLibraryOp,
   blockOrder,
   cardLabel,
@@ -11,6 +12,7 @@ import {
   manualFromConfig,
   manualProblem,
   moveOp,
+  nameBlockAfter,
   orderedOps,
   removeBlock,
   removeInput,
@@ -264,3 +266,37 @@ describe("manual assembly: diagram first", () => {
     expect(manualConfig(state, base).route).toEqual(saved.route);
   });
 });
+
+describe("manual assembly: editing on the diagram", () => {
+  it("adds an empty input block to the chosen block and selects it", () => {
+    const state = addInputBlock(emptyManual(), "b1");
+    expect(state.blocks.map((block) => block.key)).toEqual(["b1", "b2"]);
+    expect(state.edges).toEqual([{ from: "b2", to: "b1", per_unit: 1 }]);
+    expect(state.selected).toBe("b2");
+    // Не выбранному блоку — вход именно ему.
+    const deeper = addInputBlock(addInputBlock(emptyManual(), "b1"), "b1");
+    expect(deeper.edges).toEqual([{ from: "b2", to: "b1", per_unit: 1 }, { from: "b3", to: "b1", per_unit: 1 }]);
+    const chain = addInputBlock(selectBlock(deeper, "b1"), "b2");
+    expect(chain.edges.at(-1)).toEqual({ from: "b4", to: "b2", per_unit: 1 });
+    expect(addInputBlock(emptyManual(), "nope")).toEqual(emptyManual());
+  });
+
+  it("names a block after its first operation only while the name is the default one", () => {
+    const state = addInputBlock(emptyManual(), "b1");
+    expect(nameBlockAfter(state, "b2", "Резка").blocks[1].name).toBe("Резка");
+    const numbered = renameBlock(state, "b2", "Блок 2");
+    expect(nameBlockAfter(numbered, "b2", "Усадка").blocks[1].name).toBe("Усадка");
+    const own = renameBlock(state, "b2", "Провод с лепестком");
+    expect(nameBlockAfter(own, "b2", "Резка")).toBe(own);
+    expect(nameBlockAfter(state, "b2", "  ")).toBe(state);
+  });
+
+  it("refuses a connection that makes a cycle and keeps the diagram", () => {
+    let state = addInputBlock(emptyManual(), "b1");
+    state = addInputBlock(state, "b2");
+    const result = addInput(state, "b1", "b3");
+    expect(result.problem).toBeTruthy();
+    expect(result.state).toBe(state);
+  });
+});
+

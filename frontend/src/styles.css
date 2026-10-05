@@ -1253,6 +1253,15 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .manual-op-name .op-code { margin-right: 6px; }
 .tcgen .manual-op-tools { display: flex; gap: 4px; align-items: center; }
 .tcgen .manual-op-tools .small { min-width: 30px; padding: 3px 8px; }
+.tcgen .manual-op { padding: 8px 0; }
+.tcgen .manual-op-fold { display: inline-grid; place-items: center; align-self: start; min-width: 28px; min-height: 30px; padding: 0; border: 0; background: none; cursor: pointer; }
+.tcgen .manual-op.is-open .manual-op-fold .op-badge { outline: 2px solid color-mix(in srgb, var(--primary) 45%, transparent); }
+.tcgen .manual-op-norm { min-height: 28px; padding: 0 8px; border: 0; background: none; color: var(--foreground); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.tcgen .manual-op-norm:hover { text-decoration: underline; }
+.tcgen .manual-op-name input { min-height: 30px; }
+.tcgen .manual-summary-pick { padding: 2px 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.tcgen .manual-summary-pick:hover { color: var(--foreground); text-decoration: underline; }
+.tcgen .manual-summary-name.is-selected { color: var(--foreground); }
 .tcgen .manual-grid { display: grid; grid-template-columns: 92px 112px 116px 112px minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; margin-left: 36px; align-items: end; }
 .tcgen .manual-grid .wide { grid-column: span 2; }
 .tcgen .manual-grid .result { grid-column: span 4; }
@@ -1336,6 +1345,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen .btn-link, .tcgen .btn-add { min-height: 40px; }
   .tcgen .btn-remove { width: 40px; height: 40px; }
   .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
+  .tcgen .manual-op-fold, .tcgen .manual-op-norm, .tcgen .manual-summary-pick { min-width: 40px; min-height: 40px; }
   .tcgen .manual-comp input[inputmode] { height: 36px; }
   .tcgen .route-per-chip { height: 40px; }
   .tcgen .route-tool { width: 40px; height: 40px; font-size: 18px; }
