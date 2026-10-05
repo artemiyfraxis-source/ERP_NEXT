@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   assemblyApi,
   referencesApi,
@@ -215,7 +215,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   }, [card.project, card.item_index]);
 
   // init(): каждый монтаж засевает форму из состава набора и строк расчёта (autoFillAllWires, applyCalcTin_).
-  useEffect(() => {
+  // Layout-эффект: вкладки появляются в том же коммите, что и справочники; обычный эффект стартует позже, и клик по
+  // вкладке в этом окне затирался бы засевом (под нагрузкой тесты «Ручной сборки» теряли клик).
+  useLayoutEffect(() => {
     if (!refs || !kit) return;
     const restored = manualFromConfig(card.document?.build_config);
     setManual(restored ?? emptyManual());
