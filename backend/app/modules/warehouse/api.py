@@ -281,7 +281,6 @@ def _reserve_holders(request: Request, lots: list[StockLot]) -> dict[UUID, list[
     if not lots:
         return {}
     ids = [lot.id for lot in lots]
-    wanted = set(ids)
     holders: dict[UUID, list[dict]] = {}
     factory = getattr(request.app.state, "procurement_uow_factory", None)
     if callable(factory):
@@ -308,25 +307,15 @@ def _reserve_holders(request: Request, lots: list[StockLot]) -> dict[UUID, list[
                     "quantity": _number(reserve.quantity),
                     "unit": reserve.unit,
                 })
-            # Kit lines hold reserve in every status up to issue («Готов к выдаче» too), so walk all requests.
-            after: UUID | None = None
-            while True:
-                page = list(uow.fulfillment.list(limit=200, after_id=after))
-                for kit in page:
-                    for line in kit.lines:
-                        if line.lot is None or line.lot.lot_id not in wanted or line.reserved <= 0:
-                            continue
-                        holders.setdefault(line.lot.lot_id, []).append({
-                            "kind": "kit",
-                            "label": f"{kit.number} · {kit.purpose}".rstrip(" ·"),
-                            "request_id": str(kit.id),
-                            "request_number": kit.number,
-                            "quantity": _number(line.reserved),
-                            "unit": line.unit,
-                        })
-                if len(page) < 200:
-                    break
-                after = page[-1].id
+            for request_id, number, purpose, lot_id, unit, reserved in uow.fulfillment.holders_on_lots(ids):
+                holders.setdefault(lot_id, []).append({
+                    "kind": "kit",
+                    "label": f"{number} · {purpose}".rstrip(" ·"),
+                    "request_id": str(request_id),
+                    "request_number": number,
+                    "quantity": _number(reserved),
+                    "unit": unit,
+                })
     return holders
 
 

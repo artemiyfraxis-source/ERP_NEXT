@@ -67,7 +67,9 @@ def test_lot_lists_procurement_techcard_and_kit_holders_adding_up_to_reserved():
         procurement_uow_factory=factory(stock_covers=SimpleNamespace(active_on_lots=lambda ids: [cover])),
         fulfillment_uow_factory=factory(
             kit_reserves=SimpleNamespace(active_on_lots=lambda ids: [reserve]),
-            fulfillment=SimpleNamespace(list=lambda limit, after_id=None: [kit] if after_id is None else []),
+            fulfillment=SimpleNamespace(
+                holders_on_lots=lambda ids: [(kit.id, kit.number, kit.purpose, target.id, "шт", Decimal("5"))],
+            ),
         ),
     ))
 
