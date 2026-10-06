@@ -607,7 +607,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
   </div>;
 }
 
-/* «Снабжение»: Нужно / Свободно / В закупке / Не хватает по каждой позиции. Позиции, где не хватает, отмечаются
+/* «Снабжение»: Нужно / Свободно / Без ГРН / В закупке / Не хватает по каждой позиции. Позиции, где не хватает, отмечаются
    галочкой, и одна кнопка «Заказать недостающее» оформляет на них заявки на закупку (ничего не отмечено — на все). */
 function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder: boolean; deadline?: string | null }) {
   const [lines, setLines] = useState<SupplyLine[] | null>(null);
@@ -629,8 +629,10 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
   const count = chosen.length || shortLines.length;
   const missing = lines.filter((line) => line.stage === "не заведено").length;
   const received = lines.filter((line) => line.received).length;
-  const stock = lines.filter((line) => line.stage === "со склада").length;
-  const tone = (line: SupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : line.stage === "со склада" ? "info" : "warn";
+  // Закрыто «Есть на складе, без ГРН» — тоже со склада, без закупки (стадия «Закупка · Готово · без ГРН»).
+  const fromStock = (line: SupplyLine) => line.stage === "со склада" || line.stage.endsWith("без ГРН");
+  const stock = lines.filter(fromStock).length;
+  const tone = (line: SupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : fromStock(line) ? "info" : "warn";
   const zeroDash = (value: string) => Number(value) ? value : "—";
 
   function toggle(art: string, on: boolean) {
@@ -665,6 +667,7 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
     { key: "name", title: "Наименование", width: 300, value: (line) => line.name, wrap: true },
     { key: "need", title: "Нужно", width: 84, value: (line) => line.need, numeric: true },
     { key: "free", title: "Свободно", width: 90, value: (line) => zeroDash(line.free), numeric: true, hint: "Свободно на складе, с резервами самого проекта" },
+    { key: "off_book", title: "Без ГРН", width: 84, value: (line) => zeroDash(line.off_book || "0"), numeric: true, hint: "Закупка отметила «Есть на складе, без ГРН»: лежит на полке, но не заведено в партию и не в резерве" },
     { key: "ordered", title: "В закупке", width: 92, value: (line) => zeroDash(line.ordered), numeric: true, hint: "Заявки и строки закупки проекта, ещё не принятые" },
     { key: "kitted", title: "В комплектации", width: 120, value: (line) => zeroDash(line.kitted), numeric: true, hint: "В резерве или выдано по комплектации проекта" },
     { key: "short", title: "Не хватает", width: 100, value: (line) => zeroDash(line.short), numeric: true,

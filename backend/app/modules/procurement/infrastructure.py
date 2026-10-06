@@ -834,6 +834,23 @@ class SqlAlchemyStockCoverRepository:
         )
         return [_cover_domain(row) for row in rows]
 
+    def active_without_lot(self, line_ids: Sequence[UUID]) -> list[StockCover]:
+        """Active covers «Есть на складе, без ГРН» of these lines (no lot holds them) — the project's «Снабжение»."""
+        ids = tuple(dict.fromkeys(line_ids))
+        found: list[StockCover] = []
+        for start in range(0, len(ids), 500):
+            rows = self.session.scalars(
+                select(ProcurementStockCoverRow)
+                .where(
+                    ProcurementStockCoverRow.line_id.in_(ids[start:start + 500]),
+                    ProcurementStockCoverRow.lot_id.is_(None),
+                    ProcurementStockCoverRow.quantity > 0,
+                )
+                .order_by(ProcurementStockCoverRow.created_at, ProcurementStockCoverRow.id)
+            )
+            found.extend(_cover_domain(row) for row in rows)
+        return found
+
     def reserved_on_lot(self, lot_id: UUID) -> Decimal:
         """What «Со склада» holds in reserve on one lot (the warehouse row edit may not go under it)."""
         total = self.session.scalar(

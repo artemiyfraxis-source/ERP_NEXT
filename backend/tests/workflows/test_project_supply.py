@@ -69,3 +69,25 @@ def test_open_quantity_counts_each_purchase_once_and_stops_at_acceptance():
         ("G-1", "Запрос"): 0,
     }
     assert next(row for row in rows if row.article == "" and row.where == "Запрос").name == "Корпус Molex"
+
+
+def test_line_closed_from_stock_without_grn_is_not_accepted():
+    """«Есть на складе, без ГРН» closes the line «Готово» without money, but nothing was accepted onto a lot."""
+    covered = replace(_request("Контакт", "30", article="43030-0007"), status=RequestStatus.IN_WORK)
+    bought = replace(_request("Клемма", "5", article="K-1"), status=RequestStatus.IN_WORK)
+    lotless = replace(_line(covered, "30", ProcurementStatus.DONE), stock_covered=Decimal("30"))
+    paid = replace(_line(bought, "5", ProcurementStatus.DONE), paid_at=NOW)  # bought, paid and accepted
+
+    rows = {row.article: row for row in supply_rows(
+        "708К.4", [covered, bought], [lotless, paid], lotless=[lotless.id, paid.id],
+    ) if row.where != "Запрос"}
+
+    assert (rows["43030-0007"].where, rows["43030-0007"].status, rows["43030-0007"].received) == (
+        "Закупка", "Готово · без ГРН", False,
+    )
+    assert rows["43030-0007"].open_quantity == 0  # nothing left to buy
+    assert (rows["K-1"].where, rows["K-1"].status, rows["K-1"].received) == ("Приёмка", "Готово", True)
+    plain = {  # the cover was bound to a ГРН since: the goods are on a lot
+        row.article: row for row in supply_rows("708К.4", [covered], [lotless]) if row.where != "Запрос"
+    }
+    assert (plain["43030-0007"].where, plain["43030-0007"].received) == ("Приёмка", True)

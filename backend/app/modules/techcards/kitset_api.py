@@ -413,7 +413,7 @@ def supply(
     request: Request,
     _principal: Annotated[Principal, Depends(projects_view_principal)],
 ) -> dict:
-    """`portalKitsetSupply`: что по позициям закуплено, что едет, что есть на складе и чего не хватает."""
+    """`portalKitsetSupply`: что по позициям закуплено, что едет, что есть на складе (и без ГРН) и чего не хватает."""
     kitset = _kitset(request, project)
     lines, _requests = flow.project_supply(
         kitset, requests_factory(request), procurement_factory(request), fulfillment_factory(request),
@@ -421,7 +421,8 @@ def supply(
     return {"project": kitset.project, "lines": [{
         "art": line.article, "name": line.name, "kbs": list(line.kbs), "need": _number(line.need),
         "unit": unit_for_type(line.item_type),
-        "free": _number(line.free), "ordered": _number(line.ordered), "kitted": _number(line.kitted),
+        "free": _number(line.free), "off_book": _number(line.off_book), "ordered": _number(line.ordered),
+        "kitted": _number(line.kitted),
         "short": _number(line.short),
         "grn": line.grn, "stage": line.stage, "received": line.received,
         "rows": [{"where": row.where, "status": row.status, "source_id": row.source_id} for row in line.rows],
@@ -444,7 +445,7 @@ def order_missing(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """Заявки на закупку недостающего: Нужно − Свободно − В закупке по каждой позиции; повтор не дублирует."""
+    """Заявки на закупку недостающего: Нужно − Свободно − Без ГРН − В закупке по каждой позиции; повтор не дублирует."""
     if principal.permissions.get("newrequest") != "edit":
         raise HTTPException(status_code=403, detail="Раздел «Оформить заявку» вам не открыт")
     factory = requests_factory(request)
