@@ -6,7 +6,7 @@
  */
 
 /** Где метка: у разъёма, на обоих концах провода, на расстоянии от конца, по КД, своё место. */
-export type MarkPlace = "conn" | "ends" | "dist" | "kd" | "free";
+export type MarkPlace = "conn" | "ends" | "dist" | "kd" | "item" | "free";
 export type MarkRow = { target: string; text: string; material: string; place: MarkPlace; mm: string; where: string; qty: string };
 /** Материал маркировки из БД.МАТ: наименование (оно же ключ строки), группа, единица. */
 export type MarkMat = { name: string; group: string; unit: string };
@@ -16,8 +16,13 @@ export type MarkSpec = {
 };
 
 export const MARK_PLACES: ReadonlyArray<readonly [MarkPlace, string]> = [
-  ["conn", "У разъёма"], ["ends", "На концах"], ["dist", "От конца, мм"], ["kd", "По КД"], ["free", "Своё место"],
+  ["conn", "У разъёма"], ["ends", "На концах"], ["dist", "От конца, мм"], ["kd", "По КД"], ["item", "На изделии"], ["free", "Своё место"],
 ];
+/** Вид маркировки: термотрубка (на разъёмы и провода) или хлястик (на изделие). Старые сохранённые значения показываются как есть. */
+export const MARK_KINDS = ["Термотрубка", "Хлястик"] as const;
+export const MARK_KIND_DEFAULT = MARK_KINDS[0];
+export const MARK_KIND_ITEM = MARK_KINDS[1];
+
 export const WHOLE_HARNESS = "Жгут целиком";
 
 const MARK_GROUP_RE = /бирк|маркир|кембрик|этикет|маркер/i;
@@ -33,6 +38,7 @@ export function markPlaceText(row: Pick<MarkRow, "place" | "mm" | "where">): str
   if (row.place === "ends") return "на обоих концах";
   if (row.place === "dist") return row.mm.trim() ? `${row.mm.trim()} мм от конца` : "от конца, мм по КД";
   if (row.place === "kd") return "по КД";
+  if (row.place === "item") return "на изделии";
   return row.where.trim() || "по КД";
 }
 
@@ -62,7 +68,7 @@ const norm = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
 /** Материал строки в справочнике или в составе; null — «нет в справочнике». Пустой материал — не проверяется. */
 export function markMaterialSource(material: string, mats: MarkMat[], comps: CompLike[]): "ref" | "kit" | null {
   const key = norm(material);
-  if (!key) return "ref";
+  if (!key || MARK_KINDS.some((kind) => norm(kind) === key)) return "ref";
   if (comps.some((comp) => norm(comp.art || "") === key || norm(comp.name || "") === key)) return "kit";
   return mats.some((mat) => norm(mat.name) === key) ? "ref" : null;
 }
@@ -113,6 +119,12 @@ export function markTargets(connectors: Array<{ name: string; art: string }>, wi
 }
 
 /** «По разъёмам»: метка у каждого разъёма, надпись — его обозначение. */
+/** «Маркировать изделие»: одна метка на само изделие — хлястик с обозначением позиции. */
+export function productMarkRow(designation: string): MarkRow {
+  const name = designation.trim();
+  return newMarkRow({ target: `Изделие ${name}`.trim(), text: name, material: MARK_KIND_ITEM, place: "item", qty: "1" });
+}
+
 export function markRowsByConnectors(connectors: Array<{ name: string; art: string }>, material: string): MarkRow[] {
   return connectors.map((item) => newMarkRow({
     target: `Разъём ${item.name}${item.art ? ` (${item.art})` : ""}`, text: item.name, material, place: "conn", qty: "1",
