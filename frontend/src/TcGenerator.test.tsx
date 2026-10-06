@@ -177,3 +177,41 @@ it("has one main button: «Создать» before the first issue, «Перес
   expect(await screen.findByRole("button", { name: "Пересобрать" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Создать" })).not.toBeInTheDocument();
 });
+
+it("«Маркировка по КД»: fills marks by connectors and from the harness drawing and sends them to the build", async () => {
+  mockApi((path) => {
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [
+      { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
+      { id: "mark", code: "INS_MARK_HARNESS", side: "", title: "INS_MARK_HARNESS | Маркировка жгута", name: "Маркировка жгута", category: "Монтаж маркировки", steps: 1, tooling: 1 },
+    ] });
+    if (path === `/api/techcards/kitsets/${encodeURIComponent("P-100")}/harness/${encodeURIComponent("КБ1")}`) return json({
+      document: null, version: "v1", warnings: [],
+      design: { connectors: [{ id: "x1", designation: "X1", partNumber: "XHP-2" }], wires: [{ id: "w1", circuit: "708К.4КБ1" }] },
+    });
+    return undefined;
+  });
+  const onBuild = vi.fn();
+  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()}
+    kit={kitOf("Жгут XHP 150мм", [...XH, { type: "Маркировка", name: "Маркировка", art: "Маркировка", qty: 1 }])} />);
+
+  expect(await screen.findByText("из состава: Маркировка × 1")).toBeInTheDocument();
+  expect(screen.getByText(/Метки не заданы — в маркировку пойдут бирки из состава/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "По разъёмам" }));
+  expect(screen.getByLabelText("Надпись 1")).toHaveValue("А1");
+  expect(screen.getByLabelText("Материал 1")).toHaveValue("Маркировка");
+  fireEvent.click(screen.getByRole("button", { name: "Из чертежа жгута" }));
+  expect(await screen.findByDisplayValue("708К.4КБ1")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Материал 4"), { target: { value: "Самоклейка неведомая" } });
+  expect(screen.getByText("нет в справочнике")).toBeInTheDocument();
+  expect(screen.getByText("4 метки: А1, В1, X1, 708К.4КБ1")).toBeInTheDocument();
+
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  const op = onBuild.mock.calls[0][0].ops.find((item: { type: string }) => item.type === "insMark");
+  expect(op.templateId).toBe("mark");
+  expect(op.marks.map((mark: { text: string; art: string; place: string; qty: number }) => [mark.text, mark.art, mark.place, mark.qty])).toEqual([
+    ["А1", "Маркировка", "у разъёма", 1], ["В1", "Маркировка", "у разъёма", 1], ["X1", "Маркировка", "у разъёма", 1],
+    ["708К.4КБ1", "Самоклейка неведомая", "на обоих концах", 2],
+  ]);
+});

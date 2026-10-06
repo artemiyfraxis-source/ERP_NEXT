@@ -30,6 +30,8 @@ type Housing = {
   conf: string; note?: string; grid: number[][]; round?: Array<{ pin: number; x: number; y: number }> | null;
 };
 type EtkWireField = { name?: string; art?: string; pins?: number[] };
+/** Метка по КД (etk_builder `_mark_rows`): что, надпись, материал, где, на изделие и на партию. */
+type EtkMark = { target?: string; text?: string; material?: string; place?: string; qty?: string; batch?: string };
 type EtkTool = {
   section?: string; number?: string; name?: string; inventory_number?: string; program?: string;
   parameters?: string; norm?: string; unit?: string;
@@ -48,7 +50,7 @@ type EtkOperation = {
   semis?: EtkRow[];
   result?: EtkRow[];
   time?: EtkRow[];
-  fields?: { wires?: EtkWireField[] };
+  fields?: { wires?: EtkWireField[]; marks?: EtkMark[] };
   housing?: Housing;
 };
 type EtkTopology = {
@@ -182,6 +184,18 @@ function PartRows({ rows }: { rows?: EtkRow[] }) {
   )}</div>;
 }
 
+/** Метки по КД в «Ходе операции» маркировки: монтажник видит, какую надпись, чем и где делать, сколько штук. */
+function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
+  return <table className="etk-marks" aria-label="Метки по КД">
+    <caption>Метки по КД</caption>
+    <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Материал</th><th>Где</th><th className="num">На изделие</th><th className="num">{batch ? `На партию ${batch} шт.` : "На партию"}</th></tr></thead>
+    <tbody>{marks.map((mark, index) => <tr key={index}>
+      <td className="num">{index + 1}</td><td>{mark.target || "—"}</td><td><b>{mark.text || "—"}</b></td><td>{mark.material || "—"}</td>
+      <td>{mark.place || "—"}</td><td className="num">{mark.qty || ""}</td><td className="num">{mark.batch || ""}</td>
+    </tr>)}</tbody>
+  </table>;
+}
+
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
  *  1 вход: комплектующие и полуфабрикаты → 2 инструмент, оборудование, расходники + режим пайки (жало, температура) →
  *  3 ход операции → 4 типовые дефекты с пиктограммами → 5 эскиз → 6 результат и расчётное время. */
@@ -196,6 +210,7 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
   const solder = solderMode(raw);
   const safety = String(operation.card?.safety || "").replace(SAFETY_HEAD, "").trim();
   const resultLabel = String(raw.result_label || "") || "Результат";
+  const marks = operation.fields?.marks ?? [];
   const hasInput = Boolean(operation.components?.length || operation.semis?.length);
   const hasResult = Boolean(operation.result?.length || operation.time?.length);
   // Номера разделов подряд по показанным блокам (эскиза бывает нет).
@@ -227,11 +242,12 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
       {solder && <SolderPanel mode={solder} />}
       <ToolingBySection tooling={tooling} />
     </section>
-    {operation.card?.steps?.length ? <section className="etk-sec" aria-label="Ход операции">
+    {operation.card?.steps?.length || marks.length ? <section className="etk-sec" aria-label="Ход операции">
       <h4><span className="etk-sec-n">{next()}</span>Ход операции</h4>
-      <ol className="etk-steps">{operation.card.steps.map((step, index) =>
+      {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
+      {operation.card?.steps?.length ? <ol className="etk-steps">{operation.card.steps.map((step, index) =>
         <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small>Допуск: {step.tolerance}</small>}</li>
-      )}</ol></section> : null}
+      )}</ol> : null}</section> : null}
     {operation.card?.defects && <DefectsView text={operation.card.defects} code={operation.code || ""} number={next()} />}
     {(figure || sketch) && <section className="etk-sec" aria-label="Эскиз">
       <h4><span className="etk-sec-n">{next()}</span>Эскиз</h4>

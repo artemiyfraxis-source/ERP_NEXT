@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { initState, makeGen, parsePinList_, updateEndpoint, type GenData } from "./tcGenLogic";
+import { applyGrapherGroups, grapherLengthText, initState, makeGen, parsePinList_, updateEndpoint, type GenData, type GenState } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -44,6 +44,24 @@ it("builds the interboard config the /build endpoint reads (TcGenInline buildCon
   expect(cfg.ops[0]).toMatchObject({ opNum: "CUT_WIRE_auto", tOp: "12", tPrep: "60", tMachine: "3" });
   expect(cfg.ops[1]).toMatchObject({ firstTerm: true, ep: { connArt: "XHP-2", termArt: "SXH-001T-P0.6" }, wireSources: [""] });
   expect(cfg.ops[3].wireSources).toEqual(["Колодка XH 2"]);
+});
+
+it("a drawing with end allowances is cut by the drawing's cut length — our L+ is not added twice (owner 06.10)", () => {
+  const D = data(interboard);
+  const S = initState(D);
+  // TECHMAP-GRAPHER: 300 по чертежу + поправки +8/+4 → резка 312 (вверх до шага один раз) — как cut_mm экспорта.
+  const byCut = applyGrapherGroups(S, [{ compId: "w", qty: 2, length: 300, cut: 312, correctionFrom: 8, correctionTo: 4 }]);
+  expect(byCut.measureMode).toBe("cut");
+  expect((makeGen(D, byCut).buildConfig() as Record<string, any>).wires[0].length).toBe(312);
+  // Без поправок в чертеже — как раньше: длина по чертежу + наш L+ обеих сторон из БД.ТЕР.
+  const plain = applyGrapherGroups(S, [{ compId: "w", qty: 2, length: 300, cut: 300 }]);
+  expect(plain.measureMode).toBe("inner");
+  expect((makeGen(D, plain).buildConfig() as Record<string, any>).wires[0].length).toBe(310);
+  expect(grapherLengthText({ length_mm: 300, cut_mm: 312, correction_from_mm: 8, correction_to_mm: 4 }))
+    .toBe("по чертежу 300 мм · резка 312 мм (+8/+4)");
+  expect(grapherLengthText({ length_mm: "150.2", cut_mm: 149, correction_from_mm: "0.4", correction_to_mm: -2 }))
+    .toBe("по чертежу 150,2 мм · резка 149 мм (+0,4/−2)");
+  expect(grapherLengthText({ length_mm: 90, cut_mm: 90, correction_from_mm: 0, correction_to_mm: 0 })).toBe("по чертежу 90 мм");
 });
 
 it("pairs the wire ends by the order of both pin lists: А «1-2», В «2, 1» is a crossover", () => {
@@ -229,4 +247,100 @@ it("keeps crimp and tinning separate when the machine cannot take them", () => {
   // Обжим при резке включён вручную, но карты с лужением нет — лужение остаётся отдельной операцией.
   const forced = makeGen(noCard.D, { ...noCard.S, crimpCutManual: true, crimpCut: true }).getActiveOps();
   expect(forced.map((op) => [op.type, op.tmplHint ?? ""])).toEqual([["cutWireCrimp", "CUT_WIRE+1crimp"], ["insTerm", expect.any(String)], ["tin", expect.any(String)]]);
+});
+
+// Кабель USB «Сибирь» ТЦСМ.685621.047: НВ4 0,2, терминал SXH-001T-P0.6N с аппликатором автомата A2 на обеих сторонах,
+// 3 провода (6 контактов на 2 разъёма) × 200 изделий = 600 в партии — обжим при резке включён по умолчанию (> 300).
+const usbComps = [
+  { id: "w", type: "Провод", name: "Провод НВ4 0,2", art: "НВ4 0,2", qty: 0.3 },
+  { id: "t", type: "Терминал", name: "Контакт XH", art: "SXH-001T-P0.6N", qty: 4 },
+  { id: "t2", type: "Терминал", name: "Контакт PH", art: "SPH-002T-P0.5S", qty: 2 },
+  { id: "c", type: "Соед", name: "Розетка XH", art: "I-DS1071-SCB02X5", qty: 2 },
+];
+const crimpTemplates = [
+  { id: "cwc", title: "CUT_WIRE+1crimp | Автомат резка + опрессовка", category: "Автомат резка + опрессовка" },
+  { id: "cw2c", title: "CUT_WIRE+2crimp | Автомат резка + опрессовка", category: "Автомат резка + опрессовка" },
+];
+const ter = (article: string, applicator: string, strip: string) =>
+  ({ article, step: "2.50", strip, lPlus: "5", lMinus: "", applicator, awgFrom: "", awgTo: "", mm2From: "", mm2To: "" });
+
+function usbGen(opts: { both?: boolean; side?: string; twoCard?: boolean; patch?: (S: GenState, D: GenData) => GenState } = {}) {
+  const base = data(usbComps, "Кабель USB «Сибирь» ТЦСМ.685621.047 150мм");
+  const D: GenData = {
+    ...base,
+    assemblyInfo: { ...base.assemblyInfo, "Кол-во": "200" },
+    templates: [...templates, ...crimpTemplates.filter((t) => opts.twoCard !== false || t.id !== "cw2c")],
+    ops: [...base.ops,
+      { opNumber: "CUT_WIRE+1crimp", opName: "Автомат резка + опрессовка", tOp: "4,00", tPrep: "3600", tMachine: "4,00" },
+      { opNumber: "CUT_WIRE+2crimp", opName: "Автомат резка + опрессовка", tOp: "4,80", tPrep: "3600", tMachine: "4,80" }],
+    terRecords: [ter("SXH-001T-P0.6N", "S5/M5/A2", "2"), ter("SPH-002T-P0.5S", "S7/A7", "1,8")],
+  };
+  let S: GenState = initState(D);
+  S = updateEndpoint(D, updateEndpoint(D, S, "a1", { termId: "t" }), "b1", { termId: "t" });
+  if (opts.patch) S = opts.patch(S, D);
+  S = { ...S, crimpCutSide: opts.both ? "AB" : opts.side ?? "" };
+  return { D, S, g: makeGen(D, S) };
+}
+const kinds = (ops: Array<{ type: string; side?: string }>) => ops.map((op) => `${op.type}${op.side ? ":" + op.side : ""}`);
+
+it("«Обе стороны»: one machine op crimps А and В, no manual crimping, the mountings follow the cut", () => {
+  const { g } = usbGen({ both: true });
+  expect(g.batchWires_()).toBe(600);
+  expect(g.crimpCutSides_()).toEqual(["A", "B"]);
+  expect(g.crimpCutSideSelected_()).toBe("AB");
+  const ops = g.getActiveOps();
+  expect(kinds(ops)).toEqual(["cutWireCrimp:A", "insTerm:A", "insTerm:B"]);
+  expect(ops[0].label).toBe("Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2");
+  expect(ops[0]).toMatchObject({ tmplHint: "CUT_WIRE+2crimp", strip: { a: true, lenA: "2", b: true, lenB: "2" } });
+  const cfg = g.buildConfig() as Record<string, any>;
+  expect(cfg.ops[0]).toMatchObject({
+    type: "cutWireCrimp", side: "A", templateId: "cw2c", opNum: "CUT_WIRE+2crimp", tPrep: "3600", tOp: "4.80",
+    ep: { termArt: "SXH-001T-P0.6N", connArt: "I-DS1071-SCB02X5" }, epB: { termArt: "SXH-001T-P0.6N", connArt: "I-DS1071-SCB02X5" },
+  });
+  // Терминалы — только в резке (обе стороны), ручной опрессовки в конфигурации нет.
+  expect(cfg.ops.filter((op: any) => op.type === "prsTerm")).toEqual([]);
+});
+
+it("«Обе стороны» with different terminals on А and В names both; without a CUT_WIRE+2crimp card — the one-side card", () => {
+  const patch = (S: GenState, D: GenData) => updateEndpoint(D, S, "b1", { termId: "t2" });
+  const { g } = usbGen({ both: true, patch });
+  const [cut] = g.getActiveOps();
+  expect(cut.label).toBe("Резка с обжимом А и В (SXH-001T-P0.6N / SPH-002T-P0.5S) — Провод НВ4 0,2");
+  expect(cut.strip).toEqual({ a: true, lenA: "2", b: true, lenB: "1,8" });
+  expect((g.buildConfig() as Record<string, any>).ops[0].epB).toMatchObject({ termArt: "SPH-002T-P0.5S" });
+  const noCard = usbGen({ both: true, twoCard: false });
+  expect(noCard.g.getActiveOps()[0].tmplHint).toBe("CUT_WIRE+1crimp");
+  expect((noCard.g.buildConfig() as Record<string, any>).ops[0]).toMatchObject({ templateId: "cwc", opNum: "CUT_WIRE+1crimp" });
+});
+
+it("default and «Сторона А» / «Сторона В» keep the one-side machine crimp and crimp the other side by hand", () => {
+  for (const side of ["", "A"]) {
+    const { g } = usbGen({ side });
+    expect(g.crimpCutSideSelected_()).toBe("A");
+    const ops = g.getActiveOps();
+    expect(kinds(ops)).toEqual(["cutWireCrimp:A", "insTerm:A", "prsTerm:B", "insTerm:B"]);
+    expect(ops[0]).toMatchObject({ label: "Резка с обжимом А (SXH-001T-P0.6N) — Провод НВ4 0,2", tmplHint: "CUT_WIRE+1crimp" });
+    const cfg = g.buildConfig() as Record<string, any>;
+    expect(cfg.ops[0]).toMatchObject({ side: "A", templateId: "cwc", opNum: "CUT_WIRE+1crimp" });
+    expect(cfg.ops.some((op: any) => "epB" in op)).toBe(false);
+  }
+  const b = usbGen({ side: "B" }).g;
+  expect(kinds(b.getActiveOps())).toEqual(["cutWireCrimp:B", "prsTerm:A", "insTerm:A", "insTerm:B"]);
+  expect(b.getActiveOps()[0].label).toBe("Резка с обжимом В (SXH-001T-P0.6N) — Провод НВ4 0,2");
+});
+
+it("a side the machine cannot crimp stays manual and says why; «Обе стороны» then falls back to the other side", () => {
+  // Сторона В без терминала: «Обе стороны» недоступна, сохранённый выбор "AB" — обжим стороны А, как раньше.
+  const bare = usbGen({ both: true, patch: (S, D) => updateEndpoint(D, S, "b1", { termId: "" }) }).g;
+  expect(bare.crimpCutSides_()).toEqual(["A"]);
+  expect(bare.crimpCutSideSelected_()).toBe("A");
+  expect(bare.crimpCutSideNote_("B")).toBe("сторона В: у 3 проводов не выбран терминал");
+  expect(kinds(bare.getActiveOps())).toEqual(["cutWireCrimp:A", "insTerm:A", "insTerm:B"]);
+  // У терминала стороны В нет аппликатора автомата — опрессовка В вручную.
+  const noApplicator = usbGen({ both: true, patch: (S, D) => updateEndpoint(D, { ...S }, "b1", { termId: "t2" }) });
+  const D2 = { ...noApplicator.D, terRecords: [ter("SXH-001T-P0.6N", "S5/M5/A2", "2"), ter("SPH-002T-P0.5S", "S7", "1,8")] };
+  const g2 = makeGen(D2, noApplicator.S);
+  expect(g2.crimpCutSideNote_("B")).toBe("сторона В: у SPH-002T-P0.5S нет аппликатора автомата (A…) — обжим вручную");
+  expect(kinds(g2.getActiveOps())).toEqual(["cutWireCrimp:A", "insTerm:A", "prsTerm:B", "insTerm:B"]);
+  expect(g2.crimpCutSideNote_("A")).toBe("");
 });

@@ -33,6 +33,7 @@ from .application import (
     ConcurrentFulfillmentUpdate,
     CreateFulfillmentCommand,
     DeleteFulfillmentCommand,
+    IssueBatchCommand,
     MarkReadyCommand,
     MarkReturnedCommand,
     OffBookCommand,
@@ -54,7 +55,9 @@ from .application import (
     create_fulfillment,
     delete_fulfillment,
     handout_place,
+    issue_batch,
     issue_fulfillment,
+    kit_label,
     mark_ready,
     mark_returned,
     unbind_lot,
@@ -587,6 +590,47 @@ def issue(
     return _run(lambda: issue_fulfillment(
         _version_command(request_id, payload, principal, now), uow_factory()
     ))
+
+
+class IssueBatchItem(BaseModel):
+    id: UUID
+    version: int = Field(ge=1)
+
+
+class IssueBatchPayload(BaseModel):
+    """«Выдать выбранные»: the kits ticked on the order (or one КБ), with the versions the screen showed."""
+    requests: list[IssueBatchItem] = Field(min_length=1, max_length=200)
+
+
+@router.post("/issue-batch")
+def issue_selected(
+    payload: IssueBatchPayload,
+    principal: Annotated[Principal, Depends(fulfillment_handout_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """Hand out the whole order or any of its КБ in one transaction (owner 06.10.2026): «Укомплектован» kits are sent
+    to the handout point on the way. Any kit refused → 422/409 naming its КБ, and nothing is issued."""
+    try:
+        issued = issue_batch(IssueBatchCommand(
+            versions=tuple((item.id, item.version) for item in payload.requests),
+            actor=principal.actor,
+            now=now,
+        ), uow_factory())
+    except (FulfillmentValidationError, WarehouseValidationError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ConcurrentFulfillmentUpdate as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error.args[0] if error.args else error)) from error
+    except (IntegrityError, StaleDataError) as error:
+        raise HTTPException(status_code=409, detail="Конкурентное изменение: обнови экран, ничего не выдано") from error
+    lines = sum(1 for request in issued for line in request.lines if not line.off_book and line.issued > 0)
+    return {
+        "requests": [_result(request) for request in issued],
+        "message": f"Выдано: {', '.join(kit_label(request) for request in issued)}. "
+                   f"Списано со склада позиций: {lines}.",
+    }
 
 
 @router.post("/{request_id}/returned")

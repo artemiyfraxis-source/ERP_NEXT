@@ -591,13 +591,25 @@ class DocumentPayload(BaseModel):
     content_b64: str = Field(min_length=1)
 
 
+# The harness drawing (TECHMAP-GRAPHER design document, schemaVersion 1) kept as a КД row of its position and
+# edited in ERP (harness_api.py): one row per position, saved over itself.
+HARNESS_CONTENT_TYPE = "application/vnd.fraxis.harness+json"
+
+
+def document_kind(document) -> str:
+    """«harness» — the harness drawing edited in ERP; «file» — an attached file."""
+    return "harness" if (document.content_type or "").split(";")[0].strip() == HARNESS_CONTENT_TYPE else "file"
+
+
 def _document_json(document) -> dict:
     """A row of the «КД» register as `tcKdByAssembly_` hands it to the card. `stored` — the bytes are in ERP (the
-    card links the download); otherwise `url` is the archived Drive link of a row from before the move, read-only."""
+    card links the download); otherwise `url` is the archived Drive link of a row from before the move, read-only.
+    `kind` — «harness» for the harness drawing (opened in the drawing editor), «file» otherwise."""
     return {
         "id": str(document.id), "index": document.item_index, "name": document.file_name,
         "size": document.size, "stored": document.stored, "url": document.url or None,
         "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
+        "kind": document_kind(document),
     }
 
 

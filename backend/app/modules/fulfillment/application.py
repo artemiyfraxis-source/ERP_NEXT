@@ -15,6 +15,7 @@ from app.modules.procurement.domain import StockCover, project_key
 from app.modules.warehouse.domain import (
     ISSUE_WRITEOFF_AUTHOR,
     StockLot,
+    WarehouseValidationError,
     WriteOffEntry,
     issue_writeoff_reason,
 )
@@ -862,24 +863,35 @@ def bind_arrived_lot(command: BindArrivedLotCommand, uow: UnitOfWork) -> Arrived
     return ArrivedLotResult(kits=tuple(kits), bound=tuple(bound), short=short)
 
 
-def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest:
-    with uow:
-        request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_ready(command.handout_location).stamped(command.now)
-        uow.fulfillment.add(updated)
-        sites = _kit_sites(uow)
-        site = sites.site_of(updated) if sites is not None else ""
+def _send_to_handout(
+    request: FulfillmentRequest,
+    handout_location: str,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+    *,
+    notify: bool = True,
+) -> FulfillmentRequest:
+    """«Укомплектован» → «Готов к выдаче» inside the caller's unit of work (no commit). `notify=False` — the kit is
+    handed out in the same action, so nobody is told to come and pick it up; the audit keeps the place and the site."""
+    updated = request.mark_ready(handout_location).stamped(now)
+    uow.fulfillment.add(updated)
+    sites = _kit_sites(uow)
+    site = sites.site_of(updated) if sites is not None else ""
+    details: dict = {"handout_location": updated.handout_location}
+    if site:  # `last_handout` of the site reads it back for the next kit
+        details["site"] = site
+    if not notify:
+        details["with_issue"] = True
+    _audit(updated, "fulfillment.ready", actor, now, details, uow)
+    if notify:
         masters = tuple(sites.masters(site)) if sites is not None else ()
-        details: dict = {"handout_location": updated.handout_location}
-        if site:  # `last_handout` of the site reads it back for the next kit
-            details["site"] = site
-        _audit(updated, "fulfillment.ready", command.actor, command.now, details, uow)
         # Issue.gs:459-474: the requester learns the kit is ready and where to pick it up; the masters of the kit's
         # site learn it too (owner, G1-T3 05.10.2026). One message, recipients de-duplicated: a master who requested
         # the kit himself gets it once.
         publish_notification(uow.outbox, notification_requested(
             key=f"fulfillment:{updated.id}:ready:v{updated.version}",
-            now=command.now,
+            now=now,
             title=f"Заявка {updated.number} готова к получению",
             body=(
                 f"Заявка {updated.number} укомплектована и ждёт выдачи, место: {updated.handout_location}."
@@ -889,8 +901,69 @@ def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest
             reference=updated.number,
             user_ids=(updated.requester_id, *masters),
         ))
+    return updated
+
+
+def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    with uow:
+        request = _versioned(command.request_id, command.expected_version, uow)
+        updated = _send_to_handout(request, command.handout_location, command.actor, command.now, uow)
         uow.commit()
         return updated
+
+
+def _hand_out(
+    request: FulfillmentRequest,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+    lots: dict[UUID, StockLot],
+) -> FulfillmentRequest:
+    """«Готов к выдаче» → «КБ Выдана» inside the caller's unit of work (no commit): reserve → списано on every lot,
+    one СПИСАНИЕ row per position. `lots` holds each lot as posted so far in this transaction — two kits of one batch
+    on the same lot write off one after the other, never from the same stale balance."""
+    updated = request.mark_issued().stamped(now)
+    posted: dict[UUID, StockLot] = {}
+    for line in request.lines:
+        if line.off_book:  # «есть, но не заведено»: no lot, no stock movement, no СПИСАНИЕ row
+            continue
+        if line.lot is None:
+            raise FulfillmentValidationError("У позиции не выбрана партия")
+        lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
+        if lot is None:
+            raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
+        lots[lot.id] = posted[lot.id] = lot.issue_reserved(line.reserved)
+        uow.warehouse.add(lots[lot.id])
+    # Issue.gs:475-502: one СПИСАНИЕ row per issued position, ОСТАТОК ПОСЛЕ = the lot balance once the
+    # whole request is posted (two positions on one lot both show the final balance).
+    for line in request.lines:
+        if line.off_book or line.reserved <= 0:
+            continue
+        lot = posted[line.lot.lot_id]
+        uow.writeoffs.add(WriteOffEntry.for_lot(
+            lot,
+            kind="issue",
+            quantity=line.reserved,
+            name=line.name,
+            reason=issue_writeoff_reason(request.number),
+            purpose="",
+            author=ISSUE_WRITEOFF_AUTHOR,
+            actor_id=actor.id,
+            actor_name=actor.name,
+            occurred_at=now,
+            remaining_after=lot.balance,
+            source_key=f"fulfillment-issue:{line.id}",
+        ))
+    uow.fulfillment.add(updated)
+    off_book = [
+        {"line_id": str(line.id), "article": line.article, "name": line.name,
+         "quantity": _display_number(line.issued), "unit": line.unit}
+        for line in updated.lines if line.off_book
+    ]
+    _audit(updated, "fulfillment.issued", actor, now, {
+        "lines": len(updated.lines), **({"off_book": off_book} if off_book else {}),
+    }, uow)
+    return updated
 
 
 def issue_fulfillment(
@@ -899,49 +972,81 @@ def issue_fulfillment(
 ) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_issued().stamped(command.now)
-        lots: dict[UUID, StockLot] = {}
-        for line in request.lines:
-            if line.off_book:  # «есть, но не заведено»: no lot, no stock movement, no СПИСАНИЕ row
-                continue
-            if line.lot is None:
-                raise FulfillmentValidationError("У позиции не выбрана партия")
-            lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
-            if lot is None:
-                raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
-            lots[lot.id] = lot.issue_reserved(line.reserved)
-            uow.warehouse.add(lots[lot.id])
-        # Issue.gs:475-502: one СПИСАНИЕ row per issued position, ОСТАТОК ПОСЛЕ = the lot balance once the
-        # whole request is posted (two positions on one lot both show the final balance).
-        for line in request.lines:
-            if line.off_book or line.reserved <= 0:
-                continue
-            lot = lots[line.lot.lot_id]
-            uow.writeoffs.add(WriteOffEntry.for_lot(
-                lot,
-                kind="issue",
-                quantity=line.reserved,
-                name=line.name,
-                reason=issue_writeoff_reason(request.number),
-                purpose="",
-                author=ISSUE_WRITEOFF_AUTHOR,
-                actor_id=command.actor.id,
-                actor_name=command.actor.name,
-                occurred_at=command.now,
-                remaining_after=lot.balance,
-                source_key=f"fulfillment-issue:{line.id}",
-            ))
-        uow.fulfillment.add(updated)
-        off_book = [
-            {"line_id": str(line.id), "article": line.article, "name": line.name,
-             "quantity": _display_number(line.issued), "unit": line.unit}
-            for line in updated.lines if line.off_book
-        ]
-        _audit(updated, "fulfillment.issued", command.actor, command.now, {
-            "lines": len(updated.lines), **({"off_book": off_book} if off_book else {}),
-        }, uow)
+        updated = _hand_out(request, command.actor, command.now, uow, {})
         uow.commit()
         return updated
+
+
+# What «Выдать комплект» takes (owner 06.10.2026): a fully picked kit, sent to the handout point or not yet.
+ISSUABLE = frozenset({FulfillmentStatus.COMPLETE, FulfillmentStatus.READY})
+
+
+def kit_label(request: FulfillmentRequest) -> str:
+    """«КБ2 (REQ.26.0000020)» — how a batch names the kit it stopped on; a request without a КБ — its number."""
+    kb = kb_of(request.purpose)
+    return f"{kb} ({request.number})" if kb else request.number
+
+
+@dataclass(frozen=True)
+class IssueBatchCommand:
+    """«Выдать выбранные»: the kits of one screen, each with the version the screen showed."""
+
+    versions: tuple[tuple[UUID, int], ...]
+    actor: Actor
+    now: datetime
+
+
+def _refuse_status(request: FulfillmentRequest) -> str:
+    if request.status in {FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED}:
+        total = len(request.lines)
+        if request.open_lines():
+            return f"комплект не собран, набрано {total - len(request.open_lines())} из {total} позиций"
+        return "комплект не отмечен «Укомплектован»"
+    if request.status in {FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE}:
+        return "уже выдана"
+    return f"заявку в статусе «{request.status.value}» не выдают"
+
+
+def issue_batch(command: IssueBatchCommand, uow: UnitOfWork) -> tuple[FulfillmentRequest, ...]:
+    """Hand out several kits at once — the whole order or the КБ ticked (owner 06.10.2026) — in one transaction.
+
+    Every kit is checked before anything moves: it exists, still has the version the screen showed (a repeated or
+    double-clicked call finds the version moved on and is refused, so nothing is written off twice) and is fully
+    picked. A «Укомплектован» kit is sent to the handout point first (place: `handout_place`, «Отправлена на выдачу»
+    stamped, no «готов к получению» message) and handed out at once. Any refusal names the КБ and rolls the whole
+    batch back: nothing is issued."""
+    with uow:
+        if not command.versions:
+            raise FulfillmentValidationError("Не выбрано ни одной заявки для выдачи")
+        if len({request_id for request_id, _ in command.versions}) != len(command.versions):
+            raise FulfillmentValidationError("Заявка указана в выдаче дважды")
+        requests: list[FulfillmentRequest] = []
+        for request_id, version in command.versions:
+            request = uow.fulfillment.get(request_id)
+            if request is None:
+                raise KeyError("Заявка на выдачу не найдена — обнови экран")
+            if request.version != version:
+                raise ConcurrentFulfillmentUpdate(
+                    f"{kit_label(request)}: заявка изменилась после загрузки — обнови экран. Ничего не выдано."
+                )
+            if request.status not in ISSUABLE or not request.fully_reserved:
+                reason = _refuse_status(request) if request.status not in ISSUABLE else "комплект собран не целиком"
+                raise FulfillmentValidationError(f"{kit_label(request)}: {reason}. Ничего не выдано.")
+            requests.append(request)
+        lots: dict[UUID, StockLot] = {}
+        issued: list[FulfillmentRequest] = []
+        for request in sorted(requests, key=_kit_order):
+            try:
+                current = request
+                if current.status is FulfillmentStatus.COMPLETE:
+                    current = _send_to_handout(
+                        current, handout_place(current, uow), command.actor, command.now, uow, notify=False,
+                    )
+                issued.append(_hand_out(current, command.actor, command.now, uow, lots))
+            except (FulfillmentValidationError, WarehouseValidationError) as error:
+                raise type(error)(f"{kit_label(request)}: {error}. Ничего не выдано.") from error
+        uow.commit()
+        return tuple(issued)
 
 
 def mark_returned(command: MarkReturnedCommand, uow: UnitOfWork) -> FulfillmentRequest:

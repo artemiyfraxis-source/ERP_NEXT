@@ -1343,8 +1343,95 @@ export interface GrapherImportResult {
       component_id: string;
       mixed_corrections?: boolean;
     }>;
-  }>;
+  } & GrapherHarnessDetails>;
+  format?: { snapshot_format: number | null; source_commit: string };
+  catalog?: {
+    pinned: Array<{ source_kind: string; record_key: string; version: string; name: string; value: string; unit: string }>;
+    components: Array<{ snapshot_id: string; code: string; name: string; version: number | null; articles: string[] }>;
+    placements: Array<{ harness_id: string; article_key: string; entity_type: string; snapshot_id: string; component_code: string }>;
+  };
+  import_warnings?: string[];
 }
+
+/** Операция генератора, которую подразумевает провод чертежа (type — тип операции генератора; shared — общая для
+ *  нескольких проводов: сросток, пара, кабель, оболочка — брать один раз; block — строка маршрута чертежа). */
+export interface GrapherImpliedOp {
+  type: string; label: string; side: "" | "A" | "B"; shared: string; block: string; data: Record<string, unknown>;
+}
+
+export interface GrapherWireEnd {
+  type: "contact" | "junction" | "screen" | "free"; type_label: string; title: string;
+  connector_id: string; connector: string; part_number: string; contact_id: string; contact_number: number | null;
+  contact_name: string; contact_type: string; circuit: string; terminal_article: string; terminal: string;
+  terminal_l_plus_mm: number | null; terminal_l_minus_mm: number | null;
+  terminal_details: { manufacturer: string; series: string; description: string; article: string } | null;
+  junction_id: string; screen_id: string; screen_side: string; correction_mm: number; strip_profile: string;
+}
+
+type GrapherBlock = { id: string; title: string; index: string } | null;
+
+/** Полное чтение жгута TECHMAP-GRAPHER (модель жгута ERP, backend/app/modules/techcards/harness). Необязательные —
+ *  старый backend их не присылает. */
+export interface GrapherHarnessDetails {
+  id?: string;
+  format?: { schema_version: number; writer_contract: number | null };
+  wires?: Array<{
+    id: string; circuit: string; color: string; material: string; material_article: string; section: string;
+    component_id: string; cable_id: string; length_mm: number | null; correction_from_mm: number; correction_to_mm: number;
+    rounding_step_mm: number; unrounded_mm: number | null; cut_mm: number | null; label: string;
+    from: GrapherWireEnd; to: GrapherWireEnd; block: GrapherBlock; covering_ids: string[];
+    ops: GrapherImpliedOp[]; route_ops: GrapherImpliedOp[];
+  }>;
+  junctions?: Array<{ id: string; label: string; wire_ids: string[]; ending_wire_ids: string[]; circuits: string[] }>;
+  screens?: Array<{ id: string; label: string; wire_ids: string[]; terminal_side: string; drain_wire_ids: string[] }>;
+  diff_pairs?: Array<{ id: string; wire_ids: string[]; circuits: string[]; step: number | null; amplitude: number | null; variant: number }>;
+  twisted_groups?: Array<{ id: string; kind: string; label: string; wire_ids: string[] }>;
+  cables?: Array<{
+    id: string; label: string; material: string; material_article: string; component_id: string;
+    member_wire_ids: string[]; cores: number; length_mm: number | null; correction_from_mm: number; correction_to_mm: number;
+    rounding_step_mm: number; unrounded_mm: number | null; cut_mm: number | null;
+    sheath_strip: { from_mm: number | null; to_mm: number | null; cut_from_mm: number | null; cut_to_mm: number | null } | null;
+    block: GrapherBlock;
+  }>;
+  strip_profiles?: Array<{
+    wire_id: string; end: "from" | "to"; circuit: string; profile: string; source_key: string;
+    layers: Array<{ name: string; index: number; length_mm: number; step_mm: number; diameter_mm: number | null }>;
+  }>;
+  coverings?: Array<{
+    id: string; name: string; kind: string; kind_label: string; material: string; material_article: string;
+    component_id: string; color: string; length_mode: string; length_mm: number | null;
+    spans: Array<{ segment_id: string; from: number; to: number; from_connector: string; to_connector: string }>;
+    segment_ids: string[]; wire_ids: string[]; cable_ids: string[]; block: GrapherBlock; ops: GrapherImpliedOp[];
+  }>;
+  route_status?: string;
+  route_status_label?: string;
+  route_rows?: Array<{
+    id: string; kind: string; kind_label: string; role: string; index: string; title: string;
+    quantity: number | null; reserve: number | null; operation_time_min: number | null; comment: string; prepared: boolean;
+    depends_on: string[]; sources: Array<{ kind: string; id: string; label: string }>;
+    operations: Array<{ id: string; code: string; name: string; mode: string; note: string }>;
+    terminal_requirements: Array<{ wire_id: string; end: "from" | "to"; terminal_article: string; strip_length_mm: number | null }>;
+  }>;
+  connector_details?: Array<{
+    id: string; designation: string; part_number: string; library: string; template_code: string; template_name: string;
+    template_article: string; template_version: number | null;
+    contacts: Array<{
+      id: string; number: number | null; name: string; contact_type: string; circuit: string; terminal_article: string;
+      terminal: string; terminal_l_plus_mm: number | null; terminal_l_minus_mm: number | null; wire: string;
+      wire_section: string; color: string; status: string;
+    }>;
+  }>;
+  sheet_match?: Array<{
+    kind: string; name: string; article: string; unit: string; quantity: number | null; item_ids: string[];
+    sheet_id: string; sheet_quantity: number | null; matched_by: string;
+    status: "ok" | "quantity" | "not_in_sheet" | "not_in_drawing";
+  }>;
+  sheet_warnings?: string[];
+  import_warnings?: string[];
+}
+
+/** Строка «Данных из листа» для сверки с чертежом. */
+export type GrapherSheetRow = { id: string; type: string; name: string; article: string; kd: string; qty: number | string | null };
 
 export interface NotificationItem {
   id: string;
@@ -2225,10 +2312,12 @@ export const fulfillmentApi = {
       method: "POST",
       body: JSON.stringify(typeof place === "string" ? { version, handout_location: place } : { version, place }),
     }),
-  issue: (requestId: string, version: number) =>
-    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/issue`, {
+  /** «Выдать комплект» / «Выдать выбранные»: one transaction for every kit given, all or nothing. A «Укомплектован»
+      kit is sent to the handout point on the way (the place the server offers). */
+  issueBatch: (requests: Array<{ id: string; version: number }>) =>
+    api<{ requests: FulfillmentRequest[]; message: string }>("/api/issues/issue-batch", {
       method: "POST",
-      body: JSON.stringify({ version }),
+      body: JSON.stringify({ requests }),
     }),
   returned: (requestId: string, version: number, returnLocation: string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/returned`, {
@@ -2551,9 +2640,10 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, operation }),
     }),
-  importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = []) =>
+  importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = [],
+    sheet: GrapherSheetRow[] = []) =>
     api<GrapherImportResult>("/api/techcards/grapher/import", {
-      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components }),
+      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components, sheet }),
     }),
   create: (payload: {
     project: string;
@@ -2802,6 +2892,24 @@ export interface KitsetDocument {
   url: string | null;
   uploaded_at: string;
   who: string;
+  /** «harness» — чертёж жгута, правится в ERP (`kitsetsApi.harness`); «file» — вложенный файл. */
+  kind?: "harness" | "file";
+}
+
+/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — одна строка КД, сохраняется поверх себя.
+ *  `version` — с чем сохранять: чужое сохранение после неё даёт 409. Чертежа нет — всё null. */
+export interface HarnessDrawing {
+  document: KitsetDocument | null;
+  design: Record<string, unknown> | null;
+  version: string | null;
+  warnings: string[];
+}
+
+/** «Ручная сборка» из чертежа: build_config (операции с `origin` = `harness:<объект>:<код>`, блоки по маршруту КД) —
+ *  экран сливает её со схемой мастера через `rederive`. Ничего не сохраняется. */
+export interface HarnessDerived {
+  build_config: Record<string, unknown>;
+  warnings: string[];
 }
 
 export interface KitsetAssembly {
@@ -2922,6 +3030,7 @@ export interface KitsetDeleteResult {
 }
 
 const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
+const harnessPath = (project: string, index: string) => `${kitsetPath(project)}/harness/${encodeURIComponent(index)}`;
 
 /** Запись трека проекта: что создано в одном из модулей. `at` — ISO-время; null — события ещё нет (такие идут в конце). */
 export type ProjectTrackEntry = {
@@ -2984,6 +3093,17 @@ export const kitsetsApi = {
   documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
   removeDocument: (project: string, id: string) =>
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  harness: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
+  /** Сохранить чертёж: `version` — из последнего чтения (null — чертежа ещё нет). */
+  saveHarness: (project: string, index: string, design: Record<string, unknown>, version: string | null) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, version }) }),
+  /** «Ручная сборка» из чертежа: переданного (несохранённого в редакторе) или сохранённого. */
+  deriveHarness: (project: string, index: string, design?: Record<string, unknown>) =>
+    api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
+  harnessExportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
+  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — ложится поверх прежнего (та же проверка версии). */
+  importHarness: (project: string, index: string, payload: { file_name: string; content_b64: string; version: string | null }) =>
+    api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),
   openTechcard: (project: string, index: string) =>
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
 };

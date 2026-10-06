@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatMinutes, pluralBlocks } from "./etkRoute";
-import { RouteDiagram, numberRange } from "./RouteDiagram";
+import { PerUnit, RouteDiagram, numberRange } from "./RouteDiagram";
 import { blockTitle, routeTotals, type RouteBlock, type RouteEdge } from "./routeLogic";
 import {
   addBlock,
@@ -9,12 +9,15 @@ import {
   addInput,
   addInputBlock,
   addLibraryOp,
+  blockKind,
   blockOrder,
+  BLOCK_KIND_NAMES,
   cardCategory,
   cardLabel,
   cardNorms,
   genParams,
   inputCandidates,
+  kdChangeText,
   manualRoute,
   moveOp,
   nameBlockAfter,
@@ -26,10 +29,14 @@ import {
   removeOp,
   renameBlock,
   selectBlock,
+  setBlockChecked,
+  setBlockKind,
+  setBlockQuantity,
   setPerUnit,
   toggleComponent,
   updateOp,
   type EdgeEdit,
+  type KdSummary,
   type LibraryCard,
   type ManualOp,
   type ManualState,
@@ -72,6 +79,62 @@ function LibraryPicker({ library, opRecs, target, added, onAdd, onClose }: {
   </div>;
 }
 
+/** Что поменялось в КД у операции — «было → стало»; правленное мастером остаётся его. Принять изменения КД кнопкой —
+    позже, пока только показ. */
+function KdNote({ op }: { op: ManualOp }) {
+  const edited = new Set(op.edited ?? []);
+  return <small className="manual-op-kd">
+    {(op.kdChanges ?? []).map((change, index) => <span key={change.field} className="muted">
+      {index > 0 && <br />}{kdChangeText(change)}{edited.has(change.field) ? " (оставлено значение мастера)" : ""}
+    </span>)}
+  </small>;
+}
+
+/** «Предложить из КД» на схеме: есть ли чертёж жгута, идёт ли чтение, устарела ли схема (КД изменена) и открытое
+    предложение — сводка до применения (`summary`) или уже взятая в пустую схему схема из КД (`taken` операций). */
+export type KdOffer = {
+  available: boolean;
+  /** Почему кнопка недоступна — подсказкой на ней. */
+  hint: string;
+  busy: boolean;
+  stale: boolean;
+  onPropose: () => void;
+  proposal?: { summary?: KdSummary; taken?: number; warnings: string[]; onApply?: () => void; onCancel: () => void };
+};
+
+function kdSummaryText(summary: KdSummary): string {
+  if (!summary.added && !summary.changed && !summary.gone) return "Предложение из КД: схема уже совпадает с КД";
+  return `Предложение из КД: добавится ${summary.added}, изменится ${summary.changed}, нет в КД ${summary.gone}`;
+}
+
+/** Кнопка «Предложить из КД» (или отметка «КД изменена — предложить заново»); без чертежа — недоступна с подсказкой. */
+function KdButton({ kd }: { kd: KdOffer }) {
+  if (kd.stale && kd.available) {
+    return <button type="button" className="secondary small tone-warn" style={{ background: "var(--chip-warn-bg)" }} disabled={kd.busy} title="Чертёж жгута в КД сохранён после того, как из него предложена схема"
+      onClick={kd.onPropose}>{kd.busy ? "Читаю КД…" : "КД изменена — предложить заново"}</button>;
+  }
+  // Подсказка — на обёртке: у недоступной кнопки браузер её может не показать.
+  return <span title={kd.available ? "Блоки и операции из чертежа жгута в КД" : kd.hint}>
+    <button type="button" className="secondary small" disabled={!kd.available || kd.busy} onClick={kd.onPropose}>{kd.busy ? "Читаю КД…" : "Предложить из КД"}</button>
+  </span>;
+}
+
+/** Сводка предложения из КД до применения («Применить» / «Отмена») или после взятия в пустую схему («Закрыть»). */
+function KdProposalBar({ proposal }: { proposal: NonNullable<KdOffer["proposal"]> }) {
+  // Взятая без замечаний схема — зелёным; решение или замечания КД — жёлтым.
+  const calm = !proposal.summary && !proposal.warnings.length;
+  return <div className={calm ? "success-banner" : "warning-inline"} role="region" aria-label="Предложение из КД" style={{ display: "grid", gap: 6, fontSize: 13, marginBottom: 0 }}>
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+      <b role="status">{proposal.summary ? kdSummaryText(proposal.summary) : `Схема предложена из КД: ${proposal.taken ?? 0} оп.`}</b>
+      <span className="manual-add" style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        {proposal.onApply && <button type="button" className="primary small" onClick={proposal.onApply}>Применить</button>}
+        <button type="button" className="secondary small" onClick={proposal.onCancel}>{proposal.onApply ? "Отмена" : "Закрыть"}</button>
+      </span>
+    </div>
+    {proposal.warnings.map((warning) => <span key={warning}>{warning}</span>)}
+  </div>;
+}
+
 function normLabel(minutes: number) {
   return minutes > 0 ? <b>{formatMinutes(minutes)} мин</b> : <b className="tone-warn">не задана</b>;
 }
@@ -89,6 +152,8 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
   const title = opTitle(op, position);
   const minutes = opMinutes(op, partQty);
   const picked = new Map(op.components.map((item) => [item.id, item]));
+  // Ключа операции больше нет в КД — метка в начале строки «откуда операция».
+  const gone = op.kdGone ? <><span className="order-chip tone-warn" title="Этой операции больше нет в КД — проверьте, нужна ли она">нет в КД</span>{" "}</> : null;
   // Подпись короткая, единица — в поле; полное имя поля — в aria-label («Подготовка, мин: Резка»).
   const field = (key: "qty" | "prepMin" | "opSec", label: string, unit: string, name: string, placeholder: string) =>
     <Field label={label}><UnitInput unit={unit} inputMode="decimal" aria-label={`${name}: ${title}`} value={op[key]} placeholder={placeholder}
@@ -103,8 +168,9 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
           : <input aria-label={`Название операции ${position}`} value={op.label} placeholder={op.kind === "custom" ? "Название своей операции" : ""}
             className={op.kind === "custom" && !op.label.trim() ? "f-empty" : undefined} onChange={(event) => set({ label: event.target.value })} />}
         {op.gen
-          ? <small className="manual-op-params" title={genParams(op.gen)}>{genParams(op.gen)}{op.code && <>{genParams(op.gen) && " · "}<span className="op-code">{op.code}</span></>}</small>
-          : <small>{op.kind === "library" ? <>из библиотеки{op.code && <> · <span className="op-code">{op.code}</span></>}</> : "своя операция"}</small>}
+          ? <small className="manual-op-params" title={genParams(op.gen)}>{gone}{genParams(op.gen)}{op.code && <>{genParams(op.gen) && " · "}<span className="op-code">{op.code}</span></>}</small>
+          : <small>{gone}{op.kind === "library" ? <>из библиотеки{op.code && <> · <span className="op-code">{op.code}</span></>}</> : "своя операция"}</small>}
+        {!!op.kdChanges?.length && <KdNote op={op} />}
       </div>
       <div className="manual-op-tools">
         {!open && <button type="button" className="manual-op-norm" aria-label={`Норма: ${title}`} title="Открыть" onClick={toggle}>{normLabel(minutes)}</button>}
@@ -151,9 +217,9 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
  * выбирает блок и кладёт в него операции — «+ Операция из библиотеки» (клик по строке) и «+ Своя операция».
  * Номера операций идут по схеме: входы раньше блоков, которые их берут.
  */
-export function ManualAssembly({ state, onChange, library, opRecs, components, partQty, finalName, error }: {
+export function ManualAssembly({ state, onChange, library, opRecs, components, partQty, finalName, error, kd }: {
   state: ManualState; onChange: Change; library: LibraryCard[]; opRecs: OpRec[]; components: Comp[]; partQty: number;
-  finalName: string; error?: string;
+  finalName: string; error?: string; kd?: KdOffer;
 }) {
   const [picking, setPicking] = useState(false);
   const [added, setAdded] = useState("");
@@ -173,6 +239,11 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const position = new Map(ordered.map((op, index) => [op.seq, index + 1]));
   const total = ordered.reduce((sum, op) => sum + opMinutes(op, partQty), 0);
   const blockName = title(block);
+  const ownByKey = new Map(state.blocks.map((item) => [item.key, item]));
+  const mark = (item: RouteBlock) => {
+    const meta = ownByKey.get(item.key);
+    return { kind: blockKind(state, item.key), quantity: meta?.quantity, checked: meta?.checked };
+  };
 
   const select = (key: string) => { onChange((current) => selectBlock(current, key)); setProblem(""); setAdded(""); setNameOnPick(false); };
   // Выбрали блок (на схеме или в «Итоге») — панель блока подъезжает в видимую часть.
@@ -215,11 +286,13 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
       <h3>Схема сборки</h3>
       <span className="gsec-meta">{pluralBlocks(route.blocks.length)} · {ordered.length} оп.{ordered.length > 0 && <> · {formatMinutes(total)} мин на партию {partQty} шт.</>}</span>
       <span className="manual-add">
+        {kd && <KdButton kd={kd} />}
         <button type="button" className="secondary small" title={`Новый полуфабрикат — вход блока «${blockName}»`}
           onClick={() => { onChange((current) => addBlock(current)); setProblem(""); setAdded(""); setNameOnPick(false); }}>+ Блок</button>
       </span>
     </div>
-    <RouteDiagram route={route} title={title} numbers={(item) => numberRange(item.ops)} totals={totals} selected={block.key}
+    {kd?.proposal && <KdProposalBar proposal={kd.proposal} />}
+    <RouteDiagram route={route} title={title} numbers={(item) => numberRange(item.ops)} totals={totals} selected={block.key} marks={mark}
       onSelect={select} edgeLabel={edgeLabel} onPerUnit={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
       onAddInput={addInputTo} onConnect={connect} onEdgeEdit={() => setProblem("")}
       onEdgeQuantity={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
@@ -254,6 +327,23 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
           </div>
         </div>
         {!block.final && <button type="button" className="secondary small manual-block-delete" onClick={deleteBlock}>Удалить блок</button>}
+        <div className="manual-input-list manual-block-attrs" style={{ gridColumn: "1 / -1" }}>
+          {!block.final && <>
+            <span className="muted">Вид</span>
+            <select aria-label="Вид блока" style={{ width: "auto" }} value={blockKind(state, block.key)}
+              onChange={(event) => onChange((current) => setBlockKind(current, block.key, event.target.value as "semiFinished" | "assembly"))}>
+              <option value="semiFinished">{BLOCK_KIND_NAMES.semiFinished}</option>
+              <option value="assembly">{BLOCK_KIND_NAMES.assembly}</option>
+            </select>
+            <span className="muted">Штук в блоке</span>
+            <PerUnit value={own.quantity ?? 1} label={`Штук в блоке «${blockName}»`} unit="шт"
+              onChange={(value) => onChange((current) => setBlockQuantity(current, block.key, value))} />
+          </>}
+          <span className={own.checked ? "manual-comp on" : "manual-comp"}>
+            <label><input type="checkbox" checked={!!own.checked} onChange={(event) => onChange((current) => setBlockChecked(current, block.key, event.target.checked))} /> Проверено мастером</label>
+          </span>
+          {!!own.refs?.length && <span className="muted" title={own.refs.join(", ")}>Объекты КД: {own.refs.length}</span>}
+        </div>
       </div>
 
       <div className="manual-ops-head">
@@ -303,7 +393,7 @@ export function ManualSummary({ state, partQty, finalName, onSelect }: { state: 
           const op = bySeq.get(seq);
           if (!op) return null;
           const number = position.get(seq)!;
-          return <li key={seq}><span className="op-badge">{number}</span><span className="manual-summary-op">{opTitle(op, number)}</span>
+          return <li key={seq}><span className="op-badge">{number}</span><span className="manual-summary-op">{opTitle(op, number)}{op.kdGone && <> <span className="order-chip tone-warn">нет в КД</span></>}</span>
             <span className="manual-summary-norm">{normLabel(opMinutes(op, partQty))}</span></li>;
         })}</ol> : <div className="tone-warn manual-summary-empty">нет операций</div>}
       </div>;

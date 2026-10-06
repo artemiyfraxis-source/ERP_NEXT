@@ -29,6 +29,8 @@ from .modules.requests import api as requests_api
 from .modules.techcards import api as techcards_api
 from .modules.techcards import kitset_api as kitsets_api
 from .modules.techcards import assembly_api
+from .modules.techcards import harness_catalog_api
+from .modules.techcards import harness_api
 from .shared.http_auth import techcards_router_principal
 from .workflows import employee_card_api
 
@@ -57,6 +59,7 @@ app.include_router(
     techcards_api.router,
     dependencies=[Depends(techcards_router_principal)],
 )
+app.include_router(harness_catalog_api.router)
 app.include_router(identity_api.router)
 app.include_router(requests_api.router)
 app.include_router(procurement_api.router)
@@ -68,6 +71,7 @@ app.include_router(production_plan_api.router)
 app.include_router(production_autoplan_api.router)
 app.include_router(kitsets_api.router)
 app.include_router(assembly_api.router)
+app.include_router(harness_api.router)
 app.include_router(shipping_api.router)
 app.include_router(references_api.router)
 app.include_router(operations_api.router)

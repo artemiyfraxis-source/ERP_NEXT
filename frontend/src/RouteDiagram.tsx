@@ -22,30 +22,48 @@ export function PerUnit({ value, label, unit, onChange }: { value: number; label
   </span>;
 }
 
+/** Пометки блока ручной сборки (UML-схема порядка операций): вид блока, штук в блоке, «проверено мастером». */
+export type BlockMark = { kind?: "semiFinished" | "assembly" | "final"; quantity?: number; checked?: boolean };
+
+/* Вид блока — маленький ярлык под номерами: итог — как раньше (цвет приложения), сборка — синий, полуфабрикат — серый. */
+const KIND_TAG: Record<"semiFinished" | "assembly", { text: string; title: string; tone: string }> = {
+  semiFinished: { text: "п/ф", title: "Полуфабрикат", tone: "tone-neutral" },
+  assembly: { text: "сборка", title: "Сборка", tone: "tone-info" },
+};
+
+function KindTag({ final, mark }: { final: boolean; mark?: BlockMark }) {
+  if (final) return <span className="route-block-tag">итог</span>;
+  const kind = mark?.kind && mark.kind !== "final" ? KIND_TAG[mark.kind] : null;
+  return kind ? <span className={`order-chip ${kind.tone} route-block-kind`} title={kind.title}>{kind.text}</span> : null;
+}
+
 /** Блок: номера его операций, название (до двух строк, целиком — в подсказке), «N оп. · M мин/шт».
     Блок без операций — одна компактная строка: название и «нет операций». */
-export function BlockBox({ block, title, numbers, totals, inputs = [], selected, linking, onSelect }: {
+export function BlockBox({ block, title, numbers, totals, inputs = [], selected, linking, mark, onSelect }: {
   block: RouteBlock; title: string; numbers: string; totals?: BlockTotals; /** Названия блоков-входов: «входы: Блок 5, Блок 7»; нет входов — строки нет. */ inputs?: string[];
-  selected: boolean; linking?: boolean; onSelect: () => void;
+  selected: boolean; linking?: boolean; mark?: BlockMark; onSelect: () => void;
 }) {
   const empty = block.ops.length === 0;
   const classes = ["route-block", block.final ? "is-final" : "", selected ? "is-selected" : "", linking ? "is-linking" : "", empty ? "is-empty" : ""].filter(Boolean).join(" ");
   const time = totals?.unit != null ? ` · ${formatMinutes(totals.unit)} мин/шт${totals.inputs > 0 && totals.rolled != null && totals.rolled > 0 ? ` · с входами ${formatMinutes(totals.rolled)}` : ""}` : "";
-  const meta = `${block.ops.length} оп.${time}`, from = inputs.length ? `входы: ${inputs.join(", ")}` : "";
+  const count = mark?.quantity && mark.quantity !== 1 ? `${formatPerUnit(mark.quantity)} шт · ` : "";
+  const meta = `${count}${block.ops.length} оп.${time}`, from = inputs.length ? `входы: ${inputs.join(", ")}` : "";
+  // «Проверено мастером» — короткая галочка, чтобы не вытеснять норму блока из строки.
+  const checked = mark?.checked ? <span className="order-chip tone-ok route-block-checked" title="Проверено мастером" aria-label="проверено мастером">✓</span> : null;
   if (empty) {
     return <button type="button" className={classes} aria-pressed={selected} title={title} onClick={onSelect}>
       <span className="route-block-name">{title}</span>
-      <span className="route-block-meta"><span className="tone-warn">нет операций</span>{block.final && <span className="route-block-tag">итог</span>}</span>
+      <span className="route-block-meta"><span className="tone-warn">нет операций</span><KindTag final={block.final} mark={mark} />{checked}</span>
     </button>;
   }
   return <button type="button" className={classes} aria-pressed={selected} title={title} onClick={onSelect}>
     <span className="route-block-side">
       <span className="route-block-no" aria-hidden={!numbers}>{numbers || "—"}</span>
-      {block.final && <span className="route-block-tag">итог</span>}
+      <KindTag final={block.final} mark={mark} />
     </span>
     <span className="route-block-body">
       <span className="route-block-name">{title}</span>
-      <span className="route-block-meta">{meta}</span>
+      <span className="route-block-meta">{checked}{checked && " "}{meta}</span>
       {from && <span className="route-block-meta route-block-from" aria-hidden>{from}</span>}
     </span>
   </button>;
@@ -97,8 +115,10 @@ const isCoarse = () => typeof window !== "undefined" && typeof window.matchMedia
 
 /** Схема целиком: блоки и стрелки с числом штук. Блок выбирается кликом. Необязательные крючки нужны ручной сборке:
     «+» на блоке, «→» (соединить два блока двумя нажатиями), окно «N шт» на стрелке. Без них рисунок работает как раньше. */
-export function RouteDiagram({ route, title, numbers, totals, selected, onSelect, onPerUnit, edgeLabel, onAddInput, onConnect, onEdgeEdit, onEdgeQuantity, onEdgeRemove }: {
+export function RouteDiagram({ route, title, numbers, totals, selected, onSelect, onPerUnit, edgeLabel, onAddInput, onConnect, onEdgeEdit, onEdgeQuantity, onEdgeRemove, marks }: {
   route: Route;
+  /** Пометки блока (вид, штуки, «проверено мастером») — у ручной сборки; без них блок рисуется как раньше. */
+  marks?: (block: RouteBlock) => BlockMark | undefined;
   title: (block: RouteBlock) => string;
   /** Номера операций блока для значка: «1–3». */
   numbers: (block: RouteBlock) => string;
@@ -139,7 +159,7 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
     const tools = !!(onAddInput || onConnect);
     return <div className={[tools ? "route-node has-tools" : "route-node", item.ops.length === 0 ? "is-empty-node" : ""].filter(Boolean).join(" ")}>
       <BlockBox block={item} title={name} numbers={numbers(item)} totals={totals.get(item.key)} inputs={inputsOf(item)} selected={selected === item.key}
-        linking={linking === item.key} onSelect={() => pick(item.key)} />
+        linking={linking === item.key} mark={marks?.(item)} onSelect={() => pick(item.key)} />
       {tools && <span className="route-tools">
         {onAddInput && <button type="button" className="route-tool" aria-label={`Добавить вход в блок «${name}»`} title="Добавить вход" onClick={() => onAddInput(item.key)}>+</button>}
         {onConnect && <button type="button" className={linking === item.key ? "route-tool is-on" : "route-tool"} aria-pressed={linking === item.key}
