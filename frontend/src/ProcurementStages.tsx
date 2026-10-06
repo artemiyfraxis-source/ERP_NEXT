@@ -5,6 +5,7 @@ import {
   failureText, type ApplyOrderDocumentInput, type ManualRatePrompt, type OrderDocumentKind, type OrderDocumentRecognition, type ProcurementLine,
 } from "./api";
 import { formatDate, formatDay } from "./format";
+import { useLineHistory } from "./LineHistory";
 import { ActualDateCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { RowActions, type MenuItem } from "./ProcurementRowMenu";
 import { PriceHint, usePriceHistory } from "./PriceHistoryHint";
@@ -38,6 +39,7 @@ function useLinePanel(
   busyId: string,
 ) {
   const [open, setOpen] = useState<{ id: string; label: string } | null>(null);
+  const history = useLineHistory(); // option procurement.history: «История» is the last action of the row
   const line = open ? lines.find((item) => item.id === open.id) : undefined;
   const action = open && line ? actionsOf(line).find((item) => item.label === open.label && item.panel) : undefined;
   // Строка ушла на другую стадию — форма закрывается и не всплывёт, если строка вернётся.
@@ -47,16 +49,19 @@ function useLinePanel(
     <RowActions
       label={`Действия ${row.legacy_id}`}
       disabled={disabled || busyId === row.id}
-      items={actionsOf(row).map((item): MenuItem => ({
-        label: item.label,
-        short: item.short,
-        title: item.title,
-        disabled: item.disabled,
-        run: () => {
-          if (item.panel) setOpen(open?.id === row.id && open.label === item.label ? null : { id: row.id, label: item.label });
-          else item.run?.();
-        },
-      }))}
+      items={[
+        ...actionsOf(row).map((item): MenuItem => ({
+          label: item.label,
+          short: item.short,
+          title: item.title,
+          disabled: item.disabled,
+          run: () => {
+            if (item.panel) setOpen(open?.id === row.id && open.label === item.label ? null : { id: row.id, label: item.label });
+            else item.run?.();
+          },
+        })),
+        ...(history.enabled ? [{ label: "История", run: () => history.open(row.id, row.legacy_id) }] : []),
+      ]}
     />
   );
 
@@ -73,7 +78,7 @@ function useLinePanel(
     </div>
   ) : null;
 
-  return { menu, node };
+  return { menu, node: <>{node}{history.node}</> };
 }
 
 /** Свёрнут ли блок «Моих позиций»; помнится в браузере по ключу блока. */

@@ -146,6 +146,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   const todayOn = useStageOption("procurement.today") && !readOnly;
   const kpiOn = useStageOption("procurement.kpi");
   const [picked, setTab] = useState<ProcurementTab | null>(initialTab);
+  const [rfqFocus, setRfqFocus] = useState<string | undefined>(undefined); // «Сегодня» → the request to open in «Запросы КП»
   // Purchasing hybrid (Roller_Buyer): requests for quotes, the supplier and item directories, their settings.
   const rfqOn = useStageOption("procurement.rfq");
   const directoryOn = useStageOption("references.suppliers");
@@ -168,9 +169,9 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
         {itemsOn && <button type="button" className={`secondary small${tab === "items" ? " active" : ""}`} aria-pressed={tab === "items"} onClick={() => setTab("items")}>Номенклатура</button>}
         {settingsOn && <button type="button" className={`secondary small${tab === "settings" ? " active" : ""}`} aria-pressed={tab === "settings"} onClick={() => setTab("settings")}>Настройки</button>}
       </nav>
-      {tab === "today" && <ProcurementToday onOpenQueues={() => setTab("queues")} />}
+      {tab === "today" && <ProcurementToday onOpenQueues={() => setTab("queues")} onOpenRfq={rfqOn ? (id) => { setRfqFocus(id); setTab("rfq"); } : undefined} />}
       {tab === "kpi" && <ProcurementKpi />}
-      {tab === "rfq" && <PurchasingRfq readOnly={readOnly} />}
+      {tab === "rfq" && <PurchasingRfq readOnly={readOnly} focusId={rfqFocus} />}
       {tab === "directory" && <PurchasingSuppliers readOnly={readOnly} />}
       {tab === "items" && <PurchasingItems readOnly={readOnly} />}
       {tab === "settings" && <PurchasingSettings readOnly={readOnly} />}

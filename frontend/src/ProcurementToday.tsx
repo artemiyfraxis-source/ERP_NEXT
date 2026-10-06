@@ -3,6 +3,7 @@ import { api, failureText } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { projectLabel, useInternalProjects } from "./internalProjects";
+import { useLineHistory } from "./LineHistory";
 
 /** Option `procurement.today`: the buyer's board. Fields in priority order hold project cards (one project may sit
  *  in several fields); a card opens the project's open positions with their stage and field. */
@@ -23,20 +24,37 @@ export type TodaySection = { key: string; title: string; count: number; items: T
 export type TodayLine = {
   id: string; name: string; article: string | null; supplier: string | null; order_number: string | null;
   status: string; expected: string | null; quantity: string | null; unit: string | null; field: string | null;
+  /** Every board field the line sits in (`field` is the first); `rfq` — the request behind a «Нет ответа» / «Выбрать поставщика» card. */
+  fields?: string[]; rfq?: { id: string; number: string; hint: string } | null;
 };
 type Board = { sections: TodaySection[] };
 
 const URGENT = new Set(["overdue", "arriving"]);
 
-const lineColumns: DataColumn<TodayLine>[] = [
-  { key: "name", title: "Позиция", wrap: true, value: (row) => row.name, render: (row) => <>{row.name}{row.article && <small>{row.article}</small>}</> },
+function lineColumns(onOpenRfq: ((rfqId: string) => void) | undefined, history: ReturnType<typeof useLineHistory>): DataColumn<TodayLine>[] {
+  return [
+  { key: "name", title: "Позиция", wrap: true, value: (row) => row.name, render: (row) => (
+    <>
+      {row.name}{row.article && <small>{row.article}</small>}
+      {row.rfq && (
+        <small className="today-link">
+          {row.rfq.hint}
+          {onOpenRfq && <> · <button type="button" className="link-button" onClick={() => onOpenRfq(row.rfq!.id)}>Открыть запрос {row.rfq.number}</button></>}
+        </small>
+      )}
+    </>
+  ) },
   { key: "status", title: "Этап", value: (row) => row.status, render: (row) => <span className="today-stage">{row.status}</span> },
   { key: "field", title: "На доске", value: (row) => row.field, render: (row) => row.field || "—" },
   { key: "supplier", title: "Поставщик", value: (row) => row.supplier, render: (row) => row.supplier || "—" },
   { key: "qty", title: "Кол-во", numeric: true, value: (row) => row.quantity, render: (row) => (row.quantity ? `${Number(row.quantity).toLocaleString("ru-RU")} ${row.unit ?? ""}` : "—") },
   { key: "order", title: "Заказ №", value: (row) => row.order_number, render: (row) => row.order_number || "—" },
   { key: "expected", title: "Ожидаем", value: (row) => row.expected, render: (row) => (row.expected ? formatDate(row.expected) : "—") },
-];
+  ...(history.enabled ? [{ key: "history", title: "", value: () => "", render: (row: TodayLine) => (
+    <button type="button" className="link-button" aria-label={`История ${row.name}`} onClick={() => history.open(row.id, row.name)}>История</button>
+  ) }] : []),
+  ];
+}
 
 function daysText(section: string, days: number | null) {
   if (days === null) return "";
@@ -46,7 +64,8 @@ function daysText(section: string, days: number | null) {
   return days > 0 ? `ждёт ${days} дн.` : "";
 }
 
-export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }) {
+export function ProcurementToday({ onOpenQueues, onOpenRfq }: { onOpenQueues?: () => void; onOpenRfq?: (rfqId: string) => void }) {
+  const history = useLineHistory(); // option procurement.history: «История» on the drill-down rows
   useInternalProjects(); // option projects.internal: cards and the drill title say «ВП-001 · Название»
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState("");
@@ -78,10 +97,11 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
 
   const sections = board?.sections ?? null;
   const rowsOfProject = drill ?? [];
-  const shown = open && onlyField ? rowsOfProject.filter((row) => row.field === open.field) : rowsOfProject;
+  const shown = open && onlyField ? rowsOfProject.filter((row) => (row.fields ? row.fields.includes(open.field) : row.field === open.field)) : rowsOfProject;
 
   return (
     <section className="page">
+      {history.node}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!error && sections === null && <div className="empty">Загружаю…</div>}
       {sections !== null && !sections.length && <div className="empty">На сегодня всё сделано</div>}
@@ -130,7 +150,7 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
           </div>
           {drillError && <div className="error-banner" role="alert">{drillError}</div>}
           {!drillError && drill === null && <div className="empty">Загружаю…</div>}
-          {drill !== null && <DataTable label={`Позиции проекта ${projectLabel(open.project)}`} rows={shown} columns={lineColumns} rowKey={(row) => row.id} compactBelow={1000} />}
+          {drill !== null && <DataTable label={`Позиции проекта ${projectLabel(open.project)}`} rows={shown} columns={lineColumns(onOpenRfq, history)} rowKey={(row) => row.id} compactBelow={1000} />}
         </section>
       )}
     </section>

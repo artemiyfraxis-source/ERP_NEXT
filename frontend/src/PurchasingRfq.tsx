@@ -67,7 +67,7 @@ function gateHint(line: RfqLine) {
   return parts.join("; ");
 }
 
-export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {}) {
+export function PurchasingRfq({ readOnly = false, focusId }: { readOnly?: boolean; focusId?: string } = {}) {
   const [rfqs, setRfqs] = useState<RfqSummary[] | null>(null);
   const [selected, setSelected] = useState("");
   const [creating, setCreating] = useState(false);
@@ -84,7 +84,7 @@ export function PurchasingRfq({ readOnly = false }: { readOnly?: boolean } = {})
     }
   }, [readOnly]);
 
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { void reload(focusId); }, [reload, focusId]);
 
   return (
     <section className="page" style={{ display: "grid", gridTemplateColumns: "210px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
