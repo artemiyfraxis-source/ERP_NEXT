@@ -60,7 +60,7 @@ import {
   manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
-import { MarkTable } from "./GenMarkTable";
+import { MarkTable, markTotal } from "./GenMarkTable";
 import { markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
@@ -866,17 +866,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <Field label="Длина на изделие"><UnitInput unit="мм" value={slot.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></Field>
       </div>)}
     </Toggle>,
-    <Toggle key="mark" checked={S.mark} title="Маркировка жгута" hint={kdMarks.length ? "метки по КД — таблица ниже" : "бирки из состава или метки по КД"} onChange={(on) => update({ mark: on })}>
-      <span className="opt-note">{kdMarks.length
-        ? `${kdMarks.length} ${plural(kdMarks.length, "метка", "метки", "меток")}: ${kdMarks.slice(0, 6).map((row) => row.text || row.target).join(", ")}${kdMarks.length > 6 ? " …" : ""}`
-        : `из состава: ${marks.map((m) => `${m.art || m.name} × ${m.qty}`).join("; ") || "бирок нет"}`}</span>
-    </Toggle>,
   ].filter(Boolean);
   const machine = [
     active.some(gen.isJacketedCable_) && <Toggle key="rotor" checked={S.rotor} title="Роторный станок" hint="многожильный кабель разделывается при резке — оболочка и жилы"
       onChange={(on) => update({ rotor: on })} />,
     crimpSides.length > 0 && <Toggle key="crimp" checked={gen.crimpCutEnabled_()} title={gen.crimpCutTin_() ? "Обжим и лужение на автомате при резке" : "Обжим на автомате при резке"}
-      hint={`проводов в партии: ${gen.batchWires_()}${S.crimpCutManual ? "" : ` — по умолчанию включено при > ${gen.crimpCutMinWires_()}`}`}
+      hint={`${gen.batchWires_()} ${plural(gen.batchWires_(), "провод", "провода", "проводов")} в партии${S.crimpCutManual ? "" : `, по умолчанию — при > ${gen.crimpCutMinWires_()}`}`}
       onChange={(on) => update({ crimpCut: on, crimpCutManual: true })}>
       {crimpSides.length > 1
         ? <div className="gfield"><span className="gfield-label">Сторона обжима</span>
@@ -954,13 +949,15 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </section>}
     <section className="gsec full gen-proc" aria-label="Обработка">
       <div className="gsec-head"><h3>Обработка</h3></div>
-      <div className="proc-groups">
-        {([["Концы", ends], ["Жгут", harness], ["Автомат при резке", machine]] as const).filter(([, items]) => items.length > 0).map(([title, items]) =>
-          <div className="proc-group" key={title}><h4>{title}</h4>{items}</div>)}
+      <div className={ends.length || machine.length ? "proc-groups" : "proc-groups solo"}>
+        {([["Концы", "ends", ends], ["Жгут", "harness", harness], ["Автомат при резке", "machine", machine]] as const).filter(([, , items]) => items.length > 0).map(([title, key, items]) =>
+          <div className={`proc-group pg-${key}`} key={key}><h4>{title}</h4>{items}</div>)}
       </div>
-      {S.mark && <MarkTable rows={S.markRows} onChange={(markRows) => update({ markRows })} kitMarks={marks} comps={D.components} mats={D.markMats || []}
+      <MarkTable enabled={S.mark} onEnabled={(on) => update({ mark: on })}
+        hint={kdMarks.length ? `${kdMarks.length} ${plural(kdMarks.length, "метка", "метки", "меток")} · ${markTotal(S.markRows)} шт. на изделие` : `бирки из состава: ${marks.map((m) => `${m.art || m.name} × ${m.qty}`).join("; ") || "бирок нет"}`}
+        rows={S.markRows} onChange={(markRows) => update({ markRows })} kitMarks={marks} comps={D.components} mats={D.markMats || []}
         targets={markTargets(gen.markConnectors_(), active.map((w) => compLabel(w.compId)))}
-        onByConnectors={marksByConnectors} onFromDrawing={() => void marksFromDrawing()} drawingBusy={markDrawing.busy} note={markDrawing.note} />}
+        onByConnectors={marksByConnectors} onFromDrawing={() => void marksFromDrawing()} drawingBusy={markDrawing.busy} note={markDrawing.note} />
     </section>
   </>;
 

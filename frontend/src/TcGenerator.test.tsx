@@ -194,7 +194,7 @@ it("«Маркировка по КД»: fills marks by connectors and from the h
   render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()}
     kit={kitOf("Жгут XHP 150мм", [...XH, { type: "Маркировка", name: "Маркировка", art: "Маркировка", qty: 1 }])} />);
 
-  expect(await screen.findByText("из состава: Маркировка × 1")).toBeInTheDocument();
+  expect(await screen.findByText("бирки из состава: Маркировка × 1")).toBeInTheDocument();
   expect(screen.getByText(/Метки не заданы — в маркировку пойдут бирки из состава/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "По разъёмам" }));
   expect(screen.getByLabelText("Надпись 1")).toHaveValue("А1");
@@ -203,7 +203,7 @@ it("«Маркировка по КД»: fills marks by connectors and from the h
   expect(await screen.findByDisplayValue("708К.4КБ1")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Материал 4"), { target: { value: "Самоклейка неведомая" } });
   expect(screen.getByText("нет в справочнике")).toBeInTheDocument();
-  expect(screen.getByText("4 метки: А1, В1, X1, 708К.4КБ1")).toBeInTheDocument();
+  expect(screen.getByText("4 метки · 5 шт. на изделие")).toBeInTheDocument();
 
   vi.spyOn(window, "confirm").mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
