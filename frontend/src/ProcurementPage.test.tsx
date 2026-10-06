@@ -575,7 +575,7 @@ it("hides the retired substitution and quality-document fields on every stage", 
     menus[id] = rowActionNames(id);
   }
   // «Готов к запросу» стоит в блоке «В работе» с тем же меню; ручного «На согласование» нет нигде.
-  expect(menus["REQ-B"]).toEqual(["Со склада", "Прослеживаемость, раздробить…", "Отменить строку"]);
+  expect(menus["REQ-B"]).toEqual(["Со склада", "Прослеживаемость, раздробить…", "Есть на складе, без ГРН", "Отменить строку"]);
   for (const items of Object.values(menus)) {
     expect(items.filter((item) => /замен(а|у)(?! счёт)|качества|разрешен|согласован/i.test(item))).toEqual([]);
   }
