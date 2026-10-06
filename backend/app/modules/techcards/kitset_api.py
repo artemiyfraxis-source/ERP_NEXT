@@ -18,11 +18,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.modules.fulfillment.application import free_for_project, project_reserve_by_lot
+from app.modules.fulfillment.application import ConcurrentFulfillmentUpdate, free_for_project, project_reserve_by_lot
 from app.modules.fulfillment.domain import FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import ValidationError as RequestValidationError, unit_for_type
+from app.modules.warehouse.domain import WarehouseValidationError
 from app.modules.production.plan import (
     KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, summarize_journal,
 )
@@ -30,6 +31,7 @@ from app.modules.production.plan_application import AddPlanEventCommand, add_pla
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
 from app.shared.stored_files import file_response
+from app.workflows import kitset_reserve as reserve_flow
 from app.workflows import project_kitset as flow
 from app.workflows import project_track as track_flow
 
@@ -107,9 +109,14 @@ def _run(operation):
     except KitsetNotFound as error:
         # «Не найдена» — не сбой: плитка висела на открытом экране после сноса. gone → клиент вернётся к списку.
         raise HTTPException(status_code=404, detail={"message": str(error), "gone": True}) from error
-    except (KitsetValidationError, TechcardValidationError, ProductionValidationError, FulfillmentValidationError) as error:
+    except (
+        KitsetValidationError, TechcardValidationError, ProductionValidationError, FulfillmentValidationError,
+        WarehouseValidationError,
+    ) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    except (IntegrityError, StaleDataError) as error:
+    except ConcurrentFulfillmentUpdate as error:  # the picked lot changed since the list was loaded
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (IntegrityError, StaleDataError, reserve_flow.ConcurrentKitsetUpdate) as error:
         raise HTTPException(status_code=409, detail="Карточка проекта изменена конкурентно — обновите") from error
 
 
@@ -221,12 +228,16 @@ def load(
         actor=principal.actor, now=now,
     ), techcards_factory(request), production_factory(request), shipping_factory(request),
         _name_queue(request)))
+    # «Обновить из расчёта»: a row dropped from the calculation gives its ГРН reserve back, a new run re-counts it.
+    reserve_error = reserve_flow.resync_project(
+        result.project, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+    )
     requests, requests_error = _project_requests(payload, request, principal, result.project, now)
     return {"res": {
         "project": result.project, "assemblies": result.assemblies, "lines": result.lines,
         "erp": result.erp, "erp_error": result.erp_error, "ship": result.ship, "ship_error": result.ship_error,
         "ship_to_error": result.ship_to_error, "deadline_error": result.deadline_error,
-        "requests": requests, "requests_error": requests_error,
+        "requests": requests, "requests_error": requests_error, "reserve_error": reserve_error,
     }}
 
 
@@ -274,6 +285,7 @@ def lots(
         "lot_id": str(lot.id), "warehouse": lot.warehouse, "grn": lot.grn, "package": lot.package,
         "article": lot.article, "name": lot.name, "unit": lot.unit,
         "storage_location": lot.storage_location, "available": _number(free_for_project(lot, held)),
+        "version": lot.version,  # sent back with the pick: a lot changed since the list was loaded is refused (409)
         **({"reserved": _number(held[lot.id])} if held.get(lot.id) else {}),
     } for lot in found if free_for_project(lot, held) > 0]}
 
@@ -295,6 +307,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
     journal = summarize_journal(event for event in facts.events if normalize_project_number(event.project) == canon).get(canon)
     active = journal.blocker if journal is not None else None
     snapshot = next((item for item in facts.projects if normalize_project_number(item.project) == canon), None)
+    reserves = reserve_flow.reserves_by_row(kitset.project, fulfillment_factory(request))
     with techcards_factory(request)() as uow:
         documents = uow.kitsets.documents(kitset.project)
     return {
@@ -326,8 +339,20 @@ def _card(request: Request, kitset: Kitset) -> dict:
                     "warehouse": component.lot.warehouse, "grn": component.lot.grn,
                     "package": component.lot.package,
                 },
+                "reserve": _reserve_json(reserves.get(reserve_flow.row_key(assembly.index, component.article))),
             } for component in assembly.components],
         } for assembly in kitset.assemblies],
+    }
+
+
+def _reserve_json(reserves) -> dict | None:
+    """What the row's ГРН holds for its КБ right now (the techcard reserve); None — nothing held."""
+    if not reserves:
+        return None
+    first = reserves[0]
+    return {
+        "quantity": _number(sum((item.quantity for item in reserves), Decimal("0"))), "unit": first.unit,
+        "lot_id": str(first.lot_id), "warehouse": first.warehouse, "grn": first.grn, "package": first.package,
     }
 
 
@@ -363,23 +388,21 @@ def save_lines(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKitsetSave`: autosave of ONE spec row — an edit of one cell must not overwrite twenty others."""
+    """`portalKitsetSave`: autosave of ONE spec row — an edit of one cell must not overwrite twenty others.
+    A picked ГРН is reserved for the row's КБ at once (a re-pick moves the reserve, a cleared ГРН releases it);
+    `lot.version` from the picker refuses a lot changed since the list was loaded (409)."""
 
     def save():
-        with techcards_factory(request)() as uow:
-            current = uow.kitsets.get(project)
-            if current is None:
-                raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
-            edits = []
-            for item in payload.edits:
-                edit = item.model_dump(exclude_unset=True)
-                if "lot" in edit and edit["lot"] is None:
-                    edit["lot"] = {}
-                edits.append(edit)
-            updated, count = current.with_edits(edits, who=principal.actor.name, now=now)
-            uow.kitsets.save(updated)
-            uow.commit()
-            return {"project": updated.project, "updated": count}
+        edits = []
+        for item in payload.edits:
+            edit = item.model_dump(exclude_unset=True)
+            if "lot" in edit and edit["lot"] is None:
+                edit["lot"] = {}
+            edits.append(edit)
+        updated, count = reserve_flow.save_rows(
+            project, edits, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+        )
+        return {"project": updated.project, "updated": count}
 
     return {"res": _run(save)}
 
@@ -481,7 +504,11 @@ def issue(
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     kitset = _kitset(request, project)
     result = _run(lambda: flow.issue_from_kitset(kitset, payload.deadline, principal.actor, now, factory))
-    return {"created": result.created, "skipped": result.skipped, "message": result.message}
+    # The kits took the КБ's ГРН reserves over; what a kit did not take goes back to the lot, never held twice.
+    reserve_error = reserve_flow.resync_project(kitset.project, principal.actor, now, techcards_factory(request), factory)
+    return {
+        "created": result.created, "skipped": result.skipped, "message": result.message, "reserve_error": reserve_error,
+    }
 
 
 @router.delete("/{project}")
@@ -491,13 +518,18 @@ def delete(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKitsetDelete`: проект уходит целиком во всех разделах сразу, с хвостами без движения."""
-    return {"res": _run(lambda: flow.delete_kitset(
+    """`portalKitsetDelete`: проект уходит целиком во всех разделах сразу, с хвостами без движения; резервы ГРН его
+    спецификации возвращаются партиям."""
+    result = _run(lambda: flow.delete_kitset(
         project, principal.actor, now,
         techcards_factory(request), production_factory(request), shipping_factory(request),
         fulfillment_uow=fulfillment_factory(request), requests_uow=requests_factory(request),
         procurement_uow=procurement_factory(request),
-    ))}
+    ))
+    result["reserve_error"] = reserve_flow.release_project(
+        result["project"], principal.actor, now, fulfillment_factory(request),
+    )
+    return {"res": result}
 
 
 class MarkPayload(BaseModel):
