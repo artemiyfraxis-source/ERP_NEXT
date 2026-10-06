@@ -155,6 +155,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const [mineCursor, setMineCursor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Предупреждения сервера к последнему действию («<ID> — нет цены: ВАЛЮТА, …»): живут рядом с итогом, до следующего действия.
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const say = (text: string, warns: string[] = []) => { setNotice(text); setWarnings(warns); };
   const [busyId, setBusyId] = useState("");
   // Строки, что в запрос не попали, и почему: остаются на экране, пока их не закроют.
   const [skippedRequests, setSkippedRequests] = useState<{ text: string }[]>([]);
@@ -268,7 +271,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     try {
       const result = await procurementApi.take(lines.map((line) => line.id));
       const skipped = result.skipped ?? [];
-      setNotice(`Взято в работу: ${result.lines.length}` + (skipped.length ? `; пропущено (уже в работе или дальше): ${skipped.join(", ")}` : ""));
+      say(`Взято в работу: ${result.lines.length}` + (skipped.length ? `; пропущено (уже в работе или дальше): ${skipped.join(", ")}` : ""));
       watchAutofill(result.lines);
       await reload(true);
     } catch (reason) {
@@ -290,11 +293,12 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     setBusyId(`order:${group.number}`);
     setError("");
     try {
-      await procurementApi.applyOrderDocument(group.number, input);
+      const result = await procurementApi.applyOrderDocument(group.number, input);
       const count = input.lines.length;
-      setNotice(input.kind === "kp"
+      say(input.kind === "kp"
         ? `${group.number}: цены из КП внесены, строк: ${count}`
-        : replace ? `${group.number}: счёт заменён, строк: ${count}` : `${group.number}: счёт передан в оплату, строк: ${count}`);
+        : replace ? `${group.number}: счёт заменён, строк: ${count}` : `${group.number}: счёт передан в оплату, строк: ${count}`,
+      result.warnings ?? []);
       await reload(true);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409) {
@@ -315,7 +319,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     const rows = group.lines.filter((line) => line.status === "В оплату");
     try {
       await procurementApi.orderPaid(group.number, rows.map((line) => ({ line_id: line.id, version: line.version })), manualRate);
-      setNotice(`${group.number}: оплачено, строк в пути: ${rows.length}`);
+      say(`${group.number}: оплачено, строк в пути: ${rows.length}`);
       await reload(true);
       return null;
     } catch (reason) {
@@ -339,7 +343,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     setError("");
     try {
       const result = await procurementApi.take([line.id]);
-      setNotice(result.skipped?.length ? `${line.legacy_id} пропущена: уже в работе или дальше` : `${line.legacy_id} взята в работу`);
+      say(result.skipped?.length ? `${line.legacy_id} пропущена: уже в работе или дальше` : `${line.legacy_id} взята в работу`);
       watchAutofill(result.lines);
       await reload(true);
     } catch (reason) {
@@ -358,8 +362,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     setBusyId(line.id);
     setError("");
     try {
-      await operation();
-      setNotice(message);
+      const result = await operation();
+      const warns = (result as { warnings?: unknown } | null | undefined)?.warnings;
+      say(message, Array.isArray(warns) ? warns.filter((item): item is string => typeof item === "string") : []);
       await reload(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Переход закупки не выполнен");
@@ -414,7 +419,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       const parts = [`Сформировано запросов: ${result.orders.length}`];
       if (result.orders.length) parts.push(notSaved.length ? `файл не сохранился: ${notSaved.join(", ")}` : "PDF запросов скачаны файлами");
       if (result.other_buyer) parts.push(`строк других закупщиков не тронуто: ${result.other_buyer}`);
-      setNotice(parts.join("; "));
+      say(parts.join("; "));
       const names = new Map([...mine, ...(lines ?? [])].map((line) => [line.id, line.legacy_id]));
       setSkippedRequests(result.skipped.map((item: SkippedRequestLine | string) => {
         const entry = typeof item === "string" ? { line_id: item, reason: "" } : item;
@@ -560,6 +565,12 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
+      {warnings.length > 0 && (
+        <div className="warning-banner" role="alert">
+          <strong>Есть предупреждения</strong>
+          <ul>{warnings.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      )}
       {skippedRequests.length > 0 && (
         <div className="warning-inline" role="alert">
           <strong>В запросы не попало строк: {skippedRequests.length}</strong>
@@ -646,7 +657,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
           editing={editing}
           filling={autofill}
           {...bulkOf("inwork")}
-          onChanged={(message) => { setNotice(message); void reload(true); }}
+          onChanged={(message) => { say(message); void reload(true); }}
           onError={setError}
           onCancel={cancelLine}
           onCancelMany={cancelMany}
@@ -682,8 +693,8 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             reference={kpReference}
             queue={kpTotal > 1 ? { index: kpTotal - kpQueue.length + 1, total: kpTotal } : undefined}
             onClose={() => setKpQueue([])}
-            onSaved={(message, failure) => {
-              setNotice(message);
+            onSaved={(message, failure, warns) => {
+              say(message, warns);
               setError(failure);
               setKpQueue((current) => current.slice(1));
               void reload(true);
@@ -1083,7 +1094,7 @@ function KpForm({ reference, queue, onClose, onSaved }: {
   /** Несколько выбранных заказов идут по очереди: этот — `index` из `total`. */
   queue?: { index: number; total: number };
   onClose: () => void;
-  onSaved: (message: string, failure: string) => void;
+  onSaved: (message: string, failure: string, warnings: string[]) => void;
 }) {
   const [lines, setLines] = useState<ProcurementLine[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Record<KpField, string>>>({});
@@ -1167,6 +1178,7 @@ function KpForm({ reference, queue, onClose, onSaved }: {
       onSaved(
         result.invoice_error ? saved : invoiceUrl.trim() ? `${saved}, счёт передан в оплату` : saved,
         result.invoice_error ? `Счёт не принят, данные КП сохранены: ${result.invoice_error}` : "",
+        result.warnings ?? [],
       );
     } catch (reason) {
       const ratePrompt = manualRatePrompt(reason);

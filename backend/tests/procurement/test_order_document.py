@@ -212,10 +212,9 @@ def test_apply_is_all_or_none_and_refuses_a_partial_invoice_or_a_stale_row(procu
         "kind": "invoice", "file_url": url, "expected_arrival": "2026-10-12",
         "lines": [{**rows[0], "version": rows[0]["version"] - 1}, *rows[1:]],
     })
-    # The third row has no price in the document and none stored: the pay gate refuses it, nothing is written.
+    # No ОЖИД. ДАТА: the invoice gate refuses the first row after the prices were written — nothing stays.
     gate = client.post(f"/api/procurement/orders/{number}/apply-document", json={
-        "kind": "invoice", "file_url": url, "expected_arrival": "2026-10-12",
-        "lines": [*rows[:2], {**rows[2], "price_with_vat": None, "price": None}],
+        "kind": "invoice", "file_url": url, "lines": rows,
     })
     foreign_file = client.post(f"/api/procurement/orders/{number}/apply-document", json={
         "kind": "kp", "file_url": "https://files.test/kp.pdf", "lines": rows,
@@ -227,12 +226,46 @@ def test_apply_is_all_or_none_and_refuses_a_partial_invoice_or_a_stale_row(procu
     assert partial.status_code == 409 and "«Жду счет» (3)" in partial.json()["detail"]
     assert stale.status_code == 409 and "изменилась" in stale.json()["detail"]
     assert gate.status_code == 422
-    assert gate.json()["detail"].startswith(f"{lines[rows[2]['line_id']]['legacy_id']}: Нельзя загрузить счёт")
+    assert gate.json()["detail"] == (
+        f"{lines[rows[0]['line_id']]['legacy_id']}: Нельзя загрузить счёт — сначала заполните: ОЖИД. ДАТА"
+    )
     assert foreign_file.status_code == 422 and "не найден" in foreign_file.json()["detail"]
     assert unknown.status_code == 404
     mine = {line["id"]: line for line in client.get("/api/procurement/mine").json()["lines"]}
     assert {(mine[i]["status"], mine[i]["actual_price_with_vat"]) for i in lines} == {("Жду счет", None)}
     assert not events(sessions, "procurement.fact_price_saved")
+
+
+def test_invoice_without_a_price_for_a_row_still_goes_to_payment_with_a_warning(procurement_api):
+    """«Счёт без цен — предупреждение, а не запрет» (owner, 06.10); the price comes with «Заменить счёт»."""
+    client, _, sessions = procurement_api
+    number, lines = order(client, sessions, PARTS)
+    found = recognize(client, number, ELITAN_PDF).json()
+    rows = apply_rows(found)
+    url = found["file"]["url"]
+    bare = lines[rows[2]["line_id"]]["legacy_id"]
+
+    applied = client.post(f"/api/procurement/orders/{number}/apply-document", json={
+        "kind": "invoice", "file_url": url, "expected_arrival": "2026-10-12",
+        "lines": [*rows[:2], {**rows[2], "price_with_vat": None, "price": None}],
+    })
+
+    assert applied.status_code == 200, applied.text
+    body = applied.json()
+    assert body["warnings"] == [f"{bare} — нет цены: ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), СУММА (факт)"]
+    result = {line["id"]: line for line in body["lines"]}
+    assert {line["status"] for line in result.values()} == {"В оплату"}
+    assert result[rows[2]["line_id"]]["actual_price_with_vat"] is None
+    assert len(events(sessions, "procurement.invoice_recorded")) == 3
+
+    replaced = client.post(f"/api/procurement/orders/{number}/apply-document", json={
+        "kind": "invoice", "file_url": url, "expected_arrival": "2026-10-12",
+        "lines": [{**row, "version": result[row["line_id"]]["version"]} for row in rows],
+    })
+
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["warnings"] == []
+    assert all(line["pay_missing"] == [] for line in replaced.json()["lines"])
 
 
 def test_recognize_refuses_an_order_without_rows_to_price_and_reads_scans_as_hints(procurement_api):

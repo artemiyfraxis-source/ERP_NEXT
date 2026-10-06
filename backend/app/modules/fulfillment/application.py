@@ -81,6 +81,7 @@ class KitReserveRepository(Protocol):
     """Techcard reserves of a project КБ; optional on the unit of work (`kit_reserves`), see `_kit_reserves`."""
 
     def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[KitReserve]: ...
+    def for_project(self, project: str) -> Sequence[KitReserve]: ...
     def add(self, reserve: KitReserve) -> None: ...
 
 
@@ -311,6 +312,167 @@ def project_reserve_by_lot(
 def free_for_project(lot: StockLot, held: dict[UUID, Decimal]) -> Decimal:
     """What a kit of the project can take from the lot: ДОСТУПНО plus the project's own reserve on it."""
     return max(lot.available, Decimal("0")) + held.get(lot.id, Decimal("0"))
+
+
+# ── Резерв техкарты: ГРН, выбранный в спецификации проекта (T1, 06.10.2026) ────
+
+
+@dataclass(frozen=True)
+class HoldKitReserveCommand:
+    """One spec row (project + КБ + article) wants `quantity` («на партию», in the row's `unit`) from `lot_id`.
+    `lot_id` None — the row holds nothing (ГРН cleared, units differ, the КБ already went to kitting).
+    `expected_lot_version` — the lot version the picker showed: a pick against a lot changed since is refused."""
+
+    project: str
+    item_index: str
+    article: str
+    lot_id: UUID | None
+    quantity: Decimal
+    unit: str
+    actor: Actor
+    now: datetime
+    expected_lot_version: int | None = None
+
+
+def same_unit(left: str | None, right: str | None) -> bool:
+    """«шт» ≡ «Шт.», «м» ≡ «м»: a spec row and a lot measured differently never reserve each other."""
+
+    def key(value: str | None) -> str:
+        return str(value or "").strip().rstrip(".").casefold()
+
+    return bool(key(left)) and key(left) == key(right)
+
+
+def active_kit_reserves(uow, project: str) -> list[KitReserve]:
+    """The project's techcard reserves that still hold something (every КБ). No port or no project → []."""
+    reserves = getattr(uow, "kit_reserves", None)
+    if reserves is None or not str(project or "").strip():
+        return []
+    return [reserve for reserve in reserves.for_project(project) if reserve.active]
+
+
+def _row_reserves(uow, project: str, item_index: str, article: str) -> list[KitReserve]:
+    kb, art = item_index_key(item_index), str(article or "").strip()
+    return [
+        reserve for reserve in active_kit_reserves(uow, project)
+        if item_index_key(reserve.item_index) == kb and reserve.article.strip() == art
+    ]
+
+
+def kit_requested_kbs(uow, project: str) -> set[str]:
+    """`item_index_key` of every КБ of the project that already has a kit request (any status but «Отменена»): its
+    kit holds the lots itself, a techcard reserve next to it would count the same goods twice."""
+    key = project_key(project)
+    found: set[str] = set()
+    if not key:
+        return found
+    after, size = None, 500
+    while True:
+        page = list(uow.fulfillment.list(limit=size, after_id=after))
+        for request in page:
+            kb = kb_of(request.purpose)
+            if request.status is not FulfillmentStatus.CANCELLED and kb and project_key(project_of(request.purpose)) == key:
+                found.add(item_index_key(kb))
+        if len(page) < size:
+            return found
+        after = page[-1].id
+
+
+def _reserve_details(reserve: KitReserve, quantity: Decimal) -> dict:
+    return {
+        "quantity": format(quantity.normalize(), "f"), "unit": reserve.unit, "holder": reserve.label,
+        "article": reserve.article, "grn": reserve.grn, "kit_reserve_id": str(reserve.id),
+    }
+
+
+def release_kit_reserves(
+    reserves: Sequence[KitReserve], actor: Actor, now: datetime, uow, lots: dict[UUID, StockLot] | None = None,
+) -> dict[UUID, StockLot]:
+    """Give the reserves back to their lots: РЕЗЕРВ goes down by what each still holds, the reserve keeps its trace
+    (`released_at`). The lot is saved under its version, so a concurrent move of the lot refuses the whole step.
+    → the lots as saved (a caller reserving next on one of them goes on from that version)."""
+    lots = {} if lots is None else lots
+    for reserve in reserves:
+        if not reserve.active:
+            continue
+        lot = lots.get(reserve.lot_id) or uow.warehouse.get(reserve.lot_id)
+        if lot is not None:
+            lot = lot.release_reserve(reserve.quantity)
+            lots[lot.id] = lot
+            uow.warehouse.add(lot)
+        details = _reserve_details(reserve, reserve.quantity)
+        uow.kit_reserves.add(reserve.release(now))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=reserve.lot_id, event_type="warehouse.kit_reserve_released",
+            actor=actor, occurred_at=now, details=details,
+        ))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=reserve.id, event_type="fulfillment.kit_reserve_released",
+            actor=actor, occurred_at=now, details=details,
+        ))
+    return lots
+
+
+def _project_covered(uow, lot: StockLot, project: str) -> Decimal:
+    """What the project's procurement «Со склада» covers already hold on the lot: its kit takes them first, so the
+    techcard reserve does not hold that part a second time."""
+    covers = getattr(uow, "stock_covers", None)
+    if covers is None or lot.reserved <= 0:
+        return Decimal("0")
+    return sum(
+        (cover.quantity for cover in covers.active_on_lots([lot.id]) if cover.serves_project(project)), Decimal("0"),
+    )
+
+
+def hold_kit_reserve(command: HoldKitReserveCommand, uow) -> KitReserve | None:
+    """The spec row's techcard reserve follows its ГРН: one active reserve per project + КБ + article. Holds
+    min(«на партию» − the project's covers on the lot, ДОСТУПНО + what this row already holds there) — partial when
+    the lot has less; a lot in another unit holds nothing. A re-pick moves the reserve, `lot_id` None releases it, an
+    unchanged row is left alone. The caller commits. → the active reserve, or None."""
+    if getattr(uow, "kit_reserves", None) is None:
+        return None
+    project, item_index = str(command.project or "").strip(), str(command.item_index or "").strip()
+    article = str(command.article or "").strip()
+    if not project or not item_index or not article:
+        raise FulfillmentValidationError("Для резерва техкарты нужны проект, КБ и артикул")
+    current = _row_reserves(uow, project, item_index, article)
+    lot = None
+    if command.lot_id is not None:
+        lot = uow.warehouse.get(command.lot_id)
+        if lot is None:
+            raise FulfillmentValidationError("Партия склада не найдена — выберите ГРН заново")
+        if command.expected_lot_version is not None and lot.version != command.expected_lot_version:
+            raise ConcurrentFulfillmentUpdate("Партия на складе изменилась после загрузки списка — обновите и выберите снова")
+    wanted = Decimal("0")
+    if lot is not None and command.quantity > 0 and same_unit(command.unit, lot.unit):
+        own = sum((reserve.quantity for reserve in current if reserve.lot_id == lot.id), Decimal("0"))
+        need = command.quantity - _project_covered(uow, lot, project)
+        wanted = max(min(need, max(lot.available, Decimal("0")) + own), Decimal("0"))
+    if lot is not None and len(current) == 1 and current[0].lot_id == lot.id and current[0].quantity == wanted:
+        return current[0]
+    if not current and wanted <= 0:
+        return None
+    lots = release_kit_reserves(current, command.actor, command.now, uow, {lot.id: lot} if lot is not None else None)
+    if wanted <= 0:
+        return None
+    held = lots[lot.id].reserve(wanted)
+    uow.warehouse.add(held)
+    reserve = KitReserve(
+        id=uuid4(), project=project, item_index=item_index, article=article, lot_id=held.id,
+        warehouse=held.warehouse, grn=held.grn, package=held.package, unit=held.unit, quantity=wanted,
+        created_at=command.now, created_by=command.actor.name,
+    )
+    uow.kit_reserves.add(reserve)
+    details = _reserve_details(reserve, wanted)
+    uow.audit.add(AuditEvent(
+        id=uuid4(), aggregate_id=held.id, event_type="warehouse.kit_reserve_held",
+        actor=command.actor, occurred_at=command.now, details=details,
+    ))
+    uow.audit.add(AuditEvent(
+        id=uuid4(), aggregate_id=reserve.id, event_type="fulfillment.kit_reserve_held",
+        actor=command.actor, occurred_at=command.now, details=details,
+    ))
+    return reserve
 
 
 def _take_over_covers(

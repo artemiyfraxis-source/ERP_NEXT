@@ -177,6 +177,10 @@ class CreateRequestsCommand:
     now: datetime
     designation_base: str | None = None  # import from a calculation: one `project.NNN` per batch
     source: str = "form"
+    # Requests filed from the techcard/spec (owner, 06.10): handed to Procurement in the same transaction, «В работе»
+    # with no buyer — nobody presses «В закупку». Not part of the fingerprint: a retry of a batch filed before the
+    # switch still matches its key.
+    to_procurement: bool = False
 
 
 @dataclass(frozen=True)
@@ -270,8 +274,10 @@ def create_requests(
         )
         # Ручная заявка: № проекта вписывают руками, пусто — без проекта (владелец, 29.09). Реестр —
         # только подсказка в поле; формат 591К.3 проверяет create_request_batch.
+        stored: list[Request] = []
         for request in requests:
-            uow.requests.add(request)
+            handed = request.queue_for_procurement() if command.to_procurement else request
+            uow.requests.add(handed)
             uow.audit.add(
                 AuditEvent(
                     id=uuid4(),
@@ -286,8 +292,30 @@ def create_requests(
                     },
                 )
             )
+            if command.to_procurement:
+                line = build_procurement_requested_snapshot(handed, today=command.now.date())
+                uow.audit.add(
+                    AuditEvent(
+                        id=uuid4(),
+                        aggregate_id=handed.id,
+                        event_type="request.sent_to_procurement",
+                        actor=command.actor,
+                        occurred_at=command.now,
+                        details={"legacy_id": handed.legacy_id, "source": command.source},
+                    )
+                )
+                uow.outbox.add(
+                    OutboxMessage(
+                        id=uuid4(),
+                        topic="procurement.requested",
+                        idempotency_key=line.idempotency_key,
+                        created_at=command.now,
+                        payload=_procurement_requested_payload(line),
+                    )
+                )
+            stored.append(handed)
         uow.commit()
-        return requests
+        return stored
 
 
 def handoff_requests(

@@ -396,7 +396,7 @@ it("replaces the invoice of a paid line without touching its payment", async () 
     if (path === "/api/procurement/mine?limit=500") return json({ lines: [shipped], next_cursor: null });
     if (path.endsWith("/invoice/replace") && init?.method === "POST") {
       calls.push([path, JSON.parse(String(init.body))]);
-      return json({ line: { ...shipped, invoice_url: "https://files.test/invoice-v2.pdf", version: 4 } });
+      return json({ line: { ...shipped, invoice_url: "https://files.test/invoice-v2.pdf", version: 4 }, warnings: ["REQ-1 — нет цены: ВАЛЮТА"] });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -414,6 +414,7 @@ it("replaces the invoice of a paid line without touching its payment", async () 
     `/api/procurement/${shipped.id}/invoice/replace`,
     { version: 3, invoice_url: "https://files.test/invoice-v2.pdf", invoice_number: "18", invoice_date: null },
   ]);
+  expect((await screen.findByText("REQ-1 — нет цены: ВАЛЮТА")).closest(".warning-banner")).toBeInTheDocument();
 });
 
 it("splits an own line into supplier copies with its optimistic version", async () => {
@@ -468,7 +469,7 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
     }
     if (path === "/api/procurement/kp" && init?.method === "POST") {
       saved = JSON.parse(String(init.body));
-      return json({ lines: [awaiting, other], invoice_error: "" });
+      return json({ lines: [awaiting, other], invoice_error: "", warnings: ["REQ-2 — нет цены: ВАЛЮТА, КУРС"] });
     }
     throw new Error(`Unexpected ${path}`);
   });
@@ -494,6 +495,8 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
   expect(rows[0]).toMatchObject({ line_id: awaiting.id, version: 3, actual_quantity: "3", price: "100", vat_rate: "20", driver: "net", expected_arrival: "2026-10-01" });
   expect(rows[1]).toMatchObject({ line_id: other.id, version: 5, actual_quantity: "2", expected_arrival: "2026-10-01" });
   expect(await screen.findByText("Заказ PO-001: КП сохранено по 2 строкам, счёт передан в оплату")).toBeInTheDocument();
+  const warning = await screen.findByText("REQ-2 — нет цены: ВАЛЮТА, КУРС");
+  expect(warning.closest(".warning-banner")).toBeInTheDocument();
 });
 
 it("«Жду счёт»: the order menu opens «Внести КП» for that order only and prints the request document", async () => {
@@ -1135,7 +1138,9 @@ it("groups waiting orders with their header totals and opens «Внести КП
   expect(within(one).queryByText("Кабель")).not.toBeInTheDocument();
   await openOrder("PO-001");
   expect(within(one).getByText("Кабель")).toBeInTheDocument();
-  expect(within(within(one).getByText("Кабель").closest("tr")!).getByText(/не хватает: Цена факт/)).toHaveClass("tone-warn");
+  // Цена счёт не держит (владелец, 06.10): у строки без цены — предупреждение, не «не хватает».
+  expect(within(within(one).getByText("Кабель").closest("tr")!).getByText("нет цены")).toHaveClass("tone-warn");
+  expect(within(within(one).getByText("Кабель").closest("tr")!).queryByText(/не хватает/)).not.toBeInTheDocument();
   expect(within(table).getAllByRole("button", { name: "Вставить счёт" })).toHaveLength(2);
   expect(within(table).getAllByRole("button", { name: "Вставить КП" })).toHaveLength(2);
 
@@ -1781,10 +1786,11 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
   expect(row("REQ-3")).toHaveClass("doc-warn");
   expect(within(dialog).getByText(/В документе, но не найдено в заказе: 1/).closest(".warning-inline")).toHaveTextContent("Доставка · 1 · 500,00 ₽");
   expect(within(dialog).getByText(/в документе 844,00 ₽/)).toHaveClass("tone-warn");
-  // Без цены строки счёт не уходит; цена правится в окне.
-  expect(within(dialog).getByText("Нет цены: REQ-3")).toBeInTheDocument();
-  expect(within(dialog).getByRole("button", { name: "В оплату (3)" })).toBeDisabled();
+  // Без цены строки счёт не держится — предупреждение; цена правится в окне, и оно уходит.
+  expect(within(dialog).getByText(/^Нет цены: REQ-3 — строки уйдут «В оплату»/)).toHaveClass("warning-inline");
+  expect(within(dialog).getByRole("button", { name: "В оплату (3)" })).toBeEnabled();
   fireEvent.change(within(dialog).getByLabelText("Цена с НДС REQ-3"), { target: { value: "7,5" } });
+  expect(within(dialog).queryByText(/^Нет цены/)).not.toBeInTheDocument();
   expect(row("REQ-3")).toHaveTextContent("15,00");
   fireEvent.change(within(dialog).getByLabelText("№ счёта"), { target: { value: "58/1" } });
   fireEvent.change(within(dialog).getByLabelText("Ожидаемая дата *"), { target: { value: "2026-10-08" } });
@@ -1817,6 +1823,63 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
   await waitFor(() => expect(same.querySelector(".order-chip")).toHaveTextContent("Ждёт оплаты"));
   expect(within(same).getByRole("button", { name: "Оплачено" })).toBeInTheDocument();
   expect(bodies).toHaveLength(3);
+});
+
+it("«Вставить счёт» without a price for a line warns and still sends the invoice; the row in payment says «нет цены» and «Оплачено» waits", async () => {
+  const first = { ...line, status: "Жду счет" as const, buyer: "Закупщик", supplier: "ООО А", order_number: "PO-001", order_date: "2026-10-01", actual_quantity: "2", actual_unit: "шт" };
+  const second = { ...first, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", calculated_name: "Кабель", version: 5 };
+  const priceFields = ["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)"];
+  let invoiced = false;
+  const bodies: Record<string, unknown>[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") {
+      if (!invoiced) return json({ lines: [first, second], next_cursor: null });
+      const toPay = { status: "В оплату", invoice_url: FILE_URL, expected_arrival: "2026-10-08", invoice_item_name: "Разъём" };
+      return json({ lines: [
+        { ...first, ...toPay, version: 4, pay_missing: [], actual_price_with_vat: "122", actual_sum: "244" },
+        { ...second, ...toPay, version: 6, pay_missing: priceFields },
+      ], next_cursor: null });
+    }
+    if (path === "/api/procurement/orders/PO-001/recognize" && init?.method === "POST") {
+      return json(recognized("invoice", [
+        { line_id: first.id, legacy_id: "REQ-1", version: 3, price_with_vat: "122", matched_name: "Разъём SMA-J", confidence: "article" },
+      ], { unmatched_lines: ["REQ-2"] }));
+    }
+    if (path === "/api/procurement/orders/PO-001/apply-document" && init?.method === "POST") {
+      bodies.push(JSON.parse(String(init.body)));
+      invoiced = true;
+      return json({ kind: "invoice", lines: [], warnings: ["REQ-2 — нет цены: ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), СУММА (факт)"] });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const group = await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
+  await waitFor(() => expect(within(group).getByRole("button", { name: "Вставить счёт" })).toBeEnabled());
+  fireEvent.click(within(group).getByRole("button", { name: "Вставить счёт" }));
+  const dialog = await screen.findByRole("dialog", { name: "Вставить счёт PO-001" });
+  fireEvent.change(within(dialog).getByLabelText("Файл счёта"), { target: { files: [new File(["%PDF"], "счёт.pdf", { type: "application/pdf" })] } });
+  expect(await within(dialog).findByText(/^Нет цены: REQ-2 — строки уйдут «В оплату», «Оплачено» — после цены/)).toHaveClass("warning-inline");
+  expect(within(dialog).getByLabelText("Цена с НДС REQ-2")).toHaveValue("");
+  expect(within(dialog).queryByText(/^Нет цены: REQ-2$/)).not.toBeInTheDocument();
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "В оплату (2)" }));
+  expect(await screen.findByText("PO-001: счёт передан в оплату, строк: 2")).toBeInTheDocument();
+  expect(bodies).toHaveLength(1);
+  expect((bodies[0].lines as { price_with_vat: string | null }[]).map((row) => row.price_with_vat)).toEqual(["122", null]);
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+  const same = await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
+  await waitFor(() => expect(same.querySelector(".order-chip")).toHaveTextContent("Ждёт оплаты"));
+  await openOrder("PO-001");
+  const row = (id: string) => within(same).getByText(id).closest("tr")!;
+  expect(within(row("REQ-2")).getByText("нет цены: ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), СУММА (факт)")).toHaveClass("tone-warn");
+  expect(within(row("REQ-1")).queryByText(/нет цены/)).not.toBeInTheDocument();
+  const pay = within(same).getByRole("button", { name: "Оплачено" });
+  expect(pay).toBeDisabled();
+  expect(pay).toHaveAttribute("title", "Оплата закрыта — нет цены: REQ-2. Цену внесите через «Заменить счёт»");
 });
 
 it("«Убрать» in the invoice window drops the recognised file: the picker is back, prices and № / date return to the start", async () => {

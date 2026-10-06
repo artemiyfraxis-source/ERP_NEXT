@@ -177,6 +177,18 @@ class Request:
             procurement_actor=actor,
         )
 
+    def queue_for_procurement(self) -> Request:
+        """A request filed from the techcard/spec goes to Procurement at once (owner, 06.10): «В работе» with
+        nobody's name on it — the line lands in «Неразобранные», the one who filed it is not its buyer."""
+        if self.status is not RequestStatus.NEW:
+            raise ValidationError("В закупку сразу уходит только новая заявка")
+        return replace(
+            self,
+            status=RequestStatus.IN_WORK,
+            version=self.version + 1,
+            procurement_actor=None,
+        )
+
     def retransfer(self, actor: Actor) -> Request:
         """Repeated «В закупку» (Pipeline.gs:98-112): a new aggregate version, so a new handoff event.
 

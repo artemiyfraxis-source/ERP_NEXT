@@ -257,6 +257,22 @@ class SqlAlchemyFulfillmentRepository:
         )
         return Decimal(str(total or 0)) + SqlAlchemyKitReserveRepository(self.session).reserved_on_lot(lot_id)
 
+    def holders_on_lots(self, lot_ids) -> list[tuple[UUID, str, str, UUID, str, Decimal]]:
+        """Kit lines holding reserve on the given lots: (request id, number, purpose, lot id, unit, reserved), the
+        same lines `reserved_on_lot` sums (no status filter), in creation order."""
+        if not lot_ids:
+            return []
+        rows = self.session.execute(
+            select(
+                FulfillmentRequestRow.id, FulfillmentRequestRow.number, FulfillmentRequestRow.purpose,
+                FulfillmentLineRow.lot_id, FulfillmentLineRow.unit, FulfillmentLineRow.reserved,
+            )
+            .join(FulfillmentLineRow, FulfillmentLineRow.request_id == FulfillmentRequestRow.id)
+            .where(FulfillmentLineRow.lot_id.in_(tuple(lot_ids)), FulfillmentLineRow.reserved > 0)
+            .order_by(FulfillmentRequestRow.created_at, FulfillmentRequestRow.number, FulfillmentLineRow.position)
+        )
+        return [(row[0], row[1], row[2], row[3], row[4], Decimal(str(row[5]))) for row in rows]
+
     def open_requests(self) -> list[FulfillmentRequest]:
         """Requests whose lots can still change («Новая», «Недоукомплектован», «Укомплектован»), creation order."""
         rows = self.session.scalars(

@@ -1862,7 +1862,7 @@ export const procurementApi = {
       },
     ),
   saveKp: (reference: string, rows: KpRowInput[], invoiceUrl: string, manualExchangeRate?: string) =>
-    api<{ lines: ProcurementLine[]; invoice_error: string }>("/api/procurement/kp", {
+    api<{ lines: ProcurementLine[]; invoice_error: string; warnings?: string[] }>("/api/procurement/kp", {
       method: "POST",
       body: JSON.stringify({
         order_reference: reference,
@@ -1925,7 +1925,7 @@ export const procurementApi = {
   /** Проверенные цены документа — все строки заказа или ни одной (409 — набор устарел, 422 — сервер называет строку).
    *  КП: цены, строки остаются «Жду счет»; счёт: цены и счёт, строки уходят «В оплату». */
   applyOrderDocument: (orderNumber: string, input: ApplyOrderDocumentInput) =>
-    api<{ lines: ProcurementLine[] }>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/apply-document`, {
+    api<{ lines: ProcurementLine[]; warnings?: string[] }>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/apply-document`, {
       method: "POST",
       body: JSON.stringify(input),
     }),
@@ -1991,7 +1991,7 @@ export const procurementApi = {
     invoiceNumber = "",
     invoiceDate = "",
   ) =>
-    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/invoice`, {
+    api<{ line: ProcurementLine; warnings?: string[] }>(`/api/procurement/${lineId}/invoice`, {
       method: "POST",
       body: JSON.stringify({
         version,
@@ -2014,7 +2014,7 @@ export const procurementApi = {
     invoiceNumber: string,
     invoiceDate: string,
   ) =>
-    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/invoice/replace`, {
+    api<{ line: ProcurementLine; warnings?: string[] }>(`/api/procurement/${lineId}/invoice/replace`, {
       method: "POST",
       body: JSON.stringify({
         version,
@@ -2866,6 +2866,18 @@ export interface KitsetLot {
   warehouse: string;
   grn: string;
   package: string;
+  /** Версия партии из списка ГРН: уходит вместе с выбором, устаревшая даёт 409. */
+  version?: number;
+}
+
+/** Что ГРН строки держит под КБ прямо сейчас; null — ничего не зарезервировано. */
+export interface KitsetReserve {
+  quantity: string;
+  unit: string;
+  lot_id: string;
+  warehouse: string;
+  grn: string;
+  package: string;
 }
 
 export interface KitsetComponent {
@@ -2879,6 +2891,7 @@ export interface KitsetComponent {
   /** шт / м — by type, as the calc import (ZPK_UNIT_BY_TYPE). */
   unit: string;
   lot: KitsetLot | null;
+  reserve?: KitsetReserve | null;
 }
 
 /** Строка реестра «КД» (SUPPLYMAP TcKd.gs): файл хранится в базе ERP (`stored`), его отдаёт `documentUrl`.
@@ -2970,6 +2983,8 @@ export interface KitsetLoadResult {
   /** «Сразу создать заявки на закупку»: null — галочка не стояла или заявки не созданы (см. requests_error). */
   requests?: { created: number; existing: number; skipped: string[] } | null;
   requests_error?: string;
+  /** Не пусто — резерв ГРН пересчитался не полностью. */
+  reserve_error?: string;
 }
 
 export interface KitsetSupplyLine {
@@ -2996,6 +3011,8 @@ export interface KitsetStockLot {
   available: string;
   /** The part of `available` that is the project's own «Со склада» reserve (absent when none). */
   reserved?: string;
+  /** Версия партии: уходит с выбором в `lot.version`, устаревшая даёт 409. */
+  version?: number;
 }
 
 export interface KitsetLineEdit {
@@ -3016,6 +3033,8 @@ export interface KitsetDeleteResult {
   gp: { deleted: number; kept: number };
   /** Записи журнала проекта в производственном плане, снесённые вместе с проектом. */
   journal?: { deleted: number };
+  /** Не пусто — резерв ГРН вернулся на склад не полностью. */
+  reserve_error?: string;
   /** Хвосты без движения: журнал, запросы на комплектацию, задания, заявки на закупку; `message` — итог по-русски. */
   tails?: {
     fulfillment: { deleted: number; kept: number };
@@ -3078,7 +3097,7 @@ export const kitsetsApi = {
   lots: (query: string, project: string) =>
     api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}&project=${encodeURIComponent(project)}`),
   issue: (project: string, deadline: string) =>
-    api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; message: string }>(
+    api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; message: string; reserve_error?: string }>(
       `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
     ),
   remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
