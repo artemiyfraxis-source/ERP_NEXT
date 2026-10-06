@@ -10,6 +10,7 @@ import {
   type KitsetDeleteResult,
   type KitsetLoadResult,
   type KitsetLot,
+  type KitsetReserve,
   type KitsetStockLot,
   type KitsetTile,
   type Principal,
@@ -89,6 +90,18 @@ export function kitBatch(per: string, run: string, scrap: string, unit: string) 
   return unit === "шт" ? Math.ceil(batch) : batch;
 }
 
+/** Ячейка «ГРН склада»: выбранный ГРН и сколько из «на партию» уже в резерве под КБ. Выбран ГРН, а резерва нет
+ *  (единицы партии и позиции не сходятся) — «резерв при комплектации». ГРН не выбран — пусто. */
+export function lotLabel(lot: KitsetLot | null, reserve: KitsetReserve | null | undefined, batch: number) {
+  if (!lot?.grn) return "";
+  const grn = `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}`;
+  return reserve && reserve.grn === lot.grn
+    ? `${grn} · резерв ${reserve.quantity} из ${batch}`
+    : `${grn} · резерв при комплектации`;
+}
+
+const STALE_LOT_TEXT = "Партия изменилась — обновите список ГРН";
+
 /** «Генератор» карточки проекта (SUPPLYMAP renderGen_ / mountGen_): сверху сборки проекта, ниже генератор выбранной.
     Карточку ТК сборки заводит открытие генератора (kitsetsApi.openTechcard). */
 function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange }: {
@@ -150,7 +163,8 @@ export function deleteSummary(res: KitsetDeleteResult) {
   for (const [name, count] of Object.entries(res.erp || {})) parts.push(`${name.toLowerCase()} ${count}`);
   if (res.cards?.cards) parts.push(`техкарты ${res.cards.cards}`);
   if (res.gp?.deleted) parts.push(`склад ГП ${res.gp.deleted}`);
-  const card = `Снесено строк: ${parts.join(", ")}` + (res.gp?.kept ? `. На складе ГП осталось с движением: ${res.gp.kept}` : "");
+  const card = `Снесено строк: ${parts.join(", ")}` + (res.gp?.kept ? `. На складе ГП осталось с движением: ${res.gp.kept}` : "")
+    + (res.reserve_error ? `. Резерв ГРН вернулся не полностью: ${res.reserve_error}` : "");
   // Журнал проекта и хвосты без движения: итог по-русски собирает сервер («Удалено: 4 записи журнала проекта, …») —
   // тот же текст печатает команда purge_project_tails.
   const tails = [res.tails?.message, res.tails_error].filter(Boolean).join(" ");
@@ -183,6 +197,7 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
     [key, stored(`kitHide.${key}.${user}`, on ? "1" : "0") === "1"])) as Record<HideKey, boolean>);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [warning, setWarning] = useState("");
   const [creating, setCreating] = useState(false);
 
   async function load() {
@@ -200,10 +215,10 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
 
   async function remove(project: string) {
     if (!window.confirm(`Удалить карточку «${project}»?\n\n${DELETE_TEXT}`)) return;
-    setError(""); setNotice("");
+    setError(""); setNotice(""); setWarning("");
     try {
       const result = await kitsetsApi.remove(project);
-      setNotice(deleteSummary(result.res));
+      if (result.res.reserve_error) setWarning(deleteSummary(result.res)); else setNotice(deleteSummary(result.res));
     } catch (reason) {
       if (gone(reason)) setNotice("Карточка уже удалена — список обновлён");
       else setError(message(reason, "Не удалось удалить проект"));
@@ -221,6 +236,7 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
     }} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+    {warning && <div className="warning-banner" role="alert">{warning}</div>}
     {all === null && !error && <div className="empty">Загрузка…</div>}
     {all && !all.length && <div className="empty">Проектов пока нет — создайте первый из расчёта.</div>}
     {all && all.length > 0 && <>
@@ -306,6 +322,7 @@ function CreateFromCalc({ canRequest, close, done }: {
         res.ship_to_error && `адресат не сохранён: ${res.ship_to_error}`,
         res.ship_error && `очередь отгрузки: ${res.ship_error}`,
         res.requests_error && `заявки не созданы: ${res.requests_error}`,
+        res.reserve_error && `резерв ГРН: ${res.reserve_error}`,
       ].filter(Boolean);
       const made = requestsNote(res);
       done(res.project, `Проект «${res.project}»: сборок ${res.assemblies}, позиций ${res.lines}` + (made ? `, ${made}` : "")
@@ -355,15 +372,17 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
   const [tab, setTab] = useState<Tab>("sostav");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [warning, setWarning] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
   /* kitRefresh: перечитать расчёт по сохранённой ссылке. Номер карточки передаётся явно: в ячейке расчёта он бывает
      короче («720К.»), и обновление завело бы рядом вторую карточку. */
   async function refresh() {
     if (!card || refreshing) return;
-    setRefreshing(true); setError("");
+    setRefreshing(true); setError(""); setWarning("");
     try {
-      await kitsetsApi.load({ url: card.calc_source, number: card.project });
+      const { res } = await kitsetsApi.load({ url: card.calc_source, number: card.project });
+      if (res.reserve_error) setWarning(`Резерв ГРН пересчитан не полностью: ${res.reserve_error}`);
       await load();
     } catch (reason) { setError(message(reason, "Расчёт не прочитан")); }
     finally { setRefreshing(false); }
@@ -382,8 +401,7 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
     if (!window.confirm(`Удалить карточку «${project}»?\n\n${DELETE_TEXT}`)) return;
     try {
       const result = await kitsetsApi.remove(project);
-      window.alert(deleteSummary(result.res));
-      back();
+      window.alert(deleteSummary(result.res));      back();
     } catch (reason) {
       if (gone(reason)) back(); else setError(message(reason, "Не удалось удалить проект"));
     }
@@ -424,12 +442,13 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
       {note && <span className="muted">{note}</span>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
+    {warning && <div className="warning-banner" role="alert">{warning}</div>}
     <div className="seg-tabs" role="tablist">
       {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}
     </div>
     {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} />}
     {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline} />}
-    {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} />}
+    {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} setWarning={setWarning} reload={load} />}
     {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex} builtId={builtDrafts[genIndex] || ""}
       onBuiltChange={(id) => setBuiltDrafts((current) => ({ ...current, [genIndex]: id }))}
       done={(index) => { void load(); setTab(`tc:${index}`); setNote(`Техкарта ${index} готова — открыта вкладка «ТК ${index}».`); }} />}
@@ -685,7 +704,9 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
 type Draft = { per: string; scrap: string; name: string; link: string; lot: KitsetLot | null };
 type SpecRow = { assembly: KitsetAssembly; component: KitsetComponent };
 
-function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolean; setNote: (text: string) => void }) {
+function SpecTab({ card, canEdit, setNote, setWarning, reload }: {
+  card: KitsetCard; canEdit: boolean; setNote: (text: string) => void; setWarning: (text: string) => void; reload: () => Promise<void>;
+}) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [autosave, setAutosave] = useState("правки сохраняются сами");
   const [picking, setPicking] = useState<{ assembly: KitsetAssembly; component: KitsetComponent } | null>(null);
@@ -699,7 +720,7 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
   }
 
   /* Автосохранение ОДНОЙ строки (владелец 02.09.2026): правка одной ячейки не перезаписывает соседние двадцать. */
-  async function save(assembly: KitsetAssembly, component: KitsetComponent, patch: Partial<Draft> = {}) {
+  async function save(assembly: KitsetAssembly, component: KitsetComponent, patch: Partial<Draft> = {}): Promise<string> {
     const draft = { ...draftOf(assembly, component), ...patch };
     setAutosave("сохраняю…");
     try {
@@ -708,7 +729,23 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
         name: draft.name, link: draft.link, lot: draft.lot,
       }]);
       setAutosave(`сохранено ${new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`);
-    } catch (reason) { setAutosave(`не сохранено: ${message(reason, "ошибка")}`); }
+      if (patch.lot !== undefined) await reload();  // резерв под выбранный ГРН уже стоит: ячейка покажет его
+      return "";
+    } catch (reason) {
+      // 409: партию успели изменить с момента, когда список ГРН был загружен — выбор не принят.
+      const text = reason instanceof ApiError && reason.status === 409 ? STALE_LOT_TEXT : message(reason, "ошибка");
+      setAutosave(`не сохранено: ${text}`);
+      return text;
+    }
+  }
+
+  /** Выбор ГРН: пока сохранение не прошло, выбор в строке не остаётся; пустая строка — принято. */
+  async function pickLot(row: SpecRow, lot: KitsetLot | null): Promise<string> {
+    const before = draftOf(row.assembly, row.component).lot;
+    edit(row.assembly, row.component, { lot });
+    const failure = await save(row.assembly, row.component, { lot });
+    if (failure) edit(row.assembly, row.component, { lot: before });
+    return failure;
   }
 
   const specRows: SpecRow[] = card.assemblies.flatMap((assembly) => assembly.components.map((component) => ({ assembly, component })));
@@ -733,27 +770,35 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
       return kitBatch(draft.per, assembly.run, draft.scrap, component.unit);
     } },
     { key: "unit", title: "Ед.", width: 56, value: ({ component }) => component.unit },
-    { key: "lot", title: "ГРН склада", width: 230, value: ({ assembly, component }) => {
-      const lot = draftOf(assembly, component).lot;
-      return lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "";
-    }, render: ({ assembly, component }) => {
-      const lot = draftOf(assembly, component).lot;
+    { key: "lot", title: "ГРН склада", width: 320, value: ({ assembly, component }) => lotLabel(
+      draftOf(assembly, component).lot, component.reserve, kitBatch(draftOf(assembly, component).per, assembly.run, draftOf(assembly, component).scrap, component.unit),
+    ), render: ({ assembly, component }) => {
+      const draft = draftOf(assembly, component);
+      const text = lotLabel(draft.lot, component.reserve, kitBatch(draft.per, assembly.run, draft.scrap, component.unit));
       return <button className="secondary small" disabled={!canEdit} onClick={() => setPicking({ assembly, component })}>
-        {lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "выбрать со склада"}
+        {text || "выбрать со склада"}
       </button>;
     } },
   ];
 
   return <div className="kit-pane">
-    <p className="page-sub">«ГРН склада» резервируется при отправке на комплектацию; без ГРН позиция ждёт поставки. Правки сохраняются сами.</p>
+    <p className="page-sub">«ГРН склада» резервируется сразу при выборе; без ГРН позиция ждёт поставки. Правки сохраняются сами.</p>
     {canEdit
       ? <div className="page-actions"><button className="primary" onClick={() => setIssuing(true)}>Отправить на комплектацию</button><span className="muted kit-autosave">{autosave}</span></div>
       : <p className="page-sub">Раздел открыт на просмотр — править и отправлять нельзя.</p>}
-    {issuing && <IssueDialog project={card.project} close={() => setIssuing(false)} done={(text) => { setIssuing(false); setNote(text); }} />}
+    {issuing && <IssueDialog project={card.project} close={() => setIssuing(false)} done={(text, reserveError) => {
+      setIssuing(false); setNote(text);
+      setWarning(reserveError ? `Резерв ГРН пересчитан не полностью: ${reserveError}` : "");
+      void reload();
+    }} />}
     {picking && <LotPicker project={card.project} component={picking.component} batch={kitBatch(draftOf(picking.assembly, picking.component).per, picking.assembly.run, draftOf(picking.assembly, picking.component).scrap, picking.component.unit)}
       current={draftOf(picking.assembly, picking.component).lot}
       close={() => setPicking(null)}
-      pick={(lot) => { edit(picking.assembly, picking.component, { lot }); void save(picking.assembly, picking.component, { lot }); setPicking(null); }} />}
+      pick={async (lot) => {
+        const failure = await pickLot(picking, lot);
+        if (!failure) setPicking(null);
+        return failure;
+      }} />}
     {card.assemblies.map((assembly) => <div key={assembly.index} className="kit-spec">
       <p><strong>{assembly.index}</strong> {assembly.name} <span className="muted">кол-во {assembly.run}</span></p>
       <DataTable
@@ -770,20 +815,29 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
 }
 
 function LotPicker({ project, component, batch, current, close, pick }: {
-  project: string; component: KitsetComponent; batch: number; current: KitsetLot | null; close: () => void; pick: (lot: KitsetLot | null) => void;
+  project: string; component: KitsetComponent; batch: number; current: KitsetLot | null; close: () => void; pick: (lot: KitsetLot | null) => Promise<string>;
 }) {
   const [query, setQuery] = useState(component.name || component.art);
   const [lots, setLots] = useState<KitsetStockLot[] | null>(null);
   const [error, setError] = useState("");
+  const [stamp, setStamp] = useState(0);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       kitsetsApi.lots(query, project).then((result) => setLots(result.lots)).catch((reason) => setError(message(reason, "Склад не ответил")));
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [query, project]);
+  }, [query, project, stamp]);
+  /* Отказ сохранения (партия изменилась): окно остаётся, текст отказа сверху, список ГРН перечитывается. */
+  async function choose(lot: KitsetLot | null) {
+    if (busy) return;
+    setBusy(true); setError("");
+    const failure = await pick(lot);
+    if (failure) { setError(failure); setStamp((value) => value + 1); setBusy(false); }
+  }
   return <div className="panel kit-modal" role="dialog" aria-label="Выбор ГРН">
     <h3>ГРН для «{component.name || component.art}»</h3>
-    <p className="page-sub">Нужно на партию: {batch}. Выбранный ГРН зарезервируется при отправке на комплектацию.</p>
+    <p className="page-sub">Нужно на партию: {batch}. Выбранный ГРН резервируется сразу при выборе.</p>
     <input aria-label="Поиск по складу" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="наименование, артикул, ГРН" />
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="table-wrap"><table>
@@ -791,18 +845,18 @@ function LotPicker({ project, component, batch, current, close, pick }: {
       <tbody>{(lots || []).map((lot) => <tr key={lot.lot_id} className={current?.grn === lot.grn && (current?.package || "") === lot.package ? "selected" : ""}>
         <td>{lot.warehouse}</td><td>{lot.grn}</td><td>{lot.package}</td><td>{lot.name}</td><td>{lot.storage_location}</td>
         <td className="num">{lot.available} {lot.unit}{lot.reserved && <div className="muted">из них резерв проекта {lot.reserved} {lot.unit}</div>}</td>
-        <td><button className="secondary small" onClick={() => pick({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package })}>Выбрать</button></td>
+        <td><button className="secondary small" disabled={busy} onClick={() => void choose({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package, version: lot.version })}>Выбрать</button></td>
       </tr>)}</tbody>
     </table></div>
     {lots && !lots.length && <div className="empty">Ничего не нашлось — сотри слова и ищи по своим.</div>}
     <div className="page-actions">
-      {current && <button className="secondary" onClick={() => pick(null)}>Снять привязку</button>}
+      {current && <button className="secondary" disabled={busy} onClick={() => void choose(null)}>Снять привязку</button>}
       <button className="secondary" onClick={close}>Закрыть</button>
     </div>
   </div>;
 }
 
-function IssueDialog({ project, close, done }: { project: string; close: () => void; done: (text: string) => void }) {
+function IssueDialog({ project, close, done }: { project: string; close: () => void; done: (text: string, reserveError: string) => void }) {
   const [deadline, setDeadline] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -813,7 +867,7 @@ function IssueDialog({ project, close, done }: { project: string; close: () => v
     try {
       const result = await kitsetsApi.issue(project, deadline);
       const numbers = result.created.map((item) => item.no + (item.shortfall.length ? " (недобор)" : "")).join(", ");
-      done(`${result.message} ${numbers}`.trim());
+      done(`${result.message} ${numbers}`.trim(), result.reserve_error || "");
     } catch (reason) { setError(message(reason, "Заявки не созданы")); }
     finally { setBusy(false); }
   }

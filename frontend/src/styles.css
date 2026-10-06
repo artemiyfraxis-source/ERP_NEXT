@@ -193,6 +193,8 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .error-banner, .success-banner { margin-bottom: 16px; border-radius: 11px; padding: 11px 14px; font-size: 13px; }
 .error-banner { color: #852a24; background: #fbe7e4; }
 .success-banner { color: #205b38; background: #ddf2e4; }
+.warning-banner { margin-bottom: 16px; border-radius: 11px; padding: 11px 14px; font-size: 13px; color: #74451f; background: #fff3dd; white-space: pre-line; }
+.warning-banner ul { margin: 4px 0 0; padding-left: 18px; }
 
 .work-list { margin-top: 25px; display: grid; gap: 14px; }
 .work-list > .panel-heading { padding-left: 2px; }
