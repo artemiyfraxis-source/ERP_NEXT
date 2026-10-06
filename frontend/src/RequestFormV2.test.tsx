@@ -161,7 +161,9 @@ describe("requests.form on", () => {
     fireEvent.click(screen.getByRole("button", { name: "Применить ко всем строкам" }));
     expect(screen.getByLabelText("Категория, строка 1")).toHaveValue("");
     expect(screen.getByLabelText("План. дата, строка 2")).toHaveValue("");
-    expect(screen.getByLabelText("Категория, строка 1").querySelector("option")).toHaveTextContent("ОП (шапка)");
+    const inherited = screen.getByLabelText("Категория, строка 1").querySelector("option");
+    expect(inherited).toHaveTextContent("как в шапке");
+    expect(inherited).toHaveAttribute("title", "Из шапки: ОП");
   });
 
   it("nomenclature autocomplete fills name, article, unit and type", async () => {

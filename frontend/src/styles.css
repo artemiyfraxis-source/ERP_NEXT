@@ -3147,3 +3147,8 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 /* Номенклатура под наименованием партии / строки приёмки (option references.items). */
 .lot-item-chip { display: block; font-size: 12px; white-space: normal; }
 .lot-item-mark { margin-left: 6px; font-size: 10px; color: var(--primary); cursor: help; vertical-align: 1px; }
+/* New request form header (Витя): two even rows — who/where, then the per-line defaults with «Применить ко всем строкам». */
+.rg-common-v2 .rg-common-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); align-items: start; }
+.rg-common-v2 .rg-project, .rg-common-v2 .rg-point { grid-column: span 2; }
+.rg-common-v2 .rg-common-grid > label:nth-child(2) { grid-column: span 2; }
+.rg-common-v2 .rg-apply { grid-column: span 2; align-self: start; padding-top: 19px; }

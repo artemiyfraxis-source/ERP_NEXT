@@ -167,7 +167,7 @@ export function RequestGridV2({
       const options = schema?.categories ?? [];
       return (
         <select {...common} value={value} onChange={(e) => set(e.target.value)}>
-          <option value="">{headerCategory} (шапка)</option>
+          <option value="" title={`Из шапки: ${headerCategory}`}>как в шапке</option>
           {value && !options.includes(value) && <option>{value}</option>}
           {options.map((item) => <option key={item}>{item}</option>)}
         </select>
@@ -177,7 +177,7 @@ export function RequestGridV2({
       const category = draft.category || header.category;
       return (
         <select {...common} value={category === "ОП" ? "Да" : value} disabled={category === "ОП"} onChange={(e) => set(e.target.value)}>
-          <option value="">{draft.category ? "по категории" : headerQuality ? `${headerQuality} (шапка)` : "по категории"}</option>
+          <option value="">{draft.category ? "по категории" : "как в шапке"}</option>
           <option>Да</option><option>Нет</option>
         </select>
       );

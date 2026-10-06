@@ -654,7 +654,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       <div className={view === "create" ? "single-layout" : "list-layout"}>
         {view !== "create" ? null : canEdit ? (
           <div className="panel request-form">
-            <div className="panel-heading"><h2>Новая заявка</h2><span>Обязательные поля отмечены *; остальное заполнено по умолчанию</span></div>
+            <div className="panel-heading"><h2>Новая заявка</h2><span>{formV2 ? "Обязательные поля отмечены *; пустые поля сервер заполнит по умолчанию" : "Обязательные поля отмечены *; остальное заполнено по умолчанию"}</span></div>
             <div className="mode-tabs">
               <button type="button" className={createMode === "manual" ? "secondary small active" : "secondary small"} onClick={() => switchMode("manual")}>Вручную</button>
               <button type="button" className={createMode === "excel" ? "secondary small active" : "secondary small"} onClick={() => switchMode("excel")}>Вставить из Excel</button>

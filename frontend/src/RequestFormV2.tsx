@@ -154,9 +154,9 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
             </select>
             {showErrors && errors.delivery_point && <small className="rg-field-error" role="alert">{errors.delivery_point}</small>}
           </label>
-          <label>Категория <span className="rg-info" title={CATEGORY_HINT} aria-label={CATEGORY_HINT}>ⓘ</span>
+          <label><span>Категория <span className="rg-info" title={CATEGORY_HINT} aria-label={CATEGORY_HINT}>ⓘ</span></span>
             <select aria-label="Категория" title={CATEGORY_HINT} value={header.category} onChange={(e) => setHeader((current) => setHeaderCategory(current, e.target.value))}>
-              <option value="">{DEFAULT_CATEGORY} (по умолчанию)</option>
+              <option value="">{DEFAULT_CATEGORY}</option>
               {categories.map((item) => <option key={item}>{item}</option>)}
             </select>
           </label>
