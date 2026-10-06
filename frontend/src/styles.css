@@ -1112,6 +1112,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 @media (pointer: coarse) {
   .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select, .tcgen .gen-marks .btn-x { height: 40px; }
   .tcgen .gen-marks .btn-x { width: 40px; }
+  .tcgen .gen-marks .gtable td:first-child { padding-top: 15px; }
   .tcgen .gen-marks col.c-x { width: 44px; }
 }
 
