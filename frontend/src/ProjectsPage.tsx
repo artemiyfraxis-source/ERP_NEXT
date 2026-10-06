@@ -663,18 +663,18 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
       render: (line: SupplyLine) => isShort(line)
         ? <label className="sel-hit"><input type="checkbox" aria-label={`Заказать ${line.art}`} checked={picked.has(line.art)} onChange={(event) => toggle(line.art, event.target.checked)} /></label>
         : null }] : []),
-    { key: "art", title: "Артикул КД", width: 210, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
-    { key: "name", title: "Наименование", width: 300, value: (line) => line.name, wrap: true },
-    { key: "need", title: "Нужно", width: 84, value: (line) => line.need, numeric: true },
+    { key: "art", title: "Артикул КД", width: 170, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
+    { key: "name", title: "Наименование", width: 170, value: (line) => line.name, wrap: true },
+    { key: "need", title: "Нужно", width: 72, value: (line) => line.need, numeric: true },
     { key: "free", title: "Свободно", width: 90, value: (line) => zeroDash(line.free), numeric: true, hint: "Свободно на складе, с резервами самого проекта" },
-    { key: "off_book", title: "Без ГРН", width: 84, value: (line) => zeroDash(line.off_book || "0"), numeric: true, hint: "Закупка отметила «Есть на складе, без ГРН»: лежит на полке, но не заведено в партию и не в резерве" },
-    { key: "ordered", title: "В закупке", width: 92, value: (line) => zeroDash(line.ordered), numeric: true, hint: "Заявки и строки закупки проекта, ещё не принятые" },
-    { key: "kitted", title: "В комплектации", width: 120, value: (line) => zeroDash(line.kitted), numeric: true, hint: "В резерве или выдано по комплектации проекта" },
+    { key: "off_book", title: "Без ГРН", width: 76, value: (line) => zeroDash(line.off_book || "0"), numeric: true, hint: "Закупка отметила «Есть на складе, без ГРН»: лежит на полке, но не заведено в партию и не в резерве" },
+    { key: "ordered", title: "В закупке", width: 84, value: (line) => zeroDash(line.ordered), numeric: true, hint: "Заявки и строки закупки проекта, ещё не принятые" },
+    { key: "kitted", title: "В комплектации", width: 114, value: (line) => zeroDash(line.kitted), numeric: true, hint: "В резерве или выдано по комплектации проекта" },
     { key: "short", title: "Не хватает", width: 100, value: (line) => zeroDash(line.short), numeric: true,
       render: (line) => isShort(line) ? <strong className="tone-danger">{line.short}</strong> : <span className="muted">—</span> },
     { key: "unit", title: "Ед.", width: 48, value: (line) => line.unit },
-    { key: "kbs", title: "КБ", wrap: true, value: (line) => line.kbs.join(" · ") },
-    { key: "stage", title: "Стадия", width: 210, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
+    { key: "kbs", title: "КБ", width: 72, wrap: true, value: (line) => line.kbs.join(" · ") },
+    { key: "stage", title: "Стадия", width: 170, wrap: true, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
       {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
     </span> },
     { key: "rows", title: "Строк", width: 64, hidden: true, value: (line) => line.rows.length || "—", numeric: true },
