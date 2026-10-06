@@ -145,6 +145,27 @@ class LotItemRow(Base):
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     linked_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
 
+
+class InternalProjectRow(_Who, Base):
+    """«Внутренний проект» (migration 0091): a project of the company itself, numbered «ВП-001»; requests and lines
+    refer to it through `project_reference` like to a commercial «591К.3»; its purpose decides the GRN prefix."""
+
+    __tablename__ = "purchasing_internal_projects"
+    __table_args__ = (
+        UniqueConstraint("number", name="uq_purchasing_internal_projects_number"),
+        CheckConstraint("number LIKE 'ВП-%'", name="ck_purchasing_internal_projects_number"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_purchasing_internal_projects_name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    number: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    responsible_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    note: Mapped[str | None] = mapped_column(Text)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
 class RfqRow(_Who, Base):
     __tablename__ = "purchasing_rfqs"
     __table_args__ = (UniqueConstraint("number", name="uq_purchasing_rfqs_number"),)
