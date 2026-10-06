@@ -54,7 +54,7 @@ other identities).
   add a new one after the head. One head: right before merge, rebase on fresh `main`; if `main` gained a
   migration meanwhile, re-parent/renumber yours (not on `main` yet, so allowed) and rerun the gate
   (`backend/tests/test_alembic_single_head.py`).
-- **Live-data protocol (proposed, owner reviews):** backup → rehearsal on a copy of the prod DB → integrity/row-count
+- **Live-data protocol:** backup → rehearsal on a copy of the prod DB → integrity/row-count
   check → only then prod.
 - A PR with an Alembic migration is rehearsed on a copy of prod first; its description carries the row-count
   reconciliation from that run (before/after per table plus the invariants) and links the log.
