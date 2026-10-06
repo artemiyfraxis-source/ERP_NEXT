@@ -3152,3 +3152,4 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .rg-common-v2 .rg-project, .rg-common-v2 .rg-point { grid-column: span 2; }
 .rg-common-v2 .rg-common-grid > label:nth-child(2) { grid-column: span 2; }
 .rg-common-v2 .rg-apply { grid-column: span 2; align-self: start; padding-top: 19px; }
+.rg-table-v2 .rg-col-category { width: 124px; } .rg-table-v2 .rg-col-quality_document { width: 124px; }

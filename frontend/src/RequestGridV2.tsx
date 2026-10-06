@@ -201,7 +201,7 @@ export function RequestGridV2({
   return (
     <div className="rg" ref={root}>
       <div className="rg-scroll">
-        <table className="rg-table">
+        <table className="rg-table rg-table-v2">
           <thead>
             <tr>
               <th className="rg-no">№</th>
