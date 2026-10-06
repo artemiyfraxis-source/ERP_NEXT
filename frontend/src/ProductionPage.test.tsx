@@ -862,6 +862,28 @@ it("opens the operation's ETK read-only on that operation through the production
   expect(screen.queryByRole("button", { name: /Пересобрать/ })).not.toBeInTheDocument();
 });
 
+it("loads the ETK sketches of the fitter's operation through the production endpoints, not the techcards ones", async () => {
+  const etk = {
+    id: "80000000-0000-0000-0000-000000000001", version: 1, project: "591K.3", item_index: "КБ1", product_name: "Жгут",
+    source_calculation: "", deadline: null, status: "Выдана", revision: 1, manual_operation_keys: [],
+    created_at: "2026-09-20T09:00:00+03:00", updated_at: "2026-09-20T09:00:00+03:00", issued_at: "2026-09-20T09:00:00+03:00",
+    document: { operations: [{ position: 1, code: "OP-01", title: "Разделка кабеля" }] },
+  };
+  const seen: string[] = [];
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: [] }, { code: "OP-01" }), (path) => {
+    seen.push(path);
+    if (path.endsWith("/etk")) return json({ card: etk, focus: { position: 1, code: "OP-01" } });
+    if (path.endsWith("/etk/sketches")) return json({ items: [{ operation_key: "OP-01::::", file_name: "a.png", size: 3, uploaded_by: "Технолог", uploaded_at: "2026-09-20T10:00:00+03:00" }] });
+    return null;
+  });
+  const { container } = render(<ProductionPage principal={fitter} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
+  await waitFor(() => expect(container.querySelector(".etk-sketch img")).not.toBeNull());
+  expect(container.querySelector(".etk-sketch img")?.getAttribute("src")).toMatch(/^\/api\/production\/my\/tasks\/.+\/operations\/.+\/etk\/sketches\/OP-01%3A%3A%3A%3A\?v=/);
+  expect(seen.some((path) => path.endsWith("/etk/sketches"))).toBe(true);
+  expect(seen.some((path) => path.includes("/api/techcards/") && path.includes("/sketches"))).toBe(false);
+});
+
 it("confirms every box waiting for the master with one button", async () => {
   const waiting = (id: string, number: string) => ({
     id, number, version: 2, task_id: task.id, operation_id: task.operations[0].id, item: task.item, operation_position: 1,
