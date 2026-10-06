@@ -579,10 +579,11 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   };
   const bulkOf = (block: BulkBlock) => ({ bulk: bulk?.block === block ? bulk : null, onCloseBulk: () => setBulk(null) });
   const stageProps = { disabled: interactionLocked, busyId, editing };
+  const dense = useStageOption("procurement.dense");
 
   return (
-    <section className="page">
-      <header className="page-header">
+    <section className={dense ? "page proc-dense" : "page"}>
+      <header className={dense ? "page-header proc-dense-head" : "page-header"}>
         <div>
           <span className="eyebrow">{readOnly ? "Просмотр" : "Рабочая очередь"}</span>
           <h1>Закупка</h1>

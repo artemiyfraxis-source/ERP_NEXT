@@ -52,10 +52,21 @@ export function calculatedVatRate(line: ProcurementLine): number | null {
 const withUnit = (quantity: string | null | undefined, unit: string | null | undefined) =>
   quantity ? `${formatQuantity(quantity)} ${unit ?? ""}`.trim() : "";
 
+/** Stage → colour tone of its chip (option procurement.dense): waiting on us, on money, on the road, done. */
+export function stageTone(status: string | null | undefined): string {
+  const value = String(status ?? "").toLocaleLowerCase("ru");
+  if (value.startsWith("готово")) return "tone-done";
+  if (value.startsWith("отмен")) return "tone-off";
+  if (value.startsWith("карантин") || value.startsWith("согласование")) return "tone-alert";
+  if (value.startsWith("жду сч") || value.startsWith("в оплату")) return "tone-money";
+  if (value.startsWith("в пути")) return "tone-road";
+  return "tone-work";
+}
+
 const yesNo = (value: boolean | null) => (value === null ? "" : value ? "Да" : "Нет");
 const dayOf = (value: string | null | undefined) => formatDay(value);
 
-type SheetEditing = { editing: LineEditing; buyerName: string; disabled?: boolean };
+type SheetEditing = { editing: LineEditing; buyerName: string; disabled?: boolean; dense?: boolean };
 
 /** Колонки листа. Без `edit` — только чтение (обзор «По поставщикам» берёт из них нужные). */
 export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLine>[] {
@@ -73,7 +84,10 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
   return [
     // регистрация
     text("legacy_id", "ID", (line) => line.legacy_id, { hint: "System ID" }),
-    text("status", "Статус", (line) => line.status, { filter: true, hint: "СТАТУС ЗАПРОСА" }),
+    text("status", "Статус", (line) => line.status, {
+      filter: true, hint: "СТАТУС ЗАПРОСА",
+      ...(edit?.dense ? { render: (line: ProcurementLine) => <span className={`stage-chip ${stageTone(line.status)}`}>{line.status}</span> } : {}),
+    }),
     text("revision", "Ревизия", (line) => line.revision, { hidden: true }),
     day("request_date", "Дата запроса", (line) => line.request_date, { hidden: true }),
     text("initiator", "Инициатор", (line) => line.initiator, { hidden: true, filter: true }),
@@ -81,7 +95,7 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     text("buyer", "Закупщик", (line) => line.buyer, { filter: true, hidden: true }),
     // классификация
     text("designation", "Назначение", (line) => line.designation, { hidden: true }),
-    text("project", "Проект", (line) => projectLabel(line.project_reference), { hidden: true }),
+    text("project", "Проект", (line) => projectLabel(line.project_reference), { hidden: !edit?.dense, filter: Boolean(edit?.dense) }),
     text("task_type", "Тип задачи", (line) => line.task_type, { filter: true, hidden: true }),
     text("priority", "Приоритет", (line) => line.priority, { filter: true, hidden: true }),
     // что закупаем

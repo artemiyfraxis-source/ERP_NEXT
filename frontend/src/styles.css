@@ -3153,3 +3153,21 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .rg-common-v2 .rg-common-grid > label:nth-child(2) { grid-column: span 2; }
 .rg-common-v2 .rg-apply { grid-column: span 2; align-self: start; padding-top: 19px; }
 .rg-table-v2 .rg-col-category { width: 124px; } .rg-table-v2 .rg-col-quality_document { width: 124px; }
+
+/* Option procurement.dense (Витя): Roller_Buyer-like density — one-line queue header, readable headers and buttons, stage chips. */
+.proc-dense-head { margin-bottom: 6px; align-items: center; }
+.proc-dense-head .eyebrow, .proc-dense-head p { display: none; }
+.proc-dense-head h1 { font-size: 18px; margin: 0; }
+.proc-dense th { white-space: normal; line-height: 1.2; vertical-align: bottom; }
+.proc-dense td button, .proc-dense td .secondary, .proc-dense td .primary { white-space: nowrap; max-width: none; }
+.stage-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
+.stage-chip.tone-work { background: var(--accent); color: var(--foreground); border-color: var(--border); }
+.stage-chip.tone-money { background: var(--warn-soft); color: var(--tone-warn); border-color: var(--warn-border); }
+.stage-chip.tone-road { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
+.stage-chip.tone-alert { background: color-mix(in srgb, var(--tone-danger) 12%, transparent); color: var(--tone-danger); }
+.stage-chip.tone-done { background: color-mix(in srgb, var(--tone-ok) 14%, transparent); color: var(--tone-ok); }
+.stage-chip.tone-off { background: transparent; color: var(--muted-foreground); border-color: var(--border); text-decoration: line-through; }
+.proc-dense .row-actions { max-width: none; width: auto; }
+.proc-dense td .row-actions .row-actions-main button { flex: 0 0 auto; overflow: visible; }
+.proc-dense td .secondary.small, .proc-dense td .primary.small { overflow: visible; text-overflow: clip; max-width: none; }
+.proc-dense td:has(.row-actions), .proc-dense td.menu { width: 1%; white-space: nowrap; }

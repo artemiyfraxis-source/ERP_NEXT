@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useStageOption } from "./StageOptions";
 import { DataTable, matchesWords } from "./DataTable";
 import { failureText, procurementApi, type ProcurementLine } from "./api";
 import type { LineEditing } from "./ProcurementCellEdit";
@@ -63,7 +64,8 @@ export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } 
   }
 
   const editing: LineEditing = { onSaved: replaceLine, onConflict: reloadLine };
-  const columns = buildSheetColumns({ editing, buyerName, disabled: loading });
+  const dense = useStageOption("procurement.dense");
+  const columns = buildSheetColumns({ editing, buyerName, disabled: loading, dense });
 
   // Server-side отбор: status and buyer apply at once, the search on «Найти»/Enter — all in the table's own toolbar.
   function apply(next: typeof draft) {
