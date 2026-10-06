@@ -193,9 +193,13 @@ describe("ProjectsPage", () => {
   it("creates a project from the calculation link, as SUPPLYMAP does", async () => {
     const fetchMock = vi.mocked(fetch);
     const base = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (input, init) => String(input) === "/api/techcards/kitsets/load"
-      ? json({ res: { project: "708К.4.1", assemblies: 1, lines: 1, erp: "", erp_error: "", ship: "", ship_error: "", ship_to_error: "", deadline_error: "" } })
-      : base(input, init));
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/load") return json({ res: { project: "708К.4.1", assemblies: 1, lines: 1, erp: "", erp_error: "", ship: "", ship_error: "", ship_to_error: "", deadline_error: "" } });
+      // После «Создать» страница открывает карточку нового проекта.
+      if (url === "/api/techcards/kitsets/708К.4.1" && !init?.method) return json({ ...card, project: "708К.4.1" });
+      return base(input, init);
+    });
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByRole("button", { name: "Создать проект из расчёта" }));
     fireEvent.change(screen.getByLabelText("Ссылка на расчёт"), { target: { value: " https://docs.google.com/spreadsheets/d/1AbC/edit " } });
@@ -204,7 +208,8 @@ describe("ProjectsPage", () => {
     const [, init] = fetchMock.mock.calls.find(([url]) => String(url) === "/api/techcards/kitsets/load")!;
     const body = JSON.parse(String(init?.body));
     expect(body.url).toBe("https://docs.google.com/spreadsheets/d/1AbC/edit");
-    expect(body.content_b64).toBeUndefined();
+    expect(body.content_b64).toBeUndefined();    // Дождаться открытой карточки: иначе её загрузка дорисовывается уже после теста.
+    expect(await screen.findByText("Жгут питания")).toBeInTheDocument();
   });
 
   it("files purchase requests with the project only when the box is ticked", async () => {
