@@ -9,7 +9,7 @@
 import type { OperationCardSummary } from "./api";
 import { recordCategory } from "./etkOperation";
 import { addEdge, blockTitle, parseRoute, removeEdge, routePayload, routeProblem, type Route, type RouteEdge, type RouteOp } from "./routeLogic";
-import { opTypeName, type Comp, type OpRec } from "./tcGenLogic";
+import { detectSolderConn_, opTypeName, sideRu_, type Comp, type OpRec, type OpSpec } from "./tcGenLogic";
 
 export const MANUAL_MODE = "manual";
 const LIBRARY_OP = "libraryOp";
@@ -143,6 +143,8 @@ export type ManualState = {
   extra?: Record<string, unknown>;
   /** Ключи КД операций, которые мастер удалил: пересчёт по КД их не возвращает. */
   kdDropped?: string[];
+  /** Версия чертежа жгута, из которой схема предложена (`build_config.kdHarnessVersion`): другая в КД — «КД изменена». */
+  kdVersion?: string;
 };
 
 const FINAL_KEY = "b1";
@@ -575,6 +577,109 @@ export function rederive(manual: ManualState, derived: ManualState): ManualState
   return state;
 }
 
+/** Схема пустая: ни одной операции и ни одной удалённой мастером операции из КД. */
+export function isEmptyManual(state: ManualState): boolean {
+  return !state.ops.length && !state.kdDropped?.length;
+}
+
+/** «Предложить из КД»: пустая схема — схема из КД целиком (слияние в пустую свалило бы всё в «Новое из КД»); иначе —
+    `rederive`. Запоминается версия чертежа, из которой предложено. */
+export function proposeFromKd(manual: ManualState, derived: ManualState, version = ""): ManualState {
+  const next = isEmptyManual(manual) ? derived : rederive(manual, derived);
+  return version ? { ...next, kdVersion: version } : next;
+}
+
+export type KdSummary = { added: number; changed: number; gone: number };
+
+/** Что сделает предложение из КД со схемой: сколько операций добавится, изменится, станет «нет в КД». */
+export function kdSummary(before: ManualState, after: ManualState): KdSummary {
+  const was = new Map(before.ops.map((op) => [op.seq, op]));
+  const summary: KdSummary = { added: 0, changed: 0, gone: 0 };
+  for (const op of after.ops) {
+    const old = was.get(op.seq);
+    if (!old) summary.added += 1;
+    else if (old === op) continue;
+    else if (op.kdGone && !old.kdGone) summary.gone += 1;
+    else if (JSON.stringify(old) !== JSON.stringify(op)) summary.changed += 1;
+  }
+  return summary;
+}
+
+/** Схема предложена из другой версии чертежа, чем та, что сейчас в КД. */
+export function kdStale(state: Pick<ManualState, "kdVersion">, current: string | null | undefined): boolean {
+  return !!state.kdVersion && !!current && state.kdVersion !== current;
+}
+
+/** Подсказка карточки для операции генератора — те же `tmplHint` / категория, что даёт ей генератор (tcGenLogic
+    `getActiveOps`): у чертежа своих кодов карточек нет. */
+const KD_CARD_HINTS: Record<string, Pick<OpSpec, "tmplHint" | "cat">> = {
+  cutWire: { tmplHint: "CUT_WIRE_auto", cat: "Резка" },
+  cutTut: { tmplHint: "CUT_TUT_short", cat: "Резка" },
+  insTut: { tmplHint: "INS_TUT", cat: "Монтаж" },
+  // ТУТ из чертежа — термоусадка на жгуте (покрытие), как «Усадка термоусадки на жгуте» генератора.
+  heatTut: { tmplHint: "HEAT_TTK_short", cat: "Усадка" },
+  // Кабель без известного материала — общая разделка, как stripCableTmpl_ без кабеля.
+  stripCable: { tmplHint: "STRIP_CABLE", cat: "Разделка" },
+  coaxStrip: { tmplHint: "STRIP_COAX_auto" },
+  splice: { tmplHint: "SDR_W_W", cat: "Пайка" },
+  twist: { cat: "Свивка" },
+  tin: { cat: "Лужение" },
+  seal: { tmplHint: "SEAL", cat: "Герметизация" },
+  insHousing: { cat: "Монтаж корпуса" },
+  insMark: { cat: "Монтаж маркировки" },
+  foldCore: { tmplHint: "PREP_FOLD", cat: "Подготовка" },
+  endCap: { tmplHint: "INS_END_CAP", cat: "Монтаж" },
+};
+
+/** Операция генератора из КД как её видит подбор карточки генератора (OpSpec). Не операция генератора — null. */
+export function kdOpSpec(op: ManualOp): OpSpec | null {
+  const gen = op.gen;
+  if (!gen) return null;
+  const type = str(gen.type);
+  const side = str(gen.side) === "B" ? "B" as const : str(gen.side) === "A" ? "A" as const : undefined;
+  const ep = gen.ep && typeof gen.ep === "object" ? gen.ep as Record<string, unknown> : {};
+  const termArt = str(ep.termArt) || str(ep.termName);
+  const spec: OpSpec = { type, opKey: `kd:${op.origin || op.seq}`, label: op.label, ...(side ? { side } : {}) };
+  const strip = gen.strip && typeof gen.strip === "object" ? gen.strip as Record<string, unknown> : {};
+  const strips = Number(!!strip.a) + Number(!!strip.b);
+  switch (type) {
+    case "cutWireStrip": return strips ? { ...spec, tmplHint: `CUT_WIRE+${strips}strip` } : { ...spec, ...KD_CARD_HINTS.cutWire };
+    case "cutWireCrimp": return { ...spec, tmplHint: gen.tin ? "CUT_WIRE+1crimp+tin" : "CUT_WIRE+1crimp" };
+    case "insWrap": return { ...spec, tmplHint: str(gen.wrapKind) === "braid" ? "INS_BRAID" : "INS_WRAP", cat: "Монтаж" };
+    case "solderConn": {
+      const hint = detectSolderConn_(str(ep.connArt) || str(ep.connName));
+      return hint ? { ...spec, tmplHint: hint } : spec;
+    }
+    case "prsTerm": return { ...spec, cat: `Опрессовка терминалов (${sideRu_(side ?? "A")})`, termArt };
+    case "insTerm": return { ...spec, cat: `Монтаж терминалов (${sideRu_(side ?? "A")})`, termArt };
+    default: return KD_CARD_HINTS[type] ? { ...spec, ...KD_CARD_HINTS[type] } : null;
+  }
+}
+
+/** Карточка, которую подобрал генератор: id шаблона, код, нормы БД.ОП в секундах (пусто — нет). */
+export type KdCard = { templateId: string; code: string; prepSec: string; opSec: string };
+
+/** Операциям генератора из КД без карточки — карточка, как её подбирает генератор (`pick`), и нормы БД.ОП там, где
+    своих нет. Не подобралась — операция остаётся без карточки (сборка покажет «нет карточки»). */
+export function fillKdCards(state: ManualState, pick: (spec: OpSpec) => KdCard | null): ManualState {
+  let touched = false;
+  const ops = state.ops.map((op) => {
+    if (!op.origin || !op.gen || str(op.gen.templateId)) return op;
+    const spec = kdOpSpec(op);
+    const card = spec ? pick(spec) : null;
+    if (!card?.templateId) return op;
+    touched = true;
+    const code = card.code || str(op.gen.opNum);
+    const prep = num(card.prepSec), sec = num(card.opSec);
+    return {
+      ...op, templateId: card.templateId, code, gen: { ...op.gen, templateId: card.templateId, opNum: code },
+      prepMin: op.prepMin || (prep && !Number.isNaN(prep) ? text(prep / 60) : ""),
+      opSec: op.opSec || (sec && !Number.isNaN(sec) ? text(sec) : ""),
+    };
+  });
+  return touched ? { ...state, ops } : state;
+}
+
 /** Состав КБ на операции: отметить строку — со своим количеством из состава, снять — убрать. */
 export function toggleComponent(state: ManualState, seq: number, comp: Comp): ManualState {
   const op = state.ops.find((item) => item.seq === seq);
@@ -705,6 +810,7 @@ export function manualConfig(state: ManualState, base: Record<string, unknown>):
   return {
     ...state.extra, mode: MANUAL_MODE, assemblyIndex: base.assemblyIndex, assemblyName: base.assemblyName, partQty: base.partQty, ops,
     route: { ...route, blocks }, ...(state.kdDropped?.length ? { kdDropped: [...state.kdDropped] } : {}),
+    ...(state.kdVersion ? { kdHarnessVersion: state.kdVersion } : {}),
   };
 }
 
@@ -797,10 +903,11 @@ export function manualFromConfig(config: unknown): ManualState | null {
     };
   });
   const nextSeq = Math.max(0, ...ops.map((op) => op.seq)) + 1;
-  const { mode: _mode, ops: _ops, route: _route, assemblyIndex: _index, assemblyName: _name, partQty: _qty, materialsSheet: _sheet, kdDropped: _dropped, ...extra } = saved;
+  const { mode: _mode, ops: _ops, route: _route, assemblyIndex: _index, assemblyName: _name, partQty: _qty, materialsSheet: _sheet, kdDropped: _dropped, kdHarnessVersion: _version, ...extra } = saved;
   const withExtra = Object.keys(extra).length ? { extra } : {};
   const droppedKeys = [...new Set(Array.isArray(saved.kdDropped) ? saved.kdDropped.filter((key): key is string => typeof key === "string" && !!key.trim()) : [])];
-  const withDroppedKeys = droppedKeys.length ? { kdDropped: droppedKeys } : {};
+  const version = typeof saved.kdHarnessVersion === "string" ? saved.kdHarnessVersion.trim() : "";
+  const withDroppedKeys = { ...(droppedKeys.length ? { kdDropped: droppedKeys } : {}), ...(version ? { kdVersion: version } : {}) };
   if (!ops.length) return { ...emptyManual(), nextSeq, ...withExtra, ...withDroppedKeys };
   const positioned = routeOps(ops, Number(saved.partQty) || 1);
   const parsed = parseRoute(saved.route);

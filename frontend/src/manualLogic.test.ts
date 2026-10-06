@@ -11,7 +11,13 @@ import {
   kdChangeText,
   kdKey,
   emptyManual,
+  fillKdCards,
   genParams,
+  isEmptyManual,
+  kdOpSpec,
+  kdStale,
+  kdSummary,
+  proposeFromKd,
   manualConfig,
   manualFromConfig,
   manualProblem,
@@ -31,6 +37,7 @@ import {
   stepsPayload,
   toolingPayload,
   updateOp,
+  type KdCard,
   type LibraryCard,
   type ManualOp,
   type ManualState,
@@ -528,3 +535,116 @@ describe("manual assembly: re-derive from the КД, the master wins", () => {
   });
 });
 
+/* «Предложить из КД»: build_config, как его отдаёт POST …/harness/{index}/derive — блоки по маршруту КД (`route:<строка>`),
+   операции генератора без карточек и операция маршрута («Сборка жгута»). */
+const fromHarness = () => ({
+  mode: "manual", assemblyIndex: "КБ7", assemblyName: "Жгут", partQty: 10,
+  ops: [
+    { type: "cutWireStrip", side: "", tPrep: "", tOp: "", wires: [{ name: "W1", art: "МГТФ 0,35", qty: 1, length: 300 }], strip: { a: true, b: true },
+      label: "Резка с разделкой: W1", kdData: [{ wire_id: "w1" }], origin: "harness:r1:cutWireStrip.AB", seq: 1 } as Record<string, unknown>,
+    { type: "prsTerm", side: "B", tPrep: "", tOp: "", ep: { connName: "X2", connArt: "", label: "X2", termArt: "ЛП-3", termName: "" },
+      wires: [{ name: "W1", art: "МГТФ 0,35", qty: 1 }], label: "Опрессовка терминала (В) — X2", kdData: [{}], origin: "harness:X2:prsTerm.B", seq: 2 },
+    { type: "solderConn", side: "A", tPrep: "", tOp: "", ep: { connName: "XT60", connArt: "XT60-M", label: "XT60", termArt: "", termName: "" },
+      wires: [{ name: "W1", art: "МГТФ 0,35", qty: 1 }], label: "Пайка разъёма (А) — XT60", kdData: [{}], origin: "harness:X1:solderConn.A", seq: 3 },
+    { type: "heatTut", side: "", tPrep: "", tOp: "", tutArt: "ТУТ 6/3", tutName: "ТУТ 6/3", tutCount: 1, label: "Усадка ТУТ — H1", kdData: [{}],
+      origin: "harness:h1:heatTut", seq: 4 },
+    { type: "customOp", label: "Сборка жгута", qty: "1", tPrep: "", tOp: "", opNum: "", steps: [], tooling: [], origin: "harness:s1:assembly", seq: 5 },
+  ] as Array<Record<string, unknown>>,
+  route: {
+    blocks: [
+      { key: "route:r1", name: "Провод W1", ops: [1, 2, 3], final: false, kind: "semiFinished" },
+      { key: "route:r2", name: "Жгут", ops: [4, 5], final: true },
+    ],
+    edges: [{ from: "route:r1", to: "route:r2", per_unit: 1 }],
+  },
+});
+
+describe("manual assembly: «Предложить из КД»", () => {
+  it("takes the КД scheme as is into an empty scheme instead of dumping it into «Новое из КД»", () => {
+    const derived = manualFromConfig(fromHarness())!;
+    expect(isEmptyManual(emptyManual())).toBe(true);
+    const next = proposeFromKd(emptyManual(), derived, "v1");
+    expect(next).toEqual({ ...derived, kdVersion: "v1" });
+    expect(next.blocks.map((block) => [block.key, block.name])).toEqual([["route:r1", "Провод W1"], ["route:r2", "Жгут"]]);
+    expect(next.blocks.some((block) => block.name === "Новое из КД")).toBe(false);
+    // Слияние в пустую схему так и сделало бы: всё, кроме итога, — в «Новое из КД».
+    expect(rederive(emptyManual(), derived).blocks.some((block) => block.name === "Новое из КД")).toBe(true);
+    expect(manualProblem(next, "Жгут")).toBeNull();
+  });
+
+  it("merges into a non-empty scheme by rederive and counts what will be added, changed and gone from the КД", () => {
+    const derived = manualFromConfig(fromHarness())!;
+    // Мастер взял схему, правил название резки, удалил пайку и добавил свою операцию; в КД потом — новая резка ТУТ,
+    // другая ТУТ у усадки и нет опрессовки.
+    let manual = proposeFromKd(emptyManual(), derived, "v1");
+    manual = updateOp(manual, 1, { label: "Резка W1 в размер" });
+    manual = removeOp(manual, 3);
+    manual = updateOp(addCustomOp(manual, "route:r2"), manual.nextSeq, { label: "Прозвонка" });
+    const config = fromHarness();
+    config.ops = config.ops.filter((op) => op.seq !== 2).map((op) => (op.seq === 4 ? { ...op, tutArt: "ТУТ 9/3" } : op));
+    config.ops.push({ type: "cutTut", side: "", tPrep: "", tOp: "", tutArt: "ТУТ 6/3", tutName: "ТУТ 6/3", tutCount: 1, label: "Резка ТУТ — H1",
+      kdData: [{}], origin: "harness:h1:cutTut", seq: 6 });
+    config.route.blocks[0].ops = [1, 3];
+    config.route.blocks[1].ops = [4, 5, 6];
+    const fresh = manualFromConfig(config)!;
+    expect(isEmptyManual(manual)).toBe(false);
+    const next = proposeFromKd(manual, fresh, "v2");
+    expect(next).toEqual({ ...rederive(manual, fresh), kdVersion: "v2" });
+    expect(kdSummary(manual, next)).toEqual({ added: 1, changed: 1, gone: 1 });
+    expect(next.ops.find((op) => op.origin === "harness:r1:cutWireStrip.AB")!.label).toBe("Резка W1 в размер"); // правка мастера осталась
+    expect(next.ops.some((op) => op.origin === "harness:X1:solderConn.A")).toBe(false); // удалённая мастером не вернулась
+    // Тот же КД ещё раз — менять нечего.
+    expect(kdSummary(next, proposeFromKd(next, fresh, "v2"))).toEqual({ added: 0, changed: 0, gone: 0 });
+    // Мастер удалил всё: схема без операций, но с удалёнными из КД — не пустая, удалённые не вернутся.
+    const cleared = manual.ops.reduce((state, op) => removeOp(state, op.seq), manual);
+    expect(cleared.ops).toHaveLength(0);
+    expect(isEmptyManual(cleared)).toBe(false);
+    expect(proposeFromKd(cleared, derived).ops.some((op) => op.origin === "harness:X1:solderConn.A")).toBe(false);
+  });
+
+  it("saves the КД version it was proposed from and marks the scheme when the drawing changed since", () => {
+    const state = proposeFromKd(emptyManual(), manualFromConfig(fromHarness())!, "v1");
+    const config = manualConfig(state, base);
+    expect(config.kdHarnessVersion).toBe("v1");
+    const back = manualFromConfig(config)!;
+    expect(back.kdVersion).toBe("v1");
+    expect(back.extra).toBeUndefined();
+    expect(kdStale(back, "v1")).toBe(false);
+    expect(kdStale(back, "v2")).toBe(true);
+    expect(kdStale(back, null)).toBe(false); // чертежа нет или ещё не прочитан — не отмечаем
+    // Схема не из КД — без версии и без отметки.
+    const own = manualFromConfig(manualConfig(three(), base))!;
+    expect(own).not.toHaveProperty("kdVersion");
+    expect(manualConfig(own, base)).not.toHaveProperty("kdHarnessVersion");
+    expect(kdStale(own, "v2")).toBe(false);
+  });
+
+  it("asks the generator's card pick with the generator's hint or category per operation and fills code and БД.ОП norms", () => {
+    const derived = manualFromConfig(fromHarness())!;
+    const specs = derived.ops.map(kdOpSpec);
+    expect(specs.map((spec) => spec && { tmplHint: spec.tmplHint, cat: spec.cat, side: spec.side, termArt: spec.termArt })).toEqual([
+      { tmplHint: "CUT_WIRE+2strip", cat: undefined, side: undefined, termArt: undefined },
+      { tmplHint: undefined, cat: "Опрессовка терминалов (В)", side: "B", termArt: "ЛП-3" },
+      { tmplHint: "SDR_XT60", cat: undefined, side: "A", termArt: undefined },
+      { tmplHint: "HEAT_TTK_short", cat: "Усадка", side: undefined, termArt: undefined },
+      null, // операция маршрута — своя, карточка ей не нужна
+    ]);
+    const cards: Record<string, KdCard> = {
+      "CUT_WIRE+2strip": { templateId: "cut2", code: "CUT_WIRE+2strip", prepSec: "600", opSec: "5" },
+      "Опрессовка терминалов (В)": { templateId: "prsB", code: "PRS_TERMINAL_hand", prepSec: "", opSec: "" },
+    };
+    const filled = fillKdCards(derived, (spec) => cards[spec.tmplHint || spec.cat || ""] ?? null);
+    const op = (seq: number) => filled.ops.find((item) => item.seq === seq)!;
+    expect(op(1)).toMatchObject({ templateId: "cut2", code: "CUT_WIRE+2strip", prepMin: "10", opSec: "5" });
+    expect(op(1).gen).toMatchObject({ type: "cutWireStrip", templateId: "cut2", opNum: "CUT_WIRE+2strip" });
+    expect(op(2)).toMatchObject({ templateId: "prsB", code: "PRS_TERMINAL_hand", prepMin: "", opSec: "" });
+    // Не подобралась — остаётся без карточки, как пришла.
+    expect(op(3)).toBe(derived.ops[2]);
+    expect(op(5)).toBe(derived.ops[4]);
+    const payload = manualConfig(filled, base).ops as Array<Record<string, unknown>>;
+    expect(payload[0]).toMatchObject({ type: "cutWireStrip", templateId: "cut2", opNum: "CUT_WIRE+2strip", tPrep: "600", tOp: "5", origin: "harness:r1:cutWireStrip.AB" });
+    expect(payload[2]).not.toHaveProperty("templateId");
+    // Карточка уже есть — не перебирается.
+    expect(fillKdCards(filled, () => ({ templateId: "other", code: "X", prepSec: "", opSec: "" })).ops[0]).toBe(op(1));
+  });
+});

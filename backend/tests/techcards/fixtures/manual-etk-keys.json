@@ -1,0 +1,80 @@
+{
+ "720К.-КБ1": [
+  "CUT_WIRE_auto::1::",
+  "PRS_TERMINAL_auto::Molex 39012140::A",
+  "INS_terminal_1.00::Molex 39012140::A",
+  "PRS_TERMINAL_auto::Molex 39012141::B",
+  "INS_terminal_1.00::Molex 39012141::B"
+ ],
+ "720К.1.2-КБ1": [
+  "CUT_WIRE+1crimp::обжим::A",
+  "INS_terminal_1.00::Molex 39012140::A",
+  "PRS_TERMINAL_auto::Molex 39012141::B",
+  "INS_terminal_1.00::Molex 39012141::B"
+ ],
+ "708К.2-КБ1": [
+  "CUT_WIRE_auto::1::",
+  "CUT_TUT_short::ТТК 4,8/1,6мм прозрачная самозатухающая::",
+  "INS_TUT::под пайку::",
+  "US_WELD::4::",
+  "HEAT_TTK_short::на пайке::",
+  "PRS_TERMINAL_auto::174047-2::A",
+  "INS_terminal_1.00::174047-2::A",
+  "TWIST::8::",
+  "INS_WRAP::9::",
+  "INS_BRAID::10::",
+  "INS_BRAID::11::",
+  "INS_MARK_HARNESS::12::",
+  "PRS_TERMINAL_auto::174047-2::B",
+  "INS_terminal_1.00::174047-2::B",
+  "INS_WRAP::15::"
+ ],
+ "708К.5-КБ1": [
+  "CUT_WIRE_auto::1::",
+  "CUT_TUT_short::ТТК 4,8/1,6мм, прозрачная::",
+  "INS_TUT::под пайку::",
+  "SDR_W_W::4::",
+  "HEAT_TTK_short::на пайке::",
+  "PRS_TERMINAL_auto::I-DS1071-SCB02X20::A",
+  "INS_terminal_2,54-6,3::I-DS1071-SCB02X20::A",
+  "TWIST::8::",
+  "PRS_TERMINAL_auto::Molex 22-55-2401::B",
+  "INS_terminal_1.00::Molex 22-55-2401::B",
+  "PRS_TERMINAL_auto::Molex 43025-0200::B",
+  "INS_terminal_2,54-6,3::Molex 43025-0200::B",
+  "PRS_TERMINAL_auto::Molex 43025-0201::B",
+  "INS_terminal_2,54-6,3::Molex 43025-0201::B",
+  "INS_WRAP::15::"
+ ],
+ "591К.5-КБ2": [
+  "CUT_WIRE+2strip::разделка::",
+  "CUT_WIRE+1strip::разделка::",
+  "CUT_TUT_short::ТТК 6/2мм, черная::",
+  "INS_TUT::под пайку::",
+  "SDR_XT60::XT60U-F::A",
+  "PRS_TERMINAL_auto::XHP-9::A",
+  "INS_terminal_2,54-6,3::XHP-9::A",
+  "SDR_PCB::Плата::B",
+  "SDR_PCB::S9B-XH-A::B",
+  "HEAT_TYT_short::на пайке::"
+ ],
+ "729К.2-КБ1": [
+  "CUT_WIRE+2strip::разделка::",
+  "CUT_TUT_short::ТУТ 16/8мм, черная::",
+  "INS_TUT::на жгут::",
+  "INS_RJ_cat5::8P8C-SH::A",
+  "INS_RJ_cat5::8P8C-SH::B",
+  "HEAT_TYT_short::на жгуте::"
+ ],
+ "345К.2-КБ1": [
+  "CUT_WIRE+2strip::разделка::",
+  "CUT_TUT_short::ТУТ 10/5мм, черная::",
+  "INS_TUT::под пайку::",
+  "SDR_BANANA::Banana 4mm::A",
+  "CUT_TUT_short::ТТК 6/2мм, черная::",
+  "INS_TUT::на жгут::",
+  "HEAT_TTK_short::на жгуте::",
+  "SDR_НК::ПМ 2.5–6::B",
+  "HEAT_TYT_short::на пайке::"
+ ]
+}

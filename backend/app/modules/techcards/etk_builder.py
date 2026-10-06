@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -1135,6 +1136,36 @@ def _manual_generator_operation(
     return operation
 
 
+def _etk_key(operation: Mapping[str, Any]) -> tuple[str, str, str]:
+    """The ETK operation key (project_cards.operation_key): code, connector, side."""
+    code, connector, side = (str(operation.get(field) or "").strip() for field in ("code", "connector", "side"))
+    return code, connector, side
+
+
+def _distinct_generator_keys(items: Sequence[_ManualOp], built: list[dict[str, Any]], seqs: Sequence[str]) -> None:
+    """Generator operations of one card, connector and side in a manual scheme — a scheme from the harness drawing has
+    them per route block (X1 crimped in two blocks, a strip cut per block) — would share the ETK key. Only those get a
+    tail on the connector: the operation's own connector when that tells them apart, else its `seq`. An operation whose
+    key is unique keeps it as it was, so saved techcards and issued ETKs keep their keys."""
+    counts = Counter(_etk_key(operation) for operation in built)
+    groups: dict[tuple[str, str, str], list[tuple[_ManualOp, dict[str, Any]]]] = defaultdict(list)
+    for item, operation in zip(items, built):
+        if item.generator and counts[_etk_key(operation)] > 1:
+            groups[_etk_key(operation)].append((item, operation))
+    taken = set(counts)
+    for (code, base, side), members in groups.items():
+        own = [str(_endpoint(item.source).get("connName") or _endpoint(item.source).get("connArt") or "").strip()
+               for item, _operation in members]
+        by_connector = all(name and name != base for name in own) and len(set(own)) == len(own)
+        for (item, operation), name in zip(members, own):
+            tail = name if by_connector else seqs[item.position - 1]
+            connector = f"{base} · {tail}" if base else tail
+            while (code, connector, side) in taken:
+                connector = f"{connector} · {item.position}"
+            taken.add((code, connector, side))
+            operation["connector"] = connector
+
+
 def _build_manual(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str, technology_source: Mapping[str, Any] | None,
@@ -1211,6 +1242,7 @@ def _build_manual(
             "fields": fields,
         })
 
+    _distinct_generator_keys(items, built, seqs)
     connections = _connections(config)
     document = {
         "schema_version": ETK_VERSION,
