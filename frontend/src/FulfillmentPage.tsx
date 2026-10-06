@@ -27,9 +27,11 @@ const MODES = {
   },
   give: {
     title: "Выдача со списанием",
-    stages: ["Готов к выдаче", "КБ Выдана", "КБ Возвращена"],
+    // «Укомплектован» too (owner 06.10.2026): a fully picked kit is handed out from here, sent to the handout point
+    // on the way — otherwise an order whose КБ were all only picked would not show on the screen at all.
+    stages: ["Укомплектован", "Готов к выдаче", "КБ Выдана", "КБ Возвращена"],
     hidden: [] as string[],
-    empty: "Заявок к выдаче нет. Сюда приходят укомплектованные заявки, отправленные на выдачу.",
+    empty: "Заявок к выдаче нет. Сюда приходят укомплектованные заявки.",
   },
 };
 const ARCHIVE = ["Готово", "Отменена"];
@@ -61,6 +63,24 @@ function closedLine(line: FulfillmentLine) {
 
 function openLines(request: FulfillmentRequest) {
   return (request.lines ?? []).filter((line) => !closedLine(line));
+}
+
+/* «Выдать комплект» (owner 06.10.2026): a fully picked kit, sent to the handout point or not yet — the server sends a
+   «Укомплектован» kit there on the way. */
+const ISSUABLE = ["Укомплектован", "Готов к выдаче"];
+
+export function issuable(request: FulfillmentRequest) {
+  return ISSUABLE.includes(request.status) && openLines(request).length === 0;
+}
+
+/** Why a kit of the order can't be handed out now — the chooser shows it next to the disabled box. */
+export function notIssuable(request: FulfillmentRequest) {
+  if (["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status)) return request.at_issued ? `выдана ${stamp(request.at_issued)}` : "уже выдана";
+  if (request.status === "Отменена") return "заявка отменена";
+  const total = request.lines.length;
+  const open = openLines(request).length;
+  if (open) return `набрано ${total - open} из ${total}`;
+  return "не отмечен «Укомплектован»";
 }
 
 function stamp(value?: string | null) {
@@ -417,12 +437,29 @@ function ProjectPanel({ project, requests, onClose, busyId, ...cardProps }: Card
   });
   // Both actions go through the page's mutate: one busy lock, the banner, the reload; a 409 reloads and says so.
   const runBulk = (operation: () => Promise<{ message: string }>) => void cardProps.mutate(`project:${project}`, operation);
+  // «Выдать…» (owner 06.10.2026): the whole order or the КБ ticked, in one call; the chooser closes once it went through.
+  const [choosing, setChoosing] = useState(false);
+  const canIssue = cardProps.canHandout && cardProps.showGive && requests.some(issuable);
 
   return <div className="panel fulfillment-project">
     <div className="procurement-title">
       <div><strong>Проект {project}</strong><small>КБ: {requests.length} · набрано {done} из {positions.length} поз. по заказу</small></div>
-      <button className="secondary small" onClick={onClose}>← К заявкам</button>
+      <div className="fulfillment-head-actions">
+        {canIssue && <button className="primary small" aria-expanded={choosing} disabled={Boolean(busyId)} onClick={() => setChoosing((value) => !value)}>Выдать…</button>}
+        <button className="secondary small" onClick={onClose}>← К заявкам</button>
+      </div>
     </div>
+    {choosing && canIssue && <IssueChooser
+      project={project}
+      requests={requests}
+      busy={Boolean(busyId)}
+      onCancel={() => setChoosing(false)}
+      onIssue={(chosen) => void cardProps.mutate(`project:${project}`, async () => {
+        const result = await fulfillmentApi.issueBatch(chosen.map((request) => ({ id: request.id, version: request.version })));
+        setChoosing(false);
+        return result;
+      })}
+    />}
     <div className="calendar-chips" role="tablist" aria-label="Заявки проекта">
       <button type="button" role="tab" aria-selected={tab === "all"} className={`calendar-chip${tab === "all" ? " active" : ""}`} onClick={() => setTab("all")}>Весь заказ</button>
       {requests.map((request) => {
@@ -456,6 +493,65 @@ function ProjectPanel({ project, requests, onClose, busyId, ...cardProps }: Card
         })}
         {!positions.length && <tr><td colSpan={canBulk ? 6 : 5} className="empty">Позиций нет.</td></tr>}
       </tbody></table></div>}
+  </div>;
+}
+
+/* «Выдать…» on the order: a box per КБ — the fully picked ones ticked, the rest disabled with the reason — and what
+   the ticked kits write off. «Выдать выбранные» is one call: the server issues all of them or none. */
+function IssueChooser({ project, requests, busy, onCancel, onIssue }: {
+  project: string;
+  requests: FulfillmentRequest[];
+  busy: boolean;
+  onCancel: () => void;
+  onIssue: (chosen: FulfillmentRequest[]) => void;
+}) {
+  const ordered = [...requests].sort((a, b) => kbOf(a).localeCompare(kbOf(b), "ru", { numeric: true }));
+  const [picked, setPicked] = useState(() => new Set(ordered.filter(issuable).map((request) => request.id)));
+  const chosen = ordered.filter((request) => picked.has(request.id) && issuable(request));
+  const writeOff = new Map<string, { article: string; name: string; grn: string; place: string; qty: number; unit: string }>();
+  let offBook = 0;
+  for (const request of chosen) {
+    for (const line of request.lines) {
+      if (isOffBook(line)) { offBook += 1; continue; }
+      if (!line.lot) continue;
+      const key = `${line.lot.id}|${line.name}`;
+      const item = writeOff.get(key) ?? { article: line.article, name: line.name, grn: `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}`, place: line.lot.storage_location || "без места", qty: 0, unit: line.unit };
+      item.qty = Math.round((item.qty + Number(line.reserved)) * 1000) / 1000;
+      writeOff.set(key, item);
+    }
+  }
+  const toggle = (id: string) => setPicked((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  return <div className="issue-chooser" role="group" aria-label={`Выдать комплекты проекта ${project}`}>
+    <h3>Выдать комплекты</h3>
+    <div className="table-wrap"><table className="grid wide"><thead><tr><th className="check" /><th>КБ</th><th>Заявка</th><th>Статус</th><th className="num">Позиций</th><th>Отправлена на выдачу</th><th>Примечание</th></tr></thead><tbody>
+      {ordered.map((request) => {
+        const can = issuable(request);
+        return <tr key={request.id} className={can ? undefined : "muted-row"}>
+          <td className="check"><input type="checkbox" aria-label={`Выдать ${kbOf(request)}`} disabled={!can || busy} checked={can && picked.has(request.id)} onChange={() => toggle(request.id)} /></td>
+          <td><strong>{kbOf(request)}</strong></td>
+          <td>{request.number}</td>
+          <td><span className="iss-chip" style={{ background: STAGE_COLORS[request.status] ?? "#6b7280" }}>{request.status}</span></td>
+          <td className="num">{request.lines.length}</td>
+          <td>{request.at_picked ? `${stamp(request.at_picked)}${request.handout_location ? ` · ${request.handout_location}` : ""}` : can ? `сейчас · ${request.handout_place || DEFAULT_HANDOUT_PLACE}` : "—"}</td>
+          <td>{can ? "" : notIssuable(request)}</td>
+        </tr>;
+      })}
+    </tbody></table></div>
+    <details className="issue-writeoff" open>
+      <summary>Спишется со склада: {writeOff.size} поз. по {chosen.length} КБ{offBook ? ` · без списания («есть, не заведено»): ${offBook}` : ""}</summary>
+      {writeOff.size > 0 && <div className="table-wrap"><table className="grid wide"><thead><tr><th>Позиция</th><th>Партия</th><th>Место</th><th className="num">Спишется</th></tr></thead><tbody>
+        {[...writeOff.values()].map((item) => <tr key={`${item.grn}|${item.name}`}><td className="text"><strong>{item.article || "—"}</strong><small>{item.name}</small></td><td>{item.grn}</td><td>{item.place}</td><td className="num">{item.qty} {item.unit}</td></tr>)}
+      </tbody></table></div>}
+    </details>
+    <div className="fulfillment-actions">
+      <button className="primary" disabled={busy || !chosen.length} onClick={() => onIssue(chosen)}>{chosen.length ? `Выдать выбранные (${chosen.length})` : "Выдать выбранные"}</button>
+      <button className="secondary" onClick={onCancel}>Отмена</button>
+    </div>
   </div>;
 }
 
@@ -519,7 +615,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
           <span className="handout-offer">Место выдачи: <b>{offered}</b> <button className="link-button table-link" disabled={busy} onClick={() => setSending(true)}>Другое место</button></span>
           <button className="primary" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.ready(request.id, request.version, offered))}>Отправить на выдачу</button>
         </>}
-        {canHandout && showGive && request.status === "Готов к выдаче" && <button className="primary" disabled={busy} onClick={() => move("КБ Выдана", "Количество спишется со склада (резерв → списано), заявка станет выданной. Отменить это можно только возвратом.", () => fulfillmentApi.issue(request.id, request.version))}>Выдать комплект</button>}
+        {canHandout && showGive && issuable(request) && <button className="primary" disabled={busy} onClick={() => move("КБ Выдана", `${request.status === "Укомплектован" ? `Комплект уйдёт на выдачу (место: ${offered}) и сразу будет выдан. ` : ""}Количество спишется со склада (резерв → списано), заявка станет выданной. Отменить это можно только возвратом.`, () => fulfillmentApi.issueBatch([{ id: request.id, version: request.version }]))}>Выдать комплект</button>}
         {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => move("Готово", "Заявка закроется и уйдёт в архив.", () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
         {canEdit && !closed && <button className="link-button danger-link" disabled={busy} onClick={() => move("Отменена", "Резерв освободится, заявка уйдёт в архив.", () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
         <button className="secondary small" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>

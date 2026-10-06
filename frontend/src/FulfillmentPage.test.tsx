@@ -166,7 +166,7 @@ it("lets a technical lead with edit on handout hand a kit out", async () => {
   render(<FulfillmentPage principal={director} mode="give" />);
   await expand("FRX-ISS-26-0001");
   fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
-  await waitFor(() => expect(posts).toEqual([`/api/issues/${request.id}/issue`]));
+  await waitFor(() => expect(posts).toEqual(["/api/issues/issue-batch"]));
 });
 
 it("prints the issue sheet and, once something is issued, offers the return sheet too", async () => {
@@ -485,7 +485,7 @@ it("warns that handing the kit out writes the stock off before it does", async (
   fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
 
   expect(confirm.mock.calls[0][0]).toContain("Количество спишется со склада");
-  await waitFor(() => expect(posts).toEqual([`/api/issues/${request.id}/issue`]));
+  await waitFor(() => expect(posts).toEqual(["/api/issues/issue-batch"]));
 });
 
 it("lets only the administrator delete a request", async () => {
@@ -741,4 +741,116 @@ it("marks one line «есть, не заведено», counts it as closed and 
   fireEvent.click(screen.getByRole("button", { name: "Снять отметку" }));
   expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
   expect(calls).toEqual([["POST", url, { version: 3 }], ["DELETE", url, { version: 4 }]]);
+});
+
+/* Owner 06.10.2026, project 33МФ.2: КБ1 and КБ2 «Укомплектован», КБ3 «Готов к выдаче» — issue any КБ or the whole order. */
+const order = (overrides: Partial<FulfillmentRequest>[]): FulfillmentRequest[] => overrides.map((item, index) => ({
+  ...request,
+  id: `o${index + 1}`,
+  number: `REQ.26.00000${19 + index}`,
+  purpose: `33МФ.2 · КБ${index + 1} · Жгут`,
+  project: "33МФ.2",
+  version: 5 + index,
+  lines: [boundLine],
+  ...item,
+}));
+
+function issueFetch(requests: FulfillmentRequest[], bodies: unknown[]) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST" && path === "/api/issues/issue-batch") {
+      bodies.push(JSON.parse(String(init.body)));
+      return json({ requests: [], message: "Выдано: КБ1 (REQ.26.0000019). Списано со склада позиций: 1." });
+    }
+    if (path === "/api/issues") return json({ requests, next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("offers «Выдать комплект» on a КБ that is only «Укомплектован» and issues it in one click", async () => {
+  const bodies: unknown[] = [];
+  issueFetch(order([{ status: "Укомплектован", handout_place: "1B3" }, { status: "Готов к выдаче", handout_location: "1B3" }]), bodies);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
+  fireEvent.click(screen.getByRole("button", { name: "Выдать комплект" }));
+
+  expect(confirm.mock.calls[0][0]).toContain("Комплект уйдёт на выдачу (место: 1B3) и сразу будет выдан.");
+  expect(confirm.mock.calls[0][0]).toContain("Количество спишется со склада");
+  await waitFor(() => expect(bodies).toEqual([{ requests: [{ id: "o1", version: 5 }] }]));
+  expect(await screen.findByText("Выдано: КБ1 (REQ.26.0000019). Списано со склада позиций: 1.")).toBeInTheDocument();
+  // «Отправить на выдачу» stays the picker's step on «Запросы на комплектацию», not a second button here.
+  expect(screen.queryByRole("button", { name: "Отправить на выдачу" })).not.toBeInTheDocument();
+});
+
+it("issues the ticked КБ of the whole order in one call; a КБ not picked is disabled with what is picked", async () => {
+  const bodies: unknown[] = [];
+  issueFetch(order([
+    { status: "Укомплектован" },
+    { status: "Готов к выдаче", handout_location: "1B3", at_picked: "2026-10-06T09:57:00" },
+    { status: "Недоукомплектован", lines: [boundLine, { ...request.lines[0], id: "waiting" }] },
+    { status: "КБ Выдана", at_issued: "2026-10-05T15:20:00", lines: [{ ...boundLine, reserved: "0", issued: "4" }] },
+  ]), bodies);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Выдать…" }));
+
+  const chooser = screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" });
+  expect(within(chooser).getByLabelText("Выдать КБ1")).toBeChecked();
+  expect(within(chooser).getByLabelText("Выдать КБ2")).toBeChecked();
+  expect(within(chooser).getByLabelText("Выдать КБ3")).toBeDisabled();
+  expect(within(chooser).getByLabelText("Выдать КБ3")).not.toBeChecked();
+  expect(within(chooser).getByText("набрано 1 из 2")).toBeInTheDocument();
+  expect(within(chooser).getByLabelText("Выдать КБ4")).toBeDisabled();
+  expect(within(chooser).getByText(/^выдана 05\.10\.2026/)).toBeInTheDocument();
+  expect(within(chooser).getByText("сейчас · Зона выдачи")).toBeInTheDocument();
+  expect(within(chooser).getByText(/^Спишется со склада: 1 поз\. по 2 КБ/)).toBeInTheDocument();
+
+  fireEvent.click(within(chooser).getByLabelText("Выдать КБ2"));
+  expect(within(chooser).getByText(/^Спишется со склада: 1 поз\. по 1 КБ/)).toBeInTheDocument();
+  fireEvent.click(within(chooser).getByRole("button", { name: "Выдать выбранные (1)" }));
+
+  await waitFor(() => expect(bodies).toEqual([{ requests: [{ id: "o1", version: 5 }] }]));
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Выдать комплекты проекта 33МФ.2" })).not.toBeInTheDocument());
+});
+
+it("keeps the chooser open and names the КБ when the server refuses the batch", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") return new Response(JSON.stringify({ detail: "КБ2 (REQ.26.0000020): заявка изменилась после загрузки — обнови экран. Ничего не выдано." }), { status: 409, headers: { "Content-Type": "application/json" } });
+    if (path === "/api/issues") return json({ requests: order([{ status: "Укомплектован" }, { status: "Укомплектован" }]), next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Выдать…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Выдать выбранные (2)" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("КБ2 (REQ.26.0000020): заявка изменилась после загрузки");
+  expect(screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" })).toBeInTheDocument();
+});
+
+it("gives no issue action without the handout right or on the picking screen", async () => {
+  issueFetch(order([{ status: "Укомплектован" }, { status: "Готов к выдаче" }]), []);
+  const picker: Principal = { ...principal, permissions: { fulfillment: "edit", handout: "view" } };
+
+  const { unmount } = render(<FulfillmentPage principal={picker} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  expect(screen.queryByRole("button", { name: "Выдать…" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
+  expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
+  unmount();
+
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  expect(screen.queryByRole("button", { name: "Выдать…" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
+  expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Отправить на выдачу" })).toBeInTheDocument();
 });

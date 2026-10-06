@@ -2312,10 +2312,12 @@ export const fulfillmentApi = {
       method: "POST",
       body: JSON.stringify(typeof place === "string" ? { version, handout_location: place } : { version, place }),
     }),
-  issue: (requestId: string, version: number) =>
-    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/issue`, {
+  /** «Выдать комплект» / «Выдать выбранные»: one transaction for every kit given, all or nothing. A «Укомплектован»
+      kit is sent to the handout point on the way (the place the server offers). */
+  issueBatch: (requests: Array<{ id: string; version: number }>) =>
+    api<{ requests: FulfillmentRequest[]; message: string }>("/api/issues/issue-batch", {
       method: "POST",
-      body: JSON.stringify({ version }),
+      body: JSON.stringify({ requests }),
     }),
   returned: (requestId: string, version: number, returnLocation: string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/returned`, {
