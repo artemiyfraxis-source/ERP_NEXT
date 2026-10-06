@@ -13,4 +13,4 @@ metadata:
 - Real data on server: `deploy/load-real-data.sh base | projects | stock [--yes]`.
 - Owner's manual part: erp-server key on GitHub, Ubuntu from USB with Import SSH identity, BIOS Power On, sudoers + Tailscale line, send the IP.
 
-Related: [[launch-plan]], [[google-wiring]], [[erp-local-demo]], [[staff-and-sites]]. Hub: [[erp-next-hub]].
+Related: [[google-wiring]], [[erp-local-demo]], [[staff-and-sites]]. Hub: [[erp-next-hub]].
