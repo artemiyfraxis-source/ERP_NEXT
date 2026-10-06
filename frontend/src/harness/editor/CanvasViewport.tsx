@@ -154,6 +154,37 @@ export interface CanvasViewportProps {
   readonly onPhysicalContextAction?: (segmentId:string,point:EditorPoint,action:PhysicalContextAction,target?:PhysicalContextTarget)=>void;
   readonly onCanvasDoubleClick?: (point: EditorPoint, ctrlKey?: boolean) => void;
   readonly onCatalogDrop: (itemId: string, point: EditorPoint) => void;
+  /** View mode: every callback that changes the drawing is dropped (`readOnlyCanvasProps`), a press starts no drag —
+   *  the canvas pans, zooms and selects to inspect. */
+  readonly readOnly?: boolean;
+}
+
+/** What changes the drawing from the canvas: drags, connections, inline and popover editors, drops, context actions.
+ *  View mode passes none of them. */
+export const CANVAS_EDIT_PROPS = [
+  "onFreeWireEndpointMove", "onFreeWireEndpointPreview", "onFreeWireEndpointsXChange", "onDetachedPairAction",
+  "onFreeWireEndStyleRequest", "onCoveringDrag", "onDimensionCreate", "onPositionRailCreate", "onGraphicCreate",
+  "inlineEditor", "overlay", "onDrawingScale", "onDrawingMove", "objectProperties", "onObjectPick", "onObjectMove",
+  "onObjectMovePreview", "onWireConnect", "onWireReconnect", "onWireConnectToWire", "onWireReconnectToWire",
+  "onE4WireSegmentMove", "onE4WireRoutePointRemove", "onE4WireLabelPositionChange", "onE4ScreenPositionChange",
+  "onWireToolRequest", "onWireRoutePointPreview", "onWireRoutePointMove", "onWireRoutePointRemove",
+  "onObjectEditRequest", "onPhysicalNodesConnect", "onPhysicalNodeConnectToSegment", "onPhysicalContextAction",
+  "onCanvasDoubleClick", "onPipeIntervalSelect",
+] as const satisfies readonly (keyof CanvasViewportProps)[];
+
+const ignoreCatalogDrop = () => undefined;
+
+/** The canvas props of view mode: the edit callbacks removed, a catalog drop ignored. */
+export function readOnlyCanvasProps(props: CanvasViewportProps): CanvasViewportProps {
+  if (!props.readOnly) return props;
+  const result: Record<string, unknown> = { ...props, onCatalogDrop: ignoreCatalogDrop };
+  for (const key of CANVAS_EDIT_PROPS) delete result[key];
+  return result as unknown as CanvasViewportProps;
+}
+
+export function CanvasViewport(props: CanvasViewportProps) {
+  // Called, not rendered: one component, its hooks run here (the gesture tests drive this function directly).
+  return EditableCanvasViewport(readOnlyCanvasProps(props));
 }
 
 interface EditorViewportWheelEvent {
@@ -3009,7 +3040,8 @@ function e4ConnectorSnapTarget(object: EditorSceneObject): E4ConnectorSnapTarget
   };
 }
 
-export function CanvasViewport({
+function EditableCanvasViewport({
+  readOnly = false,
   onFreeWireEndpointMove, onFreeWireEndpointsXChange, onFreeWireEndpointPreview, onDetachedPairAction, onFreeWireEndStyleRequest,
   view,
   tool,
@@ -3325,7 +3357,12 @@ export function CanvasViewport({
     setGraphicPathDraft(null);setGraphicStart(null);setGraphicPreview(null);
   };
 
+  // View mode: a press selects (and the hand tool or the middle button pans) — anything else it started is dropped.
   const pointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
+    pressCanvas(event);
+    if (readOnly && dragRef.current && dragRef.current.kind !== "pan") dragRef.current = null;
+  };
+  const pressCanvas = (event: PointerEvent<HTMLCanvasElement>) => {
     if(event.button===0&&view==="drawing"&&tool==="select"&&(onFreeWireEndpointMove||onFreeWireEndpointsXChange)&&!onObjectPick){
       const p=screenToWorld(camera,localPoint(event.clientX,event.clientY));
       const axis = freeEndAxes.find(axis => Math.abs(axis.x - p.x) <= 8 / camera.zoom &&

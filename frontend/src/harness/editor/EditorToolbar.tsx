@@ -67,6 +67,8 @@ export interface EditorToolbarProps {
   readonly onAngleStepChange?: (degrees: number) => void;
   readonly snaps?: { corners: boolean; contours: boolean; tangents: boolean };
   readonly onSnapsChange?: (snaps: { corners: boolean; contours: boolean; tangents: boolean }) => void;
+  /** View mode: «Выбор» and «Перемещение поля» plus the zoom tab; nothing that draws or edits. */
+  readonly readOnly?: boolean;
 }
 
 export function EditorToolbar({
@@ -88,9 +90,11 @@ export function EditorToolbar({
   onAngleStepChange,
   snaps,
   onSnapsChange,
+  readOnly = false,
 }: EditorToolbarProps) {
   const zoomIsPreset = editorZoomPresets.some((preset) => Math.abs(preset - zoom) < 0.001);
-  const visibleTools = tools.filter((tool) => tool.views.includes(view));
+  const visibleTools = tools.filter((tool) => tool.views.includes(view) && (!readOnly || tool.id === "select" || tool.id === "pan"));
+  const sections = readOnly ? toolbarSections.filter((section) => section.id === "drawing" || section.id === "view") : toolbarSections;
   const [activeSection, setActiveSection] = useState<ToolbarSection>("drawing");
 
   useEffect(() => {
@@ -159,9 +163,9 @@ export function EditorToolbar({
   return (
     <aside className="he-toolbar" aria-label="Инструменты редактора">
       <nav className="he-toolbar-tabs" aria-label="Контекст инструментов" role="tablist">
-        {toolbarSections.map(section => <button type="button" role="tab" key={section.id} id={`he-toolbar-tab-${section.id}`} aria-selected={activeSection === section.id} aria-controls={`he-toolbar-panel-${section.id}`} className={activeSection === section.id ? "active" : ""} onClick={() => setActiveSection(section.id)}>{section.label}</button>)}
+        {sections.map(section => <button type="button" role="tab" key={section.id} id={`he-toolbar-tab-${section.id}`} aria-selected={activeSection === section.id} aria-controls={`he-toolbar-panel-${section.id}`} className={activeSection === section.id ? "active" : ""} onClick={() => setActiveSection(section.id)}>{readOnly && section.id === "drawing" ? "Просмотр" : section.label}</button>)}
       </nav>
-      {toolbarSections.map(section => <div key={section.id} hidden={activeSection !== section.id}>{renderSection(section.id)}</div>)}
+      {sections.map(section => <div key={section.id} hidden={activeSection !== section.id}>{renderSection(section.id)}</div>)}
     </aside>
   );
 }

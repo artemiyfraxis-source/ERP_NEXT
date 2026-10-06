@@ -2922,8 +2922,9 @@ export interface KitsetDocument {
   url: string | null;
   uploaded_at: string;
   who: string;
-  /** «harness» — чертёж жгута, правится в ERP (`kitsetsApi.harness`); «file» — вложенный файл. */
-  kind?: "harness" | "file";
+  /** «harness» — чертёж жгута, правится в ERP (`kitsetsApi.harness`); «harness_unlinked» — чертёж, отвязанный от позиции
+   *  (хранится, «Вернуть» — `kitsetsApi.restoreHarness`); «file» — вложенный файл. */
+  kind?: "harness" | "harness_unlinked" | "file";
 }
 
 /** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — одна строка КД, сохраняется поверх себя.
@@ -3137,6 +3138,12 @@ export const kitsetsApi = {
   deriveHarness: (project: string, index: string, design?: Record<string, unknown>) =>
     api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
   harnessExportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
+  /** «Отвязать» чертёж от позиции: строка КД и чертёж остаются, карточка показывает его с «Вернуть». */
+  unlinkHarness: (project: string, index: string, version: string | null = null) =>
+    api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ version }) }),
+  /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
+  restoreHarness: (project: string, index: string, documentId: string) =>
+    api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
   /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — ложится поверх прежнего (та же проверка версии). */
   importHarness: (project: string, index: string, payload: { file_name: string; content_b64: string; version: string | null }) =>
     api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),

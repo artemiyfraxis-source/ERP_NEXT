@@ -129,6 +129,8 @@ export function layersWithIsolatedLayer(layers: readonly EditorLayer[], layerId:
 export type EditorSaveState = "saved" | "saving" | "changed" | "error";
 
 export interface HarnessEditorWorkspaceProps {
+  /** View mode: the canvas only pans, zooms and selects; panels are shown disabled, the catalog is hidden. */
+  readonly readOnly?: boolean;
   readonly harnessId: string;
   readonly harnessDesignation: string;
   readonly view?: HarnessEditorView;
@@ -303,7 +305,17 @@ function selectEditorTextField(event: FocusEvent<HTMLElement>): void {
   });
 }
 
+/** Tools that change nothing — the only ones in view mode. */
+export const READ_ONLY_TOOLS: readonly EditorTool[] = ["select", "pan"];
+
+/** Panels in view mode: every control inside is disabled by the browser (inputs, selects, buttons), the content stays
+ *  readable and scrollable. */
+function ReadOnlyFieldset({ readOnly, children }: { readonly readOnly: boolean; readonly children: ReactNode }) {
+  return readOnly ? <fieldset className="he-readonly-fieldset" disabled>{children}</fieldset> : <>{children}</>;
+}
+
 export function HarnessEditorWorkspace({
+  readOnly = false,
   harnessId,
   harnessDesignation,
   view: controlledView,
@@ -409,11 +421,11 @@ export function HarnessEditorWorkspace({
         'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="dialog"],[popover]:popover-open',
       ))) return;
       const next = editorToolShortcut(event, view);
-      if (next) { event.preventDefault(); setTool(next); }
+      if (next && (!readOnly || READ_ONLY_TOOLS.includes(next))) { event.preventDefault(); setTool(next); }
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [view]);
+  }, [view, readOnly]);
   const objects = controlledObjects ?? localObjects;
   const layers = controlledLayers ?? localLayers;
   const selectedObjectId = controlledSelectedObjectId === undefined
@@ -696,15 +708,16 @@ export function HarnessEditorWorkspace({
             }}
           >Объекты</button>}
           <div className="he-utility-content" id="he-utility-content" hidden={!utilityPanelOpen}>
-            {!localCopyControls && <button
-              className={`he-save-state he-save-state-utility ${saveState}`}
-              type="button"
-              onClick={onSaveRequest}
-              disabled={!onSaveRequest || saveState === "saved" || saveState === "saving"}
-              title={saveState === "error" ? "Повторить сохранение" : "Сохранить сейчас"}
-            >
-              <span aria-hidden="true" />{saveLabels[saveState]}
-            </button>}
+            {/* View mode: nothing to save — the page header says «Только просмотр». */}
+            {!localCopyControls && !readOnly && (<button
+                className={`he-save-state he-save-state-utility ${saveState}`}
+                type="button"
+                onClick={onSaveRequest}
+                disabled={!onSaveRequest || saveState === "saved" || saveState === "saving"}
+                title={saveState === "error" ? "Повторить сохранение" : "Сохранить сейчас"}
+              >
+                <span aria-hidden="true" />{saveLabels[saveState]}
+              </button>)}
             {!localCopyControls && <section className="he-utility-section he-controls-section" aria-label="Панели редактора">
               <button type="button" className="ui-control he-control-action" aria-pressed={materialPanelOpen} onClick={() => { setMaterialPanelOpen(open => !open); if (window.innerWidth <= 1100) { setInspectorOpen(false); } }}>
                 {materialPanelOpen ? "Скрыть объекты" : "Показать объекты"}
@@ -713,9 +726,9 @@ export function HarnessEditorWorkspace({
                 {inspectorOpen ? "Скрыть свойства и слои" : "Показать свойства и слои"}
               </button>
             </section>}
-            <div className="he-view-options">
+            {!readOnly && <div className="he-view-options">
               <InfoHint>Перемещайте точки свободно. Удерживайте Ctrl для привязки к углам с шагом 30°. Shift меняет редактирование соседних плеч; Ctrl и Shift можно удерживать вместе.</InfoHint>
-            </div>
+            </div>}
             {localCopyControls && <section className="he-utility-section he-controls-section" aria-label="Видимость фрагмента">
               <h3>Видимость фрагмента</h3>
               <button type="button" className="ui-control he-control-action" onClick={() => localCopyControls.onHiddenObjectIdsChange(objects.filter(object => selectedObjectIds.includes(object.id)).map(object => object.id).length
@@ -726,10 +739,11 @@ export function HarnessEditorWorkspace({
                 <input type="range" min="0" max="100" value={Math.round(localCopyControls.backgroundOpacity * 100)} onChange={event => localCopyControls.onBackgroundOpacityChange(Number(event.target.value) / 100)} />
               </label>
             </section>}
-            {documentActions}
+            <ReadOnlyFieldset readOnly={readOnly}>{documentActions}</ReadOnlyFieldset>
           </div>
         </aside>
         <EditorToolbar
+          readOnly={readOnly}
           view={view}
           activeTool={tool}
           zoom={camera.zoom}
@@ -750,6 +764,7 @@ export function HarnessEditorWorkspace({
           onFitView={fitView}
         />
         <CanvasViewport
+          readOnly={readOnly}
           view={view}
           tool={tool}
           camera={camera}
@@ -812,7 +827,7 @@ export function HarnessEditorWorkspace({
           onCatalogDrop={droppedCatalogItem}
           inlineEditor={canvasEditor}
         />
-        {drawingWindows && <div className="he-table-window-layer">{drawingWindows(camera)}</div>}
+        {drawingWindows && <div className="he-table-window-layer"><ReadOnlyFieldset readOnly={readOnly}>{drawingWindows(camera)}</ReadOnlyFieldset></div>}
         {(previewMessage || cableSheathWarning) && <div className="he-routing-preview-error" role="status">
           {previewMessage || cableSheathWarning}
         </div>}
@@ -822,7 +837,7 @@ export function HarnessEditorWorkspace({
             <button type="button" role="tab" aria-selected={inspectorTab === "properties"} className={inspectorTab === "properties" ? "active" : ""} onClick={() => setInspectorTab("properties")}>Свойства</button>
             <button type="button" role="tab" aria-selected={inspectorTab === "layers"} className={inspectorTab === "layers" ? "active" : ""} onClick={() => setInspectorTab("layers")}>Слои <span>{layers.length}</span></button>
           </div>
-          <div className="he-inspector-content">
+          <div className="he-inspector-content"><ReadOnlyFieldset readOnly={readOnly}>
             {view === "drawing" && onDrawingEndStyleChange && onDrawingEndStylesChange && onDrawingEndEndpointChange && <FreeWireEndsPanel objects={objects} selectedIds={selectedObjectIds} disabled={selectedWireIds.some(id => layers.some(layer => layer.locked && layer.id === objects.find(object => object.id === id)?.layerId))} onStyle={onDrawingEndStyleChange} onStyles={onDrawingEndStylesChange} onEndpoint={onDrawingEndEndpointChange} onBulkX={onDrawingEndBulkXChange} focusTarget={freeWireEndFocus} />}
             {typeof relationPanel==="function"?relationPanel(tool,setTool):relationPanel}
             {inspectorTab === "properties" ? (
@@ -884,7 +899,7 @@ export function HarnessEditorWorkspace({
                 </div>
               </section>}</>
             )}
-          </div>
+          </ReadOnlyFieldset></div>
         </aside>
 
         <aside id="he-material-panel" className="he-material-panel" aria-label="Список материальных объектов" hidden={!materialPanelOpen}>
@@ -905,7 +920,7 @@ export function HarnessEditorWorkspace({
           />
         </aside>
 
-        {view !== "drawing" && <CatalogDock
+        {view !== "drawing" && !readOnly && <CatalogDock
           items={catalogItems}
           sources={catalogSources}
           selectedSourceId={selectedCatalogSourceId}
