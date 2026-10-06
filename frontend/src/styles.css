@@ -901,7 +901,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
    только «Наименование». Числа и поля с числами — вправо, под своими заголовками. */
 .kit-pane .data-table table.grid.wide { width: 100%; table-layout: fixed; }
 .kit-pane .data-table table.grid.wide { min-width: 1180px; }
-.kit-spec .data-table table.grid.wide { min-width: 1600px; }
+.kit-spec .data-table table.grid.wide { min-width: 1180px; }
 .kit-spec td.num input { text-align: right; font-variant-numeric: tabular-nums; }
 .kit-pane .data-table td.num { font-variant-numeric: tabular-nums; }
 .kit-spec td input { padding: 5px 8px; }

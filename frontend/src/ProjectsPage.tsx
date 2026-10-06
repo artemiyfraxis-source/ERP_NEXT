@@ -750,27 +750,27 @@ function SpecTab({ card, canEdit, setNote, setWarning, reload }: {
 
   const specRows: SpecRow[] = card.assemblies.flatMap((assembly) => assembly.components.map((component) => ({ assembly, component })));
   const specColumns: DataColumn<SpecRow>[] = [
-    { key: "art", title: "Артикул КД", width: 240, wrap: true, value: ({ component }) => component.art },
-    { key: "type", title: "Тип", width: 130, filter: true, value: ({ component }) => component.type },
+    { key: "art", title: "Артикул КД", width: 170, wrap: true, value: ({ component }) => component.art },
+    { key: "type", title: "Тип", width: 90, filter: true, value: ({ component }) => component.type },
     { key: "name", title: "Наименование", value: ({ assembly, component }) => draftOf(assembly, component).name,
       render: ({ assembly, component }) => <input aria-label={`Наименование ${component.art}`} value={draftOf(assembly, component).name} disabled={!canEdit} onChange={(event) => edit(assembly, component, { name: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "link", title: "Ссылка", width: 340, value: ({ assembly, component }) => draftOf(assembly, component).link, render: ({ assembly, component }) => {
+    { key: "link", title: "Ссылка", width: 180, value: ({ assembly, component }) => draftOf(assembly, component).link, render: ({ assembly, component }) => {
       const link = draftOf(assembly, component).link;
       return <div className="kit-link">
         <input aria-label={`Ссылка ${component.art}`} value={link} placeholder="—" disabled={!canEdit} onChange={(event) => edit(assembly, component, { link: event.target.value })} onBlur={() => void save(assembly, component)} />
         {/^https?:\/\//i.test(link) && <a href={link} target="_blank" rel="noopener" title="Открыть">↗</a>}
       </div>;
     } },
-    { key: "per", title: "На 1 шт", width: 96, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).per,
+    { key: "per", title: "На 1 шт", width: 72, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).per,
       render: ({ assembly, component }) => <input aria-label={`На 1 шт ${component.art}`} value={draftOf(assembly, component).per} disabled={!canEdit} onChange={(event) => edit(assembly, component, { per: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "scrap", title: "% брака", width: 96, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).scrap,
+    { key: "scrap", title: "% брака", width: 72, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).scrap,
       render: ({ assembly, component }) => <input aria-label={`% брака ${component.art}`} value={draftOf(assembly, component).scrap} disabled={!canEdit} onChange={(event) => edit(assembly, component, { scrap: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "batch", title: "На партию", width: 104, numeric: true, value: ({ assembly, component }) => {
+    { key: "batch", title: "На партию", width: 84, numeric: true, value: ({ assembly, component }) => {
       const draft = draftOf(assembly, component);
       return kitBatch(draft.per, assembly.run, draft.scrap, component.unit);
     } },
-    { key: "unit", title: "Ед.", width: 56, value: ({ component }) => component.unit },
-    { key: "lot", title: "ГРН склада", width: 320, value: ({ assembly, component }) => lotLabel(
+    { key: "unit", title: "Ед.", width: 44, value: ({ component }) => component.unit },
+    { key: "lot", title: "ГРН склада", width: 300, value: ({ assembly, component }) => lotLabel(
       draftOf(assembly, component).lot, component.reserve, kitBatch(draftOf(assembly, component).per, assembly.run, draftOf(assembly, component).scrap, component.unit),
     ), render: ({ assembly, component }) => {
       const draft = draftOf(assembly, component);
