@@ -35,6 +35,7 @@ from .domain import (
     RECEIPT_STAGES,
     SupplierRequestGroup,
     ReplacementDecision,
+    STOCK_COVER_WAREHOUSES,
     StockCover,
     removal_blocker,
     requested_buyer,
@@ -2119,8 +2120,21 @@ class StockCoverUnitOfWork(UnitOfWork, Protocol):
 class CoverFromStockCommand:
     line_id: UUID
     expected_version: int
-    lot_id: UUID
+    # None — «Есть на складе, без ГРН»: the line is covered, no lot holds a reserve.
+    lot_id: UUID | None
     quantity: Decimal
+    actor: Actor
+    now: datetime
+    # Only without a lot, optional: ЦАР / ЖУК / "" (otherwise the lot's own warehouse).
+    warehouse: str = ""
+
+
+@dataclass(frozen=True)
+class BindStockCoverCommand:
+    line_id: UUID
+    expected_version: int
+    cover_id: UUID
+    lot_id: UUID
     actor: Actor
     now: datetime
 
@@ -2211,41 +2225,34 @@ def cover_from_stock(command: CoverFromStockCommand, uow: StockCoverUnitOfWork) 
 
     The reserve is the lot's РЕЗЕРВ (as kitting reserves), so ДОСТУПНО drops for everyone and a reserve over
     what is available is refused. All of КОЛ-ВО (Расчет) covered → «Готово» without money; a part → the rest
-    stays to buy (one line, `stock_covered` + `to_buy`, no split)."""
+    stays to buy (one line, `stock_covered` + `to_buy`, no split).
+
+    Without `lot_id` — «Есть на складе, без ГРН» (owner, 06.10): the same line rules (stages, buyer, no more than
+    is left to buy) in the line's own unit, but no lot is touched and nothing is reserved."""
     with uow:
         current = _load_versioned(command.line_id, command.expected_version, uow)
-        lot = uow.warehouse.get(command.lot_id)
-        if lot is None:
-            raise KeyError(f"Warehouse lot not found: {command.lot_id}")
-        updated, trimmed = current.cover_from_stock(command.quantity, lot.unit, command.actor)
         quantity = Decimal(command.quantity)
-        try:
-            reserved = lot.reserve(quantity)
-        except WarehouseValidationError as error:
-            raise ProcurementValidationError(
-                f"На партии {_lot_label(lot.grn, lot.package)} доступно {_shown(max(lot.available, Decimal('0')))}"
-                f" {lot.unit} — зарезервировать {_shown(quantity)} нельзя"
-            ) from error
-        cover = StockCover(
-            id=uuid4(),
-            line_id=current.id,
-            legacy_id=current.legacy_id,
-            project_reference=current.project_reference,
-            lot_id=lot.id,
-            warehouse=lot.warehouse,
-            grn=lot.grn,
-            package=lot.package,
-            storage_location=lot.storage_location,
-            unit=lot.unit,
-            quantity=quantity,
-            trimmed=trimmed,
-            created_at=command.now,
-            created_by=command.actor.name,
-            created_by_id=command.actor.id,
-        )
-        uow.warehouse.add(reserved)
+        if command.lot_id is None:
+            warehouse = str(command.warehouse or "").strip()
+            if warehouse and warehouse not in STOCK_COVER_WAREHOUSES:
+                raise ProcurementValidationError(f"Склад «{warehouse}» неизвестен — ЦАР, ЖУК или не указан")
+            updated, trimmed = current.cover_from_stock(command.quantity, current.calculated_unit, command.actor)
+            cover = _new_cover(
+                current, command, trimmed, lot_id=None, warehouse=warehouse, grn="", package="", storage_location="",
+                unit=current.calculated_unit,
+            )
+        else:
+            lot = uow.warehouse.get(command.lot_id)
+            if lot is None:
+                raise KeyError(f"Warehouse lot not found: {command.lot_id}")
+            updated, trimmed = current.cover_from_stock(command.quantity, lot.unit, command.actor)
+            uow.warehouse.add(_reserve_on(lot, quantity))
+            cover = _new_cover(
+                current, command, trimmed, lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
+                storage_location=lot.storage_location, unit=lot.unit,
+            )
+            _lot_audit(lot.id, "warehouse.reserved_for_procurement", cover, quantity, command.actor, command.now, uow)
         uow.stock_covers.add(cover)
-        _lot_audit(lot.id, "warehouse.reserved_for_procurement", cover, quantity, command.actor, command.now, uow)
         _save_transition(
             current,
             updated,
@@ -2255,10 +2262,10 @@ def cover_from_stock(command: CoverFromStockCommand, uow: StockCoverUnitOfWork) 
             uow=uow,
             details={
                 "cover_id": str(cover.id),
-                "lot_id": str(lot.id),
-                "warehouse": lot.warehouse,
-                "grn": lot.grn,
-                "package": lot.package,
+                "lot_id": str(cover.lot_id or ""),
+                "warehouse": cover.warehouse,
+                "grn": cover.grn,
+                "package": cover.package,
                 "quantity": _shown(quantity),
                 "stock_covered": _shown(updated.stock_covered),
                 "to_buy": _shown(updated.to_buy),
@@ -2268,25 +2275,107 @@ def cover_from_stock(command: CoverFromStockCommand, uow: StockCoverUnitOfWork) 
         return updated, cover
 
 
+def _new_cover(
+    line: ProcurementLine, command: CoverFromStockCommand, trimmed: Decimal, *, lot_id: UUID | None, warehouse: str,
+    grn: str, package: str, storage_location: str, unit: str,
+) -> StockCover:
+    return StockCover(
+        id=uuid4(),
+        line_id=line.id,
+        legacy_id=line.legacy_id,
+        project_reference=line.project_reference,
+        lot_id=lot_id,
+        warehouse=warehouse,
+        grn=grn,
+        package=package,
+        storage_location=storage_location,
+        unit=unit,
+        quantity=Decimal(command.quantity),
+        trimmed=trimmed,
+        created_at=command.now,
+        created_by=command.actor.name,
+        created_by_id=command.actor.id,
+    )
+
+
+def _reserve_on(lot: StockLot, quantity: Decimal) -> StockLot:
+    """The lot with `quantity` more in РЕЗЕРВ, or the buyer-facing refusal when it has less available."""
+    try:
+        return lot.reserve(quantity)
+    except WarehouseValidationError as error:
+        raise ProcurementValidationError(
+            f"На партии {_lot_label(lot.grn, lot.package)} доступно {_shown(max(lot.available, Decimal('0')))}"
+            f" {lot.unit} — зарезервировать {_shown(quantity)} нельзя"
+        ) from error
+
+
+def bind_stock_cover(command: BindStockCoverCommand, uow: StockCoverUnitOfWork) -> tuple[ProcurementLine, StockCover]:
+    """«Привязать ГРН» to a cover made «Есть на складе, без ГРН»: the chosen lot reserves the whole covered quantity
+    with the checks of «Со склада» (unit, ДОСТУПНО) — a lot with less is refused, never a partial binding. The line
+    keeps its quantities and stage; its version moves so a stale form gets 409."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        cover = uow.stock_covers.get(command.cover_id)
+        if cover is None or cover.line_id != current.id:
+            raise KeyError(f"Stock cover not found: {command.cover_id}")
+        lot = uow.warehouse.get(command.lot_id)
+        if lot is None:
+            raise KeyError(f"Warehouse lot not found: {command.lot_id}")
+        updated = current.bind_stock_cover(lot.unit, command.actor)
+        bound = cover.bind_lot(
+            lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
+            storage_location=lot.storage_location, unit=lot.unit,
+        )
+        uow.warehouse.add(_reserve_on(lot, bound.quantity))
+        uow.stock_covers.add(bound)
+        _lot_audit(lot.id, "warehouse.reserved_for_procurement", bound, bound.quantity, command.actor, command.now, uow)
+        _save_transition(
+            current,
+            updated,
+            event_type="procurement.stock_cover_bound",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={
+                "cover_id": str(bound.id),
+                "lot_id": str(lot.id),
+                "warehouse": lot.warehouse,
+                "grn": lot.grn,
+                "package": lot.package,
+                "quantity": _shown(bound.quantity),
+            },
+        )
+        uow.commit()
+        return updated, bound
+
+
+def _cover_place(cover: StockCover) -> str:
+    if cover.lot_id is None:
+        return f"{cover.warehouse} без ГРН".strip()
+    return f"{cover.warehouse} {_lot_label(cover.grn, cover.package)}"
+
+
 def _release_covers(
     line: ProcurementLine, covers: Sequence[StockCover], actor: Actor, now: datetime, uow,
 ) -> tuple[Decimal, Decimal, list[StockCover]]:
-    """Give each cover's held quantity back to its lot. → (released, КОЛ-ВО (факт) to give back, the covers)."""
+    """Give each cover's held quantity back to its lot; a cover «без ГРН» holds none, only the cover closes.
+    → (released, КОЛ-ВО (факт) to give back, the covers)."""
     released = Decimal("0")
     restore = Decimal("0")
     done: list[StockCover] = []
     for cover in covers:
-        lot = uow.warehouse.get(cover.lot_id)
-        if lot is None:
-            raise KeyError(f"Warehouse lot not found: {cover.lot_id}")
-        try:
-            uow.warehouse.add(lot.release_reserve(cover.quantity))
-        except WarehouseValidationError as error:
-            raise ProcurementValidationError(
-                f"На партии {_lot_label(lot.grn, lot.package)} резерв меньше, чем держит «Со склада» — "
-                "проверьте РЕЗЕРВ на складе"
-            ) from error
-        _lot_audit(lot.id, "warehouse.procurement_reserve_released", cover, cover.quantity, actor, now, uow)
+        if cover.lot_id is not None:
+            lot = uow.warehouse.get(cover.lot_id)
+            if lot is None:
+                raise KeyError(f"Warehouse lot not found: {cover.lot_id}")
+            try:
+                uow.warehouse.add(lot.release_reserve(cover.quantity))
+            except WarehouseValidationError as error:
+                raise ProcurementValidationError(
+                    f"На партии {_lot_label(lot.grn, lot.package)} резерв меньше, чем держит «Со склада» — "
+                    "проверьте РЕЗЕРВ на складе"
+                ) from error
+            _lot_audit(lot.id, "warehouse.procurement_reserve_released", cover, cover.quantity, actor, now, uow)
         released += cover.quantity
         restore += min(cover.trimmed, cover.quantity)
         done.append(cover.release(now))
@@ -2320,7 +2409,7 @@ def release_stock_cover(
             uow=uow,
             details={
                 "cover_ids": ", ".join(str(cover.id) for cover in covers),
-                "lots": ", ".join(f"{cover.warehouse} {_lot_label(cover.grn, cover.package)}" for cover in covers),
+                "lots": ", ".join(_cover_place(cover) for cover in covers),
                 "quantity": _shown(total),
                 "stock_covered": _shown(updated.stock_covered),
                 "to_buy": _shown(updated.to_buy),

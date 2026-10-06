@@ -206,3 +206,41 @@ def test_operation_etk_without_an_issued_card_is_a_russian_404(production_api): 
 
     assert missing.status_code == 404 and missing.json()["detail"] == "Нет выданной ЭТК по этой позиции"
     assert not_issued.status_code == 404 and not_issued.json()["detail"] == "Нет выданной ЭТК по этой позиции"
+
+
+def test_fitter_reads_sketches_of_his_issued_card_only_and_cannot_edit_techcards(production_api):  # noqa: F811
+    from datetime import datetime
+
+    from app.modules.techcards.project_cards import OperationSketch
+    from tests.production.test_api import issue_card
+
+    client, operator_id = production_api
+    factory = app.state.production_uow_factory
+    task = _launch(factory, operator_id, "etk-sk", link_inputs((_op(1, "Нарезка"), _op(2, "Сборка")), {2: ((1, Decimal(1)),)}))
+    card = issue_card("591K.3", "КБ1", [("OP-01", "Нарезка", "10", "0"), ("OP-02", "Сборка", "10", "0")])
+    other = issue_card("591K.9", "КБ1", [("OP-01", "Нарезка", "10", "0")])
+    png = b"PNG-sketch-bytes"
+    for target, key in ((card, "OP-02"), (other, "SECRET")):
+        with app.state.techcards_uow_factory() as uow:
+            uow.techcards.put_sketch(target.id, OperationSketch(
+                operation_key=key, file_name=f"{key}.png", content_type="image/png", size=len(png),
+                uploaded_by="Технолог", uploaded_at=datetime(2026, 9, 22, 10, 0)), png)
+            uow.commit()
+    base = _etk_url(task) + "/sketches"
+
+    _as_operator(operator_id)
+    listing = client.get(base)
+    image = client.get(base + "/OP-02")
+    foreign = client.get(base + "/SECRET")
+    traversal = client.get(base + "/../../OP-02")
+    put = client.put(f"/api/techcards/projects/{card.id}/sketches/OP-02", json={"file_name": "a.png", "content_type": "image/png", "content_base64": "AAAA"})
+    delete = client.delete(f"/api/techcards/projects/{card.id}/sketches/OP-02")
+    direct = client.get(f"/api/techcards/projects/{card.id}/sketches")
+    _as_operator(uuid4())
+    stranger_list, stranger_image = client.get(base), client.get(base + "/OP-02")
+
+    assert listing.status_code == 200 and [item["operation_key"] for item in listing.json()["items"]] == ["OP-02"]
+    assert image.status_code == 200 and image.content == png
+    assert foreign.status_code == 404 and traversal.status_code == 404
+    assert put.status_code == 403 and delete.status_code == 403 and direct.status_code == 403
+    assert stranger_list.status_code == 403 and stranger_image.status_code == 403

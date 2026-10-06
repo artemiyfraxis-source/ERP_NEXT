@@ -280,7 +280,7 @@ it("keeps every row action visible on the row (no «⋯» menu), without approva
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   const actions = within(screen.getByRole("group", { name: "Действия SM-1" }));
   expect(actions.getAllByRole("button").map((item) => item.textContent)).toEqual([
-    "Со склада", "Прослеж.…", "Отменить строку",
+    "Со склада", "Прослеж.…", "Есть на складе, без ГРН", "Отменить строку",
   ]);
   // Полное название — в имени и подсказке кнопки: колонка действий узкая.
   expect(actions.getByRole("button", { name: "Прослеживаемость, раздробить…" })).toHaveAttribute("title", "Прослеживаемость, раздробить…");
@@ -400,6 +400,63 @@ it("shows the covered quantity on the row and releases it from the menu", async 
   fireEvent.click(within(screen.getByRole("group", { name: "Действия SM-1" })).getByRole("button", { name: "Снять «Со склада»" }));
   await waitFor(() => expect(onChanged).toHaveBeenCalledWith("SM-1: «Со склада» снято"));
   expect(posted).toEqual([`POST /api/procurement/${line(1).id}/stock-cover/release`]);
+});
+
+it("marks «Есть на складе, без ГРН» with the quantity to buy and an optional warehouse, no lot", async () => {
+  const posted: Record<string, unknown>[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).endsWith("/stock-cover") && init?.method === "POST") {
+      posted.push(JSON.parse(String(init.body)));
+      return jsonResponse({ line: line(1), cover: { ...cover, lot_id: null, grn: "", warehouse: "ЖУК", quantity: "2" } });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const onChanged = vi.fn();
+  renderTable([line(1)], { onChanged });
+
+  fireEvent.click(within(screen.getByRole("group", { name: "Действия SM-1" })).getByRole("button", { name: "Есть на складе, без ГРН" }));
+  const form = screen.getByRole("form", { name: "Есть на складе, без ГРН SM-1" });
+  expect(within(form).queryByLabelText("Поиск на складе")).not.toBeInTheDocument();
+  expect((screen.getByLabelText("Количество без ГРН") as HTMLInputElement).value).toBe("2");
+  expect((screen.getByLabelText("Склад без ГРН") as HTMLSelectElement).value).toBe("");
+  fireEvent.change(screen.getByLabelText("Склад без ГРН"), { target: { value: "ЖУК" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Отметить со склада" }));
+
+  await waitFor(() => expect(posted).toEqual([{ version: 2, quantity: "2", warehouse: "ЖУК" }]));
+  await waitFor(() => expect(onChanged).toHaveBeenCalledWith("SM-1: есть на складе 2 шт, без ГРН"));
+  expect(screen.queryByRole("form", { name: "Есть на складе, без ГРН SM-1" })).not.toBeInTheDocument();
+});
+
+it("binds a ГРН to a cover made without one: the whole quantity, a lot with less is not offered", async () => {
+  const posted: string[] = [];
+  const lotless = { ...cover, id: "c9", lot_id: null, grn: "", warehouse: "", quantity: "3" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path.includes("/stock-candidates")) {
+      return jsonResponse({ line: line(1), query: "A-9", lots: [lot("1", { available: "2" }), lot("2")], covers: [lotless] });
+    }
+    if (path.endsWith("/stock-cover/c9/bind") && init?.method === "POST") {
+      posted.push(String(init.body));
+      return jsonResponse({ line: line(1), cover: { ...lotless, lot_id: "2", grn: "ГРН-2" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const onChanged = vi.fn();
+  renderTable([line(1, { stock_covered: "3", to_buy: "0" } as Partial<ProcurementLine>)], { onChanged });
+
+  fireEvent.click(within(screen.getByRole("group", { name: "Действия SM-1" })).getByRole("button", { name: "Со склада" }));
+  expect(await screen.findByText(/Без ГРН: 3 шт/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Привязать ГРН" }));
+  expect(screen.getByRole("button", { name: "Отменить привязку" })).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Партия ГРН-1"));
+  expect(screen.getByRole("button", { name: "Привязать ГРН ГРН-1" })).toBeDisabled();
+  fireEvent.click(screen.getByLabelText("Партия ГРН-2"));
+  expect(screen.getByLabelText("Количество со склада")).toBeDisabled();
+  expect((screen.getByLabelText("Количество со склада") as HTMLInputElement).value).toBe("3");
+  fireEvent.click(screen.getByRole("button", { name: "Привязать ГРН ГРН-2" }));
+
+  await waitFor(() => expect(posted).toEqual([JSON.stringify({ version: 2, lot_id: "2" })]));
+  await waitFor(() => expect(onChanged).toHaveBeenCalledWith("SM-1: ГРН ГРН-2 привязан, резерв 3 шт"));
 });
 
 // 300 строк у 15 поставщиков: у поставщиков 1-5 по 40 строк (свёрнуты), у 6-15 по 10 (открыты).

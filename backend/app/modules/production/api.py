@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -15,6 +15,7 @@ from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from app.modules.techcards.etk_read import card_view, issued_card_for_item
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import moscow_now
+from app.shared.stored_files import file_response
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, production_view_work_principal, section_allowed, shipping_warehouse_principal
 
 from .application import (
@@ -626,16 +627,8 @@ def available_inputs(
     }
 
 
-@router.get("/my/tasks/{task_id}/operations/{operation_id}/etk")
-def operation_etk(
-    task_id: UUID,
-    operation_id: UUID,
-    principal: Annotated[Principal, Depends(production_view_principal)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
-    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
-) -> dict:
-    """ЭТК операции для монтажника без доступа к разделу техкарт: только выданная карта проекта и КБ этого ПЗ
-    и операция, на которой её открыть. Монтажнику — своя операция, планировщику — любая."""
+def _etk_task_access(task_id: UUID, operation_id: UUID, principal: Principal, uow_factory: Callable[[], UnitOfWork]):
+    """Задание и операция для ЭТК: монтажнику — своя операция, планировщику — любая."""
     with uow_factory() as uow:
         task = uow.production.get(task_id)
         if task is None:
@@ -646,6 +639,20 @@ def operation_etk(
             raise HTTPException(status_code=404, detail=str(error)) from error
         if principal.actor.id not in operation.operator_ids and not section_allowed(principal, ("production",), "view"):
             raise HTTPException(status_code=403, detail="Операция не назначена сотруднику")
+    return task, operation
+
+
+@router.get("/my/tasks/{task_id}/operations/{operation_id}/etk")
+def operation_etk(
+    task_id: UUID,
+    operation_id: UUID,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    """ЭТК операции для монтажника без доступа к разделу техкарт: только выданная карта проекта и КБ этого ПЗ
+    и операция, на которой её открыть. Монтажнику — своя операция, планировщику — любая."""
+    task, operation = _etk_task_access(task_id, operation_id, principal, uow_factory)
     if techcards_factory is None:
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     with techcards_factory() as techcards:
@@ -654,6 +661,53 @@ def operation_etk(
     if result is None:
         raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
     return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}
+
+
+@router.get("/my/tasks/{task_id}/operations/{operation_id}/etk/sketches")
+def operation_etk_sketches(
+    task_id: UUID,
+    operation_id: UUID,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    """Эскизы выданной ЭТК этого задания: тот же доступ, что у самой ЭТК; раздел техкарт монтажнику не нужен."""
+    task, _ = _etk_task_access(task_id, operation_id, principal, uow_factory)
+    if techcards_factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    with techcards_factory() as techcards:
+        card = issued_card_for_item(techcards, task.project, task.item)
+        if card is None:
+            raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
+        sketches = techcards.techcards.sketches(card.id)
+    return {"items": [{
+        "operation_key": sketch.operation_key, "file_name": sketch.file_name, "size": sketch.size,
+        "uploaded_by": sketch.uploaded_by, "uploaded_at": sketch.uploaded_at.isoformat(),
+    } for sketch in sketches]}
+
+
+@router.get("/my/tasks/{task_id}/operations/{operation_id}/etk/sketches/{operation_key:path}")
+def operation_etk_sketch(
+    task_id: UUID,
+    operation_id: UUID,
+    operation_key: str,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> Response:
+    """Картинка эскиза: только из выданной ЭТК этого задания, ключ ищется среди её эскизов."""
+    task, _ = _etk_task_access(task_id, operation_id, principal, uow_factory)
+    if techcards_factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    with techcards_factory() as techcards:
+        card = issued_card_for_item(techcards, task.project, task.item)
+        found = None
+        if card is not None and operation_key in {sketch.operation_key for sketch in techcards.techcards.sketches(card.id)}:
+            found = techcards.techcards.sketch_content(card.id, operation_key)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Эскиз не найден")
+    sketch, content = found
+    return file_response(content, sketch.content_type, sketch.file_name)
 
 
 def _input_limit(uow, session: WorkSession) -> str | None:

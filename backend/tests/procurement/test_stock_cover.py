@@ -485,3 +485,222 @@ def test_kit_of_another_project_cannot_use_the_cover_and_bind_takes_over_partial
     assert released.status_code == 200, released.text
     assert released.json()["line"]["stock_covered"] == "30"
     assert get_lot(sessions, lot.id).reserved == Decimal("50")
+
+
+# --- «Есть на складе, без ГРН» (owner, 06.10) ------------------------------------------------------------
+
+def cover_without_lot(client, line: dict, quantity: str, warehouse: str | None = None):
+    body = {"version": line["version"], "quantity": quantity}
+    if warehouse is not None:
+        body["warehouse"] = warehouse
+    return client.post(f"/api/procurement/{line['id']}/stock-cover", json=body)
+
+
+def bind(client, line: dict, cover_id: str, lot: StockLot):
+    return client.post(f"/api/procurement/{line['id']}/stock-cover/{cover_id}/bind", json={
+        "version": line["version"], "lot_id": str(lot.id),
+    })
+
+
+def assert_integrity_clean(sessions) -> None:
+    """db_integrity: no lot holds less РЕЗЕРВ than its holders, nothing negative, no reserve without its lot."""
+    from app.db_integrity import take_snapshot
+
+    counts = take_snapshot(sessions.kw["bind"])["counts"]
+    bad = {key: value for key, value in counts.items() if value and key != "lot_key_constraint_missing"}
+    assert bad == {}
+
+
+def test_lotless_cover_binds_only_a_lot_and_a_bound_cover_rebinding_is_refused():
+    lotless = StockCover(
+        id=UUID(int=1), line_id=UUID(int=2), legacy_id="SM-20261002-01", project_reference="591К.3",
+        lot_id=None, warehouse="", grn="", package="", storage_location="", unit="шт",
+        quantity=Decimal("10"), created_at=NOW, created_by="Петров",
+    )
+    bound = lotless.bind_lot(
+        lot_id=UUID(int=3), warehouse="ЦАР", grn="FRX.26.0000001", package="", storage_location="1F4", unit="шт.",
+    )
+    assert (bound.lot_id, bound.grn, bound.unit, bound.quantity, bound.version) == (
+        UUID(int=3), "FRX.26.0000001", "шт.", Decimal("10"), 2,
+    )
+    with pytest.raises(ProcurementValidationError, match="уже есть ГРН"):
+        bound.bind_lot(lot_id=UUID(int=4), warehouse="ЦАР", grn="X", package="", storage_location="", unit="шт")
+    with pytest.raises(ProcurementValidationError, match="уже снято"):
+        lotless.release(NOW).bind_lot(
+            lot_id=UUID(int=4), warehouse="ЦАР", grn="X", package="", storage_location="", unit="шт",
+        )
+
+
+def test_line_bind_keeps_quantities_checks_unit_buyer_and_stage():
+    full, _ = domain_line().cover_from_stock(Decimal("124"), "шт", BUYER)
+    bound = full.bind_stock_cover("шт.", BUYER)
+    assert (bound.status, bound.stock_covered, bound.version) == (ProcurementStatus.DONE, Decimal("124"), full.version + 1)
+    with pytest.raises(ProcurementValidationError, match="Единицы не совпадают"):
+        full.bind_stock_cover("м", BUYER)
+    with pytest.raises(ProcurementValidationError, match="только свои строки"):
+        full.bind_stock_cover("шт", Actor(name="Сидоров", department="Закупки"))
+    partial, _ = domain_line().cover_from_stock(Decimal("80"), "шт", BUYER)
+    with pytest.raises(ProcurementValidationError, match="Заказ поставщику уже сформирован"):
+        replace(partial, status=ProcurementStatus.AWAITING_INVOICE).bind_stock_cover("шт", BUYER)
+
+
+def test_full_lotless_cover_closes_line_without_money_and_reserves_nothing(env):
+    client, sessions = env
+    line = line_in_work(client, sessions)
+    lot = add_lot(sessions, stock("200"))
+
+    covered = cover_without_lot(client, line, "124")
+
+    assert covered.status_code == 200, covered.text
+    body = covered.json()
+    assert (body["line"]["status"], body["line"]["stock_covered"], body["line"]["to_buy"]) == ("Готово", "124", "0")
+    assert (body["line"]["actual_sum"], body["line"]["invoice_url"], body["line"]["paid_at"]) == (None, None, None)
+    assert (body["cover"]["lot_id"], body["cover"]["grn"], body["cover"]["warehouse"]) == (None, "", "")
+    assert (body["cover"]["unit"], body["cover"]["quantity"], body["cover"]["active"]) == ("шт", "124", True)
+    assert get_lot(sessions, lot.id).reserved == 0
+    assert [event.event_type for event in events(sessions, lot.id)] == []
+    (stored,) = covers_of(sessions, line["id"])
+    assert stored.lot_id is None
+    (event,) = [item for item in events(sessions, line["id"]) if item.event_type == "procurement.stock_covered"]
+    assert (event.details["lot_id"], event.details["quantity"]) == ("", "124")
+    assert_integrity_clean(sessions)
+
+
+def test_partial_lotless_cover_leaves_the_rest_to_buy_in_the_line_unit_with_optional_warehouse(env):
+    client, sessions = env
+    line = line_in_work(client, sessions, unit="м", quantity="50")
+
+    partial = cover_without_lot(client, line, "20", warehouse="ЖУК")
+
+    assert partial.status_code == 200, partial.text
+    body = partial.json()
+    assert (body["line"]["status"], body["line"]["stock_covered"], body["line"]["to_buy"]) == ("Готов к запросу", "20", "30")
+    assert body["line"]["actual_quantity"] == "30"
+    assert (body["cover"]["unit"], body["cover"]["warehouse"], body["cover"]["lot_id"]) == ("м", "ЖУК", None)
+    over = cover_without_lot(client, body["line"], "31")
+    assert over.status_code == 422 and "осталось 30" in over.json()["detail"]
+    unknown = cover_without_lot(client, body["line"], "1", warehouse="СКЛАД")
+    assert unknown.status_code == 422
+    assert_integrity_clean(sessions)
+
+
+def test_lotless_cover_has_the_same_stage_and_buyer_rules(env):
+    client, sessions = env
+    line = line_in_work(client, sessions)
+    app.dependency_overrides[authenticated_principal] = lambda: buyer_principal("Сидоров")
+    foreign = cover_without_lot(client, line, "1")
+    assert foreign.status_code == 422 and "только свои строки" in foreign.json()["detail"]
+    app.dependency_overrides[authenticated_principal] = buyer_principal
+    fresh = consume_procurement_requested(message(suffix=2), SqlAlchemyProcurementUnitOfWork(sessions))
+    unclaimed = cover_without_lot(client, {"id": str(fresh.id), "version": fresh.version}, "1")
+    assert unclaimed.status_code == 422
+    closed = cover_without_lot(client, line, "124").json()["line"]
+    again = cover_without_lot(client, closed, "1")
+    assert again.status_code == 422 and "до запроса поставщику" in again.json()["detail"]
+
+
+def test_releasing_a_lotless_cover_only_reopens_the_line(env):
+    client, sessions = env
+    line = line_in_work(client, sessions)
+    lot = add_lot(sessions, stock("200"))
+    closed = cover_without_lot(client, line, "124", warehouse="ЦАР").json()["line"]
+
+    released = client.post(f"/api/procurement/{line['id']}/stock-cover/release", json={"version": closed["version"]})
+
+    assert released.status_code == 200, released.text
+    body = released.json()
+    assert (body["line"]["status"], body["line"]["stock_covered"], body["line"]["to_buy"]) == ("Готов к запросу", "0", "124")
+    assert [(item["quantity"], item["active"], item["lot_id"]) for item in body["released"]] == [("0", False, None)]
+    assert get_lot(sessions, lot.id).reserved == 0
+    assert [event.event_type for event in events(sessions, lot.id)] == []
+    (event,) = [item for item in events(sessions, line["id"]) if item.event_type == "procurement.stock_cover_released"]
+    assert event.details["lots"] == "ЦАР без ГРН"
+    assert_integrity_clean(sessions)
+
+
+def test_cancelling_a_line_with_a_lotless_cover_touches_no_lot(env):
+    client, sessions = env
+    line = line_in_work(client, sessions)
+    covered = cover_without_lot(client, line, "80").json()["line"]
+
+    cancelled = client.post(f"/api/procurement/{line['id']}/cancel", json={"version": covered["version"]})
+
+    assert cancelled.status_code == 200, cancelled.text
+    assert (cancelled.json()["line"]["status"], cancelled.json()["line"]["stock_covered"]) == ("Отменено", "0")
+    assert_integrity_clean(sessions)
+
+
+def test_bind_reserves_the_whole_covered_quantity_on_the_chosen_lot(env):
+    client, sessions = env
+    line = line_in_work(client, sessions)
+    lot = add_lot(sessions, stock("200"))
+    covered = cover_without_lot(client, line, "124").json()
+    cover_id = covered["cover"]["id"]
+
+    stale = bind(client, line, cover_id, lot)
+    bound = bind(client, covered["line"], cover_id, lot)
+
+    assert stale.status_code == 409
+    assert bound.status_code == 200, bound.text
+    body = bound.json()
+    assert (body["line"]["status"], body["line"]["stock_covered"], body["line"]["version"]) == (
+        "Готово", "124", covered["line"]["version"] + 1,
+    )
+    assert (body["cover"]["lot_id"], body["cover"]["grn"], body["cover"]["warehouse"], body["cover"]["quantity"]) == (
+        str(lot.id), "FRX.26.0000001", "ЦАР", "124",
+    )
+    stored = get_lot(sessions, lot.id)
+    assert (stored.reserved, stored.available) == (Decimal("124"), Decimal("76"))
+    (lot_event,) = [event for event in events(sessions, lot.id) if event.event_type == "warehouse.reserved_for_procurement"]
+    assert lot_event.details["quantity"] == "124"
+    assert "procurement.stock_cover_bound" in [event.event_type for event in events(sessions, line["id"])]
+    again = bind(client, body["line"], cover_id, add_lot(sessions, stock("500", grn="FRX.26.0000002")))
+    assert again.status_code == 422 and "уже есть ГРН" in again.json()["detail"]
+    assert_integrity_clean(sessions)
+    # Bound, the cover is an ordinary «Со склада» reserve: release gives it back to the lot.
+    released = client.post(f"/api/procurement/{line['id']}/stock-cover/release", json={"version": body["line"]["version"]})
+    assert released.status_code == 200, released.text
+    assert get_lot(sessions, lot.id).reserved == 0
+    assert_integrity_clean(sessions)
+
+
+def test_bind_refuses_a_lot_with_too_little_or_another_unit_and_writes_nothing(env):
+    client, sessions = env
+    line = line_in_work(client, sessions)
+    covered = cover_without_lot(client, line, "80").json()
+    cover_id = covered["cover"]["id"]
+    small = add_lot(sessions, stock("79"))
+    metres = add_lot(sessions, stock("500", grn="FRX.26.0000003", unit="м"))
+
+    short = bind(client, covered["line"], cover_id, small)
+    other_unit = bind(client, covered["line"], cover_id, metres)
+    missing = client.post(f"/api/procurement/{line['id']}/stock-cover/{UUID(int=9)}/bind", json={
+        "version": covered["line"]["version"], "lot_id": str(small.id),
+    })
+
+    assert short.status_code == 422 and "доступно 79 шт" in short.json()["detail"]
+    assert other_unit.status_code == 422 and "Единицы не совпадают" in other_unit.json()["detail"]
+    assert missing.status_code == 404
+    assert (get_lot(sessions, small.id).reserved, get_lot(sessions, metres.id).reserved) == (0, 0)
+    (stored,) = covers_of(sessions, line["id"])
+    assert (stored.lot_id, stored.quantity) == (None, Decimal("80"))
+    current = client.get(f"/api/procurement/{line['id']}/stock-candidates").json()["line"]
+    assert current["version"] == covered["line"]["version"]
+    assert_integrity_clean(sessions)
+
+
+def test_kit_of_the_same_project_never_takes_over_a_lotless_cover(env):
+    client, sessions = env
+    line = line_in_work(client, sessions)
+    lot = add_lot(sessions, stock("100"))
+    cover_without_lot(client, line, "80")
+
+    request = kit(sessions, "591К.3 · КБ1 · Жгут", "30", lot)
+
+    assert request.lines[0].reserved == Decimal("30")
+    (held,) = covers_of(sessions, line["id"])
+    assert (held.quantity, held.consumed, held.lot_id) == (Decimal("80"), 0, None)
+    lots = client.get("/api/stock").json()["lots"]
+    (shown,) = [item for item in lots if item["id"] == str(lot.id)]
+    assert all(holder["kind"] != "procurement" for holder in shown["reserve_holders"])
+    assert_integrity_clean(sessions)

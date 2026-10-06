@@ -2447,6 +2447,10 @@ export const productionApi = {
     }),
   execution: (operatorId = "") => api<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>(`/api/production/my/execution${operatorId ? `?operator_id=${operatorId}` : ""}`),
   /** ЭТК операции для монтажника: выданная карта ПЗ и операция, на которой её открыть (не требует раздела техкарт). */
+  operationEtkSketches: (taskId: string, operationId: string) =>
+    api<{ items: OperationSketch[] }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches`),
+  operationEtkSketchUrl: (taskId: string, operationId: string, operationKey: string, at = "") =>
+    `/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
   operationEtk: (taskId: string, operationId: string) =>
     api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string) =>
@@ -2566,6 +2570,19 @@ export const shippingApi = {
   /** `portalShipPack`: «Упаковать» отмеченное в карточке проекта. */
   projectPack: (project: string, lines: Array<{ good_id: string; quantity: string }>) => api<{ shipment: Shipment }>("/api/shipping/project-pack", {
     method: "POST", body: JSON.stringify({ project, lines }),
+  }),
+  /** «Отгрузить» / «Упаковать, отгрузить позже» карточки проекта: карточка, отправка, УПД и отгрузка — одна транзакция.
+   * Тот же ключ с тем же телом возвращает уже сделанное, с другим — 409. */
+  projectShip: (payload: {
+    project: string;
+    addressee_version: number;
+    lines: Array<{ good_id: string; version: number; quantity: string }>;
+    addressee?: Record<string, string | null>;
+    documents?: { upd_number: string; upd_date: string | null; deadline: string | null };
+    upd_file?: { file_name: string; content_type: string; content_base64: string };
+    ship: boolean;
+  }, idempotencyKey: string) => api<{ shipment: Shipment; shipped: boolean; closed: boolean; why: string; replayed: boolean }>("/api/shipping/project-ship", {
+    method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload),
   }),
 };
 

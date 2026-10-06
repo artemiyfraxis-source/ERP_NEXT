@@ -332,8 +332,8 @@ const SKETCH_TYPES = "image/png,image/jpeg,image/webp,image/gif";
 
 /** Своя картинка эскиза к операции (владелец 30.09: «нет схемы и некуда её добавлять»): хранится в базе ERP, одна на
  *  операцию; «Загрузить» — файлом или вставкой скриншота (Ctrl+V), «Заменить», «Убрать». */
-function OperationSketchView({ cardId, operationKey, canEdit, sketch, onChanged }: {
-  cardId: string; operationKey: string; canEdit: boolean; sketch?: OperationSketch; onChanged: () => void;
+function OperationSketchView({ cardId, operationKey, canEdit, sketch, onChanged, url }: {
+  cardId: string; operationKey: string; canEdit: boolean; sketch?: OperationSketch; onChanged: () => void; url: (key: string, at: string) => string;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -363,8 +363,8 @@ function OperationSketchView({ cardId, operationKey, canEdit, sketch, onChanged 
 
   return <div className="etk-sketch" tabIndex={canEdit ? 0 : undefined}
     onPaste={canEdit ? (event) => upload(Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/"))) : undefined}>
-    {sketch && <a href={techcardsApi.sketchUrl(cardId, operationKey, sketch.uploaded_at)} target="_blank" rel="noreferrer">
-      <img src={techcardsApi.sketchUrl(cardId, operationKey, sketch.uploaded_at)} alt="Эскиз операции" />
+    {sketch && <a href={url(operationKey, sketch.uploaded_at)} target="_blank" rel="noreferrer">
+      <img src={url(operationKey, sketch.uploaded_at)} alt="Эскиз операции" />
     </a>}
     {canEdit && <div className="etk-sketch-bar">
       <input ref={input} type="file" accept={SKETCH_TYPES} hidden onChange={(event) => { upload(event.target.files?.[0]); event.target.value = ""; }} />
@@ -454,9 +454,9 @@ function RouteStrip({ route, current, onPick }: { route: EtkRoute; current: numb
 export interface EtkFocus { code: string; position: number }
 
 /** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_). */
-function EtkView({ card, canEdit, onSaved, sketches, onSketches, focus }: {
+function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focus }: {
   card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void;
-  sketches: OperationSketch[]; onSketches: () => void; focus?: EtkFocus;
+  sketches: OperationSketch[]; onSketches: () => void; sketchUrl: (key: string, at: string) => string; focus?: EtkFocus;
 }) {
   const list = operations(card.document);
   const [selected, setSelected] = useState(() => {
@@ -504,14 +504,14 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, focus }: {
         initial={editDraft(etkTitle(operation) + (operation.connector ? ` — ${operation.connector}` : ""), operation.card)}
         saveNote={`Сохранение — ревизия ${card.revision + 1}`}
         context={editContext(operation, String(record(card.document?.kit).part_quantity ?? ""),
-          uploaded ? techcardsApi.sketchUrl(card.id, etkOperationKey(operation), uploaded.uploaded_at) : "")}
+          uploaded ? sketchUrl(etkOperationKey(operation), uploaded.uploaded_at) : "")}
         onCancel={() => setEditing(false)}
         onSave={save}
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
           batch={String(record(card.document?.kit).part_quantity ?? "")}
           actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>✏️ Править</button> : null}
-          sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit}
+          sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit} url={sketchUrl}
             sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />
         <div className="etk-nav">
           <button className="secondary small" disabled={!index} onClick={() => setSelected(index - 1)}>← Назад</button>
@@ -532,10 +532,18 @@ function stamp(value: string | null | undefined) {
 
 /** Вкладка «ТК КБn»: одна строка о карте и действия, схема жгута один раз, маршрут слева и операция справа, журнал
     ревизий свёрнут. Правят операции здесь («✏️ Править»); пересборка — в «Генераторе». */
-export function EtkSheet({ card, principal, title, focus, onChange, onRebuild }: {
+export type EtkSketchSource = { list: () => Promise<{ items: OperationSketch[] }>; url: (operationKey: string, at: string) => string };
+
+export function EtkSheet({ card, principal, title, focus, onChange, onRebuild, sketchSource }: {
   card: ProjectTechcard; principal: Principal; title?: ReactNode; focus?: EtkFocus;
   onChange: (card: ProjectTechcard) => void; onRebuild?: () => void;
+  /** Откуда брать эскизы; по умолчанию раздел техкарт. Монтажнику экран «Мои задания» даёт свой источник. */
+  sketchSource?: EtkSketchSource;
 }) {
+  const source: EtkSketchSource = sketchSource ?? {
+    list: () => techcardsApi.sketches(card.id),
+    url: (operationKey, at) => techcardsApi.sketchUrl(card.id, operationKey, at),
+  };
   const [revisions, setRevisions] = useState<TechcardRevision[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -548,7 +556,7 @@ export function EtkSheet({ card, principal, title, focus, onChange, onRebuild }:
   useEffect(() => {
     void techcardsApi.revisions(card.id).then((result) => setRevisions(result.items)).catch(() => setRevisions([]));
   }, [card.id, card.version]);
-  const loadSketches = () => void techcardsApi.sketches(card.id).then((result) => setSketches(result?.items ?? [])).catch(() => setSketches([]));
+  const loadSketches = () => void source.list().then((result) => setSketches(result?.items ?? [])).catch(() => setSketches([]));
   useEffect(loadSketches, [card.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function issue() {
@@ -567,7 +575,7 @@ export function EtkSheet({ card, principal, title, focus, onChange, onRebuild }:
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
         <span className="muted">{list.length} операций · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
       {list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, Object.fromEntries(sketches.map((item) =>
-        [item.operation_key, window.location.origin + techcardsApi.sketchUrl(card.id, item.operation_key, item.uploaded_at)]))))}>🖨 Печать / PDF</button>}
+        [item.operation_key, window.location.origin + source.url(item.operation_key, item.uploaded_at)]))))}>🖨 Печать / PDF</button>}
       {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>⚙️ Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}
     </div>
@@ -576,7 +584,7 @@ export function EtkSheet({ card, principal, title, focus, onChange, onRebuild }:
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>⚠ Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)} />
-    <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} sketches={sketches} onSketches={loadSketches} onSaved={(updated) => {
+    <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} />
