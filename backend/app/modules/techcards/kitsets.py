@@ -433,7 +433,7 @@ def supply_lines(
     item actually used, so purchases under either article count for the position. A row without an article counts
     by its name. Each row, lot and kit line counts for one position only.
     Stage = the LATEST row of the position (one bought, another still requested → it is on its way);
-    no rows → «со склада» if the spec has a ГРН, else «не заведено».
+    no rows → «со склада» if the spec has a ГРН or the line is already kitted (reserved/issued), else «не заведено».
     """
     lines: dict[str, dict[str, Any]] = {}
     for assembly in kitset.assemblies:
@@ -477,7 +477,7 @@ def supply_lines(
         if best is not None:
             stage = best.where + (f" · {best.status}" if best.status else "")
         else:
-            stage = "со склада" if line["grn"] else "не заведено"
+            stage = "со склада" if line["grn"] or line["kitted"] > 0 else "не заведено"
         result.append(SupplyLine(
             article=line["article"], name=line["name"], kbs=tuple(line["kbs"]), need=line["need"],
             grn=line["grn"], stage=stage, received=any(row.where == "Приёмка" and row.received for row in found),
