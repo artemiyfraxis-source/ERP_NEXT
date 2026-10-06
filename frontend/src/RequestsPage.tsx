@@ -10,6 +10,9 @@ import {
 } from "./api";
 import { canAct } from "./navigation";
 import { RequestGrid } from "./RequestGrid";
+import { RequestFormV2 } from "./RequestFormV2";
+import { usePurposeLabel } from "./purposeLabels";
+import { useStageOption } from "./StageOptions";
 import {
   GRID_LIMIT,
   parseExcelTsv,
@@ -138,6 +141,10 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const canHandoff = canAct(principal, "procurement");
 
   const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">("manual");
+  // Stage option «Новая форма заявки»: off = the form below as it was.
+  const formV2 = useStageOption("requests.form");
+  const purposeText = usePurposeLabel();
+  const [formSeed, setFormSeed] = useState<{ id: number; text: string } | null>(null);
 
   const [mineRows, setMineRows] = useState<RequestRow[]>([]);
   const [mineTotal, setMineTotal] = useState(0);
@@ -377,6 +384,13 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       setExcelError("Не нашёл строк с данными.");
       return;
     }
+    if (formV2) {
+      setFormSeed({ id: Date.now(), text: excelText });
+      setExcelText("");
+      setCreateMode("manual");
+      setNotice(`Из Excel распознано позиций: ${parsed.rows.length}. Колонки: ${parsed.recognized.join(", ")}. Проверьте таблицу и оформите.`);
+      return;
+    }
     const result = applyPaste(positions, 0, "name", excelText, emptyDraft(common));
     if ("error" in result) {
       setExcelError(result.error);
@@ -582,9 +596,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "item_type", title: "Тип", value: (row) => row.item_type, filter: true, hidden: true },
     { key: "design_article", title: "Артикул КД", value: (row) => row.design_article ?? "", hidden: view === "mine" },
     { key: "purpose", title: "Назначение (база)", value: (row) => row.purpose, hidden: true },
-    { key: "project_reference", title: "Цель", value: (row) => row.project_reference || row.purpose, filter: true },
+    { key: "project_reference", title: "Цель", value: (row) => row.project_reference || purposeText(row.purpose), filter: true },
     { key: "quantity", title: "Кол-во", value: (row) => `${row.quantity} ${row.unit}`, numeric: true },
-    { key: "delivery_point", title: "Точка отгрузки", value: (row) => row.delivery_point, filter: true, hidden: true },
+    { key: "delivery_point", title: formV2 ? "Склад" : "Точка отгрузки", value: (row) => row.delivery_point, filter: true, hidden: true },
     { key: "category", title: "Категория", value: (row) => row.category, filter: true, hidden: view === "mine" },
     { key: "quality_document", title: "Док. качества", value: (row) => row.quality_document ?? "", hidden: true },
     { key: "procurement_deadline", title: "Дедлайн", value: (row) => formatDate(row.procurement_deadline), hidden: view === "mine" },
@@ -647,7 +661,24 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               <button type="button" className={createMode === "calc" ? "secondary small active" : "secondary small"} onClick={() => switchMode("calc")}>Из расчёта</button>
             </div>
 
-            {createMode === "manual" && (
+            {createMode === "manual" && formV2 && (
+              <RequestFormV2
+                schema={schema}
+                seed={formSeed}
+                onError={setError}
+                onNotice={setNotice}
+                onCreated={async (ids) => {
+                  setNotice(ids.length === 1 ? `Создана заявка ${ids[0]}` : `Создано заявок: ${ids.length} (${ids.join(", ")})`);
+                  try {
+                    await reload();
+                  } catch (reason) {
+                    setError(reason instanceof Error ? `Заявки созданы, но список не обновился: ${reason.message}` : "Заявки созданы, но список не обновился");
+                  }
+                }}
+              />
+            )}
+
+            {createMode === "manual" && !formV2 && (
               <div className="rg-form">
                 <div className="rg-common">
                   <div className="rg-common-title">Общее для всех позиций <span>— применяется ко всем строкам таблицы</span></div>
@@ -717,7 +748,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                 <p className="page-sub">Вставьте ссылку на Google-таблицу расчёта — позиции листа ЗКП станут заявками.</p>
                 <div className="form-grid">
                   <label className="wide">Ссылка на расчёт<input type="text" placeholder="https://docs.google.com/spreadsheets/d/…" value={calcUrl} onChange={(e) => { calcPreset.current = null; setCalcUrl(e.target.value); }} /></label>
-                  <label>Назначение (на всю пачку) *<select value={calcPurpose} onChange={(e) => setCalcPurpose(e.target.value)}>{schema?.purposes.map((item) => <option key={item}>{item}</option>)}</select></label>
+                  <label>Назначение (на всю пачку) *<select value={calcPurpose} onChange={(e) => setCalcPurpose(e.target.value)}>{schema?.purposes.map((item) => <option key={item} value={item}>{purposeText(item)}</option>)}</select></label>
                   <label>Дедлайн (на всю пачку) *<input type="date" value={calcDeadline} onChange={(e) => setCalcDeadline(e.target.value)} /></label>
                   <label className="wide">Точка отгрузки (на всю пачку) *<select value={calcPoint} onChange={(e) => setCalcPoint(e.target.value)}><option value="">— выбери адрес —</option>{schema?.delivery_points.map((item) => <option key={item}>{item}</option>)}</select></label>
                 </div>

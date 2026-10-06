@@ -39,3 +39,13 @@ def test_unknown_key_is_refused(monkeypatch, tmp_path):
     monkeypatch.setenv(stage_options.ENV, str(tmp_path / "o.json"))
     with pytest.raises(KeyError):
         stage_options.set_enabled("nope", True)
+
+
+def test_new_request_form_option_is_registered_and_off_by_default(monkeypatch, tmp_path):
+    monkeypatch.delenv(stage_options.ENV, raising=False)
+    option = next(item for item in stage_options.OPTIONS if item.key == "requests.form")
+    assert option.block == "Заявки" and option.title == "Новая форма заявки"
+    assert stage_options.states()["requests.form"] is False
+    monkeypatch.setenv(stage_options.ENV, str(tmp_path / "o.json"))
+    stage_options.set_enabled("requests.form", True)
+    assert stage_options.enabled("requests.form") is True

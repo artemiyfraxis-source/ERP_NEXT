@@ -1,6 +1,7 @@
 import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { SuggestInput } from "./SuggestInput";
 import { useStageOption } from "./StageOptions";
+import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief, type ItemRow } from "./purchasingItemsApi";
 import {
   receivingApi,
@@ -61,6 +62,7 @@ function passportParts(mass: string, fields: Partial<Omit<WarehouseLotPassport, 
  *  `readOnly` — «режим просмотра» (ID-6): the stock is read, every entry/move/writeoff/edit control is gone
  *  (SUPPLYMAP portalApplyAccess_ 'view' drops b.edit, portalStock05Guard_ refuses writes). */
 export function WarehousePage({ admin = false, readOnly = false }: { admin?: boolean; readOnly?: boolean } = {}) {
+  const purposeText = usePurposeLabel();
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
@@ -311,7 +313,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
         <table className="grid wide compact stock-table" aria-label="Таблица склада">
           <colgroup>{shownColumns.map((key) => <col key={key} className={`stock-col-${key}`} />)}</colgroup>
           <thead><tr>{shownColumns.map((key) => <th key={key} className={classes(columnClass(key), key === pinned && "stock-pin")}>{columnTitle(key, true)}</th>)}</tr></thead>
-          <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot, key === pinned, lotItems[lot.id]))}</tr>)}</tbody>
+          <tbody>{lots.map((lot) => <tr key={lot.id}>{shownColumns.map((key) => flatCell(key, lot, key === pinned, lotItems[lot.id], purposeText))}</tr>)}</tbody>
         </table>
       </div> : <div className="table-wrap" ref={wrapRef}>
         <table className="grid wide compact stock-table">
@@ -488,7 +490,7 @@ function cutCell(key: ColumnKey, text: string, pinned: boolean, className = "") 
 }
 
 /** One lot of «Таблица склада», cell by cell in the order of the visible columns. */
-function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: ItemBrief) {
+function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: ItemBrief, purposeText: (value: string) => string = (value) => value) {
   switch (key) {
     case "name": return <td key={key} className={classes("stock-name", pinned && "stock-pin")} title={lot.name || undefined}>{lot.name || "—"}{brief && itemMark(lot.name || "", brief.name, `Позиция номенклатуры (связь: ${VIA_LABELS[brief.via]})`)}</td>;
     case "article": return cutCell(key, lot.article || "—", pinned);
@@ -497,7 +499,7 @@ function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: It
     case "available": return <td key={key} className={classes("num", pinned && "stock-pin")}>{lot.available}</td>;
     case "place": return cutCell(key, lot.storage_location || "—", pinned);
     case "warehouse": return cutCell(key, lot.warehouse, pinned);
-    case "purpose": return cutCell(key, lot.purpose || "—", pinned);
+    case "purpose": return cutCell(key, purposeText(lot.purpose) || "—", pinned);
     case "series": return cutCell(key, lot.series || "—", pinned);
     case "type": return cutCell(key, lot.item_type || "—", pinned);
     default: return null;
@@ -585,6 +587,7 @@ function ManualStockForm({ busy, knownLots, columnOrder, typeChoices, onCancel, 
   onCancel: () => void;
   onAdded: (items: WarehouseManualItem[]) => Promise<WarehouseAddResult | null>;
 }) {
+  const purposeText = usePurposeLabel();
   // Rows put aside with «В список» and rows the server did not accept (with the reason).
   const [rows, setRows] = useState<Array<{ item: WarehouseManualItem; error: string }>>([]);
   const [report, setReport] = useState("");
@@ -759,7 +762,7 @@ function ManualStockForm({ busy, knownLots, columnOrder, typeChoices, onCancel, 
           <td className="num">{String(row.item.quantity).trim() ? `${row.item.quantity} ${row.item.unit}` : "—"}</td>
           <td>{row.item.storage_location || "—"}</td>
           <td>{row.item.warehouse}</td>
-          <td>{row.item.purpose || "—"}</td>
+          <td>{purposeText(row.item.purpose) || "—"}</td>
           <td className="manual-stock-passport-cell">{manualPassportLine(row.item) || "—"}</td>
           {anyRefused && <td className="danger-text">{row.error}</td>}
           <td className="manual-stock-row-actions">
@@ -1317,6 +1320,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
   history: boolean;
   readOnly: boolean;
 }) {
+  const purposeText = usePurposeLabel();
   // Every action is a window over the stock, as the buttons on a SUPPLYMAP partition card (− / + / ✎ / История).
   const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "item">("");
   const close = () => setDialog("");
@@ -1333,7 +1337,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
       </div>
       <p className="lot-card-meta">
         <span>ГРН {lot.grn}{lot.package ? ` / ${lot.package}` : ""}</span>
-        {lot.purpose && <span>{lot.purpose}</span>}
+        {lot.purpose && <span>{purposeText(lot.purpose)}</span>}
         {writtenOff && <span>списано {lot.written_off}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}

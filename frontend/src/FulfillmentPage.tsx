@@ -1,3 +1,4 @@
+import { usePurposeLabel } from "./purposeLabels";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ApiError,
@@ -134,6 +135,7 @@ function RequestTiles({ requests, openProject, openRequest }: {
   openProject: (project: string) => void;
   openRequest: (id: string) => void;
 }) {
+  const purposeText = usePurposeLabel();
   const items: TileItem[] = [];
   const byProject = new Map<string, { project: string; requests: FulfillmentRequest[] }>();
   for (const request of requests) {
@@ -156,7 +158,7 @@ function RequestTiles({ requests, openProject, openRequest }: {
       return tile(request.id, `Открыть заявку ${request.number}`, () => openRequest(request.id), <>
         <div className="t-row"><strong className="t-h">{request.number}</strong><span className="t-sub">{createdDay(request.created_at)}</span></div>
         <StageChips counts={new Map([[request.status, 1]])} />
-        <div className="t-in">{request.purpose || "—"}</div>
+        <div className="t-in">{purposeText(request.purpose) || "—"}</div>
         {request.shortfall && <div className="t-warn">недобор: {request.shortfall}</div>}
         <div className="t-sub">{request.requester}{request.deadline ? ` · до ${day(request.deadline)}` : ""}{count ? ` · позиций ${count}` : ""}</div>
       </>);
@@ -184,6 +186,7 @@ function RequestTiles({ requests, openProject, openRequest }: {
 }
 
 export function FulfillmentPage({ principal, mode }: { principal: Principal; mode?: keyof typeof MODES }) {
+  const purposeText = usePurposeLabel();
   const [archive, setArchive] = useState(false);
   const [showReady, setShowReady] = useState(false);
   const [byProject, setByProject] = useState(false);
@@ -275,7 +278,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         ? <button type="button" className="link-button table-link" onClick={(event) => { event.stopPropagation(); setProject(projectOf(request)); }}>{projectOf(request)}</button>
         : "—",
     },
-    { key: "purpose", title: "Назначение", value: (request) => request.purpose, wrap: true },
+    { key: "purpose", title: "Назначение", value: (request) => purposeText(request.purpose), wrap: true },
     { key: "requester", title: "Заявитель", value: (request) => request.requester },
     { key: "status", title: "Статус", value: (request) => request.status, filter: true, render: (request) => <span className="status">{request.status}</span> },
     { key: "deadline", title: "Дедлайн", value: (request) => request.deadline ?? "", render: (request) => day(request.deadline) || "—" },
@@ -463,6 +466,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
   request: FulfillmentRequest;
   busy: boolean;
 }) {
+  const purposeText = usePurposeLabel();
   const [returnLocation, setReturnLocation] = useState(request.return_location ?? "");
   const [sending, setSending] = useState(false);
   const [printError, setPrintError] = useState("");
@@ -506,7 +510,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
 
   return (
     <article className="panel fulfillment-card">
-      <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><span className="status">{request.status}</span></div>
+      <div className="procurement-title"><div><strong>{request.number}</strong><small>{purposeText(request.purpose)} · {request.requester}</small></div><span className="status">{request.status}</span></div>
       {meta.length > 0 && <dl className="fulfillment-meta">{meta.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
       <p className="fulfillment-progress">Набрано {request.lines.length - waiting.length} из {request.lines.length} поз.{waiting.length > 0 && !closed ? ` · ждут ГРН: ${waiting.length}` : ""}</p>
       {request.shortfall && <details className="fulfillment-short"><summary>Недобор по составу</summary><div>{request.shortfall}</div></details>}

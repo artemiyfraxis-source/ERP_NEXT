@@ -4,6 +4,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { openPrintSheet } from "./print";
 import { useStageOption } from "./StageOptions";
+import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief } from "./purchasingItemsApi";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
@@ -415,13 +416,14 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       .catch(() => { if (live) setLineItems({}); });
     return () => { live = false; };
   }, [itemsOn, lines]);
-  const columns = useMemo(() => (itemsOn ? COLUMNS.map((column) => column.key !== "name" ? column : {
+  const purposeText = usePurposeLabel();
+  const columns = useMemo(() => COLUMNS.map((column) => column.key === "purpose" ? { ...column, value: (line: ReceivingLine) => purposeText(line.purpose) } : column).map((column) => !itemsOn || column.key !== "name" ? column : {
     ...column,
     render: (line: ReceivingLine) => {
       const brief = lineItems[line.id];
       return <>{itemTitle(line)}{brief && <small className="muted lot-item-chip" title={`Позиция номенклатуры, связь: ${VIA_LABELS[brief.via]}`}>{brief.name}</small>}</>;
     },
-  }) : COLUMNS), [itemsOn, lineItems]);
+  }), [itemsOn, lineItems, purposeText]);
   const requestSeq = useRef(0);
 
   function queueQuery(after?: string): ReceivingQuery {

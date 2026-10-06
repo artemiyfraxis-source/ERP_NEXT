@@ -2344,6 +2344,15 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .rg-errors { color: var(--tone-danger); font-weight: 600; }
 .rg-errors .rg-link { margin-left: 8px; color: var(--tone-danger); }
 .rg-spacer { flex: 1 1 auto; }
+.suggest-list .suggest-group { padding: 6px 10px 2px; color: var(--muted-foreground); font-size: 11px; font-weight: 700; text-transform: uppercase; cursor: default; }
+.rg-common-v2 .rg-project { grid-column: span 2; }
+.rg-common-v2 small { display: block; margin-top: 2px; color: var(--muted-foreground); font-size: 11px; }
+.rg-common-v2 .rg-field-error { color: var(--tone-danger); }
+.rg-common-v2 select:disabled { color: var(--muted-foreground); background: var(--accent); }
+.rg-common-v2 .rg-bad { border-color: var(--tone-danger); }
+.rg-info { color: var(--primary); cursor: help; }
+.rg-apply { display: flex; align-items: end; }
+.rg-table input.rg-inherit { color: var(--muted-foreground); }
 @media (max-width: 1700px) { .rg-common-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (pointer: coarse) {
   .rg-table input, .rg-table select { height: 40px; }
