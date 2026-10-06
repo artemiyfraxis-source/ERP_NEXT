@@ -274,23 +274,48 @@ def _procurement_reserve(request: Request, lot_id: UUID) -> Decimal:
 
 
 def _reserve_holders(request: Request, lots: list[StockLot]) -> dict[UUID, list[dict]]:
-    """Who holds each lot's РЕЗЕРВ through «Со склада»: «SM-20261002-01 / 591К.3 — 80 шт» (owner 2026-10-04)."""
-    factory = getattr(request.app.state, "procurement_uow_factory", None)
-    if not callable(factory) or not lots:
+    """Who holds each lot's РЕЗЕРВ: procurement «Со склада» covers («SM-20261002-01 / 591К.3 — 80 шт», owner
+    2026-10-04), techcard reserves («728К.2 · КБ1 · техкарта — 10 шт») and kit requests («REQ-… · назначение — 5 шт»).
+    Each module is read through its own unit of work factory, no import of it here; a module that is not wired
+    (or has no such repository) adds nothing."""
+    if not lots:
         return {}
+    ids = [lot.id for lot in lots]
     holders: dict[UUID, list[dict]] = {}
-    with factory() as uow:
-        covers = getattr(uow, "stock_covers", None)
-        if covers is None:
-            return {}
-        for cover in covers.active_on_lots([lot.id for lot in lots]):
-            holders.setdefault(cover.lot_id, []).append({
-                "kind": "procurement",
-                "label": cover.label,
-                "procurement_line_id": str(cover.line_id),
-                "quantity": _number(cover.quantity),
-                "unit": cover.unit,
-            })
+    factory = getattr(request.app.state, "procurement_uow_factory", None)
+    if callable(factory):
+        with factory() as uow:
+            covers = getattr(uow, "stock_covers", None)
+            for cover in covers.active_on_lots(ids) if covers is not None else ():
+                holders.setdefault(cover.lot_id, []).append({
+                    "kind": "procurement",
+                    "label": cover.label,
+                    "procurement_line_id": str(cover.line_id),
+                    "quantity": _number(cover.quantity),
+                    "unit": cover.unit,
+                })
+    factory = getattr(request.app.state, "fulfillment_uow_factory", None)
+    if callable(factory):
+        with factory() as uow:
+            reserves = getattr(uow, "kit_reserves", None)
+            for reserve in reserves.active_on_lots(ids) if reserves is not None else ():
+                holders.setdefault(reserve.lot_id, []).append({
+                    "kind": "techcard",
+                    "label": f"{reserve.label} · техкарта",
+                    "project": reserve.project,
+                    "item_index": reserve.item_index,
+                    "quantity": _number(reserve.quantity),
+                    "unit": reserve.unit,
+                })
+            for request_id, number, purpose, lot_id, unit, reserved in uow.fulfillment.holders_on_lots(ids):
+                holders.setdefault(lot_id, []).append({
+                    "kind": "kit",
+                    "label": f"{number} · {purpose}".rstrip(" ·"),
+                    "request_id": str(request_id),
+                    "request_number": number,
+                    "quantity": _number(reserved),
+                    "unit": unit,
+                })
     return holders
 
 
