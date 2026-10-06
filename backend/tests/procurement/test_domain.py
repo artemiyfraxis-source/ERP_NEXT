@@ -291,17 +291,38 @@ def awaiting_invoice(buyer: Actor):
     )
 
 
-def test_invoice_is_refused_until_fact_money_is_filled():
+def test_invoice_without_prices_goes_to_payment_and_names_only_the_real_blockers():
+    """«Счёт без цен — предупреждение, а не запрет» (owner, 06.10): prices never block the invoice."""
     buyer = Actor(name="Петров", department="Закупки")
     line = awaiting_invoice(buyer)
 
     with pytest.raises(ProcurementValidationError) as error:
         line.record_invoice("https://files.test/invoice.pdf", date(2026, 9, 30), buyer)
+    assert str(error.value) == "Нельзя загрузить счёт — сначала заполните: НАИМЕНОВАНИЕ (Счет)"
 
-    assert str(error.value) == (
-        "Нельзя загрузить счёт — сначала заполните: ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), "
-        "СУММА (факт), НАИМЕНОВАНИЕ (Счет)"
+    named = replace(line, invoice_item_name="Разъём SMA")
+    assert named.invoice_missing(date(2026, 9, 30)) == []
+    invoiced = named.record_invoice("https://files.test/invoice.pdf", date(2026, 9, 30), buyer)
+
+    assert invoiced.status is ProcurementStatus.TO_PAY
+    assert invoiced.price_missing() == ["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)"]
+
+
+def test_payment_of_an_invoice_without_prices_is_refused_with_the_missing_fields():
+    buyer = Actor(name="Петров", department="Закупки")
+    invoiced = replace(awaiting_invoice(buyer), invoice_item_name="Разъём SMA").record_invoice(
+        "https://files.test/invoice.pdf", date(2026, 9, 30), buyer,
     )
+
+    with pytest.raises(ProcurementValidationError) as error:
+        invoiced.mark_paid(buyer, datetime(2026, 9, 22, 12, 0))
+    assert str(error.value) == (
+        "Нельзя провести оплату — сначала заполните: ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), СУММА (факт)"
+    )
+
+    priced = invoiced.set_fact_price(Decimal("1220"), buyer)  # added later, in «В оплату»
+    assert priced.price_missing() == []
+    assert priced.mark_paid(buyer, datetime(2026, 9, 22, 12, 0)).status is ProcurementStatus.IN_TRANSIT
 
 
 def test_fact_money_is_derived_and_recorded_with_invoice_identity():
@@ -698,8 +719,14 @@ def test_invoice_replacement_is_refused_without_an_invoice_owner_money_or_url():
         line.replace_invoice("https://files.test/invoice-v2.pdf", other)
     with pytest.raises(ProcurementValidationError, match="Счёт обязателен"):
         line.replace_invoice("   ", buyer)
-    with pytest.raises(ProcurementValidationError, match="сначала заполните: ВАЛЮТА"):
-        _strip_money(line).replace_invoice("https://files.test/invoice-v2.pdf", buyer)
+    with pytest.raises(ProcurementValidationError, match=r"сначала заполните: НАИМЕНОВАНИЕ \(Счет\)$"):
+        dataclasses.replace(_strip_money(line), invoice_item_name=None).replace_invoice(
+            "https://files.test/invoice-v2.pdf", buyer,
+        )
+    # Prices do not block the replacement either: it is how they come later.
+    replaced = _strip_money(line).replace_invoice("https://files.test/invoice-v2.pdf", buyer)
+    assert replaced.invoice_url == "https://files.test/invoice-v2.pdf"
+    assert replaced.price_missing() == ["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)"]
 
 
 def test_cancelled_line_keeps_its_invoice():
