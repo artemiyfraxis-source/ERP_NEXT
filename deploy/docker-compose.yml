@@ -30,6 +30,9 @@ services:
     environment:
       ERP_DATABASE_URL: postgresql+psycopg://erp:${POSTGRES_PASSWORD}@db:5432/erp
       ERP_COOKIE_SECURE: ${ERP_COOKIE_SECURE:-1}
+      # 0: the API never migrates on start (update.sh does, after a backup and a rehearsal); bootstrap.sh passes 1
+      # only for a first install on an empty database.
+      ERP_AUTO_MIGRATE: ${ERP_AUTO_MIGRATE:-0}
       SUPPLYMAP_SOURCE_REPOSITORY: /opt/supplymap
     volumes:
       - ${ERP_HOME:-/opt/erp}/config/secrets:/run/erp-secrets:ro

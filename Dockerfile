@@ -23,4 +23,6 @@ RUN useradd --system --uid 10001 erp && chown -R erp /app
 USER erp
 EXPOSE 8000
 # main.py serves /app/frontend/dist itself (parents[2] of app/main.py), so one process covers site + API.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+# The entrypoint starts uvicorn only when the database is at this image's migration head (or ERP_AUTO_MIGRATE=1 on a
+# first install); migrations on a live server go through deploy/update.sh (backup → rehearsal → check).
+CMD ["sh", "/app/backend/docker-entrypoint.sh"]

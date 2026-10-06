@@ -17,5 +17,17 @@ if [ ! -f "$seen" ]; then echo "$req" > "$seen"; exit 0; fi
 [ "$(cat "$seen")" = "$req" ] && exit 0
 echo "$req" > "$seen"
 echo "запрос обновления $req"
+# Approval of a destructive migration rides in the request commit message («approve=<rev>»). Read it only from the
+# update-request branch commit itself; a request without it clears any earlier approval.
+approved=""
+tmp=$(mktemp -d)
+if git init -q --bare "$tmp" 2>/dev/null && git -C "$tmp" fetch -q --depth=1 "$REPO" refs/heads/update-request 2>/dev/null; then
+  approved=$(git -C "$tmp" log -1 --format=%B FETCH_HEAD 2>/dev/null | grep -Eo 'approve=[0-9a-z_]+' | head -n1 | cut -d= -f2)
+fi
+rm -rf "$tmp"
+mkdir -p "$ERP_HOME/status"
+printf '%s
+' "$approved" > "$ERP_HOME/status/migration-approved"
+[ -n "$approved" ] && echo "разрешена миграция $approved"
 touch "$ERP_HOME/update-now"
 systemctl start --no-block erp-auto-update.service

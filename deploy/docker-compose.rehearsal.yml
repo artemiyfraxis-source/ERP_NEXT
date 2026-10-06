@@ -1,0 +1,36 @@
+# Throwaway stack for the update rehearsal (deploy/rehearse.sh): a copy of the production database gets the new
+# migrations here first. No secrets, no Google key, no worker (nothing is sent anywhere), no published ports, and the
+# network is internal (no way out). The database lives in an anonymous volume that `down -v` deletes after every run.
+name: erp-rehearsal
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: erp
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: rehearsal   # not a secret: the database is a throwaway copy on an internal network
+      TZ: Europe/Moscow
+    volumes:
+      - /var/lib/postgresql/data
+    networks: [rehearsal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp -d erp"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  api:
+    image: ${ERP_CANDIDATE_IMAGE:-erp-next:candidate}
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      ERP_DATABASE_URL: postgresql+psycopg://erp:rehearsal@db:5432/erp
+      ERP_COOKIE_SECURE: "0"
+      ERP_AUTO_MIGRATE: "0"
+      TZ: Europe/Moscow
+    networks: [rehearsal]
+
+networks:
+  rehearsal:
+    internal: true
