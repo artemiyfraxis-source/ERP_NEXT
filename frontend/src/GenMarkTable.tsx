@@ -13,7 +13,7 @@ export function markTotal(rows: MarkRow[]): string {
 
 /** «Маркировка жгута» генератора: таблица меток (что, надпись, материал, где, сколько на изделие) и быстрое
  *  заполнение — по разъёмам формы и из чертежа жгута позиции. Материал — из состава или БД.МАТ; чужой помечен. */
-export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, comps, mats, productDesignation, onByConnectors, onFromDrawing, drawingBusy, note }: {
+export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, kitMarks, comps, mats, productDesignation, onByConnectors, onFromDrawing, drawingBusy, note }: {
   enabled: boolean;
   onEnabled: (on: boolean) => void;
   /** Серая подсказка под переключателем: счёт меток или бирки из состава. */
@@ -21,6 +21,8 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, c
   rows: MarkRow[];
   onChange: (rows: MarkRow[]) => void;
   targets: string[];
+  /** Маркировочные позиции состава: в выборе вида после Термотрубки и Хлястика, первая — по умолчанию у новых меток. */
+  kitMarks: CompLike[];
   /** Обозначение изделия для «Маркировать изделие»; пусто — кнопки нет. */
   productDesignation?: string;
   comps: CompLike[];
@@ -32,6 +34,8 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, c
 }) {
   const id = useId();
   const set = (index: number, patch: Partial<MarkRow>) => onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const kitNames = kitMarks.map((comp) => comp.art || comp.name || "").filter((name) => name && !(MARK_KINDS as readonly string[]).includes(name));
+  const options = [...MARK_KINDS as readonly string[], ...kitNames];
   const hasProductRow = rows.some((row) => row.place === "item");
   return <div className="gen-marks" aria-label="Маркировка по КД">
     <div className="gen-marks-bar">
@@ -39,7 +43,7 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, c
       {enabled && <span className="gen-marks-actions">
         {onByConnectors && <button type="button" className="secondary small" onClick={onByConnectors}>По разъёмам</button>}
         {onFromDrawing && <button type="button" className="secondary small" disabled={drawingBusy} onClick={onFromDrawing}>{drawingBusy ? "Читаю чертёж…" : "Из чертежа жгута"}</button>}
-        <button type="button" className="secondary small" onClick={() => onChange([...rows, newMarkRow({ material: MARK_KIND_DEFAULT })])}>+ Метка</button>
+        <button type="button" className="secondary small" onClick={() => onChange([...rows, newMarkRow({ material: kitNames[0] || MARK_KIND_DEFAULT })])}>+ Метка</button>
         {productDesignation !== undefined && <button type="button" className="secondary small" disabled={hasProductRow} title={hasProductRow ? "Метка изделия уже в таблице" : undefined}
           onClick={() => onChange([...rows, productMarkRow(productDesignation)])}>Маркировать изделие</button>}
       </span>}
@@ -59,8 +63,8 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, c
           <td><input aria-label={`Надпись ${n}`} value={row.text} placeholder="как в КД" onChange={(event) => set(index, { text: event.target.value })} /></td>
           <td><select aria-label={`Материал ${n}`} className={missing ? "is-warn" : undefined} value={row.material} title={missing ? "Нет в справочнике БД.МАТ и в составе" : undefined}
             onChange={(event) => set(index, { material: event.target.value })}>
-            {MARK_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-            {!(MARK_KINDS as readonly string[]).includes(row.material) && <option value={row.material}>{row.material || "— не задан —"}</option>}
+            {options.map((name) => <option key={name} value={name}>{name}</option>)}
+            {!options.includes(row.material) && <option value={row.material}>{row.material || "— не задан —"}</option>}
           </select>
             {missing && <small className="tone-warn">нет в справочнике</small>}</td>
           <td><span className="gen-marks-place">

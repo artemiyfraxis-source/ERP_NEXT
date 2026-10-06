@@ -198,10 +198,10 @@ it("«Маркировка по КД»: fills marks by connectors and from the h
   expect(screen.getByText(/Метки не заданы — в маркировку пойдут бирки из состава/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "По разъёмам" }));
   expect(screen.getByLabelText("Надпись 1")).toHaveValue("А1");
-  expect(screen.getByLabelText("Материал 1")).toHaveValue("Термотрубка");
+  expect(screen.getByLabelText("Материал 1")).toHaveValue("Маркировка");
   fireEvent.click(screen.getByRole("button", { name: "Из чертежа жгута" }));
   expect(await screen.findByDisplayValue("708К.4КБ1")).toBeInTheDocument();
-  expect(screen.getByLabelText("Материал 4")).toHaveValue("Термотрубка");
+  expect(screen.getByLabelText("Материал 4")).toHaveValue("Маркировка");
   expect(screen.getAllByRole("option", { name: "Хлястик" }).length).toBeGreaterThan(0);
   fireEvent.change(screen.getByLabelText("Материал 4"), { target: { value: "Хлястик" } });
   expect(screen.getByText("4 метки · 5 шт. на изделие")).toBeInTheDocument();
@@ -212,7 +212,7 @@ it("«Маркировка по КД»: fills marks by connectors and from the h
   const op = onBuild.mock.calls[0][0].ops.find((item: { type: string }) => item.type === "insMark");
   expect(op.templateId).toBe("mark");
   expect(op.marks.map((mark: { text: string; art: string; place: string; qty: number }) => [mark.text, mark.art, mark.place, mark.qty])).toEqual([
-    ["А1", "Термотрубка", "у разъёма", 1], ["В1", "Термотрубка", "у разъёма", 1], ["X1", "Термотрубка", "у разъёма", 1],
+    ["А1", "Маркировка", "у разъёма", 1], ["В1", "Маркировка", "у разъёма", 1], ["X1", "Маркировка", "у разъёма", 1],
     ["708К.4КБ1", "Хлястик", "на обоих концах", 2],
   ]);
 });

@@ -373,7 +373,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   // «Маркировка по КД»: материал по умолчанию — бирка из состава (её строка набора и спишется).
   const [markDrawing, setMarkDrawing] = useState<{ busy: boolean; note: string }>({ busy: false, note: "" });
-  const kitMarkArt = () => MARK_KIND_DEFAULT;
+  const kitMarkArt = () => { const first = gen.markComps_()[0]; return (first && (first.art || first.name)) || MARK_KIND_DEFAULT; };
   const marksByConnectors = () => {
     const rows = markRowsByConnectors(gen.markConnectors_(), kitMarkArt());
     setMarkDrawing({ busy: false, note: rows.length ? "" : "В форме нет разъёмов — выберите разъёмы сторон А и В." });
@@ -956,7 +956,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>
       <MarkTable enabled={S.mark} onEnabled={(on) => update({ mark: on })}
         hint={kdMarks.length ? `${kdMarks.length} ${plural(kdMarks.length, "метка", "метки", "меток")} · ${markTotal(S.markRows)} шт. на изделие` : `бирки из состава: ${marks.map((m) => `${m.art || m.name} × ${m.qty}`).join("; ") || "бирок нет"}`}
-        rows={S.markRows} onChange={(markRows) => update({ markRows })} comps={D.components} productDesignation={card.item_index} mats={D.markMats || []}
+        rows={S.markRows} onChange={(markRows) => update({ markRows })} kitMarks={marks} comps={D.components} productDesignation={card.item_index} mats={D.markMats || []}
         targets={markTargets(gen.markConnectors_(), active.map((w) => compLabel(w.compId)))}
         onByConnectors={marksByConnectors} onFromDrawing={() => void marksFromDrawing()} drawingBusy={markDrawing.busy} note={markDrawing.note} />
     </section>
