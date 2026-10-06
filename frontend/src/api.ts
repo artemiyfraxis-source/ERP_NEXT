@@ -2567,6 +2567,19 @@ export const shippingApi = {
   projectPack: (project: string, lines: Array<{ good_id: string; quantity: string }>) => api<{ shipment: Shipment }>("/api/shipping/project-pack", {
     method: "POST", body: JSON.stringify({ project, lines }),
   }),
+  /** «Отгрузить» / «Упаковать, отгрузить позже» карточки проекта: карточка, отправка, УПД и отгрузка — одна транзакция.
+   * Тот же ключ с тем же телом возвращает уже сделанное, с другим — 409. */
+  projectShip: (payload: {
+    project: string;
+    addressee_version: number;
+    lines: Array<{ good_id: string; version: number; quantity: string }>;
+    addressee?: Record<string, string | null>;
+    documents?: { upd_number: string; upd_date: string | null; deadline: string | null };
+    upd_file?: { file_name: string; content_type: string; content_base64: string };
+    ship: boolean;
+  }, idempotencyKey: string) => api<{ shipment: Shipment; shipped: boolean; closed: boolean; why: string; replayed: boolean }>("/api/shipping/project-ship", {
+    method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload),
+  }),
 };
 
 export const referencesApi = {

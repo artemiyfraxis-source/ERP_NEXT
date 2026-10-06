@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, ProjectAddressee, Shipment, ShipmentBox,
     ShipmentLine, ShipmentStatus, StoredFile, UpdType,
@@ -219,6 +219,12 @@ class SqlAlchemyShipmentRepository:
             ShipmentRow.id.in_(ids), ShipmentRow.status.not_in((ShipmentStatus.CLOSED.value, ShipmentStatus.CANCELLED.value)),
         ).order_by(ShipmentRow.created_at, ShipmentRow.id))
         return [shipment for shipment in map(self._domain, rows) if shipment.lines and shipment.lines[0].project == project]
+    def created_details(self, shipment_id: UUID) -> dict | None:
+        """Подробности события «shipping.created» отправки: в них ключ повтора и отпечаток тела «Отгрузить»."""
+        details = self.session.scalar(select(AuditEventRow.details).where(
+            AuditEventRow.aggregate_id == shipment_id, AuditEventRow.event_type == "shipping.created",
+        ).order_by(AuditEventRow.occurred_at).limit(1))
+        return dict(details) if isinstance(details, dict) else None
     def reserve_number(self, day: date) -> str:
         stamp = day.strftime("%Y%m%d"); key = f"shipment-{stamp}"
         row = self.session.scalar(select(ShippingSequenceRow).where(ShippingSequenceRow.name == key).with_for_update())
