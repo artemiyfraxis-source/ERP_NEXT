@@ -366,9 +366,81 @@ describe("ProjectsPage", () => {
     const lotsCall = vi.mocked(fetch).mock.calls.find(([url]) => decodeURIComponent(String(url)).startsWith("/api/techcards/kitsets/lots"));
     expect(decodeURIComponent(String(lotsCall?.[0]))).toContain("&project=708К.4");  // its own «Со склада» reserve counts as free
     fireEvent.click(screen.getByRole("button", { name: "Выбрать" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "FRX.26.0000001" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "FRX.26.0000001 · резерв при комплектации" })).toBeTruthy());
     const lotCall = vi.mocked(fetch).mock.calls.filter(([url]) => decodeURIComponent(String(url)).endsWith("/lines")).at(-1);
     expect(JSON.parse(String(lotCall?.[1]?.body)).edits[0].lot).toEqual({ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "" });
+  });
+
+  describe("ГРН в спецификации: резерв при выборе", () => {
+    const lot = { lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "" };
+    const withLot = (reserve: unknown) => ({
+      ...card,
+      assemblies: [{ ...card.assemblies[0], components: [card.assemblies[0].components[0], { ...card.assemblies[0].components[1], lot, reserve }] }],
+    });
+    function serve(cardBody: unknown, extra?: (url: string, method: string) => Response | undefined) {
+      const base = vi.mocked(fetch).getMockImplementation()!;
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const url = decodeURIComponent(String(input));
+        const method = init?.method || "GET";
+        if (url === "/api/techcards/kitsets/708К.4" && method === "GET") return json(cardBody);
+        return extra?.(url, method) ?? base(input, init);
+      });
+    }
+    async function openSpec() {
+      render(<ProjectsPage principal={editor} />);
+      fireEvent.click(await screen.findByText("708К.4"));
+      fireEvent.click(await screen.findByRole("tab", { name: "Спецификация" }));
+    }
+
+    it("shows the reserved part against the batch need and the new wording", async () => {
+      serve(withLot({ quantity: "6", unit: "шт", lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "" }));
+      await openSpec();
+      expect(await screen.findByRole("button", { name: "FRX.26.0000001 · резерв 6 из 21" })).toBeTruthy();
+      expect(screen.getByText(/резервируется сразу при выборе/)).toBeTruthy();
+      expect(screen.queryByText(/при отправке на комплектацию;/)).toBeNull();
+    });
+
+    it("says «резерв при комплектации» when a ГРН is picked but nothing is held", async () => {
+      serve(withLot(null));
+      await openSpec();
+      expect(await screen.findByRole("button", { name: "FRX.26.0000001 · резерв при комплектации" })).toBeTruthy();
+    });
+
+    it("sends the lot version from the list with the pick", async () => {
+      serve(card, (url) => url.startsWith("/api/techcards/kitsets/lots")
+        ? json({ lots: [{ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", article: "43025-0400", name: "Корпус Молекс", unit: "шт", storage_location: "1F4", available: "15", version: 7 }] })
+        : undefined);
+      await openSpec();
+      fireEvent.click(screen.getAllByRole("button", { name: "выбрать со склада" })[1]);
+      fireEvent.click(await screen.findByRole("button", { name: "Выбрать" }));
+      await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/lines"))).toBe(true));
+      const saved = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/lines")).at(-1);
+      expect(JSON.parse(String(saved?.[1]?.body)).edits[0].lot).toEqual({ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", version: 7 });
+    });
+
+    it("on 409 explains the stale lot, keeps the picker open, reloads the lots and drops the pick", async () => {
+      serve(card, (url, method) => url.endsWith("/lines") && method === "PUT" ? json({ detail: "conflict" }, 409) : undefined);
+      await openSpec();
+      fireEvent.click(screen.getAllByRole("button", { name: "выбрать со склада" })[1]);
+      fireEvent.click(await screen.findByRole("button", { name: "Выбрать" }));
+      expect(await screen.findByText("Партия изменилась — обновите список ГРН")).toBeTruthy();
+      await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => decodeURIComponent(String(url)).startsWith("/api/techcards/kitsets/lots")).length).toBeGreaterThan(1));
+      expect(screen.getByRole("dialog", { name: "Выбор ГРН" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
+      expect(screen.getAllByRole("button", { name: "выбрать со склада" })).toHaveLength(2);
+    });
+
+    it("shows a non-empty reserve_error of the issue as a warning", async () => {
+      serve(card, (url) => url.endsWith("/issue")
+        ? json({ created: [], skipped: [], message: "Заявок создано: 0.", reserve_error: "FRX.26.0000001: партия занята" })
+        : undefined);
+      await openSpec();
+      fireEvent.click(screen.getByRole("button", { name: "Отправить на комплектацию" }));
+      fireEvent.change(screen.getByLabelText("Дедлайн"), { target: { value: "2026-10-20" } });
+      fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+      const warning = await screen.findByText(/FRX\.26\.0000001: партия занята/);
+      expect(warning.closest(".warning-banner")).toBeTruthy();
+    });
   });
 
   it("shows a piece line's batch in whole pieces while typing", async () => {

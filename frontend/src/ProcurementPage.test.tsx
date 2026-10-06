@@ -396,7 +396,7 @@ it("replaces the invoice of a paid line without touching its payment", async () 
     if (path === "/api/procurement/mine?limit=500") return json({ lines: [shipped], next_cursor: null });
     if (path.endsWith("/invoice/replace") && init?.method === "POST") {
       calls.push([path, JSON.parse(String(init.body))]);
-      return json({ line: { ...shipped, invoice_url: "https://files.test/invoice-v2.pdf", version: 4 } });
+      return json({ line: { ...shipped, invoice_url: "https://files.test/invoice-v2.pdf", version: 4 }, warnings: ["REQ-1 — нет цены: ВАЛЮТА"] });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -414,6 +414,7 @@ it("replaces the invoice of a paid line without touching its payment", async () 
     `/api/procurement/${shipped.id}/invoice/replace`,
     { version: 3, invoice_url: "https://files.test/invoice-v2.pdf", invoice_number: "18", invoice_date: null },
   ]);
+  expect((await screen.findByText("REQ-1 — нет цены: ВАЛЮТА")).closest(".warning-banner")).toBeInTheDocument();
 });
 
 it("splits an own line into supplier copies with its optimistic version", async () => {
@@ -468,7 +469,7 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
     }
     if (path === "/api/procurement/kp" && init?.method === "POST") {
       saved = JSON.parse(String(init.body));
-      return json({ lines: [awaiting, other], invoice_error: "" });
+      return json({ lines: [awaiting, other], invoice_error: "", warnings: ["REQ-2 — нет цены: ВАЛЮТА, КУРС"] });
     }
     throw new Error(`Unexpected ${path}`);
   });
@@ -494,6 +495,8 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
   expect(rows[0]).toMatchObject({ line_id: awaiting.id, version: 3, actual_quantity: "3", price: "100", vat_rate: "20", driver: "net", expected_arrival: "2026-10-01" });
   expect(rows[1]).toMatchObject({ line_id: other.id, version: 5, actual_quantity: "2", expected_arrival: "2026-10-01" });
   expect(await screen.findByText("Заказ PO-001: КП сохранено по 2 строкам, счёт передан в оплату")).toBeInTheDocument();
+  const warning = await screen.findByText("REQ-2 — нет цены: ВАЛЮТА, КУРС");
+  expect(warning.closest(".warning-banner")).toBeInTheDocument();
 });
 
 it("«Жду счёт»: the order menu opens «Внести КП» for that order only and prints the request document", async () => {
