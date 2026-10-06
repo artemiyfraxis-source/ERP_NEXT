@@ -168,6 +168,25 @@ def test_handoff_requires_explicit_in_work_transition():
         build_procurement_requested_snapshot(request, today=date(2026, 9, 15))
 
 
+def test_queue_for_procurement_hands_a_new_request_over_with_nobody_as_buyer():
+    request = create_request_batch(
+        [draft()],
+        actor=Actor(name="Иванов", department="РНД"),
+        now=datetime(2026, 9, 15),
+        existing_legacy_ids=[],
+        existing_designations=[],
+    )[0]
+
+    queued = request.queue_for_procurement()
+
+    assert (queued.status, queued.version, queued.procurement_actor) == (RequestStatus.IN_WORK, 2, None)
+    snapshot = build_procurement_requested_snapshot(queued, today=date(2026, 9, 15))
+    assert snapshot.buyer is None
+    assert snapshot.idempotency_key == f"request:{request.id}:procurement:v2"
+    with pytest.raises(ValidationError, match="новая заявка"):
+        queued.queue_for_procurement()
+
+
 def test_legacy_sequence_and_designation_helpers():
     assert next_legacy_id(["noise", "SM-20260915-09"], date(2026, 9, 15)) == "SM-20260915-10"
     assert next_designation("48К.13", ["48К.13.009"]) == "48К.13.010"

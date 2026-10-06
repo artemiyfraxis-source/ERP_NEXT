@@ -18,7 +18,7 @@ from app.modules.requests.domain import (
     unit_for_type,
 )
 from app.main import app
-from app.modules.requests.infrastructure import RequestRow
+from app.modules.requests.infrastructure import OutboxMessageRow, RequestRow
 from tests.factories import Actor
 from tests.requests.test_application import FakeUnitOfWork
 from tests.requests.test_write_api import request_payload, write_api  # noqa: F401 — fixture
@@ -234,6 +234,10 @@ def test_import_endpoint_creates_batch_and_is_idempotent(write_api):  # noqa: F8
     with sessions() as session:
         rows = session.execute(select(RequestRow.name, RequestRow.design_article, RequestRow.category)).all()
     assert sorted(rows) == [("DB-9M", "DB-9M", "ИП"), ("МГТФ 0,35", "МГТФ 0,35", "Общепром"), ("Разъём", None, "Общепром")]
+    # The manual import is not handed off by itself (owner, 06.10): «Новый», «В закупку» stays a button.
+    assert {row["status"] for row in created} == {"Новый"}
+    with sessions() as session:
+        assert session.scalars(select(OutboxMessageRow)).all() == []
 
 
 def test_import_endpoint_warns_about_an_unknown_project_but_creates_the_batch(write_api):  # noqa: F811

@@ -450,7 +450,7 @@ def create_kitset_requests(
     created = create_requests(CreateRequestsCommand(
         creation_key=f"kitset-requests:{normalize_project_number(command.project)}",
         drafts=tuple(drafts), actor=command.actor, now=command.now,
-        designation_base=command.project.strip(), source="import",
+        designation_base=command.project.strip(), source="import", to_procurement=True,
     ), requests_uow())
     return KitsetRequestsResult(created=len(created), skipped=tuple(skipped))
 
@@ -859,7 +859,7 @@ def order_missing(
     ).encode()).hexdigest()[:32]
     created = create_requests(CreateRequestsCommand(
         creation_key=f"kitset-missing:{canon}:{digest}", drafts=tuple(drafts), actor=command.actor,
-        now=command.now, designation_base=kitset.project.strip(), source="kitset-missing",
+        now=command.now, designation_base=kitset.project.strip(), source="kitset-missing", to_procurement=True,
     ), requests_uow())
     result.created = [{
         "art": request.design_article or "", "name": request.name, "quantity": kit_number_payload(request.quantity),
