@@ -213,6 +213,16 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-meta dd { margin: 0; font-weight: 500; }
 .fulfillment-progress { margin: 8px 0 0; font-size: 13px; color: var(--muted-foreground); }
 .fulfillment-create, .fulfillment-project { padding: 18px 20px; margin-bottom: 16px; }
+.fulfillment-head-actions { display: flex; gap: 8px; align-items: center; }
+.issue-chooser { margin: 12px 0 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 12px 0; }
+.issue-chooser h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+.issue-chooser th.check, .issue-chooser td.check { width: 36px; text-align: center; }
+.issue-chooser td.check input { width: 16px; height: 16px; margin: 0; }
+.issue-chooser tr.muted-row td { color: var(--muted-foreground); }
+.issue-writeoff { margin-top: 10px; font-size: 13px; }
+.issue-writeoff summary { cursor: pointer; font-weight: 500; }
+.issue-writeoff .table-wrap { margin-top: 8px; }
+@media (pointer: coarse) { .issue-chooser td.check input { width: 22px; height: 22px; } }
 .lot-picker { display: grid; gap: 8px; }
 .lot-picker .status { margin-left: 6px; }
 .danger-link { color: #a33830; }
