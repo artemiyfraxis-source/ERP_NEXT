@@ -61,6 +61,28 @@ export interface RequestSchema {
   projects?: string[];
   /** ТИП combobox options (REQUEST_FORM_FIELDS «ТИП»). */
   item_types?: string[];
+  /** Stage option projects.internal: open internal projects «ВП-001» (empty while the option is off). */
+  internal_projects?: InternalProjectBrief[];
+}
+
+export interface InternalProjectBrief {
+  number: string;
+  name: string;
+  purpose: string;
+}
+
+/** Stage option projects.internal: a project of the company itself; requests refer to it by `number`. */
+export interface InternalProject extends InternalProjectBrief {
+  id: string;
+  responsible_id: string | null;
+  responsible: string | null;
+  note: string | null;
+  closed: boolean;
+  closed_at: string | null;
+  version: number;
+  /** Procurement lines of the project by stage. */
+  lines: Record<string, number>;
+  open_requests: number;
 }
 
 export interface RequestRow {
@@ -284,6 +306,8 @@ export interface ReceivingLine {
   name: string;
   item_type: string;
   purpose: string;
+  /** The project the line was bought for (ЦЕЛЬ): «591К.3» or an internal «ВП-001». */
+  goal?: string;
   supplier: string;
   ordered_quantity: string;
   unit: string;
@@ -1625,6 +1649,14 @@ export const accessApi = {
       method: "PUT",
       body: JSON.stringify({ access }),
     }),
+};
+
+export const internalProjectsApi = {
+  list: () => api<{ projects: InternalProject[] }>("/api/purchasing/internal-projects"),
+  create: (body: { name: string; purpose: string; responsible_id?: string | null; note?: string | null }) =>
+    api<InternalProject>("/api/purchasing/internal-projects", { method: "POST", body: JSON.stringify(body) }),
+  close: (id: string) => api<InternalProject>(`/api/purchasing/internal-projects/${id}/close`, { method: "POST" }),
+  reopen: (id: string) => api<InternalProject>(`/api/purchasing/internal-projects/${id}/reopen`, { method: "POST" }),
 };
 
 export const requestsApi = {

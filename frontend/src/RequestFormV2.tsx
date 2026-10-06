@@ -4,13 +4,14 @@ import { ComboBox, type ComboOption } from "./ComboBox";
 import { purposeLabel } from "./purposeLabels";
 import type { ItemRow } from "./purchasingItemsApi";
 import { RequestGridV2 } from "./RequestGridV2";
+import { openSection } from "./navigation";
 import { useStageOption } from "./StageOptions";
 import {
   GRID_LIMIT, applyPaste, isBlankRow, positionsWord, type Draft, type GridKey,
 } from "./requestGridLogic";
 import {
-  CATEGORY_HINT, DEFAULT_CATEGORY, applyHeaderToAll, chooseProject, customerKey, emptyHeader, emptyLine,
-  hasErrors, internalKey, payloadV2, pointLabel, projectKind, setHeaderCategory, validateForm, type Header,
+  CATEGORY_HINT, CREATE_INTERNAL_KEY, DEFAULT_CATEGORY, applyHeaderToAll, chooseProject, customerKey, emptyHeader, emptyLine,
+  hasErrors, internalKey, internalProjectKey, payloadV2, pointLabel, projectKind, setHeaderCategory, validateForm, type Header,
 } from "./requestFormV2Logic";
 
 type Props = {
@@ -38,10 +39,24 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
   const categories = schema?.categories ?? [];
   const units = schema?.units ?? [];
 
+  const internalOn = useStageOption("projects.internal");
+  const internal = schema?.internal_projects ?? [];
+
   const projectOptions: ComboOption[] = useMemo(() => [
-    ...(schema?.projects ?? []).map((number) => ({ value: customerKey(number), label: number, group: "Проекты заказчиков" })),
-    ...purposes.map((purpose) => ({ value: internalKey(purpose), label: purposeLabel(purpose), group: "Внутренние проекты" })),
-  ], [schema, purposes]);
+    // The registry also lists the open «ВП-…» numbers: they belong to the group below, not to the customers'.
+    ...(schema?.projects ?? []).filter((number) => !(internalOn && /^ВП-\d+$/.test(number)))
+      .map((number) => ({ value: customerKey(number), label: number, group: "Проекты заказчиков" })),
+    ...(internalOn
+      ? (internal.length
+        ? internal.map((item) => ({ value: internalProjectKey(item.number), label: `${item.number} · ${item.name}`, group: "Внутренние проекты" }))
+        : [{ value: CREATE_INTERNAL_KEY, label: "Создать внутренний проект…", group: "Внутренние проекты" }])
+      : purposes.map((purpose) => ({ value: internalKey(purpose), label: purposeLabel(purpose), group: "Внутренние проекты" }))),
+  ], [schema, purposes, internal, internalOn]);
+
+  function pickProject(key: string) {
+    if (key === CREATE_INTERNAL_KEY) { openSection("projects", { tab: "internal" }); return; }
+    setHeader((current) => chooseProject(current, key, purposes, internal));
+  }
 
   const errors = useMemo(() => validateForm(lines, header, categories, units), [lines, header, categories, units]);
   const sendRows = lines.filter((line) => !isBlankRow(line));
@@ -124,7 +139,7 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
               options={projectOptions}
               value={header.project}
               placeholder="Номер проекта заказчика или внутренний проект"
-              onChange={(key) => setHeader((current) => chooseProject(current, key, purposes))}
+              onChange={pickProject}
               onClear={() => setHeader((current) => chooseProject(current, "", purposes))}
             />
             {showErrors && errors.project && <small className="rg-field-error" role="alert">{errors.project}</small>}

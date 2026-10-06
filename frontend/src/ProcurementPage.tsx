@@ -20,6 +20,7 @@ import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet"
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
 import { ProcurementKpi } from "./ProcurementKpi";
 import { ProcurementToday } from "./ProcurementToday";
+import { projectLabel, useInternalProjects } from "./internalProjects";
 import { useStageOption } from "./StageOptions";
 import { PurchasingItems } from "./PurchasingItems";
 import { PurchasingRfq } from "./PurchasingRfq";
@@ -108,7 +109,7 @@ function mergeLines(current: ProcurementLine[], fresh: ProcurementLine[]) {
 const availableColumns: DataColumn<ProcurementLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>рев. {line.revision}</small></> },
   { key: "name", title: "Позиция", value: (line) => line.calculated_name, render: (line) => <>{line.calculated_name}<small>{line.designation}</small></> },
-  { key: "project", title: "Проект", value: (line) => line.project_reference, render: (line) => <>{line.project_reference || "—"}<small>{line.delivery_point}</small></> },
+  { key: "project", title: "Проект", value: (line) => projectLabel(line.project_reference), render: (line) => <>{projectLabel(line.project_reference) || "—"}<small>{line.delivery_point}</small></> },
   { key: "planned", title: "Срок", value: (line) => line.planned_date, render: (line) => <>{formatDate(line.planned_date)}<small>{line.priority}</small></> },
   { key: "priority", title: "Приоритет", value: (line) => line.priority, filter: true, hidden: true },
   { key: "qty", title: "Кол-во", value: (line) => `${line.calculated_quantity} ${line.calculated_unit}` },
@@ -120,7 +121,7 @@ const availableColumns: DataColumn<ProcurementLine>[] = [
 ];
 
 const inWorkColumns: DataColumn<ProcurementLine>[] = [
-  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>{line.project_reference || line.designation}</small></> },
+  { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>{projectLabel(line.project_reference) || line.designation}</small></> },
   { key: "name", title: "Позиция", value: (line) => line.calculated_name, render: (line) => <>{line.calculated_name}<small>{line.actual_quantity ?? line.calculated_quantity} {line.actual_unit ?? line.calculated_unit}</small></> },
   { key: "buyer", title: "Закупщик", value: (line) => line.buyer },
   { key: "status", title: "Статус", value: (line) => line.status, filter: true },
@@ -133,6 +134,7 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
 export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly?: boolean; buyerName?: string } = {}) {
   // Stage options: «Сегодня» (first, and the default only when on; the buyer's own list, so not in view mode)
   // and «Показатели».
+  useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the project columns
   const todayOn = useStageOption("procurement.today") && !readOnly;
   const kpiOn = useStageOption("procurement.kpi");
   const [picked, setTab] = useState<ProcurementTab | null>(null);

@@ -175,3 +175,13 @@ export function isSection(value: string | null): value is Section {
 export function isBlock(value: string | null): value is BlockId {
   return BLOCKS.some(({ id }) => id === value);
 }
+
+/** Go to another section the way the menu does: `?section=…` in the address bar plus a popstate for the shell. */
+export function openSection(section: string, extra: Record<string, string> = {}) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("section", section);
+  url.searchParams.delete("block");
+  for (const [key, value] of Object.entries(extra)) url.searchParams.set(key, value);
+  window.history.pushState({}, "", url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}

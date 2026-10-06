@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { DataTable, matchesWords } from "./DataTable";
 import { failureText, procurementApi, type ProcurementLine } from "./api";
 import type { LineEditing } from "./ProcurementCellEdit";
+import { useInternalProjects } from "./internalProjects";
 import { buildSheetColumns } from "./ProcurementSheetColumns";
 
 /* Лист закупки целиком и обзор «По поставщикам» — то, что в SUPPLYMAP давали вид purchase
@@ -19,6 +20,7 @@ function message(reason: unknown, fallback: string) {
 
 /** `buyerName` — имя вошедшего: правка комментария и даты открыта только в строках, где он закупщик. */
 export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } = {}) {
+  useInternalProjects(); // option projects.internal: the «Проект» column shows «ВП-001 · Название»
   const [lines, setLines] = useState<ProcurementLine[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [buyers, setBuyers] = useState<string[]>([]);

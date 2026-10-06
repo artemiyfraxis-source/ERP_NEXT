@@ -1,6 +1,7 @@
 /* Stage option `requests.form`: logic of the reworked «Оформить заявку» form. No React here.
    Idea: nothing is pre-filled. The header («Общее для всех позиций») is the default, a line value is the override;
    an empty line value means «as in the header». The server fills what is omitted (apply_draft_defaults). */
+import type { InternalProjectBrief } from "./api";
 import {
   isBlankRow, validateRow, type Common, type Draft, type RowErrors,
 } from "./requestGridLogic";
@@ -21,7 +22,8 @@ export function pointLabel(address: string): string {
   return code ? `${code} — ${address}` : address;
 }
 
-/** Header = the common fields plus the chosen project: «c:<номер>» (customer) or «i:<назначение>» (internal). */
+/** Header = the common fields plus the chosen project: «c:<номер>» (customer), «i:<назначение>» (internal by purpose,
+ *  option projects.internal off) or «p:<ВП-номер>» (an internal project, option on). */
 export type Header = Common & { project: string };
 
 export function emptyHeader(): Header {
@@ -41,12 +43,20 @@ export function emptyLine(): Draft {
 
 export const customerKey = (number: string) => `c:${number}`;
 export const internalKey = (purpose: string) => `i:${purpose}`;
+export const internalProjectKey = (number: string) => `p:${number}`;
+/** The «Создать внутренний проект…» item of the project list (no internal project exists yet). */
+export const CREATE_INTERNAL_KEY = "new:";
 export const projectKind = (header: Header): "customer" | "internal" | "" =>
-  header.project.startsWith("c:") ? "customer" : header.project.startsWith("i:") ? "internal" : "";
+  header.project.startsWith("c:") ? "customer" : header.project.startsWith("i:") || header.project.startsWith("p:") ? "internal" : "";
 
 /** A customer project sets the number and leaves Назначение editable (default «Обеспечение производства»);
- *  an internal project clears the number and sets Назначение (the form locks it). */
-export function chooseProject(header: Header, key: string, purposes: string[]): Header {
+ *  an internal purpose clears the number and sets Назначение; an internal project «ВП-001» sets its number and its own
+ *  purpose (the form locks it). */
+export function chooseProject(header: Header, key: string, purposes: string[], internal: InternalProjectBrief[] = []): Header {
+  if (key.startsWith("p:")) {
+    const project = internal.find((item) => item.number === key.slice(2));
+    return { ...header, project: key, project_reference: key.slice(2), purpose: project?.purpose ?? "" };
+  }
   if (key.startsWith("i:")) return { ...header, project: key, project_reference: "", purpose: key.slice(2) };
   if (key.startsWith("c:")) {
     const wasInternal = projectKind(header) === "internal";

@@ -1,6 +1,7 @@
 import type { DataColumn } from "./DataTable";
 import type { ProcurementLine } from "./api";
 import { formatDay } from "./format";
+import { projectLabel } from "./internalProjects";
 import { ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 
 /* Колонки «Весь лист» — все колонки листа закупки в порядке блоков SUPPLYMAP (Config.gs SHEET_ORDER.PURCHASE):
@@ -80,7 +81,7 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     text("buyer", "Закупщик", (line) => line.buyer, { filter: true, hidden: true }),
     // классификация
     text("designation", "Назначение", (line) => line.designation, { hidden: true }),
-    text("project", "Проект", (line) => line.project_reference, { hidden: true }),
+    text("project", "Проект", (line) => projectLabel(line.project_reference), { hidden: true }),
     text("task_type", "Тип задачи", (line) => line.task_type, { filter: true, hidden: true }),
     text("priority", "Приоритет", (line) => line.priority, { filter: true, hidden: true }),
     // что закупаем

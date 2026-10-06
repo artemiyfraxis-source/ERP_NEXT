@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, failureText } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
+import { projectLabel, useInternalProjects } from "./internalProjects";
 
 /** Option `procurement.today`: the buyer's board. Fields in priority order hold project cards (one project may sit
  *  in several fields); a card opens the project's open positions with their stage and field. */
@@ -46,6 +47,7 @@ function daysText(section: string, days: number | null) {
 }
 
 export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }) {
+  useInternalProjects(); // option projects.internal: cards and the drill title say «ВП-001 · Название»
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState("");
   const [open, setOpen] = useState<{ project: string; field: string } | null>(null);
@@ -103,7 +105,7 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
                     aria-pressed={active}
                     onClick={() => { setOpen(active ? null : { project: card.project, field: section.title }); setOnlyField(true); }}
                   >
-                    <span className="today-card-head"><strong>{card.project}</strong><span>{card.count} поз.</span></span>
+                    <span className="today-card-head"><strong>{projectLabel(card.project)}</strong><span>{card.count} поз.</span></span>
                     {daysText(section.key, card.days) && <span className={`today-days${section.key === "overdue" ? " late" : ""}`}>{daysText(section.key, card.days)}</span>}
                     {card.suppliers.length > 0 && <small>{card.suppliers.slice(0, 3).join(", ")}{card.suppliers.length > 3 ? ` +${card.suppliers.length - 3}` : ""}</small>}
                   </button>
@@ -115,9 +117,9 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
         </div>
       )}
       {open && (
-        <section className="panel table-panel today-drill" aria-label={`Проект ${open.project}`}>
+        <section className="panel table-panel today-drill" aria-label={`Проект ${projectLabel(open.project)}`}>
           <div className="panel-heading">
-            <h2>{open.project}</h2>
+            <h2>{projectLabel(open.project)}</h2>
             <span>{open.field}</span>
             <span className="today-drill-actions">
               <button type="button" className={`secondary small${onlyField ? " active" : ""}`} aria-pressed={onlyField} onClick={() => setOnlyField(true)}>В этом поле</button>
@@ -128,7 +130,7 @@ export function ProcurementToday({ onOpenQueues }: { onOpenQueues?: () => void }
           </div>
           {drillError && <div className="error-banner" role="alert">{drillError}</div>}
           {!drillError && drill === null && <div className="empty">Загружаю…</div>}
-          {drill !== null && <DataTable label={`Позиции проекта ${open.project}`} rows={shown} columns={lineColumns} rowKey={(row) => row.id} compactBelow={1000} />}
+          {drill !== null && <DataTable label={`Позиции проекта ${projectLabel(open.project)}`} rows={shown} columns={lineColumns} rowKey={(row) => row.id} compactBelow={1000} />}
         </section>
       )}
     </section>

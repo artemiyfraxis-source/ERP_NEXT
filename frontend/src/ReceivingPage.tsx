@@ -4,6 +4,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { openPrintSheet } from "./print";
 import { useStageOption } from "./StageOptions";
+import { projectLabel, useInternalProjects } from "./internalProjects";
 import { usePurposeLabel } from "./purposeLabels";
 import { VIA_LABELS, purchasingItemsApi, type ItemBrief } from "./purchasingItemsApi";
 import { SupplierReturnPanel } from "./SupplierReturnPanel";
@@ -21,6 +22,7 @@ const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "order", title: "№ заказа", value: (line) => line.order_number ?? "" },
   { key: "expected", title: "Ожид. дата", value: (line) => line.expected_arrival ?? "" },
   { key: "purpose", title: "Назначение", value: (line) => line.purpose, filter: true, wrap: true, width: 140, hidden: true },
+  { key: "goal", title: "Проект", value: (line) => projectLabel(line.goal), filter: true, wrap: true, width: 140, hidden: true },
   { key: "ordered", title: "Заказано", value: (line) => line.ordered_quantity, numeric: true, render: (line) => `${line.ordered_quantity} ${line.unit}` },
   { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <span className="status">{line.status}</span> },
   { key: "document", title: "УПД", value: (line) => [line.document_number, formatDate(line.document_date)].filter(Boolean).join(" от ") || (line.shipping_document_note ? "ждём по ЭДО" : ""), wrap: true, width: 100 },
@@ -417,6 +419,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
     return () => { live = false; };
   }, [itemsOn, lines]);
   const purposeText = usePurposeLabel();
+  useInternalProjects(); // option projects.internal: the «Проект» column shows «ВП-001 · Название»
   const columns = useMemo(() => COLUMNS.map((column) => column.key === "purpose" ? { ...column, value: (line: ReceivingLine) => purposeText(line.purpose) } : column).map((column) => !itemsOn || column.key !== "name" ? column : {
     ...column,
     render: (line: ReceivingLine) => {
