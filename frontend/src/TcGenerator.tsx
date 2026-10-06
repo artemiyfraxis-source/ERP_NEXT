@@ -59,11 +59,13 @@ import {
   manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
+import { MarkTable } from "./GenMarkTable";
+import { markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
-type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia"> & { library: LibraryCard[] };
+type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats"> & { library: LibraryCard[] };
 
-const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, library: [] };
+const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], library: [] };
 const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
   ["tape", "Лента — последней операцией"], ["braid", "Оплётка — до термоусадки"], ["under", "Лента под оплётку — перед ней"],
@@ -112,13 +114,14 @@ function loadRefs(force = false): Promise<Refs> {
 async function readRefs(): Promise<Refs> {
   const safe = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
   const noRecords = { metadata: null, columns: [], records: [] };
-  const [templates, op, ter, coax, kabAwg, kabCoax] = await Promise.all([
+  const [templates, op, ter, coax, kabAwg, kabCoax, mat] = await Promise.all([
     safe(techcardsApi.templates(), { metadata: null, items: [] }),
     safe(referencesApi.techOperations("op", "", 5000), noRecords),
     safe(referencesApi.techOperations("ter", "", 5000), noRecords),
     safe(referencesApi.techOperations("coax", "", 5000), noRecords),
     safe(referencesApi.techOperations("kab_awg", "", 5000), noRecords),
     safe(referencesApi.techOperations("kab_coax", "", 5000), noRecords),
+    safe(referencesApi.techOperations("mat", "", 5000), noRecords),
   ]);
   return {
     templates: (templates?.items || []).map((item): Tmpl => ({ id: item.id, title: item.title, category: item.category })),
@@ -131,6 +134,7 @@ async function readRefs(): Promise<Refs> {
     coaxRecords: (coax?.records || []).map((record) => coaxFromFields(record.fields)),
     wireDia: wireDiaFromRecords((kabAwg?.records || []).map((record) => record.fields)),
     coaxCableDia: coaxDiaFromRecords((kabCoax?.records || []).map((record) => record.fields)),
+    markMats: markMatsFromRecords((mat?.records || []).map((record) => record.fields)),
   };
 }
 
@@ -232,7 +236,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     if (!refs || !kit) return;
     const restored = manualFromConfig(card.document?.build_config);
     setManual(restored ?? emptyManual());
-    setS(restored ? switchGenTab(initState(D), "manual") : initState(D));
+    // Метки по КД собранной карты возвращаются в форму: следующая сборка их не теряет.
+    const markRows = markRowsFromConfig(card.document?.build_config);
+    const seeded = markRows.length ? { ...initState(D), mark: true, markRows } : initState(D);
+    setS(restored ? switchGenTab(seeded, "manual") : seeded);
     setStatus({ text: "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, card.id, kit]);
@@ -362,6 +369,27 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // к БД.ОП. Правка самих времён — setTime, она карточку не перерисовывает.
   const update = (patch: Partial<GenState> | ((current: GenState) => GenState)) =>
     setS((current) => ({ ...(typeof patch === "function" ? patch(current) : { ...current, ...patch }), times: {} }));
+
+  // «Маркировка по КД»: материал по умолчанию — бирка из состава (её строка набора и спишется).
+  const [markDrawing, setMarkDrawing] = useState<{ busy: boolean; note: string }>({ busy: false, note: "" });
+  const kitMarkArt = () => { const first = gen.markComps_()[0]; return first ? first.art || first.name || "" : ""; };
+  const marksByConnectors = () => {
+    const rows = markRowsByConnectors(gen.markConnectors_(), kitMarkArt());
+    setMarkDrawing({ busy: false, note: rows.length ? "" : "В форме нет разъёмов — выберите разъёмы сторон А и В." });
+    if (rows.length) update((current) => ({ ...current, markRows: mergeMarkRows(current.markRows, rows) }));
+  };
+  async function marksFromDrawing() {
+    setMarkDrawing({ busy: true, note: "" });
+    try {
+      const found = await kitsetsApi.harness(card.project, card.item_index);
+      const rows = found?.design ? markRowsFromHarness(found.design, kitMarkArt()) : [];
+      const note = !found?.design ? "У позиции нет чертежа жгута." : rows.length ? "" : "В чертеже жгута нет обозначений разъёмов и маркировки проводов.";
+      setMarkDrawing({ busy: false, note });
+      if (rows.length) update((current) => ({ ...current, markRows: mergeMarkRows(current.markRows, rows) }));
+    } catch (reason) {
+      setMarkDrawing({ busy: false, note: reason instanceof Error ? reason.message : "Чертёж жгута не прочитан" });
+    }
+  }
   const complex = S.tab === "complex";
   const { terms: bomTerms, conns: bomConns } = gen.bomLists();
   const wireOptions = gen.wireComps_();
@@ -706,6 +734,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const capTubes = gen.capTubes();
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.getCompById(row.compId) }));
   const marks = gen.markComps_();
+  const kdMarks = S.markRows.filter((row) => row.text.trim() || row.target.trim());
   const typical = S.tab !== "coax" && !manualTab;
   const epsA = gen.endpointsOnSide_("A"), epsB = gen.endpointsOnSide_("B");
   const sidesFull = !epsA.length || !epsB.length;
@@ -834,8 +863,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <Field label="Длина на изделие"><UnitInput unit="мм" value={slot.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, wrap: { ...current.wrap, slots: current.wrap.slots.map((s, j) => (j === i ? { ...s, len: event.target.value } : s)) } }))} /></Field>
       </div>)}
     </Toggle>,
-    <Toggle key="mark" checked={S.mark} title="Маркировка жгута" hint="бирки из состава" onChange={(on) => update({ mark: on })}>
-      <span className="opt-note">{marks.map((m) => `${m.art || m.name} × ${m.qty}`).join("; ") || "в составе нет бирок"}</span>
+    <Toggle key="mark" checked={S.mark} title="Маркировка жгута" hint={kdMarks.length ? "метки по КД — таблица ниже" : "бирки из состава или метки по КД"} onChange={(on) => update({ mark: on })}>
+      <span className="opt-note">{kdMarks.length
+        ? `${kdMarks.length} ${plural(kdMarks.length, "метка", "метки", "меток")}: ${kdMarks.slice(0, 6).map((row) => row.text || row.target).join(", ")}${kdMarks.length > 6 ? " …" : ""}`
+        : `из состава: ${marks.map((m) => `${m.art || m.name} × ${m.qty}`).join("; ") || "бирок нет"}`}</span>
     </Toggle>,
   ].filter(Boolean);
   const machine = [
@@ -923,6 +954,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {([["Концы", ends], ["Жгут", harness], ["Автомат при резке", machine]] as const).filter(([, items]) => items.length > 0).map(([title, items]) =>
           <div className="proc-group" key={title}><h4>{title}</h4>{items}</div>)}
       </div>
+      {S.mark && <MarkTable rows={S.markRows} onChange={(markRows) => update({ markRows })} kitMarks={marks} comps={D.components} mats={D.markMats || []}
+        targets={markTargets(gen.markConnectors_(), active.map((w) => compLabel(w.compId)))}
+        onByConnectors={marksByConnectors} onFromDrawing={() => void marksFromDrawing()} drawingBusy={markDrawing.busy} note={markDrawing.note} />}
     </section>
   </>;
 

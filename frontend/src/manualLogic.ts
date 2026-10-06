@@ -220,7 +220,7 @@ export function genParams(gen: Record<string, unknown>): string {
   if (str(gen.wrapArt)) parts.push(`обмотка ${str(gen.wrapArt)}${str(gen.wrapLen) ? ` ${str(gen.wrapLen)} мм` : ""}`);
   if (str(gen.sealArt)) parts.push(`герметик ${str(gen.sealArt)}`);
   const marks = list(gen.marks);
-  if (marks.length) parts.push(`маркировка: ${marks.map((mark) => str(mark.art || mark.name)).filter(Boolean).join(", ")}`);
+  if (marks.length) parts.push(`маркировка: ${marks.map((mark) => str(mark.text || mark.art || mark.name)).filter(Boolean).join(", ")}`);
   if (gen.tin) parts.push("с лужением");
   if (Number(gen.units) > 1) parts.push(`${str(gen.units)} шт.`);
   return parts.join(" · ");
