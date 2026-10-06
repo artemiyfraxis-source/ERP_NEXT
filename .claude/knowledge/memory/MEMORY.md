@@ -1,7 +1,9 @@
 - [ERP_NEXT hub](erp-next-hub.md) — START HERE: map of every note below (Obsidian graph root)
-- [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, batch access asks
+- [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, one server update per batch of parallel PRs, batch access asks
 - [Owner request queue](owner-request-queue.md) — owner piles requests mid-turn: numbered visible queue, dispatch each via orchestrator at once
 - [Owner goals 05.10](owner-goals-1005.md) — goal 1: minimal chain закупка→приёмка→выдача; goal 2: debug production; receiving answers
+- [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; hold migration PRs until the pipeline exists
+- [Vasily code permission](vasily-code-permission.md) — TECHMAP-GRAPHER code may be ported/copied with attribution (author OK via owner, 06.10)
 - [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
 - [Launch plan](launch-plan.md) — server 01.10, five blocks by 05.10, second wave 05–09.10, cutover
 - [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, LAN + Tailscale, push.ps1
