@@ -15,14 +15,14 @@ it still does directly.
 - Call `erp-planner` with the owner's request in their words. Read its plan critically: merge tasks
   that share a file, keep at most one migration per batch.
 - Tell the owner the plan in 3–6 lines (Russian), then go on without waiting. Ask only when a choice
-  changes what the owner gets and neither SUPPLYMAP nor the rules settle it.
+  changes what the owner gets and neither the ERP's code nor the rules settle it.
 
 ## 2. Dispatch
 - One `erp-worker` per task of the batch, all in one message so they run in parallel. Pass the
   planner's model (`opus` for stock, money, generator, status machines, migrations, real-data import).
 - The brief is self-contained: goal, zone, files to read, done-when, decisions already taken. The
   worker cannot see this conversation.
-- Reading-heavy side questions go to `supplymap-scout` / `Explore`, not into this context.
+- Reading-heavy side questions go to `Explore`, not into this context.
 
 ## 3. Integrate, one branch at a time
 1. `git merge --no-ff <worker branch>`. A conflict in a file both sides changed: resolve it here; if

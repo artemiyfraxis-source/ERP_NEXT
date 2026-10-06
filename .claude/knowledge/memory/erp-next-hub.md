@@ -10,9 +10,9 @@ Owner: Артемий. Project knowledge lives in this folder (mounted into the 
 `projects/ERP_NEXT`, see brain note memory-topology), so every note here is one node of the graph.
 
 - How the owner wants agents to work → [[owner-working-rules]]; screens → [[erp-screens-rules]] (skill `erp-screens`)
-- Launch dates and waves → [[launch-plan]]; production server → [[erp-server]]
+- Production server → [[erp-server]]
 - Staff, roles, sites (ЦАР / ЖУК), PIN login → [[staff-and-sites]]
-- Parity with SUPPLYMAP and deliberate differences → [[supplymap-parity]]; owner decisions stored in SUPPLYMAP memory → [[supplymap-domain-decisions]]
+- Parity with SUPPLYMAP and deliberate differences → [[supplymap-parity]]
 - Modules: [[module-projects]] · [[module-techcards]] · [[module-reference-db]] · [[module-warehouse]] · [[module-fulfillment]] · [[module-production]] · [[module-shipping]] · [[module-procurement]]
 - Google (read-only, being left) → [[google-wiring]]
 - Deferred by the owner → [[deferred-by-owner]]

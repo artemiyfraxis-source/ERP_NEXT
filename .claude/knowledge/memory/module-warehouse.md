@@ -9,5 +9,4 @@ metadata:
 - Never write to the live SUPPLYMAP warehouse (ЦАР / ЖУК / СПИСАНИЕ); imports read only.
 - Import: load now, re-run tops up the difference from Google (new lots, balances/places for lots without ERP movements; conflicts to a report, `--dry-run`). Owner 2026-09-29 20:19.
 - FIFO by ПТ number (deliberate difference) → [[supplymap-parity]].
-- Owner decisions on balances/reserve on the SUPPLYMAP side → [[supplymap-domain-decisions]].
-- Consumed by [[module-fulfillment]], fed by [[module-procurement]] (receiving). Go-live → [[launch-plan]]. Decisions: [[runlog-decisions]]. Hub: [[erp-next-hub]].
+- Consumed by [[module-fulfillment]], fed by [[module-procurement]] (receiving). Decisions: [[runlog-decisions]]. Hub: [[erp-next-hub]].

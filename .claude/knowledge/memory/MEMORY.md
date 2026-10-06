@@ -5,12 +5,9 @@
 - [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; hold migration PRs until the pipeline exists
 - [Vasily code permission](vasily-code-permission.md) — TECHMAP-GRAPHER code may be ported/copied with attribution (author OK via owner, 06.10)
 - [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
-- [Launch plan](launch-plan.md) — server 01.10, five blocks by 05.10, second wave 05–09.10, cutover
 - [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, LAN + Tailscale, push.ps1
 - [Staff and sites](staff-and-sites.md) — ЦАР/ЖУК fitters, masters, full-access roles, PIN
-- [SUPPLYMAP left](supplymap-left.md) — owner 05.10: don't consult SUPPLYMAP for fixes/new rules anymore
-- [SUPPLYMAP parity](supplymap-parity.md) — «всё как в SUPPLYMAP», deliberate differences, out of scope
-- [SUPPLYMAP domain decisions](supplymap-domain-decisions.md) — owner decisions that bind the port live in SUPPLYMAP memory; which note to read per area
+- [SUPPLYMAP legacy diffs](supplymap-parity.md) — SUPPLYMAP retired 05.10; deliberate ERP differences, box numbers, out of scope
 - Modules: [projects](module-projects.md) · [techcards](module-techcards.md) · [reference DB](module-reference-db.md) · [warehouse](module-warehouse.md) · [fulfillment](module-fulfillment.md) · [production](module-production.md) · [shipping](module-shipping.md) · [procurement](module-procurement.md)
 - [Google wiring](google-wiring.md) — read-only, being left; service account, KD folder, key location
 - [Deferred by owner](deferred-by-owner.md) — traceability, boxes/defects section
@@ -23,4 +20,3 @@
 - [Techcards per project](techcards-bulk.md) — projects wiped 30.09 (migration 0078); owner creates them, one project from Google only on request
 - [Parallel sessions and worktrees](parallel-sessions-worktrees.md) — never remove a worktree or commit on a branch another session owns
 - [Resume at limit reset](resume-at-limit-reset.md) — on «session limit» schedule a cron at the reset time and resume workers
-- [Two developers](team-two-devs.md) — Витя (h4styq) since 05.10: own rules, shared .claude/team/RULES.md, only owner touches main

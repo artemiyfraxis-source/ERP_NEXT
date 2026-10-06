@@ -11,8 +11,7 @@ Google's visuals (owner, 2026-09-30: «не тяни дизайн из гугл�
 Visuals follow the ERP's own style (section 5) and should read better than the sheet. Every screen is judged by a fitter, a master, a technologist or a buyer who must read it at a glance
 on a 27" monitor (2560 px), a 16" laptop (~1536×864 CSS px — owner, 04.10: «на 16 дюймах склад не читаемый») or a
 12.7" tablet (~1400 px, touch). Every screen change is checked at all three; key columns fit 1536 px without sideways scroll. Generic design advice
-(`design-critique`) applies on top; where it conflicts, this file wins. `frontend-design` is for
-marketing pages — do not use it here.
+(`design-critique`) applies on top; where it conflicts, this file wins.
 
 ## 1. Words on the screen
 
