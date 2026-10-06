@@ -165,6 +165,12 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
             text(tool.norm), text(tool.unit),
           ])],
         } },
+        ...(rows(object(operation.fields).marks).length ? [{ table: {
+          columns: ["№", "Что маркируем", "Надпись", "Материал", "Где", "На изделие", "На партию"],
+          rows: numbered(rows(object(operation.fields).marks), (mark) => [
+            text(mark.target), text(mark.text), text(mark.material), text(mark.place), text(mark.qty), text(mark.batch),
+          ]),
+        } }] as PrintBlock[] : []),
         { table: {
           columns: ["Тип", "№", "Описание операции, материалов и оснастки", "Допуск"],
           rows: rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text), text(step.tolerance)]),

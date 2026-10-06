@@ -1066,6 +1066,37 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gopt-body { display: grid; gap: 8px; margin-left: 15px; padding: 4px 0 4px 24px; border-left: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); }
 .tcgen .proc-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 6px 24px; align-items: start; }
 .tcgen .proc-group { display: grid; min-width: 0; }
+/* «Маркировка по КД»: таблица меток во всю ширину «Обработки», поля прямо в ячейках. */
+.tcgen .gen-marks { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.tcgen .gen-marks-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.tcgen .gen-marks-head h4 { margin: 0; }
+.tcgen .gen-marks-head .muted { font-size: 12px; }
+.tcgen .gen-marks-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.tcgen .gen-marks .gtable-wrap { max-height: none; overflow-x: auto; }
+.tcgen .gen-marks .gtable { table-layout: fixed; min-width: 600px; }
+.tcgen .gen-marks .gtable td { padding: 3px 4px; vertical-align: top; }
+.tcgen .gen-marks .gtable td:first-child { padding: 9px 6px 0 10px; color: var(--muted-foreground); }
+.tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select { width: 100%; height: 28px; }
+.tcgen .gen-marks .gtable input.num { text-align: right; }
+.tcgen .gen-marks .gtable td small { padding: 1px 2px 0; }
+.tcgen .gen-marks col.c-n { width: 34px; }
+.tcgen .gen-marks col.c-target { width: 26%; }
+.tcgen .gen-marks col.c-text { width: 16%; }
+.tcgen .gen-marks col.c-mat { width: 25%; }
+.tcgen .gen-marks col.c-place { width: 21%; }
+.tcgen .gen-marks col.c-qty { width: 76px; }
+.tcgen .gen-marks col.c-x { width: 32px; }
+.tcgen .gen-marks-place { display: grid; gap: 4px; }
+/* Расстояние / своё место — рядом с выбором на широком, под ним на 16". */
+.tcgen .gen-marks { container-type: inline-size; }
+@container (min-width: 900px) { .tcgen .gen-marks-place.two { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); } }
+.tcgen .gen-marks .btn-x { width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); font-size: 16px; cursor: pointer; }
+.tcgen .gen-marks .btn-x:hover { color: var(--tone-danger); }
+@media (pointer: coarse) {
+  .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select, .tcgen .gen-marks .btn-x { height: 40px; }
+  .tcgen .gen-marks .btn-x { width: 40px; }
+  .tcgen .gen-marks col.c-x { width: 44px; }
+}
 
 /* Чип-флажок: провод, конец, параметр разъёма. */
 .tcgen .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1792,6 +1823,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }
 /* 6 Результат: таблица «что отдаём дальше — сколько» + плитка расчётного времени отдельной цифрой. */
 .etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(220px, 280px); gap: 10px; align-items: start; }
+/* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */
+.etk-marks { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: 1px solid var(--border); font-size: 13px; }
+.etk-marks caption { padding: 0 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
+.etk-marks th { padding: 6px 10px; text-align: left; font-size: 11px; font-weight: 700; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; background: var(--accent); white-space: nowrap; }
+.etk-marks td { padding: 6px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+.etk-marks .num { width: 1%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.etk-marks td.num:not(:first-child) { font-weight: 600; }
 .etk-result-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
 .etk-result-table th { padding: 6px 12px; text-align: left; font-size: 11px; font-weight: 700; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; background: var(--accent); }
 .etk-result-table td { padding: 7px 12px; border-top: 1px solid var(--border); vertical-align: top; }

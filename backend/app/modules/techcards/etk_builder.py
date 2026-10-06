@@ -201,6 +201,38 @@ def _group_cut_components(wires: Sequence[Mapping[str, Any]], quantity: Decimal)
     return [{"art": row["art"], "name": row["name"], "norm": _format(row["meters"]), "unit": "М."} for row in grouped.values()]
 
 
+def _mark_items(op: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [item for item in op.get("marks") or [] if isinstance(item, Mapping)]
+
+
+def _kd_marks(marks: Sequence[Mapping[str, Any]]) -> bool:
+    """Метки по КД (генератор, «Маркировка по КД»): у строки есть надпись или что маркируем. Старая конфигурация —
+    бирки из состава (art/name/qty) — собирается как раньше."""
+    return any(str(item.get("text") or "").strip() or str(item.get("target") or "").strip() for item in marks)
+
+
+def _mark_materials(marks: Sequence[Mapping[str, Any]], quantity: Decimal) -> list[dict[str, str]]:
+    """Комплектующие маркировки: материал меток, сложенный по артикулу, на партию; метка без материала — без строки."""
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in marks:
+        art = str(item.get("art") or item.get("name") or "").strip()
+        if not art:
+            continue
+        row = grouped.setdefault(art, {"art": art, "name": str(item.get("name") or ""), "count": Decimal(0)})
+        row["count"] += _number(item.get("qty"), Decimal(1))
+    return [{"art": row["art"], "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."} for row in grouped.values()]
+
+
+def _mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Метки по КД для ЭТК: что маркируем, надпись, материал, где, сколько на изделие и на партию."""
+    quantity = _part_quantity(config)
+    return [{
+        "target": str(item.get("target") or "").strip(), "text": str(item.get("text") or "").strip(),
+        "material": str(item.get("name") or item.get("art") or "").strip(), "place": str(item.get("place") or "").strip(),
+        "qty": _format(_number(item.get("qty"), Decimal(1))), "batch": _format(_number(item.get("qty"), Decimal(1)) * quantity),
+    } for item in _mark_items(op) if str(item.get("text") or "").strip() or str(item.get("target") or "").strip()]
+
+
 def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> list[dict[str, str]]:
     if code in NO_COMPONENTS:
         return []
@@ -224,6 +256,9 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
         meters = _decimal(op.get("wrapLen")) * quantity / 1000
         return [{"art": str(op.get("wrapArt") or ""), "name": str(op.get("wrapName") or op.get("wrapArt") or ""), "norm": _format(meters), "unit": "М."}]
     if operation_type == "insMark":
+        marks = _mark_items(op)
+        if _kd_marks(marks):
+            return _mark_materials(marks, quantity)
         return [{"art": str(item.get("art") or item.get("name") or ""), "name": str(item.get("name") or ""), "norm": _format(_number(item.get("qty"), Decimal(1)) * quantity), "unit": "Шт."} for item in op.get("marks") or []]
     endpoint = _endpoint(op)
     kind = _kind(op)
@@ -505,6 +540,8 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         side = side if isinstance(side, Mapping) else {}
         fields["coax"] = {"cable": coax.get("cableArt") or "", "connector": side.get("article") or "", **{
             key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
+    if operation_type == "insMark" and _kd_marks(_mark_items(op)):
+        fields["marks"] = _mark_rows(op, config)
     wires = _wires(op, config)
     if _kind(op) or operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         pin_values = op.get("pins") if isinstance(op.get("pins"), list) else []
