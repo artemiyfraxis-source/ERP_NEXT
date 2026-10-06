@@ -28,7 +28,12 @@ function LessonEditor({ draft, onSaved }: { draft: AssemblyDraft; onSaved: (draf
   const [text, setText] = useState(draft.lesson);
   const [state, setState] = useState<{ text: string; error: boolean }>({ text: "", error: false });
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setText(draft.lesson); }, [draft.id, draft.lesson]);
+  // Сброс поля при смене черновика — прямо в рендере: эффект при монтировании мог сработать после ввода и стереть его.
+  const [shown, setShown] = useState({ id: draft.id, lesson: draft.lesson });
+  if (shown.id !== draft.id || shown.lesson !== draft.lesson) {
+    setShown({ id: draft.id, lesson: draft.lesson });
+    setText(draft.lesson);
+  }
   async function save() {
     setBusy(true);
     try {
