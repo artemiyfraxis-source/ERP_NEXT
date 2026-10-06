@@ -208,6 +208,10 @@ class KpEntry:
 
 MONEY_EDITABLE = frozenset({ProcurementStatus.AWAITING_INVOICE, ProcurementStatus.TO_PAY})
 
+# The money fields of the pay gate (owner, 06.10: «счёт без цен — предупреждение, а не запрет»): the invoice takes the
+# line «В оплату» without them, with a warning; «Оплачено» still needs every one of them.
+PRICE_FIELDS = ("ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)")
+
 
 _PAID_STATUSES = frozenset({ProcurementStatus.IN_TRANSIT, ProcurementStatus.QUARANTINE, ProcurementStatus.DONE})
 
@@ -320,6 +324,14 @@ class ProcurementLine:
             invoice_item_name=self.invoice_item_name,
             expected_arrival=expected_arrival or self.expected_arrival,
         )
+
+    def invoice_missing(self, expected_arrival: date | None = None) -> list[str]:
+        """What still blocks the invoice: the pay gate without the money fields (`PRICE_FIELDS`)."""
+        return [name for name in self.pay_missing(expected_arrival) if name not in PRICE_FIELDS]
+
+    def price_missing(self) -> list[str]:
+        """The money fields still empty: the invoice warns about them, «Оплачено» refuses."""
+        return [name for name in self.pay_missing() if name in PRICE_FIELDS]
 
     def take_in_work(self, actor: Actor) -> ProcurementLine:
         """«Новый» → the buyer's desk. КОЛ-ВО / ЕД.ИЗМ (факт) start from what is to buy (owner, 05.10) when empty,
@@ -546,7 +558,8 @@ class ProcurementLine:
             raise ProcurementValidationError("Ожидаемая дата поступления не может быть раньше заказа")
         if self.status is not ProcurementStatus.AWAITING_INVOICE:
             raise ProcurementValidationError("Счёт принимается только на этапе «Жду счет»")
-        missing = self.pay_missing(expected_arrival)
+        # Prices are not required here: the line goes «В оплату» with a warning, «Оплачено» waits for them.
+        missing = self.invoice_missing(expected_arrival)
         if missing:
             raise ProcurementValidationError("Нельзя загрузить счёт — сначала заполните: " + ", ".join(missing))
         return replace(
@@ -591,7 +604,7 @@ class ProcurementLine:
         if self.status is ProcurementStatus.CANCELLED:
             raise ProcurementValidationError("Счёт отменённой строки не заменяется")
         # ОЖИД. ДАТА is not part of the invoice: a backorder line clears it until the resend is confirmed.
-        missing = [name for name in self.pay_missing() if name != "ОЖИД. ДАТА"]
+        missing = [name for name in self.invoice_missing() if name != "ОЖИД. ДАТА"]
         if missing:
             raise ProcurementValidationError("Нельзя загрузить счёт — сначала заполните: " + ", ".join(missing))
         updated = replace(

@@ -1883,7 +1883,7 @@ def _invoice_steps(
     arrival = expected_arrival or current.expected_arrival
     if arrival is None and current.status is ProcurementStatus.AWAITING_INVOICE:
         raise ProcurementValidationError(
-            "Нельзя загрузить счёт — сначала заполните: " + ", ".join(current.pay_missing())
+            "Нельзя загрузить счёт — сначала заполните: " + ", ".join(named.invoice_missing())
         )
     updated = named.record_invoice(
         invoice_url, arrival or current.created_at.date(), actor,
@@ -2988,8 +2988,9 @@ def apply_order_document(command: ApplyOrderDocumentCommand, uow: UnitOfWork) ->
     КП: «Цена факт» (with the document's НДС rate and net price) on the rows sent, which stay where they are; the КП
     file is named in each row's audit event (the line has no КП field). Invoice: the same prices, then the order-wide
     invoice (`invoice_supplier_order` rules) — the rows sent must be exactly the order's «Жду счет» rows (they go
-    «В оплату») or exactly its «В оплату» rows (the invoice is replaced). A row refused by its stage, the pay gate or a
-    foreign-currency document refuses the whole call; a stale row is `ConcurrentProcurementUpdate`."""
+    «В оплату») or exactly its «В оплату» rows (the invoice is replaced). A row refused by its stage, the invoice gate
+    (prices are not part of it — a row without one goes on with a warning) or a foreign-currency document refuses the
+    whole call; a stale row is `ConcurrentProcurementUpdate`."""
     kind = _document_kind(command.kind)
     reference = _order_reference(command.order_number)
     refs = [OrderLineRef(row.line_id, row.expected_version) for row in command.rows]

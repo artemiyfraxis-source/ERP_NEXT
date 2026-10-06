@@ -2,7 +2,7 @@
 
 import base64
 import binascii
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -847,6 +847,23 @@ def _transition(operation) -> dict:
     return {"line": _line_result(_command_errors(operation))}
 
 
+def _price_warnings(lines: Sequence[ProcurementLine]) -> list[str]:
+    """«Счёт без цен — предупреждение, а не запрет» (owner, 06.10): the rows that went «В оплату» or got their invoice
+    replaced without a price; «Оплачено» waits for it."""
+    warnings = []
+    for line in lines:
+        missing = line.price_missing() if line.status is ProcurementStatus.TO_PAY else []
+        if missing:
+            warnings.append(f"{line.legacy_id} — нет цены: {', '.join(missing)}")
+    return warnings
+
+
+def _invoiced(operation) -> dict:
+    """`_transition` for a single-line invoice: the row and its price warning."""
+    line = _command_errors(operation)
+    return {"line": _line_result(line), "warnings": _price_warnings([line])}
+
+
 def _command_errors(operation):
     """Run a write command (retried once on a lost race) and map its errors to HTTP."""
     try:
@@ -940,7 +957,11 @@ def kp_save(
 
     _transition(operation)
     result = outcome["result"]
-    return {"lines": [_line_result(line) for line in result.lines], "invoice_error": result.invoice_error}
+    return {
+        "lines": [_line_result(line) for line in result.lines],
+        "invoice_error": result.invoice_error,
+        "warnings": _price_warnings(result.lines),
+    }
 
 
 @router.patch("/{line_id}/money")
@@ -1079,7 +1100,8 @@ def invoice_order(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
     """One invoice for the order: all its «Жду счет» rows go «В оплату», or all its «В оплату» rows get it
-    replaced; all or none (409 when the rows sent are not that set or a row is stale, 422 on the pay gate)."""
+    replaced; all or none (409 when the rows sent are not that set or a row is stale, 422 on the invoice gate). Rows
+    without a price still go «В оплату»; `warnings` names them."""
     lines = _command_errors(
         lambda: invoice_supplier_order(
             InvoiceSupplierOrderCommand(
@@ -1095,7 +1117,7 @@ def invoice_order(
             uow_factory(),
         )
     )
-    return {"lines": [_line_result(line) for line in lines]}
+    return {"lines": [_line_result(line) for line in lines], "warnings": _price_warnings(lines)}
 
 
 @router.post("/orders/{order_number}/paid")
@@ -1301,7 +1323,7 @@ def invoice(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    return _transition(
+    return _invoiced(
         lambda: record_invoice(
             RecordInvoiceCommand(
                 line_id=line_id,
@@ -1493,7 +1515,8 @@ def apply_document(
 ) -> dict:
     """Prices from the document in one transaction, all rows or none; an invoice also goes on every order row
     («Жду счет» → «В оплату», or the invoice of «В оплату» rows is replaced). 409 — the order moved on or a row is
-    stale; 422 — a row refused (stage, pay gate) or a foreign-currency document."""
+    stale; 422 — a row refused (stage, invoice gate) or a foreign-currency document. A row without a price is not
+    refused: `warnings` names it («нет цены: …»)."""
     lines = _command_errors(
         lambda: apply_order_document(
             ApplyOrderDocumentCommand(
@@ -1516,7 +1539,7 @@ def apply_document(
             uow_factory(),
         )
     )
-    return {"kind": payload.kind, "lines": [_line_result(line) for line in lines]}
+    return {"kind": payload.kind, "lines": [_line_result(line) for line in lines], "warnings": _price_warnings(lines)}
 
 
 @router.post("/{line_id}/invoice/replace")
@@ -1527,7 +1550,7 @@ def invoice_replace(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    return _transition(
+    return _invoiced(
         lambda: replace_invoice(
             ReplaceInvoiceCommand(
                 line_id=line_id,
