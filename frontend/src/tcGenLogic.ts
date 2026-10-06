@@ -7,6 +7,7 @@
  * Выход — тот же config, что форма отправляла portalTechmapGenerate, и его принимает
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
+import { markLabel, markSpecs, type MarkMat, type MarkRow, type MarkSpec } from "./tcGenMarks";
 
 /** `art` — what the row actually uses (selects, gauge, terminals, ETK); `kd` — the КД article it replaced, display only. */
 export type Comp = { id: string; type: string; name: string; art: string; kd?: string; qty: number | string; length?: number };
@@ -40,6 +41,8 @@ export type GenData = {
   wireDia: WireDia;
   coaxCableDia: CoaxCableDia;
   calcOps: CalcOp[];
+  /** Материалы маркировки из БД.МАТ (tcGenMarks.markMatsFromRecords) — выбор «Вид / материал» у меток. */
+  markMats?: MarkMat[];
 };
 
 export type Side = "A" | "B";
@@ -82,6 +85,8 @@ export type GenState = {
   spl: { enabled: boolean; count: string; wires: string; tut: string; tutMat: string; strip: string; fold: boolean };
   hs: { enabled: boolean; manual: boolean; rows: Array<{ compId: string; len: string; cnt: string }> };
   mark: boolean;
+  /** Метки по КД (tcGenMarks); пусто — в маркировку идут бирки из состава, как раньше. */
+  markRows: MarkRow[];
   freeStrip: { enabled: boolean; len: string };
   cap: { enabled: boolean; tut: string; len: string };
   wrap: { enabled: boolean; slots: WrapSlot[] };
@@ -103,7 +108,7 @@ export type OpSpec = {
   strip?: { a: boolean; lenA: string; b: boolean; lenB: string }; stripCount?: number;
   tutArt?: string; tutName?: string; tutCount?: number; tutSegs?: Array<{ len: string; count: number }>;
   harness?: boolean; units?: number; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
-  wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number }>;
+  wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number } | MarkSpec>;
   sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number; tin?: boolean;
 };
 
@@ -267,6 +272,7 @@ export function emptyState(): GenState {
     spl: { enabled: false, count: "1", wires: "3", tut: "", tutMat: "", strip: "", fold: false },
     hs: { enabled: false, manual: false, rows: [] },
     mark: false,
+    markRows: [],
     freeStrip: { enabled: false, len: "" },
     cap: { enabled: true, tut: "", len: "" },
     wrap: { enabled: false, slots: WRAP_SLOTS_.map(() => ({ mat: "", kind: "tape" as WrapKind, len: "" })) },
@@ -1171,8 +1177,11 @@ export function makeGen(D: GenData, S: GenState) {
       dress.push({ type: "insTut", opKey: "insHs", tmplHint: "INS_TUT", cat: "Монтаж", tutCount: hsCount, harness: true, label: `Надеть термоусадку на жгут — ${hsCount} шт` });
       dress.push({ type: "heatTut", opKey: "heatHs", tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: hsCount, harness: true, label: `Усадка термоусадки на жгуте — ${hsCount} шт` });
     }
-    const marks = S.mark ? markComps_() : [];
-    if (marks.length) {
+    const kdMarks = S.mark ? markSpecs(S.markRows || [], comps()) : [];
+    const marks = S.mark && !kdMarks.length ? markComps_() : [];
+    if (kdMarks.length) {
+      dress.push({ type: "insMark", opKey: "insMark", cat: "Монтаж маркировки", label: markLabel(kdMarks), marks: kdMarks });
+    } else if (marks.length) {
       dress.push({ type: "insMark", opKey: "insMark", cat: "Монтаж маркировки", label: `Маркировка — ${marks.map((m) => m.art || m.name).join(", ")}`,
         marks: marks.map((m) => ({ art: m.art || m.name || "", name: m.name || "", qty: qtyNum(m) || 1 })) });
     }
@@ -1503,7 +1512,12 @@ export function makeGen(D: GenData, S: GenState) {
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
-    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, asmLenFromName_, calcCutLengths_, freeEnds_,
+    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_,
+    /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
+    markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
+      const conn = getCompById(e.connId);
+      return { name: (e.label || "").trim() || endKey_(e), art: conn ? conn.art || conn.name || "" : "" };
+    })), asmLenFromName_, calcCutLengths_, freeEnds_,
     wireQtyFromTerms_: (wires: Comp[]) => {
       if (wires.length !== 1 || cableCoresFromName_(`${wires[0].name || ""} ${wires[0].art || ""}`) > 1) return 0;
       const conns = bomLists().conns.filter((c) => !/корпус|housing/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`));

@@ -523,3 +523,48 @@ def test_cut_cards_list_the_measuring_tools_their_steps_use():
     assert any("разрывная" in name for name in tools)
     numbers = [tool["number"] for tool in tooling if tool["section"] == "Инструмент"]
     assert numbers == [str(index) for index in range(1, len(numbers) + 1)]
+
+
+def _mark_op(document: dict) -> dict:
+    return next(item for item in document["operations"] if item["type"] == "insMark")
+
+
+def test_bare_marking_toggle_keeps_the_old_etk_composition_tags_without_a_mark_list():
+    op = _mark_op(build("708К.2-КБ1"))
+    assert op["components"] == [
+        {"art": "Маркировка проводов у разъёмов", "name": "Маркировка проводов у разъёмов", "norm": "760", "unit": "Шт."},
+        {"art": "Маркировка отводов", "name": "Маркировка отводов", "norm": "114", "unit": "Шт."},
+        {"art": "Децимальный номер изделия", "name": "Децимальный номер изделия", "norm": "38", "unit": "Шт."},
+    ]
+    assert "marks" not in op["fields"]
+    # 20 с на метку × (20 + 3 + 1) метки × 38 шт + 120 с подготовки = 306 мин.
+    assert [row["norm"] for row in op["time"]] == ["306"]
+
+
+def test_marks_by_kd_list_every_mark_group_materials_and_scale_the_norm_by_their_count():
+    config = deepcopy(kit("708К.2-КБ1")["config"])
+    mark = next(item for item in config["ops"] if item["type"] == "insMark")
+    tag = "Бирка маркировочная TMS-SCE-1/4-2.0-4 жёлтая"
+    mark["marks"] = [
+        {"art": tag, "name": tag, "qty": 1, "target": "Разъём X1 (174047-2)", "text": "X1", "place": "у разъёма", "placeKind": "conn", "placeMm": ""},
+        {"art": tag, "name": tag, "qty": 1, "target": "Разъём X2", "text": "X2", "place": "у разъёма", "placeKind": "conn", "placeMm": ""},
+        {"art": "Маркировка отводов", "name": "Маркировка отводов", "qty": 2, "target": "Провод W1", "text": "708К.4КБ1",
+         "place": "50 мм от конца", "placeKind": "dist", "placeMm": "50"},
+        {"art": "", "name": "", "qty": 1, "target": "Жгут целиком", "text": "КБ1 №1", "place": "на оплётке", "placeKind": "free", "placeMm": ""},
+    ]
+    op = _mark_op(build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"]))
+    assert op["fields"]["marks"] == [
+        {"target": "Разъём X1 (174047-2)", "text": "X1", "material": tag, "place": "у разъёма", "qty": "1", "batch": "38"},
+        {"target": "Разъём X2", "text": "X2", "material": tag, "place": "у разъёма", "qty": "1", "batch": "38"},
+        {"target": "Провод W1", "text": "708К.4КБ1", "material": "Маркировка отводов", "place": "50 мм от конца", "qty": "2", "batch": "76"},
+        {"target": "Жгут целиком", "text": "КБ1 №1", "material": "", "place": "на оплётке", "qty": "1", "batch": "38"},
+    ]
+    # Материал складывается по артикулу на партию; метка без материала строки не даёт.
+    assert op["components"] == [
+        {"art": tag, "name": tag, "norm": "76", "unit": "Шт."},
+        {"art": "Маркировка отводов", "name": "Маркировка отводов", "norm": "76", "unit": "Шт."},
+    ]
+    # Норма БД.ОП на штуку × 5 меток на изделие × 38 шт + подготовка: 20 × 5 × 38 / 60 + 2 = 65,33 мин.
+    assert [row["norm"] for row in op["time"]] == ["65,33"]
+    assert op["result"][0]["name"].endswith("(маркирован)")
+    assert op["card"]["steps"]
