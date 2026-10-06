@@ -162,6 +162,21 @@ def test_supply_takes_latest_stage_and_marks_stock_and_missing():
     assert lines["43030-0007"].stage == "со склада"
 
 
+def test_supply_line_without_purchase_is_from_stock_when_kitted_even_without_grn():
+    kitset = _replaced_wire_kitset()
+    kitted = [SupplyStock("GHR-04V-S", "Колодка 4pin 1.25мм", Decimal("20"))]
+    lines = {line.article: line for line in supply_lines(kitset, [], kitted=kitted)}
+    assert lines["GHR-04V-S"].stage == "со склада"
+    assert lines["Силиконовый 28AWG черный"].stage == "не заведено"
+    zero = {line.article: line for line in supply_lines(
+        kitset, [], kitted=[SupplyStock("GHR-04V-S", "Колодка 4pin 1.25мм", Decimal("0"))])}
+    assert zero["GHR-04V-S"].stage == "не заведено"
+    # A purchase row still wins over the kit.
+    bought = {line.article: line for line in supply_lines(
+        kitset, [SupplyRow("GHR-04V-S", "Закупка", "В работе")], kitted=kitted)}
+    assert bought["GHR-04V-S"].stage == "Закупка · В работе"
+
+
 def _replaced_wire_kitset():
     return manual_kitset(project="720К.1", customer="З", who="Т", now=NOW, assemblies=[{
         "index": "КБ1", "name": "Жгут", "run": "10", "components": [

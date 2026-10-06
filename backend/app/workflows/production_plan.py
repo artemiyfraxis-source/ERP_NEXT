@@ -182,11 +182,15 @@ def kit_stage_facts(
         FulfillmentStatus.COMPLETE, FulfillmentStatus.READY, FulfillmentStatus.ISSUED,
         FulfillmentStatus.RETURNED, FulfillmentStatus.DONE,
     }
+    started = {FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE}
     for request in fulfillment:
         if request.status in picked:
             key = kit_key_from_purpose(request.purpose)
             if key:
                 facts["kit"].add(key)
+                # Комплект выдан монтажнику — работа началась (владелец, проект 33МФ.2): ISSUED и дальше = «В работе».
+                if request.status in started:
+                    facts["work"].add(key)
     for task in tasks:
         if task.status is ProductionStatus.RUNNING:
             facts["work"].add(kit_stage_key(task.project, task.item))
