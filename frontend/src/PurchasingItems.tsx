@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { urlParam } from "./navigation";
 import { api, failureText } from "./api";
 import {
   ITEM_CATEGORIES, categoryLabel, purchasingItemsApi as itemsApi,
@@ -15,7 +16,7 @@ const emptyForm: ItemInput = { name: "", part_number: "", manufacturer: "", cate
 type Supplier = { id: string; name: string };
 
 export function PurchasingItems({ readOnly = false }: { readOnly?: boolean } = {}) {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(() => urlParam("q"));
   const [category, setCategory] = useState<ItemCategory | "">("");
   const [hasPrice, setHasPrice] = useState(false);
   const [page, setPage] = useState(1);

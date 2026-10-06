@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { urlParam } from "./navigation";
 import {
   ApiError,
   failureText,
@@ -129,6 +130,13 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
   { key: "eta", title: "Ожидается", value: (line) => line.expected_arrival },
 ];
 
+const TABS: readonly ProcurementTab[] = ["today", "queues", "sheet", "suppliers", "kpi", "rfq", "directory", "items", "settings"];
+/** `?tab=` (the global search lands on a tab); an unknown or switched-off tab falls back to the default below. */
+function initialTab(): ProcurementTab | null {
+  const value = urlParam("tab");
+  return TABS.find((tab) => tab === value) ?? null;
+}
+
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
 export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly?: boolean; buyerName?: string } = {}) {
@@ -137,7 +145,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the project columns
   const todayOn = useStageOption("procurement.today") && !readOnly;
   const kpiOn = useStageOption("procurement.kpi");
-  const [picked, setTab] = useState<ProcurementTab | null>(null);
+  const [picked, setTab] = useState<ProcurementTab | null>(initialTab);
   // Purchasing hybrid (Roller_Buyer): requests for quotes, the supplier and item directories, their settings.
   const rfqOn = useStageOption("procurement.rfq");
   const directoryOn = useStageOption("references.suppliers");

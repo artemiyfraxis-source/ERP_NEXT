@@ -1,4 +1,5 @@
 import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { urlParam } from "./navigation";
 import { SuggestInput } from "./SuggestInput";
 import { useStageOption } from "./StageOptions";
 import { usePurposeLabel } from "./purposeLabels";
@@ -67,7 +68,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => urlParam("q"));
   const wordSearch = useStageOption("warehouse.word_search");
   const itemsOn = useStageOption("references.items");
   const [lotItems, setLotItems] = useState<Record<string, ItemBrief>>({});

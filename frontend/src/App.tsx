@@ -43,6 +43,7 @@ import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
 import { StageOptionsPanel } from "./StageOptions";
 import { ThemeSwitch } from "./ThemeSwitch";
+import { GlobalSearch } from "./CommandPalette";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
 type Place = { section: Section; block: BlockId | null; user?: string | null };
@@ -60,6 +61,8 @@ export function App() {
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [loading, setLoading] = useState(true);
   const [place, setPlace] = useState<Place>(placeFromUrl);
+  // The address bar changed under us (global search, back button): pages that read their start filter from it remount.
+  const [visit, setVisit] = useState(0);
   const [shellError, setShellError] = useState("");
   // On a tablet the sidebar is a drawer behind «☰»; any navigation closes it.
   const [navOpen, setNavOpen] = useState(false);
@@ -75,7 +78,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const listener = () => setPlace(placeFromUrl());
+    const listener = () => { setPlace(placeFromUrl()); setVisit((count) => count + 1); };
     window.addEventListener("popstate", listener);
     return () => window.removeEventListener("popstate", listener);
   }, []);
@@ -95,6 +98,8 @@ export function App() {
     url.searchParams.delete("block");
     url.searchParams.delete("project");
     url.searchParams.delete("user");
+    url.searchParams.delete("tab");
+    url.searchParams.delete("q");
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
     if (next.user) url.searchParams.set("user", next.user);
@@ -213,20 +218,21 @@ export function App() {
           </button>
         </div>
       </aside>
+      <GlobalSearch principal={principal} />
       <main className="workspace main">
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
         {runsTheSystem(principal) && <UpdateFailure />}
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
         {activeBlock && <BlockPage principal={principal} block={activeBlock} navigate={navigate} home={() => go({ section: "cabinet", block: null })} />}
-        {activeSection === "projects" && <ProjectsPage principal={principal} />}
+        {activeSection === "projects" && <ProjectsPage key={visit} principal={principal} />}
         {activeSection === "techcards" && <TechcardsPage principal={principal} view="projects" />}
         {activeSection === "tctemplates" && <ReferencesPage principal={principal} initialTab="templates" />}
         {activeSection === "newrequest" && <RequestsPage principal={principal} view="create" />}
         {activeSection === "myrequests" && <RequestsPage principal={principal} view="mine" />}
         {activeSection === "requests" && <RequestsPage principal={principal} />}
-        {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
+        {activeSection === "procurement" && <ProcurementPage key={visit} readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
-        {activeSection === "stock" && <WarehousePage admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")} />}
+        {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}

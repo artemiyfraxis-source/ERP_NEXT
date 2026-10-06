@@ -168,12 +168,27 @@ export function visibleBlocks(principal: Principal) {
     .filter((block) => block.items.length > 0);
 }
 
+/** A query parameter of the address bar ("" when absent): the pages read their starting filter from it (`?q=`). */
+export function urlParam(name: string): string {
+  return new URLSearchParams(window.location.search).get(name) ?? "";
+}
+
 export function isSection(value: string | null): value is Section {
   return NAV.some(({ id }) => id === value);
 }
 
 export function isBlock(value: string | null): value is BlockId {
   return BLOCKS.some(({ id }) => id === value);
+}
+
+/** Open a section with exactly these parameters (the global search): `?section=…&tab=…&q=…`, no leftovers. */
+export function openPlace(section: string, params: Record<string, string> = {}) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set("section", section);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  window.history.pushState({}, "", url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 /** Go to another section the way the menu does: `?section=…` in the address bar plus a popstate for the shell. */
