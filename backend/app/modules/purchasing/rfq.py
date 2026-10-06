@@ -556,6 +556,11 @@ def _entries(session: Session, rfq_id: UUID, lines: dict[UUID, RfqLineRow], vali
     return by_line
 
 
+def line_offers(session: Session, rfq_id: UUID, lines: dict[UUID, RfqLineRow], valid_days: int) -> dict[UUID, list[Offer]]:
+    """Every offer of each live request line (current or expired): the read model of the «Сегодня» follow-ups."""
+    return {line_id: [entry.offer for entry in found] for line_id, found in _entries(session, rfq_id, lines, valid_days).items()}
+
+
 def _cell(entry: _Entry, *, current: bool, best: Offer | None, base: Offer | None, decision: DecisionRow | None,
           requires: list[str]) -> dict:
     line, quote, offer = entry.line, entry.quote, entry.offer

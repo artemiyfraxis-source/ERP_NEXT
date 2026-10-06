@@ -5,6 +5,7 @@ import { readSaved, writeSaved, type Saved } from "./DataTable";
 import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
 import { RowActions } from "./ProcurementRowMenu";
+import { useLineHistory } from "./LineHistory";
 import { PriceHint, usePriceHistory } from "./PriceHistoryHint";
 import { formatMoney } from "./ProcurementSheetColumns";
 import { BulkStatus, StageHeading, stageSummary, useCollapsed, type BulkState } from "./ProcurementStages";
@@ -212,6 +213,7 @@ export function ProcurementInWorkTable({
   renderDetail: (line: ProcurementLine) => ReactNode;
 }) {
   const [collapsed, toggleCollapsed] = useCollapsed("inwork");
+  const history = useLineHistory(); // option procurement.history
   // Правки — только тронутые ячейки поверх свежих данных строки: дозаполнение с сервера или перечитанная
   // очередь не стирают набранное, а нетронутые ячейки показывают то, что пришло.
   const [edits, setEdits] = useState<Record<string, Partial<InWorkDraft>>>({});
@@ -408,6 +410,7 @@ export function ProcurementInWorkTable({
 
   return (
     <section className="panel table-panel procurement-stage stage-block" aria-label="В работе">
+      {history.node}
       <StageHeading title="В работе" count={lines.length} hint={IN_WORK_HINT} summary={lines.length ? stageSummary(lines) : undefined} collapsed={collapsed} onToggle={toggleCollapsed}>
         {edited.length > 0 && <span className="dirty-note">изменено: {edited.length}</span>}
         <button type="button" className={edited.length ? "primary small" : "secondary small"} disabled={disabled || saving || !edited.length} onClick={() => void saveAll()}>
@@ -501,6 +504,7 @@ export function ProcurementInWorkTable({
                   ...(covered > 0 ? [{ label: "Снять «Со склада»", run: () => void releaseStock(line) }] : []),
                   { label: "Прослеживаемость, раздробить…", short: "Прослеж.…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
                   { label: "Отменить строку", run: () => onCancel(line) },
+                  ...(history.enabled ? [{ label: "История", run: () => history.open(line.id, line.legacy_id) }] : []),
                 ];
                 const rowClass = [dirty.size ? "edited" : "", selected.has(line.id) ? "selected" : "", ready ? "ready" : ""].join(" ").trim();
                 return (

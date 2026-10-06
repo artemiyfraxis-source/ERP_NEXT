@@ -17,6 +17,9 @@ SECTIONS = (
     ("arriving", "Приезжает сегодня/завтра"),
     ("awaiting_invoice", "Ждём счёт"),
     ("to_pay", "Ждёт оплаты"),
+    # Option procurement.rfq: fed from the buyer's open requests for quotes (app.workflows.procurement_rfq_followups).
+    ("rfq_no_answer", "Нет ответа на запрос КП"),
+    ("rfq_to_decide", "Выбрать поставщика"),
     ("in_work", "В работе: запросить, выбрать поставщика"),
     ("quarantine", "Карантин / ожидание приёмки"),
     ("available", "Новые доступные"),
@@ -39,6 +42,9 @@ def _item(line: ProcurementLine, day: date | None, days: int | None, hint: str) 
 
 
 NO_PROJECT = "Без проекта"
+# Follow-up fields: {field key: {procurement line id: {rfq_id, rfq_number, date, days, hint}}}.
+Followups = dict[str, dict]
+FOLLOWUP_KEYS = ("rfq_no_answer", "rfq_to_decide")
 CARDS_PER_FIELD = 30
 
 
@@ -47,11 +53,19 @@ def _age_anchor(line: ProcurementLine) -> date:
     return line.order_date or line.created_at.date()
 
 
-def build_today(lines: Iterable[ProcurementLine], today: date, available_count: int = 0) -> list[dict]:
+def build_today(
+    lines: Iterable[ProcurementLine], today: date, available_count: int = 0, followups: Followups | None = None,
+) -> list[dict]:
     """Sections {key, title, count, items} in fixed priority order; empty sections are omitted."""
     tomorrow = today + timedelta(days=1)
     buckets: dict[str, list[tuple[tuple, dict]]] = {key: [] for key, _ in SECTIONS}
     for line in lines:
+        for key in FOLLOWUP_KEYS:
+            follow = (followups or {}).get(key, {}).get(line.id)
+            if follow is not None:
+                item = _item(line, follow["date"], follow["days"], follow["hint"])
+                item["rfq_id"], item["rfq_number"] = follow["rfq_id"], follow["rfq_number"]
+                buckets[key].append(((follow["date"],), item))
         status = line.status
         expected = line.expected_arrival
         if status is ProcurementStatus.IN_TRANSIT:
@@ -125,10 +139,12 @@ def _project_cards(items: list[dict]) -> list[dict]:
     return [{**card, "suppliers": sorted(card["suppliers"])} for card in ordered]
 
 
-def build_board(lines: Iterable[ProcurementLine], today: date, available_count: int = 0) -> dict:
+def build_board(
+    lines: Iterable[ProcurementLine], today: date, available_count: int = 0, followups: Followups | None = None,
+) -> dict:
     """«Сегодня» as a board: fields in priority order with project cards (a project may sit in several fields).
     Positions are not sent here — a card opens them through `project_lines` (5 000 lines = 1.8 MB otherwise)."""
-    sections = build_today(list(lines), today, available_count)
+    sections = build_today(list(lines), today, available_count, followups)
     for section in sections:
         if section["key"] == "available":
             section["projects"] = []
@@ -140,10 +156,19 @@ def build_board(lines: Iterable[ProcurementLine], today: date, available_count: 
     return {"sections": sections}
 
 
-def project_lines(lines: Iterable[ProcurementLine], project: str, today: date) -> list[dict]:
-    """Every open line of one project with its stage and the board field it sits in (None — not on the board)."""
+def project_lines(
+    lines: Iterable[ProcurementLine], project: str, today: date, followups: Followups | None = None,
+) -> list[dict]:
+    """Every open line of one project with its stage and the board field it sits in (None — not on the board).
+    A line may sit in several fields: `field` is the first, `fields` all of them; a request follow-up adds `rfq`."""
     lines = [line for line in lines if (line.project_reference or NO_PROJECT) == project]
-    field_of = {item["id"]: section["title"] for section in build_today(lines, today) for item in section["items"]}
+    fields_of: dict[str, list[str]] = {}
+    rfq_of: dict[str, dict] = {}
+    for section in build_today(lines, today, followups=followups):
+        for item in section["items"]:
+            fields_of.setdefault(item["id"], []).append(section["title"])
+            if "rfq_id" in item:
+                rfq_of.setdefault(item["id"], {"id": item["rfq_id"], "number": item["rfq_number"], "hint": item["hint"]})
     closed = {ProcurementStatus.DONE, ProcurementStatus.CANCELLED}
     rows = [
         {
@@ -156,7 +181,9 @@ def project_lines(lines: Iterable[ProcurementLine], project: str, today: date) -
             "expected": line.expected_arrival.isoformat() if line.expected_arrival else None,
             "quantity": str(line.actual_quantity) if line.actual_quantity is not None else None,
             "unit": line.actual_unit,
-            "field": field_of.get(str(line.id)),
+            "field": (fields_of.get(str(line.id)) or [None])[0],
+            "fields": fields_of.get(str(line.id), []),
+            "rfq": rfq_of.get(str(line.id)),
         }
         for line in lines
         if line.status not in closed
