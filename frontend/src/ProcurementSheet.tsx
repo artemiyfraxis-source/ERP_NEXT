@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { urlParam } from "./navigation";
 import { DataTable, matchesWords } from "./DataTable";
 import { failureText, procurementApi, type ProcurementLine } from "./api";
 import type { LineEditing } from "./ProcurementCellEdit";
@@ -25,7 +26,7 @@ export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } 
   const [cursor, setCursor] = useState<string | null>(null);
   const [buyers, setBuyers] = useState<string[]>([]);
   const [statuses, setStatuses] = useState<string[]>([]);
-  const [draft, setDraft] = useState({ q: "", status: "", buyer: "" });
+  const [draft, setDraft] = useState({ q: urlParam("q"), status: "", buyer: "" });
   const [applied, setApplied] = useState(draft);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

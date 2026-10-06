@@ -3153,3 +3153,17 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .rg-common-v2 .rg-common-grid > label:nth-child(2) { grid-column: span 2; }
 .rg-common-v2 .rg-apply { grid-column: span 2; align-self: start; padding-top: 19px; }
 .rg-table-v2 .rg-col-category { width: 124px; } .rg-table-v2 .rg-col-quality_document { width: 124px; }
+
+/* Поиск Ctrl+K (опция ui.search): по центру, плотно, только переменные темы. */
+.palette-scrim { position: fixed; inset: 0; z-index: 90; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; background: rgba(0, 0, 0, 0.4); }
+.palette { width: min(640px, calc(100vw - 24px)); max-height: 70vh; display: flex; flex-direction: column; background: var(--card); color: var(--foreground); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); overflow: hidden; }
+.palette-input { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 10px 14px; font-size: 15px; background: transparent; color: inherit; outline: none; }
+.palette-list { overflow-y: auto; padding: 4px 0; }
+.palette-group { padding: 6px 14px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); }
+.palette-item { display: flex; align-items: baseline; gap: 10px; padding: 4px 14px; cursor: pointer; font-size: 13px; line-height: 1.35; }
+.palette-item.active { background: var(--accent); }
+.palette-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; max-width: 60%; }
+.palette-sub { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.palette-note { padding: 10px 14px; color: var(--muted-foreground); font-size: 13px; }
+.palette-note.error { color: var(--tone-danger); }
+.palette-foot { padding: 4px 14px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted-foreground); }

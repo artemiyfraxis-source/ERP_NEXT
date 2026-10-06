@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { urlParam } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { failureText } from "./api";
 import { formatDay } from "./format";
@@ -199,7 +200,7 @@ function CardPanel({ card, readOnly, busy, onSave, onArchive, onClose }: {
 
 /** «Справочник поставщиков» — карточки поставщиков с ИНН, категориями, доменами и статистикой по закупкам. */
 export function PurchasingSuppliers({ readOnly = false }: { readOnly?: boolean } = {}) {
-  const [filters, setFilters] = useState<SupplierFilters>({ q: "", category: "", key: false, archived: false });
+  const [filters, setFilters] = useState<SupplierFilters>({ q: urlParam("q"), category: "", key: false, archived: false });
   const [rows, setRows] = useState<Supplier[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);

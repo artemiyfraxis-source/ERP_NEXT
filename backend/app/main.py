@@ -28,7 +28,7 @@ from .modules.techcards import api as techcards_api
 from .modules.techcards import kitset_api as kitsets_api
 from .modules.techcards import assembly_api
 from .shared.http_auth import techcards_router_principal
-from .workflows import employee_card_api, stage_options_api
+from .workflows import employee_card_api, search_api, stage_options_api
 from .modules.purchasing import api_internal_projects as purchasing_internal_projects_api
 from .modules.purchasing import api_items as purchasing_items_api
 from .modules.purchasing import api_rfq as purchasing_rfq_api
@@ -76,6 +76,7 @@ app.include_router(references_api.router)
 app.include_router(operations_api.router)
 app.include_router(employee_card_api.router)
 app.include_router(stage_options_api.router)
+app.include_router(search_api.router)
 for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasing_items_api, purchasing_rfq_api,
                purchasing_internal_projects_api):
     app.include_router(_purchasing.router)
