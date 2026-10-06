@@ -68,6 +68,8 @@ check "stack restarted" prod_has "up -d"
 check "code switched" rev_is app new5678
 check "previous code kept" rev_is app.prev old1234
 check "result ok:true" result_has '"ok": true'
+check "result has finished_at in UTC ISO" bash -c "grep -q -E '\"finished_at\": \"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z\"' '$ERP_HOME/status/update-result.json'"
+check "same Caddyfile: Caddy not recreated" prod_hasnt "force-recreate --no-deps caddy"
 
 case_name="rehearsal red"
 setup red 0088_x $'head 0089_y\npending 0089_y 0'
@@ -175,6 +177,13 @@ check "exit 0" [ "$rc" = 0 ]
 check "keeps 10 dumps" [ "$(find "$ERP_HOME/backups/pre-update" -name '*.dump' | wc -l)" -eq 10 ]
 check "oldest dropped with its sha256" bash -c "[ ! -e '$ERP_HOME/backups/pre-update/erp_2026-01-01.dump' ] && [ ! -e '$ERP_HOME/backups/pre-update/erp_2026-01-01.dump.sha256' ]"
 check "daily backups untouched" [ ! -d "$ERP_HOME/backups/daily" ]
+
+case_name="Caddyfile changed"
+setup caddy 0088_x "head 0088_x"
+printf '# new route\n' >> "$ERP_HOME/app.new/deploy/Caddyfile"
+run_update
+check "exit 0" [ "$rc" = 0 ]
+check "Caddy recreated after the code switch" prod_has "up -d --force-recreate --no-deps caddy"
 
 echo "update.test.sh: $passed passed, $failed failed"
 [ "$failed" = 0 ]

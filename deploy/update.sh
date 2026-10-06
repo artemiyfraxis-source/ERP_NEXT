@@ -45,8 +45,10 @@ write_result() {  # ok(true|false) message
   {
     printf '{"ok": %s, "step": %s, "message": %s, "revision": %s' "$1" "$(json_str "$step")" "$(json_str "$2")" \
       "$(json_str "$code_rev")"
-    printf ', "migration": %s, "db_revision": %s, "approve": %s, "at": %s}\n' "$(json_str "$head")" \
+    printf ', "migration": %s, "db_revision": %s, "approve": %s, "at": %s' "$(json_str "$head")" \
       "$(json_str "$db_rev")" "$(json_str "$approve")" "$(json_str "$(date '+%d.%m.%Y %H:%M')")"
+    # The button workflow (update-server.yml) waits for a finished_at later than its own start: UTC ISO 8601.
+    printf ', "finished_at": %s}\n' "$(json_str "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"
   } > "$tmp"
   chmod 644 "$tmp"; mv "$tmp" "$result"
 }
@@ -246,6 +248,12 @@ if ! "$erp" up -d || ! healthy "$erp" "$head"; then
     fail "новая версия не ответила /api/health?db=1 — вернул прежний образ, база не менялась"
   fi
   fail "новая версия не ответила /api/health?db=1 после миграции; база на $head. Журнал: ./erp.sh logs api. Восстановить базу: ./restore.sh $final_dump"
+fi
+
+# Caddy mounts the single file ./Caddyfile: after the code switch it still reads the previous copy, and `up -d` does
+# not recreate it. A changed Caddyfile → recreate Caddy (a second or two without the site).
+if ! cmp -s "$prod/deploy/Caddyfile" "$ERP_HOME/app.prev/deploy/Caddyfile"; then
+  "$erp" up -d --force-recreate --no-deps caddy || echo "Caddy не пересоздан: новый Caddyfile не подхвачен" >&2
 fi
 
 # То, чего нет в SUPPLYMAP: шаблоны карт ERP и правки справочников (идемпотентно, ручные правки не трогает).
