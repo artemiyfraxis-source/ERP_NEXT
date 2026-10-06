@@ -2804,3 +2804,16 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .harness-save { font-size: 13px; font-weight: 600; }
 .harness-page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .harness-page-body > .harness-root { flex: 1; min-height: 0; overflow: auto; }
+
+/* ── Обход на 16" ноутбуке (1536×864): всё меню и профиль без прокрутки меню; действия строки сотрудника в одну строку ── */
+@media (hover: hover) and (pointer: fine) and (min-width: 901px) and (max-height: 960px) {
+  .sidebar { padding: 12px 12px 10px; }
+  .brand { padding-bottom: 8px; }
+  .nav-group { margin-top: 6px; padding-top: 5px; }
+  .nav-group h4 { margin-bottom: 3px; }
+  .nav-item { padding-top: 4px; padding-bottom: 4px; }
+  .profile { padding-top: 8px; gap: 2px; }
+  .profile .link-button { padding-top: 2px; }
+}
+.row-action-cell .row-actions { flex-direction: row; align-items: center; width: auto; max-width: none; }
+.staff-page td.text > strong, .staff-page td.text small { white-space: nowrap; }
