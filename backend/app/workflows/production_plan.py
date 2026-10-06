@@ -188,7 +188,7 @@ def kit_stage_facts(
             key = kit_key_from_purpose(request.purpose)
             if key:
                 facts["kit"].add(key)
-                # Комплект выдан монтажнику — работа началась (владелец, проект 33МФ.2): ISSUED и дальше = «В работе».
+                # Комплект выдан монтажнику — работа началась (решено агентом 06.10, проект 33МФ.2): ISSUED и дальше = «В работе».
                 if request.status in started:
                     facts["work"].add(key)
     for task in tasks:
