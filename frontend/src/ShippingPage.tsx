@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   failureText, productionApi, shippingApi, type FinishedGood, type FinishedGoodsReadyBox, type Principal, type ProjectAddressee,
   type Shipment,
@@ -242,6 +242,8 @@ function ShipPanel({ row, shipments, addressees, canManage, canWarehouse, canEdi
   const [docs, setDocs] = useState({ upd_number: "", upd_date: today(), deadline: "" });
   const [file, setFile] = useState<File | null>(null);
   const [problem, setProblem] = useState("");
+  // Ключ повтора живёт до успеха: повтор после обрыва связи вернёт уже сделанную отгрузку, а не заведёт вторую.
+  const shipKey = useRef(crypto.randomUUID());
   const chosen = readyLines.filter((line) => marked[line.good.id] && num(qty[line.good.id]) > 0);
   const total = round2(chosen.reduce((sum, line) => sum + num(qty[line.good.id]), 0));
   const editCard = canManage;
@@ -257,30 +259,27 @@ function ShipPanel({ row, shipments, addressees, canManage, canWarehouse, canEdi
     if (over) { setProblem(`${over.good.item_index}: на складе только ${over.ready}`); return; }
     if (!card.shipping_point.trim()) { setProblem("Укажите адрес отгрузки"); return; }
     if (shipNow && card.upd_type !== "ЭДО" && !file) { setProblem("По бумажной УПД отгрузить можно только с файлом УПД — приложите его или выберите тип «ЭДО»"); return; }
-    const lines = chosen.map((line) => ({ good_id: line.good.id, quantity: qty[line.good.id] }));
+    const lines = chosen.map((line) => ({ good_id: line.good.id, version: line.good.version, quantity: qty[line.good.id] }));
     void mutate(`ship:${row.project}`, async () => {
-      if (editCard) {
-        const before = storedCard();
-        const changed = Object.fromEntries(Object.entries(card).filter(([key, value]) => value.trim() !== before[key as keyof CardDraft])
-          .map(([key, value]) => [key, (key === "terms" || key === "upd_type") ? value || null : value.trim()]));
-        if (Object.keys(changed).length) await shippingApi.saveAddressee({ project: row.project, version: stored?.version ?? 0, ...changed });
-      }
-      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта.
+      const before = storedCard();
+      const changed = editCard ? Object.fromEntries(Object.entries(card).filter(([key, value]) => value.trim() !== before[key as keyof CardDraft])
+        .map(([key, value]) => [key, (key === "terms" || key === "upd_type") ? value || null : value.trim()])) : {};
       const number = docs.upd_number.trim();
-      let { shipment } = canManage
-        ? await shippingApi.create({ lines, deadline: docs.deadline || null, upd_number: number, upd_date: number ? docs.upd_date || null : null, terms: null, upd_type: null, no_docs: false })
-        : await shippingApi.projectPack(row.project, lines);
-      try {
-        if (file) shipment = (await shippingApi.uploadUpd(shipment.id, shipment.version, await readFile(file))).shipment;
-        if (!shipNow) return { text: `Упаковано: ${shipment.number}${shipment.pl_number ? ` · ${shipment.pl_number}` : ""}` };
-        const result = await shippingApi.action(shipment.id, "ship", shipment.version);
-        return { text: result.closed ? `Отгружено и закрыто: ${shipment.number}` : `Отгружено: ${shipment.number}. ${notClosed(result.why)}` };
-      } catch (reason) {
-        return { warning: `${shipment.number} упакована, но не отгружена: ${failureText(reason, "операция не выполнена")}` };
-      }
-    }, (result) => {
-      const outcome = result as { text?: string; warning?: string };
-      return outcome.warning ? { warning: outcome.warning } : outcome.text ?? "";
+      const upload = file ? await readFile(file) : null;
+      // Один запрос — одна транзакция: карточка, отправка, файл УПД и отгрузка сохраняются вместе или никак.
+      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта.
+      const result = await shippingApi.projectShip({
+        project: row.project, addressee_version: stored?.version ?? 0, lines, ship: shipNow,
+        ...(Object.keys(changed).length ? { addressee: changed } : {}),
+        ...(canManage ? { documents: { upd_number: number, upd_date: number ? docs.upd_date || null : null, deadline: docs.deadline || null } } : {}),
+        ...(upload ? { upd_file: { file_name: upload.name, content_type: upload.type, content_base64: upload.base64 } } : {}),
+      }, shipKey.current);
+      shipKey.current = crypto.randomUUID();
+      return result;
+    }, (outcome) => {
+      const { shipment, shipped, closed, why } = outcome as { shipment: Shipment; shipped: boolean; closed: boolean; why: string };
+      if (!shipped) return `Упаковано: ${shipment.number}${shipment.pl_number ? ` · ${shipment.pl_number}` : ""}`;
+      return closed ? `Отгружено и закрыто: ${shipment.number}` : `Отгружено: ${shipment.number}. ${notClosed(why)}`;
     });
   };
 

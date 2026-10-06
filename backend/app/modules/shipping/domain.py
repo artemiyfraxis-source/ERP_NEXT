@@ -367,14 +367,15 @@ class Shipment:
         carrier: str, deadline: date | None, upd_type: UpdType | None, upd_number: str,
         upd_date: date | None, upd_url: str, manager: str, note: str,
         lines: tuple[ShipmentLine, ...], manager_id: UUID | None = None,
-        inherited: frozenset[str] = frozenset(),
+        inherited: frozenset[str] = frozenset(), id: UUID | None = None,
     ) -> Shipment:
+        """`id` задаёт вызывающий, когда отправку надо узнать повторно (ключ повтора «Отгрузить»)."""
         if not lines:
             raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
         if len({line.finished_good_id for line in lines}) != len(lines):
             raise ShippingValidationError("Позиция готовой продукции указана дважды")
         return cls(
-            id=uuid4(), number=_text(number, "Номер отгрузки"), version=1,
+            id=id or uuid4(), number=_text(number, "Номер отгрузки"), version=1,
             created_at=created_at, status=ShipmentStatus.NEW,
             customer=str(customer or "").strip(), receiver=_text(receiver, "Получатель"),
             shipping_point=_text(shipping_point, "Точка отгрузки"),
