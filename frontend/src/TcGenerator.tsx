@@ -11,6 +11,7 @@ import {
   type TerminalResolution,
 } from "./api";
 import {
+  CRIMP_BOTH_,
   FOLD_STRIP_MM_,
   JACKET_STRIP_MM_,
   WRAP_SLOTS_,
@@ -372,6 +373,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const hasB = gen.endpointsOnSide_("B").length > 0;
   const crimpSides = gen.crimpCutSides_();
   const crimpTinTerm = gen.crimpTinNoApplicator_();
+  // Одну сторону автомат обжать может, другую — нет: почему другая остаётся ручной.
+  const crimpSideNote = crimpSides.length === 1 ? gen.crimpCutSideNote_(crimpSides[0] === "A" ? "B" : "A") : "";
   const note = gen.twistNote();
 
   function selectComps(list: Comp[], value: string, onChange: (id: string) => void, label: string, empty = "— нет —") {
@@ -846,9 +849,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       onChange={(on) => update({ crimpCut: on, crimpCutManual: true })}>
       {crimpSides.length > 1
         ? <div className="gfield"><span className="gfield-label">Сторона обжима</span>
-          <Seg label="Сторона обжима при резке" value={gen.crimpCutSideSelected_()} options={crimpSides.map((side) => [side, `Сторона ${sideRu_(side)}`] as const)}
+          <Seg label="Сторона обжима при резке" value={gen.crimpCutSideSelected_()}
+            options={[...crimpSides.map((side) => [side, `Сторона ${sideRu_(side)}`] as const), [CRIMP_BOTH_, "Обе стороны"] as const]}
             onChange={(side) => update({ crimpCutSide: side })} /></div>
-        : <span className="opt-note">Обжим на стороне {sideRu_(crimpSides[0])}</span>}
+        : <span className="opt-note">Обжим на стороне {sideRu_(crimpSides[0])}{crimpSideNote && `; ${crimpSideNote}`}</span>}
     </Toggle>,
     !crimpSides.length && crimpTinTerm && <p key="crimp-off" className="opt-note">Резка с обжимом и лужением недоступна: у {crimpTinTerm} в БД.ТЕР нет аппликатора автомата (A…).</p>,
   ].filter(Boolean);

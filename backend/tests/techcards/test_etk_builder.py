@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.techcards.etk_builder import _suffix, _topology, build_etk
+from app.modules.techcards.etk_builder import _result_name, _suffix, _topology, build_etk
 from app.modules.techcards.operation_cards import parse_operation_library
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardValidationError
 from app.modules.references.technology import TerminalRecord
@@ -232,6 +232,69 @@ def test_cut_and_crimp_operation_tracks_terminal_material_strip_and_applicator()
     assert "Подрезка жил:" in defects
     assert "Опрессовка — нарушение геометрии зоны обжатия жилы:" in defects
     assert "Несоответствие высоты опрессовки или усилия на разрыв:" in defects
+
+
+def _both_sides_config(term_b: str) -> dict:
+    """Generator «Обе стороны»: one CUT_WIRE+2crimp op with `ep` (А) and `epB` (В), no prsTerm — mountings follow."""
+    wire = {"name": "Провод НВ4 0,2", "art": "НВ4 0,2", "qty": 4, "length": 160}
+    return {
+        "assemblyName": "Кабель USB", "partQty": 100, "wires": [dict(wire)],
+        "ops": [{
+            "type": "cutWireCrimp", "templateId": "cut-wire-2crimp-автомат-резка-опрессовка",
+            "opNum": "CUT_WIRE+2crimp", "side": "A", "tPrep": 3600, "tOp": 4.8, "wires": [dict(wire)],
+            "strip": {"a": True, "lenA": "2", "b": True, "lenB": "2"},
+            "ep": {"connArt": "I-DS1071-SCB02X5", "termArt": "SXH-001T-P0.6N", "termName": "Контакт XH"},
+            "epB": {"connArt": "I-DS1071-SCB02X5", "termArt": term_b, "termName": "Контакт"},
+        }, *({"type": "insTerm", "opNum": "INS_terminal_2,54-6,3", "side": side, "wires": [dict(wire)], "wireSources": [""],
+              "ep": {"connArt": "I-DS1071-SCB02X5", "termArt": "SXH-001T-P0.6N" if side == "A" else term_b}} for side in ("A", "B"))],
+    }
+
+
+def test_cut_crimping_both_sides_carries_both_terminals_once_and_no_manual_crimp():
+    records = (
+        TerminalRecord(article="SXH-001T-P0.6N", applicator="S5/M5/A2", crimp_height="0,60 - 0,75", awg_from="28", awg_to="22"),
+        TerminalRecord(article="SPH-002T-P0.5S", applicator="S7/A7", crimp_height="0,48 - 0,52", awg_from="28", awg_to="24"),
+    )
+    same = build_etk(enrich_terminal_norms(_both_sides_config("SXH-001T-P0.6N"), records), CARDS, operation_library_commit="x")
+    cut = same["operations"][0]
+    assert (cut["code"], cut["connector"]) == ("CUT_WIRE+2crimp", "обжим А и В")
+    # Терминал обеих сторон один: строка комплектующих одна, на каждый конец — 4 провода × 2 конца × 100 = 800.
+    assert [row for row in cut["components"] if row["unit"] == "Шт."] == [
+        {"art": "SXH-001T-P0.6N", "name": "Контакт XH", "norm": "800", "unit": "Шт."}]
+    assert cut["result"] == [{"name": "НВ4 0,2 160мм, обжатый терминал SXH-001T-P0.6N с двух сторон", "norm": "400", "unit": "Шт."}]
+    assert cut["fields"]["applicator"] == "A2"
+    assert cut["fields"]["strip"] == {"a": True, "b": True, "lenA": "2", "lenB": "2"}
+    # Ручной опрессовки нет, монтаж в разъёмы терминалов не списывает: всего терминалов в ЭТК — 800, без двойного счёта.
+    assert [operation["type"] for operation in same["operations"]] == ["cutWireCrimp", "insTerm", "insTerm"]
+    terminals = sum(float(row["norm"].replace(",", ".")) for operation in same["operations"]
+                    for row in operation["components"] if row["art"].startswith("SXH"))
+    assert terminals == 800
+
+    mixed = build_etk(enrich_terminal_norms(_both_sides_config("SPH-002T-P0.5S"), records), CARDS, operation_library_commit="x")
+    cut = mixed["operations"][0]
+    assert [(row["art"], row["norm"]) for row in cut["components"] if row["unit"] == "Шт."] == [
+        ("SXH-001T-P0.6N", "400"), ("SPH-002T-P0.5S", "400")]
+    assert cut["result"][0]["name"] == "НВ4 0,2 160мм, обжатый терминал SXH-001T-P0.6N (А) / SPH-002T-P0.5S (В)"
+    # Два аппликатора на станке, высота обжима — по сторонам.
+    assert cut["fields"]["applicator"] == "A2/A7"
+    assert cut["fields"]["crimpHeight"] == "0,60 - 0,75 (А) / 0,48 - 0,52 (В)"
+    assert _result_name(_both_sides_config("SPH-002T-P0.5S")["ops"][0], {}, "") == (
+        "НВ4 0,2 160мм; ст. А: обжат терм. SXH-001T-P0.6N; ст. В: обжат терм. SPH-002T-P0.5S")
+
+
+def test_one_side_cut_crimp_ignores_side_b_norms_and_keeps_its_etk():
+    """An op without `epB` (old configs, «Сторона А/В») builds exactly as before even if a stray `terminalNormB` sits on it."""
+    config = _both_sides_config("SXH-001T-P0.6N")
+    config["ops"][0].pop("epB")
+    config["ops"][0]["opNum"] = "CUT_WIRE+1crimp"
+    config["ops"][0]["templateId"] = "cut-wire-1crimp-автомат-резка-опрессовка"
+    before = build_etk(deepcopy(config), CARDS, operation_library_commit="x")
+    config["ops"][0]["terminalNormB"] = {"applicator": "A9", "crimpHeight": "1"}
+    assert build_etk(config, CARDS, operation_library_commit="x")["operations"] == before["operations"]
+    cut = before["operations"][0]
+    assert cut["connector"] == "обжим"
+    assert [row["norm"] for row in cut["components"] if row["unit"] == "Шт."] == ["400"]
+    assert cut["result"][0]["name"] == "НВ4 0,2 160мм, обжатый терминал SXH-001T-P0.6N"
 
 
 def test_drawing_cut_length_with_end_allowances_reaches_the_etk_unchanged():

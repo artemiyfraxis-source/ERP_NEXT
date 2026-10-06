@@ -84,6 +84,17 @@ def _endpoint(op: Mapping[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _endpoint_b(op: Mapping[str, Any]) -> dict[str, Any]:
+    """Side В of a cut that crimps both ends on the machine (`epB`, generator «Обе стороны»); {} for any other op."""
+    value = op.get("epB") if op.get("type") == "cutWireCrimp" else None
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _side_b_op(op: Mapping[str, Any]) -> dict[str, Any]:
+    """The side-В view of a both-sides cut: the same operation with `ep` = `epB`, for location and placeholders."""
+    return {**op, "side": "B", "ep": _endpoint_b(op)}
+
+
 def _side_label(op: Mapping[str, Any]) -> str:
     return "В" if op.get("side") == "B" else "А"
 
@@ -130,7 +141,7 @@ def _suffix(op: Mapping[str, Any]) -> str:
     if operation_type == "cutWireStrip":
         return "разделка"
     if operation_type == "cutWireCrimp":
-        return "обжим + лужение" if op.get("tin") else "обжим"
+        return "обжим + лужение" if op.get("tin") else "обжим А и В" if _endpoint_b(op) else "обжим"
     if operation_type == "cutTut":
         return str(op.get("tutArt") or "ТУТ")
     if operation_type == "insTut":
@@ -166,7 +177,9 @@ def _result_name(
         cut = "; ".join(filter(None, (_wire_name(item) for item in wires)))
         terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
         tinned = f"; {TINNED_END}" if op.get("tin") else ""
-        return f"{cut}; {_location(op, config)}: обжат терм. {terminal}{tinned}" if terminal else cut
+        side_b = _side_b_op(op)
+        crimped_b = f"; {_location(side_b, config)}: обжат терм. {_terminal(side_b)}" if _terminal(side_b) else ""
+        return f"{cut}; {_location(op, config)}: обжат терм. {terminal}{crimped_b}{tinned}" if terminal else cut
     if operation_type == "cutTut":
         material = str(op.get("tutArt") or op.get("tutName") or "ТУТ")
         segments = op.get("tutSegs") if isinstance(op.get("tutSegs"), list) else []
@@ -209,13 +222,16 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         rows = _group_cut_components(_wires(op, config), quantity)
         endpoint = _endpoint(op)
-        terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
-        if terminal:
-            count = sum((_number(wire.get("qty"), Decimal(1)) for wire in _wires(op, config)), Decimal(0))
-            rows.append({
-                "art": terminal, "name": str(endpoint.get("termName") or ""),
-                "norm": _format(count * quantity), "unit": "Шт.",
-            })
+        count = sum((_number(wire.get("qty"), Decimal(1)) for wire in _wires(op, config)), Decimal(0))
+        # Обжим обеих сторон: терминал каждой стороны по разу на провод; один артикул на обеих — одной строкой.
+        terminals: dict[str, dict[str, Any]] = {}
+        for side in (endpoint, _endpoint_b(op)):
+            art = str(side.get("termArt") or side.get("termName") or "")
+            if art:
+                row = terminals.setdefault(art, {"name": str(side.get("termName") or ""), "count": Decimal(0)})
+                row["count"] += count
+        rows.extend({"art": art, "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."}
+                    for art, row in terminals.items())
         return rows
     if operation_type == "cutTut":
         count = _decimal(op.get("tutCount")) * quantity
@@ -246,6 +262,14 @@ def _row(name: str, norm: object) -> dict[str, str]:
 def _terminal(op: Mapping[str, Any]) -> str:
     endpoint = _endpoint(op)
     return str(endpoint.get("termArt") or endpoint.get("termName") or "")
+
+
+def _cut_terminal(op: Mapping[str, Any]) -> str:
+    """What a cut-with-crimp leaves on the wire: the side's terminal; both sides — «X с двух сторон» / «X (А) / Y (В)»."""
+    terminal, terminal_b = _terminal(op), _terminal(_side_b_op(op)) if _endpoint_b(op) else ""
+    if not (terminal and terminal_b):
+        return terminal
+    return f"{terminal} с двух сторон" if terminal == terminal_b else f"{terminal} (А) / {terminal_b} (В)"
 
 
 # Резка с обжимом и лужением (CUT_WIRE+1crimp+tin): второй конец провода станок лудит сам.
@@ -296,7 +320,7 @@ def _result_rows(
     if (kind in {"ins", "sdr"} or (kind == "prs" and not build_side)) and wires:
         return [_row(single, _format(quantity))]
     if (operation_type in CUT_TYPES or (kind == "prs" and build_side)) and wires:
-        terminal = _terminal(op) if kind or operation_type == "cutWireCrimp" else ""
+        terminal = _cut_terminal(op) if kind or operation_type == "cutWireCrimp" else ""
         return [_row(_wire_result_name(wire, terminal, bool(op.get("tin"))), _per_wire(wire, quantity)) for wire in wires]
     norm = ""
     if operation_type == "coaxCutTut":
@@ -368,7 +392,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
         if kind in {"ins", "sdr"} or (kind == "prs" and op.get("side") == "B"):
             return [{"name": result_name, "norm": _format(operation_minutes * sum(map(units, wires)) * quantity + setup_minutes, 2)}]
         setup_per_wire = setup_minutes / len(wires)
-        terminal = str(_endpoint(op).get("termArt") or _endpoint(op).get("termName") or "") if operation_type == "cutWireCrimp" or kind else ""
+        terminal = _cut_terminal(op) if operation_type == "cutWireCrimp" or kind else ""
         return [{
             "name": _wire_result_name(wire, terminal, bool(op.get("tin"))),
             "norm": _format((operation_minutes * units(wire) * quantity if operation_minutes else units(wire) * quantity) + setup_per_wire, 2),
@@ -523,6 +547,13 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         for source, target in (("applicator", "applicator"), ("crimpHeight", "crimpHeight"), ("pullForce", "pullForce"), ("bySection", "crimpBySection")):
             if source in terminal_norm:
                 fields[target] = deepcopy(terminal_norm[source])
+    # Обе стороны с разными терминалами: станку нужны оба аппликатора, нормы — по сторонам. Один терминал — нормы те же.
+    terminal_norm_b = op.get("terminalNormB")
+    if isinstance(terminal_norm_b, Mapping) and _endpoint_b(op) and _terminal(_side_b_op(op)) != _terminal(op):
+        for key in ("applicator", "crimpHeight", "pullForce"):
+            value_a, value_b = str(fields.get(key) or ""), str(terminal_norm_b.get(key) or "")
+            if value_b and value_b != value_a:
+                fields[key] = f"{value_a}/{value_b}" if key == "applicator" else f"{value_a or '?'} (А) / {value_b} (В)"
     return fields
 
 
@@ -538,6 +569,9 @@ def _placeholder_map(
     }
     side_a = endpoint_side if endpoint and op.get("side") != "B" else config.get("sideA") or {}
     side_b = endpoint_side if endpoint and op.get("side") == "B" else config.get("sideB") or {}
+    endpoint_b = _endpoint_b(op)
+    if endpoint_b:
+        side_b = {**endpoint_side, **{key: endpoint_b.get(key) or "" for key in ("termName", "termArt", "connName", "connArt")}}
     values = {
         "index": config.get("assemblyIndex") or "", "name": config.get("assemblyName") or "",
         "wire_name": wire_data.get("name") or "", "wire_art": wire_data.get("art") or "",
@@ -689,18 +723,20 @@ def _card_warning(op: Mapping[str, Any], position: int, code: str) -> str:
 
 
 def _terminal_warning(op: Mapping[str, Any], position: int, code: str) -> str | None:
-    terminal_norm = op.get("terminalNorm")
-    if not isinstance(terminal_norm, Mapping):
-        return None
-    missing_sections = [
-        str(item.get("section") or "сечение не определено")
-        for item in terminal_norm.get("bySection") or []
-        if isinstance(item, Mapping) and not item.get("found")
-    ]
-    if not missing_sections:
-        return None
-    terminal = str(_endpoint(op).get("termArt") or _endpoint(op).get("termName") or "")
-    return f"Операция {position} ({code}): нет нормы терминала {terminal} для {', '.join(missing_sections)}"
+    messages = []
+    for norm_key, side_op in (("terminalNorm", op), ("terminalNormB", _side_b_op(op))):
+        terminal_norm = op.get(norm_key)
+        if not isinstance(terminal_norm, Mapping) or (norm_key == "terminalNormB" and not _endpoint_b(op)):
+            continue
+        missing_sections = [
+            str(item.get("section") or "сечение не определено")
+            for item in terminal_norm.get("bySection") or []
+            if isinstance(item, Mapping) and not item.get("found")
+        ]
+        terminal = _terminal(side_op)
+        if missing_sections and not any(terminal in message for message in messages):
+            messages.append(f"Операция {position} ({code}): нет нормы терминала {terminal} для {', '.join(missing_sections)}")
+    return "; ".join(messages) or None
 
 
 def _typed_connector(op: Mapping[str, Any], fallback: object) -> str:

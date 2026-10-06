@@ -55,35 +55,44 @@ def enrich_terminal_norms(
     for operation in operations:
         if not isinstance(operation, dict) or operation.get("type") not in {"prsTerm", "cutWireCrimp"}:
             continue
-        endpoint = operation.get("ep")
-        if not isinstance(endpoint, Mapping):
-            continue
-        article = str(endpoint.get("termArt") or endpoint.get("termName") or "").strip()
-        wires = operation.get("wires")
-        if not article or not isinstance(wires, list):
-            continue
-        sections = tuple(
-            wire_section(str(wire.get("art") or wire.get("name") or ""), gost_awg)
-            for wire in wires if isinstance(wire, Mapping)
-        )
-        if endpoint.get("fold"):
-            # A core folded under the contact is crimped as a doubled cross-section.
-            sections = tuple(fold_wire_section(section) for section in sections)
-        resolution = resolve_terminal(terminal_records, article, sections)
-        operation["terminalNorm"] = {
-            "applicator": resolution.applicator,
-            "crimpHeight": resolution.crimp_height,
-            "pullForce": resolution.pull_force,
-            "bySection": [
-                {
-                    "section": item.section,
-                    "crimpHeight": item.crimp_height,
-                    "pullForce": item.pull_force,
-                    "applicator": item.applicator,
-                    "rangeOnly": item.range_only,
-                    "found": item.found,
-                }
-                for item in resolution.by_section
-            ],
-        }
+        # A cut that crimps both ends («Обе стороны») carries side В as `epB`: its norm goes to `terminalNormB`.
+        sides = (("ep", "terminalNorm"), ("epB", "terminalNormB")) if operation.get("type") == "cutWireCrimp" else (("ep", "terminalNorm"),)
+        for endpoint_key, norm_key in sides:
+            _enrich_side(operation, operation.get(endpoint_key), norm_key, terminal_records, gost_awg)
     return enriched
+
+
+def _enrich_side(
+    operation: dict[str, Any], endpoint: object, norm_key: str, terminal_records: tuple[TerminalRecord, ...],
+    gost_awg: Mapping[str, int] | None,
+) -> None:
+    if not isinstance(endpoint, Mapping):
+        return
+    article = str(endpoint.get("termArt") or endpoint.get("termName") or "").strip()
+    wires = operation.get("wires")
+    if not article or not isinstance(wires, list):
+        return
+    sections = tuple(
+        wire_section(str(wire.get("art") or wire.get("name") or ""), gost_awg)
+        for wire in wires if isinstance(wire, Mapping)
+    )
+    if endpoint.get("fold"):
+        # A core folded under the contact is crimped as a doubled cross-section.
+        sections = tuple(fold_wire_section(section) for section in sections)
+    resolution = resolve_terminal(terminal_records, article, sections)
+    operation[norm_key] = {
+        "applicator": resolution.applicator,
+        "crimpHeight": resolution.crimp_height,
+        "pullForce": resolution.pull_force,
+        "bySection": [
+            {
+                "section": item.section,
+                "crimpHeight": item.crimp_height,
+                "pullForce": item.pull_force,
+                "applicator": item.applicator,
+                "rangeOnly": item.range_only,
+                "found": item.found,
+            }
+            for item in resolution.by_section
+        ],
+    }
