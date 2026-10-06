@@ -1205,6 +1205,10 @@ def warehouse_lots(
     with uow:
         if after_id is not None and uow.warehouse.get(after_id) is None:
             raise KeyError(f"Warehouse cursor not found: {after_id}")
+        page = getattr(uow.warehouse, "page", None)
+        if callable(page):  # one pass over the lots for the page and the count (SqlAlchemyWarehouseRepository)
+            lots, total = page(limit, after_id, query, warehouse, include_zero)
+            return list(lots), total
         lots = uow.warehouse.list(limit, after_id, query, warehouse, include_zero)
         return list(lots), uow.warehouse.count(query, warehouse, include_zero)
 
