@@ -1,13 +1,23 @@
 import { useId } from "react";
+import { Toggle } from "./GenControls";
 import {
   MARK_PLACES, markMaterialSource, markRowActive, newMarkRow, type MarkMat, type MarkPlace, type MarkRow,
 } from "./tcGenMarks";
 
 type CompLike = { art?: string; name?: string };
 
-/** «Маркировка по КД» генератора: таблица меток (что, надпись, материал, где, сколько на изделие) и быстрое
+/** Штук меток на изделие (строка без «Кол-во» — одна). */
+export function markTotal(rows: MarkRow[]): string {
+  return String(rows.filter(markRowActive).reduce((sum, row) => sum + (Number(row.qty.replace(",", ".")) || 1), 0)).replace(".", ",");
+}
+
+/** «Маркировка жгута» генератора: таблица меток (что, надпись, материал, где, сколько на изделие) и быстрое
  *  заполнение — по разъёмам формы и из чертежа жгута позиции. Материал — из состава или БД.МАТ; чужой помечен. */
-export function MarkTable({ rows, onChange, targets, kitMarks, comps, mats, onByConnectors, onFromDrawing, drawingBusy, note }: {
+export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, kitMarks, comps, mats, onByConnectors, onFromDrawing, drawingBusy, note }: {
+  enabled: boolean;
+  onEnabled: (on: boolean) => void;
+  /** Серая подсказка под переключателем: счёт меток или бирки из состава. */
+  hint: string;
   rows: MarkRow[];
   onChange: (rows: MarkRow[]) => void;
   targets: string[];
@@ -22,19 +32,18 @@ export function MarkTable({ rows, onChange, targets, kitMarks, comps, mats, onBy
 }) {
   const id = useId();
   const set = (index: number, patch: Partial<MarkRow>) => onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
-  const total = rows.filter(markRowActive).reduce((sum, row) => sum + (Number(row.qty.replace(",", ".")) || 1), 0);
   const kitNames = kitMarks.map((comp) => comp.art || comp.name || "").filter(Boolean);
   return <div className="gen-marks" aria-label="Маркировка по КД">
-    <div className="gen-marks-head">
-      <h4>Маркировка по КД</h4>
-      {rows.some(markRowActive) && <span className="muted">{rows.filter(markRowActive).length} меток · {String(total).replace(".", ",")} шт. на изделие</span>}
-      <span className="gen-marks-actions">
+    <div className="gen-marks-bar">
+      <Toggle checked={enabled} onChange={onEnabled} title="Маркировка жгута" hint={hint} />
+      {enabled && <span className="gen-marks-actions">
         {onByConnectors && <button type="button" className="secondary small" onClick={onByConnectors}>По разъёмам</button>}
         {onFromDrawing && <button type="button" className="secondary small" disabled={drawingBusy} onClick={onFromDrawing}>{drawingBusy ? "Читаю чертёж…" : "Из чертежа жгута"}</button>}
         <button type="button" className="secondary small" onClick={() => onChange([...rows, newMarkRow({ material: kitNames[0] || "" })])}>+ Метка</button>
-      </span>
+      </span>}
     </div>
-    {note && <div className="warning-inline">{note}</div>}
+    {enabled && note && <div className="warning-inline">{note}</div>}
+    {enabled && <>
     <datalist id={`${id}-targets`}>{targets.map((item) => <option key={item} value={item} />)}</datalist>
     <datalist id={`${id}-mats`}>
       {kitNames.map((name) => <option key={`kit:${name}`} value={name}>из состава</option>)}
@@ -53,7 +62,7 @@ export function MarkTable({ rows, onChange, targets, kitMarks, comps, mats, onBy
           <td><input aria-label={`Материал ${n}`} list={`${id}-mats`} className={missing ? "is-warn" : undefined} value={row.material} placeholder="бирка, трубка, этикетка"
             title={missing ? "Нет в справочнике БД.МАТ и в составе" : row.material || undefined} onChange={(event) => set(index, { material: event.target.value })} />
             {missing && <small className="tone-warn">нет в справочнике</small>}</td>
-          <td><span className={row.place === "dist" || row.place === "free" ? "gen-marks-place two" : "gen-marks-place"}>
+          <td><span className="gen-marks-place">
             <select aria-label={`Где ${n}`} value={row.place} onChange={(event) => set(index, { place: event.target.value as MarkPlace })}>
               {MARK_PLACES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
@@ -65,5 +74,6 @@ export function MarkTable({ rows, onChange, targets, kitMarks, comps, mats, onBy
         </tr>;
       })}</tbody>
     </table></div> : <div className="gempty">Метки не заданы — в маркировку пойдут бирки из состава. Заполните по разъёмам, из чертежа жгута или добавьте метку.</div>}
+  </>}
   </div>;
 }
