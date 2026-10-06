@@ -1641,18 +1641,46 @@ export function applyCalcTin_(D: GenData, S: GenState): GenState {
   return { ...S, tin: { ...S.tin, enabled: true, stripLen: m ? m[1] : S.tin.stripLen } };
 }
 
-/** Строки чертежа TECHMAP-GRAPHER → «Кабели» (grapherApply_). compId — позиция состава, не найдено — пусто («выбери»). */
-export function applyGrapherGroups(S0: GenState, groups: Array<{ compId: string; qty: number; length: number; cores?: number; jacket?: string }>): GenState {
-  let S = S0;
+export type GrapherGroupIn = {
+  compId: string; qty: number; length: number; cores?: number; jacket?: string;
+  /** Длина реза из чертежа: длина + поправки концов, вверх до шага (TECHMAP-GRAPHER). */
+  cut?: number | null; correctionFrom?: number; correctionTo?: number;
+};
+
+/** Есть ли в строках чертежа поправки концов (тех. запас на контакт, владелец 06.10). */
+export function grapherHasCorrections(groups: Array<Pick<GrapherGroupIn, "correctionFrom" | "correctionTo">>): boolean {
+  return groups.some((g) => (Number(g.correctionFrom) || 0) !== 0 || (Number(g.correctionTo) || 0) !== 0);
+}
+
+const mmRu = (value: string | number) => String(Number(value)).replace(".", ",");
+
+/** «по чертежу 300 мм · резка 312 мм (+8/+4)» — обе длины строки чертежа. */
+export function grapherLengthText(g: { length_mm: string | number | null; cut_mm: string | number | null; correction_from_mm: string | number; correction_to_mm: string | number }): string {
+  if (g.length_mm == null) return "нет длины";
+  const a = Number(g.correction_from_mm) || 0, b = Number(g.correction_to_mm) || 0;
+  const base = `по чертежу ${mmRu(g.length_mm)} мм`;
+  if (!a && !b) return base;
+  const sg = (x: number) => (x >= 0 ? "+" : "−") + mmRu(Math.abs(x));
+  return `${base} · резка ${g.cut_mm == null ? "—" : mmRu(g.cut_mm)} мм (${sg(a)}/${sg(b)})`;
+}
+
+/** Строки чертежа TECHMAP-GRAPHER → «Кабели» (grapherApply_). compId — позиция состава, не найдено — пусто («выбери»).
+ *  Поправки концов в чертеже — тех. запас на контакт (владелец 06.10): если они есть, кабели режутся по длине реза
+ *  чертежа, а режим «длина реза» отключает наш припуск L+/L− из БД.ТЕР, чтобы запас не посчитался дважды.
+ *  Без поправок — как раньше: длина по чертежу и наш припуск. */
+export function applyGrapherGroups(S0: GenState, groups: GrapherGroupIn[]): GenState {
+  const byCut = grapherHasCorrections(groups);
+  let S: GenState = byCut ? { ...S0, measureMode: "cut" } : S0;
   let next = S.nextWireIdx;
+  const lengthOf = (g: GrapherGroupIn) => (byCut ? Number(g.cut ?? g.length) || 0 : g.length || 0);
   const wires = groups.map((g) => {
-    const w: WireEntry = { idx: next++, compId: g.compId || "", length: g.length || 0, qty: g.qty };
+    const w: WireEntry = { idx: next++, compId: g.compId || "", length: lengthOf(g), qty: g.qty };
     if ((g.cores || 0) > 1) w.cores = g.cores;
     if (g.jacket) w.jacket = String(g.jacket);
     return w;
   });
   S = { ...S, wires, nextWireIdx: next };
-  const lens = Array.from(new Set(groups.map((g) => g.length || 0)));
+  const lens = Array.from(new Set(groups.map(lengthOf)));
   if (lens.length === 1 && !S.advancedLength) return { ...S, drawingLength: lens[0], sharedLengthText: lens[0] ? String(lens[0]) : "" };
   if (!S.advancedLength) return { ...S, advancedLength: true };
   return S;

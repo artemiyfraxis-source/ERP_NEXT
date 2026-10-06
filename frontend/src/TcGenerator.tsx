@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   assemblyApi,
+  kitsetsApi,
   referencesApi,
   techcardsApi,
   type AssemblyDraft,
@@ -15,6 +16,8 @@ import {
   WRAP_SLOTS_,
   addEndpoint,
   applyGrapherGroups,
+  grapherHasCorrections,
+  grapherLengthText,
   coaxDiaFromRecords,
   coaxFromFields,
   coaxRecordFields,
@@ -49,11 +52,11 @@ import {
 } from "./tcGenLogic";
 import { RouteEditor } from "./RouteEditor";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
-import { ManualAssembly, ManualSummary } from "./ManualAssembly";
+import { ManualAssembly, ManualSummary, type KdOffer } from "./ManualAssembly";
 import { AssemblyDrafts } from "./AssemblyDrafts";
 import {
-  MANUAL_MODE, cardCategory, cardLabel, emptyManual, manualConfig, manualFromConfig, manualProblem, selectBlock,
-  type LibraryCard, type ManualState,
+  MANUAL_MODE, cardCategory, cardLabel, emptyManual, fillKdCards, isEmptyManual, kdStale, kdSummary, manualConfig, manualFromConfig,
+  manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 
@@ -214,6 +217,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.project, card.item_index]);
 
+  // «Предложить из КД»: чертёж жгута позиции (есть ли он и его версия) читается один раз за карту при открытии «Ручной
+  // сборки»; предложение — схема из КД (`derived`) с версией, сводка считается по текущей схеме мастера.
+  const harnessKey = `${card.project}::${card.item_index}`;
+  const [drawing, setDrawing] = useState<{ key: string; version: string | null; error: string } | null>(null);
+  const [kdBusy, setKdBusy] = useState(false);
+  const [kdProposal, setKdProposal] = useState<{ derived: ManualState | null; version: string; warnings: string[]; taken?: number } | null>(null);
+  useEffect(() => { setKdProposal(null); }, [card.id]);
+
   // init(): каждый монтаж засевает форму из состава набора и строк расчёта (autoFillAllWires, applyCalcTin_).
   // Layout-эффект: вкладки появляются в том же коммите, что и справочники; обычный эффект стартует позже, и клик по
   // вкладке в этом окне затирался бы засевом (под нагрузкой тесты «Ручной сборки» теряли клик).
@@ -237,6 +248,70 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const manualTab = S.tab === "manual";
   const partQty = Number((config as Record<string, unknown>).partQty) || 1;
   const manualCfg = useMemo(() => ({ ...manualConfig(manual, config), materialsSheet: S.materialsSheet }), [manual, config, S.materialsSheet]);
+
+  useEffect(() => {
+    if (!manualTab || drawing?.key === harnessKey) return;
+    let alive = true;
+    kitsetsApi.harness(card.project, card.item_index)
+      .then((found) => { if (alive) setDrawing({ key: harnessKey, version: found?.version ?? null, error: "" }); })
+      .catch((reason) => { if (alive) setDrawing({ key: harnessKey, version: null, error: reason instanceof Error ? reason.message : "КД не прочитана" }); });
+    return () => { alive = false; };
+  }, [manualTab, harnessKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const harnessNow = drawing?.key === harnessKey ? drawing : null;
+
+  // Карточка операции из КД — тем же подбором, что у генератора (подсказка шаблона / категория, шаг терминала по БД.ТЕР,
+  // нормы из БД.ОП); состояние формы кабелей не участвует, чтобы выбор на типовых вкладках не подмешивался.
+  const kdGen = useMemo(() => makeGen(D, emptyState()), [D]);
+  const pickKdCard = (spec: OpSpec): KdCard | null => {
+    const row = kdGen.opRow(spec);
+    if (!row.templateId) return null;
+    const code = (refs?.library || []).find((item) => item.id === row.templateId)?.code || row.matched?.opNumber || "";
+    return { templateId: row.templateId, code, prepSec: row.times.tPrep, opSec: row.times.tOp };
+  };
+
+  async function proposeKd() {
+    setKdBusy(true); setKdProposal(null);
+    try {
+      const current = await kitsetsApi.harness(card.project, card.item_index);
+      setDrawing({ key: harnessKey, version: current?.version ?? null, error: "" });
+      if (!current?.version) { setStatus({ text: "В КД нет чертежа жгута.", error: true }); return; }
+      const result = await kitsetsApi.deriveHarness(card.project, card.item_index);
+      const read = manualFromConfig(result.build_config);
+      if (!read) throw new Error("Схема из КД не прочитана");
+      const derived = fillKdCards(read, pickKdCard);
+      setStatus({ text: "", error: false });
+      if (isEmptyManual(manual)) {
+        setManual(proposeFromKd(manual, derived, current.version)); setRouteError("");
+        setKdProposal({ derived: null, version: current.version, warnings: result.warnings ?? [], taken: derived.ops.length });
+      } else {
+        setKdProposal({ derived, version: current.version, warnings: result.warnings ?? [] });
+      }
+    } catch (reason) {
+      setStatus({ text: reason instanceof Error ? reason.message : "Схема из КД не предложена", error: true });
+    } finally {
+      setKdBusy(false);
+    }
+  }
+
+  const kdOffer: KdOffer = {
+    available: !!harnessNow?.version,
+    hint: !harnessNow ? "Проверяю КД…" : harnessNow.error ? `КД не прочитана: ${harnessNow.error}` : "В КД нет чертежа жгута",
+    busy: kdBusy,
+    stale: kdStale(manual, harnessNow?.version),
+    onPropose: () => void proposeKd(),
+    ...(kdProposal ? {
+      proposal: kdProposal.derived
+        ? {
+          summary: kdSummary(manual, proposeFromKd(manual, kdProposal.derived, kdProposal.version)), warnings: kdProposal.warnings,
+          onApply: () => {
+            const { derived, version } = kdProposal;
+            setManual((current) => proposeFromKd(current, derived!, version)); setRouteError(""); setKdProposal(null);
+          },
+          onCancel: () => setKdProposal(null),
+        }
+        : { taken: kdProposal.taken, warnings: kdProposal.warnings, onCancel: () => setKdProposal(null) },
+    } : {}),
+  };
   useEffect(() => { onConfig?.(manualTab ? manualCfg : config); }, [config, manualCfg, manualTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Схема полуфабрикатов (ARCH-TRACK-1). В сборку идут операции с выбранным шаблоном (validate), номер = место в этом списке.
@@ -316,7 +391,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         reader.readAsDataURL(file);
       });
       const data = await techcardsApi.importGrapher(file.name, dataUrl.split(",", 2)[1] || "",
-        wireOptions.map((c) => ({ id: c.id, article: c.art || "", name: c.name || "" })));
+        wireOptions.map((c) => ({ id: c.id, article: c.art || "", name: c.name || "" })),
+        components.map((c) => ({ id: c.id, type: c.type || "", name: c.name || "", article: c.art || "", kd: c.kd || "", qty: c.qty ?? null })));
       if (!data.harnesses.length) { setStatus({ text: "В проекте чертежа нет жгутов.", error: true }); return; }
       const index = data.harnesses.findIndex((h) => h.designation.trim().toLowerCase() === card.item_index.trim().toLowerCase());
       setGrapher({ data, pick: index >= 0 ? index : 0 });
@@ -334,9 +410,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       compId: group.component_id && components.some((c) => c.id === group.component_id) ? group.component_id : "",
       qty: group.quantity, length: Number(group.length_mm) || 0, cores: group.cores,
       jacket: group.jacket_mm == null ? "" : String(group.jacket_mm),
+      cut: group.cut_mm == null ? null : Number(group.cut_mm),
+      correctionFrom: Number(group.correction_from_mm) || 0, correctionTo: Number(group.correction_to_mm) || 0,
     }));
     update((current) => applyGrapherGroups(current, groups));
-    setStatus({ text: `Кабели из ${harness.designation || "чертежа"} подставлены в «Кабели»`, error: false });
+    setStatus({ text: `Кабели из ${harness.designation || "чертежа"} подставлены в «Кабели»${grapherHasCorrections(groups) ? " — по длине реза с поправками чертежа" : ""}`, error: false });
   }
 
   async function saveTer(ep: Endpoint) {
@@ -811,7 +889,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {grapher && (() => {
       const h = grapher.data.harnesses[grapher.pick];
       const our = gen.getLengthAdjustment_();
-      const sg = (x: string | number) => (Number(x) >= 0 ? "+" : "") + x;
+      const byCut = grapherHasCorrections(h.groups.map((g) => ({ correctionFrom: Number(g.correction_from_mm), correctionTo: Number(g.correction_to_mm) })));
       return <section className="gsec full grapher-box" aria-label="Чертёж">
         <div className="gsec-head"><h3>Чертёж {grapher.data.project.designation || grapher.data.project.name}</h3>
           {grapher.data.harnesses.length > 1 ? <select aria-label="Жгут чертежа" value={grapher.pick} onChange={(event) => setGrapher({ ...grapher, pick: Number(event.target.value) })}>
@@ -819,15 +897,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             : <span className="gsec-meta">жгут {h.designation} × {h.quantity}</span>}
           <button className="primary small" onClick={grapherApply}>Подставить в «Кабели»</button>
           <button className="btn-link" onClick={() => setGrapher(null)}>скрыть</button></div>
-        <div className="gtable-wrap"><table className="gtable"><thead><tr><th>Материал в чертеже</th><th>Позиция набора</th><th className="num">Шт</th><th className="num">По чертежу, мм</th><th>Поправки</th><th className="num">Рез в чертеже</th><th>Концы</th></tr></thead><tbody>
+        <div className="gtable-wrap"><table className="gtable"><thead><tr><th>Материал в чертеже</th><th>Позиция набора</th><th className="num">Шт</th><th>Длина</th><th>Концы</th></tr></thead><tbody>
           {h.groups.map((g, i) => <tr key={i}><td>{g.material || "—"}{g.cores > 1 ? ` · ${g.cores} жил${g.jacket_mm != null ? ", разделка " + g.jacket_mm : ""}` : ""}</td>
             <td>{g.component_id && gen.getCompById(g.component_id) ? compLabel(g.component_id) : <span className="tone-danger">не найдено — выбери</span>}</td>
-            <td className="num">{g.quantity}</td><td className="num">{g.length_mm == null ? <span className="tone-danger">нет</span> : g.length_mm}</td>
-            <td>{Number(g.correction_from_mm) || Number(g.correction_to_mm) ? `${sg(g.correction_from_mm)} / ${sg(g.correction_to_mm)}` : "—"}{g.mixed_corrections ? " (разные)" : ""}</td>
-            <td className="num">{g.cut_mm == null ? "—" : g.cut_mm}</td><td className="muted">{g.ends.join("; ")}{g.quantity > g.ends.length ? " …" : ""}</td></tr>)}
+            <td className="num">{g.quantity}</td>
+            <td>{g.length_mm == null ? <span className="tone-danger">нет длины</span> : grapherLengthText(g)}{g.mixed_corrections ? " (поправки разные)" : ""}</td>
+            <td className="muted">{g.ends.join("; ")}{g.quantity > g.ends.length ? " …" : ""}</td></tr>)}
         </tbody></table></div>
-        <small className="muted">Припуск у нас: {our.parts.length ? `${our.parts.join(", ")} = ${our.total} мм` : "концы ещё не выбраны"} — длина реза считается по нему. Разъёмы: {h.connectors.map((c) => `${c.designation} ${c.part_number}${c.terminals.length ? ` (терм. ${c.terminals.join(", ")})` : ""}`).join("; ") || "нет"}{h.pairs ? `. Свитых пар в чертеже: ${h.pairs} — включи свивку ниже.` : "."}</small>
-        {h.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}
+        <small className="muted">{byCut ? "Режем по длине реза чертежа (с поправками концов) — припуск L+/L− из БД.ТЕР не добавляется."
+          : <>Припуск у нас: {our.parts.length ? `${our.parts.join(", ")} = ${our.total} мм` : "концы ещё не выбраны"} — длина реза считается по нему.</>} Разъёмы: {h.connectors.map((c) => `${c.designation} ${c.part_number}${c.terminals.length ? ` (терм. ${c.terminals.join(", ")})` : ""}`).join("; ") || "нет"}{h.pairs ? `. Свитых пар в чертеже: ${h.pairs} — включи свивку ниже.` : "."}</small>
+        {[...h.warnings, ...(h.sheet_warnings ?? [])].map((item) => <div className="warning-inline" key={item}>{item}</div>)}
       </section>;
     })()}
     {sideSection("A")}
@@ -883,7 +962,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           openId={draftId} builtId={builtId} onOpen={openDraft} onUploaded={() => void reloadDrafts()}
           onChanged={(changed) => setDrafts((current) => ({ ...current, items: current.items.map((item) => (item.id === changed.id ? changed : item)) }))} />}
         {manualTab && <ManualAssembly state={manual} onChange={(next) => { setRouteError(""); setManual(next); }} library={refs.library} opRecs={D.ops} components={components}
-          partQty={partQty} finalName={finalName} error={routeError} />}
+          partQty={partQty} finalName={finalName} error={routeError} kd={kdOffer} />}
       </div></div>
 
       {/* Итог (владелец 04.10): операции, схема и одна кнопка — справа и всегда на виду; на планшете — внизу. */}

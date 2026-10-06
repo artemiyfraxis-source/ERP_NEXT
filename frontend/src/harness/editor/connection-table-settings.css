@@ -1,0 +1,9 @@
+/* Scoped under .harness-root: generated from TECHMAP-GRAPHER CSS (e63befb), UI colours mapped to ERP tokens. */
+.harness-root .he-connection-settings { gap:8px; }
+.harness-root .he-settings-help { margin:0; color:var(--muted-foreground); font-size:10px; line-height:1.4; }
+.harness-root .he-connection-settings-list { display:grid; gap:4px; }
+.harness-root .he-connection-setting-row { display:flex; align-items:center; gap:6px; min-height:30px; padding:4px 7px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--muted-foreground); cursor:grab; }
+.harness-root .he-connection-setting-row:active { cursor:grabbing; }
+.harness-root .he-connection-setting-row label { display:flex; align-items:center; gap:7px; min-width:0; font-size:11px; cursor:pointer; }
+.harness-root .he-connection-setting-row input { width:14px; height:14px; margin:0; accent-color:var(--primary); }
+.harness-root .he-connection-drag { color:var(--muted-foreground); font-size:14px; line-height:1; }

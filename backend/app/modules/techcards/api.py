@@ -60,6 +60,8 @@ from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, T
 from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
 from .grapher_import import GrapherComponent, GrapherImportError, read_export
+from .harness import SheetRow
+from .harness.rules import to_decimal
 from .connector_housings import attach_housings, connector_catalog, housing_of
 from .assembly_schema import generator_to_assembly
 from .assembly_drafts import AssemblyDraftError, AssemblyDraftNotFound, draft_for_card, finalise_draft
@@ -173,10 +175,21 @@ class AssemblyFromGeneratorPayload(BaseModel):
     config: dict[str, Any]
 
 
+class GrapherSheetRowPayload(BaseModel):
+    """A row of «Данные из листа»: the drawing is checked against it."""
+    id: str = Field(min_length=1, max_length=255)
+    type: str = Field(default="", max_length=128)
+    name: str = Field(default="", max_length=512)
+    article: str = Field(default="", max_length=512)
+    kd: str = Field(default="", max_length=512)
+    qty: str | float | None = None
+
+
 class GrapherImportPayload(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_base64: str = Field(min_length=1, max_length=42_000_000)
     components: list[GrapherComponentPayload] = Field(default_factory=list, max_length=5000)
+    sheet: list[GrapherSheetRowPayload] = Field(default_factory=list, max_length=5000)
 
 
 def _generator_gate(*scopes: str):
@@ -325,6 +338,9 @@ def import_grapher_export(
         content = base64.b64decode(payload.content_base64, validate=True)
         return read_export(content, payload.filename, tuple(
             GrapherComponent(item.id, item.article, item.name) for item in payload.components
+        ), tuple(
+            SheetRow(item.id, item.type, item.name, item.article, item.kd, to_decimal(item.qty))
+            for item in payload.sheet
         ))
     except (binascii.Error, GrapherImportError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

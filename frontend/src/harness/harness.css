@@ -1,0 +1,89 @@
+/* Harness editor root: maps the TECHMAP-GRAPHER --ui-* variables to ERP tokens; resets apply only inside the editor. */
+.harness-root {
+  --ui-ink: var(--foreground);
+  --ui-muted: var(--muted-foreground);
+  --ui-border: var(--border);
+  --ui-surface: var(--card);
+  --ui-soft: var(--panel-soft);
+  --ui-accent: var(--primary);
+  --ui-accent-soft: var(--sheet-selected);
+  --ui-radius: 6px;
+  --ui-control-height: 30px;
+  position: relative;
+  min-height: 0;
+  color: var(--foreground);
+  background: var(--background);
+}
+.harness-root,
+.harness-root * { box-sizing: border-box; }
+.harness-root :is(button, input, select, textarea) { font: inherit; }
+.harness-root button:disabled { cursor: not-allowed; opacity: .58; }
+
+.harness-root .primary-action,
+.harness-root .secondary-action {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.harness-root .primary-action { border: 1px solid var(--primary); background: var(--primary); color: var(--primary-foreground); box-shadow: 0 4px 12px rgb(23 110 157 / 18%); }
+.harness-root .primary-action:hover:not(:disabled) { background: var(--primary); }
+.harness-root .secondary-action { border: 1px solid var(--border); background: var(--card); color: var(--foreground); }
+.harness-root .secondary-action:hover:not(:disabled) { background: var(--panel-soft); }
+.harness-root .cut-list-warning,
+.harness-root .cut-list-error { margin: 12px 0 0; padding: 9px 10px; border-left: 3px solid var(--tone-warn); border-radius: 5px; background: var(--warn-soft); color: var(--tone-warn); font-size: 11px; line-height: 1.4; }
+.harness-root .cut-list-error { border-left-color: var(--tone-danger); background: var(--sheet-invalid-bg); color: var(--tone-danger); }
+.harness-root .cut-list-loading,
+.harness-root .cut-list-empty { margin: 12px 0 0; color: var(--muted-foreground); font-size: 11px; }
+.harness-root .cut-list-scroll { margin-top: 12px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; }
+.harness-root .cut-list-table { width: 100%; border-collapse: collapse; font-size: 10px; white-space: nowrap; }
+.harness-root .cut-list-table th { padding: 7px 8px; background: var(--sheet-selected); color: var(--muted-foreground); text-align: left; }
+.harness-root .cut-list-table td { padding: 8px; border-top: 1px solid var(--border); color: var(--muted-foreground); vertical-align: top; font-variant-numeric: tabular-nums; }
+.harness-root .cut-list-table td:first-child { min-width: 118px; white-space: normal; }
+.harness-root .cut-list-table td:first-child strong,
+.harness-root .cut-list-table td:first-child span,
+.harness-root .cut-list-table td small { display: block; }
+.harness-root .cut-list-table td:first-child span { margin-top: 2px; color: var(--muted-foreground); }
+.harness-root .cut-list-table td small { margin-top: 3px; color: var(--tone-warn); font-size: 9px; }
+.harness-root .cut-list-status { padding: 3px 6px; border-radius: 8px; background: var(--border); color: var(--tone-ok); font-weight: 800; }
+.harness-root .cut-list-status.incomplete { background: var(--warn-soft); color: var(--tone-warn); }
+.harness-root .diagnostics { max-height: 250px; margin-top: 15px; display: grid; gap: 7px; overflow: auto; }
+.harness-root .diagnostics h3 { margin-bottom: 3px; }
+.harness-root .diagnostic { padding: 10px 11px; display: flex; align-items: flex-start; gap: 9px; border-left: 3px solid var(--tone-danger); border-radius: 6px; background: var(--sheet-invalid-bg); color: var(--tone-danger); font-size: 11px; }
+.harness-root .diagnostic.warning { border-left-color: var(--tone-warn); background: var(--warn-soft); color: var(--tone-warn); }
+.harness-root .diagnostic > div { display: grid; gap: 3px; }
+.harness-root .diagnostic-content { min-width: 0; }
+.harness-root .diagnostic-details { margin-top: 2px; color: currentColor; opacity: .82; }
+.harness-root .diagnostic-details summary { width: max-content; cursor: pointer; font-size: 10px; }
+.harness-root .diagnostic-details dl { margin: 7px 0 0; padding: 7px 9px; display: grid; gap: 5px; border-radius: 5px; background: rgb(255 255 255 / 55%); }
+.harness-root .diagnostic-details dl > div { display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr); gap: 8px; }
+.harness-root .diagnostic-details dt { font-weight: 700; }
+.harness-root .diagnostic-details dd { margin: 0; overflow-wrap: anywhere; }
+.harness-root .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.harness-root .info-hint { position: relative; display: inline-flex; vertical-align: middle; margin-left: 6px; font-size: 13px; font-weight: 400; }
+.harness-root .info-hint > button { border: 1px solid var(--muted-foreground); border-radius: 50%; background: transparent; color: var(--muted-foreground); width: 20px; height: 20px; padding: 0; cursor: help; }
+
+/* Shared compact controls for library and E4 panels. Canvas geometry stays local. */
+.harness-root .ui-control { min-height: var(--ui-control-height); padding: 5px 9px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-surface); color: var(--ui-ink); font: 600 11px/1.3 Inter, "Segoe UI", Arial, sans-serif; cursor: pointer; }
+.harness-root .ui-control:hover:not(:disabled) { border-color: var(--muted-foreground); background: var(--ui-accent-soft); }
+.harness-root .ui-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; color: var(--ui-ink); font-size: 11px; }
+.harness-root :is(.component-library, .harness-editor) :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* Keep help icons independent of surrounding form/button rules. */
+.harness-root :is(.component-library, .harness-editor, .app-shell) .info-hint { display: inline-flex; align-items: center; flex: 0 0 auto; margin: 0; padding: 0; border: 0; background: transparent; vertical-align: middle; text-transform: none; letter-spacing: normal; }
+.harness-root :is(.component-library, .harness-editor, .app-shell) .info-hint.info-hint > button { display: grid; place-items: center; flex: 0 0 18px; width: 18px; min-width: 18px; max-width: 18px; height: 18px; min-height: 18px; padding: 0; margin: 0; border: 1px solid var(--muted-foreground); border-radius: 50%; background: var(--card); color: var(--muted-foreground); font: 600 11px/1 Arial, sans-serif; box-shadow: none; cursor: help; }
+
+/* All InfoHints use the browser top layer; panel overflow and z-index cannot clip them. */
+.harness-root .info-hint > .info-hint-popup[popover] {
+  position: fixed; inset: auto; margin: 0; border: 0;
+  box-sizing: border-box; width: min(290px, calc(100vw - 16px)); min-width: 0;
+  max-width: calc(100vw - 16px); min-height: 0; max-height: calc(100vh - 16px);
+  padding: 10px; border-radius: 6px; background: var(--foreground); color: white;
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--foreground) 20%, transparent); overflow: auto; overflow-wrap: anywhere;
+  font: 400 12px/1.5 Inter, "Segoe UI", Arial, sans-serif;
+  text-align: left; white-space: normal; text-transform: none; letter-spacing: normal;
+  cursor: auto; user-select: text;
+}
+.harness-root .info-hint > .info-hint-popup[popover]:not(:popover-open) { display: none; }
+.harness-root .info-hint > .info-hint-popup[popover]:popover-open { display: block; }
+.harness-root .info-hint-popup::backdrop { background: transparent; pointer-events: none; }

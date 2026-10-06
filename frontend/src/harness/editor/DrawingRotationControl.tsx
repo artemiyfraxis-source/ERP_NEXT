@@ -1,0 +1,7 @@
+import {useEffect,useState} from "react";
+export function DrawingRotationControl({value,onChange,disabled}:{value:number;onChange:(value:number)=>void;disabled:boolean}) {
+ const [snap,setSnap]=useState(true),[text,setText]=useState(String(value));
+ useEffect(()=>setText(String(Math.round(value*100)/100)),[value]);
+ const commit=(number:number)=>{if(!Number.isFinite(number)){setText(String(value));return;}const next=snap?Math.round(number/15)*15:number;const normalized=((next+180)%360+360)%360-180;setText(String(normalized));onChange(normalized);};
+ return <div className="drawing-rotation-control"><label>Поворот, °<input aria-label="Поворот разъёма на чертеже" type="text" inputMode="decimal" disabled={disabled} value={text} onChange={e=>setText(e.target.value)} onBlur={()=>{if(text.trim())commit(Number(text.replace(",",".")));else setText(String(value));}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}/></label><div style={{display:"flex",gap:4}}><button type="button" className="ui-control" aria-label="Повернуть на −15°" disabled={disabled} onClick={()=>commit(value-15)}>↶ 15°</button><button type="button" className="ui-control" aria-label="Повернуть на 15°" disabled={disabled} onClick={()=>commit(value+15)}>↷ 15°</button><button type="button" className="ui-control" aria-label="Развернуть разъём на 180°" disabled={disabled} onClick={()=>commit(value+180)}>180°</button></div><label><input type="checkbox" checked={snap} onChange={e=>setSnap(e.target.checked)}/>Шаг 15°</label></div>;
+}

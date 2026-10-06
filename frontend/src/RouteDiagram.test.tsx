@@ -106,3 +106,19 @@ it("lists the linked inputs on a block card and shows nothing for a block withou
   expect(screen.getByTitle("Блок b1").textContent).not.toMatch(/вход/);
   expect(document.body.textContent).not.toContain("с входами 0");
 });
+
+it("marks blocks by kind, quantity and the master's check only when the caller passes marks", () => {
+  mount({ marks: (item) => (item.key === "b1" ? { kind: "semiFinished", checked: true } : item.key === "b2" ? { kind: "assembly", quantity: 3 } : { kind: item.final ? "final" : "semiFinished" }) });
+  expect(screen.getByTitle("Блок b1")).toHaveTextContent("п/ф");
+  expect(within(screen.getByTitle("Блок b1")).getByTitle("Проверено мастером")).toHaveTextContent("✓");
+  expect(screen.getByTitle("Блок b1")).toHaveTextContent("✓ 1 оп.");
+  expect(screen.getByTitle("Блок b2")).toHaveTextContent("сборка");
+  expect(screen.getByTitle("Блок b2")).toHaveTextContent("3 шт · 1 оп.");
+  expect(within(screen.getByTitle("Блок b3")).getAllByText("итог")).toHaveLength(1);
+  expect(screen.getByTitle("Блок b4")).toHaveTextContent("п/ф"); // пустой блок — тоже с видом
+});
+
+it("draws no kind tags without marks", () => {
+  mount();
+  expect(document.querySelector(".route-block-kind, .route-block-checked")).toBeNull();
+});
