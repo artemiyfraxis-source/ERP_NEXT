@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   AUTH_REQUIRED_EVENT,
   ApiError,
@@ -37,18 +37,23 @@ import { NotificationBell } from "./NotificationBell";
 import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
 import { ProjectsPage } from "./ProjectsPage";
+// Экран чертежа жгута грузится отдельным куском — вместе с редактором, главный пакет не растёт.
+const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
 import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
-type Place = { section: Section; block: BlockId | null; user?: string | null };
+type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string } };
 
 function placeFromUrl(): Place {
   const params = new URLSearchParams(window.location.search);
   const value = params.get("section");
   if (value === "warehouse") return { section: "stock", block: null };
+  if (value === "projects" && params.get("project") && params.get("harness")) {
+    return { section: value, block: null, harness: { project: params.get("project")!, index: params.get("harness")! } };
+  }
   if (isSection(value)) return { section: value, block: null, user: params.get("user") || null };
   const block = params.get("block");
   return { section: "cabinet", block: isBlock(block) ? block : null };
@@ -93,6 +98,7 @@ export function App() {
     url.searchParams.delete("block");
     url.searchParams.delete("project");
     url.searchParams.delete("user");
+    url.searchParams.delete("harness");
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
     if (next.user) url.searchParams.set("user", next.user);
@@ -162,6 +168,12 @@ export function App() {
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
   // The level's name under the user (the backend adds «· режим» while the admin mode is on).
+  // Чертёж жгута — на весь экран, без меню: редактору нужна вся площадь.
+  if (place.harness && visibleNav.some(({ id }) => id === "projects")) {
+    return <Suspense fallback={<div className="screen-center muted">Загрузка редактора…</div>}>
+      <HarnessPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
+    </Suspense>;
+  }
   const levelName = principal.role_label || (accessLevelOf(principal) ? accessLevelLabel(accessLevelOf(principal)) : "");
 
   return (
