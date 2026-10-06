@@ -367,10 +367,17 @@ def _base_designation(value: str) -> str:
     return re.sub(r"\.\d{3,}$", "", str(value or "").strip())
 
 
+_INTERNAL_PROJECT_GOAL = re.compile(r"ВП-\d{3,}")
+
+
 def grn_prefix_for(*, purpose: str, link: str, goal: str) -> str | None:
     if re.search(r"давальческ", str(link or ""), re.IGNORECASE):
         return "CSM"
-    source = str(goal or "").strip() or str(purpose or "").strip()
+    goal_text = str(goal or "").strip()
+    # An internal project «ВП-001» carries no GRN meaning itself: its purpose (copied into the request) decides.
+    if _INTERNAL_PROJECT_GOAL.fullmatch(goal_text.upper()):
+        goal_text = ""
+    source = goal_text or str(purpose or "").strip()
     normalized = _base_designation(source).casefold()
     if normalized in {"r&d", "rnd"}:
         return "R&D"

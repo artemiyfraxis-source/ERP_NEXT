@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Iterable, Sequence
 from uuid import UUID, uuid4
 
+from app.shared import stage_options
 from app.shared.identity import Actor
 
 
@@ -56,11 +57,16 @@ _PROJECT_HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
 _PROJECT_NUMBER = re.compile(
     r"(?:[1-9]\d*(?:К[А-Я]?|МФ)(?:\.(?:[А-Я]{1,3}|[1-9]\d*))*\.?|П\d{4}-[1-9]\d*(?:\.[1-9]\d*)?)"
 )
+# «Внутренний проект» (stage option projects.internal): ВП-001, number grows past 999 without padding.
+_INTERNAL_PROJECT = re.compile(r"ВП-\d{3,}")
 _PROJECT_WITHOUT_VERSION = re.compile(r"([1-9]\d*(?:К[А-Я]?|МФ)(?:\.[А-Я]{1,3})?)\.?")
 
 
 def project_reference_valid(value: str | None) -> bool:
-    return bool(_PROJECT_NUMBER.fullmatch(re.sub(r"\s+", "", _text(value).upper())))
+    text = re.sub(r"\s+", "", _text(value).upper())
+    if _PROJECT_NUMBER.fullmatch(text):
+        return True
+    return bool(_INTERNAL_PROJECT.fullmatch(text)) and stage_options.enabled("projects.internal")
 
 
 def normalize_project_reference(value: str | None) -> str:

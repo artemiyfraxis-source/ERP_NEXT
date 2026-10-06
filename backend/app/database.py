@@ -30,7 +30,7 @@ from .modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from .modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from .modules.purchasing.infrastructure import SqlAlchemyPurchasingUnitOfWork
 from .workflows.kitset_names import KitsetNameQueue
-from .workflows.project_registry import PlanSnapshotProjectRegistry
+from .workflows.project_registry import InternalAwareProjectRegistry, PlanSnapshotProjectRegistry
 from .workflows.receiving_stock import WarehouseStockBalanceLookup
 from .workflows.procurement_stage import ProcurementLineStageLookup
 from .workflows.supplier_directory import ReferencesSupplierDirectory
@@ -121,7 +121,8 @@ def configure_database(app: FastAPI, database_url: str) -> Engine:
     app.state.operations_uow_factory = build_operations_uow_factory(engine)
     app.state.techcards_uow_factory = build_techcards_uow_factory(engine)
     app.state.purchasing_uow_factory = build_purchasing_uow_factory(engine)
-    app.state.project_registry = PlanSnapshotProjectRegistry(app.state.production_uow_factory)
+    app.state.project_registry = InternalAwareProjectRegistry(
+        PlanSnapshotProjectRegistry(app.state.production_uow_factory), app.state.purchasing_uow_factory)
     app.state.procurement_stage_lookup = ProcurementLineStageLookup(app.state.procurement_uow_factory)
     app.state.procurement_supplier_directory = ReferencesSupplierDirectory(app.state.references_uow_factory)
     app.state.receiving_stock_lookup = WarehouseStockBalanceLookup(app.state.warehouse_uow_factory)

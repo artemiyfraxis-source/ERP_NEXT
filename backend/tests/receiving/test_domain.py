@@ -203,6 +203,11 @@ def test_invalid_quantities_are_rejected():
         ("Обеспечение производства", "", "591к.3", "PPM"),
         ("что угодно", "Давальческое сырьё", "", "CSM"),
         ("неизвестно", "", "", None),
+        # An internal project goal: the purpose decides, not the «ВП-…» text.
+        ("RND", "", "ВП-001", "R&D"),
+        ("FRX", "", "вп-012", "FRX"),
+        ("Хоз деятельность", "", "ВП-001", None),
+        ("Хоз деятельность", "Давальческое сырьё", "ВП-001", "CSM"),
     ],
 )
 def test_grn_prefix_matches_supplymap_rules(purpose, link, goal, expected):
