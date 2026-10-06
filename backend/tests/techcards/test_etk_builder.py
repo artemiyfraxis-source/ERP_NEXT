@@ -568,3 +568,17 @@ def test_marks_by_kd_list_every_mark_group_materials_and_scale_the_norm_by_their
     assert [row["norm"] for row in op["time"]] == ["65,33"]
     assert op["result"][0]["name"].endswith("(маркирован)")
     assert op["card"]["steps"]
+
+
+def test_product_mark_with_a_tab_goes_to_the_etk_in_russian_and_feeds_the_materials():
+    config = deepcopy(kit("708К.2-КБ1")["config"])
+    mark = next(item for item in config["ops"] if item["type"] == "insMark")
+    mark["marks"] = [
+        {"art": "Термотрубка", "name": "Термотрубка", "qty": 1, "target": "Разъём X1", "text": "X1", "place": "у разъёма", "placeKind": "conn", "placeMm": ""},
+        {"art": "Хлястик", "name": "Хлястик", "qty": 1, "target": "Изделие КБ1", "text": "КБ1", "place": "на изделии", "placeKind": "item", "placeMm": ""},
+    ]
+    op = _mark_op(build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"]))
+    assert [(m["target"], m["material"], m["place"]) for m in op["fields"]["marks"]] == [
+        ("Разъём X1", "Термотрубка", "у разъёма"), ("Изделие КБ1", "Хлястик", "на изделии"),
+    ]
+    assert {c["art"] for c in op["components"]} == {"Термотрубка", "Хлястик"}

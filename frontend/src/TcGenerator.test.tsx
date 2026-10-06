@@ -198,11 +198,12 @@ it("«Маркировка по КД»: fills marks by connectors and from the h
   expect(screen.getByText(/Метки не заданы — в маркировку пойдут бирки из состава/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "По разъёмам" }));
   expect(screen.getByLabelText("Надпись 1")).toHaveValue("А1");
-  expect(screen.getByLabelText("Материал 1")).toHaveValue("Маркировка");
+  expect(screen.getByLabelText("Материал 1")).toHaveValue("Термотрубка");
   fireEvent.click(screen.getByRole("button", { name: "Из чертежа жгута" }));
   expect(await screen.findByDisplayValue("708К.4КБ1")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Материал 4"), { target: { value: "Самоклейка неведомая" } });
-  expect(screen.getByText("нет в справочнике")).toBeInTheDocument();
+  expect(screen.getByLabelText("Материал 4")).toHaveValue("Термотрубка");
+  expect(screen.getAllByRole("option", { name: "Хлястик" }).length).toBeGreaterThan(0);
+  fireEvent.change(screen.getByLabelText("Материал 4"), { target: { value: "Хлястик" } });
   expect(screen.getByText("4 метки · 5 шт. на изделие")).toBeInTheDocument();
 
   vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -211,7 +212,49 @@ it("«Маркировка по КД»: fills marks by connectors and from the h
   const op = onBuild.mock.calls[0][0].ops.find((item: { type: string }) => item.type === "insMark");
   expect(op.templateId).toBe("mark");
   expect(op.marks.map((mark: { text: string; art: string; place: string; qty: number }) => [mark.text, mark.art, mark.place, mark.qty])).toEqual([
-    ["А1", "Маркировка", "у разъёма", 1], ["В1", "Маркировка", "у разъёма", 1], ["X1", "Маркировка", "у разъёма", 1],
-    ["708К.4КБ1", "Самоклейка неведомая", "на обоих концах", 2],
+    ["А1", "Термотрубка", "у разъёма", 1], ["В1", "Термотрубка", "у разъёма", 1], ["X1", "Термотрубка", "у разъёма", 1],
+    ["708К.4КБ1", "Хлястик", "на обоих концах", 2],
   ]);
+});
+
+it("«Термоусадка на жгут»: без ТТК/ТУТ в составе включённый переключатель говорит об этом, а не рисует пустую полоску", async () => {
+  mockApi();
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+
+  await screen.findByText("Резка — МГТФ 0,12");
+  fireEvent.click(screen.getByRole("switch", { name: /Термоусадка на жгут/ }));
+  expect(screen.getByText(/В составе проекта нет термоусадки \(ТТК\/ТУТ\)/)).toBeInTheDocument();
+});
+
+it("«Термоусадка на жгут»: ТТК из состава даёт поля отрезка и их количество", async () => {
+  mockApi();
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()}
+    kit={kitOf("Жгут XHP 150мм", [...XH, { type: "Трубка", name: "ТТК 6/3", art: "ТТК 6/3", qty: 2 }])} />);
+
+  await screen.findByText("Резка — МГТФ 0,12");
+  const toggle = screen.getByRole("switch", { name: /Термоусадка на жгут/ });
+  if (!(toggle as HTMLInputElement).checked) fireEvent.click(toggle);
+  expect(await screen.findByText(/ТТК 6\/3 — отрезок/)).toBeInTheDocument();
+  expect(screen.getByText("Отрезков на изделие")).toBeInTheDocument();
+  expect(screen.queryByText(/В составе проекта нет термоусадки/)).toBeNull();
+});
+
+it("«Маркировать изделие»: одна метка «На изделии» с хлястиком, повторное нажатие дубль не добавляет", async () => {
+  mockApi();
+  const onBuild = vi.fn();
+  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+
+  await screen.findByText("Резка — МГТФ 0,12");
+  fireEvent.click(screen.getByRole("switch", { name: /Маркировка жгута/ }));
+  fireEvent.click(screen.getByRole("button", { name: "+ Метка" }));
+  expect(screen.getByLabelText("Материал 1")).toHaveValue("Термотрубка");
+  const product = screen.getByRole("button", { name: "Маркировать изделие" });
+  fireEvent.click(product);
+  expect(screen.getByLabelText("Что маркируем 2")).toHaveValue("Изделие КБ1");
+  expect(screen.getByLabelText("Надпись 2")).toHaveValue("КБ1");
+  expect(screen.getByLabelText("Материал 2")).toHaveValue("Хлястик");
+  expect(screen.getByLabelText("Где 2")).toHaveValue("item");
+  expect(screen.getByLabelText("На изделие 2")).toHaveValue("1");
+  expect(product).toBeDisabled();
+  expect(screen.queryByLabelText("Надпись 3")).toBeNull();
 });

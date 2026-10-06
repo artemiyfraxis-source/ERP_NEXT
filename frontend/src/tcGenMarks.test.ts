@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { initState, makeGen, type GenData } from "./tcGenLogic";
 import {
   markLabel, markMaterialSource, markMatsFromRecords, markPlaceText, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness,
-  markSpecs, markTargets, mergeMarkRows, newMarkRow,
+  markSpecs, markTargets, mergeMarkRows, newMarkRow, productMarkRow,
 } from "./tcGenMarks";
 
 const templates = [
@@ -131,4 +131,20 @@ it("places, labels, materials from БД.МАТ and the «нет в справо�
   expect(markMaterialSource("Маркировка", mats, [{ art: "Маркировка" }])).toBe("kit");
   expect(markMaterialSource("Самоклейка неведомая", mats, [])).toBeNull();
   expect(markMaterialSource("", mats, [])).toBe("ref");
+});
+
+it("«Маркировать изделие»: метка на изделие с хлястиком, место «на изделии» уходит в операцию по-русски", () => {
+  const row = productMarkRow("КБ1");
+  expect(row).toMatchObject({ target: "Изделие КБ1", text: "КБ1", material: "Хлястик", place: "item", qty: "1" });
+  expect(markPlaceText(row)).toBe("на изделии");
+  const [spec] = markSpecs([row], []);
+  expect(spec).toMatchObject({ art: "Хлястик", name: "Хлястик", place: "на изделии", placeKind: "item", qty: 1 });
+  const op = { type: "insMark", marks: [spec] };
+  expect(markRowsFromConfig({ ops: [op] })[0]).toMatchObject({ place: "item", material: "Хлястик", target: "Изделие КБ1" });
+});
+
+it("вид маркировки Термотрубка / Хлястик не считается «нет в справочнике»", () => {
+  expect(markMaterialSource("Термотрубка", [], [])).toBe("ref");
+  expect(markMaterialSource("Хлястик", [], [])).toBe("ref");
+  expect(markMaterialSource("Самоклейка неведомая", [], [])).toBeNull();
 });

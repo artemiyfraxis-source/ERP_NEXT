@@ -61,7 +61,7 @@ import {
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { MarkTable, markTotal } from "./GenMarkTable";
-import { markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
+import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats"> & { library: LibraryCard[] };
@@ -373,7 +373,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   // «Маркировка по КД»: материал по умолчанию — бирка из состава (её строка набора и спишется).
   const [markDrawing, setMarkDrawing] = useState<{ busy: boolean; note: string }>({ busy: false, note: "" });
-  const kitMarkArt = () => { const first = gen.markComps_()[0]; return first ? first.art || first.name || "" : ""; };
+  const kitMarkArt = () => MARK_KIND_DEFAULT;
   const marksByConnectors = () => {
     const rows = markRowsByConnectors(gen.markConnectors_(), kitMarkArt());
     setMarkDrawing({ busy: false, note: rows.length ? "" : "В форме нет разъёмов — выберите разъёмы сторон А и В." });
@@ -846,6 +846,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </Toggle>,
     <Toggle key="hs" checked={S.hs.enabled} title="Термоусадка на жгут" hint="концы оплётки — ТТК/ТУТ из состава"
       onChange={(on) => update((current) => ({ ...current, hs: { ...current.hs, enabled: on, manual: true } }))}>
+      {hsComps.length === 0 && <span className="opt-note">В составе проекта нет термоусадки (ТТК/ТУТ) — добавьте её в состав, и здесь появятся отрезки.</span>}
       {hsComps.map(({ row, comp }, i) => <div className="opt-grid" key={row.compId}>
         <Field label={`${comp ? comp.art || comp.name : row.compId} — отрезок`} className="span2"><UnitInput unit="мм" value={row.len} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, rows: current.hs.rows.map((r, j) => (j === i ? { ...r, len: event.target.value } : r)) } }))} /></Field>
         <Field label="Отрезков на изделие"><input value={row.cnt} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, rows: current.hs.rows.map((r, j) => (j === i ? { ...r, cnt: event.target.value } : r)) } }))} /></Field>
@@ -955,7 +956,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>
       <MarkTable enabled={S.mark} onEnabled={(on) => update({ mark: on })}
         hint={kdMarks.length ? `${kdMarks.length} ${plural(kdMarks.length, "метка", "метки", "меток")} · ${markTotal(S.markRows)} шт. на изделие` : `бирки из состава: ${marks.map((m) => `${m.art || m.name} × ${m.qty}`).join("; ") || "бирок нет"}`}
-        rows={S.markRows} onChange={(markRows) => update({ markRows })} kitMarks={marks} comps={D.components} mats={D.markMats || []}
+        rows={S.markRows} onChange={(markRows) => update({ markRows })} comps={D.components} productDesignation={card.item_index} mats={D.markMats || []}
         targets={markTargets(gen.markConnectors_(), active.map((w) => compLabel(w.compId)))}
         onByConnectors={marksByConnectors} onFromDrawing={() => void marksFromDrawing()} drawingBusy={markDrawing.busy} note={markDrawing.note} />
     </section>
