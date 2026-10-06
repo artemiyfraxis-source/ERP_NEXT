@@ -30,7 +30,7 @@ def _card(user_id: UUID, request: Request, now: datetime) -> dict:
         raise HTTPException(status_code=503, detail="Identity ERP не настроен")
     card = employee_card(
         user_id, now, identity=identity, production=_factory(request, "production_uow_factory"),
-        requests=_factory(request, "uow_factory"), operations=_factory(request, "operations_uow_factory"),
+        techcards=_factory(request, "techcards_uow_factory"), requests=_factory(request, "uow_factory"), operations=_factory(request, "operations_uow_factory"),
     )
     if card is None:
         raise HTTPException(status_code=404, detail="Сотрудник не найден.")

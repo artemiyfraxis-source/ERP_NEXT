@@ -23,7 +23,7 @@ const FULL: EmployeeCard = {
     { project: "512А.1", roles: ["Инициатор заявок"], deadline: null },
   ],
   skills: [
-    { operation: "CUT_WIRE", allowed: true, stars: 3, coefficient: "1.25" },
+    { operation: "CUT_WIRE", name: "Резка провода", allowed: true, stars: 3, coefficient: "1.25" },
     { operation: "PRS_TERM", allowed: false, stars: 0, coefficient: "1" },
   ],
   absences: {
@@ -63,9 +63,6 @@ function serve(card: EmployeeCard, seen: string[] = []) {
     const path = String(input);
     seen.push(path);
     if (path.startsWith("/api/employee-card/")) return json(card);
-    if (path === "/api/production/skills") {
-      return json({ skills: [], operation_codes: [{ code: "CUT_WIRE", name: "Резка провода" }, { code: "PRS_TERM", name: "" }] });
-    }
     throw new Error(`Unexpected request: ${path}`);
   });
   return seen;
@@ -126,10 +123,14 @@ it("shows the own card: header, the «Обзор» tab and the cards in the conc
 });
 
 it("names the competences in Russian, the allowed ones first, with the code as a small second line", async () => {
-  serve(FULL);
+  const seen = serve(FULL);
   render(<EmployeeCardPage principal={principal()} />);
   const skills = await screen.findByRole("region", { name: "Компетенции" });
   expect(await within(skills).findByText("Резка провода")).toBeInTheDocument();
+  expect(seen).not.toContain("/api/production/skills");
+  // Код без названия: «операция без названия», код — только в подсказке.
+  expect(within(skills).getByText("операция без названия")).toHaveAttribute("title", "PRS_TERM");
+  expect(within(skills).queryByText("PRS_TERM")).toBeNull();
   expect(within(skills).getByText("CUT_WIRE")).toBeInTheDocument();
   expect(within(skills).getByLabelText("3 из 5")).toBeInTheDocument();
   expect(within(skills).getByText(/×1,25/)).toBeInTheDocument();

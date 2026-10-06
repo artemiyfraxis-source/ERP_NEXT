@@ -8,7 +8,7 @@ import { ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellE
    документ качества → цены (расчёт, факт) → валюта → счёт и оплата → сроки → комментарий.
    Видны ключевые (на 16" вместе с «Комментарием» без прокрутки вбок), остальные включаются в «Колонках». System ID (колонка «ID») стоит первым, а не последним, как в листе:
    таблица широкая, первая колонка залипает слева и именно по ней строку узнают.
-   Нет в данных ERP, поэтому не показаны: ЦЕЛЬ, DATASHEET, файлы РАЗРЕШЕНИЕ и ДОК. КАЧЕСТВА. */
+   Нет в данных ERP, поэтому не показаны: DATASHEET, файлы РАЗРЕШЕНИЕ и ДОК. КАЧЕСТВА. */
 
 const MINUS = "−";
 
@@ -82,6 +82,7 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     text("designation", "Назначение", (line) => line.designation, { hidden: true }),
     text("project", "Проект", (line) => line.project_reference, { hidden: true }),
     text("task_type", "Тип задачи", (line) => line.task_type, { filter: true, hidden: true }),
+    text("purpose", "Цель", (line) => line.purpose, { filter: true, hidden: true }),
     text("priority", "Приоритет", (line) => line.priority, { filter: true, hidden: true }),
     // что закупаем
     text("category", "Категория", (line) => line.category, { filter: true, hidden: true }),
