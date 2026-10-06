@@ -110,6 +110,8 @@ BY_SUPPLIER_CLOSED = frozenset(
 )
 # «Со склада» is set and taken off while the line is with its buyer, before the supplier request is formed.
 STOCK_COVER_STAGES = frozenset({ProcurementStatus.IN_WORK, ProcurementStatus.READY})
+# «Есть на складе, без ГРН»: the warehouse is optional ("" — not said).
+STOCK_COVER_WAREHOUSES = ("ЦАР", "ЖУК")
 # The buyer's desk before the supplier request (owner, 05.10): the facts are edited inline in both stages and the
 # stage follows them — complete facts are «Готов к запросу», anything missing sends the line back to «В работе».
 FACTS_EDITABLE = frozenset({ProcurementStatus.IN_WORK, ProcurementStatus.READY})
@@ -982,11 +984,7 @@ class ProcurementLine:
         supplier request is out the cover stays: the order was formed for the remainder only."""
         self._require_owner(actor)
         amount = _stock_quantity(quantity)
-        closed_by_cover = self.status is ProcurementStatus.DONE and self.paid_at is None
-        if self.status not in STOCK_COVER_STAGES and not closed_by_cover:
-            raise ProcurementValidationError(
-                "Заказ поставщику уже сформирован — «Со склада» на этой строке не снимается"
-            )
+        closed_by_cover = self._require_cover_open("«Со склада» на этой строке не снимается")
         if amount > self.stock_covered:
             raise ProcurementValidationError("Снимаем больше, чем закрыто со склада")
         actual = self.actual_quantity
@@ -995,6 +993,24 @@ class ProcurementLine:
         reopened = replace(self, stock_covered=self.stock_covered - amount, actual_quantity=actual)
         status = reopened._stage_from_data() if closed_by_cover else self.status
         return replace(reopened, status=status, version=self.version + 1)
+
+    def bind_stock_cover(self, lot_unit: str, actor: Actor) -> ProcurementLine:
+        """«Привязать ГРН» to a cover made «Есть на складе, без ГРН»: the line keeps its quantities, only its version
+        moves (a stale form gets 409). Same buyer and the same stages as «Снять "Со склада"»."""
+        self._require_owner(actor)
+        self._require_cover_open("ГРН к «Со склада» уже не привязывается")
+        if not same_unit(self.calculated_unit, lot_unit):
+            raise ProcurementValidationError(
+                f"Единицы не совпадают: в строке «{self.calculated_unit}», у партии «{lot_unit}»"
+            )
+        return replace(self, version=self.version + 1)
+
+    def _require_cover_open(self, refused: str) -> bool:
+        """A cover changes before the supplier request or on a line it closed («Готово», unpaid). → closed by it."""
+        closed_by_cover = self.status is ProcurementStatus.DONE and self.paid_at is None
+        if self.status not in STOCK_COVER_STAGES and not closed_by_cover:
+            raise ProcurementValidationError(f"Заказ поставщику уже сформирован — {refused}")
+        return closed_by_cover
 
     def reconcile_rate(self, rate: ExchangeRate, actor: Actor) -> ProcurementLine:
         """Replace a manually typed rate with the CBR one for the same day and replay the amounts."""
@@ -1615,13 +1631,17 @@ class StockCover:
     The lot's РЕЗЕРВ carries `quantity` (the same counter kitting reserves through, so ДОСТУПНО = БАЛАНС − РЕЗЕРВ
     stays one number). A kit request of the same project takes it over (`consume`): the reserve moves to the kit
     line without leaving the lot, `consumed`/`consumed_by` keep the trace. `trimmed` is how much КОЛ-ВО (факт)
-    of the line the cover cut, given back on release."""
+    of the line the cover cut, given back on release.
+
+    «Есть на складе, без ГРН» (owner, 06.10): `lot_id` None — the line is covered but no lot holds a reserve (empty
+    ГРН/упаковка/место, unit of the line, warehouse optional). A kit never takes it over (kits find covers by lot);
+    «Привязать ГРН» (`bind_lot`) later reserves the whole quantity on one lot."""
 
     id: UUID
     line_id: UUID
     legacy_id: str
     project_reference: str | None
-    lot_id: UUID
+    lot_id: UUID | None
     warehouse: str
     grn: str
     package: str
@@ -1654,6 +1674,19 @@ class StockCover:
         if not self.active:
             raise ProcurementValidationError("Резерв «Со склада» уже снят")
         return replace(self, quantity=Decimal("0"), released_at=now, version=self.version + 1)
+
+    def bind_lot(
+        self, *, lot_id: UUID, warehouse: str, grn: str, package: str, storage_location: str, unit: str,
+    ) -> StockCover:
+        """«Привязать ГРН»: the cover made without a lot now sits on this one (the caller reserves its quantity)."""
+        if self.lot_id is not None:
+            raise ProcurementValidationError("У «Со склада» уже есть ГРН")
+        if not self.active:
+            raise ProcurementValidationError("«Со склада» уже снято")
+        return replace(
+            self, lot_id=lot_id, warehouse=warehouse, grn=grn, package=package, storage_location=storage_location,
+            unit=unit, version=self.version + 1,
+        )
 
     def consume(self, quantity: Decimal, request_number: str) -> StockCover:
         amount = _stock_quantity(quantity)

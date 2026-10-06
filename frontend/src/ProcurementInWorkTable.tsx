@@ -3,7 +3,7 @@ import { ApiError, failureText, procurementApi, type ProcurementLine } from "./a
 import { selectRange } from "./bulk";
 import { readSaved, writeSaved, type Saved } from "./DataTable";
 import { NoteCell, type LineEditing } from "./ProcurementCellEdit";
-import { ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
+import { ProcurementNoLotCover, ProcurementStockPicker, coveredOf, stockApi, toBuyOf } from "./ProcurementStockPicker";
 import { RowActions } from "./ProcurementRowMenu";
 import { formatMoney } from "./ProcurementSheetColumns";
 import { BulkStatus, StageHeading, stageSummary, useCollapsed, type BulkState } from "./ProcurementStages";
@@ -217,6 +217,8 @@ export function ProcurementInWorkTable({
   const [invalid, setInvalid] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(null);
   const [stockFor, setStockFor] = useState<Set<string>>(new Set());
+  // «Есть на складе, без ГРН»: строка, под которой открыта короткая форма количества.
+  const [noLotFor, setNoLotFor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const anchor = useRef<string | null>(null);
@@ -497,6 +499,7 @@ export function ProcurementInWorkTable({
                   { label: "Со склада", run: () => stockToggle(line.id) },
                   ...(covered > 0 ? [{ label: "Снять «Со склада»", run: () => void releaseStock(line) }] : []),
                   { label: "Прослеживаемость, раздробить…", short: "Прослеж.…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
+                  { label: "Есть на складе, без ГРН", run: () => { setOpen(null); setNoLotFor(noLotFor === line.id ? null : line.id); } },
                   { label: "Отменить строку", run: () => onCancel(line) },
                 ];
                 const rowClass = [dirty.size ? "edited" : "", selected.has(line.id) ? "selected" : "", ready ? "ready" : ""].join(" ").trim();
@@ -541,7 +544,17 @@ export function ProcurementInWorkTable({
                         />
                       </td></tr>
                     )}
-                    {open === line.id && <tr className="buy-detail"><td colSpan={COLUMN_COUNT}>{renderDetail(line)}</td></tr>}
+                    {noLotFor === line.id && (
+                      <tr className="buy-detail"><td colSpan={COLUMN_COUNT}>
+                        <ProcurementNoLotCover
+                          line={line}
+                          disabled={disabled}
+                          onClose={() => setNoLotFor(null)}
+                          onDone={(message) => { setNoLotFor(null); onChanged(message); }}
+                        />
+                      </td></tr>
+                    )}
+                    {open === line.id &&<tr className="buy-detail"><td colSpan={COLUMN_COUNT}>{renderDetail(line)}</td></tr>}
                   </Fragment>
                 );
               })}

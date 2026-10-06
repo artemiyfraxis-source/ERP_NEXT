@@ -92,8 +92,10 @@ from .application import (
     invoice_supplier_order,
     pay_supplier_order,
     save_fact_prices_batch,
+    BindStockCoverCommand,
     CoverFromStockCommand,
     ReleaseStockCoverCommand,
+    bind_stock_cover,
     cover_from_stock,
     release_stock_cover,
     stock_candidates,
@@ -305,8 +307,15 @@ class SplitInput(VersionInput):
 
 
 class StockCoverInput(VersionInput):
-    lot_id: UUID
+    # None — «Есть на складе, без ГРН»: covered without a reserve on any lot.
+    lot_id: UUID | None = None
     quantity: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+    # Only without a lot, optional.
+    warehouse: Literal["ЦАР", "ЖУК", ""] = ""
+
+
+class StockCoverBindInput(VersionInput):
+    lot_id: UUID
 
 
 class StockCoverReleaseInput(VersionInput):
@@ -1701,7 +1710,7 @@ def _cover_result(cover: StockCover) -> dict:
         "id": str(cover.id),
         "line_id": str(cover.line_id),
         "label": cover.label,
-        "lot_id": str(cover.lot_id),
+        "lot_id": str(cover.lot_id) if cover.lot_id else None,
         "warehouse": cover.warehouse,
         "grn": cover.grn,
         "package": cover.package,
@@ -1778,7 +1787,8 @@ def cover_line_from_stock(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    """«Со склада»: reserve `quantity` of lot `lot_id` for the line; all of it covered → «Готово», no money."""
+    """«Со склада»: reserve `quantity` of lot `lot_id` for the line; all of it covered → «Готово», no money.
+    Without `lot_id` — «Есть на складе, без ГРН»: the same line rules, no reserve (`warehouse` optional)."""
     covers: list[StockCover] = []
 
     def operation() -> ProcurementLine:
@@ -1788,6 +1798,38 @@ def cover_line_from_stock(
                 expected_version=payload.version,
                 lot_id=payload.lot_id,
                 quantity=payload.quantity,
+                actor=principal.actor,
+                now=now,
+                warehouse=payload.warehouse,
+            ),
+            uow_factory(),
+        )
+        covers[:] = [cover]
+        return line
+
+    result = _transition(operation)
+    return {**result, "cover": _cover_result(covers[0])}
+
+
+@router.post("/{line_id}/stock-cover/{cover_id}/bind")
+def bind_line_stock_cover(
+    line_id: UUID,
+    cover_id: UUID,
+    payload: StockCoverBindInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """«Привязать ГРН»: a cover «без ГРН» reserves its whole quantity on lot `lot_id`, or nothing (422)."""
+    covers: list[StockCover] = []
+
+    def operation() -> ProcurementLine:
+        line, cover = bind_stock_cover(
+            BindStockCoverCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                cover_id=cover_id,
+                lot_id=payload.lot_id,
                 actor=principal.actor,
                 now=now,
             ),
