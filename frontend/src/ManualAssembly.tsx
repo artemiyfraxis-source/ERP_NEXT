@@ -36,6 +36,7 @@ import {
   toggleComponent,
   updateOp,
   type EdgeEdit,
+  type KdSummary,
   type LibraryCard,
   type ManualOp,
   type ManualState,
@@ -87,6 +88,51 @@ function KdNote({ op }: { op: ManualOp }) {
       {index > 0 && <br />}{kdChangeText(change)}{edited.has(change.field) ? " (оставлено значение мастера)" : ""}
     </span>)}
   </small>;
+}
+
+/** «Предложить из КД» на схеме: есть ли чертёж жгута, идёт ли чтение, устарела ли схема (КД изменена) и открытое
+    предложение — сводка до применения (`summary`) или уже взятая в пустую схему схема из КД (`taken` операций). */
+export type KdOffer = {
+  available: boolean;
+  /** Почему кнопка недоступна — подсказкой на ней. */
+  hint: string;
+  busy: boolean;
+  stale: boolean;
+  onPropose: () => void;
+  proposal?: { summary?: KdSummary; taken?: number; warnings: string[]; onApply?: () => void; onCancel: () => void };
+};
+
+function kdSummaryText(summary: KdSummary): string {
+  if (!summary.added && !summary.changed && !summary.gone) return "Предложение из КД: схема уже совпадает с КД";
+  return `Предложение из КД: добавится ${summary.added}, изменится ${summary.changed}, нет в КД ${summary.gone}`;
+}
+
+/** Кнопка «Предложить из КД» (или отметка «КД изменена — предложить заново»); без чертежа — недоступна с подсказкой. */
+function KdButton({ kd }: { kd: KdOffer }) {
+  if (kd.stale && kd.available) {
+    return <button type="button" className="secondary small tone-warn" style={{ background: "var(--chip-warn-bg)" }} disabled={kd.busy} title="Чертёж жгута в КД сохранён после того, как из него предложена схема"
+      onClick={kd.onPropose}>{kd.busy ? "Читаю КД…" : "КД изменена — предложить заново"}</button>;
+  }
+  // Подсказка — на обёртке: у недоступной кнопки браузер её может не показать.
+  return <span title={kd.available ? "Блоки и операции из чертежа жгута в КД" : kd.hint}>
+    <button type="button" className="secondary small" disabled={!kd.available || kd.busy} onClick={kd.onPropose}>{kd.busy ? "Читаю КД…" : "Предложить из КД"}</button>
+  </span>;
+}
+
+/** Сводка предложения из КД до применения («Применить» / «Отмена») или после взятия в пустую схему («Закрыть»). */
+function KdProposalBar({ proposal }: { proposal: NonNullable<KdOffer["proposal"]> }) {
+  // Взятая без замечаний схема — зелёным; решение или замечания КД — жёлтым.
+  const calm = !proposal.summary && !proposal.warnings.length;
+  return <div className={calm ? "success-banner" : "warning-inline"} role="region" aria-label="Предложение из КД" style={{ display: "grid", gap: 6, fontSize: 13, marginBottom: 0 }}>
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+      <b role="status">{proposal.summary ? kdSummaryText(proposal.summary) : `Схема предложена из КД: ${proposal.taken ?? 0} оп.`}</b>
+      <span className="manual-add" style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        {proposal.onApply && <button type="button" className="primary small" onClick={proposal.onApply}>Применить</button>}
+        <button type="button" className="secondary small" onClick={proposal.onCancel}>{proposal.onApply ? "Отмена" : "Закрыть"}</button>
+      </span>
+    </div>
+    {proposal.warnings.map((warning) => <span key={warning}>{warning}</span>)}
+  </div>;
 }
 
 function normLabel(minutes: number) {
@@ -171,9 +217,9 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
  * выбирает блок и кладёт в него операции — «+ Операция из библиотеки» (клик по строке) и «+ Своя операция».
  * Номера операций идут по схеме: входы раньше блоков, которые их берут.
  */
-export function ManualAssembly({ state, onChange, library, opRecs, components, partQty, finalName, error }: {
+export function ManualAssembly({ state, onChange, library, opRecs, components, partQty, finalName, error, kd }: {
   state: ManualState; onChange: Change; library: LibraryCard[]; opRecs: OpRec[]; components: Comp[]; partQty: number;
-  finalName: string; error?: string;
+  finalName: string; error?: string; kd?: KdOffer;
 }) {
   const [picking, setPicking] = useState(false);
   const [added, setAdded] = useState("");
@@ -240,10 +286,12 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
       <h3>Схема сборки</h3>
       <span className="gsec-meta">{pluralBlocks(route.blocks.length)} · {ordered.length} оп.{ordered.length > 0 && <> · {formatMinutes(total)} мин на партию {partQty} шт.</>}</span>
       <span className="manual-add">
+        {kd && <KdButton kd={kd} />}
         <button type="button" className="secondary small" title={`Новый полуфабрикат — вход блока «${blockName}»`}
           onClick={() => { onChange((current) => addBlock(current)); setProblem(""); setAdded(""); setNameOnPick(false); }}>+ Блок</button>
       </span>
     </div>
+    {kd?.proposal && <KdProposalBar proposal={kd.proposal} />}
     <RouteDiagram route={route} title={title} numbers={(item) => numberRange(item.ops)} totals={totals} selected={block.key} marks={mark}
       onSelect={select} edgeLabel={edgeLabel} onPerUnit={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
       onAddInput={addInputTo} onConnect={connect} onEdgeEdit={() => setProblem("")}

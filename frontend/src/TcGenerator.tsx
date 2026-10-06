@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   assemblyApi,
+  kitsetsApi,
   referencesApi,
   techcardsApi,
   type AssemblyDraft,
@@ -51,11 +52,11 @@ import {
 } from "./tcGenLogic";
 import { RouteEditor } from "./RouteEditor";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
-import { ManualAssembly, ManualSummary } from "./ManualAssembly";
+import { ManualAssembly, ManualSummary, type KdOffer } from "./ManualAssembly";
 import { AssemblyDrafts } from "./AssemblyDrafts";
 import {
-  MANUAL_MODE, cardCategory, cardLabel, emptyManual, manualConfig, manualFromConfig, manualProblem, selectBlock,
-  type LibraryCard, type ManualState,
+  MANUAL_MODE, cardCategory, cardLabel, emptyManual, fillKdCards, isEmptyManual, kdStale, kdSummary, manualConfig, manualFromConfig,
+  manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 
@@ -216,6 +217,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.project, card.item_index]);
 
+  // «Предложить из КД»: чертёж жгута позиции (есть ли он и его версия) читается один раз за карту при открытии «Ручной
+  // сборки»; предложение — схема из КД (`derived`) с версией, сводка считается по текущей схеме мастера.
+  const harnessKey = `${card.project}::${card.item_index}`;
+  const [drawing, setDrawing] = useState<{ key: string; version: string | null; error: string } | null>(null);
+  const [kdBusy, setKdBusy] = useState(false);
+  const [kdProposal, setKdProposal] = useState<{ derived: ManualState | null; version: string; warnings: string[]; taken?: number } | null>(null);
+  useEffect(() => { setKdProposal(null); }, [card.id]);
+
   // init(): каждый монтаж засевает форму из состава набора и строк расчёта (autoFillAllWires, applyCalcTin_).
   // Layout-эффект: вкладки появляются в том же коммите, что и справочники; обычный эффект стартует позже, и клик по
   // вкладке в этом окне затирался бы засевом (под нагрузкой тесты «Ручной сборки» теряли клик).
@@ -239,6 +248,70 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const manualTab = S.tab === "manual";
   const partQty = Number((config as Record<string, unknown>).partQty) || 1;
   const manualCfg = useMemo(() => ({ ...manualConfig(manual, config), materialsSheet: S.materialsSheet }), [manual, config, S.materialsSheet]);
+
+  useEffect(() => {
+    if (!manualTab || drawing?.key === harnessKey) return;
+    let alive = true;
+    kitsetsApi.harness(card.project, card.item_index)
+      .then((found) => { if (alive) setDrawing({ key: harnessKey, version: found?.version ?? null, error: "" }); })
+      .catch((reason) => { if (alive) setDrawing({ key: harnessKey, version: null, error: reason instanceof Error ? reason.message : "КД не прочитана" }); });
+    return () => { alive = false; };
+  }, [manualTab, harnessKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const harnessNow = drawing?.key === harnessKey ? drawing : null;
+
+  // Карточка операции из КД — тем же подбором, что у генератора (подсказка шаблона / категория, шаг терминала по БД.ТЕР,
+  // нормы из БД.ОП); состояние формы кабелей не участвует, чтобы выбор на типовых вкладках не подмешивался.
+  const kdGen = useMemo(() => makeGen(D, emptyState()), [D]);
+  const pickKdCard = (spec: OpSpec): KdCard | null => {
+    const row = kdGen.opRow(spec);
+    if (!row.templateId) return null;
+    const code = (refs?.library || []).find((item) => item.id === row.templateId)?.code || row.matched?.opNumber || "";
+    return { templateId: row.templateId, code, prepSec: row.times.tPrep, opSec: row.times.tOp };
+  };
+
+  async function proposeKd() {
+    setKdBusy(true); setKdProposal(null);
+    try {
+      const current = await kitsetsApi.harness(card.project, card.item_index);
+      setDrawing({ key: harnessKey, version: current?.version ?? null, error: "" });
+      if (!current?.version) { setStatus({ text: "В КД нет чертежа жгута.", error: true }); return; }
+      const result = await kitsetsApi.deriveHarness(card.project, card.item_index);
+      const read = manualFromConfig(result.build_config);
+      if (!read) throw new Error("Схема из КД не прочитана");
+      const derived = fillKdCards(read, pickKdCard);
+      setStatus({ text: "", error: false });
+      if (isEmptyManual(manual)) {
+        setManual(proposeFromKd(manual, derived, current.version)); setRouteError("");
+        setKdProposal({ derived: null, version: current.version, warnings: result.warnings ?? [], taken: derived.ops.length });
+      } else {
+        setKdProposal({ derived, version: current.version, warnings: result.warnings ?? [] });
+      }
+    } catch (reason) {
+      setStatus({ text: reason instanceof Error ? reason.message : "Схема из КД не предложена", error: true });
+    } finally {
+      setKdBusy(false);
+    }
+  }
+
+  const kdOffer: KdOffer = {
+    available: !!harnessNow?.version,
+    hint: !harnessNow ? "Проверяю КД…" : harnessNow.error ? `КД не прочитана: ${harnessNow.error}` : "В КД нет чертежа жгута",
+    busy: kdBusy,
+    stale: kdStale(manual, harnessNow?.version),
+    onPropose: () => void proposeKd(),
+    ...(kdProposal ? {
+      proposal: kdProposal.derived
+        ? {
+          summary: kdSummary(manual, proposeFromKd(manual, kdProposal.derived, kdProposal.version)), warnings: kdProposal.warnings,
+          onApply: () => {
+            const { derived, version } = kdProposal;
+            setManual((current) => proposeFromKd(current, derived!, version)); setRouteError(""); setKdProposal(null);
+          },
+          onCancel: () => setKdProposal(null),
+        }
+        : { taken: kdProposal.taken, warnings: kdProposal.warnings, onCancel: () => setKdProposal(null) },
+    } : {}),
+  };
   useEffect(() => { onConfig?.(manualTab ? manualCfg : config); }, [config, manualCfg, manualTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Схема полуфабрикатов (ARCH-TRACK-1). В сборку идут операции с выбранным шаблоном (validate), номер = место в этом списке.
@@ -889,7 +962,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           openId={draftId} builtId={builtId} onOpen={openDraft} onUploaded={() => void reloadDrafts()}
           onChanged={(changed) => setDrafts((current) => ({ ...current, items: current.items.map((item) => (item.id === changed.id ? changed : item)) }))} />}
         {manualTab && <ManualAssembly state={manual} onChange={(next) => { setRouteError(""); setManual(next); }} library={refs.library} opRecs={D.ops} components={components}
-          partQty={partQty} finalName={finalName} error={routeError} />}
+          partQty={partQty} finalName={finalName} error={routeError} kd={kdOffer} />}
       </div></div>
 
       {/* Итог (владелец 04.10): операции, схема и одна кнопка — справа и всегда на виду; на планшете — внизу. */}
