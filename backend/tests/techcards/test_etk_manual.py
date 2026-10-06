@@ -247,3 +247,17 @@ def test_refuses_a_manual_list_it_cannot_build_in_russian(change, message):
     with pytest.raises(ValueError) as error:
         build(config)
     assert str(error.value) == message
+
+
+def test_generator_operations_of_existing_schemes_keep_their_etk_keys():
+    """Every golden kit opened in «Ручная сборка» builds exactly the ETK keys it built before colliding generator
+    operations were told apart (fixtures/manual-etk-keys.json): saved techcards and issued ETKs keep theirs."""
+    from app.modules.techcards.assembly_schema import generator_to_assembly
+    from tests.techcards import test_etk_golden as golden
+
+    expected = json.loads((Path(__file__).parent / "fixtures" / "manual-etk-keys.json").read_text(encoding="utf-8"))
+    assert set(expected) == set(golden.KITS)
+    for kit, keys in expected.items():
+        document = build_etk(generator_to_assembly(golden._kit(kit)), golden.CARDS,
+                             operation_library_commit=golden.LIBRARY["sourceCommit"])
+        assert [operation_key(operation) for operation in document["operations"]] == keys, kit

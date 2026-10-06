@@ -25,7 +25,7 @@ from app.modules.techcards.harness_api import assembly_from_harness
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.kitset_api import HARNESS_CONTENT_TYPE, document_kind
 from app.modules.techcards.kitsets import KitAssembly, KitDocument, Kitset
-from app.modules.techcards.project_cards import _document as checked_document
+from app.modules.techcards.project_cards import _document as checked_document, operation_key
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
@@ -417,3 +417,37 @@ def test_import_refusals_are_russian(harness_api, content, file_name, message):
     assert response.status_code == 422
     assert response.json()["detail"] == message
     assert _rows(factory) == []
+
+
+# Cards the generator picks for the drawing's operations (template hint / category, as the screen does).
+_PICKED = {
+    "cutWireStrip": "CUT_WIRE+2strip", "cutWire": "CUT_WIRE_auto", "coaxStrip": "STRIP_COAX_auto", "twist": "TWIST",
+    "prsTerm": "PRS_TERMINAL_hand", "insTerm": "INS_terminal_1.00", "splice": "SDR_W_W", "insWrap": "INS_WRAP",
+    "stripCable": "STRIP_CABLE", "cutTut": "CUT_TUT_short", "insTut": "INS_TUT", "heatTut": "HEAT_TTK_short",
+}
+
+
+def test_a_scheme_derived_from_the_drawing_with_the_generator_cards_builds_with_distinct_etk_keys(harness_api):
+    """«Предложить из КД» → cards picked → «Создать»: X1 and X2 are crimped in two blocks, the strip cut is in two —
+    one card, connector and side for several operations. The ETK builds with distinct keys: the connector stays in the
+    key, the operation's number is its tail; an operation without a twin keeps its key as it was."""
+    from tests.techcards.test_etk_manual import CARDS
+
+    client, _factory, _clock = harness_api
+    client.put(f"{BASE}/КБ1", json={"design": _design()})
+    config = client.post(f"{BASE}/КБ1/derive", json={}).json()["build_config"]
+    by_code = {card.code: card for card in CARDS}
+    for op in config["ops"]:
+        if op["type"] in _PICKED:
+            card = by_code[_PICKED[op["type"]]]
+            op.update(templateId=card.source_id, opNum=card.code)
+    document = checked_document(build_etk(config, CARDS, operation_library_commit=""))
+    keys = [operation_key(operation) for operation in document["operations"]]
+    assert len(keys) == len(config["ops"]) == len(set(keys))
+    ops = _by_origin(config)
+    connector = {operation["position"]: operation["connector"] for operation in document["operations"]}
+    twins = (ops["harness:x1:prsTerm.A@r1"]["seq"], ops["harness:x1:prsTerm.A@-"]["seq"])
+    assert {connector[seq] for seq in twins} == {f"X1 · {seq}" for seq in twins}
+    assert connector[ops["harness:x4:prsTerm.A"]["seq"]] == "X4"
+    cuts = [op["seq"] for op in config["ops"] if op["type"] == "cutWireStrip"]
+    assert len(cuts) == 2 and [connector[seq] for seq in cuts] == [f"разделка · {seq}" for seq in cuts]
