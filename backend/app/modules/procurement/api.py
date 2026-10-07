@@ -52,6 +52,7 @@ from .application import (
     MarkPaidBatchItem,
     SupplierDirectory,
     UnitOfWork,
+    StockCoverUnitOfWork,
     ConcurrentProcurementUpdate,
     available_procurement,
     buyer_procurement,
@@ -119,7 +120,7 @@ from .domain import (
     same_unit,
     normalize_invoice_url,
 )
-from app.modules.warehouse.domain import StockLot
+from .stock_port import StockLotView
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
 from .invoice_file import invoice_date as invoice_day
@@ -476,6 +477,13 @@ class KpFileInput(BaseModel):
 
 def procurement_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
     factory = getattr(request.app.state, "procurement_uow_factory", None)
+    if not callable(factory):
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    return factory
+
+
+def procurement_stock_uow_factory(request: Request) -> Callable[[], StockCoverUnitOfWork]:
+    factory = getattr(request.app.state, "procurement_stock_uow_factory", None)
     if not callable(factory):
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     return factory
@@ -1674,7 +1682,7 @@ def _offline(action: OfflineAction):
         payload: VersionInput,
         principal: Annotated[Principal, Depends(procurement_edit_principal)],
         now: Annotated[datetime, Depends(moscow_now)],
-        uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+        uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
     ) -> dict:
         return _transition(
             lambda: set_procurement_offline_status(
@@ -1761,7 +1769,7 @@ def _reserve_note(covers: list[StockCover]) -> str:
     )
 
 
-def _candidate_result(lot: StockLot, line: ProcurementLine, holders: list[StockCover]) -> dict:
+def _candidate_result(lot: StockLotView, line: ProcurementLine, holders: list[StockCover]) -> dict:
     return {
         "id": str(lot.id),
         "version": lot.version,
@@ -1788,7 +1796,7 @@ def _candidate_result(lot: StockLot, line: ProcurementLine, holders: list[StockC
 def stock_cover_candidates(
     line_id: UUID,
     _principal: Annotated[Principal, Depends(procurement_edit_principal)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
     q: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
     """«Со склада» — the lots that can cover the line (warehouse search by the typed text, otherwise by АРТИКУЛ,
@@ -1811,7 +1819,7 @@ def cover_line_from_stock(
     payload: StockCoverInput,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
 ) -> dict:
     """«Со склада»: reserve `quantity` of lot `lot_id` for the line; all of it covered → «Готово», no money.
     Without `lot_id` — «Есть на складе, без ГРН»: the same line rules, no reserve (`warehouse` optional)."""
@@ -1844,7 +1852,7 @@ def bind_line_stock_cover(
     payload: StockCoverBindInput,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
 ) -> dict:
     """«Привязать ГРН»: a cover «без ГРН» reserves its whole quantity on lot `lot_id`, or nothing (422)."""
     covers: list[StockCover] = []
@@ -1874,7 +1882,7 @@ def release_line_stock_cover(
     payload: StockCoverReleaseInput,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
 ) -> dict:
     """«Снять "Со склада"»: every active cover of the line (or only `cover_id`) goes back to its lot."""
     released: list[StockCover] = []

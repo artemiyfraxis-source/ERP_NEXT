@@ -14,6 +14,7 @@ from app.modules.procurement.infrastructure import (
     ProcurementLineRow,
     SqlAlchemyProcurementUnitOfWork,
 )
+from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
 from app.modules.requests.api import moscow_now
 from app.shared.events import OutboxMessage
 from app.shared.http_auth import Principal, authenticated_principal
@@ -64,6 +65,7 @@ def procurement_api():
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
     app.state.procurement_uow_factory = factory
+    app.state.procurement_stock_uow_factory = lambda: SqlAlchemyProcurementStockUnitOfWork(sessions)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Петров", department="Закупки"),
         email="petrov@example.test",
@@ -76,6 +78,7 @@ def procurement_api():
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
     del app.state.procurement_uow_factory
+    del app.state.procurement_stock_uow_factory
     engine.dispose()
 
 
