@@ -634,6 +634,11 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
   const stock = lines.filter(fromStock).length;
   const tone = (line: SupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : fromStock(line) ? "info" : "warn";
   const zeroDash = (value: string) => Number(value) ? value : "—";
+  // «Готово · без ГРН»: партию к строке привязывает её закупщик — подсказка говорит, где.
+  const grnHint = (line: SupplyLine) => {
+    const row = line.rows.find((item) => item.status.endsWith("без ГРН"));
+    return row ? `ГРН привязывает закупщик: Закупка → Мои позиции → ${row.source_id} → «Привязать ГРН»` : undefined;
+  };
 
   function toggle(art: string, on: boolean) {
     setPicked((current) => {
@@ -674,7 +679,7 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
       render: (line) => isShort(line) ? <strong className="tone-danger">{line.short}</strong> : <span className="muted">—</span> },
     { key: "unit", title: "Ед.", width: 48, value: (line) => line.unit },
     { key: "kbs", title: "КБ", width: 72, wrap: true, value: (line) => line.kbs.join(" · ") },
-    { key: "stage", title: "Стадия", width: 170, wrap: true, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
+    { key: "stage", title: "Стадия", width: 170, wrap: true, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`} title={grnHint(line)}>
       {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
     </span> },
     { key: "rows", title: "Строк", width: 64, hidden: true, value: (line) => line.rows.length || "—", numeric: true },

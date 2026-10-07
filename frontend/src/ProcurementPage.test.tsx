@@ -2094,3 +2094,55 @@ it("on 409 from «Оплачено» says the order changed and rereads the queu
   expect(await screen.findByText(/Строки заказа изменились — список обновлён/)).toBeInTheDocument();
   await waitFor(() => expect(reads).toBe(2));
 });
+
+it("«Готово · без ГРН»: «Привязать ГРН» only on a line closed without a ГРН; the lot gets all of it and the action goes", async () => {
+  const done = { ...line, status: "Готово", buyer: "Закупщик", supplier: "ООО А", actual_quantity: "2", actual_unit: "шт", stock_covered: "2", to_buy: "0" };
+  const lotless = { ...done, stock_without_grn: "2" };
+  const fromLot = { ...done, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", stock_without_grn: "0" };
+  const cover = {
+    id: "c1", line_id: line.id, label: "REQ-1", lot_id: null, warehouse: "", grn: "", package: "", storage_location: "", unit: "шт",
+    quantity: "2", consumed: "0", consumed_by: null, active: true, created_at: "2026-10-06T09:00:00+03:00", created_by: "Закупщик", released_at: null,
+  };
+  const lot = (id: string, available: string) => ({
+    id, version: 1, warehouse: "ЦАР", grn: `ГРН-${id}`, package: "", article: "", series: "", name: "Разъём", item_type: "Комплектующие",
+    purpose: "", unit: "шт", storage_location: "A-1", balance: "5", reserved: "0", available, unit_matches: true, holders: [], reserve_note: "",
+  });
+  let bound = false;
+  const posted: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine?limit=500") {
+      return json({ lines: [bound ? { ...lotless, version: 4, stock_without_grn: "0" } : lotless, fromLot] });
+    }
+    if (path === `/api/procurement/${line.id}/stock-candidates`) return json({ line: lotless, query: "Разъём", lots: [lot("1", "1"), lot("2", "5")], covers: [cover] });
+    if (path === `/api/procurement/${line.id}/stock-cover/c1/bind` && init?.method === "POST") {
+      posted.push(String(init.body));
+      bound = true;
+      return json({ line: { ...lotless, version: 4 }, cover: { ...cover, lot_id: "2", grn: "ГРН-2", warehouse: "ЦАР" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  await openPaidBlock(/^Принято/);
+  await openOrder("Без № заказа");
+  expect(rowActionNames("REQ-1")).toContain("Привязать ГРН");
+  expect(rowActionNames("REQ-2")).not.toContain("Привязать ГРН");
+  const statusOf = (id: string) => screen.getByText(id).closest("tr")!.querySelector(".status-cell")!.textContent;
+  expect(statusOf("REQ-1")).toBe("Принятобез ГРН");
+  expect(statusOf("REQ-2")).toBe("Принято");
+
+  await pickRowAction("REQ-1", "Привязать ГРН");
+  expect(await screen.findByText(/Без ГРН: 2 шт — выберите партию ниже/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Зарезервировать" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Партия ГРН-1"));
+  expect(screen.getByRole("button", { name: "Привязать ГРН ГРН-1" })).toBeDisabled(); // доступно 1 < 2
+  fireEvent.click(screen.getByLabelText("Партия ГРН-2"));
+  fireEvent.click(screen.getByRole("button", { name: "Привязать ГРН ГРН-2" }));
+
+  await waitFor(() => expect(posted).toEqual([JSON.stringify({ version: 3, lot_id: "2" })]));
+  expect(await screen.findByText("REQ-1: ГРН ГРН-2 привязан, резерв 2 шт")).toBeInTheDocument();
+  await waitFor(() => expect(rowActionNames("REQ-1")).not.toContain("Привязать ГРН"));
+  expect(screen.queryByText(/Без ГРН: 2 шт/)).not.toBeInTheDocument();
+});

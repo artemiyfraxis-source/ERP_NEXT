@@ -2096,6 +2096,9 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .stock-picker { display: grid; gap: 6px; }
 .stock-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .stock-search input { height: 26px; min-width: 260px; }
+/* «Привязать ГРН» в панели строки: поиск и «Найти» в одну строку, без растянутого на всю ширину поля. */
+.stock-search.bind-search { max-width: none; }
+.stock-search.bind-search input { width: 360px; }
 .stock-reserve { display: flex; align-items: end; gap: 8px; }
 .stock-reserve input { width: 110px; height: 26px; }
 .stock-lots tr.muted { color: var(--muted-foreground); }

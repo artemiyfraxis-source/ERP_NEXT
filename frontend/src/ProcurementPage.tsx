@@ -18,6 +18,7 @@ import {
 import { DataTable, readSaved, writeSaved, type DataColumn } from "./DataTable";
 import { ProcurementBySupplier, ProcurementSheetView } from "./ProcurementSheet";
 import { ProcurementInWorkTable } from "./ProcurementInWorkTable";
+import { ProcurementStockPicker, waitsForGrn } from "./ProcurementStockPicker";
 import {
   BackorderStage, COMPACT_BELOW, OrderStageBlock, OtherStage, StageHeading, orderGroups, orderStage,
   type BulkState, type OrderGroup, type RowAction,
@@ -474,7 +475,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   // Действия строки видны на ней (без меню «⋯»); формы раскрываются под таблицей стадии.
   const form = (line: ProcurementLine) => ({ line, busy: busyId === line.id, disabled: interactionLocked, onAdvance: advance });
   const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", short: "Прослеж.…", panel: () => <TraceabilityForm {...form(line)} /> });
-  const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", panel: () => <SplitAction {...form(line)} /> });
+  const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", short: "Раздробить…", panel: () => <SplitAction {...form(line)} /> });
   const cancel = (line: ProcurementLine): RowAction => ({ label: "Отменить строку", run: () => cancelLine(line) });
   const replaceInvoice = (line: ProcurementLine): RowAction[] => (
     line.invoice_url ? [{ label: "Заменить счёт…", short: "Заменить…", panel: () => <InvoiceReplaceForm {...form(line)} /> }] : []
@@ -519,7 +520,20 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     },
     ...replaceInvoice(line), split(line),
   ];
+  // «Готово · без ГРН» (закрыта «Есть на складе, без ГРН»): партию выбирают потом — резерв встаёт на неё целиком.
+  const bindGrn = (line: ProcurementLine): RowAction[] => waitsForGrn(line) ? [{
+    label: "Привязать ГРН",
+    short: "ГРН…",
+    title: "Закрыто «Есть на складе, без ГРН» — выберите партию, всё количество зарезервируется на ней",
+    panel: () => (
+      <ProcurementStockPicker
+        line={line} bindOnly disabled={interactionLocked}
+        onDone={(message) => { if (message) say(message); void reload(true); }}
+      />
+    ),
+  }] : [];
   const paidActions = (line: ProcurementLine): RowAction[] => [
+    ...bindGrn(line),
     ...(line.exchange_rate_manual ? [{
       label: "Сверить курс с ЦБ",
       short: "Курс с ЦБ",
@@ -541,7 +555,8 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   // Комментарий и ожидаемая дата правятся в ячейке: свежая строка встаёт на место без перезагрузки очереди,
   // а 409 перечитывает очередь (другая правка успела раньше).
   const editing: LineEditing = {
-    onSaved: (saved) => setMine((current) => current.map((item) => (item.id === saved.id ? saved : item))),
+    // Слияние, а не замена: ответ правки ячейки не несёт полей «Моих позиций» (сколько ждёт «Привязать ГРН»).
+    onSaved: (saved) => setMine((current) => current.map((item) => (item.id === saved.id ? { ...item, ...saved } : item))),
     onConflict: () => reload(true),
   };
   const openKp = (references: string[]) => {

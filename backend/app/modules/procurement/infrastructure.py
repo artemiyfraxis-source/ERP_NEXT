@@ -423,7 +423,12 @@ class SqlAlchemyProcurementRepository:
         )
         if accepted_since is not None:
             # «Готово», принятые не раньше `accepted_since` (ФАКТ. ДАТА; без неё — день создания строки).
+            # «Готово · без ГРН» (closed «Есть на складе, без ГРН», no lot bound yet) stays at any age: the buyer
+            # still has «Привязать ГРН» to do on it.
             since = datetime.combine(accepted_since, datetime.min.time()).replace(tzinfo=timezone.utc)
+            lotless = select(ProcurementStockCoverRow.line_id).where(
+                ProcurementStockCoverRow.lot_id.is_(None), ProcurementStockCoverRow.quantity > 0,
+            )
             wanted = or_(
                 wanted,
                 and_(
@@ -434,6 +439,7 @@ class SqlAlchemyProcurementRepository:
                             ProcurementLineRow.actual_arrival.is_(None),
                             ProcurementLineRow.created_at >= since,
                         ),
+                        ProcurementLineRow.id.in_(lotless),
                     ),
                 ),
             )
