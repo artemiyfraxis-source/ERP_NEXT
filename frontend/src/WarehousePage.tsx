@@ -691,7 +691,7 @@ function ManualStockForm({ busy, knownLots, columnOrder, typeChoices, onCancel, 
           <label>Единица<input value={unit} onChange={(event) => setUnit(event.target.value)} /></label>
         </>,
         warehouse: <label>Склад<select value={warehouse} onChange={(event) => setWarehouse(event.target.value)}><option value="ЦАР">ЦАР</option><option value="ЖУК">ЖУК</option></select></label>,
-        purpose: <label>Назначение<input value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>,
+        purpose: <label className="span-2">Назначение<input value={purpose} onChange={(event) => setPurpose(event.target.value)} /></label>,
         place: <label>Место хранения<input aria-label="Место хранения для внесения" placeholder="1F4" className={placeHint.busy ? "place-busy" : undefined} title={placeHint.busy ? BUSY_TITLE : undefined} value={storageLocation} onChange={(event) => setStorageLocation(event.target.value)} /></label>,
       })}</div>
       <PlaceHint {...placeHint} place={storageLocation} onPick={setStorageLocation} />

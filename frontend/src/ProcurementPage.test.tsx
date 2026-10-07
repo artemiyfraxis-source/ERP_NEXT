@@ -775,17 +775,14 @@ const orderLine = (n: number, status: string, extra: Partial<ProcurementLine> = 
 const headingNames = () => screen.getAllByRole("heading", { level: 2 })
   .map((heading) => BLOCK_NAMES.find((name) => heading.textContent?.replace(/^[▸▾]/, "").startsWith(name))).filter(Boolean);
 
-it("keeps every «Мои позиции» block on screen even with no data: seven headings in order, each with 0 and one grey line; «Прочие позиции» only with lines", async () => {
+it("collapses empty «Мои позиции» blocks into one grey line «Пусто: …» instead of eight empty cards", async () => {
   mockMine([]);
 
   const { container } = render(<ProcurementPage />);
-  await screen.findByText(/Нет строк в работе/);
-  expect(headingNames()).toEqual(FLOW_BLOCK_NAMES);
-  for (const name of FLOW_BLOCK_NAMES) expect(screen.getByRole("heading", { name: new RegExp(`^${name}`) })).toHaveTextContent(`${name === "Принято" ? "Принято за 30 дней" : name} 0`);
-  expect(screen.getByText(/Нет строк в работе/)).toHaveClass("stage-empty");
-  expect(container.querySelectorAll(".stage-empty")).toHaveLength(FLOW_BLOCK_NAMES.length);
-  expect(screen.queryByRole("region", { name: "Прочие позиции" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
+  await screen.findByText(/^Пусто:/);
+  expect(screen.getByText(/^Пусто:/)).toHaveTextContent("Пусто: В работе, Жду счёт, Ждёт оплаты, В пути, Карантин, Принято за 30 дней, Дозавоз, Прочие позиции");
+  expect(headingNames()).toEqual([]);
+  expect(container.querySelectorAll(".stage-empty")).toHaveLength(0);
   expect(container.querySelectorAll("table")).toHaveLength(0);
   // В «Блоках» «Прочие позиции» перечислены и тогда, когда строк нет.
   fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
@@ -830,8 +827,9 @@ it("migrates the old hidden «Оплачено» block key into the three new bl
   mockMine([orderLine(1, "В пути"), orderLine(2, "Готово")]);
 
   render(<ProcurementPage />);
-  await screen.findByRole("heading", { name: /^Жду счёт/ });
-  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "Дозавоз"]);
+  await screen.findByText(/^Пусто:/);
+  expect(screen.getByText(/^Пусто:/)).toHaveTextContent("Пусто: В работе, Жду счёт, Ждёт оплаты, Дозавоз");
+  expect(headingNames()).toEqual([]);
   expect(screen.getByText("скрыто: В пути 1, Принято за 30 дней 1")).toBeInTheDocument();
 });
 
@@ -843,13 +841,13 @@ it("«Блоки» hides blocks, the choice survives a remount, and a hidden blo
   fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Принято за 30 дней" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Прочие позиции" }));
-  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "В пути", "Карантин", "Дозавоз"]);
+  expect(headingNames()).toEqual(["Жду счёт"]);
   expect(screen.getByText("скрыто: Принято за 30 дней 2, Прочие позиции 1")).toBeInTheDocument();
   first.unmount();
 
   render(<ProcurementPage />);
   await screen.findByRole("heading", { name: /^Жду счёт/ });
-  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "В пути", "Карантин", "Дозавоз"]);
+  expect(headingNames()).toEqual(["Жду счёт"]);
   expect(screen.getByText("скрыто: Принято за 30 дней 2, Прочие позиции 1")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
   expect(screen.getByRole("checkbox", { name: "Принято за 30 дней" })).not.toBeChecked();
@@ -871,17 +869,17 @@ it("one search narrows every block and its counts (ID, name, supplier, order num
   fireEvent.change(search, { target: { value: "альфа" } });
   expect(heading("В работе")).toHaveTextContent("В работе 1");
   expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 1");
-  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
+  expect(screen.queryByRole("heading", { name: /^Ждёт оплаты/ })).not.toBeInTheDocument();
   expect(heading("В пути")).toHaveTextContent("В пути 1");
 
   fireEvent.change(search, { target: { value: "сч-777" } });
   expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 1");
-  expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 0");
-  expect(heading("В работе")).toHaveTextContent("В работе 0");
+  expect(screen.queryByRole("heading", { name: /^Жду счёт/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /^В работе/ })).not.toBeInTheDocument();
 
   fireEvent.change(search, { target: { value: "po-003" } });
   expect(heading("В пути")).toHaveTextContent("В пути 1");
-  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
+  expect(screen.queryByRole("heading", { name: /^Ждёт оплаты/ })).not.toBeInTheDocument();
 });
 
 it("shows orders · positions · расчёт / факт in a block heading", async () => {
@@ -1634,7 +1632,7 @@ it("shows «Неразобранные» only when there is something to take; v
   });
 
   const empty = render(<ProcurementPage />);
-  await screen.findByText(/Нет строк в работе/);
+  await screen.findByText(/^Пусто:/);
   expect(screen.queryByRole("region", { name: "Неразобранные" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: /Неразобранные/ })).not.toBeInTheDocument();
   empty.unmount();
