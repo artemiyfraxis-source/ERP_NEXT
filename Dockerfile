@@ -9,7 +9,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm     npm config set fetch-retries 5 && npm config set fetch-retry-mintimeout 20000 && npm config set fetch-retry-maxtimeout 120000     && npm ci --no-audit --no-fund
 COPY frontend/ ./
 # Cap the V8 heap so the tsc/vite build stays predictable on a small host instead of being OOM-killed.
-ENV NODE_OPTIONS=--max-old-space-size=2048
+ENV NODE_OPTIONS=--max-old-space-size=6144
 RUN npm run build && npm run build:tcgen
 
 FROM python:3.12-slim
