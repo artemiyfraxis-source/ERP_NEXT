@@ -161,6 +161,8 @@ export interface SkippedRequestLine {
 
 export interface ProcurementLine {
   id: string;
+  /** ЦЕЛЬ заявки, из которой строка (списки листа; в ответах на правки её нет). */
+  purpose?: string | null;
   legacy_id: string;
   revision: string;
   status: string;
@@ -2802,6 +2804,8 @@ export type EmployeeCardProject = {
 export type EmployeeCardSkill = {
   /** Код операции из матрицы компетенций. */
   operation: string;
+  /** Название операции из выданных техкарт или запущенных операций; null — названия нет. */
+  name?: string | null;
   allowed: boolean;
   stars: number;
   /** Десятичная строка: "1.25". */

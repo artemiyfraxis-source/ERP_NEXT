@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   employeeCardApi,
   failureText,
-  productionApi,
   type EmployeeCard,
   type EmployeeCardAbsence,
   type EmployeeCardSkill,
@@ -38,7 +37,6 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
   const own = !userId || userId === principal.user.id;
   const [card, setCard] = useState<EmployeeCard | null>(null);
   const [error, setError] = useState("");
-  const [names, setNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let live = true;
@@ -49,19 +47,6 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
       .catch((reason) => { if (live) setError(failureText(reason, "Карточка не загружена")); });
     return () => { live = false; };
   }, [own, userId]);
-
-  // Названия операций для компетенций: карточка отдаёт только код. Без доступа к производству остаются коды.
-  useEffect(() => {
-    if (!card?.skills.length) return;
-    let live = true;
-    productionApi.skills()
-      .then((result) => {
-        if (!live) return;
-        setNames(Object.fromEntries((result.operation_codes ?? []).filter((item) => item.name.trim()).map((item) => [item.code, item.name.trim()])));
-      })
-      .catch(() => undefined);
-    return () => { live = false; };
-  }, [card]);
 
   // «Сотрудники» — только superadmin / admin (backend staffdir_principal): правка карточки и чужие карточки.
   const canEdit = Boolean(openStaffEdit) && hasFullAccess(principal);
@@ -162,7 +147,7 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
       </Card>
 
       <Card title="Компетенции" count={card.skills.length || undefined}>
-        <Skills skills={card.skills} names={names} />
+        <Skills skills={card.skills} />
       </Card>
 
       <Card title={own ? "Мои заявки на покупку" : "Заявки на покупку"} count={card.requests.count || undefined}>
@@ -238,7 +223,7 @@ function Vacations({ absences, asOf }: { absences: EmployeeCard["absences"]; asO
   </>;
 }
 
-function Skills({ skills, names }: { skills: EmployeeCardSkill[]; names: Record<string, string> }) {
+function Skills({ skills }: { skills: EmployeeCardSkill[] }) {
   const [all, setAll] = useState(false);
   // Сначала допущенные, лучшие сверху; без допуска — в конце.
   const sorted = useMemo(
@@ -250,10 +235,10 @@ function Skills({ skills, names }: { skills: EmployeeCardSkill[]; names: Record<
   return <>
     <ul className="ec-list">
       {shown.map((item) => {
-        const name = names[item.operation];
+        const name = item.name?.trim();
         const coefficient = Number(item.coefficient);
         return <li key={item.operation} className="ec-row ec-skill">
-          <span className="ec-main">{name ? <>{name}<small className="ec-code">{item.operation}</small></> : item.operation}</span>
+          <span className="ec-main">{name ? <>{name}<small className="ec-code">{item.operation}</small></> : <span title={item.operation}>операция без названия</span>}</span>
           {item.allowed
             ? <span className="ec-date"><span className="ec-stars" aria-label={`${item.stars} из 5`}>{"★".repeat(item.stars) || "—"}</span>{coefficient !== 1 && Number.isFinite(coefficient) ? ` ×${item.coefficient.replace(".", ",")}` : ""}</span>
             : <span className="ec-date tone-danger">нет допуска</span>}

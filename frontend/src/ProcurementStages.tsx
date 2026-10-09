@@ -1008,6 +1008,7 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
         rowKey={(line) => line.id}
         storageKey="procurement-backorder"
         compactBelow={COMPACT_BELOW}
+        hideSearch
         emptyText="Дозавоза нет"
       />
       {panel.node}</>}
@@ -1040,6 +1041,7 @@ export function OtherStage({ lines, disabled, busyId, actionsOf, editing }: Stag
         rowKey={(line) => line.id}
         storageKey="procurement-other"
         compactBelow={COMPACT_BELOW}
+        hideSearch
       />
       {panel.node}</>}
     </section>
