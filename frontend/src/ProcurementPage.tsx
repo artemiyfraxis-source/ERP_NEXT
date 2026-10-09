@@ -127,6 +127,8 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   const [tab, setTab] = useState<ProcurementTab>("queues");
   return (
     <>
+      <header className="page-head"><h1>Закупка</h1></header>
+      {readOnly && <p className="page-sub">Лист закупки открыт вам только на просмотр: что свободно и что едет.</p>}
       <nav className="shipping-tabs" aria-label="Разделы закупки">
         <button type="button" className={`secondary small${tab === "queues" ? " active" : ""}`} aria-pressed={tab === "queues"} onClick={() => setTab("queues")}>Очереди</button>
         <button type="button" className={`secondary small${tab === "sheet" ? " active" : ""}`} aria-pressed={tab === "sheet"} onClick={() => setTab("sheet")}>Весь лист</button>
@@ -457,6 +459,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   };
   const hiddenWithData = BLOCKS.filter((block) => hiddenBlocks.includes(block.key) && blockCount[block.key] > 0);
   const showBlock = (key: string) => !hiddenBlocks.includes(key);
+  // Пустые стадии не рисуются карточками: одна строка «Пусто: …», непустые — как были.
+  const showFilled = (key: string) => showBlock(key) && blockCount[key] > 0;
+  const emptyTitles = BLOCKS.filter((block) => showBlock(block.key) && blockCount[block.key] === 0).map((block) => block.title);
   const toggleBlock = (key: string, shown: boolean) => setHiddenBlocks((current) => {
     const next = shown ? current.filter((item) => item !== key) : [...current.filter((item) => item !== key), key];
     writeSaved(BLOCKS_KEY, { hidden: next });
@@ -553,16 +558,6 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
 
   return (
     <section className="page">
-      <header className="page-header">
-        <div>
-          <span className="eyebrow">{readOnly ? "Просмотр" : "Рабочая очередь"}</span>
-          <h1>Закупка</h1>
-          <p>{readOnly ? "Лист закупки открыт вам только на просмотр: что свободно и что едет." : "Позиции в работе по поставщикам, запросы поставщикам, счета и оплата по заказам."}</p>
-        </div>
-        <button className="secondary" onClick={() => void reload()} disabled={interactionLocked}>
-          {refreshing ? "Обновляем…" : "Обновить"}
-        </button>
-      </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
       {warnings.length > 0 && (
@@ -582,6 +577,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       <div className="queue-summary">
         {(readOnly || available.length > 0) && <span><strong>{available.length}</strong> доступно</span>}
         <span><strong>{mine.length}</strong> {readOnly ? "в работе" : "у меня"}</span>
+        <button className="secondary small page-actions" onClick={() => void reload()} disabled={interactionLocked}>
+          {refreshing ? "Обновляем…" : "Обновить"}
+        </button>
       </div>
 
       {(readOnly || available.length > 0 || Boolean(availableCursor)) && <section className="panel table-panel procurement-stage">
@@ -649,7 +647,8 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             ))}
           </fieldset>
         )}
-        {showBlock("inwork") && <ProcurementInWorkTable
+        {emptyTitles.length > 0 && <p className="empty-stages">Пусто: {emptyTitles.join(", ")}</p>}
+        {showFilled("inwork") && <ProcurementInWorkTable
           lines={inWorkBlock}
           units={units}
           disabled={interactionLocked}
@@ -671,7 +670,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
         />}
         {ORDER_BLOCKS.map(({ stage, title, hint, initiallyCollapsed }) => {
           const groups = ordersAt(stage);
-          return showBlock(stage) && (
+          return showFilled(stage) && (
             <OrderStageBlock
               key={stage} stage={stage}
               {...stageProps} {...(stage === "transit" ? bulkOf("orders") : {})}
@@ -701,7 +700,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             }}
           />
         )}
-        {showBlock("backorder") && (
+        {showFilled("backorder") && (
           <BackorderStage
             {...stageProps}
             lines={backorders}
@@ -709,7 +708,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             onConfirmBackorder={(line, date) => run(line, () => procurementApi.confirmBackorder(line.id, line.version, date), `${line.legacy_id}: досыл подтверждён, передано в приёмку`)}
           />
         )}
-        {showBlock("other") && <OtherStage {...stageProps} lines={other} actionsOf={otherActions} />}
+        {showFilled("other") && <OtherStage {...stageProps} lines={other} actionsOf={otherActions} />}
         {mineCursor && (
           <button className="secondary" disabled={interactionLocked} onClick={() => void loadMore("mine", mineCursor)}>
             {loadingMore === "mine" ? "Загружаем…" : "Ещё мои"}

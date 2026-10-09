@@ -227,9 +227,9 @@ export function StaffPage({ openCard, openUserId }: {
             <td>{levelLabel(user)}</td>
             <td>{user.active ? "активен" : "отключён"}</td>
             <td className="row-action-cell"><span className="row-actions">
-              {openCard && <button className="secondary small row-action" aria-label={`Карточка ${user.name}`} onClick={(event) => { event.stopPropagation(); openCard(user.id); }}>Карточка</button>}
-              <button className="secondary small row-action" aria-label={`Править ${user.name}`} onClick={(event) => { event.stopPropagation(); startEdit(user); }}>Править</button>
-              <button className="secondary small row-action" aria-label={`Удалить ${user.name}`} disabled={busy} onClick={(event) => { event.stopPropagation(); remove(user); }}>Удалить</button>
+              {openCard && <button className="link-button row-action always" aria-label={`Карточка ${user.name}`} onClick={(event) => { event.stopPropagation(); openCard(user.id); }}>Карточка</button>}
+              <button className="link-button row-action always" aria-label={`Править ${user.name}`} onClick={(event) => { event.stopPropagation(); startEdit(user); }}>Править</button>
+              <button className="link-button row-action always" aria-label={`Удалить ${user.name}`} disabled={busy} onClick={(event) => { event.stopPropagation(); remove(user); }}>Удалить</button>
             </span></td>
           </tr>)}
         </tbody>
