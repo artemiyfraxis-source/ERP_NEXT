@@ -2,7 +2,7 @@
 
 import base64
 import binascii
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -490,6 +490,14 @@ def procurement_receiving(request: Request) -> ExpectedArrivalCopier | None:
     return ReceivingStatusLookup(factory) if callable(factory) else None
 
 
+def procurement_purposes(request: Request) -> Callable[[Sequence[ProcurementLine]], dict[UUID, str]]:
+    """ЦЕЛЬ строк листа: `requests.purpose` по source_request_id, одним запросом на список (порт `app.workflows`)."""
+    lookup = getattr(request.app.state, "request_purpose_lookup", None)
+    if lookup is None:
+        return lambda lines: {}
+    return lambda lines: lookup.purposes_for([line.source_request_id for line in lines])
+
+
 def procurement_exchange_rates(request: Request) -> ExchangeRates:
     rates = getattr(request.app.state, "procurement_exchange_rates", None)
     if rates is None:
@@ -502,8 +510,9 @@ def _decimal_result(value: Decimal | None) -> str | None:
     return format(value.normalize(), "f") if value is not None else None
 
 
-def _line_result(line: ProcurementLine) -> dict:
+def _line_result(line: ProcurementLine, purposes: Mapping[UUID, str] | None = None) -> dict:
     return {
+        "purpose": (purposes or {}).get(line.source_request_id),
         "id": str(line.id),
         "legacy_id": line.legacy_id,
         "revision": line.revision,
@@ -598,10 +607,11 @@ def _retry_transaction(operation):
     raise AssertionError("unreachable")
 
 
-def _page_result(lines: list[ProcurementLine], limit: int) -> dict:
+def _page_result(lines: list[ProcurementLine], limit: int, purposes_of=None) -> dict:
     page = lines[:limit]
+    purposes = purposes_of(page) if purposes_of else None
     return {
-        "lines": [_line_result(line) for line in page],
+        "lines": [_line_result(line, purposes) for line in page],
         "next_cursor": str(page[-1].id) if len(lines) > limit else None,
     }
 
@@ -612,6 +622,7 @@ def available_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     after: UUID | None = None,
 ) -> dict:
@@ -621,7 +632,7 @@ def available_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return _page_result(lines, limit)
+    return _page_result(lines, limit, purposes_of)
 
 
 @router.get("/mine")
@@ -630,6 +641,7 @@ def my_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
     now: Annotated[datetime, Depends(moscow_now)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     after: UUID | None = None,
@@ -645,7 +657,7 @@ def my_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return _page_result(lines, limit)
+    return _page_result(lines, limit, purposes_of)
 
 
 @router.get("/in-work")
@@ -654,6 +666,7 @@ def in_work_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     after: UUID | None = None,
 ) -> dict:
@@ -662,7 +675,7 @@ def in_work_lines(
         lines = in_work_procurement(uow_factory(), limit=limit + 1, after_id=after)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return _page_result(lines, limit)
+    return _page_result(lines, limit, purposes_of)
 
 
 @router.get("/meta")
@@ -681,6 +694,7 @@ def procurement_meta(
 def all_lines(
     _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
     q: Annotated[str, Query(max_length=200)] = "",
     status: Annotated[str | None, Query(max_length=32)] = None,
     buyer: Annotated[str | None, Query(max_length=255)] = None,
@@ -694,7 +708,7 @@ def all_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return {**_page_result(lines, limit), "buyers": buyers}
+    return {**_page_result(lines, limit, purposes_of), "buyers": buyers}
 
 
 @router.get("/by-supplier")

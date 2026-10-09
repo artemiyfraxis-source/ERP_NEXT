@@ -254,6 +254,14 @@ class SqlAlchemyRequestRepository:
         row = self.session.get(RequestRow, request_id)
         return _request_domain(row) if row is not None else None
 
+    def purposes_by_ids(self, request_ids: Sequence[UUID]) -> dict[UUID, str]:
+        """ЦЕЛЬ заявок одним запросом (для строк листа закупки)."""
+        ids = list(request_ids)
+        if not ids:
+            return {}
+        rows = self.session.execute(select(RequestRow.id, RequestRow.purpose).where(RequestRow.id.in_(ids)))
+        return {row_id: purpose for row_id, purpose in rows}
+
     def delete(self, request_id: UUID) -> None:
         """Заявка, ещё не взятая в закупку; выданное ей обозначение остаётся занятым (request_designations)."""
         row = self.session.get(RequestRow, request_id)

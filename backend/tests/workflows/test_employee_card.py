@@ -287,6 +287,28 @@ def test_subordinates_follow_the_site_master_flag_not_the_role(erp):
     assert [item["name"] for item in card(erp, FITTER)["subordinates"]] == ["Монтажник Борис"]
 
 
+def test_direct_reports_by_manager_come_first_then_the_site_fitters_without_duplicates(erp):
+    # Жук — не с площадки мастера, но подчинён ему напрямую; Анна — и по руководителю, и по площадке: один раз.
+    _flag(erp, FITTER_ZHUK, manager_id=MASTER)
+    _flag(erp, FITTER, manager_id=MASTER)
+
+    names = [item["name"] for item in card(erp, MASTER)["subordinates"]]
+
+    assert names == ["Монтажник Анна", "Монтажник Жук", "Монтажник Борис"]
+
+
+def test_non_master_manager_sees_only_direct_reports_and_never_the_inactive(erp):
+    _flag(erp, FITTER, manager_id=ADMIN)
+    _flag(erp, FITTER_GONE, manager_id=ADMIN)
+
+    body = card(erp, ADMIN)
+
+    assert body["subordinates"] == [
+        {"id": str(FITTER), "name": "Монтажник Анна", "site": "ЦАР", "department": "Монтаж"},
+    ]
+    assert [item["name"] for item in card(erp, MASTER)["subordinates"]] == ["Монтажник Анна", "Монтажник Борис"]
+
+
 # ── Проекты ──────────────────────────────────────────────────────────────
 
 
@@ -382,10 +404,24 @@ def test_skills_are_the_persons_own_rows(erp):
         uow.commit()
 
     assert card(erp, FITTER)["skills"] == [
-        {"operation": "OP-01", "allowed": True, "stars": 4, "coefficient": "1.25"},
-        {"operation": "OP-02", "allowed": False, "stars": 0, "coefficient": "1"},
+        {"operation": "OP-01", "name": None, "allowed": True, "stars": 4, "coefficient": "1.25"},
+        {"operation": "OP-02", "name": None, "allowed": False, "stars": 0, "coefficient": "1"},
     ]
     assert card(erp, ADMIN)["skills"] == []
+
+
+def test_skill_name_comes_from_a_launched_operation_when_no_techcard_is_issued(erp):
+    launch(erp, PROJECT, [FITTER_2])  # операция OP-01 «Разделка»
+    with erp.production() as uow:
+        uow.skills.replace_for_operator(FITTER, (
+            OperatorSkill(FITTER, "OP-01", True, 3, Decimal("1")),
+            OperatorSkill(FITTER, "OP-77", True, 1, Decimal("1")),
+        ))
+        uow.commit()
+
+    skills = card(erp, FITTER)["skills"]
+
+    assert [(item["operation"], item["name"]) for item in skills] == [("OP-01", "Разделка"), ("OP-77", None)]
 
 
 def test_upcoming_absences_and_the_next_vacation(erp):

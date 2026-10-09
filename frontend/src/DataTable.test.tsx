@@ -190,3 +190,14 @@ it("shows a custom group label with the selected count and hides inapplicable bu
   fireEvent.click(screen.getByLabelText("Выбрать 1"));
   expect(screen.getByRole("button", { name: "Только Чип" })).toBeTruthy();
 });
+
+it("hideSearch removes only the search box: filters, columns and the table stay", () => {
+  const props = { label: "Тест", rows, columns, rowKey: (row: Row) => row.id, storageKey: "t-hide" };
+  const { rerender } = render(<DataTable {...props} />);
+  expect(screen.getByRole("searchbox")).toBeInTheDocument();
+  rerender(<DataTable {...props} hideSearch />);
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(screen.getByRole("button", { name: "Фильтры" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Колонки" })).toBeInTheDocument();
+  expect(names()).toHaveLength(3);
+});

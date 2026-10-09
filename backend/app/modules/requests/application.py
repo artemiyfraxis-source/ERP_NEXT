@@ -46,6 +46,9 @@ class RequestRepository(Protocol):
         """RQ-MINE: server-side «Мои заявки», newest first, paginated."""
         ...
     def count_by_initiator(self, actor_id: UUID, search: str = "") -> int: ...
+    def purposes_by_ids(self, request_ids: Sequence[UUID]) -> dict[UUID, str]:
+        """ЦЕЛЬ заявок одним запросом."""
+        ...
 
 
 class ProcurementStageLookup(Protocol):

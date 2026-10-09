@@ -882,6 +882,30 @@ it("one search narrows every block and its counts (ID, name, supplier, order num
   expect(screen.queryByRole("heading", { name: /^Ждёт оплаты/ })).not.toBeInTheDocument();
 });
 
+it("«Дозавоз» and «Прочие позиции» keep «Колонки» but no search box of their own; the section search still filters them", async () => {
+  const base: ProcurementLine = { ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт" };
+  const many = (prefix: string, extra: Partial<ProcurementLine>) => Array.from({ length: 8 }, (_, index): ProcurementLine => ({
+    ...base, id: `30000000-0000-0000-0000-00000002${prefix.charCodeAt(0)}${index}`, legacy_id: `${prefix}-${index + 1}`,
+    status: "Согласование", ...extra,
+  }));
+  mockMine([
+    ...many("BO", { is_backorder: true, invoice_url: "https://files.test/i.pdf", invoice_number: "17" }),
+    ...many("OT", {}),
+  ]);
+
+  render(<ProcurementPage />);
+  const backorder = await screen.findByRole("region", { name: "Дозавоз" });
+  const other = await screen.findByRole("region", { name: "Прочие позиции" });
+  for (const block of [backorder, other]) {
+    expect(within(block).getByRole("button", { name: "Колонки" })).toBeInTheDocument();
+    expect(within(block).queryByRole("searchbox")).toBeNull();
+  }
+
+  fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по моим позициям" }), { target: { value: "BO-3" } });
+  expect(within(screen.getByRole("region", { name: "Дозавоз" })).getByText("BO-3")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Дозавоз" })).queryByText("BO-4")).toBeNull();
+});
+
 it("shows orders · positions · расчёт / факт in a block heading", async () => {
   mockMine([
     orderLine(1, "Жду счет", { calculated_sum: "100", actual_sum: "120" }),
