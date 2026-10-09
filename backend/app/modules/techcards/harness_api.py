@@ -19,7 +19,8 @@ under the same two keys — only this harness's rows. The editor's own document 
 save carries them over from the stored drawing; the export moves them back to the project level, the import in.
 
 «Отвязать» (unlink) relabels the row to HARNESS_UNLINKED_CONTENT_TYPE: the position no longer reads it, the card lists it
-with «Вернуть» (restore), which relabels it back. A harness drawing is never hard-deleted."""
+with «Вернуть» (restore), which relabels it back. A harness drawing is never hard-deleted. At most one LINKED drawing per
+position is a database rule (partial unique index, migration 0089): a save or «Вернуть» racing another one gets 409."""
 
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
@@ -604,8 +606,19 @@ def _when(value: datetime) -> str:
     return value.strftime("%d.%m.%Y %H:%M")
 
 
+BUSY = "У сборки {index} уже есть чертёж жгута — его только что привязали или создали; обновите страницу"
+
+
 def _save(request: Request, project: str, index: str, design: Mapping[str, Any], version: str | None,
           principal: Principal, now: datetime, event: str) -> dict[str, Any]:
+    try:
+        return _store(request, project, index, design, version, principal, now, event)
+    except IntegrityError as error:  # two first saves at once: the other one's drawing is linked already
+        raise HTTPException(status_code=409, detail=BUSY.format(index=str(index or "").strip().upper())) from error
+
+
+def _store(request: Request, project: str, index: str, design: Mapping[str, Any], version: str | None,
+           principal: Principal, now: datetime, event: str) -> dict[str, Any]:
     try:
         document, warnings = normalized(design)
         content = encode(document)
@@ -805,9 +818,13 @@ def restore_harness(
             raise HTTPException(status_code=409, detail=(
                 f"У сборки {index} уже есть чертёж жгута — сначала отвяжите его, потом верните этот"
             ))
-        if not uow.kitsets.relabel_document(
-            kitset.project, document.id, from_type=document.content_type, to_type=HARNESS_CONTENT_TYPE,
-        ):
+        try:
+            relabelled = uow.kitsets.relabel_document(
+                kitset.project, document.id, from_type=document.content_type, to_type=HARNESS_CONTENT_TYPE,
+            )
+        except IntegrityError as error:  # another «Вернуть» linked a drawing between the check above and here
+            raise HTTPException(status_code=409, detail=BUSY.format(index=index)) from error
+        if not relabelled:
             raise HTTPException(status_code=409, detail="Чертёж жгута только что изменили — обновите страницу")
         _audit(uow, principal, now, "techcards.kitset_harness_restored", kitset.project, index, document)
         found = _current(uow, kitset.project, index)

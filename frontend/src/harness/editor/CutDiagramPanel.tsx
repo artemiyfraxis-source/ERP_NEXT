@@ -36,14 +36,14 @@ export function CutDiagramSvg({diagram,a=diagram.a,b=diagram.b}:{diagram:CutDiag
 function LayerTable({label,end}:{label:string;end:CutDiagramEnd}) {
   return <section><strong>{label} · {end.profileName ?? "Профиль не задан"}</strong>{end.steps.length>0&&<table className="he-cut-layers"><thead><tr><th>Слой</th><th>Ø, мм</th><th>L от торца, мм</th><th>Ступень, мм</th></tr></thead><tbody>{end.steps.map(s=><tr key={s.index}><td>{s.index}</td><td>{mm(s.diameterMm)}</td><td>{mm(s.cumulativeLengthMm)}</td><td>{mm(s.stepLengthMm)}</td></tr>)}</tbody></table>}</section>;
 }
-function CutField({label,value,nullable,onCommit}:{label:string;value:number|null;nullable:boolean;onCommit:(value:string)=>boolean}) {
+function CutField({label,value,nullable,readOnly=false,onCommit}:{label:string;value:number|null;nullable:boolean;readOnly?:boolean;onCommit:(value:string)=>boolean}) {
   const [draft,setDraft]=useState(value===null?"":String(value)),[invalid,setInvalid]=useState(false);
   useEffect(()=>{setDraft(value===null?"":String(value));setInvalid(false);},[value]);
   const commit=()=>{const v=draft.trim().replace(",",".");if(v===String(value??""))return;if(v===""&&!nullable||v!==""&&!Number.isFinite(Number(v))){setInvalid(true);return;}setInvalid(!onCommit(v));};
-  return <label>{label}<input type="text" inputMode="decimal" aria-label={label} aria-invalid={invalid} value={draft} onChange={e=>{setDraft(e.target.value);setInvalid(false);}} onBlur={commit} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}}}/>{invalid&&<small role="alert">Проверьте значение и допустимую длину.</small>}</label>;
+  return <label>{label}<input type="text" inputMode="decimal" aria-label={label} readOnly={readOnly} aria-invalid={invalid} value={draft} onChange={e=>{setDraft(e.target.value);setInvalid(false);}} onBlur={commit} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();}}}/>{invalid&&<small role="alert">Проверьте значение и допустимую длину.</small>}</label>;
 }
 
-export function CutDiagramPanel({document,quantity,revision,unsaved,relatedIds,onReveal,onCommand,sourceFingerprint,embedded=false}:{sourceFingerprint?:string;embedded?:boolean;document:HarnessDesignDocument;quantity:number;revision:number;unsaved:boolean;relatedIds:readonly string[];onReveal:(id:string)=>void;onCommand:(c:EditorCommand)=>boolean}) {
+export function CutDiagramPanel({document,quantity,revision,unsaved,relatedIds,onReveal,onCommand,sourceFingerprint,embedded=false,readOnly=false}:{readOnly?:boolean;sourceFingerprint?:string;embedded?:boolean;document:HarnessDesignDocument;quantity:number;revision:number;unsaved:boolean;relatedIds:readonly string[];onReveal:(id:string)=>void;onCommand:(c:EditorCommand)=>boolean}) {
   const [open,setOpen]=useState(embedded),[selected,setSelected]=useState("");
   const trigger=useRef<HTMLButtonElement>(null);
   const close=()=>{setOpen(false);trigger.current?.focus();};
@@ -71,7 +71,7 @@ export function CutDiagramPanel({document,quantity,revision,unsaved,relatedIds,o
       {embedded&&<HarnessCutListTable cutList={live} onReveal={id=>{setSelected(id);onReveal(id);}} highlightedIds={[active]}/>}
       {diagram?<><strong>{diagram.material ?? "Материал не закреплён"}</strong><div className="he-cut-fields">{([
         ["lengthMm","Исходная длина, мм",diagram.sourceLengthMm], ["endCorrectionFromMm","Поправка A, мм",diagram.correctionA], ["endCorrectionToMm","Поправка B, мм",diagram.correctionB], ["cutRoundingStepMm","Шаг округления, мм",diagram.roundingMm],
-      ] as const).map(([key,label,value])=><CutField key={`${diagram.objectId}:${key}`} label={label} value={value} nullable={key==="lengthMm"} onCommit={value=>commit(key,value)}/>)}</div>
+      ] as const).map(([key,label,value])=><CutField key={`${diagram.objectId}:${key}`} label={label} value={value} nullable={key==="lengthMm"} readOnly={readOnly} onCommit={value=>commit(key,value)}/>)}</div>
         <p>{mm(diagram.sourceLengthMm)} + ({mm(diagram.correctionA)}) + ({mm(diagram.correctionB)}) = {mm(diagram.unroundedMm)} мм → <strong>{mm(diagram.cutLengthMm)} мм</strong> · {diagram.quantity} шт. · {diagram.totalMetres===null?"—":diagram.totalMetres.toLocaleString("ru-RU",{maximumFractionDigits:6})} м</p>
         {diagram.warnings.length>0&&<details open><summary>Проверить · {diagram.warnings.length}</summary><ul>{diagram.warnings.map(w=><li key={w}>{w}</li>)}</ul></details>}
         <CutDiagramSvg diagram={diagram}/>

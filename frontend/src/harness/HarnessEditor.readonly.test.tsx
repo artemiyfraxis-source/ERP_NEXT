@@ -72,6 +72,39 @@ describe("редактор жгута в режиме просмотра", () =>
   }, 30_000);
 });
 
+describe("документы чертежа в режиме просмотра", () => {
+  it("таблицу соединений и спецификацию можно открыть, двигать и закрыть — чертёж не меняется и не сохраняется", async () => {
+    const { api, stored, save } = await openReadOnly();
+    const documents = screen.getByRole("region", { name: "Документы" });
+    const connections = within(documents).getByRole("button", { name: "Таблица соединений" });
+    expect((connections as HTMLButtonElement).disabled).toBe(false);
+    // Правка чертежа из «Документов» в просмотре не показывается.
+    expect(within(documents).queryByRole("button", { name: "Добавить позиции" })).toBeNull();
+
+    fireEvent.click(connections);
+    const window = await screen.findByRole("region", { name: "Таблица соединений на поле" });
+    expect(within(window).getByRole("table", { name: "Таблица соединений" })).toBeTruthy();
+    expect(within(window).getByText("W1")).toBeTruthy();
+    // Поля таблицы только для чтения, «Скачать» и окно — работают.
+    expect((within(window).getByLabelText("Длина W1") as HTMLInputElement).readOnly).toBe(true);
+    expect((within(window).getByRole("button", { name: "Скачать" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.change(within(window).getByLabelText("Закрепить: Таблица соединений"), { target: { value: "right" } });
+    expect((within(window).getByLabelText("Закрепить: Таблица соединений") as HTMLSelectElement).value).toBe("right");
+
+    fireEvent.click(within(documents).getByRole("button", { name: "Спецификация" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Чертёж" }).getAttribute("aria-selected")).toBe("true"));
+    const bom = await screen.findByRole("region", { name: "Спецификация на поле" });
+    expect(within(bom).queryByRole("button", { name: "Добавить позиции" })).toBeNull();
+    expect(within(bom).queryByRole("button", { name: "↑" })).toBeNull();
+    fireEvent.click(within(bom).getByRole("button", { name: "Закрыть: Спецификация" }));
+    expect(screen.queryByRole("region", { name: "Спецификация на поле" })).toBeNull();
+
+    await act(() => new Promise((resolve) => setTimeout(resolve, 900)));
+    expect(save).not.toHaveBeenCalled();
+    expect(api.exportSnapshot("p-1", "h-1")).toBe(stored);
+  }, 30_000);
+});
+
 describe("поле в режиме просмотра", () => {
   it("не получает ни одного обработчика правки: ни перетаскивания, ни соединения, ни редакторов", () => {
     const edit = Object.fromEntries(CANVAS_EDIT_PROPS.map((key) => [key, vi.fn()]));

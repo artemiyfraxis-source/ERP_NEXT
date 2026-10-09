@@ -157,6 +157,8 @@ export interface HarnessEditorWorkspaceProps {
   readonly drawingAngleStep?:number;
   readonly selectedGraphic?:boolean; readonly canPasteGraphic?:boolean; readonly onGraphicCopy?:()=>void; readonly onGraphicPaste?:()=>void; readonly onGraphicDelete?:()=>void; readonly onUndo?:()=>void; readonly angleStep?:number; readonly onAngleStepChange?:(degrees:number)=>void; readonly onDrawingSnapsChange?:(snaps:DrawingSnaps)=>void;
   readonly documentActions?: ReactNode;
+  /** View mode: actions that only look at the drawing (open a table to read / download) — outside the disabled fieldset. */
+  readonly viewActions?: ReactNode;
   readonly drawingWindows?: (camera:EditorCamera)=>ReactNode;
   readonly revealRequest?: { readonly token: number; readonly objectIds: readonly string[] };
   readonly cables?: readonly CableInstance[];
@@ -330,7 +332,7 @@ export function HarnessEditorWorkspace({
   catalogHasMore,
   selectedObjectId: controlledSelectedObjectId,
   selectedObjectIds: controlledSelectedObjectIds,
-  highlightedObjectIds = [], foregroundWireIds = [], relationPanel, revealRequest, documentActions, drawingWindows,onDimensionCreate,onPositionRailCreate,onGraphicCreate,drawingSnaps,drawingAngleStep,selectedGraphic,canPasteGraphic,onGraphicCopy,onGraphicPaste,onGraphicDelete,onUndo,angleStep,onAngleStepChange,onDrawingSnapsChange,onPipeIntervalSelect,onCoveringDrag,
+  highlightedObjectIds = [], foregroundWireIds = [], relationPanel, revealRequest, documentActions, viewActions, drawingWindows,onDimensionCreate,onPositionRailCreate,onGraphicCreate,drawingSnaps,drawingAngleStep,selectedGraphic,canPasteGraphic,onGraphicCopy,onGraphicPaste,onGraphicDelete,onUndo,angleStep,onAngleStepChange,onDrawingSnapsChange,onPipeIntervalSelect,onCoveringDrag,
   cables = [],
   saveState = "saved",
   onSaveRequest,
@@ -740,6 +742,7 @@ export function HarnessEditorWorkspace({
               </label>
             </section>}
             <ReadOnlyFieldset readOnly={readOnly}>{documentActions}</ReadOnlyFieldset>
+            {readOnly && viewActions}
           </div>
         </aside>
         <EditorToolbar
@@ -827,7 +830,7 @@ export function HarnessEditorWorkspace({
           onCatalogDrop={droppedCatalogItem}
           inlineEditor={canvasEditor}
         />
-        {drawingWindows && <div className="he-table-window-layer"><ReadOnlyFieldset readOnly={readOnly}>{drawingWindows(camera)}</ReadOnlyFieldset></div>}
+        {drawingWindows && <div className="he-table-window-layer">{drawingWindows(camera)}</div>}
         {(previewMessage || cableSheathWarning) && <div className="he-routing-preview-error" role="status">
           {previewMessage || cableSheathWarning}
         </div>}

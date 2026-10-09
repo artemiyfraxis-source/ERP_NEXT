@@ -776,6 +776,12 @@ export function HarnessDesignEditor({
   const [view, setView] = useState<HarnessEditorView>(initialView);
   const [resource, setResource] = useState<HarnessDesignResource | null>(null);
   const [history, setHistory] = useState<EditorHistory | null>(null);
+  // View mode: the table windows opened, moved or closed live on this copy of the drawing documents — never in the
+  // drawing, never saved. null — as stored.
+  const [viewDocuments, setViewDocuments] = useState<DrawingDocuments | null>(null);
+  const shownDocument = useMemo(() => history && readOnly && viewDocuments !== null
+    ? { ...history.present, drawingDocuments: viewDocuments } : history?.present,
+  [history, readOnly, viewDocuments]);
   const textureAssets=useCoveringAssets(catalogApi.materials,projectId,!!history?.present.drawingDocuments?.coveringLibrary?.textures.length,history?.present.drawingDocuments?.coveringLibrary?.textures.map(t=>t.sha256).join(",")??"");
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [selectedObjectIds, setSelectedObjectIds] = useState<readonly string[]>([]);
@@ -1743,6 +1749,24 @@ export function HarnessDesignEditor({
   };
 
   const positionsVisible = !!history?.present.drawingDocuments?.leaders.some(leader => !leader.hidden);
+  const shownDocuments = shownDocument?.drawingDocuments;
+  const changeShownDocuments = (documents: DrawingDocuments): boolean => {
+    if (!readOnly) return run({ type: "set-drawing-documents", documents });
+    setViewDocuments(documents);
+    return true;
+  };
+  const openTable = (kind: DrawingTable["kind"]) => {
+    if (kind !== "connections" && view !== "drawing") { setView("drawing"); onViewChange?.("drawing"); }
+    const documents = withDrawingTable(shownDocuments, kind);
+    if (documents && documents !== shownDocuments) changeShownDocuments(documents);
+  };
+  const cutReadiness = routeCutReadiness(history.present, resource.sourceFingerprint, saveState !== "saved");
+  const documentsSection = <section className="he-utility-section he-documents-section" aria-labelledby="he-documents-heading">
+    <h3 id="he-documents-heading">Документы</h3>
+    {view === "drawing" && !readOnly && <button type="button" className="ui-control he-document-action" onClick={()=>run({type:"set-drawing-documents",documents:addDrawingPositions(history.present,drawingPerimeters)})}><span className="he-doc-icon"><DocumentIcon kind="positions" /></span>Добавить позиции</button>}
+    {view === "drawing" && !readOnly && <button type="button" className="ui-control he-document-action he-document-toggle" aria-pressed={positionsVisible} aria-label={positionsVisible?"Скрыть позиции":"Показать позиции"} title={positionsVisible?"Скрыть позиции на чертеже":"Показать позиции на чертеже"} onClick={()=>run({type:"set-drawing-documents",documents:setDrawingPositionsVisibility(history.present,!positionsVisible,drawingPerimeters)})}><span className="he-doc-icon"><DocumentIcon kind="visibility" visible={positionsVisible} /></span>Позиции</button>}
+    {(["connections","cut","bom"] as const).map(kind=><button type="button" className="ui-control he-document-action" key={kind} disabled={kind==="cut"&&!cutReadiness.ready} title={kind==="cut"?cutReadiness.message:undefined} onClick={()=>openTable(kind)}><span className="he-doc-icon"><DocumentIcon kind={kind} /></span>{kind==="bom"?"Спецификация":kind==="cut"?"Карта резки":"Таблица соединений"}</button>)}
+  </section>;
   return (
     <div className={`he-host ${placementBusy ? "is-placement-busy" : ""}`}>
       {message && <div className="he-save-message" role="alert">{message.startsWith("Схема открыта в безопасном режиме")
@@ -1838,14 +1862,10 @@ export function HarnessDesignEditor({
           <button type="button" className="ui-control he-control-action" disabled={!volumeEligible} aria-pressed={history.present.drawingDocuments?.volumeShading!==false} onClick={()=>{const documents=history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]};run({type:"set-drawing-documents",documents:{...documents,volumeShading:documents.volumeShading===false}})}}><span className="he-doc-icon"><DocumentIcon kind="volume" /></span>Объёмный свет</button>
           <InfoHint>Затемнение краёв и светлая середина пайпов, проводов и покрытий. Сохраняется для этого чертежа; отключение не меняет материалы, цвета и размеры.</InfoHint>
         </section>}
-          <section className="he-utility-section he-documents-section" aria-labelledby="he-documents-heading">
-            <h3 id="he-documents-heading">Документы</h3>
-            {view === "drawing" && <button type="button" className="ui-control he-document-action" onClick={()=>run({type:"set-drawing-documents",documents:addDrawingPositions(history.present,drawingPerimeters)})}><span className="he-doc-icon"><DocumentIcon kind="positions" /></span>Добавить позиции</button>}
-            {view === "drawing" && <button type="button" className="ui-control he-document-action he-document-toggle" aria-pressed={positionsVisible} aria-label={positionsVisible?"Скрыть позиции":"Показать позиции"} title={positionsVisible?"Скрыть позиции на чертеже":"Показать позиции на чертеже"} onClick={()=>run({type:"set-drawing-documents",documents:setDrawingPositionsVisibility(history.present,!positionsVisible,drawingPerimeters)})}><span className="he-doc-icon"><DocumentIcon kind="visibility" visible={positionsVisible} /></span>Позиции</button>}
-            {(["connections","cut","bom"] as const).map(kind=><button type="button" className="ui-control he-document-action" key={kind} disabled={kind==="cut"&&!routeCutReadiness(history.present,resource.sourceFingerprint,saveState!=="saved").ready} title={kind==="cut"?routeCutReadiness(history.present,resource.sourceFingerprint,saveState!=="saved").message:undefined} onClick={()=>{if(kind!=="connections"&&view!=="drawing"){setView("drawing");onViewChange?.("drawing");}const documents=withDrawingTable(history.present.drawingDocuments,kind);if(documents&&documents!==history.present.drawingDocuments)run({type:"set-drawing-documents",documents});}}><span className="he-doc-icon"><DocumentIcon kind={kind} /></span>{kind==="bom"?"Спецификация":kind==="cut"?"Карта резки":"Таблица соединений"}</button>)}
-          </section>
+          {!readOnly && documentsSection}
         </>}
-        drawingWindows={camera=><DrawingTableWindows connectionTableSettings={connectionTableSettings} sourceFingerprint={resource.sourceFingerprint} wireOptions={wireLookup.options} wireDatabaseOptions={wireLookup.databaseOptions} onWireSearch={wireLookup.search} perimeters={drawingPerimeters} view={view} document={history.present} camera={camera} quantity={harnessQuantity} revision={resource.revision} unsaved={saveState!=="saved"} selectedIds={[...selectedObjectIds,...related.rowIds]} onChange={documents=>run({type:"set-drawing-documents",documents})} onCommand={run} onReveal={ids=>{setRelatedSourceIds(ids);setSelectedObjectId(null);setSelectedObjectIds([]);}}/>}
+        viewActions={documentsSection}
+        drawingWindows={camera=><DrawingTableWindows readOnly={readOnly} exportName={harnessDesignation} connectionTableSettings={connectionTableSettings} sourceFingerprint={resource.sourceFingerprint} wireOptions={wireLookup.options} wireDatabaseOptions={wireLookup.databaseOptions} onWireSearch={wireLookup.search} perimeters={drawingPerimeters} view={view} document={shownDocument ?? history.present} camera={camera} quantity={harnessQuantity} revision={resource.revision} unsaved={saveState!=="saved"} selectedIds={[...selectedObjectIds,...related.rowIds]} onChange={changeShownDocuments} onCommand={run} onReveal={ids=>{setRelatedSourceIds(ids);setSelectedObjectId(null);setSelectedObjectIds([]);}}/>}
         onDimensionCreate={(wireId,from,to,pointCount,mode,auxiliary)=>{
           const wire=history.present.wires.find(w=>w.id===wireId),segment=history.present.physicalTopology?.segments.find(s=>s.id===wireId);if(!wire&&!segment)return;
           const id=crypto.randomUUID(),documents=history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]};
