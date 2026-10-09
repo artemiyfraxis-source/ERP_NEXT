@@ -32,13 +32,14 @@ from app.shared.clock import moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import AuditEventRow, create_schema
 from app.workflows import kitset_reserve
+from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
 from tests.factories import Actor
 from tests.techcards.calc_sheets import FakeSheets, calc_sheets, grid
 
 
 STATE = (
     "production_uow_factory", "techcards_uow_factory", "fulfillment_uow_factory",
-    "shipping_uow_factory", "uow_factory", "procurement_uow_factory",
+    "shipping_uow_factory", "uow_factory", "procurement_uow_factory", "procurement_stock_uow_factory",
 )
 CALC = "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit#gid=0"
 PROJECT = "708К.4"
@@ -64,6 +65,7 @@ def env():
     app.state.shipping_uow_factory = lambda: SqlAlchemyShippingUnitOfWork(sessions)
     app.state.uow_factory = lambda: SqlAlchemyUnitOfWork(sessions)
     app.state.procurement_uow_factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    app.state.procurement_stock_uow_factory = lambda: SqlAlchemyProcurementStockUnitOfWork(sessions)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(id=UUID("40000000-0000-0000-0000-000000000001"), name="Технолог", department="Производство"),
         email="engineer@example.test", roles=frozenset({"engineer"}), permissions={"projects": "edit"},

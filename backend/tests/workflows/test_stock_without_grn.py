@@ -67,13 +67,13 @@ def cover_without_lot(line, quantity: str):
     return cover_from_stock(CoverFromStockCommand(
         line_id=line.id, expected_version=line.version, lot_id=None, quantity=Decimal(quantity), actor=BUYER,
         now=NOW,
-    ), app.state.procurement_uow_factory())
+    ), app.state.procurement_stock_uow_factory())
 
 
 def bind(line, cover, item):
     return bind_stock_cover(BindStockCoverCommand(
         line_id=line.id, expected_version=line.version, cover_id=cover.id, lot_id=item.id, actor=BUYER, now=NOW,
-    ), app.state.procurement_uow_factory())
+    ), app.state.procurement_stock_uow_factory())
 
 
 def supply(client) -> dict:
