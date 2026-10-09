@@ -490,6 +490,31 @@ describe("ProjectsPage", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: "Заказать недостающее (0)" }) as HTMLButtonElement).disabled).toBe(true));
   });
 
+  it("counts stock without a ГРН in «Снабжение»: its own column, from stock, nothing to order", async () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (decodeURIComponent(String(input)) === "/api/techcards/kitsets/708К.4/supply") {
+        return json({ project: "708К.4", lines: [
+          { art: "43025-0400", name: "Корпус Molex", kbs: ["КБ1"], need: "20", unit: "шт", free: "0", off_book: "20", ordered: "0", kitted: "0", short: "0", grn: "", stage: "Закупка · Готово · без ГРН", received: false, rows: [] },
+          { art: "43030-0007", name: "Контакт", kbs: ["КБ2"], need: "32", unit: "шт", free: "0", off_book: "12", ordered: "18", kitted: "0", short: "2", grn: "", stage: "Закупка · В работе", received: false, rows: [] },
+        ] });
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", newrequest: "edit" } }} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Снабжение" }));
+
+    expect(await screen.findByRole("columnheader", { name: /Без ГРН/ })).toBeTruthy();
+    expect(screen.getByText("12")).toBeTruthy();
+    expect(screen.getAllByText("Закупка · Готово · без ГРН").some((node) => node.className === "tone-info")).toBe(true);
+    const fromStock = screen.getByText("Со склада, без закупки").parentElement!;
+    expect(fromStock.querySelector("strong")!.textContent).toBe("1");
+    expect(screen.queryByLabelText("Заказать 43025-0400")).toBeNull();  // covered without a ГРН: nothing to order
+    expect(screen.getByLabelText("Заказать 43030-0007")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Заказать недостающее (1)" })).toBeTruthy();
+  });
+
   it("shows «Снабжение» without the order button to whoever cannot file requests", async () => {
     const base = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => {

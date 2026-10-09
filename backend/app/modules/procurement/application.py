@@ -2092,6 +2092,7 @@ class StockCoverRepository(Protocol):
     def get(self, cover_id: UUID) -> StockCover | None: ...
     def for_line(self, line_id: UUID) -> Sequence[StockCover]: ...
     def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[StockCover]: ...
+    def active_without_lot(self, line_ids: Sequence[UUID]) -> Sequence[StockCover]: ...
     def reserved_on_lot(self, lot_id: UUID) -> Decimal: ...
     def add(self, cover: StockCover) -> None: ...
 
@@ -2218,6 +2219,22 @@ def stock_candidates(
             holders.setdefault(cover.lot_id, []).append(cover)
         covers = list(uow.stock_covers.for_line(line.id))
         return StockCandidates(line=line, query=used, lots=lots, holders=holders, covers=covers)
+
+
+def without_grn_quantities(lines: Sequence[ProcurementLine], uow: StockCoverUnitOfWork) -> dict[UUID, Decimal]:
+    """How much of each line is covered «Есть на складе, без ГРН» and still waits for «Привязать ГРН» (0 when
+    nothing). Only lines with «Со склада» are looked up; a unit of work without covers (test fakes) gives zeros."""
+    result = {line.id: Decimal("0") for line in lines}
+    covered = [line.id for line in lines if line.stock_covered > 0]
+    if not covered:
+        return result
+    with uow:
+        covers = getattr(uow, "stock_covers", None)
+        found = list(covers.active_without_lot(covered)) if covers is not None else []
+    for cover in found:
+        if cover.lot_id is None and cover.line_id in result:
+            result[cover.line_id] += cover.quantity
+    return result
 
 
 def cover_from_stock(command: CoverFromStockCommand, uow: StockCoverUnitOfWork) -> tuple[ProcurementLine, StockCover]:

@@ -7,6 +7,7 @@ import {
 import { formatDate, formatDay } from "./format";
 import { ActualDateCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { RowActions, type MenuItem } from "./ProcurementRowMenu";
+import { waitsForGrn } from "./ProcurementStockPicker";
 import { formatAmount } from "./ProcurementSheetColumns";
 
 /* «Мои позиции» листа закупки — раздельные блоки, каждый сворачивается щелчком по заголовку (владелец, 05.10:
@@ -407,6 +408,7 @@ const LINE_STATUS: Record<string, string> = { [AWAITING]: "Жду счёт", [TO
 function lineStatus(line: ProcurementLine): ReactNode {
   const label = LINE_STATUS[line.status] ?? line.status;
   const price = priceMissing(line);
+  if (waitsForGrn(line)) return <>{label}<small className="tone-warn">без ГРН</small></>;
   if (line.status === AWAITING) {
     const missing = missingForInvoice(line);
     return (

@@ -613,16 +613,11 @@ def cards_state(project: str, cards: Iterable[ProjectTechcard]) -> dict[str, dic
 _RECEIVING_STATUSES = {"В пути", "Карантин", "Готово"}
 
 
-def supply_rows(
+def _project_chain(
     project: str, requests: Iterable[Request], procurement: Iterable[ProcurementLine],
-) -> list[SupplyRow]:
-    """The purchase chain of the project: Запрос → Закупка → Приёмка. SUPPLYMAP ties it by ЦЕЛЬ (project number)
-    and АРТИКУЛ КД; here by the request's project reference (or purpose) and design article. A procurement line
-    in transit, quarantine or done is at acceptance; «Готово» means it was accepted with a ГРН.
-
-    `open_quantity` («В закупке»): a live request with no procurement line yet brings its КОЛ-ВО; once handed over,
-    only the newest live revision of its line brings what is still to buy (КОЛ-ВО − «Со склада») until it is
-    accepted. Accepted goods lie on the shelf or sit in the kit — counted there, not twice."""
+) -> tuple[dict[UUID, Request], list[ProcurementLine]]:
+    """The project's requests (by id) and procurement lines: by the request's project reference (or purpose), a
+    line by its request or its own project reference."""
     canon = normalize_project_number(project)
     by_request: dict[UUID, Request] = {}
     for request in requests:
@@ -637,6 +632,30 @@ def supply_rows(
         target = normalize_project_number(line.project_reference) if line.project_reference else ""
         if line.source_request_id in by_request or target == canon:
             lines.append(line)
+    return by_request, lines
+
+
+def _line_article(line: ProcurementLine, request: Request | None) -> str:
+    # Артикул мог остаться только в заявке — тянем его вперёд по связи строки с заявкой.
+    return str(line.design_article or "").strip() or (str(request.design_article or "").strip() if request else "")
+
+
+def supply_rows(
+    project: str, requests: Iterable[Request], procurement: Iterable[ProcurementLine],
+    lotless: Iterable[UUID] = (),
+) -> list[SupplyRow]:
+    """The purchase chain of the project: Запрос → Закупка → Приёмка. SUPPLYMAP ties it by ЦЕЛЬ (project number)
+    and АРТИКУЛ КД; here by the request's project reference (or purpose) and design article. A procurement line
+    in transit, quarantine or done is at acceptance; «Готово» means it was accepted with a ГРН.
+
+    `open_quantity` («В закупке»): a live request with no procurement line yet brings its КОЛ-ВО; once handed over,
+    only the newest live revision of its line brings what is still to buy (КОЛ-ВО − «Со склада») until it is
+    accepted. Accepted goods lie on the shelf or sit in the kit — counted there, not twice.
+
+    `lotless` — ids of lines holding a cover «Есть на складе, без ГРН»: such a line closed from stock (unpaid
+    «Готово») was never accepted — it stays in «Закупка» as «Готово · без ГРН», not «Принято на склад»."""
+    by_request, lines = _project_chain(project, requests, procurement)
+    without_lot = set(lotless)
     handed = {line.source_request_id for line in lines}
     newest: dict[UUID, ProcurementLine] = {}
     for line in lines:
@@ -658,16 +677,47 @@ def supply_rows(
         if status == "Отменено":
             continue
         request = by_request.get(line.source_request_id)
-        # Артикул мог остаться только в заявке — тянем его вперёд по связи строки с заявкой.
-        article = str(line.design_article or "").strip() or (str(request.design_article or "").strip() if request else "")
+        article = _line_article(line, request)
         where = "Приёмка" if status in _RECEIVING_STATUSES else "Закупка"
         live = newest.get(line.source_request_id) is line and status != "Готово"
+        received = status == "Готово"
+        if received and line.paid_at is None and line.id in without_lot:
+            where, status, received = "Закупка", f"{status} · без ГРН", False
         rows.append(SupplyRow(
             article=article, where=where, status=status, source_id=line.legacy_id or str(line.id),
-            received=status == "Готово", name=line.calculated_name or (request.name if request else ""),
+            received=received, name=line.calculated_name or (request.name if request else ""),
             open_quantity=line.to_buy if live else Decimal("0"),
         ))
     return rows
+
+
+def supply_off_book(
+    project: str, requests: Iterable[Request], procurement: Iterable[ProcurementLine],
+    procurement_uow: Callable[[], ProcurementUnitOfWork] | None,
+) -> list[tuple[UUID, SupplyStock]]:
+    """«Без ГРН»: the project's procurement covers «Есть на складе, без ГРН» — on the shelf, in no lot, so neither
+    «Свободно» nor «В закупке» (the line's КОЛ-ВО − «Со склада») has them. Cancelled lines bring nothing.
+    → (line id, the quantity under the line's article and name). No factory or no port (test fakes) → []."""
+    if procurement_uow is None:
+        return []
+    by_request, lines = _project_chain(project, requests, procurement)
+    by_id = {line.id: line for line in lines if line.status.value != "Отменено"}
+    if not by_id:
+        return []
+    with procurement_uow() as uow:
+        covers = getattr(uow, "stock_covers", None)
+        found = list(covers.active_without_lot(list(by_id))) if covers is not None else []
+    result = []
+    for cover in found:
+        line = by_id.get(cover.line_id)
+        if line is None or cover.lot_id is not None or cover.quantity <= 0:
+            continue
+        request = by_request.get(line.source_request_id)
+        result.append((line.id, SupplyStock(
+            article=_line_article(line, request), name=line.calculated_name or (request.name if request else ""),
+            quantity=cover.quantity,
+        )))
+    return result
 
 
 def supply_stock(project: str, fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None) -> list[SupplyStock]:
@@ -700,7 +750,9 @@ def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list
         for line in request.lines:
             quantity = line.reserved + max(line.issued - line.returned_good, Decimal("0"))
             if quantity > 0:
-                kitted.append(SupplyStock(article=line.article, name=line.name, quantity=quantity))
+                kitted.append(SupplyStock(
+                    article=line.article, name=line.name, quantity=quantity, off_book=line.off_book,
+                ))
     return kitted
 
 
@@ -714,7 +766,7 @@ def project_supply(
     procurement_uow: Callable[[], ProcurementUnitOfWork] | None,
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None,
 ) -> tuple[tuple[SupplyLine, ...], tuple[Request, ...]]:
-    """The «Снабжение» tab: every spec position with Нужно / Свободно / В закупке / Не хватает and its stage.
+    """The «Снабжение» tab: every spec position with Нужно / Свободно / Без ГРН / В закупке / Не хватает, its stage.
     A module without a factory reads empty. Also returns the project's requests (the order reads their point)."""
     def read(factory, reader):
         if factory is None:
@@ -725,9 +777,11 @@ def project_supply(
     requests = read(requests_uow, lambda uow: uow.requests.recent(10_000))
     procurement = read(procurement_uow, lambda uow: uow.procurement.list(limit=10_000))
     kits = read(fulfillment_uow, lambda uow: uow.fulfillment.list(limit=10_000))
-    rows = supply_rows(kitset.project, requests, procurement)
+    off_book = supply_off_book(kitset.project, requests, procurement, procurement_uow)
+    rows = supply_rows(kitset.project, requests, procurement, lotless=[line_id for line_id, _item in off_book])
     lines = supply_lines(
         kitset, rows, supply_stock(kitset.project, fulfillment_uow), supply_kitting(kitset.project, kits),
+        off_book=[item for _line_id, item in off_book],
     )
     return lines, requests
 
@@ -776,6 +830,8 @@ def _skip_reason(line: SupplyLine) -> tuple[str, str]:
         return "уже в закупке", f"уже в закупке: {kit_number_payload(line.ordered)}"
     if line.kitted > 0:
         return "уже в комплектации", f"уже в комплектации: {kit_number_payload(line.kitted)}"
+    if line.off_book > 0:
+        return "есть на складе без ГРН", f"на складе без ГРН: {kit_number_payload(line.off_book)}"
     return "хватает на складе", f"свободно на складе: {kit_number_payload(line.free)}"
 
 
@@ -801,7 +857,8 @@ def order_missing(
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None = None,
     production_uow: Callable[[], PlanUnitOfWork] | None = None,
 ) -> OrderMissingResult:
-    """Purchase requests for what the project lacks: per position Нужно − Свободно − В закупке − в комплектации.
+    """Purchase requests for what the project lacks: per position Нужно − Свободно − В закупке − в комплектации −
+    на складе без ГРН.
 
     Idempotent by construction: the requests it files count «В закупке» at once, so a repeat finds nothing short;
     the creation key (project + what is ordered + the chain it saw) also turns a double click into one batch.

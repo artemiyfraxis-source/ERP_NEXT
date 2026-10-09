@@ -371,11 +371,14 @@ class SupplyRow:
 
 @dataclass(frozen=True)
 class SupplyStock:
-    """A quantity of the item the project already has: a free warehouse lot, or the project's kit lines."""
+    """A quantity of the item the project already has: a free warehouse lot, the project's kit lines, or what its
+    procurement marked «Есть на складе, без ГРН». `off_book` — a kit line issued «есть, не заведено» (no lot): it
+    takes from that same unbooked stock, so it uses up the procurement's «без ГРН» instead of adding to it."""
 
     article: str
     name: str
     quantity: Decimal
+    off_book: bool = False
 
 
 @dataclass(frozen=True)
@@ -392,11 +395,15 @@ class SupplyLine:
     ordered: Decimal = Decimal("0")  # «В закупке»: open requests and procurement lines of the project
     free: Decimal = Decimal("0")  # «Свободно»: free stock (with the project's own reserves) under this item
     kitted: Decimal = Decimal("0")  # reserved or issued to the project's kits
+    # «Без ГРН»: procurement covered it «Есть на складе, без ГРН» — on the shelf, in no lot, reserved nowhere; less
+    # what the project's kits already issued «есть, не заведено» (the same unbooked goods, never counted twice).
+    off_book: Decimal = Decimal("0")
 
     @property
     def short(self) -> Decimal:
-        """«Не хватает»: need − free stock − in procurement − already in the kits, never below zero."""
-        return max(self.need - self.free - self.ordered - self.kitted, Decimal("0"))
+        """«Не хватает»: need − free stock − in procurement − already in the kits − on the shelf without a ГРН, never
+        below zero."""
+        return max(self.need - self.free - self.ordered - self.kitted - self.off_book, Decimal("0"))
 
 
 _SUPPLY_RANK = {"Запрос": 1, "Закупка": 2, "Приёмка": 3}
@@ -425,13 +432,15 @@ def _supply_match(lines: dict[str, dict[str, Any]], article: object, name: objec
 
 def supply_lines(
     kitset: Kitset, rows: Iterable[SupplyRow], stock: Iterable[SupplyStock] = (),
-    kitted: Iterable[SupplyStock] = (),
+    kitted: Iterable[SupplyStock] = (), off_book: Iterable[SupplyStock] = (),
 ) -> tuple[SupplyLine, ...]:
     """Positions of the spec against purchasing, keyed by the КД article (the one key calc and purchase share).
 
     A row replaced in the calc (`kit_article`: the wire in «Наименование» differs from the КД one) is bought as the
     item actually used, so purchases under either article count for the position. A row without an article counts
-    by its name. Each row, lot and kit line counts for one position only.
+    by its name. Each row, lot and kit line counts for one position only. `off_book` — procurement covers «Есть на
+    складе, без ГРН» (no lot holds them, so they are in no `stock`): they count for the position less the kit lines
+    issued «есть, не заведено» of it; bound to a ГРН, a cover leaves them and is counted with its lot instead.
     Stage = the LATEST row of the position (one bought, another still requested → it is on its way);
     no rows → «со склада» if the spec has a ГРН or the line is already kitted (reserved/issued), else «не заведено».
     """
@@ -446,7 +455,8 @@ def supply_lines(
                 line = lines[key] = {
                     "article": component.article, "name": component.name, "type": component.type, "kbs": [],
                     "need": Decimal("0"), "grn": "", "rows": (), "used": set(), "names": set(),
-                    "free": Decimal("0"), "kitted": Decimal("0"),
+                    "free": Decimal("0"), "kitted": Decimal("0"), "off_book": Decimal("0"),
+                    "kitted_off_book": Decimal("0"),
                 }
             used = _article_key(kit_article(component.article, component.name)["art"])
             if used != key:
@@ -462,11 +472,13 @@ def supply_lines(
         key = _supply_match(lines, row.article, row.name)
         if key is not None:
             lines[key]["rows"] += (row,)
-    for items, field_name in ((stock, "free"), (kitted, "kitted")):
+    for items, field_name in ((stock, "free"), (kitted, "kitted"), (off_book, "off_book")):
         for item in items:
             key = _supply_match(lines, item.article, item.name)
             if key is not None and item.quantity > 0:
                 lines[key][field_name] += item.quantity
+                if field_name == "kitted" and item.off_book:
+                    lines[key]["kitted_off_book"] += item.quantity
     result = []
     for line in lines.values():
         found = line["rows"]
@@ -484,6 +496,7 @@ def supply_lines(
             rows=found, item_type=line["type"],
             ordered=sum((row.open_quantity for row in found), Decimal("0")),
             free=line["free"], kitted=line["kitted"],
+            off_book=max(line["off_book"] - line["kitted_off_book"], Decimal("0")),
         ))
     return tuple(result)
 

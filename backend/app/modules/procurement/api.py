@@ -99,6 +99,7 @@ from .application import (
     cover_from_stock,
     release_stock_cover,
     stock_candidates,
+    without_grn_quantities,
 )
 from .domain import (
     ACTUAL_UNITS,
@@ -510,7 +511,11 @@ def _decimal_result(value: Decimal | None) -> str | None:
     return format(value.normalize(), "f") if value is not None else None
 
 
-def _line_result(line: ProcurementLine, purposes: Mapping[UUID, str] | None = None) -> dict:
+def _line_result(
+    line: ProcurementLine, purposes: Mapping[UUID, str] | None = None, *, without_grn: Decimal | None = None,
+) -> dict:
+    """The line for the screens. `without_grn` — only where the caller looked up the covers («Мои позиции»)."""
+    extra = {} if without_grn is None else {"stock_without_grn": _decimal_result(without_grn)}
     return {
         "purpose": (purposes or {}).get(line.source_request_id),
         "id": str(line.id),
@@ -591,6 +596,8 @@ def _line_result(line: ProcurementLine, purposes: Mapping[UUID, str] | None = No
         # «Со склада»: reserved on our lots for this line, and what is still to buy.
         "stock_covered": _decimal_result(line.stock_covered),
         "to_buy": _decimal_result(line.to_buy),
+        # «Есть на складе, без ГРН» still waiting for «Привязать ГРН» (present only where looked up).
+        **extra,
     }
 
 
@@ -607,11 +614,15 @@ def _retry_transaction(operation):
     raise AssertionError("unreachable")
 
 
-def _page_result(lines: list[ProcurementLine], limit: int, purposes_of=None) -> dict:
+def _page_result(
+    lines: list[ProcurementLine], limit: int, purposes_of=None,
+    without_grn: Callable[[list[ProcurementLine]], dict] | None = None,
+) -> dict:
     page = lines[:limit]
     purposes = purposes_of(page) if purposes_of else None
+    lotless = without_grn(page) if without_grn is not None else {}
     return {
-        "lines": [_line_result(line, purposes) for line in page],
+        "lines": [_line_result(line, purposes, without_grn=lotless.get(line.id)) for line in page],
         "next_cursor": str(page[-1].id) if len(lines) > limit else None,
     }
 
@@ -657,7 +668,8 @@ def my_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return _page_result(lines, limit, purposes_of)
+    # «Готово · без ГРН»: the screen offers «Привязать ГРН» on the lines that still have a cover without a lot.
+    return _page_result(lines, limit, purposes_of, lambda page: without_grn_quantities(page, uow_factory()))
 
 
 @router.get("/in-work")

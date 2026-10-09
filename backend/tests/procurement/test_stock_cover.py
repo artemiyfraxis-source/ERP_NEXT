@@ -1,7 +1,7 @@
 """«Со склада» (owner 2026-10-04): a purchase-sheet line covered from our own lot instead of being bought."""
 
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -704,3 +704,82 @@ def test_kit_of_the_same_project_never_takes_over_a_lotless_cover(env):
     (shown,) = [item for item in lots if item["id"] == str(lot.id)]
     assert all(holder["kind"] != "procurement" for holder in shown["reserve_holders"])
     assert_integrity_clean(sessions)
+
+
+# --- «Мои позиции»: «Привязать ГРН» on a line closed «Готово · без ГРН» (07.10) ------------------------------
+
+def mine(client) -> dict[str, dict]:
+    return {line["id"]: line for line in client.get("/api/procurement/mine").json()["lines"]}
+
+
+def test_mine_marks_what_waits_for_a_grn_and_binding_a_done_line_moves_it_to_the_lot_once(env):
+    client, sessions = env
+    lotless_line = line_in_work(client, sessions)
+    lot_line = line_in_work(client, sessions, suffix=2)
+    lot = add_lot(sessions, stock("300"))
+    covered = cover_without_lot(client, lotless_line, "124").json()
+    assert cover(client, lot_line, lot, "124").status_code == 200
+
+    shown = mine(client)
+    done = shown[lotless_line["id"]]
+    assert (done["status"], done["stock_covered"], done["stock_without_grn"]) == ("Готово", "124", "124")
+    # closed from a lot: «Готово» too, but nothing waits for a ГРН — the screen offers no «Привязать ГРН»
+    assert (shown[lot_line["id"]]["status"], shown[lot_line["id"]]["stock_without_grn"]) == ("Готово", "0")
+    assert get_lot(sessions, lot.id).reserved == Decimal("124")
+
+    # a double click sends the same version twice: the first binds, the second is stale and writes nothing
+    first = bind(client, done, covered["cover"]["id"], lot)
+    second = bind(client, done, covered["cover"]["id"], lot)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 409
+    assert get_lot(sessions, lot.id).reserved == Decimal("248")  # 124 of the other line + these 124, once
+    (held,) = covers_of(sessions, lotless_line["id"])
+    assert (held.lot_id, held.quantity) == (lot.id, Decimal("124"))
+    after = mine(client)[lotless_line["id"]]
+    assert (after["status"], after["stock_covered"], after["stock_without_grn"]) == ("Готово", "124", "0")
+    # a repeat with the fresh version is refused too: the cover already has its ГРН
+    again = bind(client, after, covered["cover"]["id"], lot)
+    assert again.status_code == 422 and "уже есть ГРН" in again.json()["detail"]
+    assert get_lot(sessions, lot.id).reserved == Decimal("248")
+    bound_events = [event.event_type for event in events(sessions, lotless_line["id"])]
+    assert bound_events.count("procurement.stock_cover_bound") == 1
+    assert_integrity_clean(sessions)
+
+
+def test_binding_a_done_line_over_what_the_lot_has_available_writes_nothing(env):
+    client, sessions = env
+    line = line_in_work(client, sessions)
+    covered = cover_without_lot(client, line, "124").json()
+    small = add_lot(sessions, stock("130"))
+    other = line_in_work(client, sessions, suffix=2)
+    assert cover(client, other, small, "10").status_code == 200  # 130 − 10 = 120 available < 124
+    done = mine(client)[line["id"]]
+
+    refused = bind(client, done, covered["cover"]["id"], small)
+
+    assert refused.status_code == 422 and "доступно 120 шт" in refused.json()["detail"]
+    assert get_lot(sessions, small.id).reserved == Decimal("10")
+    (held,) = covers_of(sessions, line["id"])
+    assert (held.lot_id, held.quantity) == (None, Decimal("124"))
+    still = mine(client)[line["id"]]
+    assert (still["version"], still["stock_without_grn"]) == (done["version"], "124")
+    assert "procurement.stock_cover_bound" not in [event.event_type for event in events(sessions, line["id"])]
+    assert_integrity_clean(sessions)
+
+
+def test_a_done_line_without_grn_stays_in_mine_past_30_days_until_it_is_bound(env):
+    client, sessions = env
+    lotless_line = line_in_work(client, sessions)
+    lot_line = line_in_work(client, sessions, suffix=2)
+    lot = add_lot(sessions, stock("300"))
+    covered = cover_without_lot(client, lotless_line, "124").json()
+    assert cover(client, lot_line, lot, "124").status_code == 200
+
+    app.dependency_overrides[moscow_now] = lambda: NOW + timedelta(days=60)
+    late = mine(client)
+    # the line closed from a lot left after 30 days; the one still waiting for its ГРН did not
+    assert list(late) == [lotless_line["id"]]
+
+    assert bind(client, late[lotless_line["id"]], covered["cover"]["id"], lot).status_code == 200
+    assert mine(client) == {}

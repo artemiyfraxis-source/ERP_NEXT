@@ -20,8 +20,9 @@ export type StockLot = {
 
 type Candidates = { line: ProcurementLine; query: string; lots: StockLot[]; covers: StockCover[] };
 
-/** Поля строки, которые добавил склад: сколько закрыто со склада и сколько осталось купить. */
-export type StockFields = { stock_covered?: string | null; to_buy?: string | null };
+/** Поля строки, которые добавил склад: сколько закрыто со склада, сколько осталось купить и сколько закрыто
+ *  «Есть на складе, без ГРН» и ждёт «Привязать ГРН» (последнее отдают только «Мои позиции»). */
+export type StockFields = { stock_covered?: string | null; to_buy?: string | null; stock_without_grn?: string | null };
 
 export const stockApi = {
   candidates: (lineId: string, q?: string) =>
@@ -50,6 +51,12 @@ export function coveredOf(line: ProcurementLine): number {
   return Number((line as ProcurementLine & StockFields).stock_covered ?? 0) || 0;
 }
 
+/** «Готово · без ГРН»: строка закрыта «Есть на складе, без ГРН» (без оплаты), ГРН к ней ещё не привязан. */
+export function waitsForGrn(line: ProcurementLine): boolean {
+  const withoutGrn = Number((line as ProcurementLine & StockFields).stock_without_grn ?? 0) || 0;
+  return line.status === "Готово" && !line.paid_at && withoutGrn > 0;
+}
+
 export function toBuyOf(line: ProcurementLine): string {
   return (line as ProcurementLine & StockFields).to_buy ?? line.calculated_quantity;
 }
@@ -57,12 +64,15 @@ export function toBuyOf(line: ProcurementLine): string {
 const num = (value: string) => Number(String(value).replace(",", ".")) || 0;
 const fmt = (value: number) => String(Math.round(value * 1e6) / 1e6).replace(".", ",");
 
-export function ProcurementStockPicker({ line, disabled, onDone, onClose }: {
+export function ProcurementStockPicker({ line, disabled, bindOnly = false, onDone, onClose }: {
   line: ProcurementLine;
   disabled: boolean;
+  /** Только «Привязать ГРН» (строка «Готово · без ГРН»): покрытие без ГРН выбрано сразу, новый резерв не ставится. */
+  bindOnly?: boolean;
   /** Резерв поставлен или строка устарела — таблица перечитывает строки. */
   onDone: (message: string) => void;
-  onClose: () => void;
+  /** Своя кнопка «Закрыть»; в панели стадии её нет — там закрывает заголовок панели. */
+  onClose?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [lots, setLots] = useState<StockLot[]>([]);
@@ -85,6 +95,8 @@ export function ProcurementStockPicker({ line, disabled, onDone, onClose }: {
       const result = await stockApi.candidates(line.id, q);
       setLots(result.lots);
       setCovers(result.covers);
+      const first = bindOnly && !bindId ? result.covers.find((cover) => cover.active && !cover.lot_id) : undefined;
+      if (first) { setBindId(first.id); setQuantity(first.quantity.replace(".", ",")); }
       if (q === undefined) setQuery(result.query);
       setLotId("");
     } catch (reason) {
@@ -124,7 +136,7 @@ export function ProcurementStockPicker({ line, disabled, onDone, onClose }: {
       onDone(`${line.legacy_id}: со склада ${result.cover.quantity} ${result.cover.unit} (ГРН ${result.cover.grn})`);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409) {
-        setError("Строка изменилась — таблица обновлена, откройте «Со склада» ещё раз.");
+        setError(`Строка изменилась — таблица обновлена, откройте ${bindOnly ? "«Привязать ГРН»" : "«Со склада»"} ещё раз.`);
         onDone("");
       } else {
         setError(failureText(reason, "Резерв не поставлен"));
@@ -145,14 +157,14 @@ export function ProcurementStockPicker({ line, disabled, onDone, onClose }: {
   const short = binding && chosen && num(chosen.available) < num(binding.quantity);
   return (
     <div className="stock-picker">
-      <form className="stock-search" onSubmit={submitSearch}>
-        <strong>Со склада · {line.legacy_id}</strong>
+      <form className={bindOnly ? "stock-search bind-search" : "stock-search"} onSubmit={submitSearch}>
+        {!bindOnly && <strong>Со склада · {line.legacy_id}</strong>}
         {/* Фокус уходит в открытую панель: иначе строка с фокусом держит раскрытые действия, и при первом клике
             в панели строка схлопывается, а клик проходит мимо кнопки. */}
         <input aria-label="Поиск на складе" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="артикул или наименование" />
         <button type="submit" className="secondary small" disabled={loading}>Найти</button>
-        <small>К закупке: {fmt(toBuy)} {line.calculated_unit}{coveredOf(line) > 0 ? ` · уже со склада: ${fmt(coveredOf(line))}` : ""}</small>
-        <button type="button" className="secondary small" onClick={onClose}>Закрыть</button>
+        {!bindOnly && <small>К закупке: {fmt(toBuy)} {line.calculated_unit}{coveredOf(line) > 0 ? ` · уже со склада: ${fmt(coveredOf(line))}` : ""}</small>}
+        {onClose && <button type="button" className="secondary small" onClick={onClose}>Закрыть</button>}
       </form>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {held.length > 0 && (
@@ -161,9 +173,10 @@ export function ProcurementStockPicker({ line, disabled, onDone, onClose }: {
       {lotless.map((cover) => (
         <div key={cover.id} className="stock-search">
           <small>Без ГРН: {cover.quantity} {cover.unit}{cover.warehouse ? ` · ${cover.warehouse}` : ""}{bindId === cover.id ? " — выберите партию ниже" : ""}</small>
-          <button type="button" className="secondary small" disabled={disabled} onClick={() => startBind(cover.id)}>{bindId === cover.id ? "Отменить привязку" : "Привязать ГРН"}</button>
+          {!bindOnly && <button type="button" className="secondary small" disabled={disabled} onClick={() => startBind(cover.id)}>{bindId === cover.id ? "Отменить привязку" : "Привязать ГРН"}</button>}
         </div>
       ))}
+      {bindOnly && !loading && !lotless.length && <div className="empty">Без ГРН ничего не осталось — ГРН уже привязан.</div>}
       <div className="inwork-scroll">
         <table className="inwork-table stock-lots">
           <thead>
@@ -192,7 +205,7 @@ export function ProcurementStockPicker({ line, disabled, onDone, onClose }: {
           <button type="button" className="primary small" disabled={disabled || busy || !lotId || Boolean(short)} title={short ? `На партии доступно ${chosen?.available} — нужно ${binding.quantity}` : undefined} onClick={() => void reserve()}>
             {busy ? "Привязываем…" : `Привязать ГРН${chosen ? ` ${chosen.grn}` : ""}`}
           </button>
-        ) : (
+        ) : !bindOnly && (
           <button type="button" className="primary small" disabled={disabled || busy || !lotId || !quantityOk} onClick={() => void reserve()}>{busy ? "Резервируем…" : "Зарезервировать"}</button>
         )}
       </div>
