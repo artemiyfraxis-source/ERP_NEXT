@@ -121,6 +121,10 @@ FACT_PRICE_VAT = Decimal("22")
 # keeps a cancelled line closed (решено агентом — проверить). «Согласование» is a parked line, still noted.
 NOTE_EDITABLE = frozenset(set(ProcurementStatus) - {ProcurementStatus.NEW, ProcurementStatus.CANCELLED})
 NOTE_MAX_LENGTH = 2000
+# DATASHEET (a link or a text) — edited in the КОММЕНТАРИЙ window by the line's buyer.
+DATASHEET_MAX_LENGTH = 2000
+# Files the buyer attaches to a line besides invoices and КП: РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА (procurement_files.kind).
+LINE_DOCUMENT_KINDS = {"permit": "Разрешение", "quality": "Документ качества"}
 # ОЖИД. ДАТА: `gateAwaitInvoice_` (Guards.gs:523-560) opens it once the order is placed («Жду счет»); the ETA floats
 # until the goods are in, so the buyer moves it through «Карантин» (решено агентом — проверить: «Готово» is closed).
 EXPECTED_ARRIVAL_EDITABLE = frozenset(
@@ -307,6 +311,8 @@ class ProcurementLine:
     note: str | None = None
     # ФАКТ. ДАТА (OwnerTick.gs syncActualArrival_): the latest inspection date of the line's deliveries.
     actual_arrival: date | None = None
+    # DATASHEET: a link to the item's datasheet (or a text) the buyer keeps on the line.
+    datasheet: str | None = None
 
     @property
     def to_buy(self) -> Decimal:
@@ -832,6 +838,37 @@ class ProcurementLine:
         if text == self.note:
             return self
         return replace(self, note=text, version=self.version + 1)
+
+    def _require_sheet_edit(self, actor: Actor, what: str) -> None:
+        """The buyer's own sheet fields (DATASHEET, РАЗРЕШЕНИЕ / ДОК. КАЧЕСТВА files): the same window as КОММЕНТАРИЙ."""
+        _validate_actor(actor)
+        if self.status is ProcurementStatus.NEW:
+            raise ProcurementValidationError(
+                f"Сначала поставьте статус «{ProcurementStatus.IN_WORK.value}» — возьмите строку в работу"
+            )
+        if self.status not in NOTE_EDITABLE:
+            raise ProcurementValidationError(f"Строка отменена — {what} не меняется")
+        self._require_owner(actor)
+
+    def set_datasheet(self, datasheet: str | None, actor: Actor) -> ProcurementLine:
+        """DATASHEET: a link or a text on the line, in the same window and for the same buyer as КОММЕНТАРИЙ."""
+        text = _text(datasheet) or None
+        if text is not None and len(text) > DATASHEET_MAX_LENGTH:
+            raise ProcurementValidationError(f"DATASHEET длиннее {DATASHEET_MAX_LENGTH} символов")
+        self._require_sheet_edit(actor, "DATASHEET")
+        if text == self.datasheet:
+            return self
+        return replace(self, datasheet=text, version=self.version + 1)
+
+    def attach_document(self, kind: str, actor: Actor) -> ProcurementLine:
+        """A РАЗРЕШЕНИЕ or ДОК. КАЧЕСТВА file on the line. A quality document attached means the goods go with one:
+        ДОК. КАЧЕСТВА turns «Да» (receiving then checks it) — a new version; a permit or a line already «Да» stays."""
+        if kind not in LINE_DOCUMENT_KINDS:
+            raise ProcurementValidationError("Вид файла: разрешение или документ качества")
+        self._require_sheet_edit(actor, "файл")
+        if kind != "quality" or _norm(self.quality_document) == "да":
+            return self
+        return replace(self, quality_document="Да", version=self.version + 1)
 
     def set_expected_arrival(self, expected_arrival: date, actor: Actor) -> ProcurementLine:
         """ОЖИД. ДАТА by hand: the supplier's ETA, from «Жду счет» (`gateAwaitInvoice_`) until the goods are in.
@@ -1604,6 +1641,8 @@ def split_line(
                 calculated_price_with_vat=source.calculated_price_with_vat,
                 calculated_sum=source.calculated_sum,
                 initiator_id=source.initiator_id,
+                # The same item: its DATASHEET goes with every copy.
+                datasheet=source.datasheet,
             )
         )
     if buyer is None:

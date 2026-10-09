@@ -204,6 +204,11 @@ export interface ProcurementLine {
   actual_arrival?: string | null;
   /** КОММЕНТАРИЙ: свободная заметка закупщика, от «В работе»; не на «Новый»/«Отменено» (setNote). */
   note?: string | null;
+  /** DATASHEET: ссылка или текст, правится как комментарий (setDatasheet). */
+  datasheet?: string | null;
+  /** Файлы РАЗРЕШЕНИЕ и ДОК. КАЧЕСТВА (только в списках: «Мои позиции», «Весь лист», «По поставщикам»). */
+  permit_files?: ProcurementFile[];
+  quality_files?: ProcurementFile[];
   invoice_url: string | null;
   paid_at: string | null;
   currency: string | null;
@@ -1839,6 +1844,18 @@ export interface ApplyOrderDocumentInput {
   lines: (OrderLineRef & { price_with_vat: string | null; invoice_item_name?: string | null })[];
 }
 
+/** Вид файла строки закупки: разрешение (на замену) или документ качества. */
+export type ProcurementFileKind = "permit" | "quality";
+
+export interface ProcurementFile {
+  id: string;
+  kind: ProcurementFileKind;
+  file_name: string;
+  url: string;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
 export interface InvoiceUpload {
   url: string;
   file_name: string;
@@ -1971,6 +1988,17 @@ export const procurementApi = {
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/note`, {
       method: "PATCH",
       body: JSON.stringify({ version, note }),
+    }),
+  setDatasheet: (lineId: string, version: number, datasheet: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/datasheet`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, datasheet }),
+    }),
+  /** Файл разрешения или документа качества к строке; документ качества ставит «Док. качества: Да». */
+  uploadLineFile: (lineId: string, kind: ProcurementFileKind, file: { name: string; type: string; base64: string }) =>
+    api<{ file: ProcurementFile; line: ProcurementLine }>(`/api/procurement/${lineId}/files`, {
+      method: "POST",
+      body: JSON.stringify({ kind, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
     }),
   setExpectedArrival: (lineId: string, version: number, expectedArrival: string) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/expected-arrival`, {

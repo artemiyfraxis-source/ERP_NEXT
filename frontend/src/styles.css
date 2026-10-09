@@ -2283,6 +2283,19 @@ input.cell-edit-input[type="date"] { width: 130px; min-width: 0; }
 textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .data-table td small.cell-edit-error, .cell-edit-error { display: block; margin-top: 2px; color: #852a24; font-size: 11.5px; white-space: normal; }
 .order-lines td.note-cell { min-width: 120px; max-width: 220px; white-space: normal; }
+/* DATASHEET и файлы строки закупки (ProcurementLineDocuments): ссылки по одной в строку, длинное имя — многоточием. */
+.cell-link { font-size: 12px; }
+.file-links { display: flex; flex-direction: column; gap: 1px; min-width: 0; max-width: 220px; }
+.file-links a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.line-documents { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.line-documents .file-links { max-width: none; }
+.line-doc-datasheet { display: flex; align-items: center; gap: 10px; }
+.line-doc-datasheet a { font-weight: 400; white-space: nowrap; }
+.line-doc-field { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.line-doc-title { color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.line-doc-empty { color: var(--muted-foreground); font-size: 13px; }
+.line-doc-field .file-button { display: inline-flex; align-items: center; cursor: pointer; }
+.line-doc-field .file-button.disabled { opacity: .6; cursor: default; }
 .order-lines td.missing-cell { min-width: 120px; max-width: 220px; white-space: normal; }
 .procurement-sheet td.num { font-variant-numeric: tabular-nums; }
 /* Весь лист и стадии: ключевые колонки вместе с «Комментарием» должны влезать в 16" без прокрутки вбок —

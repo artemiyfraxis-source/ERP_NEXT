@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from alembic import command
 from alembic.config import Config
 
@@ -158,3 +159,36 @@ def test_sheet_fields_migration_adds_note_and_backfills_actual_arrival_then_down
 
     command.downgrade(config, "0082_project_tasks")
     assert not {"note", "actual_arrival"} & _columns(database_path)
+
+
+def test_datasheet_and_file_kind_migration_keeps_existing_files_as_other_and_checks_the_kind(tmp_path):
+    backend_root = Path(__file__).parents[2]
+    database_path = tmp_path / "kinds.db"
+    config = Config(backend_root / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
+    command.upgrade(config, "0088_api_tokens_assembly_drafts")
+    assert "datasheet" not in _columns(database_path)
+
+    line, invoice = uuid4().hex, uuid4().hex
+    with sqlite3.connect(database_path) as connection:
+        _insert(connection, "procurement_lines", id=line, status="В оплату", version=5)
+        _insert(connection, "procurement_files", id=invoice, line_id=line, file_name="Счёт № 58.pdf", content=b"%PDF")
+
+    command.upgrade(config, "0089_procurement_datasheet_file_kinds")
+    assert "datasheet" in _columns(database_path)
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("SELECT id, kind, file_name, content FROM procurement_files").fetchall() == [
+            (invoice, "other", "Счёт № 58.pdf", b"%PDF"),
+        ]
+        assert connection.execute("SELECT datasheet, version FROM procurement_lines").fetchall() == [(None, 5)]
+        _insert(connection, "procurement_files", id=uuid4().hex, line_id=line, kind="quality")
+        _insert(connection, "procurement_files", id=uuid4().hex, line_id=line, kind="permit")
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert(connection, "procurement_files", id=uuid4().hex, line_id=line, kind="счёт")
+
+    command.downgrade(config, "0088_api_tokens_assembly_drafts")
+    assert "datasheet" not in _columns(database_path)
+    with sqlite3.connect(database_path) as connection:
+        file_columns = {row[1] for row in connection.execute("PRAGMA table_info(procurement_files)")}
+        kept = connection.execute("SELECT COUNT(*) FROM procurement_files").fetchone()[0]
+    assert "kind" not in file_columns and kept == 3
