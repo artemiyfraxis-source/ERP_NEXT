@@ -91,7 +91,8 @@ h3 { font-size: 15px; font-weight: 600; }
 .page-header p { margin: 0; color: var(--muted-foreground); font-size: 13px; }
 .eyebrow { display: block; margin-bottom: 6px; color: var(--muted-foreground); font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
 .counter, .queue-summary span { border-radius: 999px; padding: 9px 13px; background: #dfe5dc; color: #47544c; font-size: 13px; }
-.queue-summary { display: flex; gap: 9px; margin: -12px 0 20px; }
+.queue-summary { display: flex; align-items: center; gap: 9px; margin: 0 0 14px; }
+.empty-stages { margin: 0 0 10px; color: var(--muted-foreground); font-size: 13px; }
 .queue-summary strong { color: #10281d; }
 
 .panel { border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
@@ -159,6 +160,13 @@ th, td { padding: 11px 14px; border-bottom: 1px solid var(--border); text-align:
 .manual-stock-head h2 { font-size: 16px; font-weight: 600; }
 details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; font-weight: 600; }
 .manual-stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; align-items: end; margin-bottom: 14px; }
+/* «Быстрый ввод»: плотная форма как в остальных — поля 32 px, на 16" и шире четыре в ряд без дыр (2+2 / 1+1+1+1 / 1+2+1). */
+.manual-stock-form label { gap: 4px; }
+.manual-stock-form input, .manual-stock-form select { height: 32px; padding: 5px 9px; font-size: 13px; }
+@media (min-width: 1500px) {
+  .manual-stock-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-flow: dense; gap: 8px 12px; }
+}
+@media (pointer: coarse) { .manual-stock-form input, .manual-stock-form select { height: 40px; } }
 .place-busy { background: #fff4d1; border-color: #e0a800; }
 /* «Переместить» (SUPPLYMAP wh05Move): a modal over the stock list, opened from a lot card or the toolbar. */
 .dialog-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(0, 26, 24, .35); }
@@ -2804,3 +2812,21 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .harness-save { font-size: 13px; font-weight: 600; }
 .harness-page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .harness-page-body > .harness-root { flex: 1; min-height: 0; overflow: auto; }
+
+/* ── Обход на 16" ноутбуке (1536×864): всё меню и профиль без прокрутки меню; действия строки сотрудника в одну строку ── */
+@media (hover: hover) and (pointer: fine) and (min-width: 901px) and (max-height: 960px) {
+  .sidebar { padding: 12px 12px 10px; }
+  .brand { padding-bottom: 8px; }
+  .nav-group { margin-top: 6px; padding-top: 5px; }
+  .nav-group h4 { margin-bottom: 3px; }
+  .nav-item { padding-top: 4px; padding-bottom: 4px; }
+  .profile { padding-top: 8px; gap: 2px; }
+  .profile .link-button { padding-top: 2px; }
+}
+.row-action-cell .row-actions { flex-direction: row; align-items: center; width: auto; max-width: none; }
+/* «Сотрудники»: действия строки всегда на виду, узкими текстовыми кнопками — без пустой колонки справа. */
+.staff-page tr .row-action.always { visibility: visible; }
+.staff-page .row-action-cell .row-actions { gap: 10px; }
+.staff-page .row-action-cell .link-button { padding: 0; font-size: 12.5px; }
+@media (pointer: coarse) { .staff-page .row-action-cell .link-button { min-height: 40px; } }
+.staff-page td.text > strong, .staff-page td.text small { white-space: nowrap; }
