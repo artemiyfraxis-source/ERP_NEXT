@@ -115,7 +115,12 @@ done
 
 # 2. Candidate image (production keeps running the old one).
 step=build
-docker build -t "$candidate" -f "$new/Dockerfile" "$new" || fail "новая версия не собралась — сервер работает на прежней"
+export DOCKER_BUILDKIT=1  # the Dockerfile uses a BuildKit cache mount for the npm cache
+if ! docker build -t "$candidate" -f "$new/Dockerfile" "$new"; then
+  echo "== $(date -Is) сборка образа не удалась — повторяю один раз (сбой сети/памяти бывает разовым)"
+  sleep 15
+  docker build -t "$candidate" -f "$new/Dockerfile" "$new" || fail "новая версия не собралась — сервер работает на прежней"
+fi
 
 # 3. Pre-update backup, always.
 step=backup
