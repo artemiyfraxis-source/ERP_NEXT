@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { failureText, kitsetsApi } from "./api";
-import { HarnessEditorLazy, loadHarnessAdapters, type HarnessEditorCatalogApi } from "./harness";
+import { HarnessEditorLazy, loadHarnessAdapters, type ComponentPlacementApi, type HarnessEditorCatalogApi } from "./harness";
 import type { ServerHarnessDesignApi, ServerSaveState } from "./harness/serverApi";
 import { closeHarness } from "./harnessNav";
 import { readFileBase64 } from "./ProjectsPage";
@@ -13,12 +13,14 @@ const STATE_TEXT: Record<ServerSaveState, string> = {
 };
 
 /** Чертёж жгута на весь экран: редактор TECHMAP-GRAPHER над чертежом из КД позиции. `catalog` — справочники ERP
- *  (по умолчанию редактор берёт свой пустой каталог в памяти). */
+ *  (по умолчанию редактор берёт свой пустой каталог в памяти). Без права «Проекты: правка» — тот же чертёж в режиме
+ *  просмотра: двигать поле, масштабировать, выбирать и смотреть свойства; ничего не меняется и не сохраняется. */
 export function HarnessPage({ project, index, canEdit, catalog, onBack = () => closeHarness(project) }: {
   project: string; index: string; canEdit: boolean; catalog?: HarnessEditorCatalogApi; onBack?: () => void;
 }) {
   const [title, setTitle] = useState("");
   const [api, setApi] = useState<ServerHarnessDesignApi | null>(null);
+  const [placements, setPlacements] = useState<ComponentPlacementApi | undefined>(undefined);
   const [erpCatalog, setErpCatalog] = useState<HarnessEditorCatalogApi | undefined>(undefined);
   const [state, setState] = useState<ServerSaveState>("saved");
   const [error, setError] = useState("");
@@ -35,15 +37,18 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
   }, [project, index]);
 
   // Редактор и его модель грузятся отдельным куском вместе с адаптером; при «обновить» адаптер создаётся заново.
+  // Библиотечные компоненты пишутся в тот же документ КД через тот же адаптер (одна версия на двоих).
   useEffect(() => {
-    if (!canEdit) return;
     let live = true;
     setApi(null); setState("saved");
     void Promise.all([import("./harness/serverApi"), loadHarnessAdapters()]).then(([{ createServerHarnessDesignApi }, adapters]) => {
       if (!live) return;
       // Справочники ERP (провода, терминалы, разъёмы…) — по умолчанию; `catalog` подменяет их.
-      setErpCatalog(catalog ?? adapters.createErpHarnessEditorCatalog());
-      setApi(createServerHarnessDesignApi({ onState: (next) => { if (live) setState(next); } }));
+      const references = catalog ?? adapters.createErpHarnessEditorCatalog();
+      const designApi = createServerHarnessDesignApi({ readOnly: !canEdit, onState: (next) => { if (live) setState(next); } });
+      setErpCatalog(references);
+      setPlacements(references.templates ? designApi.componentPlacements(references.templates) : undefined);
+      setApi(designApi);
     }).catch((reason) => { if (live) setError(failureText(reason, "Редактор не загрузился")); });
     return () => { live = false; };
   }, [canEdit, generation]);
@@ -66,7 +71,9 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
       <button className="secondary small" onClick={onBack}>← Назад</button>
       <h1>{heading}</h1>
       <span className="muted">Чертёж жгута</span>
-      {canEdit && <span className={`harness-save tone-${state === "conflict" || state === "error" ? "danger" : state === "saving" ? "warn" : "ok"}`} role="status">{STATE_TEXT[state]}</span>}
+      {canEdit
+        ? <span className={`harness-save tone-${state === "conflict" || state === "error" ? "danger" : state === "saving" ? "warn" : "ok"}`} role="status">{STATE_TEXT[state]}</span>
+        : <span className="harness-save tone-neutral" role="status" title="Правят сотрудники с правом «Проекты: правка»">Только просмотр</span>}
       {state === "conflict" && <button className="primary small" onClick={() => setGeneration((value) => value + 1)}>Обновить чертёж</button>}
       <span className="harness-page-actions">
         {note && <span className="muted">{note}</span>}
@@ -77,11 +84,10 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="harness-page-body">
-      {!canEdit ? <div className="empty">Чертёж жгута правят сотрудники с правом «Проекты: правка».</div>
-        : !api ? <div className="empty">Загрузка…</div>
+      {!api ? <div className="empty">Загрузка…</div>
         : <Suspense fallback={<div className="empty">Загрузка редактора…</div>}>
           <HarnessEditorLazy key={generation} projectId={project} harnessId={index} harnessDesignation={heading} initialView="e4"
-            apiOverride={api} catalogOverride={erpCatalog} />
+            apiOverride={api} componentPlacementApiOverride={placements} catalogOverride={erpCatalog} readOnly={!canEdit} />
         </Suspense>}
     </div>
   </section>;

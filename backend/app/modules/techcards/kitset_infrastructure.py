@@ -202,6 +202,19 @@ class SqlAlchemyKitsetRepository:
         )
         return result.rowcount or 0
 
+    def relabel_document(self, project: str, document_id: UUID, *, from_type: str, to_type: str) -> int:
+        """Change the content type of a register row that still has `from_type` (the harness drawing unlinked from its
+        position and linked back — the row and its bytes stay). 0 when the row is gone or already relabelled."""
+        result = self.session.execute(
+            update(KitDocumentRow)
+            .where(
+                KitDocumentRow.id == document_id, KitDocumentRow.project == project,
+                KitDocumentRow.content_type == from_type,
+            )
+            .values(content_type=to_type)
+        )
+        return result.rowcount or 0
+
     def delete_document(self, project: str, document_id: UUID) -> int:
         result = self.session.execute(
             delete(KitDocumentRow).where(KitDocumentRow.project == project, KitDocumentRow.id == document_id)

@@ -626,11 +626,16 @@ class DocumentPayload(BaseModel):
 # The harness drawing (TECHMAP-GRAPHER design document, schemaVersion 1) kept as a КД row of its position and
 # edited in ERP (harness_api.py): one row per position, saved over itself.
 HARNESS_CONTENT_TYPE = "application/vnd.fraxis.harness+json"
+# A drawing unlinked from its position («Отвязать»): the row and its bytes stay, the position no longer reads it, the card
+# lists it with «Вернуть». Nothing about the drawing is hard-deleted.
+HARNESS_UNLINKED_CONTENT_TYPE = "application/vnd.fraxis.harness-unlinked+json"
+DOCUMENT_KINDS = {HARNESS_CONTENT_TYPE: "harness", HARNESS_UNLINKED_CONTENT_TYPE: "harness_unlinked"}
 
 
 def document_kind(document) -> str:
-    """«harness» — the harness drawing edited in ERP; «file» — an attached file."""
-    return "harness" if (document.content_type or "").split(";")[0].strip() == HARNESS_CONTENT_TYPE else "file"
+    """«harness» — the harness drawing edited in ERP; «harness_unlinked» — such a drawing unlinked from its position;
+    «file» — an attached file."""
+    return DOCUMENT_KINDS.get((document.content_type or "").split(";")[0].strip(), "file")
 
 
 def _document_json(document) -> dict:
@@ -687,7 +692,15 @@ def delete_document(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKdDelete`: отвязать вложение — строка реестра и файл уходят из ERP."""
+    """`portalKdDelete`: отвязать вложение — строка реестра и файл уходят из ERP. Чертёж жгута так не удаляется: его
+    отвязывают с возвратом (`harness_api.unlink_harness` / `restore_harness`)."""
+    kitset = _kitset(request, project)
+    with techcards_factory(request)() as uow:
+        document = uow.kitsets.document(kitset.project, document_id)
+    if document is not None and document_kind(document) != "file":
+        raise HTTPException(status_code=409, detail=(
+            "Чертёж жгута не удаляется: его отвязывают от позиции («Отвязать»), вернуть можно кнопкой «Вернуть»"
+        ))
     deleted = _run(lambda: flow.detach_document(
         project, document_id, principal.actor, now, techcards_factory(request),
     ))

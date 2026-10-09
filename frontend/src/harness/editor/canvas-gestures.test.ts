@@ -316,3 +316,23 @@ it('picks a bundle participant without creating a pipe drag or changing selectio
  expect(pick).toHaveBeenCalledExactlyOnceWith('pipe');expect(capture).not.toHaveBeenCalled();expect(select).not.toHaveBeenCalled();expect(move).not.toHaveBeenCalled();expect(double).not.toHaveBeenCalled();
  handlers.onKeyDown!({...e,key:'Escape'});expect(cancel).toHaveBeenCalledOnce();
 });
+
+it.each([false, true])("view mode=%s: a press on a connector selects it, a drag moves it only outside view mode", readOnly => {
+  const move = vi.fn(), preview = vi.fn(), select = vi.fn();
+  const object = { ...connector, x: 100, y: 80 };
+  const props = { view: "e4" as const, tool: "select" as const, camera: { zoom: 1, offsetX: 0, offsetY: 0 }, objects: [object],
+    layers: [{ id: "connectors", label: "Соединители", visible: true, locked: false }], selectedObjectId: null,
+    onObjectSelect: select, onObjectMove: move, onObjectMovePreview: preview, onCatalogDrop: vi.fn(), onCameraChange: vi.fn(), readOnly };
+  const render = () => { hooks.index = 0; return CanvasViewport(props); };
+  const canvas = (render().props as { children: ReactElement[] }).children.find(child => child?.type === "canvas")!;
+  const handlers = canvas.props as Record<string, (event: any) => void>;
+  let captured = false;
+  const target = { style: {}, setPointerCapture: vi.fn(() => { captured = true; }), hasPointerCapture: () => captured, releasePointerCapture: vi.fn(() => { captured = false; }) };
+  const start = { pointerId: 3, button: 0, clientX: 150, clientY: 120, currentTarget: target, preventDefault: vi.fn() };
+  handlers.onPointerDown!(start);
+  handlers.onPointerMove!({ ...start, clientX: 250, clientY: 220 });
+  handlers.onPointerUp!({ ...start, clientX: 250, clientY: 220 });
+  expect(select).toHaveBeenCalledWith("X", false);
+  if (readOnly) { expect(move).not.toHaveBeenCalled(); expect(preview).not.toHaveBeenCalled(); }
+  else expect(move).toHaveBeenCalled();
+});

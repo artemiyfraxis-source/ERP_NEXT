@@ -141,6 +141,9 @@ export interface HarnessDesignEditorProps {
   readonly catalogOverride?: HarnessEditorCatalogApi;
   readonly onClose?: () => void;
   readonly onViewChange?: (view: HarnessEditorView) => void;
+  /** View mode (ERP: no «Проекты: правка»): pan, zoom and select-to-inspect only — no drag, no edits, never saved.
+   *  Load-time normalisation still runs in memory so the drawing looks as it does for the editor. */
+  readonly readOnly?: boolean;
 }
 
 export type ProjectComponentSnapshotLookup = ReadonlyMap<string, ProjectComponentSnapshotResource>;
@@ -750,7 +753,10 @@ export function HarnessDesignEditor({
   catalogOverride,
   onClose,
   onViewChange,
+  readOnly = false,
 }: HarnessDesignEditorProps) {
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   // Subscribe the scene projection as well as the left-panel editor to the
   // global preference, so a column change is visible immediately on the field.
   const connectionTableSettings = useConnectionTableSettings();
@@ -917,6 +923,7 @@ export function HarnessDesignEditor({
   }, [api, harnessId, projectId, refreshComponentGraph]);
 
   const saveOnce = useCallback(async (): Promise<boolean> => {
+      if (readOnlyRef.current) return true;
       savingRef.current = true;
       try {
         const currentHistory = historyRef.current;
@@ -962,7 +969,7 @@ export function HarnessDesignEditor({
   }, [saveOnce]);
 
   useEffect(() => {
-    if (!history) return;
+    if (!history || readOnly) return;
     if (JSON.stringify(history.present) === savedJsonRef.current) {
       if (!savingRef.current) setSaveState("saved");
       return;
@@ -970,7 +977,7 @@ export function HarnessDesignEditor({
     setSaveState("changed");
     const timer = window.setTimeout(() => void flushSave(), 650);
     return () => window.clearTimeout(timer);
-  }, [flushSave, history]);
+  }, [flushSave, history, readOnly]);
 
   useEffect(() => {
     if (!history) return;
@@ -1113,7 +1120,10 @@ export function HarnessDesignEditor({
     return history ? volumeShadingEligible(history.present) : false;
   }, [history?.present]);
 
-  const run = useCallback((command: EditorCommand): boolean => {
+  // `system` — load-time normalisation the editor applies itself; in view mode only such commands change the drawing
+  // (in memory, never saved), the user's ones are refused.
+  const execute = useCallback((command: EditorCommand, system: boolean): boolean => {
+    if (readOnlyRef.current && !system) return false;
     if (placementBusyRef.current || pendingPlacementRef.current) return false;
     const current = historyRef.current;
     if (!current) return false;
@@ -1146,9 +1156,10 @@ export function HarnessDesignEditor({
       return false;
     }
   }, [prepareCoverings, wireLookup.databaseOptions]);
+  const run = useCallback((command: EditorCommand): boolean => execute(command, false), [execute]);
 
   const stepHistory = useCallback((step: (history: EditorHistory) => EditorHistory) => {
-    if (placementBusyRef.current || pendingPlacementRef.current) return;
+    if (readOnlyRef.current || placementBusyRef.current || pendingPlacementRef.current) return;
     const current = historyRef.current;
     if (!current) return;
     const next = step(current);
@@ -1162,9 +1173,9 @@ export function HarnessDesignEditor({
     const pending = history.present.connectors.filter(c=>!initializedExits.current.has(c.id));
     if(!pending.length)return;
     const topology = ensureConnectorExits(history.present);
-    if (topology === history.present.physicalTopology || run({ type: "set-physical-topology", topology }))
+    if (topology === history.present.physicalTopology || execute({ type: "set-physical-topology", topology }, true))
       history.present.connectors.forEach(c=>initializedExits.current.add(c.id));
-  }, [view, history, placementBusy, placementPending, run]);
+  }, [view, history, placementBusy, placementPending, execute]);
 
   const previewObjectMove = useCallback((objectId: string, point: { readonly x: number; readonly y: number } | null, mode?:import("./physical-editing").PhysicalDragMode) => {
     pendingMovePreviewRef.current = point ? { objectId, point, mode } : null;
@@ -1211,6 +1222,7 @@ export function HarnessDesignEditor({
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (readOnlyRef.current) return;
       const current = historyRef.current;
       if (!current || JSON.stringify(current.present) === savedJsonRef.current) return;
       event.preventDefault();
@@ -1592,7 +1604,7 @@ export function HarnessDesignEditor({
   };
 
   const addCatalogItem = async (item: EditorCatalogItem, point?: { readonly x: number; readonly y: number }) => {
-    if (placementBusyRef.current) return;
+    if (readOnlyRef.current || placementBusyRef.current) return;
     if (pendingPlacementRef.current) {
       await retryPendingPlacement();
       return;
@@ -1756,6 +1768,7 @@ export function HarnessDesignEditor({
           setUiFailureNonce((value) => value + 1);
         }}
       ><HarnessEditorWorkspace
+        readOnly={readOnly}
         harnessId={harnessId}
         harnessDesignation={harnessDesignation}
         view={view}
