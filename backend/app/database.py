@@ -32,6 +32,7 @@ from .workflows.kitset_names import KitsetNameQueue
 from .workflows.project_registry import PlanSnapshotProjectRegistry
 from .workflows.receiving_stock import WarehouseStockBalanceLookup
 from .workflows.procurement_stage import ProcurementLineStageLookup
+from .workflows.request_purpose import RequestPurposeLookup
 from .workflows.supplier_directory import ReferencesSupplierDirectory
 from .shared.warehouse_location import set_rack_layout_loader
 
@@ -116,6 +117,7 @@ def configure_database(app: FastAPI, database_url: str) -> Engine:
     app.state.techcards_uow_factory = build_techcards_uow_factory(engine)
     app.state.project_registry = PlanSnapshotProjectRegistry(app.state.production_uow_factory)
     app.state.procurement_stage_lookup = ProcurementLineStageLookup(app.state.procurement_uow_factory)
+    app.state.request_purpose_lookup = RequestPurposeLookup(app.state.uow_factory)
     app.state.procurement_supplier_directory = ReferencesSupplierDirectory(app.state.references_uow_factory)
     app.state.receiving_stock_lookup = WarehouseStockBalanceLookup(app.state.warehouse_uow_factory)
     app.state.kitset_name_queue = KitsetNameQueue(sessionmaker(bind=engine, expire_on_commit=False, class_=Session))

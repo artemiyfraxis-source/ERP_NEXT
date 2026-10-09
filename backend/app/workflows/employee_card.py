@@ -28,8 +28,10 @@ from app.modules.identity.domain import (
 )
 from app.modules.operations.domain import task_module_label
 from app.modules.production.domain import ProductionStatus
+from app.modules.production.launchable import route_from_document
 from app.modules.production.plan import normalize_project_number, project_from_purpose
 from app.modules.requests.domain import RequestStatus, project_reference_valid
+from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, as_utc
 from app.workflows.project_registry import PlanSnapshotProjectRegistry
 
@@ -126,7 +128,7 @@ class _Shop:
     sessions: int = 0
 
 
-def _read_shop(uow, user: IdentityUser, now: datetime) -> _Shop:
+def _read_shop(uow, user: IdentityUser, now: datetime, route_names: dict[str, str]) -> _Shop:
     shop = _Shop()
     today = _local(now).date()
     if user.site_master:
@@ -141,9 +143,16 @@ def _read_shop(uow, user: IdentityUser, now: datetime) -> _Shop:
         key = normalize_project_number(snapshot.project)
         shop.known_projects.add(key)
         shop.deadlines[key] = snapshot.deadline
+    tasks = uow.production.list(limit=_LIMIT)
+    # Название операции: выданные маршруты техкарт (как `/api/production/skills`), иначе этап запущенной операции с тем же кодом.
+    names = dict(route_names)
+    for task in tasks:
+        for operation in task.operations:
+            if operation.code and operation.stage and operation.code not in names:
+                names[operation.code] = operation.stage
     shop.skills = [
-        {"operation": item.operation_code, "allowed": item.allowed, "stars": item.stars,
-         "coefficient": format(item.coefficient.normalize(), "f")}
+        {"operation": item.operation_code, "name": names.get(item.operation_code) or None, "allowed": item.allowed,
+         "stars": item.stars, "coefficient": format(item.coefficient.normalize(), "f")}
         for item in sorted(uow.skills.list(), key=lambda item: item.operation_code) if item.operator_id == user.id
     ]
     shop.absences = [
@@ -152,7 +161,7 @@ def _read_shop(uow, user: IdentityUser, now: datetime) -> _Shop:
         if item.operator_id == user.id and item.to_date >= today
     ]
     month_start, month_end = _month_bounds(now)
-    for task in uow.production.list(limit=_LIMIT):
+    for task in tasks:
         if not any(user.id in operation.operator_ids for operation in task.operations):
             continue
         if task.status is ProductionStatus.RUNNING:
@@ -251,29 +260,55 @@ def _projects(shop: _Shop | None, own: _Own | None, open_projects: list[str] | N
     return sorted(cards, key=lambda card: (card["deadline"] is None, card["deadline"] or "", card["project"]))
 
 
+def _route_names(techcards: Callable[[], Any] | None) -> dict[str, str]:
+    """Код операции → название по выданным техкартам; нет модуля техкарт — пусто."""
+    names: dict[str, str] = {}
+    if techcards is None:
+        return names
+    with techcards() as uow:
+        for card in uow.techcards.list():
+            if card.status is not TechcardStatus.ISSUED:
+                continue
+            for step in route_from_document(card.document):
+                if step.code and step.stage and step.code not in names:
+                    names[step.code] = step.stage
+    return names
+
+
+def _merge_subordinates(reports: list[dict[str, Any]], site_fitters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Прямые подчинённые (по руководителю) первыми, затем монтажники площадки мастера; один человек — один раз."""
+    seen = {item["id"] for item in reports}
+    return reports + [item for item in site_fitters if item["id"] not in seen]
+
+
 def employee_card(
     user_id: UUID, now: datetime, *,
     identity: Callable[[], Any],
     production: Callable[[], Any] | None = None,
+    techcards: Callable[[], Any] | None = None,
     requests: Callable[[], Any] | None = None,
     operations: Callable[[], Any] | None = None,
 ) -> dict[str, Any] | None:
     """Карточка сотрудника из фабрик unit of work модулей; нет фабрики — раздел пустой. `None` — такого сотрудника нет.
 
     `identity` обязателен: без человека карточки нет. Ничего не пишет."""
-    def person(uow) -> tuple[IdentityUser, IdentityUser | None, frozenset[str]] | None:
+    def person(uow) -> tuple[IdentityUser, IdentityUser | None, frozenset[str], list[dict[str, Any]]] | None:
         users = uow.identity.all_users()
         user = next((item for item in users if item.id == user_id), None)
         if user is None:
             return None
         manager = next((item for item in users if item.id == user.manager_id), None) if user.manager_id else None
-        return user, manager, _edit_sections(uow, user)
+        reports = [
+            {"id": str(item.id), "name": item.name, "site": _text(item.site), "department": _text(item.department)}
+            for item in sorted(users, key=lambda item: item.name) if item.active and item.manager_id == user.id
+        ]
+        return user, manager, _edit_sections(uow, user), reports
 
     found = _read(identity, person)
     if found is None:
         return None
-    user, manager, sections = found
-    shop = _read(production, lambda uow: _read_shop(uow, user, now))
+    user, manager, sections, reports = found
+    shop = _read(production, lambda uow: _read_shop(uow, user, now, _route_names(techcards)))
     own = _read(requests, lambda uow: _read_requests(uow, user.id))
     tasks = _read(operations, lambda uow: _read_tasks(uow, sections))
     # Закрытые проекты отсекает тот же реестр открытых проектов, что проверяет заявки (снимок плана + журнал).
@@ -284,7 +319,7 @@ def employee_card(
         "as_of": _local(now).date().isoformat(),
         "header": _header(user),
         "personnel": _personnel(user, manager),
-        "subordinates": shop.subordinates if shop is not None else [],
+        "subordinates": _merge_subordinates(reports, shop.subordinates if shop is not None else []),
         "projects": _projects(shop, own, open_projects),
         "skills": shop.skills if shop is not None else [],
         "absences": {

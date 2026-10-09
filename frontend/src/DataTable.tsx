@@ -81,6 +81,8 @@ export interface DataTableProps<T> {
   /** Пока строк меньше — без строки поиска/фильтров/колонок и без «Показано N из N»: маленькой таблице они
       только мешают (блоки «Мои позиции» в листе закупки). По умолчанию всегда полная. */
   compactBelow?: number;
+  /** Прячет только форму поиска (фильтры/колонки/Excel остаются): поиск есть у раздела выше. */
+  hideSearch?: boolean;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -179,6 +181,7 @@ export function DataTable<T>({
   searchLabel,
   searchPlaceholder,
   compactBelow = 0,
+  hideSearch = false,
 }: DataTableProps<T>) {
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
@@ -355,10 +358,10 @@ export function DataTable<T>({
   return (
     <section className="data-table" aria-label={label}>
       {!compact && <div className="filters table-toolbar">
-        <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
+        {!hideSearch && <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
           <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? "Поиск по всем колонкам"} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
           {onSearch && <button type="submit" className="secondary small">Найти</button>}
-        </form>
+        </form>}
         {filterColumns.length > 0 && (
           <button type="button" className={activeFilters.length ? "secondary small filter-toggle active" : "secondary small filter-toggle"} aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>
             Фильтры{activeFilters.length ? ` · ${activeFilters.length}` : ""}
