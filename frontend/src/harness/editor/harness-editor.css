@@ -109,7 +109,8 @@
 .harness-root .he-save-state.saving > span,
 .harness-root .he-save-state.changed > span { background: var(--tone-warn); }
 .harness-root .he-save-state.error > span { background: var(--tone-danger); }
-
+/* View mode (ERP: no «Проекты: правка»): panels keep their layout, their controls are disabled by the fieldset. */
+.harness-root .he-readonly-fieldset { display: contents; margin: 0; padding: 0; border: 0; min-width: 0; }
 .harness-root .he-workspace {
   min-width: 0;
   min-height: 0;

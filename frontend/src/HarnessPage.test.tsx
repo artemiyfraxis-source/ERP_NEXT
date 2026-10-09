@@ -7,13 +7,13 @@ import { HarnessPage } from "./HarnessPage";
 // Настоящий редактор тяжёлый (его проверяет harness/HarnessEditor.smoke.test): здесь он заменён кнопкой «Правка»,
 // которая читает и сохраняет чертёж через переданный адаптер так же, как автосохранение редактора.
 vi.mock("./harness", () => ({
-  loadHarnessAdapters: async () => ({ createErpHarnessEditorCatalog: () => ({ erp: true }) }),
-  HarnessEditorLazy: ({ apiOverride, projectId, harnessId, harnessDesignation, catalogOverride }: HarnessDesignEditorProps) => {
+  loadHarnessAdapters: async () => ({ createErpHarnessEditorCatalog: () => ({ erp: true, templates: { assetContentUrl: () => "" } }) }),
+  HarnessEditorLazy: ({ apiOverride, projectId, harnessId, harnessDesignation, catalogOverride, readOnly, componentPlacementApiOverride }: HarnessDesignEditorProps) => {
     const edit = async () => {
       const resource = await apiOverride!.get(projectId, harnessId);
       await apiOverride!.save(projectId, harnessId, resource.revision, resource.content).catch(() => undefined);
     };
-    return <div data-testid="editor" data-erp-catalog={String(Boolean((catalogOverride as unknown as { erp?: boolean })?.erp))}><span>{harnessDesignation}</span><button onClick={() => void edit()}>Правка</button></div>;
+    return <div data-testid="editor" data-read-only={String(Boolean(readOnly))} data-placements={String(Boolean(componentPlacementApiOverride))} data-erp-catalog={String(Boolean((catalogOverride as unknown as { erp?: boolean })?.erp))}><span>{harnessDesignation}</span><button onClick={() => void edit()}>Правка</button></div>;
   },
 }));
 
@@ -87,9 +87,24 @@ describe("HarnessPage", () => {
     expect(await screen.findByText("Чертёж загружен.")).toBeTruthy();
   });
 
-  it("без права правки редактор не открывается", async () => {
+  it("без права правки чертёж открывается для просмотра: ничего не уходит на сервер", async () => {
     render(<HarnessPage project="708К.4" index="КБ1" canEdit={false} />);
-    expect(await screen.findByText(/Чертёж жгута правят/)).toBeTruthy();
-    expect(screen.queryByTestId("editor")).toBeNull();
+    const editor = await screen.findByTestId("editor");
+    expect(editor.getAttribute("data-read-only")).toBe("true");
+    expect(screen.getByRole("status").textContent).toBe("Только просмотр");
+    expect(screen.queryByRole("button", { name: "Загрузить .techmap-project.zip" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Скачать для TECHMAP-GRAPHER" })).toBeTruthy();
+    // Даже если редактор попробует сохранить, адаптер просмотра откажет, не дойдя до сервера.
+    fireEvent.click(screen.getByRole("button", { name: "Правка" }));
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith("/harness/КБ1") && call.method === "GET")).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(calls.some((call) => call.method === "PUT")).toBe(false);
+  });
+
+  it("с правом правки редактор получает размещения библиотечных компонентов того же чертежа", async () => {
+    render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
+    const editor = await screen.findByTestId("editor");
+    expect(editor.getAttribute("data-read-only")).toBe("false");
+    expect(editor.getAttribute("data-placements")).toBe("true");
   });
 });

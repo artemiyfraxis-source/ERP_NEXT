@@ -12,7 +12,7 @@ from zipfile import ZipFile
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -28,7 +28,7 @@ from app.modules.techcards.kitsets import KitAssembly, KitDocument, Kitset
 from app.modules.techcards.project_cards import _document as checked_document, operation_key
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import create_schema
+from app.shared.persistence import AuditEventRow, create_schema
 from tests.factories import Actor
 
 from . import grapher_fixture as fx
@@ -164,10 +164,11 @@ def test_stale_or_missing_version_is_a_conflict_and_changes_nothing(harness_api)
     assert client.get(f"{BASE}/КБ1").json()["design"]["wires"][0]["lengthMm"] == 111
     assert len(_rows(factory)) == 1
 
-    # The drawing deleted from КД while it was being edited.
-    client.delete(f"/api/techcards/kitsets/{PROJECT}/documents/{first['document']['id']}")
+    # The drawing unlinked from the position while it was being edited (a harness drawing is never deleted).
+    assert client.delete(f"/api/techcards/kitsets/{PROJECT}/documents/{first['document']['id']}").status_code == 409
+    client.post(f"{BASE}/КБ1/unlink", json={})
     gone = client.put(f"{BASE}/КБ1", json={"design": mine, "version": first["version"]})
-    assert gone.status_code == 409 and "удалён" in gone.json()["detail"]
+    assert gone.status_code == 409 and "отвязан" in gone.json()["detail"]
 
 
 def test_replace_content_refuses_a_row_saved_after_it_was_read(harness_api):
@@ -451,3 +452,153 @@ def test_a_scheme_derived_from_the_drawing_with_the_generator_cards_builds_with_
     assert connector[ops["harness:x4:prsTerm.A"]["seq"]] == "X4"
     cuts = [op["seq"] for op in config["ops"] if op["type"] == "cutWireStrip"]
     assert len(cuts) == 2 and [connector[seq] for seq in cuts] == [f"разделка · {seq}" for seq in cuts]
+
+
+# ── «Отвязать» with «Вернуть»: nothing is deleted ──────────────────────────────────────────────────────────────
+
+
+def _kd(client, index="КБ1"):
+    card = client.get(f"/api/techcards/kitsets/{PROJECT}")
+    assert card.status_code == 200, card.text
+    return next(assembly for assembly in card.json()["assemblies"] if assembly["index"] == index)["kd"]
+
+
+def _harness_events(factory):
+    with factory() as uow:
+        return list(uow.session.scalars(
+            select(AuditEventRow.event_type)
+            .where(AuditEventRow.event_type.like("techcards.kitset_harness%"))
+            .order_by(AuditEventRow.occurred_at)
+        ))
+
+
+def test_unlink_keeps_the_drawing_listed_and_restore_links_it_back(harness_api):
+    client, factory, clock = harness_api
+    saved = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()
+    document_id = saved["document"]["id"]
+
+    clock["now"] = NOW + timedelta(minutes=5)
+    unlinked = client.post(f"{BASE}/КБ1/unlink", json={"version": saved["version"]})
+    assert unlinked.status_code == 200, unlinked.text
+    assert unlinked.json()["document"]["kind"] == "harness_unlinked"
+    # The position no longer reads it: no drawing, nothing to derive or export; the row and its bytes stay.
+    assert client.get(f"{BASE}/КБ1").json()["document"] is None
+    assert client.post(f"{BASE}/КБ1/derive", json={}).status_code == 404
+    assert client.get(f"{BASE}/КБ1/export").status_code == 404
+    [row] = _rows(factory, "КБ1")
+    assert str(row.id) == document_id and document_kind(row) == "harness_unlinked" and row.stored
+    assert [(item["id"], item["kind"]) for item in _kd(client)] == [(document_id, "harness_unlinked")]
+    # An unlinked drawing is not hard-deleted either.
+    refused = client.delete(f"/api/techcards/kitsets/{PROJECT}/documents/{document_id}")
+    assert refused.status_code == 409 and "отвязывают" in refused.json()["detail"]
+    # An editor still open on it cannot save over the gap: its version names a drawing the position no longer has.
+    stale = client.put(f"{BASE}/КБ1", json={"design": _design(), "version": saved["version"]})
+    assert stale.status_code == 409 and "отвязан" in stale.json()["detail"]
+
+    clock["now"] = NOW + timedelta(minutes=10)
+    restored = client.post(f"{BASE}/КБ1/restore", json={"document_id": document_id})
+    assert restored.status_code == 200, restored.text
+    body = restored.json()
+    assert body["document"]["id"] == document_id and body["document"]["kind"] == "harness"
+    assert body["design"] == saved["design"] and body["version"] == saved["version"]
+    assert [item["kind"] for item in _kd(client)] == ["harness"]
+    assert _harness_events(factory) == [
+        "techcards.kitset_harness_saved", "techcards.kitset_harness_unlinked", "techcards.kitset_harness_restored",
+    ]
+
+
+def test_unlink_and_restore_refusals(harness_api):
+    client, factory, _clock = harness_api
+    assert client.post(f"{BASE}/КБ1/unlink", json={}).json()["detail"] == "У сборки КБ1 нет чертежа жгута"
+    first = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()
+    edited = _design()
+    edited["wires"][0]["lengthMm"] = 333
+    client.put(f"{BASE}/КБ1", json={"design": edited, "version": first["version"]})
+    stale = client.post(f"{BASE}/КБ1/unlink", json={"version": first["version"]})
+    assert stale.status_code == 409 and "обновите страницу" in stale.json()["detail"]
+    assert client.post(f"{BASE}/КБ1/unlink").status_code == 200  # the card unlinks without a version
+    old_id = _rows(factory, "КБ1")[0].id
+
+    # A new drawing on the position: the old one cannot come back on top of it.
+    client.put(f"{BASE}/КБ1", json={"design": _design()})
+    busy = client.post(f"{BASE}/КБ1/restore", json={"document_id": str(old_id)})
+    assert busy.status_code == 409
+    assert busy.json()["detail"] == "У сборки КБ1 уже есть чертёж жгута — сначала отвяжите его, потом верните этот"
+    # Only an unlinked drawing of this very position comes back.
+    linked_id = next(row.id for row in _rows(factory, "КБ1") if document_kind(row) == "harness")
+    assert client.post(f"{BASE}/КБ1/restore", json={"document_id": str(linked_id)}).status_code == 404
+    assert client.post(f"{BASE}/КБ2/restore", json={"document_id": str(old_id)}).status_code == 404
+    assert client.delete(f"/api/techcards/kitsets/{PROJECT}/documents/{linked_id}").status_code == 409
+    assert len(_rows(factory, "КБ1")) == 2
+
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "view"})
+    assert client.post(f"{BASE}/КБ1/unlink", json={}).status_code == 403
+    assert client.post(f"{BASE}/КБ1/restore", json={"document_id": str(old_id)}).status_code == 403
+
+
+# ── Library component placements live in the drawing ────────────────────────────────────────────────────────────
+
+
+def _graph():
+    snapshot = fx.snapshot()
+    return {"componentSnapshots": snapshot["componentSnapshots"],
+            "componentPlacements": [{**snapshot["componentPlacements"][0], "harnessId": "КБ1"}]}
+
+
+def test_library_placements_survive_the_editors_saves_and_a_reload(harness_api):
+    client, _factory, _clock = harness_api
+    graph = _graph()
+    placed = client.put(f"{BASE}/КБ1", json={"design": _design(**graph)}).json()
+    assert {key: placed["design"][key] for key in graph} == graph
+    assert not [warning for warning in placed["warnings"] if "component" in warning]
+
+    # The editor's autosave sends its own document model, which has no such section: the placements stay.
+    moved = _design()
+    moved["connectors"][0]["positions"] = {"e4": {"x": 400, "y": 200}, "drawing": {"x": 410, "y": 210}}
+    saved = client.put(f"{BASE}/КБ1", json={"design": moved, "version": placed["version"]}).json()
+    reloaded = client.get(f"{BASE}/КБ1").json()
+    assert {key: reloaded["design"][key] for key in graph} == graph
+    assert reloaded["design"]["connectors"][0]["positions"] == moved["connectors"][0]["positions"]
+    assert reloaded["version"] == saved["version"]
+
+    # Placing one more library component names the graph: that save wins.
+    more = deepcopy(graph)
+    more["componentPlacements"].append({**more["componentPlacements"][0], "placementId": "pl2"})
+    client.put(f"{BASE}/КБ1", json={"design": _design(**more), "version": saved["version"]})
+    assert len(client.get(f"{BASE}/КБ1").json()["design"]["componentPlacements"]) == 2
+
+
+def test_library_placements_go_out_with_the_export_and_back_in_with_the_import(harness_api):
+    client, _factory, _clock = harness_api
+    saved = client.put(f"{BASE}/КБ1", json={"design": _design(**_graph())}).json()
+    exported = client.get(f"{BASE}/КБ1/export")
+    with ZipFile(BytesIO(exported.content)) as archive:
+        snapshot = json.loads(archive.read("project/snapshot.json"))
+    [harness] = snapshot["harnesses"]
+    # As TECHMAP-GRAPHER keeps them: at the project level, the placement naming the exported harness.
+    assert "componentPlacements" not in harness["design"]["content"]
+    assert [row["harnessId"] for row in snapshot["componentPlacements"]] == [harness["harnessId"]]
+    assert snapshot["componentSnapshots"] == _graph()["componentSnapshots"]
+
+    imported = client.post(f"{BASE}/КБ2/import", json={
+        "file_name": "a.techmap-project.zip", "content_b64": base64.b64encode(exported.content).decode(),
+    }).json()
+    assert imported["design"]["componentSnapshots"] == saved["design"]["componentSnapshots"]
+    assert [row["placementId"] for row in imported["design"]["componentPlacements"]] == ["pl1"]
+
+
+def test_import_of_the_authors_export_takes_only_this_harness_placements(harness_api):
+    client, _factory, _clock = harness_api
+    snapshot = fx.snapshot()
+    other = deepcopy(snapshot["harnesses"][0])
+    other.update(harnessId="h-kb2", designation="КБ2")
+    snapshot["harnesses"].append(other)
+    snapshot["componentSnapshots"].append({**snapshot["componentSnapshots"][0], "snapshotId": "s-other"})
+    snapshot["componentPlacements"].append({**snapshot["componentPlacements"][0], "placementId": "pl9",
+                                            "harnessId": "h-kb2", "snapshotId": "s-other"})
+    kb1 = client.post(f"{BASE}/КБ1/import", json={"file_name": "p.zip", "content_b64": _zip(snapshot)}).json()
+    assert [row["placementId"] for row in kb1["design"]["componentPlacements"]] == ["pl1"]
+    assert [row["snapshotId"] for row in kb1["design"]["componentSnapshots"]] == [fx.UUID]
+    kb2 = client.post(f"{BASE}/КБ2/import", json={"file_name": "p.zip", "content_b64": _zip(snapshot)}).json()
+    assert [row["placementId"] for row in kb2["design"]["componentPlacements"]] == ["pl9"]
+    assert [row["snapshotId"] for row in kb2["design"]["componentSnapshots"]] == ["s-other"]

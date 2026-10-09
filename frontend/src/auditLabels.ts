@@ -161,6 +161,10 @@ const EVENT_NAMES: Record<string, string> = {
   "techcards.kitset_deleted": "Проект удалён",
   "techcards.kitset_document_added": "КД приложена",
   "techcards.kitset_document_removed": "КД убрана",
+  "techcards.kitset_harness_saved": "Чертёж жгута сохранён",
+  "techcards.kitset_harness_imported": "Чертёж жгута загружен из TECHMAP-GRAPHER",
+  "techcards.kitset_harness_unlinked": "Чертёж жгута отвязан",
+  "techcards.kitset_harness_restored": "Чертёж жгута возвращён",
 
   "references.tech_snapshot_replaced": "Снимок базы данных обновлён",
   "references.tech_record_created": "Запись базы данных добавлена",

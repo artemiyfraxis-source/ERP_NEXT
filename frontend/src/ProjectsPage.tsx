@@ -19,6 +19,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { PendingLesson } from "./AssemblyDrafts";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
+import { formatDate } from "./format";
 import { openHarness } from "./harnessNav";
 import { ProjectStatus } from "./ProjectStatus";
 import { ProjectTrack } from "./ProjectTrack";
@@ -539,6 +540,18 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
     } catch (reason) { setError(message(reason, "КД не приложена")); }
   }
 
+  // Чертёж жгута не удаляется: «Отвязать» оставляет его в КД позиции отвязанным, «Вернуть» привязывает обратно.
+  async function unlinkHarness(index: string) {
+    if (!window.confirm(`Отвязать чертёж жгута от ${index}? Он останется в КД отвязанным — вернуть можно кнопкой «Вернуть».`)) return;
+    try { await kitsetsApi.unlinkHarness(card.project, index); setNote(`${index}: чертёж жгута отвязан.`); await reload(); }
+    catch (reason) { setError(message(reason, "Чертёж не отвязан")); }
+  }
+
+  async function restoreHarness(index: string, documentId: string) {
+    try { await kitsetsApi.restoreHarness(card.project, index, documentId); setNote(`${index}: чертёж жгута возвращён.`); await reload(); }
+    catch (reason) { setError(message(reason, "Чертёж не возвращён")); }
+  }
+
   async function detach(documentId: string) {
     if (!window.confirm("Отвязать КД? Файл и строка вложения удалятся из ERP.")) return;
     try { await kitsetsApi.removeDocument(card.project, documentId); setNote("Отвязано."); await reload(); }
@@ -547,11 +560,19 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
 
   const kdCell = (assembly: KitsetAssembly) => {
     const harness = assembly.kd.find((document) => document.kind === "harness");
+    const unlinked = assembly.kd.filter((document) => document.kind === "harness_unlinked");
     return <>
     {harness && <div className="kit-kd">
       <button className="link-button" onClick={() => openHarness(card.project, assembly.index)}>Чертёж жгута</button>
+      {canEdit && <button className="link-button kit-kd-action" onClick={() => void unlinkHarness(assembly.index)}>Отвязать</button>}
     </div>}
-    {assembly.kd.filter((document) => document.kind !== "harness").map((document) => <div key={document.id} className="kit-kd">
+    {unlinked.map((document) => <div key={document.id} className="kit-kd kit-kd-unlinked">
+      <span className="muted">Отвязанный чертёж жгута · сохранён {formatDate(document.uploaded_at)}</span>
+      {canEdit && <button className="link-button kit-kd-action" disabled={Boolean(harness)}
+        title={harness ? "У позиции уже есть чертёж — сначала отвяжите его" : undefined}
+        onClick={() => void restoreHarness(assembly.index, document.id)}>Вернуть</button>}
+    </div>)}
+    {assembly.kd.filter((document) => document.kind !== "harness" && document.kind !== "harness_unlinked").map((document) => <div key={document.id} className="kit-kd">
       {document.stored || !document.url
         ? <a href={kitsetsApi.documentUrl(card.project, document.id)} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
         : <><a href={document.url} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a> <span className="muted">на Диске (архив)</span></>}

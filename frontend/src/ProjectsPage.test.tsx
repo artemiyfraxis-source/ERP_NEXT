@@ -600,6 +600,51 @@ describe("ProjectsPage", () => {
     expect(open).toBeTruthy();
   });
 
+  it("чертёж жгута: «Отвязать» оставляет его в КД, «Вернуть» привязывает обратно; файл КД так не удаляется", async () => {
+    const drawing = { id: "h1", index: "КБ1", name: "708К.4КБ1 — Чертёж жгута", size: 900, stored: true, url: null, uploaded_at: "2026-10-06T14:30:00", who: "Технолог", kind: "harness" as const };
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    let kd: unknown[] = [drawing];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      const method = init?.method || "GET";
+      if (url === "/api/techcards/kitsets/708К.4" && method === "GET") return json({ ...card, assemblies: [{ ...card.assemblies[0], kd }] });
+      if (url.endsWith("/harness/КБ1/unlink")) { kd = [{ ...drawing, kind: "harness_unlinked" }]; return json({ document: kd[0] }); }
+      if (url.endsWith("/harness/КБ1/restore")) { kd = [drawing]; return json({ document: drawing, design: {}, version: "v1", warnings: [] }); }
+      return base(input, init);
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("button", { name: "Отвязать" }));
+    expect(confirm).toHaveBeenCalledWith("Отвязать чертёж жгута от КБ1? Он останется в КД отвязанным — вернуть можно кнопкой «Вернуть».");
+    expect(await screen.findByText("Отвязанный чертёж жгута · сохранён 06.10.2026 14:30")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Чертёж жгута" })).toBeNull();
+    expect(screen.queryByTitle("Отвязать")).toBeNull(); // не файл КД с «✕»: удалить его нельзя
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Вернуть" }));
+    expect(await screen.findByRole("button", { name: "Чертёж жгута" })).toBeTruthy();
+    const restore = vi.mocked(fetch).mock.calls.find(([url]) => decodeURIComponent(String(url)).endsWith("/restore"))!;
+    expect(JSON.parse(String(restore[1]!.body))).toEqual({ document_id: "h1" });
+  });
+
+  it("чертёж жгута: без права правки нет «Отвязать» и «Вернуть»", async () => {
+    const drawing = { id: "h1", index: "КБ1", name: "Чертёж жгута", size: 900, stored: true, url: null, uploaded_at: "2026-10-06T14:30:00", who: "Технолог", kind: "harness" as const };
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET")
+        return json({ ...card, assemblies: [{ ...card.assemblies[0], kd: [drawing, { ...drawing, id: "h0", kind: "harness_unlinked" }] }] });
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={viewer} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    expect(await screen.findByRole("button", { name: "Чертёж жгута" })).toBeTruthy();
+    expect(screen.getByText("Отвязанный чертёж жгута · сохранён 06.10.2026 14:30")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Отвязать" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Вернуть" })).toBeNull();
+  });
+
   it("opens the track of the project only on the «Трек» tab", async () => {
     const trackCalls: string[] = [];
     const base = vi.mocked(fetch).getMockImplementation()!;

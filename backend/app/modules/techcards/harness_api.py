@@ -11,19 +11,28 @@ route's own assembly steps, in blocks from the drawing's manufacturing route, ea
 `harness:<object>:<code>` so the frontend's `rederive` merges it into the master's scheme. Nothing is saved.
 
 Export / import: a `.techmap-project.zip` with `project/snapshot.json` as TECHMAP-GRAPHER writes it (snapshotFormat
-4, harness design schemaVersion 1). After an import the ERP copy is the truth."""
+4, harness design schemaVersion 1). After an import the ERP copy is the truth.
+
+Library components placed on the drawing (TECHMAP-GRAPHER's project-level `componentSnapshots` / `componentPlacements`:
+the pinned template a connector was placed from, which the editor needs to draw it) live inside the design document
+under the same two keys — only this harness's rows. The editor's own document model has no such section, so a plain
+save carries them over from the stored drawing; the export moves them back to the project level, the import in.
+
+«Отвязать» (unlink) relabels the row to HARNESS_UNLINKED_CONTENT_TYPE: the position no longer reads it, the card lists it
+with «Вернуть» (restore), which relabels it back. A harness drawing is never hard-deleted."""
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 import hashlib
 from io import BytesIO
 import json
 from typing import Annotated, Any, Mapping
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -39,7 +48,9 @@ from .domain.route import RouteError, RouteOp, parse_route
 from .harness import HarnessDesign, dump_design, parse_design, wire_ops
 from .harness.derive import ROUTE_MODE_LABELS, ImpliedOp, wire_color, wire_material
 from .harness.snapshot import SCHEMA_VERSION
-from .kitset_api import HARNESS_CONTENT_TYPE, _document_json, techcards_factory
+from .kitset_api import (
+    HARNESS_CONTENT_TYPE, HARNESS_UNLINKED_CONTENT_TYPE, _document_json, document_kind, techcards_factory,
+)
 from .kitsets import KitDocument, Kitset, item_id
 
 router = APIRouter(prefix="/api/techcards/kitsets", tags=["Проекты"])
@@ -51,6 +62,9 @@ MAX_EXPORT_BYTES = 30 * 1024 * 1024
 FINAL_KEY = "b1"
 UNROUTED_KEY = "route:-"
 UNROUTED_NAME = "Не в маршруте КД"
+COMPONENT_SNAPSHOTS = "componentSnapshots"
+COMPONENT_PLACEMENTS = "componentPlacements"
+COMPONENT_GRAPH_KEYS = (COMPONENT_SNAPSHOTS, COMPONENT_PLACEMENTS)
 
 
 class HarnessError(ValueError):
@@ -420,6 +434,20 @@ def decode(content: bytes) -> dict[str, Any]:
     return value
 
 
+def carry_component_graph(document: Mapping[str, Any], stored: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The document to store: a save that does not name the library placements (the editor's autosave — its model has
+    no such section) keeps those of the stored drawing; a save that names them (placing a library component) wins."""
+    result = dict(document)
+    for key in COMPONENT_GRAPH_KEYS:
+        if key not in result and stored is not None and isinstance(stored.get(key), list):
+            result[key] = deepcopy(stored[key])
+    return result
+
+
+def _rows(value: object) -> list[dict[str, Any]]:
+    return [dict(item) for item in value if isinstance(item, Mapping)] if isinstance(value, list) else []
+
+
 def version_of(content: bytes) -> str:
     """The version token: what the client loaded, it names on save."""
     return hashlib.sha256(content).hexdigest()[:32]
@@ -435,6 +463,8 @@ def export_zip(design: Mapping[str, Any], *, project: str, index: str, name: str
     SqliteProjectExportService.cs of e63befb): the ERP project number is the project designation, the position
     index is the harness designation, ids are stable per project / КД row."""
     run = plain(quantity) if isinstance(quantity, Decimal) else quantity
+    content = {key: value for key, value in design.items() if key not in COMPONENT_GRAPH_KEYS}
+    placements = [{**row, "harnessId": harness_id} for row in _rows(design.get(COMPONENT_PLACEMENTS))]
     snapshot = {
         "snapshotFormat": SNAPSHOT_FORMAT,
         "project": {
@@ -445,9 +475,10 @@ def export_zip(design: Mapping[str, Any], *, project: str, index: str, name: str
         "harnesses": [{
             "harnessId": harness_id, "designation": index, "quantity": run, "sortOrder": 0,
             "createdUtc": _utc(created), "updatedUtc": _utc(updated), "documents": [],
-            "design": {"schemaVersion": SCHEMA_VERSION, "content": dict(design)},
+            "design": {"schemaVersion": SCHEMA_VERSION, "content": content},
         }],
-        "attachments": [], "pinnedCharacteristics": [], "componentSnapshots": [], "componentPlacements": [],
+        "attachments": [], "pinnedCharacteristics": [],
+        COMPONENT_SNAPSHOTS: _rows(design.get(COMPONENT_SNAPSHOTS)), COMPONENT_PLACEMENTS: placements,
     }
     buffer = BytesIO()
     with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
@@ -494,7 +525,18 @@ def design_from_export(content: bytes, file_name: str, *, project: str, index: s
     if design.get("schemaVersion") is not None and design.get("schemaVersion") != SCHEMA_VERSION:
         raise HarnessError(f"Поддерживается только схема чертежа {SCHEMA_VERSION}, в экспорте — {design.get('schemaVersion')}")
     inner = design.get("content")
-    return dict(inner) if isinstance(inner, Mapping) else dict(design)
+    result = dict(inner) if isinstance(inner, Mapping) else dict(design)
+    # The library placements of this harness and the snapshots they pin (project-level in the export) go inside.
+    if not any(key in result for key in COMPONENT_GRAPH_KEYS):
+        harness_id = str(harness.get("harnessId") or "")
+        placements = [row for row in _rows(snapshot.get(COMPONENT_PLACEMENTS))
+                      if harness_id and str(row.get("harnessId") or "") == harness_id]
+        used = {str(row.get("snapshotId") or "") for row in placements}
+        if placements:
+            result[COMPONENT_PLACEMENTS] = placements
+            result[COMPONENT_SNAPSHOTS] = [row for row in _rows(snapshot.get(COMPONENT_SNAPSHOTS))
+                                           if str(row.get("snapshotId") or "") in used]
+    return result
 
 
 # ── HTTP ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -509,6 +551,15 @@ class SavePayload(BaseModel):
 class DerivePayload(BaseModel):
     # The drawing as it is in the editor (unsaved); None — the saved one.
     design: dict[str, Any] | None = None
+
+
+class UnlinkPayload(BaseModel):
+    # The version on screen; None — unlink whatever is stored (the card does not hold a version).
+    version: str | None = Field(default=None, max_length=64)
+
+
+class RestorePayload(BaseModel):
+    document_id: UUID
 
 
 class ImportPayload(BaseModel):
@@ -564,9 +615,17 @@ def _save(request: Request, project: str, index: str, design: Mapping[str, Any],
         kitset, index = _position(uow, project, index)
         current = _current(uow, kitset.project, index)
         file_name = f"{item_id(kitset.project, index)} — {TITLE}"
+        if current is not None and any(key not in document for key in COMPONENT_GRAPH_KEYS):
+            try:
+                kept = carry_component_graph(document, decode(current[1]))
+                content = encode(kept) if kept != document else content
+            except HarnessError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
         if current is None:
             if version:
-                raise HTTPException(status_code=409, detail="Чертёж жгута удалён из КД, пока вы его правили — обновите страницу")
+                raise HTTPException(status_code=409, detail=(
+                    "Чертёж жгута отвязан от позиции или удалён, пока вы его правили — обновите страницу"
+                ))
             saved = KitDocument(
                 id=uuid4(), project=kitset.project, item_index=index, file_name=file_name,
                 content_type=HARNESS_CONTENT_TYPE, size=len(content), uploaded_at=now, uploaded_by=principal.actor.name,
@@ -691,3 +750,69 @@ def import_harness(
     except HarnessError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return _save(request, project, index, design, payload.version, principal, now, "techcards.kitset_harness_imported")
+
+
+def _audit(uow, principal: Principal, now: datetime, event: str, project: str, index: str, document: KitDocument) -> None:
+    uow.audit.add(AuditEvent(
+        id=uuid4(), aggregate_id=principal.actor.id, event_type=event, actor=principal.actor, occurred_at=now,
+        details={"project": project, "item_index": index, "file": document.file_name, "document_id": str(document.id)},
+    ))
+
+
+@router.post("/{project}/harness/{index}/unlink")
+def unlink_harness(
+    project: str, index: str, request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    payload: UnlinkPayload | None = None,
+) -> dict:
+    """«Отвязать» чертёж от позиции: строка КД и сам чертёж остаются (отвязанный, с «Вернуть» в карточке), позиция его
+    больше не читает — ни редактор, ни «Предложить из КД». Версия с экрана, если передана, должна совпасть."""
+    with techcards_factory(request)() as uow:
+        kitset, index = _position(uow, project, index)
+        current = _current(uow, kitset.project, index)
+        if current is None:
+            raise HTTPException(status_code=404, detail=f"У сборки {index} нет чертежа жгута")
+        stored, content = current
+        if payload is not None and payload.version and payload.version != version_of(content):
+            raise HTTPException(status_code=409, detail=(
+                f"Чертёж жгута уже сохранил {stored.uploaded_by} {_when(stored.uploaded_at)} — обновите страницу"
+            ))
+        if not uow.kitsets.relabel_document(
+            kitset.project, stored.id, from_type=stored.content_type, to_type=HARNESS_UNLINKED_CONTENT_TYPE,
+        ):
+            raise HTTPException(status_code=409, detail="Чертёж жгута только что изменили — обновите страницу")
+        _audit(uow, principal, now, "techcards.kitset_harness_unlinked", kitset.project, index, stored)
+        uow.commit()
+    return {"document": _document_json(replace(stored, content_type=HARNESS_UNLINKED_CONTENT_TYPE))}
+
+
+@router.post("/{project}/harness/{index}/restore")
+def restore_harness(
+    project: str, index: str, payload: RestorePayload, request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """«Вернуть» отвязанный чертёж позиции. У позиции уже есть чертёж — 409: два чертежа у одной позиции не бывает,
+    сначала отвязывают тот."""
+    with techcards_factory(request)() as uow:
+        kitset, index = _position(uow, project, index)
+        document = uow.kitsets.document(kitset.project, payload.document_id)
+        if (document is None or document.item_index.upper() != index.upper()
+                or document_kind(document) != "harness_unlinked"):
+            raise HTTPException(status_code=404, detail=f"У сборки {index} нет такого отвязанного чертежа жгута")
+        if _current(uow, kitset.project, index) is not None:
+            raise HTTPException(status_code=409, detail=(
+                f"У сборки {index} уже есть чертёж жгута — сначала отвяжите его, потом верните этот"
+            ))
+        if not uow.kitsets.relabel_document(
+            kitset.project, document.id, from_type=document.content_type, to_type=HARNESS_CONTENT_TYPE,
+        ):
+            raise HTTPException(status_code=409, detail="Чертёж жгута только что изменили — обновите страницу")
+        _audit(uow, principal, now, "techcards.kitset_harness_restored", kitset.project, index, document)
+        found = _current(uow, kitset.project, index)
+        uow.commit()
+    try:
+        return _view(found)
+    except HarnessError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
