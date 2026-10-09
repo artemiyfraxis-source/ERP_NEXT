@@ -1,5 +1,5 @@
-"""«Кабели и провода» (owner 04.10.2026): БД.ПРОВ and the coax D1·D2·D3 table (СПР.КАБ · коаксиал) as three lists —
-коаксиальные кабели, монтажные провода, прочие кабели.
+"""«Кабели и провода» (owner 04.10.2026, 10.10.2026): БД.ПРОВ and the coax D1·D2·D3 table (СПР.КАБ · коаксиал) as four
+lists — коаксиальные кабели, монтажные провода, многожильные кабели («разобрать позже»), прочие кабели.
 
 Storage stays as SUPPLYMAP keeps it: БД.ПРОВ rows (`prov`) and the D-table rows (`kab_coax`) the ETK generator reads
 by cable name. This module only classifies and joins them; nothing here changes what the generator looks up."""
@@ -11,16 +11,21 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Mapping, Sequence
 
+from .cable_structure import CoaxCard, card_for
 from .domain import ReferenceValidationError, TechOperationRecord, cable_key
 
 
 class CableKind(str, Enum):
     COAX = "coax"
     WIRE = "wire"
+    MULTI = "multi"
     OTHER = "other"
 
 
-CABLE_KIND_LABELS = {CableKind.COAX: "Коаксиальные кабели", CableKind.WIRE: "Монтажные провода", CableKind.OTHER: "Прочие кабели"}
+CABLE_KIND_LABELS = {
+    CableKind.COAX: "Коаксиальные кабели", CableKind.WIRE: "Монтажные провода", CableKind.MULTI: "Многожильные кабели",
+    CableKind.OTHER: "Прочие кабели",
+}
 DIAMETERS = ("D1", "D2", "D3")
 MARK_FIELD = "Марка"
 TYPE_FIELD = "Тип провода"
@@ -63,9 +68,11 @@ def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | s
     1. «Тип провода» starts with «коакс» → коаксиальный;
     2. the mark has a row in the D1·D2·D3 table → коаксиальный;
     3. no type, the mark carries the generator's coax markers (RG-…, coax, коакс) → коаксиальный;
-    4. one core («Число жил» = 1) → монтажный провод;
-    5. cores not given, type starts with «монтаж» or «силикон» → монтажный провод;
-    6. everything else → прочие кабели."""
+    4. more than one core, or the type says «многожильный» → многожильный кабель (owner 10.10.2026: «все многожильные
+       в отдельную вкладку»; UL2725 is listed with one core but typed as a multi-core cable);
+    5. one core («Число жил» = 1) → монтажный провод;
+    6. cores not given, type starts with «монтаж» or «силикон» → монтажный провод;
+    7. everything else → прочие кабели."""
     kind_type = str(fields.get(TYPE_FIELD) or "").strip()
     lowered = kind_type.casefold()
     if lowered.startswith("коакс"):
@@ -75,6 +82,10 @@ def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | s
     if not kind_type and _COAX_MARK.search(mark):
         return CableKind.COAX, "марка коаксиального кабеля"
     cores = _cores(fields)
+    if cores is not None and cores > 1:
+        return CableKind.MULTI, f"жил: {cores}"
+    if "многожил" in lowered:
+        return CableKind.MULTI, f"тип «{kind_type}»"
     if cores == 1:
         return CableKind.WIRE, "одна жила"
     if cores is None and lowered.startswith(("монтаж", "силикон")):
@@ -94,6 +105,8 @@ class CableRow:
     record: TechOperationRecord | None  # БД.ПРОВ row; None — the cable is only in the D-table
     dia: TechOperationRecord | None  # the D-table row the generator uses for this name
     dia_hint: TechOperationRecord | None  # no own D row: the D row of the same family (RG58 for «RG-58 A/U»)
+    card: CoaxCard | None = None  # coax card by the exact name, else the family card («RG-58» for «RG-58 C/U»)
+    card_exact: bool = False
 
     @property
     def key(self) -> str:
@@ -112,9 +125,12 @@ def family_dia(key: str, index: Mapping[str, TechOperationRecord]) -> TechOperat
 
 def cable_rows(
     wires: Sequence[TechOperationRecord], diameters: Sequence[TechOperationRecord], overrides: Mapping[str, CableKind],
+    cards: Mapping[str, CoaxCard] | None = None,
 ) -> list[CableRow]:
-    """БД.ПРОВ rows, each with its class, plus the D-table cables that have no БД.ПРОВ coax row of the same name.
-    `overrides` — cable key → the class the user moved the row to; it beats the automatic rule."""
+    """БД.ПРОВ rows, each with its class, plus the D-table cables that have no БД.ПРОВ coax row of the same name, plus
+    the coax cards no row is named as. `overrides` — cable key → the class the user moved the row to; it beats the
+    automatic rule. Every coax row carries its card (`card_for`)."""
+    cards = cards or {}
     index = diameter_index(diameters)
     dia_keys = frozenset(index)
     rows: list[CableRow] = []
@@ -128,16 +144,27 @@ def cable_rows(
         dia = index.get(key) if kind == CableKind.COAX else None
         if dia is not None:
             joined.add(key)
+        card, exact = card_for(key, cards) if kind == CableKind.COAX else (None, False)
         rows.append(CableRow(
             kind=kind, auto=auto, reason="перенесён вручную" if manual and manual != auto else reason,
             manual=bool(manual and manual != auto), cable=mark, record=record, dia=dia,
             dia_hint=family_dia(key, index) if kind == CableKind.COAX and dia is None else None,
+            card=card, card_exact=exact,
         ))
+    named = {row.key for row in rows if row.kind == CableKind.COAX}
     for key, dia in index.items():
         if key not in joined:
+            card, exact = card_for(key, cards)
+            named.add(key)
             rows.append(CableRow(
                 kind=CableKind.COAX, auto=CableKind.COAX, reason="есть в таблице D1 · D2 · D3", manual=False,
-                cable=dia_cable(dia), record=None, dia=dia, dia_hint=None,
+                cable=dia_cable(dia), record=None, dia=dia, dia_hint=None, card=card, card_exact=exact,
+            ))
+    for key, card in cards.items():
+        if key not in named:
+            rows.append(CableRow(
+                kind=CableKind.COAX, auto=CableKind.COAX, reason="есть карточка коаксиального кабеля", manual=False,
+                cable=card.name, record=None, dia=None, dia_hint=family_dia(key, index), card=card, card_exact=True,
             ))
     return rows
 
