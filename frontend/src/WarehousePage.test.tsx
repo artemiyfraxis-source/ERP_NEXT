@@ -539,7 +539,7 @@ it("shows the first server page at once and joins the next page on «Показ�
   const gate = new Promise<void>((resolve) => { release = resolve; });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path !== "/api/stock/item-types") paths.push(path);
+    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals")) paths.push(path);
     if (path === "/api/stock") return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
     if (path === "/api/stock?after=cursor-1") { await gate; return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null }); }
     throw new Error(`Unexpected request: ${path}`);
@@ -565,7 +565,7 @@ it("«Загрузить всё» reads every remaining page", async () => {
   const paths: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path !== "/api/stock/item-types") paths.push(path);
+    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals")) paths.push(path);
     if (path === "/api/stock") return json({ lots: [lot], total: 3, truncated: 2, next_cursor: "c1" });
     if (path === "/api/stock?after=c1") return json({ lots: [page2], total: 3, truncated: 1, next_cursor: "c2" });
     if (path === "/api/stock?after=c2") return json({ lots: [third], total: 3, truncated: 0, next_cursor: null });
@@ -576,6 +576,40 @@ it("«Загрузить всё» reads every remaining page", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Загрузить всё" }));
   expect(await screen.findByRole("button", { name: "Показать партии (3)" })).toBeInTheDocument();
   expect(paths).toEqual(["/api/stock", "/api/stock?after=c1", "/api/stock?after=c2"]);
+});
+
+it("shows the same group and article totals on page 1 as after «Загрузить всё», the numbers come from the server", async () => {
+  const totals = {
+    group: "series",
+    groups: [{ group: "LOT-2409", articles: 1, balance: "15", reserved: "0", available: "14", lots: 2, units: ["шт"] }],
+    articles: [{ group: "LOT-2409", article: "ghr-04v-s", balance: "15", reserved: "0", available: "14", lots: 2, units: ["шт"] }],
+  };
+  const requested: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    requested.push(path);
+    if (path.startsWith("/api/stock/totals")) return json(totals);
+    if (path === "/api/stock") return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
+    if (path === "/api/stock?after=cursor-1") return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  const header = await screen.findByText(/партий 2 · остаток 15 шт/);
+  expect(screen.getByText("LOT-2409 · 1")).toBeInTheDocument();
+  const row = screen.getByRole("button", { name: "Показать партии (1)" }).closest("tr")!;
+  const cells = () => within(row).getAllByRole("cell").map((cell) => cell.textContent);
+  expect(cells()).toContain("15 шт");           // 10 loaded, 15 on the shelf: the server number, not the loaded sum
+  expect(cells()).toContain("2");
+  expect(screen.getByRole("status")).not.toHaveTextContent("по показанным");
+  const sums = (texts: Array<string | null>) => texts.filter((text) => text === "15 шт" || text === "2");
+  const onPageOne = [header.textContent, sums(cells())];
+
+  fireEvent.click(screen.getByRole("button", { name: "Загрузить всё" }));
+  await screen.findByRole("button", { name: "Показать партии (2)" });
+  expect(screen.getByText(/партий 2 · остаток 15 шт/).textContent).toBe(onPageOne[0]);
+  expect(sums(within(screen.getByRole("button", { name: "Показать партии (2)" }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent))).toEqual(onPageOne[1]);
+  expect(requested.filter((path) => path.startsWith("/api/stock/totals")).length).toBeGreaterThan(0);
 });
 
 it("updates only the edited row after a write-off and does not re-read the list", async () => {
@@ -882,7 +916,7 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   expect(screen.queryByRole("button", { name: /^Ещё/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Обновить" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Таблица склада" })).toBeInTheDocument();
-  expect(requested.every((call) => call === "GET /api/stock")).toBe(true);
+  expect(requested.every((call) => call === "GET /api/stock" || call.startsWith("GET /api/stock/totals"))).toBe(true);
 });
 
 it("«История» on a lot opens a window with the journal of its ГРН only (administrator)", async () => {

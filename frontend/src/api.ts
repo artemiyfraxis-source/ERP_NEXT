@@ -2375,6 +2375,13 @@ export const receivingApi = {
     ),
 };
 
+export type WarehouseTotal = { balance: string; reserved: string; available: string; lots: number; units: string[] };
+export type WarehouseTotals = {
+  group: string;
+  groups: Array<WarehouseTotal & { group: string; articles: number }>;
+  articles: Array<WarehouseTotal & { group: string; article: string }>;
+};
+
 export const warehouseApi = {
   list: ({ after, query = "", includeZero = false, warehouse = "" }: {
     after?: string;
@@ -2389,6 +2396,21 @@ export const warehouseApi = {
     if (warehouse) params.set("warehouse", warehouse);
     const suffix = params.size ? `?${params}` : "";
     return api<{ lots: WarehouseLot[]; total: number; truncated: number; next_cursor: string | null }>(`/api/stock${suffix}`);
+  },
+  /** Sums per group and per article of a group over ALL lots of the filter (not just the loaded pages). */
+  totals: ({ group = "", query = "", includeZero = false, warehouse = "" }: {
+    group?: string;
+    query?: string;
+    includeZero?: boolean;
+    warehouse?: string;
+  } = {}) => {
+    const params = new URLSearchParams();
+    if (group) params.set("group", group);
+    if (query.trim()) params.set("q", query.trim());
+    if (includeZero) params.set("zero", "true");
+    if (warehouse) params.set("warehouse", warehouse);
+    const suffix = params.size ? `?${params}` : "";
+    return api<WarehouseTotals>(`/api/stock/totals${suffix}`);
   },
   shelfPlaces: (warehouse: string, shelf: string) => api<WarehouseShelfPlaces>(
     `/api/stock/places?warehouse=${encodeURIComponent(warehouse)}&shelf=${encodeURIComponent(shelf)}`,

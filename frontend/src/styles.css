@@ -1729,6 +1729,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-table > tbody > tr.stock-group-row > td { background: #e9f0ef; color: #38504d; text-transform: none; letter-spacing: 0; font-size: 12.5px; }
 /* The group header stays in view when the table is scrolled sideways: its label is pinned, the band spans the row. */
 .stock-group-label { position: sticky; left: 10px; }
+.stock-group-sum { font-weight: 400; color: var(--muted-foreground); }
 .stock-article-row.open td { background: #eaf6f4; }
 .stock-table > tbody > tr.stock-cards-row > td { background: #f6f8f8; padding: 12px 16px; white-space: normal; }
 .stock-cards-row .lot-cards { position: sticky; left: 16px; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 32px); }
