@@ -49,7 +49,7 @@ const NEW_TYPE: Record<CableKind, Record<string, string>> = {
   other: {},
 };
 const cardState = (row: CableRow) => !row.card ? "нет карточки"
-  : `${row.card.verified ? "проверено" : "не проверено"}${row.card_exact ? "" : ` · как у ${row.card.name}`}`;
+  : `${row.card.verified ? `проверено${row.card.confidence ? `, ${row.card.confidence}` : ""}` : "не проверено"}${row.card_exact ? "" : ` · как у ${row.card.name}`}`;
 const NUMBER = /^-?\d[\d\s]*([.,]\d+)?$/;
 const cableKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
 const diaText = (dia: CableDiameters) => DIAMETERS.map((name) => dia[name] || "—").join(" · ");
@@ -106,10 +106,11 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
     })) : []),
     ...(kind === "coax" ? [
       { key: "__span", title: "Диапазон VNA", value: (row: CableRow) => row.card ? spanText(row.card) : "" },
+      { key: "__op", title: "Рабочая частота, ГГц", numeric: true, value: (row: CableRow) => row.card?.max_operating_ghz ?? "", render: (row: CableRow) => num(row.card?.max_operating_ghz) },
       { key: "__fc", title: "Частота среза, ГГц", numeric: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) },
       {
         key: "__card", title: "Карточка", value: cardState,
-        render: (row: CableRow) => <span className={!row.card ? "muted" : row.card.verified ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
+        render: (row: CableRow) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
       },
     ] : []),
     ...(kind === "wire" ? [{

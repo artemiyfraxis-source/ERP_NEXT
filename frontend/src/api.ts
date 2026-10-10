@@ -1149,16 +1149,23 @@ export interface CoaxCard {
   layers: Array<{ layer: string; label: string; material: string; diameter_mm: number | null }>;
   connectors: Array<{ family: string; max_ghz: number | null; max_note: string; span_to_ghz: number | null }>;
   /** VSWR — an acceptance norm proposed for the VNA check, not a datasheet value. `peak` — the «Peak» marker. */
-  markers: Array<{ freq_mhz: number | null; peak: boolean; vswr_max: number | null; note: string }>;
-  /** As the datasheet publishes it, plus the derived dB/m. */
+  /** `vswr_ref` — what a reference assembly's datasheet guarantees (to settle a disputed reject). */
+  markers: Array<{ freq_mhz: number | null; peak: boolean; vswr_max: number | null; vswr_ref: number | null; note: string }>;
+  /** As the datasheet publishes it, plus the derived dB/m; `interpolated` + `basis` — not published at that frequency. */
   attenuation: Array<{
-    freq_mhz: number; kind: "nominal" | "max"; value: number; unit: string; ref_length_m: number; temp_c: number | null;
-    loss_db_m: number; derived: boolean; interpolated: boolean; source: string;
+    freq_mhz: number; kind: "nominal" | "typical" | "max"; value: number; unit: string; ref_length_m: number;
+    temp_c: number | null; loss_db_m: number; derived: boolean; interpolated: boolean; source: string; basis: string;
   }>;
   span_from_mhz: number | null;
   span_to_ghz: number | null;
   span_note: string;
+  /** Cut-off of the first higher mode (TE11) — physics; not the rated limit `max_operating_ghz`. */
   fc_ghz: number | null;
+  fc_note: string;
+  max_operating_ghz: number | null;
+  max_operating_note: string;
+  /** Datasheet wording behind a number («50 ±2», «>165 (EZ)»), and `mechanical` notes. */
+  param_notes: Record<string, string>;
   notes: string;
   sources: string[];
   confidence: string;
@@ -1167,8 +1174,8 @@ export interface CoaxCard {
   params: Partial<Record<CoaxParam, number>>;
 }
 
-export type CoaxParam = "impedance_ohm" | "velocity_pct" | "shielding_db" | "bend_static_mm" | "bend_dynamic_mm"
-  | "temp_min_c" | "temp_max_c" | "voltage_max_v" | "weight_g_m";
+export type CoaxParam = "impedance_ohm" | "velocity_pct" | "capacitance_pf_m" | "shielding_db" | "bend_static_mm"
+  | "bend_dynamic_mm" | "temp_min_c" | "temp_max_c" | "voltage_max_v" | "max_power_w" | "max_power_at_mhz" | "weight_g_m";
 
 /** The D1·D2·D3 row the ETK generator uses for a coax cable (СПР.КАБ · коаксиал). */
 export interface CableDiameters {

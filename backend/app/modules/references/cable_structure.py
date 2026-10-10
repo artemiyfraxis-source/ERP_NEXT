@@ -317,10 +317,11 @@ def refreshed_hookup(wire: HookupWire, mark: str, fields: Mapping[str, str], edi
 
 LAYERS = ("core", "dielectric", "shield", "jacket")
 LAYER_LABELS = {"core": "Жила", "dielectric": "Диэлектрик", "shield": "Экран", "jacket": "Оболочка"}
-# Card parameters a technologist, buyer or tester asks for; filled only from the seed file, never guessed.
+# Card parameters a technologist, buyer or tester asks for; filled only from the seed file, never guessed. The number is
+# what a calculation reads; `param_notes` keeps the datasheet wording («50 ±2», «>165 (EZ); >100 (Smiths)»).
 PARAMS = (
-    "impedance_ohm", "velocity_pct", "shielding_db", "bend_static_mm", "bend_dynamic_mm", "temp_min_c", "temp_max_c",
-    "voltage_max_v", "weight_g_m",
+    "impedance_ohm", "velocity_pct", "capacitance_pf_m", "shielding_db", "bend_static_mm", "bend_dynamic_mm",
+    "temp_min_c", "temp_max_c", "voltage_max_v", "max_power_w", "max_power_at_mhz", "weight_g_m",
 )
 _SIGNED_PARAMS = {"temp_min_c", "temp_max_c"}
 
@@ -345,45 +346,59 @@ class CoaxMarker:
     freq_mhz: Decimal | None  # None — the «Peak» marker (max VSWR over the span)
     vswr_max: Decimal | None  # acceptance norm proposed for the shop's VNA check, not a datasheet value
     note: str = ""
+    vswr_ref: Decimal | None = None  # the VSWR a reference assembly's datasheet guarantees, to settle a disputed reject
 
 
 # Attenuation as the datasheet publishes it (owner 10.10.2026): the value in its unit, per reference length, at a
-# temperature, nominal or max, with its source; dB/m is derived from it so an assembly's loss can be computed later.
-ATTENUATION_UNITS = {"dB/m": Decimal(1), "dB/100m": Decimal(100), "dB/100ft": Decimal("30.48"), "dB/ft": Decimal("0.3048")}
-ATTENUATION_KINDS = ("nominal", "max")
+# temperature, nominal / typical / max, with its source; dB/m is derived from it so an assembly's loss can be computed
+# later. A point the datasheet does not publish (a marker between two published ones) is `interpolated`, with its basis.
+ATTENUATION_UNITS = {
+    "dB/m": Decimal(1), "dB/100m": Decimal(100), "dB/km": Decimal(1000), "dB/100ft": Decimal("30.48"),
+    "dB/ft": Decimal("0.3048"),
+}
+ATTENUATION_KINDS = ("nominal", "typical", "max")
 _UNIT_ALIASES = {
-    "db/m": "dB/m", "дб/м": "dB/m", "db/100m": "dB/100m", "дб/100м": "dB/100m", "db/100ft": "dB/100ft",
-    "дб/100фут": "dB/100ft", "db/ft": "dB/ft",
+    "db/m": "dB/m", "дб/м": "dB/m", "db/100m": "dB/100m", "дб/100м": "dB/100m", "db/km": "dB/km", "дб/км": "dB/km",
+    "db/100ft": "dB/100ft", "дб/100фут": "dB/100ft", "db/ft": "dB/ft",
 }
 
 
 @dataclass(frozen=True)
 class CoaxAttenuation:
     freq_mhz: Decimal
-    kind: str  # nominal | max
+    kind: str  # nominal | typical | max
     value: Decimal  # as published, in `unit`
     unit: str
     ref_length_m: Decimal  # the length the unit refers to (100 ft = 30,48 м)
     temp_c: Decimal | None
     loss_db_m: Decimal  # derived: value / ref_length_m
     derived: bool  # the dB/m is computed from another unit
-    interpolated: bool  # the point is interpolated between published ones, not published itself
+    interpolated: bool  # not published at this frequency: interpolated / extrapolated / by the maker's formula
     source: str = ""
+    basis: str = ""  # how the value was obtained («интерполировано (лог-лог) между 400 и 1000 МГц»), the datasheet type
+
+
+def attenuation_kind(raw: object) -> str:
+    """«typical (EZ, по M17/133)» → typical, «nominal (max ≤115 %)» → nominal, «max» → max."""
+    text = _text(raw).casefold()
+    return next((kind for kind in ATTENUATION_KINDS if text.startswith(kind)), text or "nominal")
 
 
 def attenuation_point(name: str, freq: Decimal, kind: str, value: object, unit: object, *, temp_c: object = None,
-                      interpolated: bool = False, source: str = "", ref_length_m: object = None) -> CoaxAttenuation:
+                      interpolated: bool = False, source: str = "", ref_length_m: object = None,
+                      basis: str = "") -> CoaxAttenuation:
     clean_unit = _UNIT_ALIASES.get(re.sub(r"\s", "", str(unit or "dB/m")).casefold())
     if clean_unit is None:
-        raise ReferenceValidationError(f"«{name}»: единица затухания «{unit}» — нужна dB/m, dB/100m, dB/100ft или dB/ft")
+        raise ReferenceValidationError(f"«{name}»: единица затухания «{unit}» — нужна dB/m, dB/100m, dB/km, dB/100ft или dB/ft")
     if kind not in ATTENUATION_KINDS:
-        raise ReferenceValidationError(f"«{name}»: затухание «{kind}» — номинальное (nominal) или максимальное (max)")
+        raise ReferenceValidationError(f"«{name}»: затухание «{kind}» — номинальное, типовое или максимальное")
     number = positive(f"«{name}», затухание", value, required=True)
     length = positive(f"«{name}», длина для затухания", ref_length_m) or ATTENUATION_UNITS[clean_unit]
     return CoaxAttenuation(
         freq_mhz=freq, kind=kind, value=number, unit=clean_unit, ref_length_m=length,
         temp_c=decimal_or_none(temp_c), loss_db_m=(number / length).quantize(Decimal("0.0001")),
         derived=clean_unit != "dB/m" or length != 1, interpolated=bool(interpolated), source=_text(source),
+        basis=_text(basis),
     )
 
 
@@ -399,7 +414,7 @@ class CoaxCard:
     span_from_mhz: Decimal | None
     span_to_ghz: Decimal | None
     span_note: str
-    fc_ghz: Decimal | None
+    fc_ghz: Decimal | None  # cut-off of the first higher mode (TE11): physics, not the rated limit
     notes: str
     sources: tuple[str, ...]
     confidence: str
@@ -408,6 +423,10 @@ class CoaxCard:
     params: Mapping[str, Decimal] = field(default_factory=dict)
     position: int = 0
     id: UUID = field(default_factory=uuid4)
+    fc_note: str = ""  # how f_c was obtained («calc (D 1.52, d 0.51, Vp 69.5 %)»)
+    max_operating_ghz: Decimal | None = None  # the rated maximum operating frequency (datasheet), ≠ f_c
+    max_operating_note: str = ""
+    param_notes: Mapping[str, str] = field(default_factory=dict)
 
 
 def _text(value: object) -> str:
@@ -424,6 +443,16 @@ def _freq_mhz(item: Mapping[str, Any]) -> Decimal | None | str:
     return decimal_or_none(raw)
 
 
+def _change_text(change: object) -> str:
+    """A verifier's change {field, was, now, why} → one readable line; a string stays as it is."""
+    if isinstance(change, Mapping):
+        head = _text(change.get("field"))
+        body = f"было «{_text(change.get('was'))}», стало «{_text(change.get('now'))}»"
+        why = _text(change.get("why"))
+        return f"{head}: {body}" + (f" — {why}" if why else "")
+    return _text(change)
+
+
 def card_from_seed(item: Mapping[str, Any], position: int) -> CoaxCard:
     """One cable of the seed file (`backend/data/cables/coax-cables.json`) → a validated card. One cable per entry:
     a combined entry («RG-142 / RG-400») is refused, the file must split it."""
@@ -434,7 +463,7 @@ def card_from_seed(item: Mapping[str, Any], position: int) -> CoaxCard:
         raise ReferenceValidationError(f"«{name}»: одна строка — один кабель, разделите запись")
     construction = item.get("construction") or {}
     layers = tuple(
-        CoaxLayer(layer, _text((construction.get(layer) or {}).get("material")),
+        CoaxLayer(layer, _text((construction.get(layer) or {}).get("material") or (construction.get(layer) or {}).get("type")),
                   positive(f"«{name}», {LAYER_LABELS[layer]} Ø", (construction.get(layer) or {}).get("d_mm")))
         for layer in LAYERS if construction.get(layer)
     )
@@ -449,7 +478,8 @@ def card_from_seed(item: Mapping[str, Any], position: int) -> CoaxCard:
             continue
         rule = narrowing.pop(cable_key(family), None)
         connectors.append(CoaxConnector(
-            family, positive(f"«{name}», {family}, ГГц", connector.get("max_ghz")), _text(connector.get("note")),
+            family, positive(f"«{name}», {family}, ГГц", connector.get("max_ghz")),
+            _text(connector.get("note") or connector.get("note_ru")),
             positive(f"«{name}», {family}, предел сборки", rule.get("to_ghz")) if rule else None,
         ))
     span_notes += [f"{_text(rule.get('connector') or rule.get('family'))}: до {_text(rule.get('to_ghz'))} ГГц"
@@ -457,20 +487,20 @@ def card_from_seed(item: Mapping[str, Any], position: int) -> CoaxCard:
     if _text(span.get("note")):
         span_notes.insert(0, _text(span.get("note")))
     markers, seen = [], set()
-    attenuation: dict[tuple[Decimal, str], CoaxAttenuation] = {}
+    attenuation: dict[tuple[Decimal, str, str], CoaxAttenuation] = {}  # (freq, kind, source): two sources may publish one freq
     default_temp = item.get("attenuation_temp_c", 20)
     for point in item.get("attenuation") or []:
         freq = _freq_mhz(point)
         if not isinstance(freq, Decimal) or freq <= 0:
             raise ReferenceValidationError(f"«{name}»: у точки затухания нет частоты")
         given = [(kind, point.get(kind)) for kind in ATTENUATION_KINDS if point.get(kind) is not None]
-        for kind, value in given or [(_text(point.get("kind")) or "nominal", point.get("value"))]:
-            if (freq, kind) in attenuation:
+        for kind, value in given or [(attenuation_kind(point.get("kind")), point.get("value"))]:
+            if (freq, kind, _text(point.get("source"))) in attenuation:
                 raise ReferenceValidationError(f"«{name}»: затухание на {shown(freq)} МГц повторяется")
-            attenuation[(freq, kind)] = attenuation_point(
+            attenuation[(freq, kind, _text(point.get("source")))] = attenuation_point(
                 name, freq, kind, value, point.get("unit"), temp_c=point.get("temp_c", default_temp),
                 interpolated=bool(point.get("interpolated")), source=_text(point.get("source")),
-                ref_length_m=point.get("ref_length_m"),
+                ref_length_m=point.get("ref_length_m"), basis=_text(point.get("basis")),
             )
     for marker in item.get("markers") or []:
         freq = _freq_mhz(marker)
@@ -483,18 +513,23 @@ def card_from_seed(item: Mapping[str, Any], position: int) -> CoaxCard:
             raise ReferenceValidationError(f"«{name}»: маркер {freq} повторяется")
         seen.add(key)
         vswr = decimal_or_none(marker.get("vswr_max"))
-        if vswr is not None and vswr < 1:
+        reference = decimal_or_none(marker.get("vswr_ref_assembly"))
+        if (vswr is not None and vswr < 1) or (reference is not None and reference < 1):
             raise ReferenceValidationError(f"«{name}»: КСВН не может быть меньше 1")
         loss = marker.get("attenuation_db_m")
-        # A marker's own dB/m (the owner's table) becomes a dB/m point unless the file publishes one at that frequency.
+        # A marker's own dB/m becomes a dB/m point unless the file publishes one at that frequency; with a basis
+        # («интерполировано…», «по формуле…») it is marked as not published.
         if isinstance(freq, Decimal) and loss not in (None, "") and not any(key[0] == freq for key in attenuation):
-            attenuation[(freq, "nominal")] = attenuation_point(
-                name, freq, "nominal", loss, "dB/m", temp_c=default_temp, source=_text(marker.get("source")))
-        markers.append(CoaxMarker(None if freq == "peak" else freq, vswr, _text(marker.get("note"))))
+            basis = _text(marker.get("attenuation_basis_ru") or marker.get("attenuation_basis"))
+            attenuation[(freq, "nominal", "")] = attenuation_point(
+                name, freq, "nominal", loss, "dB/m", temp_c=default_temp, source=_text(marker.get("source")),
+                interpolated=bool(basis) and not basis.casefold().startswith("по даташиту"), basis=basis)
+        markers.append(CoaxMarker(None if freq == "peak" else freq, vswr,
+                                  _text(marker.get("note") or marker.get("vswr_check_ru")), reference))
     for point in item.get("extra_attenuation") or []:  # dB/m at a frequency that is not a marker
         freq = _freq_mhz(point)
         if isinstance(freq, Decimal) and not any(key[0] == freq for key in attenuation):
-            attenuation[(freq, "nominal")] = attenuation_point(
+            attenuation[(freq, "nominal", "")] = attenuation_point(
                 name, freq, "nominal", point.get("attenuation_db_m"), "dB/m", temp_c=default_temp)
     params: dict[str, Decimal] = {}
     for key in PARAMS:
@@ -504,6 +539,10 @@ def card_from_seed(item: Mapping[str, Any], position: int) -> CoaxCard:
         if key not in _SIGNED_PARAMS and value <= 0:
             raise ReferenceValidationError(f"«{name}», {key}: укажите число больше нуля")
         params[key] = value
+    if "velocity_pct" in params and params["velocity_pct"] > 100:
+        raise ReferenceValidationError(f"«{name}»: коэффициент укорочения больше 100 %")
+    if {"temp_min_c", "temp_max_c"} <= set(params) and params["temp_min_c"] >= params["temp_max_c"]:
+        raise ReferenceValidationError(f"«{name}»: температура «от» должна быть ниже «до»")
     span_from = positive(f"«{name}», начало диапазона", span.get("from_mhz"))
     span_to = positive(f"«{name}», конец диапазона", span.get("to_ghz"))
     if span_from is not None and span_to is not None and span_from >= span_to * 1000:
@@ -518,8 +557,11 @@ def card_from_seed(item: Mapping[str, Any], position: int) -> CoaxCard:
         notes=str(item.get("notes_ru") or item.get("notes") or "").strip(),
         sources=tuple(_text(source) for source in item.get("sources") or [] if _text(source)),
         confidence=confidence, verified=bool(item.get("verified", False)),
-        changes=tuple(_text(change) for change in item.get("changed") or [] if _text(change)),
-        params=params, position=position,
+        changes=tuple(_change_text(change) for change in item.get("changed") or [] if _change_text(change)),
+        params=params, position=position, fc_note=_text(item.get("fc_note") or item.get("fc_basis")),
+        max_operating_ghz=positive(f"«{name}», рабочая частота", item.get("max_operating_ghz")),
+        max_operating_note=_text(item.get("max_operating_note")),
+        param_notes={_text(key): _text(value) for key, value in (item.get("param_notes") or {}).items() if _text(value)},
     )
 
 

@@ -51,14 +51,21 @@ ROWS[0].card = {
   id: "c-316", name: "RG-316", family: "Гибкий тонкий", verified: false, confidence: "не проверено", changes: [], sources: [],
   layers: [{ layer: "core", label: "Жила", material: "SCCS", diameter_mm: 0.51 }],
   connectors: [{ family: "SMA", max_ghz: 3, max_note: "", span_to_ghz: null }, { family: "BNC", max_ghz: 2, max_note: "2–3 ГГц", span_to_ghz: 2 }],
-  markers: [{ freq_mhz: 433, peak: false, vswr_max: 1.1, note: "" }, { freq_mhz: 2450, peak: false, vswr_max: 1.22, note: "" }, { freq_mhz: null, peak: true, vswr_max: null, note: "" }],
-  attenuation: [
-    { freq_mhz: 433, kind: "nominal", value: 0.62, unit: "dB/m", ref_length_m: 1, temp_c: 20, loss_db_m: 0.62, derived: false, interpolated: false, source: "" },
-    { freq_mhz: 2450, kind: "nominal", value: 50.3, unit: "dB/100ft", ref_length_m: 30.48, temp_c: 20, loss_db_m: 1.6503, derived: true, interpolated: false, source: "https://example.test/rg316.pdf" },
+  markers: [
+    { freq_mhz: 433, peak: false, vswr_max: 1.1, vswr_ref: 1.4, note: "строже паспорта сборки" },
+    { freq_mhz: 2450, peak: false, vswr_max: 1.22, vswr_ref: 1.4, note: "" },
+    { freq_mhz: null, peak: true, vswr_max: 1.25, vswr_ref: null, note: "" },
   ],
-  span_from_mhz: 10, span_to_ghz: 3, span_note: "до 6 ГГц при длине менее 30 см", fc_ghz: 9, notes: "Одинарный экран выше 3 ГГц излучает.",
-  params: { impedance_ohm: 50 },
+  attenuation: [
+    { freq_mhz: 433, kind: "nominal", value: 0.548, unit: "dB/m", ref_length_m: 1, temp_c: null, loss_db_m: 0.548, derived: false, interpolated: true, source: "", basis: "интерполировано (лог-лог) между 400 и 1000 МГц" },
+    { freq_mhz: 2450, kind: "typical", value: 50.3, unit: "dB/100ft", ref_length_m: 30.48, temp_c: 20, loss_db_m: 1.6503, derived: true, interpolated: false, source: "https://example.test/rg316.pdf", basis: "" },
+  ],
+  span_from_mhz: 10, span_to_ghz: 3, span_note: "", fc_ghz: 65.3, fc_note: "calc (D 1.52, d 0.51, Vp 69.5 %)",
+  max_operating_ghz: 3, max_operating_note: "3 (MIL M17/113)", notes: "Одинарный экран выше 3 ГГц излучает.",
+  params: { impedance_ohm: 50, max_power_w: 173, max_power_at_mhz: 1000 }, param_notes: { impedance_ohm: "50 ±2" },
 };
+ROWS[0].card.verified = true;
+ROWS[0].card.confidence = "средняя";
 ROWS[0].card_exact = true;
 const AWG = [
   { id: "a1", tab: "kab_awg", display_text: "22", source_sheet: "", fields: { AWG: "22", "ГОСТ": "0,35", "Ø жилы": "0,64", "МГТФ": "1,2", "UL1061": "1,35", "ПВАМ": "—" } },
@@ -190,15 +197,22 @@ it("opens a coax card a tester reads at the VNA: markers, connectors, constructi
   render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
   fireEvent.click(await screen.findByText("RG316"));
   const card = screen.getByRole("region", { name: "Карточка кабеля RG-316" });
-  expect(within(card).getByText("не проверено")).toBeInTheDocument();
+  expect(within(card).getByText("проверено по datasheet · достоверность средняя")).toBeInTheDocument();
+  // the rated operating limit and the TE11 cut-off are two numbers, never one
+  expect(within(card).getByText("Рабочая частота").parentElement).toHaveTextContent("Рабочая частота до 3 ГГц");
+  expect(within(card).getByText("Частота среза TE11").parentElement).toHaveTextContent("≈ 65,3 ГГц");
   const markers = within(card).getByRole("table", { name: "Маркеры VNA" });
   expect(within(markers).getByText("КСВН — норма приёмки (предложено)")).toBeInTheDocument();
+  expect(within(markers).getByRole("columnheader", { name: "Паспорт сборки ≤" })).toBeInTheDocument();
   const rows = within(markers).getAllByRole("row").slice(1).map((row) => row.textContent);
-  expect(rows).toEqual(["433 МГц1,10,62", "2,45 ГГц1,221,65 расч.", "Peak — максимум по диапазону——"]);
+  expect(rows).toEqual(["433 МГц1,11,40,55 интерп.", "2,45 ГГц1,221,41,65 расч.", "Peak — максимум по диапазону1,25——"]);
   const connectors = within(card).getByRole("table", { name: "Разъёмы" });
-  expect(within(connectors).getByText("до 2 ГГц")).toBeInTheDocument(); // BNC narrows the span
-  expect(within(card).getByRole("table", { name: "Затухание по источнику" })).toHaveTextContent("dB/100ft");
-  expect(within(card).getByText("Волновое сопротивление")).toBeInTheDocument();
+  expect(within(connectors).getByText("до 2 ГГц", { selector: "strong" })).toBeInTheDocument(); // BNC narrows the span
+  const datasheet = within(card).getByRole("table", { name: "Затухание по источнику" });
+  expect(datasheet).toHaveTextContent("dB/100ft");
+  expect(datasheet).toHaveTextContent("интерполировано (лог-лог) между 400 и 1000 МГц");
+  expect(within(card).getByText("Волновое сопротивление").parentElement).toHaveAttribute("title", "50 ±2");
+  expect(within(card).getByText("Мощность, макс.").parentElement).toHaveTextContent("173 Вт на 1 ГГц");
 });
 
 it("structures a hook-up wire from its БД.ПРОВ suggestion and edits a size row", async () => {

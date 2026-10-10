@@ -447,10 +447,11 @@ table.ship-lines td:first-child { width: 1%; }
 .coax-flag { padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--accent); }
 .coax-flag.tone-warn { background: var(--warn-soft); }
 .coax-flag.tone-ok { background: var(--chip-ok-bg); }
-.coax-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px 18px; align-items: start; }
+.coax-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 12px 18px; align-items: start; }
 .coax-block { min-width: 0; overflow-x: auto; }
 .coax-mini caption small { margin-left: 6px; font-weight: 400; color: var(--muted-foreground); font-size: 11.5px; }
 .coax-mini td.wrap { white-space: normal; }
+.coax-mini td small { display: inline; margin-left: 4px; }
 .coax-mini { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); }
 .coax-mini caption { padding: 0 0 4px; text-align: left; font-weight: 600; font-size: 13px; }
 .coax-mini th { padding: 4px 8px; text-align: left; vertical-align: bottom; background: var(--table-head); color: var(--table-head-fg); font-size: 11px; font-weight: 600; }

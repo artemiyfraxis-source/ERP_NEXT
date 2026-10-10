@@ -129,13 +129,22 @@ def test_committed_seed_file_is_valid_and_splits_every_combined_row():
     cards = cards_from_seed(read_seed(DEFAULT_FILE))
     names = {card.name for card in cards}
     assert {"RG-316", "RG-316D", "RG-142", "RG-400", "LMR-195", "LMR-240", "5D-FB", "8D-FB", "10D-FB", "RF 0.81",
-            "RF 1.13", "RF 1.37", "Multiflex 86", "SS405"} <= names
-    assert all(" / " not in card.name for card in cards)
+            "RF 1.13", "RF 1.37", "MULTIFLEX 86", "SS405"} <= names
+    assert len(cards) == 23 and all(" / " not in card.name for card in cards)
     by_name = {card.name: card for card in cards}
-    # a footnote «для 10D-FB» belongs to 10D-FB only; the others are left empty, not copied
-    assert by_name["10D-FB"].attenuation and not by_name["5D-FB"].attenuation
-    assert not by_name["RG-316"].markers[-2].vswr_max  # 5,8 ГГц norm is RG-316D's
-    assert by_name["RG-316D"].markers[-2].vswr_max == Decimal("1.35")
+    # verified against datasheets: every card says so, with its sources and how sure the check is
+    assert all(card.verified and card.sources and card.confidence in {"высокая", "средняя", "низкая"} for card in cards)
+    # the cut-off of the first higher mode and the rated operating limit are two different numbers
+    assert (by_name["RG-316"].fc_ghz, by_name["RG-316"].max_operating_ghz) == (Decimal("65.3"), Decimal(3))
+    assert by_name["RG-405"].span_to_ghz == Decimal(60)
+    # 0,81 мм: no maker's table — one distributor point, nothing computed on the markers
+    micro = by_name["RF 0.81"]
+    assert micro.confidence == "низкая" and len(micro.attenuation) == 1 and not any(a.interpolated for a in micro.attenuation)
+    # published points keep their unit; points between them are marked interpolated with the basis
+    rg316 = by_name["RG-316"]
+    assert any(a.unit == "dB/100ft" and a.derived for a in rg316.attenuation)
+    assert any(a.interpolated and a.basis.startswith("интерполировано") for a in rg316.attenuation)
+    assert rg316.markers[0].vswr_ref == Decimal("1.4")  # the reference assembly's datasheet VSWR
 
 
 def test_card_for_a_row_by_exact_name_or_family():
@@ -271,7 +280,7 @@ def test_api_cables_carry_structure_sizes_and_cards(tmp_path, sessions, structur
     assert rg316["card"]["name"] == "RG-316" and rg316["card"]["markers"][-1]["peak"]
     assert rg316["card"]["attenuation"][0] == {
         "freq_mhz": 433, "kind": "nominal", "value": 0.62, "unit": "dB/m", "ref_length_m": 1, "temp_c": 20,
-        "loss_db_m": 0.62, "derived": False, "interpolated": False, "source": ""}
+        "loss_db_m": 0.62, "derived": False, "interpolated": False, "source": "", "basis": ""}
     only_card = next(row for row in listed["rows"] if row["cable"] == "UT-047")
     assert only_card["id"].startswith("card:") and only_card["record"] is None and only_card["kind"] == "coax"
     assert listed["gauges"][0]["wires"] == 0 and listed["counts"]["multi"] == 2

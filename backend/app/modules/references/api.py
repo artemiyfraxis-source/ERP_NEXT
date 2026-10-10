@@ -382,15 +382,16 @@ def _card_json(card: CoaxCard | None) -> dict | None:
         "connectors": [{"family": item.family, "max_ghz": _num(item.max_ghz), "max_note": item.max_note,
                         "span_to_ghz": _num(item.span_to_ghz)} for item in card.connectors],
         "markers": [{"freq_mhz": _num(item.freq_mhz), "peak": item.freq_mhz is None, "vswr_max": _num(item.vswr_max),
-                     "note": item.note} for item in card.markers],
+                     "vswr_ref": _num(item.vswr_ref), "note": item.note} for item in card.markers],
         "attenuation": [{"freq_mhz": _num(item.freq_mhz), "kind": item.kind, "value": _num(item.value), "unit": item.unit,
                          "ref_length_m": _num(item.ref_length_m), "temp_c": _num(item.temp_c),
                          "loss_db_m": _num(item.loss_db_m), "derived": item.derived, "interpolated": item.interpolated,
-                         "source": item.source} for item in card.attenuation],
+                         "source": item.source, "basis": item.basis} for item in card.attenuation],
         "span_from_mhz": _num(card.span_from_mhz), "span_to_ghz": _num(card.span_to_ghz), "span_note": card.span_note,
-        "fc_ghz": _num(card.fc_ghz), "notes": card.notes, "sources": list(card.sources), "confidence": card.confidence,
-        "verified": card.verified, "changes": list(card.changes),
-        "params": {key: _num(value) for key, value in card.params.items()},
+        "fc_ghz": _num(card.fc_ghz), "fc_note": card.fc_note, "max_operating_ghz": _num(card.max_operating_ghz),
+        "max_operating_note": card.max_operating_note, "notes": card.notes, "sources": list(card.sources),
+        "confidence": card.confidence, "verified": card.verified, "changes": list(card.changes),
+        "params": {key: _num(value) for key, value in card.params.items()}, "param_notes": dict(card.param_notes),
     }
 
 

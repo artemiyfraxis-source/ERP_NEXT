@@ -81,7 +81,7 @@ def test_migration_structures_parsable_hookup_wires_and_keeps_every_existing_row
             f"INSERT INTO hookup_wires (id, mark, mark_key, series, gauge_id, insulation, outer_d_mm, updated_at)"
             f" VALUES ('x3', 'М', 'м', 'М', '{gauge}', '', -1, '2026-10-10')",
             "INSERT INTO coax_cable_attenuation (id, cable_id, freq_mhz, kind, value, unit, ref_length_m, loss_db_m)"
-            " VALUES ('x4', 'none', 100, 'typical', 1, 'dB/m', 1, 1)",
+            " VALUES ('x4', 'none', 100, 'guess', 1, 'dB/m', 1, 1)",
         ):
             try:
                 connection.execute(bad)
