@@ -24,8 +24,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0089_cable_structure"
-down_revision: str | None = "0088_api_tokens_assembly_drafts"
+revision: str = "0096_cable_structure"
+down_revision: str | None = "0095_identity_leave_requests"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

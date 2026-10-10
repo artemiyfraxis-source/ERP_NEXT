@@ -1,4 +1,4 @@
-"""0089_cable_structure: new tables over real БД.ПРОВ rows; nothing existing changes."""
+"""0096_cable_structure: new tables over real БД.ПРОВ rows; nothing existing changes."""
 
 import json
 import sqlite3
@@ -58,7 +58,7 @@ def test_migration_structures_parsable_hookup_wires_and_keeps_every_existing_row
                   for table in ("tech_operation_records", "reference_entries")}
         records_before = connection.execute("SELECT fields, edited_in_erp FROM tech_operation_records ORDER BY id").fetchall()
 
-    command.upgrade(config, "0089_cable_structure")
+    command.upgrade(config, "0096_cable_structure")
 
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT fields, edited_in_erp FROM tech_operation_records ORDER BY id").fetchall() == records_before
