@@ -672,7 +672,7 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
 
   return <div className="gen-pane">
     <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} builtId={builtId} onBuiltChange={onBuiltChange}
-      onConfig={(config) => { generatedConfig.current = config; }}
+      userId={principal.user.id} onConfig={(config) => { generatedConfig.current = config; }}
       /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
       more={!hasFullAccess(principal) ? undefined : <div className="build-config">
         <label>JSON-конфигурация генератора (для эксперта)<textarea aria-label="Конфигурация автоматической сборки" rows={12} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>

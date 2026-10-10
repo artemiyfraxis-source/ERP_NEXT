@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatMinutes, pluralBlocks } from "./etkRoute";
 import { PerUnit, RouteDiagram, numberRange } from "./RouteDiagram";
@@ -198,7 +199,7 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
       {!op.gen && <>
       <Field label="Параметры" className="wide"><input aria-label={`Параметры: ${title}`} value={op.params} placeholder="напр. L = 300 мм, зачистка 5 мм" onChange={(event) => set({ params: event.target.value })} /></Field>
       <Field label="Результат — полуфабрикат" className="result"><input aria-label={`Результат: ${title}`} value={op.result} placeholder={`Полуфабрикат после «${title}»`} onChange={(event) => set({ result: event.target.value })} /></Field>
-      <Field label="Примечание" className="wide"><input aria-label={`Примечание: ${title}`} value={op.note} onChange={(event) => set({ note: event.target.value })} /></Field>
+      <Field label="Примечание" className="wide"><AutoTextarea aria-label={`Примечание: ${title}`} value={op.note} onChange={(note) => set({ note })} /></Field>
       </>}
     </div>
     {op.kind === "custom" && !op.gen && <div className="manual-text">
