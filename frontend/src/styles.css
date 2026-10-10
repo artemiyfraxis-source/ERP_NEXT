@@ -35,13 +35,49 @@
   --table-head-fg: #3d4a5c;
   --table-zebra: #f3f6f7;
   --panel-soft: #f4f7f7;
+  /* Токены, на которые уже ссылались правила, но которых не было (аудит 10.10, Общ-9). */
+  --danger: var(--tone-danger);
+  --muted: var(--panel-soft);
+  --chip-ok-bg: var(--chip-success-bg);
+  --tone-info: #1d4ed8;
+  --tone-neutral: #5f6b6d;
+  /* Чип статуса (StatusChip): приглушённый фон тона и тёмный текст того же тона, контраст ≥ 4,5:1. */
+  --chip-success-bg: #e6f4ea;
+  --chip-success-fg: #1e6b3c;
+  --chip-info-bg: #e5eefb;
+  --chip-info-fg: #1d4f91;
+  --chip-warning-bg: #fdf3d8;
+  --chip-warning-fg: #7f5300;
+  --chip-danger-bg: #fdecea;
+  --chip-danger-fg: #a8231a;
+  --chip-neutral-bg: #eef1f2;
+  --chip-neutral-fg: #4b5563;
+  /* Элементы управления одной высоты: поля, списки и кнопки — 32 px, под палец — 40 px. */
+  --control-h: 32px;
+  --control-h-cell: 28px;
+  --control-radius: 8px;
+  --focus-ring: 2px solid var(--primary);
+  --danger-soft: #fdecea;
+  --disabled-bg: #e4e8e9;
+  --disabled-fg: #5f6b6d;
+  /* Таблица: шапка 12 px обычным регистром; текст колонки с переносом переносится с этой ширины. */
+  --table-head-size: 12px;
+  --dt-wrap-max: clamp(240px, 26vw, 520px);
 }
+@media (pointer: coarse) { :root { --control-h: 40px; --control-h-cell: 40px; } }
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--background); }
 button, input, select, textarea { font: inherit; font-size: 14px; }
 button { cursor: pointer; }
-button:disabled { cursor: wait; opacity: .55; }
+/* Неактивная кнопка — «нельзя», а не «грузится» (Общ-4); «ждёт» — только у занятой (aria-busy). */
+button:disabled { cursor: not-allowed; opacity: .55; }
+button[aria-busy="true"] { cursor: progress; }
+/* Видимый фокус с клавиатуры на всём, что нажимается (Общ-7); поля показывают фокус рамкой (ниже). */
+:where(button, a, summary, [role="button"], [tabindex]:not([tabindex="-1"]), input[type="checkbox"], input[type="radio"]):focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
 
 .app-shell { height: 100dvh; display: flex; overflow: hidden; }
 .sidebar { width: 240px; flex: none; height: 100%; padding: 18px 12px; color: var(--foreground); background: var(--card); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
@@ -54,7 +90,7 @@ button:disabled { cursor: wait; opacity: .55; }
 .brand-mark.large { width: 56px; height: 56px; font-size: 24px; }
 nav { display: block; }
 .nav-group { margin: 16px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
-.nav-group h4 { margin: 0 0 6px; padding: 0 9px; color: var(--muted-foreground); font-size: 10px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; }
+.nav-group h4 { margin: 0 0 6px; padding: 0 9px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; }
 .nav-item { width: 100%; display: flex; align-items: center; border: 0; border-radius: 6px; padding: 8px 9px; color: var(--foreground); background: transparent; text-align: left; font-size: 13px; }
 .nav-item:hover { background: var(--accent); }
 .nav-item.active { color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); box-shadow: inset 2px 0 var(--primary); font-weight: 500; }
@@ -89,7 +125,7 @@ h3 { font-size: 15px; font-weight: 600; }
 .panel + .panel, .table-wrap + .panel, .panel + .table-wrap, .panel + .data-table { margin-top: 16px; }
 .split-layout > .panel { margin-top: 0; }
 .page-header p { margin: 0; color: var(--muted-foreground); font-size: 13px; }
-.eyebrow { display: block; margin-bottom: 6px; color: var(--muted-foreground); font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.eyebrow { display: block; margin-bottom: 6px; color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
 .counter, .queue-summary span { border-radius: 999px; padding: 9px 13px; background: #dfe5dc; color: #47544c; font-size: 13px; }
 .queue-summary { display: flex; align-items: center; gap: 9px; margin: 0 0 14px; }
 .empty-stages { margin: 0 0 10px; color: var(--muted-foreground); font-size: 13px; }
@@ -114,7 +150,13 @@ label { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 12.5
 /* A field inside a label keeps normal text, not the label's weight. */
 label input, label select, label textarea { color: var(--foreground); font-size: 14px; font-weight: 400; }
 label.wide { grid-column: 1 / -1; }
-input, select, textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; color: var(--foreground); background: var(--card); outline: none; }
+input, select, textarea { width: 100%; border: 1px solid var(--border); border-radius: var(--control-radius); padding: 5px 10px; color: var(--foreground); background: var(--card); outline: none; }
+/* Поле и список одной высоты с кнопкой (Общ-5): 32 px, под палец — 40 px. :where — без веса: плотные поля в
+   ячейках таблиц (24–30 px) задают свою высоту своими правилами. */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), select) { height: var(--control-h); }
+/* В строке таблицы поле ниже — 28 px, строка остаётся плотной. */
+:where(td) :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), select) { height: var(--control-h-cell); }
+input:disabled, select:disabled, textarea:disabled { color: var(--disabled-fg); background: var(--accent); cursor: not-allowed; }
 input:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
 .suggest-list { position: fixed; z-index: 1000; max-height: 256px; overflow: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .12); }
 .suggest-list li { padding: 7px 10px; border-radius: 6px; color: var(--foreground); font-size: 14px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -122,14 +164,25 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 .suggest-list .suggest-desc { color: var(--muted-foreground); }
 .suggest-list li.active { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 @media (pointer: coarse) { .suggest-list li { padding: 11px 12px; } }
-textarea { resize: vertical; }
+textarea { resize: vertical; padding: 8px 10px; }
 textarea.auto-textarea { display: block; resize: none; overflow-y: hidden; line-height: 20px; padding-top: 8px; padding-bottom: 8px; box-sizing: border-box; }
-.primary, .secondary { border: 1px solid transparent; border-radius: 10px; padding: 10px 16px; font-weight: 600; }
+/* Кнопки: основная (одна на блок), обычная, опасная (удалить, отменить — отдельно и с подтверждением), значок-текст
+   (✕, ▾, ⋯ с aria-label вместо эмодзи). Высота поля, 32 px (5 + 20 + 5 + рамка); .small — 28 px, в строке таблицы. */
+.primary, .secondary { border: 1px solid transparent; border-radius: var(--control-radius); padding: 5px 14px; font-weight: 600; line-height: 20px; }
 .primary { color: var(--primary-foreground); background: var(--primary); }
-.primary:hover { opacity: .88; }
+.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 86%, #000); }
 .secondary { border-color: var(--border); color: var(--foreground); background: var(--card); }
-.compact { width: auto; padding: 9px 16px; }
-.small { padding: 7px 11px; font-size: 12.5px; }
+.secondary:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+.primary:disabled, .secondary:disabled { opacity: 1; border-color: transparent; color: var(--disabled-fg); background: var(--disabled-bg); }
+button.danger { border: 1px solid color-mix(in srgb, var(--tone-danger) 40%, var(--border)); color: var(--tone-danger); background: var(--card); }
+button.danger:hover:not(:disabled) { border-color: var(--tone-danger); background: var(--danger-soft); }
+button.primary.danger { border-color: var(--tone-danger); color: #fff; background: var(--tone-danger); }
+button.primary.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--tone-danger) 86%, #000); }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; min-width: var(--control-h); min-height: var(--control-h); padding: 0 6px; border: 1px solid transparent; border-radius: var(--control-radius); color: var(--muted-foreground); background: transparent; font-size: 16px; line-height: 1; }
+.icon-button:hover:not(:disabled) { color: var(--foreground); background: var(--accent); }
+.compact { width: auto; padding: 5px 16px; }
+.small { padding: 4px 10px; font-size: 12.5px; line-height: 18px; }
+@media (pointer: coarse) { .primary, .secondary { min-height: var(--control-h); } }
 
 /* RQ-IMPORT-UI: the three ways to create a request (SUPPLYMAP openCreate), and the Excel/calc panels. */
 .mode-tabs { display: flex; gap: 8px; padding: 0 20px 14px; flex-wrap: wrap; }
@@ -141,11 +194,12 @@ textarea.auto-textarea { display: block; resize: none; overflow-y: hidden; line-
 .table-scroll { overflow: auto; }
 .table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { color: var(--muted-foreground); background: var(--card); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+/* Шапка таблицы — одна на приложение (Общ-2): 12 px, приглушённая, обычным регистром. */
+th { color: var(--table-head-fg); background: var(--card); font-size: var(--table-head-size); font-weight: 600; letter-spacing: 0; text-transform: none; }
 th, td { padding: 11px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; white-space: nowrap; }
 .grid.wide { width: 100%; }
 .grid td.text { min-width: 220px; max-width: 340px; white-space: normal; }
-.grid .num { min-width: 64px; text-align: right; }
+.grid .num { min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
 .filters { position: sticky; top: -30px; z-index: 8; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; padding: 4px 0; background: var(--background); }
 .filters .search { flex: 1 1 260px; min-width: 180px; }
 .filters select { width: auto; }
@@ -990,6 +1044,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table .filters { margin-bottom: 0; }
 .data-table .sort-head { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
 .data-table tr.clickable { cursor: pointer; }
+.data-table tr.clickable:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
 .data-table tr.clickable:hover td, .data-table tr.open td { background: var(--accent); }
 .data-table tr.detail > td { white-space: normal; background: var(--background); }
 /* The card of an opened row: pinned left, as wide as the visible scroll box (DataTable sets --detail-width). */
@@ -1003,6 +1058,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
    pinned while the rows scroll inside the card, columns as wide as their content, the first column as the row key. */
 .data-table .table-wrap { width: auto; max-height: calc(100dvh - 190px); overflow: auto; }
 .data-table table.grid.wide { width: max-content; min-width: 100%; }
+/* Ширина по содержимому (Общ-3): колонка `fit` не шире своего текста, свободное место — колонке `grow` или пустой
+   колонке справа (`dt-fill`), а не поровну всем. Колонка с переносом идёт одной строкой до --dt-wrap-max. */
+.data-table table.grid.wide .fit { width: 1px; }
+.data-table table.grid.wide th.fit .sort-head { white-space: nowrap; }
+.data-table table.grid.wide td.fit:not(.text) :where(*) { flex-wrap: nowrap; white-space: nowrap; }
+.data-table table.grid.wide:has(> thead th.grow) { width: 100%; }
+.data-table table.grid.wide .dt-fill { width: auto; min-width: 0; padding: 0; }
+.data-table .cell-empty { color: var(--muted-foreground); }
+.data-table td.num, .data-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table .align-center { text-align: center; }
+.data-table .align-right { text-align: right; }
 .data-table table.selectable > thead > tr > th:first-child { width: 36px; padding-right: 4px; }
 .data-table table.selectable > tbody > tr:not(.detail):not(.group-row) > td:first-child { width: 36px; padding-right: 4px; }
 .data-table th, .data-table td, .table-wrap .grid th, .table-wrap .grid td { padding: 6px 12px; line-height: 1.35; }
@@ -1023,12 +1089,26 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table td small { margin-top: 1px; color: var(--muted-foreground); font-size: 11.5px; }
 .data-table .grid td.text { min-width: 0; max-width: none; }
 /* Long text wraps only past ~40 characters, so short values keep their column narrow. */
-.data-table .cell-wrap { max-width: 340px; white-space: normal; }
+.data-table .cell-wrap { min-width: var(--cell-min, 0); max-width: var(--cell-max, var(--dt-wrap-max)); white-space: normal; }
+.data-table table.sized td.text:not(.grow) > .cell-wrap { width: max-content; }
+.data-table table.grid.wide .grow > .cell-wrap { min-width: var(--cell-min, 240px); max-width: none; }
 .data-table .table-footer { font-size: 12px; color: var(--muted-foreground); }
 .calendar-chip.active { color: var(--primary-foreground); background: var(--primary); }
 .column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
 .table-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
+.table-toolbar .small { min-height: var(--control-h); }
+
+/* Чип статуса (StatusChip, statusTone.ts) — один вид на всё приложение (Общ-1): приглушённый фон тона, слово не
+   обрезается. Тон — атрибутом data-tone, чтобы старые .tone-* и .chip экранов его не перебивали. */
+.status-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 20px; padding: 0 8px; border-radius: 999px; color: var(--chip-neutral-fg); background: var(--chip-neutral-bg); font-size: 12px; font-weight: 600; line-height: 20px; letter-spacing: 0; text-transform: none; white-space: nowrap; vertical-align: middle; }
+.status-chip[data-tone="success"] { color: var(--chip-success-fg); background: var(--chip-success-bg); }
+.status-chip[data-tone="info"] { color: var(--chip-info-fg); background: var(--chip-info-bg); }
+.status-chip[data-tone="warning"] { color: var(--chip-warning-fg); background: var(--chip-warning-bg); }
+.status-chip[data-tone="danger"] { color: var(--chip-danger-fg); background: var(--chip-danger-bg); }
+.status-chip.is-empty { padding: 0; color: var(--muted-foreground); background: none; font-weight: 400; }
+.status-chip-count { color: inherit; font-weight: 400; opacity: .8; }
+@media (pointer: coarse) { .status-chip { height: 24px; line-height: 24px; } }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .supplier-return { margin-bottom: 18px; }
 

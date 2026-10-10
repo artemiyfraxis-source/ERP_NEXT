@@ -678,7 +678,7 @@ describe("RequestsPage", () => {
     expect(screen.getByText("ООО Ромашка")).toBeInTheDocument();
     expect(screen.getByText("З-17")).toBeInTheDocument();
     expect(screen.getByText("03.10.2026")).toBeInTheDocument();
-    expect(screen.getByText("1500.00")).toBeInTheDocument();
+    expect(screen.getByText("1\u202f500", { normalizer: (text) => text })).toBeInTheDocument(); // числовая колонка DataTable — по-русски: разряды, без «.00»
 
     fireEvent.change(screen.getByLabelText("Искать во всех моих заявках"), { target: { value: "кабель" } });
     fireEvent.click(screen.getByRole("button", { name: "Найти" }));
