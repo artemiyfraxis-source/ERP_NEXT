@@ -3076,10 +3076,11 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, document }),
     }),
-  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string) =>
+  /** generatorOrigin — типовая сборка, из которой «Поправить вручную» сделало ручную (`generator_origin`, та же форма). */
+  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build`, {
       method: "POST",
-      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}) }),
+      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}), ...(generatorOrigin ? { generator_origin: generatorOrigin } : {}) }),
     }),
   issue: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/issue`, {

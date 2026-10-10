@@ -26,16 +26,22 @@ export type Box = { w: number; h: number; body: string };
 
 export const EDGE = "#17272b";
 const WIRE_COLORS: Array<[RegExp, string]> = [
-  [/желт/i, "#f2c200"], [/зел[её]н/i, "#2e9e4f"], [/черн/i, "#222"], [/красн/i, "#d7322d"], [/бел/i, "#f4f4f4"],
-  [/син/i, "#2463c7"], [/голуб/i, "#5bb4e5"], [/оранж/i, "#f08a1c"], [/коричн/i, "#7a4a24"], [/сер/i, "#8d9297"], [/фиолет/i, "#7b4bb3"],
+  [/ж[её]лт/i, "#f2c200"], [/зел[её]н/i, "#2e9e4f"], [/ч[её]рн/i, "#222"], [/красн/i, "#d7322d"], [/(?<![а-яё])бел/i, "#f4f4f4"],
+  [/син/i, "#2463c7"], [/голуб/i, "#5bb4e5"], [/оранж/i, "#f08a1c"], [/коричн/i, "#7a4a24"], [/(?<![а-яё])сер/i, "#8d9297"], [/фиолет/i, "#7b4bb3"],
+  [/розов/i, "#ee82b4"],
 ];
 const DARK_WIRE = /#(222|2463c7|7a4a24|7b4bb3|d7322d|2e9e4f|6b7c86)/;
 
-/** Цвет жилы по слову в наименовании (как SUPPLYMAP etkWireColor_), иначе серо-синий. */
-export function wireColor(name: unknown): string {
+/** Цвет жилы по слову в наименовании, null — цвета в наименовании нет (схема соединений подписывает такой провод). */
+export function wireColorKnown(name: unknown): string | null {
   const text = name == null ? "" : String(name);
   for (const [pattern, color] of WIRE_COLORS) if (pattern.test(text)) return color;
-  return "#6b7c86";
+  return null;
+}
+
+/** Цвет жилы по слову в наименовании (как SUPPLYMAP etkWireColor_), иначе серо-синий. */
+export function wireColor(name: unknown): string {
+  return wireColorKnown(name) ?? "#6b7c86";
 }
 
 function esc(value: unknown): string {

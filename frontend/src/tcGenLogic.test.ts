@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { applyGrapherGroups, grapherLengthText, initState, makeGen, parsePinList_, updateEndpoint, type GenData, type GenState } from "./tcGenLogic";
+import { applyGrapherGroups, applyOpOrder, grapherLengthText, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -349,4 +349,41 @@ it("a side the machine cannot crimp stays manual and says why; «Обе стор
   expect(g2.crimpCutSideNote_("B")).toBe("сторона В: у SPH-002T-P0.5S нет аппликатора автомата (A…) — обжим вручную");
   expect(kinds(g2.getActiveOps())).toEqual(["cutWireCrimp:A", "insTerm:A", "prsTerm:B", "insTerm:B"]);
   expect(g2.crimpCutSideNote_("A")).toBe("");
+});
+
+it("names the cut of several cables with the right Russian plural: «4 кабеля», «5 кабелей»", () => {
+  const four = (S: GenState) => ({ ...S, wires: [0, 1, 2, 3].map((idx) => ({ idx, compId: "w", length: 0, qty: 1 })), nextWireIdx: 4 });
+  const [cut] = usbGen({ both: true, patch: four }).g.getActiveOps();
+  expect(cut.label).toBe("Резка с обжимом А и В (SXH-001T-P0.6N) — 4 кабеля");
+  expect([1, 2, 4, 5, 11, 21, 22, 25].map((n) => `${n} ${pluralRu(n, "кабель", "кабеля", "кабелей")}`)).toEqual([
+    "1 кабель", "2 кабеля", "4 кабеля", "5 кабелей", "11 кабелей", "21 кабель", "22 кабеля", "25 кабелей",
+  ]);
+});
+
+it("the both-sides cut asks for CUT_WIRE+2crimp even when it falls back to the one-side card", () => {
+  expect(usbGen({ both: true, twoCard: false }).g.getActiveOps()[0]).toMatchObject({ tmplHint: "CUT_WIRE+1crimp", tmplWant: "CUT_WIRE+2crimp" });
+});
+
+it("a technologist's operation order (opOrder) reorders the ops and the config, keeps templates and goes into build_config", () => {
+  const plain = usbGen({ both: true });
+  expect(kinds(plain.g.getActiveOps())).toEqual(["cutWireCrimp:A", "insTerm:A", "insTerm:B"]);
+  const order = ["cutWire", "insTermB1", "insTermA1"];
+  const g = makeGen(plain.D, { ...plain.S, opOrder: order });
+  expect(kinds(g.getActiveOps())).toEqual(["cutWireCrimp:A", "insTerm:B", "insTerm:A"]);
+  const cfg = g.buildConfig() as Record<string, any>;
+  expect(cfg.ops.map((op: any) => [op.type, op.side, op.templateId])).toEqual([["cutWireCrimp", "A", "cw2c"], ["insTerm", "B", "insB"], ["insTerm", "A", "insA"]]);
+  expect(cfg.opOrder).toEqual(order);
+  expect(plain.g.buildConfig()).not.toHaveProperty("opOrder");
+  expect(opOrderFromConfig(cfg)).toEqual(order);
+  expect(opOrderFromConfig({ opOrder: "x" })).toEqual([]);
+  expect(opOrderFromConfig(null)).toEqual([]);
+});
+
+it("applyOpOrder keeps new operations where the generator put them and moves «first crimp» to the first one", () => {
+  const op = (opKey: string, extra: Partial<OpSpec> = {}): OpSpec => ({ type: "x", opKey, label: opKey, ...extra });
+  const ops = [op("cut"), op("prsA", { firstTerm: true }), op("new"), op("prsB", { firstTerm: false })];
+  const sorted = applyOpOrder(ops, ["cut", "prsB", "prsA", "gone"]);
+  expect(sorted.map((item) => item.opKey)).toEqual(["cut", "prsB", "new", "prsA"]);
+  expect(sorted.map((item) => item.firstTerm)).toEqual([undefined, true, undefined, false]);
+  expect(applyOpOrder(ops, [])).toBe(ops);
 });
