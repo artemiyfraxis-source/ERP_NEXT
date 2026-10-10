@@ -531,19 +531,74 @@ it("fills name, series, and type from the current article catalog", async () => 
   expect(screen.getByRole("status")).toHaveTextContent("разбор кода");
 });
 
-it("loads every cursor page before calculating article totals", async () => {
-  const second = { ...lot, id: "40000000-0000-0000-0000-000000000002", grn: "FRX.26.0000002", balance: "5", available: "4" };
+const page2 = { ...lot, id: "40000000-0000-0000-0000-000000000002", grn: "FRX.26.0000002", balance: "5", available: "4" };
+
+it("shows the first server page at once and joins the next page on «Показать ещё»", async () => {
+  const paths: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
+    if (path !== "/api/stock/item-types") paths.push(path);
     if (path === "/api/stock") return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
-    if (path === "/api/stock?after=cursor-1") return json({ lots: [second], total: 2, truncated: 1, next_cursor: null });
+    if (path === "/api/stock?after=cursor-1") { await gate; return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null }); }
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<WarehousePage />);
 
+  // The first page is on screen while the page2 was never asked for.
+  expect(await screen.findByRole("button", { name: "Показать партии (1)" })).toBeInTheDocument();
+  expect(paths).toEqual(["/api/stock"]);
+  expect(screen.getByRole("status")).toHaveTextContent("Показано 1 из 2");
+
+  fireEvent.click(screen.getByRole("button", { name: "Показать ещё" }));
+  expect(await screen.findByRole("button", { name: "Загружаем…" })).toBeDisabled();
+  release();
   expect(await screen.findByRole("button", { name: "Показать партии (2)" })).toBeInTheDocument();
   expect(screen.getByText(/^15\b/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Показать ещё" })).toBeNull();
+});
+
+it("«Загрузить всё» reads every remaining page", async () => {
+  const third = { ...lot, id: "40000000-0000-0000-0000-000000000003", grn: "FRX.26.0000003" };
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path !== "/api/stock/item-types") paths.push(path);
+    if (path === "/api/stock") return json({ lots: [lot], total: 3, truncated: 2, next_cursor: "c1" });
+    if (path === "/api/stock?after=c1") return json({ lots: [page2], total: 3, truncated: 1, next_cursor: "c2" });
+    if (path === "/api/stock?after=c2") return json({ lots: [third], total: 3, truncated: 0, next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Загрузить всё" }));
+  expect(await screen.findByRole("button", { name: "Показать партии (3)" })).toBeInTheDocument();
+  expect(paths).toEqual(["/api/stock", "/api/stock?after=c1", "/api/stock?after=c2"]);
+});
+
+it("updates only the edited row after a write-off and does not re-read the list", async () => {
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path !== "/api/stock/item-types") paths.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/stock") return json({ lots: [lot, page2], total: 2, truncated: 0, next_cursor: null });
+    if (path.endsWith("/writeoff")) return json({ lot: { ...lot, version: 5, written_off: "2", balance: "8", available: "8" } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (2)" }));
+  fireEvent.click((await screen.findAllByRole("button", { name: "− Списать" }))[0]);
+  fireEvent.change(await screen.findByLabelText("Количество"), { target: { value: "2" } });
+  fireEvent.change(screen.getByLabelText("Назначение списания"), { target: { value: "FRX.001" } });
+  fireEvent.change(screen.getByLabelText("Основание"), { target: { value: "Выдача в производство" } });
+  fireEvent.click(screen.getByRole("button", { name: "Списать" }));
+
+  await waitFor(() => expect(paths.some((entry) => entry.endsWith("/writeoff"))).toBe(true));
+  await waitFor(() => expect(screen.getByText("8 шт", { exact: false })).toBeInTheDocument());
+  expect(paths.filter((entry) => entry === "GET /api/stock")).toHaveLength(1);
 });
 
 const layout = { layout: { racks: 20, shelves: 6, perRack: {} } };

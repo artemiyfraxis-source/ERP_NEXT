@@ -1674,6 +1674,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-page .page-actions { flex-wrap: wrap; align-items: center; }
 .stock-page .page-actions > button, .stock-page .more-menu > button, .stock-toolbar button { height: 36px; padding: 0 14px; font-size: 13px; white-space: nowrap; }
 .stock-toolbar { align-items: center; gap: 8px 14px; margin-bottom: 8px; }
+.table-more { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin: 8px 0; }
 .stock-toolbar .search, .stock-toolbar select { height: 36px; padding: 0 10px; font-size: 13px; }
 .stock-toolbar .inline-select { display: flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; }
 .stock-toolbar .inline-select select { width: auto; }

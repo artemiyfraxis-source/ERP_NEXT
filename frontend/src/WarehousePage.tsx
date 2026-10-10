@@ -59,6 +59,8 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [warehouse, setWarehouse] = useState("");
@@ -108,33 +110,47 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
     return () => observer.disconnect();
   }, [flat]);
 
-  async function loadAllLots() {
-    const loaded: WarehouseLot[] = [];
-    let cursor: string | undefined;
-    let total = 0;
-    do {
-      const page = await warehouseApi.list({ after: cursor, query, includeZero, warehouse });
-      loaded.push(...page.lots);
-      total = page.total;
-      cursor = page.next_cursor ?? undefined;
-    } while (cursor);
-    return { lots: [...new Map(loaded.map((lot) => [lot.id, lot])).values()], total };
-  }
-
+  /** The first server page only: the table is on screen after one request; the rest comes on demand. */
   async function reload() {
     const version = ++requestVersion.current;
     setLoading(true);
     setError("");
     try {
-      const result = await loadAllLots();
+      const page = await warehouseApi.list({ query, includeZero, warehouse });
       if (version !== requestVersion.current) return;
-      setLots(result.lots);
-      setTotal(result.total);
+      setLots(mergeLots([], page.lots));
+      setTotal(page.total);
+      setCursor(page.next_cursor);
     } catch (reason) {
       if (version !== requestVersion.current) return;
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить склад");
     } finally {
       if (version === requestVersion.current) setLoading(false);
+    }
+  }
+
+  /** «Показать ещё» — the next server page; «Загрузить всё» — every remaining page (group totals need them). */
+  async function loadMore(all: boolean) {
+    if (!cursor || loadingMore) return;
+    const version = requestVersion.current;
+    setLoadingMore(true);
+    setError("");
+    try {
+      let next: string | null = cursor;
+      let loaded = lots;
+      do {
+        const page = await warehouseApi.list({ after: next, query, includeZero, warehouse });
+        if (version !== requestVersion.current) return;
+        loaded = mergeLots(loaded, page.lots);
+        setLots(loaded);
+        setTotal(page.total);
+        next = page.next_cursor;
+        setCursor(next);
+      } while (all && next);
+    } catch (reason) {
+      if (version === requestVersion.current) setError(reason instanceof Error ? reason.message : "Не удалось загрузить склад");
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -168,10 +184,11 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
     setBusy(key);
     setError("");
     try {
-      await operation();
-      const result = await loadAllLots();
-      setLots(result.lots);
-      setTotal(result.total);
+      const result = await operation();
+      // The server answers with the touched lot(s): only those rows change, nothing is re-read.
+      const touched = touchedLots(result);
+      if (touched) setLots((current) => replaceLots(current, touched));
+      else await reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Складская операция не выполнена");
       throw reason;
@@ -316,9 +333,32 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           />)}</tbody>
         </table>
       </div>}
+      {cursor && <div className="table-more">
+        <span className="page-sub" role="status">Показано {lots.length} из {total}. Итоги по артикулам считаются по показанным партиям.</span>
+        <button className="secondary small" disabled={loadingMore || loading} onClick={() => void loadMore(false)}>{loadingMore ? "Загружаем…" : "Показать ещё"}</button>
+        <button className="secondary small" disabled={loadingMore || loading} onClick={() => void loadMore(true)}>Загрузить всё</button>
+      </div>}
       {!lots.length && !loading && <div className="empty">{includeZero ? "Склад пуст." : "Позиций с остатком нет. Включите «показывать нулевые», чтобы увидеть израсходованные партии."}</div>}
     </section>
   );
+}
+
+/** Lots with the same id once, in the order they came. */
+function mergeLots(current: WarehouseLot[], more: WarehouseLot[]) {
+  return [...new Map([...current, ...more].map((lot) => [lot.id, lot])).values()];
+}
+
+/** The lots an operation returned (`lot` or `lots`), or null when its answer names none. */
+function touchedLots(result: unknown): WarehouseLot[] | null {
+  const answer = result as { lot?: WarehouseLot; lots?: WarehouseLot[] } | null | undefined;
+  if (answer?.lot?.id) return [answer.lot];
+  if (Array.isArray(answer?.lots) && answer.lots.every((lot) => lot?.id)) return answer.lots;
+  return null;
+}
+
+function replaceLots(current: WarehouseLot[], touched: WarehouseLot[]) {
+  const byId = new Map(touched.map((lot) => [lot.id, lot]));
+  return current.map((lot) => byId.has(lot.id) ? { ...lot, ...byId.get(lot.id)! } : lot);
 }
 
 type WarehouseArticle = {
