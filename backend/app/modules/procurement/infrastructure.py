@@ -30,12 +30,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
 from app.shared.identity import Actor
 from app.shared.persistence import (
     Base,
     SqlAlchemyAuditRepository,
     SqlAlchemyOutboxRepository,
+    check_read_version,
+    note_written_version,
+    track_read_versions,
 )
 
 from .application import StatusNotificationDue, StoredInvoiceFile, SupplierOrder, SupplierOrderDocument
@@ -677,9 +679,12 @@ class SqlAlchemyProcurementRepository:
         if stored is None:
             self.session.add(incoming)
             return
+        # Compare-and-swap against the version this transaction read (StockVersionConflict on a lost race).
+        check_read_version(self.session, stored, line.version)
         for column in ProcurementLineRow.__table__.columns:
             if column.name not in _SWEEP_OWNED:
                 setattr(stored, column.name, getattr(incoming, column.name))
+        note_written_version(self.session, stored)
 
     def delete(self, line_id: UUID, expected_version: int) -> bool:
         # Core DELETE guarded by the version: a concurrent edit wins and nothing is touched. Released «Со склада»
@@ -840,6 +845,10 @@ def _cover_domain(row: ProcurementStockCoverRow) -> StockCover:
     )
 
 
+track_read_versions(ProcurementLineRow)
+track_read_versions(ProcurementStockCoverRow)
+
+
 class SqlAlchemyStockCoverRepository:
     """«Со склада» reserves. Read by Procurement (cover/release), Fulfillment (a kit of the same project takes
     them over) and the warehouse screen (who holds a lot's РЕЗЕРВ)."""
@@ -900,9 +909,11 @@ class SqlAlchemyStockCoverRepository:
         if stored is None:
             self.session.add(incoming)
             return
+        check_read_version(self.session, stored, cover.version)
         for column in ProcurementStockCoverRow.__table__.columns:
             if column.name != "id":
                 setattr(stored, column.name, getattr(incoming, column.name))
+        note_written_version(self.session, stored)
 
 
 class SqlAlchemyProcurementUnitOfWork:
@@ -918,9 +929,9 @@ class SqlAlchemyProcurementUnitOfWork:
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         self.files = SqlAlchemyInvoiceFileRepository(self.session)
-        # «Со склада»: the cover and the lot's РЕЗЕРВ move in one transaction.
+        # «Со склада» covers stay owned by procurement; the warehouse reserve is
+        # supplied by the composite stock UoW in app.workflows.procurement_stock.
         self.stock_covers = SqlAlchemyStockCoverRepository(self.session)
-        self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

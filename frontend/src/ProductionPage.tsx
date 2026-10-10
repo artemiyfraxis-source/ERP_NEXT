@@ -26,6 +26,7 @@ import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay } from "./format";
 import { MasterBoard } from "./MasterBoard";
 import { AutoplanPanel } from "./AutoplanPanel";
+import { JobPanel } from "./JobPlan";
 import { feedsText, isFirst, isNetwork, previousStage, requiredNote, requiredOf } from "./productionGraph";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
@@ -255,8 +256,10 @@ function CalendarForm({ operators, close }: { operators: ProductionOperator[]; c
       {sortedAbsences.length > 0
         ? <div className="table-wrap calendar-absences"><table className="grid"><thead><tr><th>Оператор</th><th>Вид</th><th>С</th><th>По</th><th></th></tr></thead><tbody>
           {sortedAbsences.map(({ absence, index }) => <tr key={absence.id ?? `${absence.operator_id}:${absence.from_date}:${index}`}>
-            <td>{operatorName(absence.operator_id)}</td><td>{absence.kind}</td><td>{formatDay(absence.from_date)}</td><td>{formatDay(absence.to_date)}</td>
-            <td className="row-end"><button type="button" className="link-button danger-link" aria-label={`Удалить отсутствие: ${operatorName(absence.operator_id)}, ${formatDay(absence.from_date)}`} onClick={() => setAbsences((current) => current.filter((_, position) => position !== index))}>Удалить</button></td>
+            <td>{absence.operator_name ?? operatorName(absence.operator_id)}</td><td>{absence.kind}</td><td>{formatDay(absence.from_date)}</td><td>{formatDay(absence.to_date)}</td>
+            <td className="row-end">{absence.leave_request_id
+              ? <small className="cal-leave" title="Зарегистрированное заявление: снимается отзывом заявления в «Моей карточке»">по заявлению</small>
+              : <button type="button" className="link-button danger-link" aria-label={`Удалить отсутствие: ${operatorName(absence.operator_id)}, ${formatDay(absence.from_date)}`} onClick={() => setAbsences((current) => current.filter((_, position) => position !== index))}>Удалить</button>}</td>
           </tr>)}
         </tbody></table></div>
         : !busy && <small className="cal-empty">Отсутствий нет — отпуска и больничные добавляются выше.</small>}
@@ -458,7 +461,11 @@ function TaskDetail({ task, initialOperationId = "", tasks, operators, skills, h
 }) {
   const [operationId, setOperationId] = useState(initialOperationId);
   const cancelled = task.status === "Отменено";
-  const edit = canEdit && !cancelled;
+  const done = task.status === "Выполнено";
+  const edit = canEdit && !cancelled && !done;
+  // «Выполнено» у цеха — когда финальный этап сдал тираж (сервер проверяет то же); у площадки — по «Сдано N шт».
+  const final = task.operations.find((item) => item.final) ?? task.operations[task.operations.length - 1];
+  const finalDone = Boolean(final) && Number(final.fact?.good ?? 0) >= Number(final.required_quantity ?? task.quantity);
   const nameOf = (id: string) => operators.find((operator) => operator.id === id)?.name ?? id;
   const operation = task.operations.find((item) => item.id === operationId) ?? null;
   const rows: GanttRow[] = task.operations.map((item) => ({
@@ -480,13 +487,19 @@ function TaskDetail({ task, initialOperationId = "", tasks, operators, skills, h
   return <div className="panel production-card">
     <button className="secondary small" onClick={back}>← Экран мастера</button>
     <div className="procurement-title">
-      <div><strong>{task.number} · {itemId(task)}{task.name ? ` · ${task.name}` : ""}</strong><small>{task.project} · кол-во {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · запущено {formatDate(task.created_at)}{cancelled ? " · отменено" : ""}{edit ? " · нажми на операцию, чтобы назначить операторов" : ""}</small></div>
-      <span className="status">{task.status}</span>
+      <div><strong>{task.number} · {itemId(task)}{task.name ? ` · ${task.name}` : ""}</strong><small>{task.project} · кол-во {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · запущено {formatDate(task.created_at)}{task.handed_to ? ` · отдано в ${task.handed_to}` : ""}{edit && !task.handed_to ? " · нажми на операцию, чтобы назначить операторов" : ""}</small></div>
+      <span className={`status${done ? " status-done" : cancelled ? " status-cancelled" : ""}`}>{task.status}</span>
     </div>
     {canEdit && <div className="page-actions">
-      {edit && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-      <button className="secondary small" disabled={Boolean(busy)} onClick={toggleCancel}>{cancelled ? "Вернуть в работу" : "Отменить задание"}</button>
+      {edit && !task.handed_to && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
+      {edit && !task.handed_to && finalDone && <button className="primary small" disabled={Boolean(busy)} onClick={() => void mutate(`done:${task.id}`, () => productionApi.setDone(task.id, task.version, true))}>Отметить «Выполнено»</button>}
+      {done && <button className="secondary small" disabled={Boolean(busy)} onClick={() => {
+        if (!window.confirm(`Вернуть задание ${task.number} в работу?`)) return;
+        void mutate(`done:${task.id}`, () => productionApi.setDone(task.id, task.version, false));
+      }}>Вернуть в работу</button>}
+      {!done && <button className="secondary small" disabled={Boolean(busy)} onClick={toggleCancel}>{cancelled ? "Вернуть в работу" : "Отменить задание"}</button>}
     </div>}
+    {!cancelled && <JobPanel task={task} operators={operators} canEdit={canEdit} busy={Boolean(busy)} mutate={mutate} />}
     <Gantt rows={rows} labelHead="Операция" week={week} onWeekChange={setWeek} holidays={holidays} />
     {operation && edit && <AssignCard
       task={task} operation={operation} tasks={tasks} operators={operators} skills={skills}

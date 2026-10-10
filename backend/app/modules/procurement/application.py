@@ -11,7 +11,6 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 import logging
 
-from app.modules.warehouse.domain import StockLot, WarehouseValidationError
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
@@ -63,6 +62,7 @@ from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate
 from .invoice_file import invoice_date as invoice_day
 from .document_items import SupplierDocument, read_supplier_document
 from .document_match import DocumentMatch, OrderLineCandidate, match_document_items
+from .stock_port import StockLotView, StockReservationError, StockReservationPort
 
 
 _log = logging.getLogger(__name__)
@@ -2107,7 +2107,7 @@ _OFFLINE_EVENTS = {
 }
 
 
-def set_procurement_offline_status(command: ProcurementOfflineCommand, uow: UnitOfWork) -> ProcurementLine:
+def set_procurement_offline_status(command: ProcurementOfflineCommand, uow: StockCoverUnitOfWork) -> ProcurementLine:
     with uow:
         current = _load_versioned(command.line_id, command.expected_version, uow)
         if command.action is OfflineAction.APPROVAL:
@@ -2210,24 +2210,9 @@ class StockCoverRepository(Protocol):
     def add(self, cover: StockCover) -> None: ...
 
 
-class StockLotRepository(Protocol):
-    """Port to the warehouse lots: the cover reserves on the lot through the lot's own РЕЗЕРВ rules."""
-
-    def get(self, lot_id: UUID) -> StockLot | None: ...
-    def list(
-        self,
-        limit: int = 200,
-        after_id: UUID | None = None,
-        query: str = "",
-        warehouse: str | None = None,
-        include_zero: bool = False,
-    ) -> Sequence[StockLot]: ...
-    def add(self, lot: StockLot) -> None: ...
-
-
 class StockCoverUnitOfWork(UnitOfWork, Protocol):
     stock_covers: StockCoverRepository
-    warehouse: StockLotRepository
+    stock: StockReservationPort
 
 
 @dataclass(frozen=True)
@@ -2267,7 +2252,7 @@ class ReleaseStockCoverCommand:
 class StockCandidates:
     line: ProcurementLine
     query: str
-    lots: list[StockLot]
+    lots: list[StockLotView]
     # Active «Со склада» covers on the listed lots (who already holds their РЕЗЕРВ), by lot id.
     holders: dict[UUID, list[StockCover]]
     covers: list[StockCover]
@@ -2316,9 +2301,9 @@ def stock_candidates(
             text for text in (str(line.design_article or "").strip(), line.calculated_name.strip()) if text
         ]
         used = ""
-        found: list[StockLot] = []
+        found: list[StockLotView] = []
         for text in searches:
-            found = list(uow.warehouse.list(limit=500, query=text))
+            found = list(uow.stock.list(limit=500, query=text))
             used = text
             if found:
                 break
@@ -2372,11 +2357,11 @@ def cover_from_stock(command: CoverFromStockCommand, uow: StockCoverUnitOfWork) 
                 unit=current.calculated_unit,
             )
         else:
-            lot = uow.warehouse.get(command.lot_id)
+            lot = uow.stock.get(command.lot_id)
             if lot is None:
                 raise KeyError(f"Warehouse lot not found: {command.lot_id}")
             updated, trimmed = current.cover_from_stock(command.quantity, lot.unit, command.actor)
-            uow.warehouse.add(_reserve_on(lot, quantity))
+            _reserve_on(lot, quantity, uow.stock)
             cover = _new_cover(
                 current, command, trimmed, lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
                 storage_location=lot.storage_location, unit=lot.unit,
@@ -2428,11 +2413,12 @@ def _new_cover(
     )
 
 
-def _reserve_on(lot: StockLot, quantity: Decimal) -> StockLot:
-    """The lot with `quantity` more in РЕЗЕРВ, or the buyer-facing refusal when it has less available."""
+def _reserve_on(lot: StockLotView, quantity: Decimal, stock: StockReservationPort) -> None:
+    """Reserve against the validated lot version, or return the buyer-facing refusal."""
     try:
-        return lot.reserve(quantity)
-    except WarehouseValidationError as error:
+        stock.reserve(lot.id, quantity, expected_version=lot.version)
+    except StockReservationError as error:
+        lot = error.lot
         raise ProcurementValidationError(
             f"На партии {_lot_label(lot.grn, lot.package)} доступно {_shown(max(lot.available, Decimal('0')))}"
             f" {lot.unit} — зарезервировать {_shown(quantity)} нельзя"
@@ -2448,7 +2434,7 @@ def bind_stock_cover(command: BindStockCoverCommand, uow: StockCoverUnitOfWork) 
         cover = uow.stock_covers.get(command.cover_id)
         if cover is None or cover.line_id != current.id:
             raise KeyError(f"Stock cover not found: {command.cover_id}")
-        lot = uow.warehouse.get(command.lot_id)
+        lot = uow.stock.get(command.lot_id)
         if lot is None:
             raise KeyError(f"Warehouse lot not found: {command.lot_id}")
         updated = current.bind_stock_cover(lot.unit, command.actor)
@@ -2456,7 +2442,7 @@ def bind_stock_cover(command: BindStockCoverCommand, uow: StockCoverUnitOfWork) 
             lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
             storage_location=lot.storage_location, unit=lot.unit,
         )
-        uow.warehouse.add(_reserve_on(lot, bound.quantity))
+        _reserve_on(lot, bound.quantity, uow.stock)
         uow.stock_covers.add(bound)
         _lot_audit(lot.id, "warehouse.reserved_for_procurement", bound, bound.quantity, command.actor, command.now, uow)
         _save_transition(
@@ -2495,12 +2481,13 @@ def _release_covers(
     done: list[StockCover] = []
     for cover in covers:
         if cover.lot_id is not None:
-            lot = uow.warehouse.get(cover.lot_id)
+            lot = uow.stock.get(cover.lot_id)
             if lot is None:
                 raise KeyError(f"Warehouse lot not found: {cover.lot_id}")
             try:
-                uow.warehouse.add(lot.release_reserve(cover.quantity))
-            except WarehouseValidationError as error:
+                uow.stock.release(lot.id, cover.quantity, expected_version=lot.version)
+            except StockReservationError as error:
+                lot = error.lot
                 raise ProcurementValidationError(
                     f"На партии {_lot_label(lot.grn, lot.package)} резерв меньше, чем держит «Со склада» — "
                     "проверьте РЕЗЕРВ на складе"

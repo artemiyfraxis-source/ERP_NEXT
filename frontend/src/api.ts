@@ -723,6 +723,63 @@ export interface ProductionTask {
   planned_finish: string | null;
   assigned: number;
   operations: ProductionOperation[];
+  /** План задания (Цель 2): техкарта и ревизия норм, режим передачи, партия, «первые k раньше», команда. */
+  techcard_id?: string | null;
+  techcard_revision?: number | null;
+  flow_mode?: ProductionFlowMode;
+  transfer_batch?: number | null;
+  early_quantity?: number | null;
+  team?: string[];
+  /** «Сдано N шт» площадки без отменённых; null — не считалось в этом ответе. */
+  delivered?: number | null;
+}
+
+export type ProductionFlowMode = "sequential" | "parallel" | "mixed";
+
+export interface ProductionDelivery {
+  id: string;
+  site: string;
+  quantity: number;
+  delivered_at: string;
+  delivered_by: string;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+}
+
+export interface ProductionFlowStep {
+  operation_id: string;
+  position: number;
+  stage: string;
+  code: string;
+  people: string;
+  operator_ids: string[];
+  start: string;
+  first_out: string;
+  finish: string;
+  wait_seconds: number;
+}
+
+export interface ProductionFlow {
+  task: ProductionTask;
+  modes: { value: ProductionFlowMode; name: string }[];
+  thresholds: { notice: string; limit: string };
+  plan: {
+    anchor: string;
+    transfer_batch: number;
+    first_ready: string;
+    first_quantity: number;
+    finish: string;
+    baseline_finish: string;
+    baseline_early_ready: string | null;
+    delay_percent: string | null;
+    level: "" | "ok" | "notice" | "limit";
+    work_seconds: number;
+    warnings: string[];
+    steps: ProductionFlowStep[];
+  };
+  deliveries: ProductionDelivery[];
+  delivered: number;
+  norms: { techcard_id: string | null; revision: number | null; current_revision: number | null; outdated: boolean };
 }
 
 export interface ProductionPlanEvent {
@@ -815,6 +872,10 @@ export interface ProductionAbsence {
   from_date: string;
   to_date: string;
   kind: string;
+  /** Отсутствие по зарегистрированному заявлению: календарь его показывает, но не правит и не сохраняет. */
+  leave_request_id?: string | null;
+  /** ФИО из справочника сотрудников (у заявления — любой сотрудник, не только монтажник). */
+  operator_name?: string | null;
 }
 
 export interface ProductionShift {
@@ -1112,14 +1173,75 @@ export interface ReferenceBase {
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
-export type CableKind = "coax" | "wire" | "other";
+export type CableKind = "coax" | "wire" | "multi" | "other";
 
 export interface BasesResult {
   bases: ReferenceBase[];
   /** Records per stored tab and per cable list — the counts on the tab chips. */
   tabs?: Partial<Record<TechOperationTab, number>>;
   cables?: Record<CableKind, number>;
+  /** Rows of «Сечения AWG ↔ мм²». */
+  gauges?: number;
 }
+
+/** «Сечения AWG ↔ мм²»: one conductor size (backend `references/cable_structure.py`). */
+export interface WireGauge {
+  id: string;
+  /** «28», «1/0»; empty — a ГОСТ-only size. */
+  awg: string;
+  section_mm2: number;
+  conductor_d_mm: number | null;
+  strands: string;
+  label: string;
+  /** Hook-up wires on this size. */
+  wires: number;
+}
+
+/** «Монтажные провода»: the structure of a БД.ПРОВ wire; the conductor is a size row. */
+export interface HookupWire {
+  series: string;
+  gauge_id: string;
+  insulation: string;
+  outer_d_mm: number | null;
+  voltage_v: number | null;
+  temp_min_c: number | null;
+  temp_max_c: number | null;
+}
+
+export interface CoaxCard {
+  id: string;
+  name: string;
+  family: string;
+  layers: Array<{ layer: string; label: string; material: string; diameter_mm: number | null }>;
+  connectors: Array<{ family: string; max_ghz: number | null; max_note: string; span_to_ghz: number | null }>;
+  /** VSWR — an acceptance norm proposed for the VNA check, not a datasheet value. `peak` — the «Peak» marker. */
+  /** `vswr_ref` — what a reference assembly's datasheet guarantees (to settle a disputed reject). */
+  markers: Array<{ freq_mhz: number | null; peak: boolean; vswr_max: number | null; vswr_ref: number | null; note: string }>;
+  /** As the datasheet publishes it, plus the derived dB/m; `interpolated` + `basis` — not published at that frequency. */
+  attenuation: Array<{
+    freq_mhz: number; kind: "nominal" | "typical" | "max"; value: number; unit: string; ref_length_m: number;
+    temp_c: number | null; loss_db_m: number; derived: boolean; interpolated: boolean; source: string; basis: string;
+  }>;
+  span_from_mhz: number | null;
+  span_to_ghz: number | null;
+  span_note: string;
+  /** Cut-off of the first higher mode (TE11) — physics; not the rated limit `max_operating_ghz`. */
+  fc_ghz: number | null;
+  fc_note: string;
+  max_operating_ghz: number | null;
+  max_operating_note: string;
+  /** Datasheet wording behind a number («50 ±2», «>165 (EZ)»), and `mechanical` notes. */
+  param_notes: Record<string, string>;
+  notes: string;
+  sources: string[];
+  confidence: string;
+  verified: boolean;
+  changes: string[];
+  params: Partial<Record<CoaxParam, number>>;
+}
+
+export type CoaxParam = "impedance_ohm" | "velocity_pct" | "capacitance_pf_m" | "shielding_db" | "bend_static_mm"
+  | "bend_dynamic_mm" | "temp_min_c" | "temp_max_c" | "voltage_max_v" | "max_power_w" | "max_power_at_mhz" | "weight_g_m";
 
 /** The D1·D2·D3 row the ETK generator uses for a coax cable (СПР.КАБ · коаксиал). */
 export interface CableDiameters {
@@ -1142,12 +1264,30 @@ export interface CableRow {
   dia: CableDiameters | null;
   /** No own D row: the row of the same family («RG58» for «RG-58 A/U»), to copy from. */
   dia_hint: CableDiameters | null;
+  /** Coax: the card by the exact name (`card_exact`) or of the family («RG-58» for «RG-58 C/U»). */
+  card?: CoaxCard | null;
+  card_exact?: boolean;
+  /** Монтажный wire: its structure, or — not structured yet — why, and what the БД.ПРОВ row suggests. */
+  hookup?: HookupWire | null;
+  hookup_problem?: string;
+  hookup_suggestion?: Omit<HookupWire, "gauge_id"> & { gauge_id: string };
 }
 
 export interface CablesResult {
   columns: string[];
   counts: Record<CableKind, number>;
   rows: CableRow[];
+  gauges?: WireGauge[];
+}
+
+export interface HookupPayload {
+  series: string;
+  gauge_id: string;
+  insulation: string;
+  outer_d_mm: string;
+  voltage_v: string;
+  temp_min_c: string;
+  temp_max_c: string;
 }
 
 export interface TechOperationRecord {
@@ -2465,7 +2605,7 @@ export const productionApi = {
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
     method: "PUT",
-    body: JSON.stringify({ holidays, shift, absences: absences.map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
+    body: JSON.stringify({ holidays, shift, absences: absences.filter((item) => !item.leave_request_id).map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
   }),
   skills: () => api<{ skills: ProductionSkill[]; operation_codes?: Array<{ code: string; name: string }> }>("/api/production/skills"),
   launchable: () => api<{ items: ProductionLaunchable[] }>("/api/production/launchable"),
@@ -2505,7 +2645,31 @@ export const productionApi = {
       method: "POST",
       body: JSON.stringify({ version, site }),
     }),
-  schedule: (taskId: string, version: number, replan: boolean, maxCrew: number) =>
+  /** «План задания»: расчёт по этапам в датах смены, сдачи площадки, свежесть норм ЭТК. */
+  flow: (taskId: string) => api<ProductionFlow>(`/api/production/tasks/${taskId}/flow`),
+  updateFlow: (taskId: string, version: number, settings: { flow_mode: ProductionFlowMode; transfer_batch: number | null; early_quantity: number | null; team: string[] }) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/flow`, {
+      method: "PUT", body: JSON.stringify({ version, ...settings }),
+    }),
+  refreshNorms: (taskId: string, version: number) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/norms/refresh`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Сдано N шт»; quantity null — весь остаток. */
+  deliver: (taskId: string, version: number, quantity: number | null) =>
+    api<{ task: ProductionTask; delivery: ProductionDelivery }>(`/api/production/tasks/${taskId}/deliveries`, {
+      method: "POST", body: JSON.stringify({ version, quantity }),
+    }),
+  cancelDelivery: (taskId: string, deliveryId: string, version: number) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/deliveries/${deliveryId}/cancel`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Выполнено» (done) / «Вернуть в работу». */
+  setDone: (taskId: string, version: number, done: boolean) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/status`, {
+      method: "POST", body: JSON.stringify({ version, done }),
+    }),
+  schedule:(taskId: string, version: number, replan: boolean, maxCrew: number) =>
     api<{ variants: ProductionScheduleVariant[] }>(`/api/production/tasks/${taskId}/schedule`, {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew }),
     }),
@@ -2661,6 +2825,11 @@ export const referencesApi = {
     api<CableRow>(`/api/references/cables/${recordId}/kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
   saveCableDiameters: (payload: { cable: string; dia_id: string | null; old: Record<string, string>; value: Record<string, string> }) =>
     api<CableDiameters>("/api/references/cables/diameters", { method: "PUT", body: JSON.stringify(payload) }),
+  saveHookup: (recordId: string, payload: HookupPayload & { old: HookupPayload | null }) =>
+    api<{ hookup: HookupWire; record: TechOperationRecord }>(`/api/references/cables/${recordId}/hookup`, { method: "PUT", body: JSON.stringify(payload) }),
+  saveGauge: (gaugeId: string | null, payload: { awg: string; section_mm2: string; conductor_d_mm: string; strands: string }) =>
+    api<WireGauge>(gaugeId ? `/api/references/wire-gauges/${gaugeId}` : "/api/references/wire-gauges", { method: gaugeId ? "PUT" : "POST", body: JSON.stringify(payload) }),
+  deleteGauge: (gaugeId: string) => api<void>(`/api/references/wire-gauges/${gaugeId}`, { method: "DELETE" }),
   maps: () => api<ReferenceMaps>("/api/references/maps"),
   saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
     method: "PUT",
@@ -2924,6 +3093,78 @@ export const employeeCardApi = {
   me: () => api<EmployeeCard>("/api/employee-card/me"),
   /** Чужая — только с доступом к разделу «Сотрудники» (403 без него, 404 — нет такого сотрудника). */
   byId: (id: string) => api<EmployeeCard>(`/api/employee-card/${encodeURIComponent(id)}`),
+};
+
+/**
+ * Заявления на отпуск и отгул («Моя карточка» → «Отпуска и заявления»): Сотрудник → Руководитель → Кадры, каждый шаг —
+ * подпись PIN или паролем. `version` — версия строки: шаг с чужой версией сервер отклоняет (409).
+ */
+export type LeaveKind = "vacation" | "day_off";
+export type LeaveStatus = "draft" | "signed" | "approved" | "registered" | "rejected" | "withdrawn";
+export type LeaveSignatureView = {
+  step: string;
+  step_label: string;
+  decision: string;
+  decision_label: string;
+  signer_name: string;
+  signed_at: string;
+  method_label: string;
+  content_version: number;
+  content_sha256: string;
+  comment: string;
+};
+export type LeaveRequestView = {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  kind: LeaveKind;
+  kind_label: string;
+  from_date: string;
+  to_date: string;
+  days: number;
+  comment: string;
+  status: LeaveStatus;
+  status_label: string;
+  /** Кто решает сейчас: ФИО руководителя (и замещающего) или «Кадры»; null — решений не ждёт. */
+  waiting_for: string | null;
+  content_version: number;
+  content_sha256: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  signatures: LeaveSignatureView[];
+  actions: { edit: boolean; sign: boolean; decide: boolean; withdraw: boolean };
+};
+export type LeaveBalance = { year: number; norm: number; registered: number; pending: number; left: number };
+export type LeaveOverview = {
+  today: string;
+  balance: LeaveBalance;
+  own: LeaveRequestView[];
+  /** Ждут решения этого человека (руководитель, замещающий, «Кадры»). */
+  inbox: LeaveRequestView[];
+  /** Журнал кадров (все, кроме черновиков); null — без доступа «Кадры». */
+  journal: LeaveRequestView[] | null;
+  hr: boolean;
+};
+export type LeaveDraft = { kind: LeaveKind; from_date: string; to_date: string; comment: string };
+
+export const leaveApi = {
+  overview: () => api<LeaveOverview>("/api/leave-requests"),
+  waiting: () => api<{ count: number }>("/api/leave-requests/waiting"),
+  create: (draft: LeaveDraft) =>
+    api<LeaveRequestView>("/api/leave-requests", { method: "POST", body: JSON.stringify(draft) }),
+  update: (id: string, version: number, draft: LeaveDraft) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...draft, version }) }),
+  sign: (id: string, version: number, secret: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/sign`, { method: "POST", body: JSON.stringify({ version, secret }) }),
+  decide: (id: string, version: number, approve: boolean, comment: string, secret: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/decision`, {
+      method: "POST", body: JSON.stringify({ version, approve, comment, secret }),
+    }),
+  withdraw: (id: string, version: number, secret: string, comment: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/withdraw`, {
+      method: "POST", body: JSON.stringify({ version, secret, comment }),
+    }),
 };
 
 /** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */

@@ -18,6 +18,40 @@ class ProductionValidationError(ValueError):
 class ProductionStatus(str, Enum):
     RUNNING = "Запущено"
     CANCELLED = "Отменено"
+    # Цель 2: задание закрыто — изделия сданы (ЖУК: «Сдано N шт» на весь тираж; цех: финальный этап сдал тираж).
+    DONE = "Выполнено"
+
+
+class FlowMode(str, Enum):
+    """Как партия идёт по этапам задания (виды движения предметов труда)."""
+    SEQUENTIAL = "sequential"  # последовательно: следующий этап берёт всю партию, когда предыдущий её закончил
+    PARALLEL = "parallel"  # параллельно: каждая передаточная партия уходит сразу, этап может ждать следующую
+    MIXED = "mixed"  # параллельно-последовательно: партиями, но этап работает без простоев (как ProdSchedule.gs)
+
+
+# Переходы статуса задания — только по этой таблице, проверка на сервере (ProductionTask._moved).
+STATUS_TRANSITIONS: dict[ProductionStatus, frozenset[ProductionStatus]] = {
+    ProductionStatus.RUNNING: frozenset({ProductionStatus.CANCELLED, ProductionStatus.DONE}),
+    ProductionStatus.CANCELLED: frozenset({ProductionStatus.RUNNING}),
+    ProductionStatus.DONE: frozenset({ProductionStatus.RUNNING}),
+}
+
+MAX_TEAM = 50
+
+
+def _text(value: Decimal | int) -> str:
+    return format(Decimal(value).normalize(), "f")
+
+
+def operation_code_key(code: str) -> str:
+    return str(code or "").strip()
+
+
+FLOW_MODE_NAMES: dict[FlowMode, str] = {
+    FlowMode.SEQUENTIAL: "Последовательно — вся партия целиком",
+    FlowMode.PARALLEL: "Параллельно — каждая партия сразу",
+    FlowMode.MIXED: "Параллельно-последовательно — без простоев",
+}
 
 
 @dataclass(frozen=True)
@@ -343,6 +377,15 @@ class ProductionTask:
     operations: tuple[ProductionOperation, ...]
     # Площадка, которой задание отдано целиком (владелец, 30.09: ЖУК работает не нормированно — «отдать все в жук»).
     handed_to: str = ""
+    # Цель 2, план задания: техкарта и её ревизия, с которых взяты нормы (None — задание до миграции 0089);
+    # режим передачи партии по этапам, передаточная партия (None — вся партия), «первые k раньше» (None — нет)
+    # и команда — люди задания из справочника сотрудников (по id, порядок выбора).
+    techcard_id: UUID | None = None
+    techcard_revision: int | None = None
+    flow_mode: FlowMode = FlowMode.MIXED
+    transfer_batch: int | None = None
+    early_quantity: int | None = None
+    team: tuple[UUID, ...] = ()
 
     def __post_init__(self) -> None:
         # Задание без единого входа (маршрут без схемы, старые вызовы) идёт сегодняшней цепочкой по номерам:
@@ -366,7 +409,11 @@ class ProductionTask:
         launched_by: str,
         operations: tuple[ProductionOperation, ...],
         created_at: datetime,
+        techcard_id: UUID | None = None,
+        techcard_revision: int | None = None,
     ) -> ProductionTask:
+        if techcard_revision is not None and techcard_revision < 1:
+            raise ProductionValidationError("Ревизия техкарты должна быть больше нуля")
         if quantity <= 0:
             raise ProductionValidationError("Количество должно быть целым числом больше нуля")
         if not operations:
@@ -392,6 +439,8 @@ class ProductionTask:
             status=ProductionStatus.RUNNING,
             launched_by=str(launched_by).strip(),
             operations=tuple(sorted(operations, key=lambda operation: operation.position)),
+            techcard_id=techcard_id,
+            techcard_revision=techcard_revision,
         )
         _check_network(task.operations)
         # Норма операции — на её штуки по схеме: ветка «2 на изделие» делает вдвое больше тиража.
@@ -431,8 +480,7 @@ class ProductionTask:
         plan: PlanResult,
         assigned_by: str,
     ) -> ProductionTask:
-        if self.status is ProductionStatus.CANCELLED:
-            raise ProductionValidationError(f"Задание {self.number} отменено — назначать нельзя")
+        self._check_open("назначать нельзя")
         if self.handed_to:
             raise ProductionValidationError(f"Задание {self.number} отдано в {self.handed_to} — по людям не расписывается")
         operation = self.operation(operation_id)
@@ -448,8 +496,7 @@ class ProductionTask:
         assignments: tuple[tuple[UUID, tuple[UUID, ...], datetime, datetime], ...],
         assigned_by: str,
     ) -> ProductionTask:
-        if self.status is ProductionStatus.CANCELLED:
-            raise ProductionValidationError(f"Задание {self.number} отменено — планировать нельзя")
+        self._check_open("планировать нельзя")
         if self.handed_to:
             raise ProductionValidationError(f"Задание {self.number} отдано в {self.handed_to} — по людям не расписывается")
         by_operation = {item[0]: item[1:] for item in assignments}
@@ -482,28 +529,149 @@ class ProductionTask:
             version=self.version + 1,
         )
 
-    def set_cancelled(self, cancelled: bool) -> ProductionTask:
-        target = ProductionStatus.CANCELLED if cancelled else ProductionStatus.RUNNING
-        if self.status is target:
+    def _check_open(self, action: str) -> None:
+        """Менять план можно только у задания «Запущено»: отменённое и выполненное — только вернуть в работу."""
+        if self.status is ProductionStatus.CANCELLED:
+            raise ProductionValidationError(f"Задание {self.number} отменено — {action}")
+        if self.status is ProductionStatus.DONE:
+            raise ProductionValidationError(f"Задание {self.number} выполнено — {action}")
+
+    def _moved(self, target: ProductionStatus) -> ProductionTask:
+        if target not in STATUS_TRANSITIONS[self.status]:
             raise ProductionValidationError(
-                f"Задание {self.number} уже в статусе «{target.value}»"
+                f"Задание {self.number} уже в статусе «{target.value}»" if target is self.status
+                else f"Задание {self.number} в статусе «{self.status.value}» — перевести в «{target.value}» нельзя"
             )
         return replace(self, status=target, version=self.version + 1)
 
-    def hand_over(self, site: str) -> ProductionTask:
+    def set_cancelled(self, cancelled: bool) -> ProductionTask:
+        if not cancelled and self.status is not ProductionStatus.CANCELLED:
+            raise ProductionValidationError(f"Задание {self.number} не отменено — возвращать нечего")
+        return self._moved(ProductionStatus.CANCELLED if cancelled else ProductionStatus.RUNNING)
+
+    def complete(self, done: Decimal, required: Decimal) -> ProductionTask:
+        """«Выполнено»: сдано не меньше, чем нужно по заданию (ЖУК — «Сдано N шт», цех — годные финального этапа)."""
+        if self.status is ProductionStatus.RUNNING and done < required:
+            raise ProductionValidationError(
+                f"Задание {self.number}: сдано {_text(done)} из {_text(required)} шт — ещё не выполнено"
+            )
+        return self._moved(ProductionStatus.DONE)
+
+    def reopen(self) -> ProductionTask:
+        """Выполненное задание — снова в работу (ошибочно закрыли, отменили сдачу ЖУК)."""
+        return self._moved(ProductionStatus.RUNNING)
+
+    def with_flow(
+        self,
+        *,
+        flow_mode: FlowMode,
+        transfer_batch: int | None,
+        early_quantity: int | None,
+        team: tuple[UUID, ...],
+    ) -> ProductionTask:
+        """План задания: режим передачи, передаточная партия, «первые k раньше» и команда."""
+        self._check_open("план не меняется")
+        mode = FlowMode(flow_mode)
+        if transfer_batch is not None and not 1 <= transfer_batch <= self.quantity:
+            raise ProductionValidationError(f"Передаточная партия — от 1 до {self.quantity} шт")
+        if early_quantity is not None and not 1 <= early_quantity < self.quantity:
+            raise ProductionValidationError(
+                f"«Первые раньше» — от 1 до {self.quantity - 1} шт (весь тираж — это просто задание)"
+            )
+        if len(set(team)) != len(team):
+            raise ProductionValidationError("Человек выбран в команду дважды")
+        if len(team) > MAX_TEAM:
+            raise ProductionValidationError(f"В команде не больше {MAX_TEAM} человек")
+        # Последовательно партия идёт целиком — своя передаточная партия не хранится.
+        batch = None if mode is FlowMode.SEQUENTIAL else transfer_batch
+        if (mode, batch, early_quantity, tuple(team)) == (
+            self.flow_mode, self.transfer_batch, self.early_quantity, self.team,
+        ):
+            return self
+        return replace(
+            self, flow_mode=mode, transfer_batch=batch, early_quantity=early_quantity, team=tuple(team),
+            version=self.version + 1,
+        )
+
+    def refresh_norms(
+        self,
+        norms: dict[int, tuple[str, Decimal, Decimal]],
+        techcard_id: UUID,
+        revision: int,
+    ) -> ProductionTask:
+        """Нормы из ЭТК по кнопке (никогда сами): {номер этапа: (код, сек на штуку, подготовка)}. Только нормы —
+        этапы, их коды, назначения и факт не меняются; другой состав этапов — перезапуск задания, не обновление."""
+        self._check_open("нормы не обновляются")
+        if revision < 1:
+            raise ProductionValidationError("Ревизия техкарты должна быть больше нуля")
+        own = {operation.position: operation_code_key(operation.code) for operation in self.operations}
+        fresh = {position: operation_code_key(code) for position, (code, _, _) in norms.items()}
+        if own != fresh:
+            raise ProductionValidationError(
+                "Этапы техкарты изменились (другое число этапов или коды операций) — нормы не обновлены. "
+                "Запустите новое задание по выданной техкарте"
+            )
+        operations = []
+        for operation in self.operations:
+            _, unit, setup = norms[operation.position]
+            unit, setup = Decimal(unit), Decimal(setup)
+            if not unit.is_finite() or not setup.is_finite() or unit < 0 or setup < 0:
+                raise ProductionValidationError("Нормативы операции не могут быть отрицательными")
+            operations.append(replace(
+                operation, seconds_per_unit=unit, setup_seconds=setup,
+                norm_seconds=ceil(setup + unit * self.operation_units(operation.id)),
+            ))
+        return replace(
+            self, operations=tuple(operations), techcard_id=techcard_id, techcard_revision=revision,
+            version=self.version + 1,
+        )
+
+    def hand_over(self, site: str, delivered: int = 0) -> ProductionTask:
         """Отдать задание площадке целиком ("" — вернуть на распределение по людям). Назначения и план по часам
-        снимаются: площадка без нормирования раскладывает работу сама."""
+        снимаются: площадка без нормирования раскладывает работу сама. Сданное площадкой (delivered) держит
+        задание у неё: вернуть на распределение можно, только отменив её сдачи."""
         site = str(site or "").strip()
         if site and site not in UNPLANNED_SITES:
             raise ProductionValidationError(f"Отдать целиком можно только в {', '.join(sorted(UNPLANNED_SITES))}")
-        if self.status is ProductionStatus.CANCELLED:
-            raise ProductionValidationError(f"Задание {self.number} отменено")
+        self._check_open("передавать нельзя")
+        if not site and delivered > 0:
+            raise ProductionValidationError(
+                f"{self.handed_to} уже сдал {delivered} шт — вернуть на распределение можно, только отменив сдачи"
+            )
         if site == self.handed_to:
             raise ProductionValidationError(
                 f"Задание {self.number} уже в {site}" if site else f"Задание {self.number} и так распределяется по людям"
             )
         operations = tuple(item.with_shares((), item.assigned_by) for item in self.operations) if site else self.operations
         return replace(self, handed_to=site, operations=operations, version=self.version + 1)
+
+
+@dataclass(frozen=True)
+class TaskDelivery:
+    """«Сдано N шт» площадки без нормирования (ЖУК): задание отдано ей целиком, операций в ERP она не отмечает.
+    По умолчанию сдаёт всё одним разом; можно частями. Отмена — отметка, строка остаётся в истории."""
+    id: UUID
+    task_id: UUID
+    site: str
+    quantity: int
+    delivered_at: datetime
+    delivered_by: str
+    cancelled_at: datetime | None = None
+    cancelled_by: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.quantity <= 0:
+            raise ProductionValidationError("Сдать можно целое число штук больше нуля")
+        if (self.cancelled_at is None) != (self.cancelled_by is None):
+            raise ProductionValidationError("У отмены сдачи нужны время и кто отменил")
+
+    @property
+    def active(self) -> bool:
+        return self.cancelled_at is None
+
+
+def delivered_total(deliveries) -> int:
+    return sum(item.quantity for item in deliveries if item.active)
 
 
 def operation_duration_seconds(

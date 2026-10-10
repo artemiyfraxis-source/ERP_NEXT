@@ -85,10 +85,21 @@ services:
       KEEP_DAILY: ${KEEP_DAILY:-14}
       KEEP_WEEKLY: ${KEEP_WEEKLY:-8}
       KEEP_MONTHLY: ${KEEP_MONTHLY:-36}
+      # Freshness: the container turns unhealthy (./erp.sh ps) when the last dump failed or the last good one is older.
+      BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-26}
+      BACKUP_MIN_FREE_MB: ${BACKUP_MIN_FREE_MB:-1024}
+      BACKUP_RETRY_MINUTES: ${BACKUP_RETRY_MINUTES:-60}
     volumes:
       - ./backup-loop.sh:/backup-loop.sh:ro
       - ${ERP_HOME:-/opt/erp}/backups:/backups
     entrypoint: ["bash", "/backup-loop.sh"]
+    healthcheck:
+      # backups/backup-status.json: last attempt ok and last good dump younger than BACKUP_MAX_AGE_HOURS.
+      test: ["CMD", "bash", "/backup-loop.sh", "--health"]
+      interval: 5m
+      timeout: 30s
+      retries: 2
+      start_period: 1h   # a stale status means a dump right at start
 
 volumes:
   pgdata:
