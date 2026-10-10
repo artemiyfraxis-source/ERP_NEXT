@@ -313,8 +313,14 @@ it("«Обе стороны» with different terminals on А and В names both; 
   expect((noCard.g.buildConfig() as Record<string, any>).ops[0]).toMatchObject({ templateId: "cwc", opNum: "CUT_WIRE+1crimp" });
 });
 
-it("default and «Сторона А» / «Сторона В» keep the one-side machine crimp and crimp the other side by hand", () => {
-  for (const side of ["", "A"]) {
+it("no choice yet: both sides crimpable on the machine → «Обе стороны» by default", () => {
+  const { g } = usbGen({ side: "" });
+  expect(g.crimpCutSideSelected_()).toBe("AB");
+  expect(kinds(g.getActiveOps())).toEqual(["cutWireCrimp:A", "insTerm:A", "insTerm:B"]);
+});
+
+it("«Сторона А» / «Сторона В» keep the one-side machine crimp and crimp the other side by hand", () => {
+  for (const side of ["A"]) {
     const { g } = usbGen({ side });
     expect(g.crimpCutSideSelected_()).toBe("A");
     const ops = g.getActiveOps();
