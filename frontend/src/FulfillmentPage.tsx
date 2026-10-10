@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import {
   ApiError,
   fulfillmentApi,
@@ -714,7 +715,7 @@ function ExtraIssueForm({ request, busy, mutate, onClose }: {
         <td className="num"><input aria-label={`Довыдать ${line.name || line.article}`} inputMode="decimal" value={quantities[line.id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))} /> {line.unit}</td>
       </tr>)}
     </tbody></table></div>
-    <label>Причина<input aria-label="Причина довыдачи" maxLength={200} value={reason} placeholder="брак при опрессовке, не хватило провода…" onChange={(event) => setReason(event.target.value)} /></label>
+    <label>Причина<AutoTextarea aria-label="Причина довыдачи" maxLength={200} value={reason} placeholder="брак при опрессовке, не хватило провода…" onChange={setReason} /></label>
     <div className="fulfillment-actions">
       <button className="primary" disabled={busy || !ready} onClick={submit}>{chosen.length ? `Создать довыдачу (${chosen.length} поз.)` : "Создать довыдачу"}</button>
       <button className="secondary" onClick={onClose}>Отмена</button>

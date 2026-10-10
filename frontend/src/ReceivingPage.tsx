@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import { ApiError, failureText, receivingApi, type DeliveryDeviation, type DeliveryLinePayload, type ReceivingLine, type ReceivingQuery } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
@@ -753,8 +754,8 @@ function ReceivingCard({
               ? <label title="Назначение не распознано — ГРН получит выбранный идентификатор">Идентификатор ГРН *<select required value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">— выберите —</option><option>CSM</option><option>PPM</option></select></label>
               : <label>Идентификатор ГРН<select value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">{line.grn_prefix ? `Автоматически: ${line.grn_prefix}` : "Автоматически"}</option><option>CSM</option><option>PPM</option></select></label>)}
             <label className="check-field"><input type="checkbox" checked={historical} onChange={(event) => setHistorical(event.target.checked)} />Историческая приёмка: срок годности сверяется с датой УПД</label>
-            <label className="wide">Примечание<input value={note} onChange={(event) => setNote(event.target.value)} /></label>
-            <label className="wide">Описание несоответствия<input value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+            <label className="wide">Примечание<AutoTextarea value={note} onChange={setNote} /></label>
+            <label className="wide">Описание несоответствия<AutoTextarea value={description} onChange={setDescription} /></label>
             <fieldset className="check-field wide"><legend>Несоответствия ручной проверки</legend>{MANUAL_CHECKS.map((item) => <label key={item}><input type="checkbox" checked={manual.includes(item)} onChange={(event) => setManual((current) => event.target.checked ? [...current, item] : current.filter((value) => value !== item))} />{item}</label>)}</fieldset>
           </div>
           {batchMode && (
