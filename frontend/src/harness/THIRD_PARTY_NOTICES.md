@@ -7,9 +7,16 @@ TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permiss
 - Источник: `src/Techmap.Client/src/editor`, `src/Techmap.Client/src/component-library` и общие компоненты
   (`InfoHint`, `AnchoredPopover`) на коммите `e63befb` (ветка `codex/integration-m5-22`).
 - Первый коммит ветки переноса содержит эти файлы без изменений; все правки ERP — следующими коммитами.
-- Не перенесено: сетевые клиенты (заменены адаптерами), фото/HEIC, аварийные черновики в localStorage и
+- Не перенесено: сетевые клиенты (сеть редактора — `harnessApi` в `api.ts`, чертёж — `drawing.ts`, библиотека — `library/`), фото/HEIC, аварийные черновики в localStorage и
   журнал восстановления, маршрут изготовления (Route V2) и панели производства, UML, авторинг шаблонов
   библиотеки компонентов, модель времени.
+
+## Правила хранения чертежа на сервере ERP
+
+`backend/app/modules/techcards/harness/validate.py` переписывает на Python проверки сервера и редактора
+TECHMAP-GRAPHER (коммит `9cf3b88`, та же ветка, то же разрешение автора): `ElectricalGraphValidator`,
+`ValidateCableInstances`, `HarnessStripProfileValidator`, `TemplateContactNumberingValidator`,
+`HarnessPhysicalTopologyValidator` (только ссылки и непрерывность трасс) и проверки `parseHarnessDesignDocument`.
 
 ## Исключено: каталог штриховок QCAD (GPL-3.0)
 

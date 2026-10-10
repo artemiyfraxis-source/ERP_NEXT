@@ -83,7 +83,7 @@ it("shows the own card: header, the «Обзор» tab and the cards in the conc
   expect(screen.getByText("доступ: Мастер")).toBeInTheDocument();
   expect(screen.getByText("Карточка активна")).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Обзор" })).toBeInTheDocument();
-  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Обзор", "Отпуска и заявления"]);
   expect(screen.getByText("Сведения на 04.10.2026")).toBeInTheDocument();
 
   const titles = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.firstChild?.textContent);
@@ -276,4 +276,32 @@ it("shows the server's refusal instead of an empty card", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Чужая карточка открыта только с доступом к разделу «Сотрудники»." }, 403));
   render(<EmployeeCardPage principal={principal()} userId={OTHER} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Чужая карточка открыта только с доступом");
+});
+
+it("opens «Отпуска и заявления» on the own card with the count of requests waiting for a decision", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.startsWith("/api/employee-card/")) return json(FULL);
+    if (path === "/api/leave-requests/waiting") return json({ count: 2 });
+    if (path === "/api/leave-requests") {
+      return json({ today: "2026-10-04", balance: { year: 2026, norm: 28, registered: 0, pending: 0, left: 28 }, own: [], inbox: [], journal: null, hr: false });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<EmployeeCardPage principal={principal()} />);
+
+  const tab = await screen.findByRole("tab", { name: /Отпуска и заявления/ });
+  expect(await within(tab).findByLabelText("ждут решения: 2")).toHaveTextContent("2");
+  fireEvent.click(tab);
+  expect(await screen.findByText("Заявлений нет — нажмите «Новое заявление».")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Проекты" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Обзор" }));
+  expect(screen.getByRole("region", { name: "Проекты" })).toBeInTheDocument();
+});
+
+it("offers no leave tab on someone else's card", async () => {
+  serve({ ...FULL, header: { ...FULL.header, id: OTHER } });
+  render(<EmployeeCardPage principal={principal({}, "admin")} userId={OTHER} />);
+  await screen.findByRole("heading", { level: 1 });
+  expect(screen.queryByRole("tab", { name: /Отпуска/ })).not.toBeInTheDocument();
 });

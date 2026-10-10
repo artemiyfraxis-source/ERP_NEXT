@@ -143,8 +143,11 @@ def test_jst_gh_xh_ph_zh_and_microfit_follow_the_maker_drawings():
 
 
 def test_series_without_a_checked_drawing_keep_the_warning():
-    for article in ("51021-0400", "43645-0400", "43020-0400", "43640-0400", "22-55-2081", "DS1033-09F"):
+    for article in ("51047-0400", "43645-0400", "43020-0400", "43640-0400", "22-55-2081", "DS1033-09F"):
         assert housing_of(article)["conf"] != "high", article
+    # Searched for a maker drawing on 04.10 and found none that fixes the side: the note says what is missing.
+    for article in ("51047-0400", "XT60H-M", "QS8-S-M", "LP-12-C04PE", "GX12M-4"):
+        assert housing_of(article)["conf"] != "high" and housing_of(article)["note"], article
 
 
 def test_jst_ze_nsh_pni_rcy_follow_the_jst_drawings():
@@ -200,3 +203,40 @@ def test_series_whose_drawing_has_no_contact_one_say_so():
         layout = housing_of(article)
         assert layout["conf"] == "low" and not layout["src"] and "чертеже" in layout["note"], article
     assert housing_of("CZHR-04V-S")["grid"] == [[1, 2, 3, 4]]  # unchanged until checked on a part
+
+
+def test_eh_pa_vh_phd_picoblade_minifit_and_usb_follow_the_maker_drawings():
+    # Wire side. eEH: windows/numbers face down, 1 left. ePA-F / eVH: lever up, 1 left. ePHD: ▽ face up, 1 top-left, 2
+    # under it. 510210000-SD: windows down (lock bumps up), 1 right. SD-5557-003: latch up, 1 bottom-right, rows right to
+    # left. USB 2.0 fig. 6-7/6-9: plastic part down, 1 (+5В) left.
+    cases = {
+        "EHR-4": ("jst-eh", [[1, 2, 3, 4]], "windows", 2.5),
+        "PAP-04V-S": ("jst-pa", [[1, 2, 3, 4]], "lever", 2.0),
+        "VHR-4N": ("jst-vh", [[1, 2, 3, 4]], "lever", 3.96),
+        "PHDR-10VS": ("jst-phd", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "mark", 2.0),
+        "51021-0400": ("molex-picoblade", [[4, 3, 2, 1]], "windows", 1.25),
+        "39-01-2080": ("molex-minifit-jr", [[8, 7, 6, 5], [4, 3, 2, 1]], "lever", 4.2),
+        "USB-A Male 2.0": ("usb-a", [[1, 2, 3, 4]], "none", None),
+    }
+    for article, (family, grid, latch, pitch) in cases.items():
+        layout = housing_of(article)
+        assert (layout["family"], layout["grid"], layout["latch"], layout["pitch"]) == (family, grid, latch, pitch), article
+        assert layout["conf"] == "high" and layout["src"] and layout["note"], article
+    assert housing_of("VHR-4M")["family"] == "jst-vh" and housing_of("5557-08R")["grid"] == housing_of("39012080")["grid"]
+    usb = housing_of("USB-A")
+    assert usb["labels"] == ["+5В", "D−", "D+", "GND"] and "пластик снизу" in usb["title"]
+
+    # Catalogue widths: EH B = A + 4.5, PHD B = A + 3.9, PicoBlade A = B + 3.0, Mini-Fit Jr. A = B + 5.4.
+    width = lambda layout: round((layout["cols"] - 1) * layout["pitch"] + layout["body"]["extra"], 2)
+    assert [width(housing_of(article)) for article in ("EHR-4", "EHR-15", "PHDR-10VS", "PHDR-34VS")] == [12.0, 39.5, 11.9, 35.9]
+    assert [width(housing_of(article)) for article in ("51021-0400", "51021-1500", "39012080", "39012240")] == [6.75, 20.5, 18.0, 51.6]
+    minifit = housing_of("39012080")["body"]
+    assert (minifit["h"], minifit["lock_w"], minifit["lock_h"]) == (11.6, 5.4, 2.8)
+    assert housing_of("PHDR-10VS")["body"]["h"] == 5.0 and housing_of("EHR-4")["body"]["h"] == 3.8
+
+
+def test_picoblade_plug_51047_is_split_from_the_checked_receptacle():
+    plug, receptacle = housing_of("Molex 510470300"), housing_of("Molex 510210300")
+    assert plug["family"] == "molex-picoblade-plug" and receptacle["family"] == "molex-picoblade"
+    assert plug["title"] == receptacle["title"] == "Molex PicoBlade" and plug["n"] == 3
+    assert plug["conf"] == "medium" and receptacle["conf"] == "high"

@@ -15,6 +15,7 @@ from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_mirror import BUNDLED_MIRROR, load_mirror, read_mirror
 from app.modules.techcards.harness_catalog import (
     COAX_CABLES, COAX_TERMINATIONS, CONNECTORS, DATABASE, TERMINALS, WIRES, build_harness_catalog, number,
+    reference_book,
 )
 from app.shared.persistence import create_schema
 
@@ -170,6 +171,21 @@ def test_connector_families_with_patterns_and_aliases(catalog):
     assert aliases[r"^BL2018P-0*(\d+)"]["replacement"] == "SMP-0$1V-BC"
 
 
+def test_reference_book_holds_what_the_pickers_offer(catalog, mirror_tables):
+    """A drawing may reference what the editor's pickers offer: the save checks new references against this."""
+    book = reference_book(mirror_tables)
+    assert {"UL1061 28AWG", "ПВВС 4×0,35", "RF 1.13"} <= book.wires
+    assert "MCX-male RG-174" in book.strips
+    terminal = _snapshot(catalog, TERMINALS)["records"][0]
+    assert terminal["sourceKey"] in book.terminals
+    assert {terminal["payload"].get("reelArticle"), terminal["payload"].get("bagArticle")} - {None} <= book.terminals
+    covering = next(record for record in _snapshot(catalog, DATABASE)["records"]
+                    if record["entityType"] == "protective-covering")
+    assert covering["sourceKey"] in book.coverings
+    assert book.missing({("wire", "ul1061  28awg"): "Провод 1", ("wire", "НЕТ ТАКОГО"): "Провод 2"}) == [
+        "Провод 2: провода «НЕТ ТАКОГО» нет в БД.ПРОВ"]
+
+
 def test_number_reads_sheet_cells():
     assert number("2,45") == 2.45 and number("−1,5") == -1.5 and number("35 000,00") == 35000.0
     assert number("3 мм") == 3.0
@@ -183,7 +199,17 @@ def catalog_api():
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
+    from uuid import UUID as Uuid
+
+    from app.shared.http_auth import Principal, authenticated_principal
+    from app.shared.identity import Actor
+
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=Uuid(int=8), name="Технолог", department="Производство"), email="tech@example.test",
+        roles=frozenset({"staff"}), permissions={"projects": "view"},
+    )
     yield TestClient(app)
+    app.dependency_overrides.pop(authenticated_principal, None)
     del app.state.references_uow_factory
     engine.dispose()
 
@@ -204,17 +230,22 @@ def test_catalog_endpoint_without_references_is_empty_not_an_error(catalog_api):
     assert all(count == 0 for source, count in response.json()["counts"].items() if source != CONNECTORS)
 
 
-def test_catalog_endpoint_needs_a_techcards_section():
+@pytest.mark.parametrize("permissions, status", [
+    ({"projects": "view"}, 200),     # the drawing's own right: whoever reads the drawing reads its pickers
+    ({"warehouse": "edit"}, 403),
+    ({"techcards": "view"}, 403),    # without «Проекты» the drawing itself does not open
+])
+def test_catalog_endpoint_reads_with_the_drawing_right(catalog_api, permissions, status):
     from uuid import UUID as Uuid
 
     from app.shared.http_auth import Principal, authenticated_principal
     from app.shared.identity import Actor
 
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=Actor(id=Uuid(int=7), name="Кладовщик", department="Склад"), email="store@example.test",
-        roles=frozenset({"staff"}), permissions={"warehouse": "edit"},
+        actor=Actor(id=Uuid(int=7), name="Сотрудник", department="Отдел"), email="staff@example.test",
+        roles=frozenset({"staff"}), permissions=permissions,
     )
     try:
-        assert TestClient(app).get("/api/techcards/harness-catalog").status_code == 403
+        assert catalog_api.get("/api/techcards/harness-catalog").status_code == status
     finally:
         app.dependency_overrides.pop(authenticated_principal, None)

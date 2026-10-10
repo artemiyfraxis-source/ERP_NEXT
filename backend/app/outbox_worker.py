@@ -46,6 +46,7 @@ from app.shared.warehouse_location import configured_rack_layout, set_rack_layou
 from app.workflows.arbiter import PoisonTriggerMessage, close_followed_up, dispatch_next_trigger, feed_triggers
 from app.workflows.arrival_kits import PoisonArrivalMessage, ReceivingArrivalLookup, dispatch_next_lot_arrived
 from app.workflows.kitset_names import kitset_names_tick
+from app.workflows.leave_calendar import leave_calendar_tick
 from app.workflows.procurement_autofill import AUTOFILL_TICK_CAP, procurement_autofill_tick
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from app.workflows.owner_alerts import alert_on_dead_letters, daily_overdue_digest, quarantine_escalations
@@ -61,6 +62,9 @@ _last_tail = float("-inf")
 ARBITER_CLOSE_INTERVAL_SECONDS = 30.0
 _last_arbiter_close = float("-inf")
 _tail_thread: threading.Thread | None = None
+# Registered leave requests → the shop calendar: copied right after each decision; this pass repairs a copy that failed.
+LEAVE_CALENDAR_INTERVAL_SECONDS = 60.0
+_last_leave_calendar = float("-inf")
 # «Взять в работу» → name / manufacturer / country from the supplier's page (Guards.gs inWorkSideEffects_) run on their
 # own thread too, but on a short beat: the buyer is looking at the line while it fills, so the minute of the tail
 # group would be too slow, and a dead supplier site (15 s timeout) must not hold the outbox dispatch either.
@@ -242,7 +246,22 @@ def run_timers(sessions: sessionmaker[Session]) -> int:
         logging.warning("Procurement line changed during the initiator notifications; retrying next tick")
     done += run_owner_jobs(sessions)
     done += run_arbiter(sessions)
+    done += run_leave_calendar(sessions)
     return done
+
+
+def run_leave_calendar(sessions: sessionmaker[Session]) -> int:
+    """The leave-calendar repair pass (workflows/leave_calendar.py), at most every LEAVE_CALENDAR_INTERVAL_SECONDS.
+    A failure is logged, never raised."""
+    global _last_leave_calendar
+    if time.monotonic() - _last_leave_calendar < LEAVE_CALENDAR_INTERVAL_SECONDS:
+        return 0
+    _last_leave_calendar = time.monotonic()
+    try:
+        return int(leave_calendar_tick(moscow_now(), sessions))
+    except Exception:  # noqa: BLE001 — one broken job must not stop the worker
+        logging.exception("Leave calendar sync failed; retrying next pass")
+        return 0
 
 
 def run_arbiter(sessions: sessionmaker[Session]) -> int:

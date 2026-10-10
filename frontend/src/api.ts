@@ -204,6 +204,11 @@ export interface ProcurementLine {
   actual_arrival?: string | null;
   /** КОММЕНТАРИЙ: свободная заметка закупщика, от «В работе»; не на «Новый»/«Отменено» (setNote). */
   note?: string | null;
+  /** DATASHEET: ссылка или текст, правится как комментарий (setDatasheet). */
+  datasheet?: string | null;
+  /** Файлы РАЗРЕШЕНИЕ и ДОК. КАЧЕСТВА (только в списках: «Мои позиции», «Весь лист», «По поставщикам»). */
+  permit_files?: ProcurementFile[];
+  quality_files?: ProcurementFile[];
   invoice_url: string | null;
   paid_at: string | null;
   currency: string | null;
@@ -718,6 +723,63 @@ export interface ProductionTask {
   planned_finish: string | null;
   assigned: number;
   operations: ProductionOperation[];
+  /** План задания (Цель 2): техкарта и ревизия норм, режим передачи, партия, «первые k раньше», команда. */
+  techcard_id?: string | null;
+  techcard_revision?: number | null;
+  flow_mode?: ProductionFlowMode;
+  transfer_batch?: number | null;
+  early_quantity?: number | null;
+  team?: string[];
+  /** «Сдано N шт» площадки без отменённых; null — не считалось в этом ответе. */
+  delivered?: number | null;
+}
+
+export type ProductionFlowMode = "sequential" | "parallel" | "mixed";
+
+export interface ProductionDelivery {
+  id: string;
+  site: string;
+  quantity: number;
+  delivered_at: string;
+  delivered_by: string;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+}
+
+export interface ProductionFlowStep {
+  operation_id: string;
+  position: number;
+  stage: string;
+  code: string;
+  people: string;
+  operator_ids: string[];
+  start: string;
+  first_out: string;
+  finish: string;
+  wait_seconds: number;
+}
+
+export interface ProductionFlow {
+  task: ProductionTask;
+  modes: { value: ProductionFlowMode; name: string }[];
+  thresholds: { notice: string; limit: string };
+  plan: {
+    anchor: string;
+    transfer_batch: number;
+    first_ready: string;
+    first_quantity: number;
+    finish: string;
+    baseline_finish: string;
+    baseline_early_ready: string | null;
+    delay_percent: string | null;
+    level: "" | "ok" | "notice" | "limit";
+    work_seconds: number;
+    warnings: string[];
+    steps: ProductionFlowStep[];
+  };
+  deliveries: ProductionDelivery[];
+  delivered: number;
+  norms: { techcard_id: string | null; revision: number | null; current_revision: number | null; outdated: boolean };
 }
 
 export interface ProductionPlanEvent {
@@ -810,6 +872,10 @@ export interface ProductionAbsence {
   from_date: string;
   to_date: string;
   kind: string;
+  /** Отсутствие по зарегистрированному заявлению: календарь его показывает, но не правит и не сохраняет. */
+  leave_request_id?: string | null;
+  /** ФИО из справочника сотрудников (у заявления — любой сотрудник, не только монтажник). */
+  operator_name?: string | null;
 }
 
 export interface ProductionShift {
@@ -1393,6 +1459,44 @@ export interface ConnectorFamily {
   housing: import("./connectorArt").ConnectorHousing & { conf?: string; note?: string };
 }
 
+/** «База данных → Разъёмы» по сериям (backend techcards/connector_series.py). */
+export interface ConnectorSeriesHousing {
+  article: string;
+  n: number;
+  housing: ConnectorFamily["housing"];
+  headers: Array<{ title: string; article: string }>;
+}
+
+export interface ConnectorTerminal {
+  article: string; maker: string; product: string; series: string; kind: string;
+  awg_from: string; awg_to: string; mm2_from: string; mm2_to: string; strip: string; applicator: string; crimp_height: string;
+}
+
+export interface ConnectorSeries {
+  id: string;
+  title: string;
+  maker: string;
+  variants: Array<{ title: string; family: string; housings: ConnectorSeriesHousing[] }>;
+  range_checked: boolean;
+  range_src: string;
+  datasheet: string;
+  note: string;
+  terminals: ConnectorTerminal[];
+  wire: { awg_thin?: number; awg_thick?: number; mm2_min?: number; mm2_max?: number } | null;
+  housing_count: number;
+  counts: number[];
+  pitch: number | null;
+  color: string | null;
+  checked: boolean;
+  sample: ConnectorSeriesHousing | null;
+}
+
+export interface ConnectorSeriesMatch {
+  series: string | null;
+  article: string | null;
+  housing: ConnectorFamily["housing"];
+}
+
 export interface OperationRecordEdit {
   name: string;
   safety: string;
@@ -1918,6 +2022,18 @@ export interface ApplyOrderDocumentInput {
   lines: (OrderLineRef & { price_with_vat: string | null; invoice_item_name?: string | null })[];
 }
 
+/** Вид файла строки закупки: разрешение (на замену) или документ качества. */
+export type ProcurementFileKind = "permit" | "quality";
+
+export interface ProcurementFile {
+  id: string;
+  kind: ProcurementFileKind;
+  file_name: string;
+  url: string;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
 export interface InvoiceUpload {
   url: string;
   file_name: string;
@@ -2050,6 +2166,17 @@ export const procurementApi = {
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/note`, {
       method: "PATCH",
       body: JSON.stringify({ version, note }),
+    }),
+  setDatasheet: (lineId: string, version: number, datasheet: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/datasheet`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, datasheet }),
+    }),
+  /** Файл разрешения или документа качества к строке; документ качества ставит «Док. качества: Да». */
+  uploadLineFile: (lineId: string, kind: ProcurementFileKind, file: { name: string; type: string; base64: string }) =>
+    api<{ file: ProcurementFile; line: ProcurementLine }>(`/api/procurement/${lineId}/files`, {
+      method: "POST",
+      body: JSON.stringify({ kind, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
     }),
   setExpectedArrival: (lineId: string, version: number, expectedArrival: string) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/expected-arrival`, {
@@ -2478,7 +2605,7 @@ export const productionApi = {
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
     method: "PUT",
-    body: JSON.stringify({ holidays, shift, absences: absences.map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
+    body: JSON.stringify({ holidays, shift, absences: absences.filter((item) => !item.leave_request_id).map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
   }),
   skills: () => api<{ skills: ProductionSkill[]; operation_codes?: Array<{ code: string; name: string }> }>("/api/production/skills"),
   launchable: () => api<{ items: ProductionLaunchable[] }>("/api/production/launchable"),
@@ -2518,7 +2645,31 @@ export const productionApi = {
       method: "POST",
       body: JSON.stringify({ version, site }),
     }),
-  schedule: (taskId: string, version: number, replan: boolean, maxCrew: number) =>
+  /** «План задания»: расчёт по этапам в датах смены, сдачи площадки, свежесть норм ЭТК. */
+  flow: (taskId: string) => api<ProductionFlow>(`/api/production/tasks/${taskId}/flow`),
+  updateFlow: (taskId: string, version: number, settings: { flow_mode: ProductionFlowMode; transfer_batch: number | null; early_quantity: number | null; team: string[] }) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/flow`, {
+      method: "PUT", body: JSON.stringify({ version, ...settings }),
+    }),
+  refreshNorms: (taskId: string, version: number) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/norms/refresh`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Сдано N шт»; quantity null — весь остаток. */
+  deliver: (taskId: string, version: number, quantity: number | null) =>
+    api<{ task: ProductionTask; delivery: ProductionDelivery }>(`/api/production/tasks/${taskId}/deliveries`, {
+      method: "POST", body: JSON.stringify({ version, quantity }),
+    }),
+  cancelDelivery: (taskId: string, deliveryId: string, version: number) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/deliveries/${deliveryId}/cancel`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Выполнено» (done) / «Вернуть в работу». */
+  setDone: (taskId: string, version: number, done: boolean) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/status`, {
+      method: "POST", body: JSON.stringify({ version, done }),
+    }),
+  schedule:(taskId: string, version: number, replan: boolean, maxCrew: number) =>
     api<{ variants: ProductionScheduleVariant[] }>(`/api/production/tasks/${taskId}/schedule`, {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew }),
     }),
@@ -2786,8 +2937,10 @@ export const techcardsApi = {
   deleteSketch: (cardId: string, operationKey: string) =>
     api<{ deleted: number }>(`/api/techcards/projects/${cardId}/sketches/${encodeURIComponent(operationKey)}`, { method: "DELETE" }),
   /** База разъёмов: семейства корпусов с образцом артикула и раскладкой контактов. */
-  connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null }>(
+  connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null; series_count?: number }>(
     `/api/techcards/connector-families${article ? `?article=${encodeURIComponent(article)}` : ""}`),
+  connectorSeries: (article = "") => api<{ series: ConnectorSeries[]; match: ConnectorSeriesMatch | null }>(
+    `/api/techcards/connector-series${article ? `?article=${encodeURIComponent(article)}` : ""}`),
   discardDraft: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/etk`, {
       method: "DELETE",
@@ -2942,6 +3095,78 @@ export const employeeCardApi = {
   byId: (id: string) => api<EmployeeCard>(`/api/employee-card/${encodeURIComponent(id)}`),
 };
 
+/**
+ * Заявления на отпуск и отгул («Моя карточка» → «Отпуска и заявления»): Сотрудник → Руководитель → Кадры, каждый шаг —
+ * подпись PIN или паролем. `version` — версия строки: шаг с чужой версией сервер отклоняет (409).
+ */
+export type LeaveKind = "vacation" | "day_off";
+export type LeaveStatus = "draft" | "signed" | "approved" | "registered" | "rejected" | "withdrawn";
+export type LeaveSignatureView = {
+  step: string;
+  step_label: string;
+  decision: string;
+  decision_label: string;
+  signer_name: string;
+  signed_at: string;
+  method_label: string;
+  content_version: number;
+  content_sha256: string;
+  comment: string;
+};
+export type LeaveRequestView = {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  kind: LeaveKind;
+  kind_label: string;
+  from_date: string;
+  to_date: string;
+  days: number;
+  comment: string;
+  status: LeaveStatus;
+  status_label: string;
+  /** Кто решает сейчас: ФИО руководителя (и замещающего) или «Кадры»; null — решений не ждёт. */
+  waiting_for: string | null;
+  content_version: number;
+  content_sha256: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  signatures: LeaveSignatureView[];
+  actions: { edit: boolean; sign: boolean; decide: boolean; withdraw: boolean };
+};
+export type LeaveBalance = { year: number; norm: number; registered: number; pending: number; left: number };
+export type LeaveOverview = {
+  today: string;
+  balance: LeaveBalance;
+  own: LeaveRequestView[];
+  /** Ждут решения этого человека (руководитель, замещающий, «Кадры»). */
+  inbox: LeaveRequestView[];
+  /** Журнал кадров (все, кроме черновиков); null — без доступа «Кадры». */
+  journal: LeaveRequestView[] | null;
+  hr: boolean;
+};
+export type LeaveDraft = { kind: LeaveKind; from_date: string; to_date: string; comment: string };
+
+export const leaveApi = {
+  overview: () => api<LeaveOverview>("/api/leave-requests"),
+  waiting: () => api<{ count: number }>("/api/leave-requests/waiting"),
+  create: (draft: LeaveDraft) =>
+    api<LeaveRequestView>("/api/leave-requests", { method: "POST", body: JSON.stringify(draft) }),
+  update: (id: string, version: number, draft: LeaveDraft) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...draft, version }) }),
+  sign: (id: string, version: number, secret: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/sign`, { method: "POST", body: JSON.stringify({ version, secret }) }),
+  decide: (id: string, version: number, approve: boolean, comment: string, secret: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/decision`, {
+      method: "POST", body: JSON.stringify({ version, approve, comment, secret }),
+    }),
+  withdraw: (id: string, version: number, secret: string, comment: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/withdraw`, {
+      method: "POST", body: JSON.stringify({ version, secret, comment }),
+    }),
+};
+
 /** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */
 export interface KitsetKbStage {
   index: string;
@@ -3015,13 +3240,79 @@ export interface KitsetDocument {
   kind?: "harness" | "harness_unlinked" | "file";
 }
 
-/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — одна строка КД, сохраняется поверх себя.
- *  `version` — с чем сохранять: чужое сохранение после неё даёт 409. Чертежа нет — всё null. */
+/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — строка КД с текущим чертежом и история версий.
+ *  `revision` — номер версии, с которым сохранять: чужое сохранение после него даёт 409. Чертежа нет — всё null.
+ *  `version` — прежнее имя того же номера (текстом), сервер отдаёт его один выпуск для открытых вкладок. */
 export interface HarnessDrawing {
   document: KitsetDocument | null;
   design: Record<string, unknown> | null;
-  version: string | null;
+  revision: number | null;
+  version?: string | null;
   warnings: string[];
+}
+
+/** Строка «Истории версий»: чертёж на версию `revision`; автосохранения одного сотрудника в пределах 10 минут —
+ *  одна строка (`first_revision`…`revision`, `started_at`…`saved_at`). Как появилась — сохранение, загрузка из
+ *  TECHMAP-GRAPHER, восстановление (`restored_from` — из какой), начальная (чертёж до истории); `closed` — закреплена
+ *  кнопкой «Сохранить версию». */
+export interface HarnessRevision {
+  revision: number;
+  first_revision: number;
+  started_at: string;
+  closed: boolean;
+  saved_at: string;
+  saved_by: string;
+  size: number;
+  kind: "saved" | "imported" | "restored" | "initial";
+  restored_from: number | null;
+}
+
+export interface HarnessRevisions {
+  document_id: string;
+  current: number;
+  total: number;
+  revisions: HarnessRevision[];
+}
+
+/** Документы чертежа жгута, построенные сервером из самого чертежа (techcards/harness/documents.py): ничего не хранится. */
+export type HarnessDocumentKind = "connections" | "cut" | "bom";
+
+/** Строка «Таблицы соединений» — один провод; пустое значение — «—». */
+export interface HarnessConnectionRow {
+  wire_id: string; index: string; mark: string; section: string; marking: string;
+  from: string; to: string; color: string; color_hex: string; length_mm: number | null; route: string;
+}
+
+export interface HarnessStripStep { index: number; diameter_mm: number | null; length_mm: number; step_mm: number }
+export interface HarnessCutEnd { label: string; profile: string | null; steps: HarnessStripStep[] }
+
+/** Заготовка «Карты резки»: провод вне кабеля, кабель или оболочка; длины — мм, метраж — м на все жгуты. */
+export interface HarnessCutItem {
+  id: string; kind: "wire" | "cable" | "covering"; title: string; material: string | null; material_key: string | null;
+  length_mm: number | null; correction_a_mm: number; correction_b_mm: number; rounding_step_mm: number;
+  cut_mm: number | null; unrounded_mm: number | null; pieces: number; total_m: number | null;
+  status: "ready" | "incomplete"; warnings: ("material-missing" | "length-missing")[];
+}
+
+/** Лист резки и разделки одной заготовки (провода или кабеля). */
+export interface HarnessCutSheet {
+  object_id: string; member_wire_ids: string[]; kind: "wire" | "cable"; title: string; material: string | null;
+  a: HarnessCutEnd; b: HarnessCutEnd;
+  sheath: { a_mm: number | null; b_mm: number | null; total_mm: number | null; complete: boolean } | null;
+  conductors: { id: string; a: HarnessCutEnd; b: HarnessCutEnd }[];
+  warnings: string[];
+}
+
+/** Строка «Спецификации»; `key` — тот же ключ, по которому на чертеже стоят позиции, порядок и правки текста. */
+export interface HarnessBomRow {
+  key: string; position: number; index: string; designation: string; name: string; amount: number | null;
+  unit: string; note: string; object_ids: string[];
+}
+
+export interface HarnessDocuments {
+  connections: { kind: "connections"; rows: HarnessConnectionRow[] };
+  cut: { kind: "cut"; quantity: number; items: HarnessCutItem[]; sheets: HarnessCutSheet[]; status: "ready" | "incomplete" };
+  bom: { kind: "bom"; quantity: number; rows: HarnessBomRow[] };
 }
 
 /** «Ручная сборка» из чертежа: build_config (операции с `origin` = `harness:<объект>:<код>`, блоки по маршруту КД) —
@@ -3218,25 +3509,95 @@ export const kitsetsApi = {
   documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
   removeDocument: (project: string, id: string) =>
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  harness: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
-  /** Сохранить чертёж: `version` — из последнего чтения (null — чертежа ещё нет). */
-  saveHarness: (project: string, index: string, design: Record<string, unknown>, version: string | null) =>
-    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, version }) }),
-  /** «Ручная сборка» из чертежа: переданного (несохранённого в редакторе) или сохранённого. */
-  deriveHarness: (project: string, index: string, design?: Record<string, unknown>) =>
-    api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
-  harnessExportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
-  /** «Отвязать» чертёж от позиции: строка КД и чертёж остаются, карточка показывает его с «Вернуть». */
-  unlinkHarness: (project: string, index: string, version: string | null = null) =>
-    api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ version }) }),
-  /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
-  restoreHarness: (project: string, index: string, documentId: string) =>
-    api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
-  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — ложится поверх прежнего (та же проверка версии). */
-  importHarness: (project: string, index: string, payload: { file_name: string; content_b64: string; version: string | null }) =>
-    api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),
   openTechcard: (project: string, index: string) =>
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
+};
+
+/** Шаблон библиотеки компонентов жгута (последняя версия): разъём по ключу справочника и номеру версии. */
+export interface HarnessComponentSummary {
+  templateId: string;
+  version: number;
+  code: string;
+  name: string;
+  connectorRef: string;
+  articleBindings: { sourceId: string; entityType: string; articleKey: string }[];
+  createdUtc: string;
+  updatedUtc: string;
+  hasImage: boolean;
+}
+
+/** Версия шаблона целиком: модель TECHMAP-GRAPHER (v3–v5) и рисунки; соединитель на чертеже закрепляет
+ *  `templateId` + `version` + `versionSha256`. */
+export interface HarnessComponent extends HarnessComponentSummary {
+  versionSha256: string;
+  assets: { assetId: string; fileName: string; mediaType: "image/png"; sha256: string; sizeBytes: number }[];
+  content: Record<string, unknown>;
+}
+
+/** Библиотечные соединители чертежа и закреплённые ими версии шаблонов; `unresolved` — соединители, чьей версии нет
+ *  ни в библиотеке, ни в копии старого чертежа (рисуются по своим контактам). */
+export interface HarnessPlacementGraph {
+  placements: Record<string, unknown>[];
+  snapshots: Record<string, unknown>[];
+  unresolved: string[];
+}
+
+const componentsPath = "/api/techcards/harness-components";
+const componentPath = (templateId: string, revision?: number) =>
+  `${componentsPath}/${encodeURIComponent(templateId)}${revision === undefined ? "" : `/versions/${revision}`}`;
+
+/** Чертёж жгута позиции — единственный сетевой слой редактора жгута: чертёж и его история, документы, «Ручная сборка»,
+ *  обмен с TECHMAP-GRAPHER, справочники ERP для пикеров и библиотека компонентов. */
+export const harnessApi = {
+  /** Чертёж позиции; `revision` — номер версии, с которым сохранять (чертежа нет — всё null). */
+  drawing: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
+  /** Сохранить чертёж новой версией: `revision` — из последнего чтения (null — чертежа ещё нет; иначе 409, если его
+   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`). */
+  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, revision }) }),
+  /** «Сохранить версию»: текущая версия остаётся в истории отдельной строкой; `revision` — версия на экране (иначе 409). */
+  checkpoint: (project: string, index: string, revision: number | null) =>
+    api<{ revision: number | null; row: HarnessRevision | null }>(`${harnessPath(project, index)}/checkpoint`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «История версий» чертежа, новые сверху. */
+  revisions: (project: string, index: string) => api<HarnessRevisions>(`${harnessPath(project, index)}/revisions`),
+  /** Восстановить версию: она становится чертежом новой версией; `current` — версия на экране (иначе 409). */
+  restoreRevision: (project: string, index: string, revision: number, current: number | null) =>
+    api<HarnessDrawing>(`${harnessPath(project, index)}/revisions/${revision}/restore`, { method: "POST", body: JSON.stringify({ revision: current }) }),
+  /** «Ручная сборка» из чертежа: переданного (несохранённого в редакторе) или сохранённого. */
+  derive: (project: string, index: string, design?: Record<string, unknown>) =>
+    api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
+  /** Документ чертежа: по чертежу из редактора (`design`, ещё не сохранённому) или по сохранённому. */
+  documents: <K extends HarnessDocumentKind>(project: string, index: string, kind: K, quantity = 1, design?: Record<string, unknown>) => {
+    const path = `${harnessPath(project, index)}/documents?kind=${kind}&quantity=${quantity}`;
+    return design
+      ? api<HarnessDocuments[K]>(path, { method: "POST", body: JSON.stringify({ design }) })
+      : api<HarnessDocuments[K]>(path);
+  },
+  /** Документ сохранённого чертежа файлом для Excel. */
+  documentsExcelUrl: (project: string, index: string, kind: HarnessDocumentKind, quantity = 1) =>
+    `${harnessPath(project, index)}/documents?kind=${kind}&quantity=${quantity}&format=xlsx`,
+  /** «Отвязать» чертёж от позиции: строка КД и чертёж остаются, карточка показывает его с «Вернуть». */
+  unlink: (project: string, index: string, revision: number | null = null) =>
+    api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
+  relink: (project: string, index: string, documentId: string) =>
+    api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
+  /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
+  exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
+  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */
+  import: (project: string, index: string, payload: { file_name: string; content_b64: string; revision: number | null }) =>
+    api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),
+  /** Справочники ERP для пикеров редактора (БД.ТЕР, БД.ПРОВ, СПР.КАБ, БД.КОАКС, БД.МАТ, разъёмы) — снимками. */
+  catalog: () => api<unknown>("/api/techcards/harness-catalog"),
+  /** Библиотека компонентов: последняя версия каждого шаблона. */
+  components: () => api<HarnessComponentSummary[]>(componentsPath),
+  /** Версия шаблона (без номера — последняя). */
+  component: (templateId: string, revision?: number) => api<HarnessComponent>(componentPath(templateId, revision)),
+  /** Рисунок версии шаблона (PNG). */
+  componentAssetUrl: (templateId: string, revision: number, assetId: string) =>
+    `${componentPath(templateId, revision)}/assets/${encodeURIComponent(assetId)}`,
+  /** Библиотечные соединители сохранённого чертежа и закреплённые версии. */
+  placements: (project: string, index: string) => api<HarnessPlacementGraph>(`${harnessPath(project, index)}/components`),
 };
 
 /** «Чертёж → схема»: черновики «Ручной сборки» по позиции проекта; финал и урок — пара для корпуса образцов. */

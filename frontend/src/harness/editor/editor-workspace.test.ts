@@ -56,7 +56,7 @@ import {
 import { moveLayer, toggleLayerLock, toggleLayerVisibility, updateEditorObject } from "./editor-state";
 import type { EditorLayer, EditorPoint, EditorSceneObject } from "./editor-types";
 import type { CableInstance } from "./model";
-import { HarnessEditorWorkspace, hiddenIdsForIsolatedObjects, layersWithIsolatedLayer, reconcileWorkspaceSelection } from "./HarnessEditorWorkspace";
+import { HarnessEditorWorkspace, hiddenIdsForIsolatedObjects, layersWithIsolatedLayer, reconcileWorkspaceGroupSelection, reconcileWorkspaceSelection } from "./HarnessEditorWorkspace";
 
 const layers: readonly EditorLayer[] = [
   { id: "top", label: "Верхний", visible: true, locked: false },
@@ -232,6 +232,14 @@ describe("harness editor workspace", () => {
       id: "dimension:wire", layerId: "top", kind: "dimension", label: "100 мм",
       x: 0, y: 0, width: 0, height: 0, color: "#000", points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
     }])).toEqual({ objectIds: [], primaryObjectId: null });
+  });
+
+  it("keeps an authored dimension selected when the canvas reports its hit", () => {
+    const dimension: EditorSceneObject = {
+      id: "D1", layerId: "top", kind: "dimension", label: "100 мм",
+      x: 0, y: 0, width: 0, height: 0, color: "#000", points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+    };
+    expect(reconcileWorkspaceGroupSelection([dimension.id], [dimension])).toEqual({ objectIds: [dimension.id], primaryObjectId: dimension.id });
   });
 
   it("renders a complete two-view editor shell with real controls", () => {

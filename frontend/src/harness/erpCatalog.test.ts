@@ -65,10 +65,25 @@ describe("ERP harness catalog adapter", () => {
     expect(() => parseErpHarnessCatalog({ ...fixture, contractVersion: 2 })).toThrow("Обновите страницу");
   });
 
-  it("is a full catalogOverride: references from the ERP, empty library and textures", async () => {
+  it("is the editor's full catalog: references and the component library from the ERP, empty textures", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify([{ templateId: "t", version: 2, code: "SHR-04V-S",
+      name: "JST SH", connectorRef: "SHR-04V-S", articleBindings: [], createdUtc: "c", updatedUtc: "u", hasImage: true }])));
+    vi.stubGlobal("fetch", fetch);
     const editorCatalog = createErpHarnessEditorCatalog(async () => catalog);
-    expect(await editorCatalog.templates.list()).toEqual([]);
-    expect(await editorCatalog.materials.listMaterials()).toEqual([]);
+    expect(await editorCatalog.templates.list()).toEqual([{ templateId: "t", version: 2, code: "SHR-04V-S", name: "JST SH",
+      articleBindings: [], createdUtc: "c", updatedUtc: "u" }]);
+    expect(fetch).toHaveBeenCalledWith("/api/techcards/harness-components", expect.anything());
+    expect(editorCatalog.templates.assetContentUrl("t", 2, "a")).toBe("/api/techcards/harness-components/t/versions/2/assets/a");
+    vi.unstubAllGlobals();
+    // Covering materials: the coverings of БД.МАТ that have a kind, hatched with the ERP set, no textures.
+    const materials = await editorCatalog.materials.listMaterials();
+    const coverings = snapshot("technology-database").records
+      .filter((record) => record.entityType === "protective-covering" && record.payload.coveringKind);
+    expect(materials.map((material) => material.name)).toEqual(coverings.map((record) => record.sourceKey).sort((a, b) => a.localeCompare(b, "ru")));
+    expect(materials.length).toBeGreaterThan(0);
+    expect(materials.every((material) => /^Ш\d$/.test(material.hatchCode ?? "") && material.coveringKind)).toBe(true);
+    expect(await editorCatalog.materials.listTextures("708К.4")).toEqual([]);
+    await expect(editorCatalog.materials.pinTexture("708К.4", materials[0]!)).rejects.toThrow(/штриховкой/);
     expect((await editorCatalog.references.getActive("technology-coax-terminations"))?.records).toHaveLength(3);
   });
 });

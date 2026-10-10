@@ -2,12 +2,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { physicalFixture } from "./physical-topology-fixture";
 import { buildDrawingBom, emptyDrawingDocuments } from "./drawing-documents";
-import { drawingObjectIndexScene, moveDrawingIndex } from "./drawing-indices";
+import { alignDrawingConnectorIndexes, drawingObjectIndexScene, moveDrawingIndex } from "./drawing-indices";
 import type { EditorSceneObject } from "./editor-types";
+import type { ComponentTemplateViewInstance } from "./component-template-view-renderer";
 import { parseHarnessDesignDocument } from "./model";
 import { executeEditorCommand, createEditorHistory, redoEditorCommand, undoEditorCommand } from "./history";
 import { hitTestEditorScene, redrawCanvas } from "./CanvasViewport";
 import { hiddenIdsForIsolatedObjects } from "./HarnessEditorWorkspace";
+
+vi.mock("./component-template-view-renderer", async importOriginal => ({
+  ...await importOriginal<typeof import("./component-template-view-renderer")>(),
+  // The visible library picture is deliberately displaced from the connector's
+  // legacy scene box, reproducing a rotated/offset library drawing.
+  projectComponentTemplateView: vi.fn((_instance: unknown, _view: unknown, origin: {x:number;y:number}) => ({
+    objectId: "A", snapshotId: "snapshot", viewId: "drawing", viewKind: "drawing" as const, commands: [],
+    bounds: { minX: origin.x + 120, minY: origin.y + 25, maxX: origin.x + 190, maxY: origin.y + 55 },
+  })),
+}));
 
 const sceneObject = (id: string, kind: EditorSceneObject["kind"], points?: readonly {x:number;y:number}[]): EditorSceneObject => ({
   id, kind, layerId: "wires", label: id, x: 0, y: 0, width: 80, height: 30, color: "#333", points,
@@ -38,11 +49,30 @@ describe("drawing object indices", () => {
     const base = physicalFixture(), wire = sceneObject("wire", "wire", [{x:0,y:0},{x:40,y:0}]);
     const document = { ...base, drawingDocuments: emptyDrawingDocuments() };
     const initial = drawingObjectIndexScene(document, [wire])[0]!;
-    const moved = moveDrawingIndex(document, initial.id, {x:100,y:50}, [initial]);
-    expect(moved?.indexOffsets?.wire).toEqual({x:72,y:57});
+    const moved = moveDrawingIndex(document, initial.id, {x:100,y:50}, [wire, initial]);
     const next = drawingObjectIndexScene({ ...document, drawingDocuments: moved! }, [{...wire,points:[{x:10,y:10},{x:50,y:10}]}])[0]!;
-    expect(next.x).toBe(110);
-    expect(next.y).toBe(60);
+    expect(moved?.indexOffsets?.wire).toEqual({x:next.x-Number(next.metadata?.indexBaseX),y:next.y-Number(next.metadata?.indexBaseY)});
+    const [anchor, label] = next.points!;
+    expect(anchor && label).toBeTruthy();
+    const angle = Math.acos(Math.abs((label!.y-anchor!.y) / Math.hypot(label!.x-anchor!.x,label!.y-anchor!.y)));
+    expect(angle).toBeLessThanOrEqual(Math.PI / 18 + 1e-8);
+  });
+
+  it("anchors a library connector index to its painted bounds, including after a drag", () => {
+    const document = { ...physicalFixture(), drawingDocuments: emptyDrawingDocuments() };
+    const connector = { ...sceneObject("A", "connector"), x: 10, y: 20, width: 80, height: 30 };
+    const instance = { objectId: "A", snapshotId: "snapshot", articleVariantId: "article", content: {} } as ComponentTemplateViewInstance;
+    const initial = drawingObjectIndexScene(document, [connector]);
+    const aligned = alignDrawingConnectorIndexes(document, [...initial, connector], [instance]);
+    const label = aligned.find(object => object.id === "object-index:A")!;
+    expect(label.points?.[0]).toEqual({ x: 200, y: 60 });
+    expect(label.metadata).toMatchObject({ indexOwnerMinX: "130", indexOwnerMaxX: "200" });
+
+    const movedDocs = moveDrawingIndex(document, label.id, { x: 250, y: 65 }, aligned)!;
+    const moved = alignDrawingConnectorIndexes({ ...document, drawingDocuments: movedDocs }, [...initial, connector], [instance])
+      .find(object => object.id === label.id)!;
+    expect(moved.points?.[0]).toEqual({ x: 200, y: 60 });
+    expect(moved.x).toBeGreaterThan(200);
   });
 
   it("uses real BOM indices and preserves drag offsets through save, parent movement, and history", () => {
@@ -56,13 +86,18 @@ describe("drawing object indices", () => {
     const labels = drawingObjectIndexScene(document, objects);
     expect(labels.map(label => label.label)).toEqual(["A", "W1", "ТУ1"]);
     const label = labels.find(item => item.metadata?.indexObjectId === "W1")!;
-    const documents = moveDrawingIndex(document, label.id, {x:100,y:50}, labels)!;
+    const documents = moveDrawingIndex(document, label.id, {x:100,y:50}, [...objects, ...labels])!;
     const history = executeEditorCommand(createEditorHistory(document), { type: "set-drawing-documents", documents });
     const saved = parseHarnessDesignDocument(JSON.parse(JSON.stringify(history.present)));
     const movedWire = { ...objects[1]!, points: [{x:10,y:10},{x:50,y:10}] };
     const afterParentMove = drawingObjectIndexScene(saved, [objects[0]!, movedWire, objects[2]!]).find(item => item.metadata?.indexObjectId === "W1")!;
-    expect(afterParentMove.x).toBe(110);
-    expect(afterParentMove.y).toBe(60);
+    const beforeParentMove = drawingObjectIndexScene(saved, objects).find(item => item.metadata?.indexObjectId === "W1")!;
+    expect(afterParentMove.x).toBeCloseTo(beforeParentMove.x+10);
+    expect(afterParentMove.y).toBeCloseTo(beforeParentMove.y+10);
+    const [anchor, labelPosition] = afterParentMove.points!;
+    expect(anchor && labelPosition).toBeTruthy();
+    const angle = Math.acos(Math.abs((labelPosition!.y-anchor!.y) / Math.hypot(labelPosition!.x-anchor!.x,labelPosition!.y-anchor!.y)));
+    expect(angle).toBeLessThanOrEqual(Math.PI / 18 + 1e-8);
     expect(undoEditorCommand(history).present).toBe(document);
     expect(redoEditorCommand(undoEditorCommand(history)).present.drawingDocuments?.indexOffsets?.W1).toEqual(documents.indexOffsets?.W1);
   });

@@ -26,6 +26,7 @@ import {
 import { runInPool } from "./bulk";
 import { formatDate } from "./format";
 import type { LineEditing } from "./ProcurementCellEdit";
+import { LineDocumentsForm, readBase64 } from "./ProcurementLineDocuments";
 
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
@@ -480,6 +481,11 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   // Действия строки видны на ней (без меню «⋯»); формы раскрываются под таблицей стадии.
   const form = (line: ProcurementLine) => ({ line, busy: busyId === line.id, disabled: interactionLocked, onAdvance: advance });
   const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", short: "Прослеж.…", panel: () => <TraceabilityForm {...form(line)} /> });
+  // DATASHEET, файлы разрешения и документа качества строки.
+  const documents = (line: ProcurementLine): RowAction => ({
+    label: "Документы…", short: "Документы…", title: "DATASHEET, файл разрешения, документ качества",
+    panel: () => <LineDocumentsForm line={line} editing={editing} disabled={interactionLocked} onMessage={say} />,
+  });
   const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", short: "Раздробить…", panel: () => <SplitAction {...form(line)} /> });
   const cancel = (line: ProcurementLine): RowAction => ({ label: "Отменить строку", run: () => cancelLine(line) });
   const replaceInvoice = (line: ProcurementLine): RowAction[] => (
@@ -498,7 +504,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
         </>
       ),
     },
-    traceability(line), split(line), cancel(line),
+    traceability(line), documents(line), split(line), cancel(line),
   ];
   const toPayActions = (line: ProcurementLine): RowAction[] => [
     {
@@ -514,7 +520,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       title: "Если ЦБ не отдал курс, его можно ввести вручную",
       panel: () => <PaymentAction {...form(line)} disabled={interactionLocked || line.pay_missing.length > 0} />,
     },
-    ...replaceInvoice(line), traceability(line), split(line), cancel(line),
+    ...replaceInvoice(line), traceability(line), documents(line), split(line), cancel(line),
   ];
   const backorderActions = (line: ProcurementLine): RowAction[] => [
     {
@@ -545,7 +551,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       title: "Курс введён вручную — сверьте с ЦБ, когда он ответит",
       run: () => run(line, () => procurementApi.reconcileRate(line.id, line.version), `${line.legacy_id}: курс сверен с ЦБ`),
     }] : []),
-    ...replaceInvoice(line), split(line),
+    ...replaceInvoice(line), documents(line), split(line),
   ];
   const orderActions = (line: ProcurementLine): RowAction[] => (
     line.status === "Жду счет" ? awaitingActions(line) : line.status === "В оплату" ? toPayActions(line) : paidActions(line)
@@ -679,6 +685,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
           renderDetail={(line) => (
             <>
               <TraceabilityForm {...form(line)} />
+              <LineDocumentsForm line={line} editing={editing} disabled={interactionLocked} onMessage={say} />
               <SplitAction {...form(line)} />
             </>
           )}
@@ -1092,15 +1099,6 @@ const KP_COLUMNS: { field: KpField; label: string; type?: string; fillAll?: bool
   { field: "invoice_number", label: "№ счёта", fillAll: true },
   { field: "invoice_date", label: "Дата счёта", type: "date", fillAll: true },
 ];
-
-function readBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
-    reader.readAsDataURL(file);
-  });
-}
 
 /** SUPPLYMAP «Внести КП» (Kp.gs, KpForm.html): every «Жду счет» line of one supplier order at once. */
 function KpForm({ reference, queue, onClose, onSaved }: {
