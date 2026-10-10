@@ -31,7 +31,7 @@ it("the marking operation of the ETK lists every mark by КД before the steps, 
   render(<EtkSheet card={techcard({ marks })} principal={principal} onChange={() => undefined} />);
   const table = await screen.findByRole("table", { name: "Метки по КД" });
   const rows = within(table).getAllByRole("row").map((row) => row.textContent);
-  expect(rows[0]).toContain("На партию 10 шт.");
+  expect(rows[0]).toContain("На партию 10 шт");
   expect(rows.slice(1)).toEqual([
     "1Разъём X1 (DB-9F)X1Бирка маркировочная TMSу разъёма110",
     "2Провод W1708К.4КБ1Маркировкана обоих концах220",

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { kitsetsApi, type KitsetCard, type ProjectStatusAction } from "./api";
-import { toneOf } from "./ProjectCard";
 import { AutoTextarea } from "./AutoTextarea";
 import { STAGE_AUTO, StageChangeDialog } from "./StageChangeDialog";
+import { StatusChip } from "./StatusChip";
+import { statusTone } from "./statusTone";
 
 export const PROJECT_STAGES = ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено"];
 export const PROJECT_TERMINALS = ["Отказ", "Слился", "Отменён"];
@@ -31,7 +32,6 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
   const [error, setError] = useState("");
   const [pendingStage, setPendingStage] = useState<string | null>(null);
   const box = useRef<HTMLSpanElement>(null);
-  const ladder = [...stages, ...terminals];
   const closed = terminals.includes(status);
 
   useEffect(() => {
@@ -64,23 +64,24 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
   }
   function pickStage(value: string) { setOpen(false); setError(""); setPendingStage(value); }
 
-  const chip = <span className={`kit-status tone-${toneOf(status, ladder)}`}>{status || "—"}</span>;
-  const blockChip = blocker ? <span className="kit-fact tone-danger" title="Активный блокер из журнала проекта">⛔ {blocker}</span> : null;
-  if (!canEdit) return <span className="proj-status">{chip}{blockChip}</span>;
+  const blockChip = blocker ? <StatusChip status={blocker} title="Активный блокер из журнала проекта" /> : null;
+  if (!canEdit) return <span className="proj-status"><StatusChip status={status} />{blockChip}</span>;
 
   return <span className="proj-status" ref={box} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => {
     // Плитка открывает карточку по Enter — клавиши меню до неё не доходят; Escape закрывает меню.
     event.stopPropagation();
     if (event.key === "Escape") setOpen(false);
   }}>
-    <button type="button" className={`kit-status tone-${toneOf(status, ladder)} proj-status-btn`} aria-haspopup="menu" aria-expanded={open}
-      aria-label={`Статус проекта ${project}: ${status}${blocker ? `, блокер ${blocker}` : ""}`} onClick={() => setOpen(!open)}>{status || "—"} ▾</button>
+    <button type="button" className="proj-status-btn" aria-haspopup="menu" aria-expanded={open}
+      aria-label={`Статус проекта ${project}: ${status}${blocker ? `, блокер ${blocker}` : ""}`} onClick={() => setOpen(!open)}>
+      <StatusChip status={status}>{status || "—"}<span className="proj-status-caret" aria-hidden="true">▾</span></StatusChip>
+    </button>
     {blockChip}
     {open && <div className="proj-status-menu" role="menu" aria-label={`Статус проекта ${project}`}>
       <div className="psm-head">Этап</div>
       <div className="psm-row">
         {stages.map((stage) => <button type="button" key={stage} role="menuitemradio" aria-checked={stage === status} disabled={busy}
-          className={`psm-item tone-${toneOf(stage, ladder)}${stage === status ? " on" : ""}`} onClick={() => pickStage(stage)}>{stage}</button>)}
+          className={`psm-item${stage === status ? " on" : ""}`} data-tone={statusTone(stage)} onClick={() => pickStage(stage)}>{stage}</button>)}
         <button type="button" role="menuitem" className="psm-item" disabled={busy} title="Снять ручные этапы: статус по фактам (ТК, набор, задания, склад, отгрузка)"
           onClick={() => pickStage(STAGE_AUTO)}>{closed ? "Вернуть в работу" : "Авто"}</button>
       </div>
@@ -90,7 +91,7 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
         {blocker
           ? <button type="button" role="menuitem" className="psm-item" disabled={busy} onClick={() => void run({ action: "unblock" })}>Снять {blocker}</button>
           : blockers.map((kind) => <button type="button" key={kind} role="menuitem" disabled={busy}
-            className={`psm-item tone-danger${holdKind === kind ? " on" : ""}`} onClick={() => { setHoldKind(kind); setError(""); }}>{kind}</button>)}
+            className={`psm-item${holdKind === kind ? " on" : ""}`} data-tone={statusTone(kind)} onClick={() => { setHoldKind(kind); setError(""); }}>{kind}</button>)}
       </div>
       {!blocker && holdKind && <form className="psm-reason" onSubmit={(event) => { event.preventDefault(); void run({ action: "block", value: holdKind, text: reason }); }}>
         <AutoTextarea autoFocus aria-label={`Причина ${holdKind}`} placeholder={`Причина ${holdKind}`} value={reason} onChange={setReason} />
@@ -99,7 +100,7 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
       <div className="psm-head">Закрыть проект</div>
       <div className="psm-row">
         {terminals.map((terminal) => <button type="button" key={terminal} role="menuitemradio" aria-checked={terminal === status} disabled={busy}
-          className={`psm-item tone-danger${terminal === status ? " on" : ""}`} onClick={() => void run({ action: "status", value: terminal })}>{terminal}</button>)}
+          className={`psm-item${terminal === status ? " on" : ""}`} data-tone={statusTone(terminal)} onClick={() => void run({ action: "status", value: terminal })}>{terminal}</button>)}
       </div>
       {error && <div className="psm-error" role="alert">{error}</div>}
     </div>}

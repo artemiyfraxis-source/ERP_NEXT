@@ -304,14 +304,14 @@ it("lays an ETK operation out in production order with the soldering mode and pi
   expect(solder).toHaveTextContent("Температура жала350–380 °C (±10 °C)");
   const headings = screen.getAllByRole("heading", { level: 4 }).map((item) => item.textContent);
   // «Эскиз» есть у каждой операции для технолога: туда загружают свою картинку.
-  expect(headings).toEqual(["1Вход", "2Инструмент, оборудование, расходники", "3Ход операции", "4Типовые дефекты · 2", "5Эскиз", "6Результат"]);
+  expect(headings).toEqual(["1Вход", "2Оснастка", "3Ход операции", "4Типовые дефекты · 2", "5Эскиз", "6Результат"]);
   const sections = [...document.querySelectorAll(".etk-op .tr-sec-h")].map((item) => item.textContent);
   expect(sections.slice(0, 3)).toEqual(["Инструмент", "Оборудование", "Расходники"]);
   expect(screen.getByText("Недолив припоя")).toBeInTheDocument();
   expect(document.querySelectorAll(".etk-def-pic > svg")).toHaveLength(2);
   expect(screen.getByText("Требование безопасности")).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "Полуфабрикат" })).toBeInTheDocument();
-  expect(screen.getByRole("row", { name: "Провод с XT60 1 шт" })).toBeInTheDocument();
+  expect(screen.getByRole("row", { name: /^Провод с XT60 1\sшт$/ })).toBeInTheDocument();
   // Время — отдельной цифрой, без повтора наименования полуфабриката.
   const time = screen.getByLabelText("Расчётное время");
   expect(time).toHaveTextContent("Расчётное время1,5 мин");
@@ -335,8 +335,8 @@ it("shows per-wire times beside their rows and no «— Шт.» for a missing no
 
   render(<TechcardsPage principal={engineer} view="projects" />);
   const time = await screen.findByLabelText("Расчётное время");
-  expect(time).toHaveTextContent("Расчётное время, итого170 мин2 ч 50 мин · на партию 100 шт.");
-  expect(screen.getByRole("row", { name: "ПВ3 250мм, обжатый терминал T1 200 Шт. 100,5" })).toBeInTheDocument();
+  expect(time).toHaveTextContent("Расчётное время, итого170 мин2 ч 50 мин · на партию 100 шт");
+  expect(screen.getByRole("row", { name: /^ПВ3 250мм, обжатый терминал T1 200\sшт 100,5$/ })).toBeInTheDocument();
   expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent(/^Автомат резка \+ опрессовка/);
   expect(document.querySelector(".etk-op")).not.toHaveTextContent("— Шт.");
   expect(document.querySelector(".etk-op")).not.toHaveTextContent("cutWireCrimp");
