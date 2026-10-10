@@ -12,6 +12,10 @@ from decimal import Decimal
 from typing import Protocol, Sequence
 from uuid import UUID
 
+from app.shared.persistence import StockVersionConflict
+
+__all__ = ["StockLotView", "StockReservationError", "StockReservationPort", "StockVersionConflict"]
+
 
 @dataclass(frozen=True)
 class StockLotView:
@@ -54,6 +58,8 @@ class StockReservationPort(Protocol):
         include_zero: bool = False,
     ) -> Sequence[StockLotView]: ...
 
+    # reserve/release raise StockReservationError when the lot refuses the quantity, and StockVersionConflict when
+    # the lot is no longer at `expected_version` or changes before the transaction commits (the caller rolls back).
     def reserve(self, lot_id: UUID, quantity: Decimal, *, expected_version: int) -> StockLotView: ...
 
     def release(self, lot_id: UUID, quantity: Decimal, *, expected_version: int) -> StockLotView: ...

@@ -6,11 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.orm.exc import StaleDataError
 
 from app.main import app
 from app.modules.procurement.domain import ProcurementLine
 from app.modules.procurement.infrastructure import ProcurementStockCoverRow, SqlAlchemyProcurementUnitOfWork
+from app.modules.procurement.stock_port import StockVersionConflict
 from app.modules.requests.api import moscow_now
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
@@ -58,7 +58,7 @@ def test_stock_port_rejects_a_view_changed_before_mutation(concurrent_env, actio
         viewed = uow.stock.get(lot.id)
         edited = edit_lot_metadata(sessions, lot.id)
 
-        with pytest.raises(StaleDataError):
+        with pytest.raises(StockVersionConflict):
             getattr(uow.stock, action)(lot.id, Decimal("10"), expected_version=viewed.version)
 
     assert get_lot(sessions, lot.id) == edited
@@ -121,7 +121,7 @@ def test_stock_port_flush_rejects_change_after_domain_mutation(concurrent_env, m
 
     monkeypatch.setattr(StockLot, domain_method, edit_after_mutation)
 
-    with pytest.raises(StaleDataError):
+    with pytest.raises(StockVersionConflict):
         with SqlAlchemyProcurementStockUnitOfWork(sessions) as uow:
             viewed = uow.stock.get(lot.id)
             getattr(uow.stock, action)(lot.id, Decimal("10"), expected_version=viewed.version)

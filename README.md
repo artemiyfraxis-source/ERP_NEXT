@@ -555,7 +555,7 @@ PIN (список активных сотрудников без e-mail, как 
 ```powershell
 cd backend
 $env:ERP_TEST_POSTGRES_URL = 'postgresql+psycopg://erp:erp@localhost:5432/erp_stock_test'
-.\.venv\Scripts\python.exe -m pytest tests/procurement/test_stock_cover_postgres.py -q
+.\.venv\Scripts\python.exe -m pytest tests/procurement/test_stock_cover_postgres.py tests/procurement/test_stock_versions_postgres.py -q
 Remove-Item Env:ERP_TEST_POSTGRES_URL
 ```
 

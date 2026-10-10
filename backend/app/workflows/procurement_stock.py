@@ -14,9 +14,10 @@ from app.modules.procurement.stock_port import (
     StockLotView,
     StockReservationError,
     StockReservationPort,
+    StockVersionConflict,
 )
 from app.modules.warehouse.domain import StockLot, WarehouseValidationError
-from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, StockLotRow
+from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
 
 
 def _view(lot: StockLot) -> StockLotView:
@@ -69,33 +70,29 @@ class SqlAlchemyProcurementStockPort(StockReservationPort):
         )
 
     def reserve(self, lot_id: UUID, quantity: Decimal, *, expected_version: int) -> StockLotView:
-        # Keep the row alive through add: the identity map weakly retains clean rows.
-        row = self.repository.session.get(StockLotRow, lot_id)
-        if row is not None and row.version != expected_version:
-            raise StaleDataError(f"Warehouse lot changed: {lot_id}")
-        lot = self.repository.get(lot_id)
-        if lot is None:
-            raise KeyError(f"Warehouse lot not found: {lot_id}")
-        try:
-            updated = lot.reserve(quantity)
-        except WarehouseValidationError as error:
-            raise StockReservationError(_view(lot), str(error)) from error
-        self.repository.add(updated)
-        return _view(updated)
+        return self._change(lot_id, expected_version, lambda lot: lot.reserve(quantity))
 
     def release(self, lot_id: UUID, quantity: Decimal, *, expected_version: int) -> StockLotView:
-        # Keep the row alive through add: the identity map weakly retains clean rows.
-        row = self.repository.session.get(StockLotRow, lot_id)
-        if row is not None and row.version != expected_version:
-            raise StaleDataError(f"Warehouse lot changed: {lot_id}")
-        lot = self.repository.get(lot_id)
-        if lot is None:
-            raise KeyError(f"Warehouse lot not found: {lot_id}")
+        return self._change(lot_id, expected_version, lambda lot: lot.release_reserve(quantity))
+
+    def _change(self, lot_id: UUID, expected_version: int, change) -> StockLotView:
+        # The repository's compare-and-swap holds the lot to the version this transaction read; the explicit check
+        # holds it to the view procurement validated.
         try:
-            updated = lot.release_reserve(quantity)
-        except WarehouseValidationError as error:
-            raise StockReservationError(_view(lot), str(error)) from error
-        self.repository.add(updated)
+            lot = self.repository.get(lot_id)
+            if lot is None:
+                raise KeyError(f"Warehouse lot not found: {lot_id}")
+            if lot.version != expected_version:
+                raise StockVersionConflict(f"Warehouse lot changed: {lot_id}")
+            try:
+                updated = change(lot)
+            except WarehouseValidationError as error:
+                raise StockReservationError(_view(lot), str(error)) from error
+            self.repository.add(updated)
+        except StockVersionConflict:
+            raise
+        except StaleDataError as error:  # an autoflush lost the ORM's version-guarded UPDATE
+            raise StockVersionConflict(str(error)) from error
         return _view(updated)
 
 
@@ -107,3 +104,11 @@ class SqlAlchemyProcurementStockUnitOfWork(SqlAlchemyProcurementUnitOfWork):
         assert self.session is not None
         self.stock = SqlAlchemyProcurementStockPort(self.session)
         return self
+
+    def commit(self) -> None:
+        try:
+            super().commit()
+        except StockVersionConflict:
+            raise
+        except StaleDataError as error:  # the flush lost a version-guarded UPDATE of a line, cover or lot
+            raise StockVersionConflict(str(error)) from error
