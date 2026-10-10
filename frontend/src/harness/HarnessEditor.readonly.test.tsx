@@ -71,8 +71,12 @@ describe("редактор жгута в режиме просмотра", () =>
   it("масштаб и переход на чертёж работают", async () => {
     const { save } = await openReadOnly();
     const toolbar = screen.getByRole("complementary", { name: "Инструменты редактора" });
-    fireEvent.click(within(toolbar).getByRole("tab", { name: "Вид" }));
-    fireEvent.click(await within(toolbar).findByRole("button", { name: "Увеличить масштаб" }));
+    // The toolbar resets its tab to «Просмотр» when the editor settles its view after loading: click until «Вид» stays open.
+    const zoomIn = await waitFor(() => {
+      fireEvent.click(within(toolbar).getByRole("tab", { name: "Вид" }));
+      return within(toolbar).getByRole("button", { name: "Увеличить масштаб" });
+    }, { timeout: 5_000 });
+    fireEvent.click(zoomIn);
     expect(await screen.findByLabelText(/Поле схемы Э4\. Масштаб 120 процентов/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Чертёж" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Чертёж" }).getAttribute("aria-selected")).toBe("true"));
