@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { kitsetsApi, type KitsetCard, type ProjectStatusAction } from "./api";
 import { toneOf } from "./ProjectCard";
+import { AutoTextarea } from "./AutoTextarea";
+import { STAGE_AUTO, StageChangeDialog } from "./StageChangeDialog";
 
 export const PROJECT_STAGES = ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено"];
 export const PROJECT_TERMINALS = ["Отказ", "Слился", "Отменён"];
@@ -27,6 +29,7 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
   const [holdKind, setHoldKind] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
+  const [pendingStage, setPendingStage] = useState<string | null>(null);
   const box = useRef<HTMLSpanElement>(null);
   const ladder = [...stages, ...terminals];
   const closed = terminals.includes(status);
@@ -53,6 +56,14 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
     } finally { setBusy(false); }
   }
 
+  /** Этап проекта — через окно подтверждения с предпросмотром (пропущенные этапы, предупреждения, причина назад). */
+  async function applyStage(value: string, reason: string) {
+    const result = await kitsetsApi.setStatus(project, { action: "status", value, reason });
+    setPendingStage(null);
+    onChanged(result.card);
+  }
+  function pickStage(value: string) { setOpen(false); setError(""); setPendingStage(value); }
+
   const chip = <span className={`kit-status tone-${toneOf(status, ladder)}`}>{status || "—"}</span>;
   const blockChip = blocker ? <span className="kit-fact tone-danger" title="Активный блокер из журнала проекта">⛔ {blocker}</span> : null;
   if (!canEdit) return <span className="proj-status">{chip}{blockChip}</span>;
@@ -69,9 +80,9 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
       <div className="psm-head">Этап</div>
       <div className="psm-row">
         {stages.map((stage) => <button type="button" key={stage} role="menuitemradio" aria-checked={stage === status} disabled={busy}
-          className={`psm-item tone-${toneOf(stage, ladder)}${stage === status ? " on" : ""}`} onClick={() => void run({ action: "status", value: stage })}>{stage}</button>)}
+          className={`psm-item tone-${toneOf(stage, ladder)}${stage === status ? " on" : ""}`} onClick={() => pickStage(stage)}>{stage}</button>)}
         <button type="button" role="menuitem" className="psm-item" disabled={busy} title="Снять ручные этапы: статус по фактам (ТК, набор, задания, склад, отгрузка)"
-          onClick={() => void run({ action: "status", value: "авто" })}>{closed ? "Вернуть в работу" : "Авто"}</button>
+          onClick={() => pickStage(STAGE_AUTO)}>{closed ? "Вернуть в работу" : "Авто"}</button>
       </div>
       {status === "Отгружено" && <div className="psm-note">Отгрузка по факту ставит «Отгружено» и сильнее ручного этапа.</div>}
       <div className="psm-head">Блокер</div>
@@ -82,7 +93,7 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
             className={`psm-item tone-danger${holdKind === kind ? " on" : ""}`} onClick={() => { setHoldKind(kind); setError(""); }}>{kind}</button>)}
       </div>
       {!blocker && holdKind && <form className="psm-reason" onSubmit={(event) => { event.preventDefault(); void run({ action: "block", value: holdKind, text: reason }); }}>
-        <input autoFocus aria-label={`Причина ${holdKind}`} placeholder={`Причина ${holdKind}`} value={reason} onChange={(event) => setReason(event.target.value)} />
+        <AutoTextarea autoFocus aria-label={`Причина ${holdKind}`} placeholder={`Причина ${holdKind}`} value={reason} onChange={setReason} />
         <button type="submit" className="primary small" disabled={busy || !reason.trim()}>Поставить</button>
       </form>}
       <div className="psm-head">Закрыть проект</div>
@@ -92,5 +103,8 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
       </div>
       {error && <div className="psm-error" role="alert">{error}</div>}
     </div>}
+    {pendingStage !== null && <StageChangeDialog project={project} current={status} value={pendingStage}
+      loadPreview={() => kitsetsApi.stagePreview(project, pendingStage)}
+      apply={(why) => applyStage(pendingStage, why)} onClose={() => setPendingStage(null)} />}
   </span>;
 }
