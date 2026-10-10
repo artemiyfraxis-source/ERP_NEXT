@@ -3812,6 +3812,11 @@ export const assemblyApi = {
     api<{ id: string; name: string; url: string | null }>("/api/techcards/assembly/drawings", {
       method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, content_base64: contentBase64 }),
     }),
+  /** Несколько PDF в заданном порядке — один файл КД позиции; сервер читает все части и сохраняет всё или ничего. */
+  uploadMergedDrawing: (project: string, itemIndex: string, fileName: string, files: { file_name: string; content_base64: string }[]) =>
+    api<{ id: string; name: string; url: string | null; pages: { file_name: string; pages: number }[] }>("/api/techcards/assembly/drawings/merge", {
+      method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, files }),
+    }),
 };
 
 /* Токены API (генератор техкарт, черновики сборки): выпускает и отзывает только полный доступ. */

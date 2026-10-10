@@ -203,7 +203,7 @@ it("says what to do when the position has no drafts", async () => {
   mockApi([]);
   mount();
   await openManual();
-  expect(await screen.findByText("Черновиков по этой позиции нет — пришлите чертёж Claude.")).toBeInTheDocument();
+  expect(await screen.findByText("Черновиков по этой позиции нет. Загрузите чертёж (можно несколько PDF — их сошьют в один) и попросите Claude набрать по нему схему: черновик появится здесь.")).toBeInTheDocument();
 });
 
 it("uploads a drawing of the position into its КД", async () => {
@@ -211,7 +211,7 @@ it("uploads a drawing of the position into its КД", async () => {
     ? json({ id: "doc9", name: "KB1.pdf", url: "/api/techcards/kitsets/P-100/documents/doc9" }, 201) : undefined));
   mount();
   await openManual();
-  await screen.findByText("Черновиков по этой позиции нет — пришлите чертёж Claude.");
+  await screen.findByText("Черновиков по этой позиции нет. Загрузите чертёж (можно несколько PDF — их сошьют в один) и попросите Claude набрать по нему схему: черновик появится здесь.");
   fireEvent.change(screen.getByLabelText("Файл чертежа"), { target: { files: [new File(["%PDF-1.4"], "KB1.pdf", { type: "application/pdf" })] } });
   expect(await screen.findByText("Чертёж «KB1.pdf» загружен в КД позиции")).toBeInTheDocument();
   const upload = calls.find((call) => call.path === "/api/techcards/assembly/drawings")!;
