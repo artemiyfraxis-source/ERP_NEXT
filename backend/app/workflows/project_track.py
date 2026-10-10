@@ -18,7 +18,16 @@ from typing import Any, Iterable
 
 from app.modules.fulfillment.domain import FulfillmentStatus
 from app.modules.operations.domain import task_module_label
-from app.modules.production.plan import kit_key_from_purpose, normalize_project_number, project_from_purpose
+from app.modules.production.plan import (
+    KIT_STAGES,
+    PLAN_KINDS,
+    PLAN_STAGE_AUTO,
+    PROJECT_TERMINALS,
+    kit_key_from_purpose,
+    normalize_project_number,
+    project_from_purpose,
+    stage_skipped,
+)
 from app.modules.techcards.kitsets import item_id, project_key
 from app.modules.techcards.project_cards import TechcardStatus
 from app.workflows.project_kitset import request_matches_project
@@ -212,6 +221,58 @@ def _production_entries(uow, canon: str) -> list[TrackEntry]:
     return entries
 
 
+def _by(event: Any) -> str:
+    return f" · {event.who}" if event.who else ""
+
+
+def _stage_entries(event: Any) -> list[TrackEntry]:
+    """Одна ручная смена этапа КБ журнала плана: пропущенные этапы (по одной строке), затем цель; назад и «авто» — одна."""
+    index = event.item_index
+    at = event.occurred_at
+    reason = f" · причина: {event.reason}" if event.reason else ""
+
+    def entry(ref: str, status: str) -> TrackEntry:
+        return TrackEntry(at, MODULE_PRODUCTION, "Этап КБ", ref, status, index)
+
+    if event.value == PLAN_STAGE_AUTO:
+        return [entry(PLAN_STAGE_AUTO, f"этап снова по фактам{_by(event)}{reason}")]
+    before = event.from_value
+    if before in KIT_STAGES and event.value in KIT_STAGES and KIT_STAGES.index(event.value) < KIT_STAGES.index(before):
+        return [entry(event.value, f"возврат вручную {before} → {event.value}{reason}{_by(event)}")]
+    rows = [entry(stage, f"пропущен вручную{_by(event)}") for stage in stage_skipped(before, event.value)]
+    rows.append(entry(event.value, f"выставлен вручную{_by(event)}{reason}"))
+    return rows
+
+
+def _plan_entries(uow, canon: str) -> list[TrackEntry]:
+    """Ручные этапы, блокеры и закрытые статусы из журнала плана производства; этапы по фактам идут отдельно."""
+    entries: list[TrackEntry] = []
+    for event in uow.plan_events.of_project(canon):
+        if event.kind == PLAN_KINDS["stage"]:
+            entries += _stage_entries(event)
+        elif event.kind == PLAN_KINDS["block"]:
+            text = f" · {event.text}" if event.text else ""
+            entries.append(TrackEntry(
+                event.occurred_at, MODULE_PRODUCTION, "Блокер", event.blocker, f"поставлен{_by(event)}{text}",
+            ))
+        elif event.kind == PLAN_KINDS["unblock"]:
+            entries.append(TrackEntry(
+                event.occurred_at, MODULE_PRODUCTION, "Блокер", event.blocker, f"снят{_by(event)}",
+            ))
+        elif event.kind == PLAN_KINDS["status"]:
+            reason = f" · причина: {event.reason}" if event.reason else ""
+            if event.value in PROJECT_TERMINALS:
+                entries.append(TrackEntry(
+                    event.occurred_at, MODULE_PRODUCTION, "Статус проекта", event.value, f"выставлен{_by(event)}{reason}",
+                ))
+            else:
+                entries.append(TrackEntry(
+                    event.occurred_at, MODULE_PRODUCTION, "Статус проекта", event.from_value,
+                    f"возвращён в работу{_by(event)}{reason}",
+                ))
+    return entries
+
+
 def _number(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
@@ -288,7 +349,7 @@ def project_track(
     entries += _read(procurement, lambda uow: _procurement_entries(uow, canon, kb_of_request, kb_of_line))
     entries += _read(receiving, lambda uow: _receiving_entries(uow, canon, kb_of_line))
     entries += _read(fulfillment, lambda uow: _fulfillment_entries(uow, canon))
-    entries += _read(production, lambda uow: _production_entries(uow, canon))
+    entries += _read(production, lambda uow: _production_entries(uow, canon) + _plan_entries(uow, canon))
     entries += _read(shipping, lambda uow: _good_entries(uow, canon) + _shipment_entries(uow, canon))
     entries += _read(tasks, lambda uow: _task_entries(uow, canon))
     return _order(entries)
