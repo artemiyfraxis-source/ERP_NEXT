@@ -62,7 +62,7 @@ other identities).
   `DESTRUCTIVE = True` runs only after the owner approves its revision id via the «Обновить сервер» button.
 - New code: constraints, not rollbacks — protect data with CHECK, UNIQUE, FK, NOT NULL and version checks that make bad
   states impossible, instead of relying on rollbacks or compensating scripts afterwards.
-- Repo stays private. No secrets in git. Never write to live Google data (SUPPLYMAP warehouse sheets).
+- Repo is public (owner, 10.10.2026 — free CI). No secrets in git. Never write to live Google data (SUPPLYMAP warehouse sheets).
 - Commits are authored by the human whose session it is, under their own git identity. **No
   `Co-Authored-By: Claude`, no "Generated with Claude Code"** in commits or PRs.
 - PR ready = rebased on `main`, gate green, body says what changed, which module, migration yes/no, how to
