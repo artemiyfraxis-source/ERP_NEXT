@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
 import { draftKey } from "./useGeneratorDraft";
+import { pressBuild } from "./test/pressBuild";
 
 /* Владелец 10.10: «ввёл данные и переключился — всё слетело». Переход на другую вкладку карточки размонтирует генератор;
    введённое возвращается при следующем открытии, «Создать» черновик убирает. */
@@ -58,7 +59,7 @@ it("keeps the typed form through a tab switch, restores it with a note and clear
   expect(screen.getByText(/Восстановлен несохранённый черновик от/)).toBeInTheDocument();
 
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  pressBuild();
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0]).toMatchObject({ materialsSheet: true });
   await waitFor(() => expect(screen.queryByText(/Восстановлен несохранённый черновик/)).not.toBeInTheDocument());
@@ -75,7 +76,7 @@ it("keeps the draft when the build fails", async () => {
   render(<TcGenerator card={card} kit={kit} busy={false} onBuild={onBuild} onDiscard={vi.fn()} userId="user-1" />);
   await screen.findByRole("tab", { name: "Межплатная", selected: true });
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  pressBuild();
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(window.localStorage.getItem(KEY)).not.toBeNull();
 });
