@@ -2242,6 +2242,12 @@ export function HarnessDesignEditor({
           if (topology && segment) { const sceneObject=physicalTopologyScene(history.present).find(o=>o.id===wireId);
             const transition=sceneObject?.pipe?.joiningTransitionHandles?.find(handle=>handle.index===routeIndex);
             if(transition){const pipe=topology.joiningPipes?.find(p=>p.members[transition.memberIndex]?.segmentIds.includes(wireId));if(pipe)run({type:"update-joining-pipe-member-bend",pipeId:pipe.id,memberIndex:transition.memberIndex,side:transition.side,clear:true});return;}
+            const boundary=sceneObject?.pipe?.joiningBoundaryHandles?.find(handle=>handle.index===routeIndex);
+            if(boundary&&(boundary.boundary==="outerEnter"||boundary.boundary==="outerExit")){
+              const pipe=topology.joiningPipes?.find(p=>p.members[boundary.memberIndex]?.segmentIds.includes(wireId));
+              if(pipe)run({type:"clear-joining-pipe-member-boundary",pipeId:pipe.id,memberIndex:boundary.memberIndex,boundary:boundary.boundary});
+              return;
+            }
             const authoredIndex=sceneObject?.pipe?.authoredHandleIndices?.[routeIndex];if(authoredIndex===-1)return;
             run({type:"remove-physical-bend",segmentId:wireId,index:(authoredIndex??routeIndex+1)-1}); return; }
           const wire = history.present.wires.find((item) => item.id === wireId);

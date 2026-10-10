@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { physicalSegmentPoints } from "./physical-geometry";
-import { standardCoveringOver } from "./physical-coverings";
+import { standardCoveringOver, projectOntoPolyline } from "./physical-coverings";
 import { drawingRouteSamples } from "./drawing-route-path";
 import { physicalFixture } from "./physical-topology-fixture";
 import { pipeBundleDisplaySamples, pipeBundleTransitionHandles, projectPipeBundleControls, projectPipeBundlePoint, unprojectPipeBundleEdit } from "./pipe-bundle-projection";
@@ -341,6 +341,20 @@ it("projects bundled pipe presentation inside its sleeve and rejoins the authore
   expect(controls.at(-1)).toEqual(source.at(-1));
   const wirePath = physicalWireDisplayPaths(document, "W1", { x: 0, y: 0 }, { x: 650, y: 500 })!.flat();
   expect(wirePath.some(point => !source.some(base => Math.hypot(point.x - base.x, point.y - base.y) < 0.01))).toBe(true);
+});
+
+it("keeps bend handles on the painted rounded route",()=>{
+  const base=physicalFixture();
+  const document={...base,drawingDocuments:{...base.drawingDocuments!,bendRadius:18},physicalTopology:{...base.physicalTopology!,coverings:[{
+    id:"bundle",name:"Общая оболочка",width:0,color:"#334455",lengthMm:null,spans:[{segmentId:"S0",from:0,to:1}],
+    bundle:{mode:"flat" as const,members:[{kind:"segment" as const,id:"S0"},{kind:"segment" as const,id:"S1"}]},
+  }],segments:base.physicalTopology!.segments.map(item=>item.id==="S0"?{...item,path:{kind:"routed" as const,points:[{x:250,y:130} ]}}:item)}};
+  const segment=document.physicalTopology!.segments.find(item=>item.id==="S0")!,scene=physicalTopologyScene(document).find(item=>item.id===segment.id)!;
+  const source=physicalSegmentPoints(document,segment),legacy=source.slice(1,-1).map(point=>projectPipeBundlePoint(document,segment.id,projectOntoPolyline(source,point).fraction,point));
+  expect(legacy.some(point=>projectOntoPolyline(scene.points!,point).distance>1e-6)).toBe(true);
+  for(const [index,authored] of (scene.pipe!.authoredHandleIndices??[]).entries())if(authored>=1){
+    expect(projectOntoPolyline(scene.points!,scene.pipe!.handles[index]!).distance).toBeLessThan(1e-6);
+  }
 });
 
 it("leaves an unbundled pipe and authored geometry unchanged", () => {

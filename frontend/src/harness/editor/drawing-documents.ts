@@ -5,7 +5,7 @@ import {initialLinearLeader} from "./drawing-leader-placement";
 import { drawingLocalPoint, drawingPointToLocal } from "./drawing-scale";
 import { moveDrawingDimension, validateDrawingDimensions, type DrawingDimension, type DimensionMode } from "./drawing-dimensions";
 import type { EditorSceneObject } from "./editor-types";
-import { findWireEndpoint, calculateWireCutLength, type HarnessDesignDocument, type Point, type WireEndpoint } from "./model";
+import { defaultLayerIds, findWireEndpoint, calculateWireCutLength, type HarnessDesignDocument, type Point, type WireEndpoint } from "./model";
 import { coveringPaths, coveringMeasuredLength } from "./physical-coverings";
 import { physicalNodePoint } from "./physical-ports";
 import { physicalSegmentPoints } from "./physical-geometry";
@@ -362,8 +362,8 @@ export function drawingDocumentScene(document:HarnessDesignDocument,quantity=1,p
     const offset=l.anchorLocal&&connector?drawingLocalPoint(l.anchorLocal,connector.drawingPlacements):l.anchorOffset;
     const target=origin?{x:origin.x+offset.x,y:origin.y+offset.y}:l.circle;
     const anchor=drawingObjectPerimeter(document,l.objectId,target,perimeters)??l.circle;
-    return [{id:l.id,kind:"position-leader",layerId:"dimensions",label:origin&&row?String(row.position):"?",x:l.circle.x-radius,y:l.circle.y-radius,width:radius*2,height:radius*2,color:origin&&row?"#365568":"#c23535",points:[anchor,l.circle]},
-      {id:`${l.id}:anchor`,kind:"leader-anchor",layerId:"dimensions",label:"",x:anchor.x-anchorRadius,y:anchor.y-anchorRadius,width:anchorRadius*2,height:anchorRadius*2,color:origin&&row?"#365568":"#c23535"}];
+    return [{id:l.id,kind:"position-leader",layerId:defaultLayerIds.materialIndexes,label:origin&&row?String(row.position):"?",x:l.circle.x-radius,y:l.circle.y-radius,width:radius*2,height:radius*2,color:origin&&row?"#365568":"#c23535",points:[anchor,l.circle]},
+      {id:`${l.id}:anchor`,kind:"leader-anchor",layerId:defaultLayerIds.materialIndexes,label:"",x:anchor.x-anchorRadius,y:anchor.y-anchorRadius,width:anchorRadius*2,height:anchorRadius*2,color:origin&&row?"#365568":"#c23535"}];
   });
   const rails:EditorSceneObject[]=(d.rails??[]).flatMap(rail=>[
     {id:rail.id,kind:"position-rail",layerId:"dimensions",label:"Линия позиций",x:Math.min(rail.start.x,rail.end.x),y:Math.min(rail.start.y,rail.end.y),width:Math.abs(rail.end.x-rail.start.x),height:Math.abs(rail.end.y-rail.start.y),color:"#587084",points:[rail.start,rail.end]},

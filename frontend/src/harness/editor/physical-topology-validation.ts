@@ -22,6 +22,7 @@ export function parsePhysicalTopology(value: unknown, document: HarnessDesignDoc
   for (const n of t.nodes) {
     if (!n) return fail(); unique(n.id);
     if(n.wireIds!==undefined&&(!n.connectorId||!Array.isArray(n.wireIds)||new Set(n.wireIds).size!==n.wireIds.length||n.wireIds.some((id:string)=>!document.wires.some(w=>w.id===id&&(w.from.connectorId===n.connectorId||w.to.connectorId===n.connectorId)))))return fail();
+    if(n.transitWireIds!==undefined&&(!n.connectorId||!Array.isArray(n.transitWireIds)||new Set(n.transitWireIds).size!==n.transitWireIds.length||n.transitWireIds.some((id:string)=>!document.wires.some(w=>w.id===id))))return fail();
     if(n.direction!==undefined&&!direction(n.direction))return fail();
     if(n.contactDirections!==undefined&&(!n.connectorId||!n.contactDirections||typeof n.contactDirections!=="object"||Array.isArray(n.contactDirections)||Object.entries(n.contactDirections).some(([id,value])=>!document.connectors.find(c=>c.id===n.connectorId)?.contacts.some(c=>c.id===id)||!direction(value))))return fail();
     if (!point(n.position) || n.connectorId !== undefined && !document.connectors.some(c => c.id === n.connectorId)) return fail();
