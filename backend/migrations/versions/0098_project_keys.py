@@ -30,8 +30,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0099_project_keys"
-down_revision: str | None = "0096_cable_structure"
+revision: str = "0098_project_keys"
+down_revision: str | None = "0097_fulfillment_kit_request_unique"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
