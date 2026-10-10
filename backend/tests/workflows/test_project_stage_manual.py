@@ -328,7 +328,7 @@ def at_0099(tmp_path_factory) -> Path:
     with pytest.MonkeyPatch.context() as patch:
         patch.delenv("ERP_DATABASE_URL", raising=False)
         patch.delenv("ERP_MIGRATION_ON_VIOLATION", raising=False)
-        command.upgrade(_config(path), "0099_worker_heartbeats")
+        command.upgrade(_config(path), "0100_identity_documents")
     return path
 
 
@@ -376,7 +376,7 @@ def test_migration_checks_block_updates_and_downgrades_cleanly(database):
             connection.execute("UPDATE production_plan_events SET text = 'правка'")
         connection.execute("DELETE FROM production_plan_events")  # удаление проекта сносит журнал — можно
 
-    command.downgrade(_config(database), "0099_worker_heartbeats")
+    command.downgrade(_config(database), "0100_identity_documents")
     with sqlite3.connect(database) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(production_plan_events)")}
         assert not {"from_value", "reason"} & columns
@@ -390,7 +390,7 @@ def test_violating_rows_stop_the_migration_on_request_and_are_kept_by_default(da
     with pytest.raises(RuntimeError, match="остановлена, данные не тронуты") as stopped:
         command.upgrade(_config(database, "on_violation=stop"), "0101_production_stage_history")
     assert "2 строк(и) нарушают" in str(stopped.value) and "«Готово»" in str(stopped.value)
-    assert _revision(database) == "0099_worker_heartbeats"
+    assert _revision(database) == "0100_identity_documents"
 
     command.upgrade(_config(database), "0101_production_stage_history")
     assert "2 строк(и) нарушают" in capsys.readouterr().out
@@ -398,7 +398,7 @@ def test_violating_rows_stop_the_migration_on_request_and_are_kept_by_default(da
         assert sorted(connection.execute("SELECT kind, value FROM production_plan_events").fetchall()) == [
             ("comment", ""), ("Этап КБ", "Готово"),
         ]
-    command.downgrade(_config(database), "0099_worker_heartbeats")
+    command.downgrade(_config(database), "0100_identity_documents")
 
 
 def test_migration_checks_match_the_model():
