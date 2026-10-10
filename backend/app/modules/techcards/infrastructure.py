@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
+from .harness_infrastructure import SqlAlchemyHarnessComponentRepository, SqlAlchemyHarnessRevisionRepository
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
@@ -517,6 +518,8 @@ class SqlAlchemyTechcardsUnitOfWork:
         self.techcards = SqlAlchemyTechcardRepository(self.session)
         self.operation_cards = SqlAlchemyOperationCardRepository(self.session)
         self.kitsets = SqlAlchemyKitsetRepository(self.session)
+        self.harness_revisions = SqlAlchemyHarnessRevisionRepository(self.session)
+        self.harness_components = SqlAlchemyHarnessComponentRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 

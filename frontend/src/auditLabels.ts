@@ -189,6 +189,7 @@ const EVENT_NAMES: Record<string, string> = {
   "identity.level_access_saved": "Доступы уровней сохранены",
   "identity.access_levels_migrated": "Роли переведены в уровни доступа",
   "identity.dormant_access_archived": "Исключения прежней роли с полным доступом убраны в архив",
+  "identity.level_view_defaults_seeded": "Уровням открыт просмотр склада, закупки и приёмки",
   "identity.user_access_saved": "Исключения доступа сохранены",
   "identity.admin_mode_on": "Режим администратора включён",
   "identity.admin_mode_off": "Режим администратора выключен",

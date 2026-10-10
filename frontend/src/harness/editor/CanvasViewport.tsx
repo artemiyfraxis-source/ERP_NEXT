@@ -976,6 +976,14 @@ function containsPoint(
   view?: HarnessEditorView,
 ): boolean {
   if (object.kind === "object-index") return point.x >= object.x - tolerance && point.x <= object.x + object.width + tolerance && point.y >= object.y - tolerance && point.y <= object.y + object.height + tolerance;
+  if (object.kind === "position-leader") {
+    const circle = object.points?.[1];
+    return (circle ? Math.hypot(point.x - circle.x, point.y - circle.y) <= object.width / 2 + tolerance : false) ||
+      (object.points?.[0] && object.points[1] ? pointToSegmentDistance(point, object.points[0], object.points[1]) <= tolerance : false);
+  }
+  if (object.kind === "leader-anchor" || object.kind === "rail-handle") {
+    return point.x >= object.x - tolerance && point.x <= object.x + object.width + tolerance && point.y >= object.y - tolerance && point.y <= object.y + object.height + tolerance;
+  }
   if(object.kind.startsWith("graphic-")){const p=object.points??[],width=Number(object.metadata?.graphicWidth??2)/2+tolerance,k=object.metadata?.graphicKind;if(k==="contact")return !!p[0]&&Math.hypot(point.x-p[0].x,point.y-p[0].y)<=Math.max(6,width);if(k==="text"){const fontSize=Number(object.metadata?.graphicFontSize??16);return point.x>=object.x-tolerance&&point.x<=object.x+Math.max(fontSize*1.8,object.label.length*fontSize*.65)+tolerance&&point.y>=object.y-fontSize-tolerance&&point.y<=object.y+fontSize*.2+tolerance;}if(k==="rectangle")return point.x>=Math.min(p[0]?.x??0,p[1]?.x??0)-tolerance&&point.x<=Math.max(p[0]?.x??0,p[1]?.x??0)+tolerance&&point.y>=Math.min(p[0]?.y??0,p[1]?.y??0)-tolerance&&point.y<=Math.max(p[0]?.y??0,p[1]?.y??0)+tolerance;if(k==="ellipse"&&p[0]&&p[1]){const center={x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2},rx=Math.abs(p[1].x-p[0].x)/2,ry=Math.abs(p[1].y-p[0].y)/2;return rx>0&&ry>0&&Math.abs(((point.x-center.x)/rx)**2+((point.y-center.y)/ry)**2-1)<=Math.max(.2,width/Math.max(rx,ry));}return p.slice(1).some((v,i)=>pointToSegmentDistance(point,p[i]!,v)<=width)||k==="closedContour"&&pointToSegmentDistance(point,p.at(-1)!,p[0]!)<=width;}
   if(object.kind==="position-rail")return !!object.points?.[0]&&!!object.points?.[1]&&pointToSegmentDistance(point,object.points[0],object.points[1])<=tolerance;
   if(object.kind==="dimension"&&object.metadata?.boundDimension==="true"&&Math.hypot(point.x-object.x,point.y-object.y+7)<=Math.max(16,tolerance))return true;
@@ -1522,9 +1530,16 @@ export function objectsInPaintOrder(
   // above every user-reordered layer so wires, covers and tables cannot hide them.
   const connectionPoints = result.filter((object) => object.kind === "physical-node");
   const artwork = result.filter((object) => object.kind !== "physical-node");
+  // Keep annotations from legacy documents selectable while they migrate to
+  // the dedicated material-index layer (which is absent from old layer lists).
+  const missingTopAnnotations = objects.filter((object) =>
+    (object.kind === "object-index" || object.kind === "position-leader" || object.kind === "leader-anchor") &&
+    !layers.some((layer) => layer.id === object.layerId));
+  const topAnnotations = artwork.filter((object) => object.kind === "object-index" || object.kind === "position-leader" || object.kind === "leader-anchor");
+  const regularArtwork = artwork.filter((object) => object.kind !== "object-index" && object.kind !== "position-leader" && object.kind !== "leader-anchor");
   // Drawing connector pictures are underlays; preserve user order within each pass.
   return view === "drawing"
-    ? [...artwork.filter(object => object.kind === "connector"), ...artwork.filter(object => object.kind !== "connector" && object.kind !== "object-index"), ...connectionPoints, ...artwork.filter(object => object.kind === "object-index")]
+    ? [...regularArtwork.filter(object => object.kind === "connector"), ...regularArtwork.filter(object => object.kind !== "connector"), ...connectionPoints, ...topAnnotations, ...missingTopAnnotations]
     : [...artwork, ...connectionPoints];
 }
 
@@ -1630,6 +1645,19 @@ export function hitTestEditorScene(
     if (object && !(projection && view === "drawing") && containsPoint(object, point, tolerance, view)) return object.id;
   }
   return null;
+}
+
+/** Connection points are direct editing anchors and always win over a sleeve. */
+export function coveringDragBlockedByPhysicalNode(
+  objects: readonly EditorSceneObject[],
+  layers: readonly EditorLayer[],
+  point: EditorPoint,
+  zoom: number,
+  view: HarnessEditorView,
+): boolean {
+  return objects.some(object => object.kind === "physical-node" &&
+    layers.some(layer => layer.id === object.layerId && layer.visible && !layer.locked) &&
+    containsPoint(object, point, 7 / zoom, view));
 }
 
 function roundedRectangle(
@@ -2135,6 +2163,15 @@ export function drawEditorSceneObject(
     context.textAlign = "left";
     context.textBaseline = "middle";
     const padX = 4 * scale, height = 18 * scale, width = Math.max(object.width, context.measureText(object.label).width + padX * 2);
+    const anchor = object.points?.[0], labelEndpoint = object.points?.[1] ?? { x: object.x + width / 2, y: object.y + height / 2 };
+    if (anchor) {
+      context.strokeStyle = selected ? "#1179ac" : object.color;
+      context.lineWidth = 1;
+      context.lineCap = "round";
+      context.beginPath(); context.moveTo(anchor.x, anchor.y); context.lineTo(labelEndpoint.x, labelEndpoint.y); context.stroke();
+      context.fillStyle = selected ? "#1179ac" : object.color;
+      context.beginPath(); context.arc(anchor.x, anchor.y, 2.5 * scale, 0, Math.PI * 2); context.fill();
+    }
     context.fillStyle = "rgba(255,255,255,.94)";
     context.fillRect(object.x, object.y, width, height);
     context.fillStyle = selected ? "#1179ac" : object.color;
@@ -3440,6 +3477,22 @@ function EditableCanvasViewport({
         return;
       }
     }
+    // Dimensions, material indexes and positional designations are top-layer
+    // annotations. Resolve them before physical editing gestures so a sleeve
+    // cannot consume a click intended for the annotation drawn above it.
+    if(event.button===0&&view==="drawing"&&tool==="select") {
+      const point=screenToWorld(camera,localPoint(event.clientX,event.clientY));
+      const annotation=[...objects].reverse().find(o=>["dimension","object-index","position-leader","leader-anchor"].includes(o.kind)&&layers.some(l=>l.id===o.layerId&&l.visible)&&containsPoint(o,point,7/camera.zoom,view));
+      if(annotation){
+        const layer=layers.find(l=>l.id===annotation.layerId);
+        onObjectSelect(annotation.id,event.ctrlKey||event.metaKey||event.shiftKey);
+        if(layer?.locked!==true&&onObjectMove){
+          event.currentTarget.setPointerCapture(event.pointerId);
+          dragRef.current={kind:"object",pointerId:event.pointerId,clientX:event.clientX,clientY:event.clientY,objectId:annotation.id,objectX:annotation.x,objectY:annotation.y,mode:"carry",snapState:{}};
+        }
+        return;
+      }
+    }
     if(event.button===0&&event.shiftKey&&view==="drawing"&&tool==="select") {
       const local=localPoint(event.clientX,event.clientY),point=screenToWorld(camera,local);
       const id=hitTestEditorScene(objects,layers,point,camera.zoom,view);
@@ -3449,9 +3502,14 @@ function EditableCanvasViewport({
     }
     if(event.button===0&&view==="drawing"&&tool==="select"&&!event.ctrlKey&&!event.shiftKey&&onCoveringDrag){
       const point=screenToWorld(camera,localPoint(event.clientX,event.clientY)),grip=gripAt(point);
-      const pipeGrip=objects.some(o=>o.metadata?.joiningPipe&&o.kind==="physical-node"&&layers.some(l=>l.id===o.layerId&&l.visible&&!l.locked)&&containsPoint(o,point,7/camera.zoom,view))||objects.some(o=>o.kind==="physical-segment"&&layers.some(l=>l.id===o.layerId&&l.visible&&!l.locked)&&(hitTestWireRoutePoint(o,point,camera.zoom)!==null||pipeMidpoints(o).some(h=>Math.hypot(h.point.x-point.x,h.point.y-point.y)<=7/camera.zoom)));
+      // A connection point is a direct editing anchor.  Test every physical
+      // node here, not just generated OP nodes: this handler runs before the
+      // general scene hit-test, so otherwise a sleeve would steal clicks and
+      // hover from ordinary connector exits and T junctions.
+      const nodeHit=coveringDragBlockedByPhysicalNode(objects,layers,point,camera.zoom,view);
+      const pipeGrip=nodeHit||objects.some(o=>o.kind==="physical-segment"&&layers.some(l=>l.id===o.layerId&&l.visible&&!l.locked)&&(hitTestWireRoutePoint(o,point,camera.zoom)!==null||pipeMidpoints(o).some(h=>Math.hypot(h.point.x-point.x,h.point.y-point.y)<=7/camera.zoom)));
       const cover=[...objects].reverse().find(o=>o.kind==="physical-covering"&&layers.some(l=>l.id===o.layerId&&l.visible&&!l.locked)&&coveringHit(o,point,4/camera.zoom)!==null);
-      if((grip?.part.startsWith("transition-")||!pipeGrip)&&(grip||cover)){const objectId=grip?.objectId??cover!.id,spanIndex=grip?.spanIndex??coveringHit(cover!,point,4/camera.zoom)!;
+      if(!nodeHit&&(grip?.part.startsWith("transition-")||!pipeGrip)&&(grip||cover)){const objectId=grip?.objectId??cover!.id,spanIndex=grip?.spanIndex??coveringHit(cover!,point,4/camera.zoom)!;
         setHoverGrip(null);
         onObjectSelect(objectId,false);event.currentTarget.setPointerCapture(event.pointerId);dragRef.current={kind:"covering",pointerId:event.pointerId,clientX:event.clientX,clientY:event.clientY,objectId,spanIndex,part:grip?.part??"body",start:point};return;}
     }
@@ -3659,7 +3717,10 @@ function EditableCanvasViewport({
       if (view === "drawing") {
         const pipes=objects.filter(o=>o.kind==="physical-segment"&&layers.some(l=>l.id===o.layerId&&l.visible&&!l.locked)).sort((a,b)=>Number(b.pipe?.role==="joining-pipe")-Number(a.pipe?.role==="joining-pipe"));
         const nodeHit=objects.some(o=>o.kind==="physical-node"&&layers.some(l=>l.id===o.layerId&&l.visible)&&containsPoint(o,worldPoint,7/camera.zoom,view));
-        const corner=nodeHit?undefined:pipes.map(o=>({o,index:hitTestWireRoutePoint(o,worldPoint,camera.zoom)})).find(h=>h.index!==null);
+        const corner=nodeHit?undefined:pipes.map(o=>({o,index:hitTestWireRoutePoint(o,worldPoint,camera.zoom)}))
+          .filter((hit):hit is {o:EditorSceneObject;index:number}=>hit.index!==null)
+          .map(hit=>({ ...hit, distance:Math.hypot(worldPoint.x-(hit.o.pipe?.handles[hit.index]!.x??Infinity),worldPoint.y-(hit.o.pipe?.handles[hit.index]!.y??Infinity)) }))
+          .sort((a,b)=>a.distance-b.distance)[0];
         const middle=corner||nodeHit?undefined:pipes.flatMap(o=>pipeMidpoints(o).map(h=>({...h,o}))).find(h=>Math.hypot(h.point.x-worldPoint.x,h.point.y-worldPoint.y)<=7/camera.zoom);
         const pipe=corner?.o??middle?.o,index=corner?.index??middle?.index;
         if(pipe&&index!==null&&index!==undefined){
@@ -3777,7 +3838,12 @@ function EditableCanvasViewport({
       const object=objects.find(o=>o.id===id),eligible=object&&["connector","wire","physical-node","physical-segment","physical-covering"].includes(object.kind);
       setHoverTarget(previous=>!eligible?null:previous?.id===id&&Math.hypot(previous.x-event.clientX,previous.y-event.clientY)<4?previous:{id:object.id,label:object.label||"Объект",x:event.clientX,y:event.clientY});
     }else setHoverTarget(null);
-    if (!drag) {const hit=view==="drawing"&&tool==="select"?gripAt(screenToWorld(camera,localPoint(event.clientX,event.clientY))):null;setHoverGrip(hit);event.currentTarget.style.cursor=hit?"ew-resize":"";return;}
+    if (!drag) {
+      const point=screenToWorld(camera,localPoint(event.clientX,event.clientY));
+      const nodeHit=view==="drawing"&&coveringDragBlockedByPhysicalNode(objects,layers,point,camera.zoom,view);
+      const hit=view==="drawing"&&tool==="select"&&!nodeHit?gripAt(point):null;
+      setHoverGrip(hit);event.currentTarget.style.cursor=hit?"ew-resize":"";return;
+    }
     if(drag.pointerId !== event.pointerId)return;
     if(drag.kind==="physical-node-connect") {
       if(inlineObjectDragMoved(event.clientX-drag.clientX,event.clientY-drag.clientY)) drag.moved=true;

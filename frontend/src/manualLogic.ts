@@ -605,9 +605,17 @@ export function kdSummary(before: ManualState, after: ManualState): KdSummary {
   return summary;
 }
 
-/** Схема предложена из другой версии чертежа, чем та, что сейчас в КД. */
+/** Версия чертежа КД, с которой сверяется схема: номер версии текстом; чертежа нет — null. */
+export function kdVersionOf(drawing: { document: unknown; revision: number | null } | null | undefined): string | null {
+  return drawing?.document ? String(drawing.revision ?? 0) : null;
+}
+
+// До истории версий (миграция 0090) версией чертежа был хэш его байтов: такую отметку с номером версии не сравнить.
+const LEGACY_KD_VERSION = /^[0-9a-f]{32}$/;
+
+/** Схема предложена из другой версии чертежа, чем та, что сейчас в КД. Отметка в старом виде (хэш) — не известно. */
 export function kdStale(state: Pick<ManualState, "kdVersion">, current: string | null | undefined): boolean {
-  return !!state.kdVersion && !!current && state.kdVersion !== current;
+  return !!state.kdVersion && !!current && !LEGACY_KD_VERSION.test(state.kdVersion) && state.kdVersion !== current;
 }
 
 /** Подсказка карточки для операции генератора — те же `tmplHint` / категория, что даёт ей генератор (tcGenLogic

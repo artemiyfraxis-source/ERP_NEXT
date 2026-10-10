@@ -27,27 +27,10 @@
   font-weight: 700;
   cursor: pointer;
 }
-.harness-root .primary-action { border: 1px solid var(--primary); background: var(--primary); color: var(--primary-foreground); box-shadow: 0 4px 12px rgb(23 110 157 / 18%); }
+.harness-root .primary-action { border: 1px solid var(--primary); background: var(--primary); color: var(--primary-foreground); box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 18%, transparent); }
 .harness-root .primary-action:hover:not(:disabled) { background: var(--primary); }
 .harness-root .secondary-action { border: 1px solid var(--border); background: var(--card); color: var(--foreground); }
 .harness-root .secondary-action:hover:not(:disabled) { background: var(--panel-soft); }
-.harness-root .cut-list-warning,
-.harness-root .cut-list-error { margin: 12px 0 0; padding: 9px 10px; border-left: 3px solid var(--tone-warn); border-radius: 5px; background: var(--warn-soft); color: var(--tone-warn); font-size: 11px; line-height: 1.4; }
-.harness-root .cut-list-error { border-left-color: var(--tone-danger); background: var(--sheet-invalid-bg); color: var(--tone-danger); }
-.harness-root .cut-list-loading,
-.harness-root .cut-list-empty { margin: 12px 0 0; color: var(--muted-foreground); font-size: 11px; }
-.harness-root .cut-list-scroll { margin-top: 12px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; }
-.harness-root .cut-list-table { width: 100%; border-collapse: collapse; font-size: 10px; white-space: nowrap; }
-.harness-root .cut-list-table th { padding: 7px 8px; background: var(--sheet-selected); color: var(--muted-foreground); text-align: left; }
-.harness-root .cut-list-table td { padding: 8px; border-top: 1px solid var(--border); color: var(--muted-foreground); vertical-align: top; font-variant-numeric: tabular-nums; }
-.harness-root .cut-list-table td:first-child { min-width: 118px; white-space: normal; }
-.harness-root .cut-list-table td:first-child strong,
-.harness-root .cut-list-table td:first-child span,
-.harness-root .cut-list-table td small { display: block; }
-.harness-root .cut-list-table td:first-child span { margin-top: 2px; color: var(--muted-foreground); }
-.harness-root .cut-list-table td small { margin-top: 3px; color: var(--tone-warn); font-size: 9px; }
-.harness-root .cut-list-status { padding: 3px 6px; border-radius: 8px; background: var(--border); color: var(--tone-ok); font-weight: 800; }
-.harness-root .cut-list-status.incomplete { background: var(--warn-soft); color: var(--tone-warn); }
 .harness-root .diagnostics { max-height: 250px; margin-top: 15px; display: grid; gap: 7px; overflow: auto; }
 .harness-root .diagnostics h3 { margin-bottom: 3px; }
 .harness-root .diagnostic { padding: 10px 11px; display: flex; align-items: flex-start; gap: 9px; border-left: 3px solid var(--tone-danger); border-radius: 6px; background: var(--sheet-invalid-bg); color: var(--tone-danger); font-size: 11px; }
@@ -56,7 +39,7 @@
 .harness-root .diagnostic-content { min-width: 0; }
 .harness-root .diagnostic-details { margin-top: 2px; color: currentColor; opacity: .82; }
 .harness-root .diagnostic-details summary { width: max-content; cursor: pointer; font-size: 10px; }
-.harness-root .diagnostic-details dl { margin: 7px 0 0; padding: 7px 9px; display: grid; gap: 5px; border-radius: 5px; background: rgb(255 255 255 / 55%); }
+.harness-root .diagnostic-details dl { margin: 7px 0 0; padding: 7px 9px; display: grid; gap: 5px; border-radius: 5px; background: color-mix(in srgb, var(--card) 55%, transparent); }
 .harness-root .diagnostic-details dl > div { display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr); gap: 8px; }
 .harness-root .diagnostic-details dt { font-weight: 700; }
 .harness-root .diagnostic-details dd { margin: 0; overflow-wrap: anywhere; }
