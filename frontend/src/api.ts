@@ -2931,13 +2931,33 @@ export interface KitsetDocument {
   kind?: "harness" | "harness_unlinked" | "file";
 }
 
-/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — одна строка КД, сохраняется поверх себя.
- *  `version` — с чем сохранять: чужое сохранение после неё даёт 409. Чертежа нет — всё null. */
+/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — строка КД с текущим чертежом и история версий.
+ *  `revision` — номер версии, с которым сохранять: чужое сохранение после него даёт 409. Чертежа нет — всё null.
+ *  `version` — прежнее имя того же номера (текстом), сервер отдаёт его один выпуск для открытых вкладок. */
 export interface HarnessDrawing {
   document: KitsetDocument | null;
   design: Record<string, unknown> | null;
-  version: string | null;
+  revision: number | null;
+  version?: string | null;
   warnings: string[];
+}
+
+/** Версия чертежа в «Истории версий»: как появилась — сохранение, загрузка из TECHMAP-GRAPHER, восстановление
+ *  (`restored_from` — из какой), начальная (чертёж до истории). */
+export interface HarnessRevision {
+  revision: number;
+  saved_at: string;
+  saved_by: string;
+  size: number;
+  kind: "saved" | "imported" | "restored" | "initial";
+  restored_from: number | null;
+}
+
+export interface HarnessRevisions {
+  document_id: string;
+  current: number;
+  total: number;
+  revisions: HarnessRevision[];
 }
 
 /** «Ручная сборка» из чертежа: build_config (операции с `origin` = `harness:<объект>:<код>`, блоки по маршруту КД) —
@@ -3135,21 +3155,27 @@ export const kitsetsApi = {
   removeDocument: (project: string, id: string) =>
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   harness: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
-  /** Сохранить чертёж: `version` — из последнего чтения (null — чертежа ещё нет). */
-  saveHarness: (project: string, index: string, design: Record<string, unknown>, version: string | null) =>
-    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, version }) }),
+  /** Сохранить чертёж новой версией: `revision` — из последнего чтения (null — чертежа ещё нет). Чертёж, который нельзя
+   *  хранить, — 422 со списком причин (`ApiError.detail.errors`). */
+  saveHarness: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, revision }) }),
+  /** «История версий» чертежа, новые сверху. */
+  harnessRevisions: (project: string, index: string) => api<HarnessRevisions>(`${harnessPath(project, index)}/revisions`),
+  /** Восстановить версию: она становится чертежом новой версией; `current` — версия на экране (иначе 409). */
+  restoreHarnessRevision: (project: string, index: string, revision: number, current: number | null) =>
+    api<HarnessDrawing>(`${harnessPath(project, index)}/revisions/${revision}/restore`, { method: "POST", body: JSON.stringify({ revision: current }) }),
   /** «Ручная сборка» из чертежа: переданного (несохранённого в редакторе) или сохранённого. */
   deriveHarness: (project: string, index: string, design?: Record<string, unknown>) =>
     api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
   harnessExportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
   /** «Отвязать» чертёж от позиции: строка КД и чертёж остаются, карточка показывает его с «Вернуть». */
-  unlinkHarness: (project: string, index: string, version: string | null = null) =>
-    api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ version }) }),
+  unlinkHarness: (project: string, index: string, revision: number | null = null) =>
+    api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ revision }) }),
   /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
   restoreHarness: (project: string, index: string, documentId: string) =>
     api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
-  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — ложится поверх прежнего (та же проверка версии). */
-  importHarness: (project: string, index: string, payload: { file_name: string; content_b64: string; version: string | null }) =>
+  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */
+  importHarness: (project: string, index: string, payload: { file_name: string; content_b64: string; revision: number | null }) =>
     api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),
   openTechcard: (project: string, index: string) =>
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),

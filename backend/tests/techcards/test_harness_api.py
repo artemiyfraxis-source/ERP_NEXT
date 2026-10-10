@@ -21,10 +21,10 @@ from app.modules.techcards.domain.route import parse_route, RouteOp
 from app.modules.techcards.etk_builder import build_etk
 from app.modules.techcards.grapher_import import read_export
 from app.modules.techcards.harness import parse_design
-from app.modules.techcards.harness_api import assembly_from_harness
+from app.modules.techcards.harness.assembly import assembly_from_harness
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
-from app.modules.techcards.kitset_api import HARNESS_CONTENT_TYPE, document_kind
-from app.modules.techcards.kitsets import KitAssembly, KitDocument, Kitset
+from app.modules.techcards.harness.schema import HARNESS_CONTENT_TYPE, HARNESS_UNLINKED_CONTENT_TYPE
+from app.modules.techcards.kitsets import KitAssembly, KitDocument, Kitset, document_kind
 from app.modules.techcards.project_cards import _document as checked_document, operation_key
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
@@ -96,7 +96,7 @@ def test_first_save_creates_one_harness_kd_row_and_get_returns_it_with_a_version
     client, factory, _clock = harness_api
     empty = client.get(f"{BASE}/КБ1")
     assert empty.status_code == 200, empty.text
-    assert empty.json() == {"document": None, "design": None, "version": None, "warnings": []}
+    assert empty.json() == {"document": None, "design": None, "revision": None, "version": None, "warnings": []}
 
     saved = client.put(f"{BASE}/кб1", json={"design": _design(), "version": None})
     assert saved.status_code == 200, saved.text
@@ -378,7 +378,9 @@ def test_import_of_the_authors_export_picks_the_harness_of_the_position_and_over
     snapshot = fx.snapshot()
     other = deepcopy(snapshot["harnesses"][0])
     other.update(harnessId="h-kb2", designation="КБ2")
-    other["design"]["content"]["wires"] = other["design"]["content"]["wires"][:1]
+    content = other["design"]["content"]
+    content.update(wires=content["wires"][:1], junctions=[], screens=[], diffPairs=[], cables=[])
+    content["physicalTopology"]["routes"] = content["physicalTopology"]["routes"][:1]
     snapshot["harnesses"].append(other)
 
     stale = client.post(f"{BASE}/КБ1/import", json={"file_name": "p.techmap-project.zip", "content_b64": _zip(snapshot)})
@@ -553,8 +555,8 @@ def test_restore_racing_another_restore_is_a_conflict_not_a_second_drawing(harne
     assert client.post(f"{BASE}/КБ1/restore", json={"document_id": second["document"]["id"]}).status_code == 200
 
     # The other «Вернуть» checked the position before this one committed: its check saw no linked drawing.
-    import app.modules.techcards.harness_api as harness_module
-    monkeypatch.setattr(harness_module, "_current", lambda uow, project, index: None)
+    import app.modules.techcards.harness.application as harness_module
+    monkeypatch.setattr(harness_module, "current", lambda uow, project, index: None)
     raced = client.post(f"{BASE}/КБ1/restore", json={"document_id": first["document"]["id"]})
     assert raced.status_code == 409, raced.text
     assert raced.json()["detail"] == (
@@ -570,8 +572,8 @@ def test_restore_racing_another_restore_is_a_conflict_not_a_second_drawing(harne
 def test_first_save_racing_another_first_save_is_a_conflict(harness_api, monkeypatch):
     client, factory, _clock = harness_api
     saved = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()
-    import app.modules.techcards.harness_api as harness_module
-    monkeypatch.setattr(harness_module, "_current", lambda uow, project, index: None)
+    import app.modules.techcards.harness.application as harness_module
+    monkeypatch.setattr(harness_module, "current", lambda uow, project, index: None)
     raced = client.put(f"{BASE}/КБ1", json={"design": _design(), "version": None})
     assert raced.status_code == 409, raced.text
     assert "уже есть чертёж жгута" in raced.json()["detail"]
@@ -580,7 +582,6 @@ def test_first_save_racing_another_first_save_is_a_conflict(harness_api, monkeyp
 
 def test_the_database_refuses_a_second_linked_drawing_but_not_unlinked_ones(harness_api):
     from sqlalchemy.exc import IntegrityError
-    from app.modules.techcards.kitset_api import HARNESS_UNLINKED_CONTENT_TYPE
 
     _client, factory, _clock = harness_api
 

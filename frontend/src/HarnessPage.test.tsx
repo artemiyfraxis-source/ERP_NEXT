@@ -18,7 +18,7 @@ vi.mock("./harness", () => ({
 }));
 
 const design = JSON.parse(JSON.stringify(createEmptyHarnessDesign()));
-const drawing = (version: string) => ({ document: { id: "h1", index: "КБ1", name: "Чертёж", size: 1, stored: true, url: null, uploaded_at: "2026-10-06T10:00:00", who: "Т", kind: "harness" }, design, version, warnings: [] });
+const drawing = (revision: number) => ({ document: { id: "h1", index: "КБ1", name: "Чертёж", size: 1, stored: true, url: null, uploaded_at: "2026-10-06T10:00:00", who: "Т", kind: "harness" }, design, revision, version: String(revision), warnings: [] });
 
 function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status }); }
 
@@ -32,10 +32,16 @@ describe("HarnessPage", () => {
       const url = decodeURIComponent(String(input)); const method = init?.method || "GET";
       calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       if (url === "/api/techcards/kitsets/708К.4") return json({ assemblies: [{ index: "КБ1", name: "Жгут питания" }] });
-      if (url.endsWith("/harness/КБ1") && method === "GET") return json(drawing("v1"));
+      if (url.endsWith("/harness/КБ1") && method === "GET") return json(drawing(1));
       if (url.endsWith("/harness/КБ1") && method === "PUT") return putStatus === 409
-        ? json({ detail: "Чертёж жгута только что сохранили — обновите страницу" }, 409) : json({ ...drawing("v2"), created: false });
-      if (url.endsWith("/harness/КБ1/import")) return json({ ...drawing("v3"), created: false });
+        ? json({ detail: "Чертёж жгута только что сохранили — обновите страницу" }, 409) : json({ ...drawing(2), created: false });
+      if (url.endsWith("/harness/КБ1/import")) return json({ ...drawing(3), created: false });
+      if (url.endsWith("/harness/КБ1/revisions")) return json({ document_id: "h1", current: 3, total: 3, revisions: [
+        { revision: 3, saved_at: "2026-10-10T14:30:00+03:00", saved_by: "Мастер", size: 2048, kind: "restored", restored_from: 1 },
+        { revision: 2, saved_at: "2026-10-10T12:00:00+03:00", saved_by: "Технолог", size: 3 * 1024 * 1024, kind: "imported", restored_from: null },
+        { revision: 1, saved_at: "2026-10-09T09:15:00+03:00", saved_by: "Технолог", size: 900, kind: "initial", restored_from: null },
+      ] });
+      if (url.endsWith("/harness/КБ1/revisions/2/restore")) return json(drawing(4));
       return json({});
     }));
   });
@@ -56,7 +62,7 @@ describe("HarnessPage", () => {
     render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
     fireEvent.click(await screen.findByRole("button", { name: "Правка" }));
     await waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
-    expect(calls.find((call) => call.method === "PUT")!.body.version).toBe("v1");
+    expect(calls.find((call) => call.method === "PUT")!.body.revision).toBe(1);
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Сохранено"));
   });
 
@@ -83,8 +89,37 @@ describe("HarnessPage", () => {
     expect(calls.some((call) => call.url.endsWith("/import"))).toBe(false);
     fireEvent.change(input, { target: { files: [file] } });
     await waitFor(() => expect(calls.some((call) => call.url.endsWith("/import"))).toBe(true));
-    expect(calls.find((call) => call.url.endsWith("/import"))!.body).toMatchObject({ file_name: "a.techmap-project.zip", version: "v1" });
+    expect(calls.find((call) => call.url.endsWith("/import"))!.body).toMatchObject({ file_name: "a.techmap-project.zip", revision: 1 });
     expect(await screen.findByText("Чертёж загружен.")).toBeTruthy();
+  });
+
+  it("«История версий»: кто, когда, как появилась; выбранная версия восстанавливается новой, редактор перечитывается", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
+    await screen.findByTestId("editor");
+    fireEvent.click(screen.getByRole("button", { name: "История версий" }));
+    const dialog = await screen.findByRole("dialog", { name: "История версий" });
+    expect(await screen.findByText("Восстановлена из версии 1")).toBeTruthy();
+    expect(screen.getByText("Загружена из TECHMAP-GRAPHER")).toBeTruthy();
+    expect(screen.getByText("Начальная (до истории)")).toBeTruthy();
+    expect(screen.getByText("3,0 МБ")).toBeTruthy();
+    expect(screen.getByText("текущая")).toBeTruthy();
+    expect(dialog.textContent).not.toMatch(/2026-10|restored|imported/);
+    const restore = screen.getByRole("button", { name: "Выберите версию" }) as HTMLButtonElement;
+    expect(restore.disabled).toBe(true);
+    fireEvent.click(screen.getByText("Загружена из TECHMAP-GRAPHER").closest("tr")!);
+    fireEvent.click(screen.getByRole("button", { name: "Восстановить версию 2" }));
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith("/revisions/2/restore"))).toBe(true));
+    expect(calls.find((call) => call.url.endsWith("/revisions/2/restore"))!.body).toEqual({ revision: 3 });
+    expect(await screen.findByText("Восстановлена версия 2 — теперь это версия 4.")).toBeTruthy();
+  });
+
+  it("без права правки история видна, восстановить нельзя", async () => {
+    render(<HarnessPage project="708К.4" index="КБ1" canEdit={false} />);
+    await screen.findByTestId("editor");
+    fireEvent.click(screen.getByRole("button", { name: "История версий" }));
+    expect(await screen.findByText("Восстановлена из версии 1")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Восстановить|Выберите версию/ })).toBeNull();
   });
 
   it("без права правки чертёж открывается для просмотра: ничего не уходит на сервер", async () => {

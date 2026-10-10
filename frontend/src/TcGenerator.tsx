@@ -56,7 +56,7 @@ import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, ty
 import { ManualAssembly, ManualSummary, type KdOffer } from "./ManualAssembly";
 import { AssemblyDrafts } from "./AssemblyDrafts";
 import {
-  MANUAL_MODE, cardCategory, cardLabel, emptyManual, fillKdCards, isEmptyManual, kdStale, kdSummary, manualConfig, manualFromConfig,
+  MANUAL_MODE, cardCategory, cardLabel, emptyManual, fillKdCards, isEmptyManual, kdStale, kdSummary, kdVersionOf, manualConfig, manualFromConfig,
   manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
@@ -261,7 +261,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     if (!manualTab || drawing?.key === harnessKey) return;
     let alive = true;
     kitsetsApi.harness(card.project, card.item_index)
-      .then((found) => { if (alive) setDrawing({ key: harnessKey, version: found?.version ?? null, error: "" }); })
+      .then((found) => { if (alive) setDrawing({ key: harnessKey, version: kdVersionOf(found), error: "" }); })
       .catch((reason) => { if (alive) setDrawing({ key: harnessKey, version: null, error: reason instanceof Error ? reason.message : "КД не прочитана" }); });
     return () => { alive = false; };
   }, [manualTab, harnessKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -280,19 +280,19 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   async function proposeKd() {
     setKdBusy(true); setKdProposal(null);
     try {
-      const current = await kitsetsApi.harness(card.project, card.item_index);
-      setDrawing({ key: harnessKey, version: current?.version ?? null, error: "" });
-      if (!current?.version) { setStatus({ text: "В КД нет чертежа жгута.", error: true }); return; }
+      const version = kdVersionOf(await kitsetsApi.harness(card.project, card.item_index));
+      setDrawing({ key: harnessKey, version, error: "" });
+      if (!version) { setStatus({ text: "В КД нет чертежа жгута.", error: true }); return; }
       const result = await kitsetsApi.deriveHarness(card.project, card.item_index);
       const read = manualFromConfig(result.build_config);
       if (!read) throw new Error("Схема из КД не прочитана");
       const derived = fillKdCards(read, pickKdCard);
       setStatus({ text: "", error: false });
       if (isEmptyManual(manual)) {
-        setManual(proposeFromKd(manual, derived, current.version)); setRouteError("");
-        setKdProposal({ derived: null, version: current.version, warnings: result.warnings ?? [], taken: derived.ops.length });
+        setManual(proposeFromKd(manual, derived, version)); setRouteError("");
+        setKdProposal({ derived: null, version, warnings: result.warnings ?? [], taken: derived.ops.length });
       } else {
-        setKdProposal({ derived, version: current.version, warnings: result.warnings ?? [] });
+        setKdProposal({ derived, version, warnings: result.warnings ?? [] });
       }
     } catch (reason) {
       setStatus({ text: reason instanceof Error ? reason.message : "Схема из КД не предложена", error: true });

@@ -40,7 +40,7 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function mockApi(version: string | null) {
+function mockApi(revision: number | null) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = decodeURIComponent(String(input));
     if (path === "/api/techcards/templates") return json({ metadata: null, items: [
@@ -54,7 +54,7 @@ function mockApi(version: string | null) {
         ? [{ id: "o1", tab: "op", display_text: "", source_sheet: "", fields: { opNumber: "CUT_WIRE+2strip", opName: "Резка с разделкой", tPrep: "600", tOp: "5" } }] : [] });
     }
     if (path.startsWith("/api/techcards/assembly/drafts?")) return json({ items: [] });
-    if (path === "/api/techcards/kitsets/P-300/harness/КБ7") return json({ document: null, design: version ? { schemaVersion: 1 } : null, version, warnings: [] });
+    if (path === "/api/techcards/kitsets/P-300/harness/КБ7") return json({ document: revision === null ? null : { id: "h1" }, design: revision === null ? null : { schemaVersion: 1 }, revision, warnings: [] });
     if (path === "/api/techcards/kitsets/P-300/harness/КБ7/derive") return json({ build_config: derived(), warnings: ["Длина W1 взята по чертежу"] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -62,8 +62,8 @@ function mockApi(version: string | null) {
 
 afterEach(() => vi.restoreAllMocks());
 
-function mount(version: string | null, props: Partial<Parameters<typeof TcGenerator>[0]> = {}) {
-  const fetch = mockApi(version);
+function mount(revision: number | null, props: Partial<Parameters<typeof TcGenerator>[0]> = {}) {
+  const fetch = mockApi(revision);
   const onBuild = vi.fn();
   render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kit()} {...props} />);
   return { onBuild, fetch };
@@ -87,7 +87,7 @@ it("keeps «Предложить из КД» off with a hint when the position h
 });
 
 it("takes the КД scheme into an empty scheme with the generator's cards and saves the drawing version with it", async () => {
-  const { onBuild } = mount("v1");
+  const { onBuild } = mount(1);
   await openManual();
   const button = await screen.findByRole("button", { name: "Предложить из КД" });
   await waitFor(() => expect(button).toBeEnabled());
@@ -106,7 +106,7 @@ it("takes the КД scheme into an empty scheme with the generator's cards and sa
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   const config = onBuild.mock.calls[0][0];
-  expect(config).toMatchObject({ mode: "manual", kdHarnessVersion: "v1" });
+  expect(config).toMatchObject({ mode: "manual", kdHarnessVersion: "1" });
   const ops = config.ops as Array<Record<string, unknown>>;
   // Резка — карточка по подсказке генератора и нормы БД.ОП; опрессовка — по категории и стороне; сращиванию карточки нет.
   expect(ops.find((op) => op.type === "cutWireStrip")).toMatchObject({ templateId: "cut2", opNum: "CUT_WIRE+2strip", tPrep: "600", tOp: "5" });
@@ -117,7 +117,7 @@ it("takes the КД scheme into an empty scheme with the generator's cards and sa
 
 /** Схема мастера, взятая из версии v0: резка из КД, своя прозвонка и опрессовка стороны В, которой в КД больше нет. */
 const saved = {
-  mode: "manual", assemblyIndex: "КБ7", assemblyName: "Жгут", partQty: 10, kdHarnessVersion: "v0",
+  mode: "manual", assemblyIndex: "КБ7", assemblyName: "Жгут", partQty: 10, kdHarnessVersion: "0",
   ops: [
     { type: "cutWireStrip", seq: 1, label: "Резка с разделкой: W1", tPrep: "", tOp: "", wires: [{ name: "W1", art: "МГТФ 0,35", qty: 1, length: 280 }],
       strip: { a: true, b: true }, kdData: [{}], origin: "harness:r1:cutWireStrip.AB" },
@@ -135,7 +135,7 @@ const savedCard: ProjectTechcard = {
 };
 
 it("marks a scheme from an older drawing, shows what the КД would change and merges only on «Применить»", async () => {
-  const { onBuild, fetch } = mount("v1", { card: savedCard });
+  const { onBuild, fetch } = mount(1, { card: savedCard });
   expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
   const stale = await screen.findByRole("button", { name: "КД изменена — предложить заново" });
   expect(screen.queryByRole("button", { name: "Предложить из КД" })).not.toBeInTheDocument();
@@ -163,7 +163,7 @@ it("marks a scheme from an older drawing, shows what the КД would change and m
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   const config = onBuild.mock.calls[0][0];
-  expect(config.kdHarnessVersion).toBe("v1");
+  expect(config.kdHarnessVersion).toBe("1");
   const ops = config.ops as Array<Record<string, unknown>>;
   expect(ops.find((op) => op.origin === "harness:X2:prsTerm.B")).toMatchObject({ kdGone: true });
   expect(ops.find((op) => op.origin === "harness:r1:cutWireStrip.AB")).toMatchObject({ templateId: "cut2", wires: [expect.objectContaining({ length: 300 })] });

@@ -11,6 +11,13 @@ TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permiss
   журнал восстановления, маршрут изготовления (Route V2) и панели производства, UML, авторинг шаблонов
   библиотеки компонентов, модель времени.
 
+## Правила хранения чертежа на сервере ERP
+
+`backend/app/modules/techcards/harness/validate.py` переписывает на Python проверки сервера и редактора
+TECHMAP-GRAPHER (коммит `9cf3b88`, та же ветка, то же разрешение автора): `ElectricalGraphValidator`,
+`ValidateCableInstances`, `HarnessStripProfileValidator`, `TemplateContactNumberingValidator`,
+`HarnessPhysicalTopologyValidator` (только ссылки и непрерывность трасс) и проверки `parseHarnessDesignDocument`.
+
 ## Исключено: каталог штриховок QCAD (GPL-3.0)
 
 `hatching-catalog.json` TECHMAP-GRAPHER собран из шаблонов QCAD под GPL-3.0 и сюда **не перенесён**.

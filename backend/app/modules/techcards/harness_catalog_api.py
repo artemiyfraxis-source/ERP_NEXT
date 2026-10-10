@@ -1,7 +1,8 @@
 """GET /api/techcards/harness-catalog — справочники ERP для редактора жгута (H-T4).
 
 Read-only: БД.ТЕР, БД.ПРОВ, СПР.КАБ, БД.КОАКС, БД.МАТ и база разъёмов в форме снимков TECHMAP-GRAPHER
-(`harness_catalog.build_harness_catalog`). Документ жгута хранится отдельно (`harness_api.py`).
+(`harness_catalog.build_harness_catalog`). Документ жгута хранится отдельно (`harness_api.py`); при его сохранении
+новые ссылки на эти справочники сверяются с ними же (`reference_tables` → `harness_catalog.reference_book`).
 """
 
 from __future__ import annotations
@@ -36,6 +37,13 @@ def harness_catalog(
     покрытия, семейства разъёмов — только из справочников ERP."""
     if references_factory is None:
         raise HTTPException(status_code=503, detail="Справочники ERP не подключены")
+    metadata, tables = reference_tables(references_factory)
+    stamp = metadata and (metadata["source_updated_at"] or metadata["imported_at"])
+    return build_harness_catalog(tables, captured_utc=stamp.isoformat() if stamp else "")
+
+
+def reference_tables(references_factory: Callable[[], ReferencesUnitOfWork]) -> tuple[dict | None, dict[str, list]]:
+    """The reference tabs the harness catalog reads (tab → record fields) and the import metadata."""
     with references_factory() as uow:
         metadata = uow.tech_operations.metadata()
         tables = {
@@ -43,5 +51,4 @@ def harness_catalog(
                                                                        limit=RECORD_LIMIT)]
             for tab in TABS
         }
-    stamp = metadata and (metadata["source_updated_at"] or metadata["imported_at"])
-    return build_harness_catalog(tables, captured_utc=stamp.isoformat() if stamp else "")
+    return metadata, tables

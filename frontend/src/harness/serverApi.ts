@@ -1,6 +1,6 @@
 // Хранилище чертежа жгута в ERP для редактора: `HarnessDesignApi` поверх `kitsetsApi.harness / saveHarness`.
-// Редактор считает версию числом (`revision`), сервер — хэшем содержимого: адаптер держит хэш у себя и по нему
-// сохраняет; чужое сохранение даёт 409 — адаптер переходит в «конфликт» и больше ничего не пишет.
+// Редактор считает версию своим счётчиком (`revision`), сервер — номером версии чертежа: адаптер держит серверный номер
+// у себя и с ним сохраняет; чужое сохранение даёт 409 — адаптер переходит в «конфликт» и больше ничего не пишет.
 // Библиотечные компоненты (закреплённый снимок шаблона, по которому рисуется соединитель) хранятся в том же документе
 // КД — `componentSnapshots` / `componentPlacements` (как в экспорте TECHMAP-GRAPHER, только этого жгута): размещение
 // пишет их вместе с соединителем одним сохранением, обычное автосохранение их не трогает (сервер переносит прежние).
@@ -25,7 +25,7 @@ export type ServerSaveState = "saved" | "saving" | "conflict" | "error";
 
 export interface ServerHarnessClient {
   harness: (project: string, index: string) => Promise<HarnessDrawing>;
-  saveHarness: (project: string, index: string, design: Record<string, unknown>, version: string | null) =>
+  saveHarness: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
     Promise<HarnessDrawing & { created: boolean }>;
 }
 
@@ -67,7 +67,7 @@ export function createServerHarnessDesignApi(
   const newId = options.newId ?? (() => crypto.randomUUID());
   const emit = options.onState ?? (() => undefined);
   const readOnly = options.readOnly === true;
-  let version: string | null = null;
+  let stored: number | null = null;
   let revision = 0;
   let conflicted = false;
 
@@ -76,7 +76,7 @@ export function createServerHarnessDesignApi(
     ...(warning ? { recoveryWarning: warning } : {}),
   });
   const fromDrawing = (harnessId: string, drawing: HarnessDrawing): HarnessDesignResource => {
-    version = drawing.version;
+    stored = drawing.revision;
     if (!drawing.design) return resource(harnessId, createEmptyHarnessDesign(), null);
     const parsed = parseRecoverableHarnessDesignContent(drawing.design);
     return resource(harnessId, parsed.content, parsed.warning);
@@ -87,7 +87,7 @@ export function createServerHarnessDesignApi(
   const write = async (projectId: string, harnessId: string, design: Row) => {
     emit("saving");
     try {
-      const saved = await client.saveHarness(projectId, harnessId, design, version);
+      const saved = await client.saveHarness(projectId, harnessId, design, stored);
       revision += 1;
       return saved;
     } catch (reason) {
@@ -108,7 +108,7 @@ export function createServerHarnessDesignApi(
       conflicted = false;
       // Тот же чертёж, что уже читали или сами сохранили (после размещения компонента редактор перечитывает его и
       // сверяет номер), — номер прежний; другой — следующий.
-      if (drawing.version !== version) revision += 1;
+      if (drawing.revision !== stored) revision += 1;
       const loaded = fromDrawing(harnessId, drawing);
       emit("saved");
       return loaded;
@@ -161,7 +161,7 @@ export function createServerHarnessDesignApi(
             throw new HarnessDesignApiError("Версия библиотечного компонента изменилась.", "placement_invalid", null);
           }
           const drawing = await client.harness(projectId, harnessId);
-          if (drawing.version !== version) {
+          if (drawing.revision !== stored) {
             conflicted = true;
             emit("conflict");
             throw conflict("Чертёж изменили — обновите страницу");
@@ -192,7 +192,7 @@ export function createServerHarnessDesignApi(
             [COMPONENT_PLACEMENTS]: [...rows(design[COMPONENT_PLACEMENTS]), placement],
           }));
           const saved = await write(projectId, harnessId, next);
-          version = saved.version;
+          stored = saved.revision;
           sources.set(snapshotId, { templateId: template.templateId, version: template.version });
           emit("saved");
           const result = { commandId: body.commandId, resultingRevision: revision, snapshotId };

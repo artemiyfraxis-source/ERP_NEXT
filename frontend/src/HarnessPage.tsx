@@ -2,6 +2,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { failureText, kitsetsApi } from "./api";
 import { HarnessEditorLazy, loadHarnessAdapters, type ComponentPlacementApi, type HarnessEditorCatalogApi } from "./harness";
 import type { ServerHarnessDesignApi, ServerSaveState } from "./harness/serverApi";
+import { HarnessHistory } from "./HarnessHistory";
 import { closeHarness } from "./harnessNav";
 import { readFileBase64 } from "./ProjectsPage";
 
@@ -26,6 +27,7 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [generation, setGeneration] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -59,7 +61,7 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
     setError(""); setNote(`Загружаю ${file.name}…`);
     try {
       const current = await kitsetsApi.harness(project, index);
-      await kitsetsApi.importHarness(project, index, { file_name: file.name, content_b64: await readFileBase64(file), version: current.version });
+      await kitsetsApi.importHarness(project, index, { file_name: file.name, content_b64: await readFileBase64(file), revision: current.revision });
       setNote("Чертёж загружен.");
       setGeneration((value) => value + 1);
     } catch (reason) { setNote(""); setError(failureText(reason, "Чертёж не загружен")); }
@@ -77,6 +79,7 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
       {state === "conflict" && <button className="primary small" onClick={() => setGeneration((value) => value + 1)}>Обновить чертёж</button>}
       <span className="harness-page-actions">
         {note && <span className="muted">{note}</span>}
+        <button className="secondary small" onClick={() => setHistoryOpen(true)}>История версий</button>
         <a className="secondary small button-link" href={kitsetsApi.harnessExportUrl(project, index)} download>Скачать для TECHMAP-GRAPHER</a>
         {canEdit && <button className="secondary small" onClick={() => fileRef.current?.click()}>Загрузить .techmap-project.zip</button>}
       </span>
@@ -90,5 +93,7 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
             apiOverride={api} componentPlacementApiOverride={placements} catalogOverride={erpCatalog} readOnly={!canEdit} />
         </Suspense>}
     </div>
+    {historyOpen && <HarnessHistory project={project} index={index} canEdit={canEdit} onClose={() => setHistoryOpen(false)}
+      onRestored={(from, revision) => { setError(""); setNote(`Восстановлена версия ${from} — теперь это версия ${revision}.`); setGeneration((value) => value + 1); }} />}
   </section>;
 }

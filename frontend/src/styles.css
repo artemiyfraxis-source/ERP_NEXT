@@ -2823,6 +2823,11 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
    (масштаб «100% · Ctrl + колесо», окна таблиц снизу) уходит за край экрана на высоту шапки. */
 .harness-page-body > .harness-root > .he-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .harness-page-body > .harness-root > .he-host > .harness-editor { flex: 1; height: auto; min-height: 0; }
+/* «История версий» чертежа: сбоку поверх редактора; строка выбирается кликом, действие одно — в шапке. */
+.harness-history-actions { display: flex; align-items: center; gap: 12px; }
+.harness-history-current { margin-left: 8px; font-size: 12px; font-weight: 500; }
+.harness-history .data-table tr.selected td, .harness-history .data-table tr.selected:hover td { background: var(--sheet-selected); }
+.harness-history .data-table tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
 
 /* ── Обход на 16" ноутбуке (1536×864): всё меню и профиль без прокрутки меню; действия строки сотрудника в одну строку ── */
 @media (hover: hover) and (pointer: fine) and (min-width: 901px) and (max-height: 960px) {

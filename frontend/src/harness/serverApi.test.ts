@@ -16,15 +16,15 @@ import {
 
 const document = { id: "h1", index: "КБ1", name: "Чертёж жгута", size: 1, stored: true, url: null, uploaded_at: "2026-10-06T10:00:00", who: "Технолог", kind: "harness" as const };
 const design = () => JSON.parse(JSON.stringify(createEmptyHarnessDesign())) as Record<string, unknown>;
-const drawing = (version: string | null): HarnessDrawing => version
-  ? { document, design: design(), version, warnings: [] }
-  : { document: null, design: null, version: null, warnings: [] };
+const drawing = (revision: number | null): HarnessDrawing => revision !== null
+  ? { document, design: design(), revision, warnings: [] }
+  : { document: null, design: null, revision: null, warnings: [] };
 
-function setup(stored: string | null) {
+function setup(stored: number | null) {
   const states: ServerSaveState[] = [];
   const client: ServerHarnessClient = {
     harness: vi.fn(async () => drawing(stored)),
-    saveHarness: vi.fn(async () => ({ ...drawing("v2"), created: stored === null })),
+    saveHarness: vi.fn(async () => ({ ...drawing(stored === null ? 1 : stored + 1), created: stored === null })),
   };
   return { api: createServerHarnessDesignApi({ client, onState: (state) => states.push(state) }), client, states };
 }
@@ -41,17 +41,17 @@ describe("серверный адаптер чертежа жгута", () => {
   });
 
   it("сохраняет по версии, полученной при чтении, и берёт новую из ответа", async () => {
-    const { api, client, states } = setup("v1");
+    const { api, client, states } = setup(1);
     const loaded = await api.get("708К.4", "КБ1");
     expect(loaded.revision).toBe(1);
     const first = await api.save("708К.4", "КБ1", 1, loaded.content);
     await api.save("708К.4", "КБ1", first.revision, first.content);
-    expect(vi.mocked(client.saveHarness).mock.calls.map((call) => call[3])).toEqual(["v1", "v2"]);
+    expect(vi.mocked(client.saveHarness).mock.calls.map((call) => call[3])).toEqual([1, 2]);
     expect(states).toEqual(["saved", "saving", "saved", "saving", "saved"]);
   });
 
   it("409 — конфликт: ошибка с кодом, дальше сохранения не уходят на сервер", async () => {
-    const { api, client, states } = setup("v1");
+    const { api, client, states } = setup(1);
     const loaded = await api.get("708К.4", "КБ1");
     vi.mocked(client.saveHarness).mockRejectedValueOnce(new ApiError("Чертёж жгута только что сохранили", 409));
     const failure = await api.save("708К.4", "КБ1", 1, loaded.content).catch((reason) => reason);
@@ -66,7 +66,7 @@ describe("серверный адаптер чертежа жгута", () => {
   });
 
   it("просмотр: сохранение отклоняется, не доходя до сервера", async () => {
-    const client: ServerHarnessClient = { harness: vi.fn(async () => drawing("v1")), saveHarness: vi.fn() };
+    const client: ServerHarnessClient = { harness: vi.fn(async () => drawing(1)), saveHarness: vi.fn() };
     const api = createServerHarnessDesignApi({ client, readOnly: true });
     const loaded = await api.get("708К.4", "КБ1");
     const failure = await api.save("708К.4", "КБ1", loaded.revision, loaded.content).catch((reason) => reason);
@@ -78,7 +78,7 @@ describe("серверный адаптер чертежа жгута", () => {
   });
 
   it("другая ошибка сервера не называется конфликтом", async () => {
-    const { api, client, states } = setup("v1");
+    const { api, client, states } = setup(1);
     const loaded = await api.get("708К.4", "КБ1");
     vi.mocked(client.saveHarness).mockRejectedValueOnce(new ApiError("Чертёж жгута больше 20 МБ", 422));
     await expect(api.save("708К.4", "КБ1", 1, loaded.content)).rejects.toThrow("больше 20 МБ");
@@ -124,18 +124,18 @@ function placementBody(published: ReturnType<typeof template>, revision: number)
   return componentPlacementRequest(instance, revision, "40000000-0000-4000-8000-000000000004");
 }
 
-/** Сервер как `harness_api`: хранит документ как есть, версия — по содержимому; сохранение без раздела библиотечных
+/** Сервер как `harness_api`: хранит документ как есть, каждое сохранение — следующая версия; сохранение без раздела библиотечных
  *  компонентов переносит прежний (у модели редактора такого раздела нет). */
 function fakeServer(initial: Record<string, unknown>) {
-  let stored = { design: initial, version: "v1", n: 1 };
+  let stored = { design: initial, revision: 1 };
   const client: ServerHarnessClient = {
-    harness: vi.fn(async () => ({ document, design: JSON.parse(JSON.stringify(stored.design)), version: stored.version, warnings: [] })),
-    saveHarness: vi.fn(async (_project, _index, next, version) => {
-      if (version !== stored.version) throw new ApiError("Чертёж жгута уже сохранили", 409);
+    harness: vi.fn(async () => ({ document, design: JSON.parse(JSON.stringify(stored.design)), revision: stored.revision, warnings: [] })),
+    saveHarness: vi.fn(async (_project, _index, next, revision) => {
+      if (revision !== stored.revision) throw new ApiError("Чертёж жгута уже сохранили", 409);
       const design = { ...next };
       for (const key of [COMPONENT_SNAPSHOTS, COMPONENT_PLACEMENTS]) if (!(key in design) && key in stored.design) design[key] = stored.design[key];
-      stored = { design, version: `v${stored.n + 1}`, n: stored.n + 1 };
-      return { document, design: JSON.parse(JSON.stringify(design)), version: stored.version, warnings: [], created: false };
+      stored = { design, revision: stored.revision + 1 };
+      return { document, design: JSON.parse(JSON.stringify(design)), revision: stored.revision, warnings: [], created: false };
     }),
   };
   return { client, stored: () => stored };
@@ -183,7 +183,7 @@ describe("библиотечные компоненты в чертеже ERP", 
     const server = fakeServer(design());
     const api = createServerHarnessDesignApi({ client: server.client });
     const loaded = await api.get("708К.4", "КБ1");
-    vi.mocked(server.client.harness).mockResolvedValueOnce({ document, design: design(), version: "v9", warnings: [] });
+    vi.mocked(server.client.harness).mockResolvedValueOnce({ document, design: design(), revision: 9, warnings: [] });
     const failure = await api.componentPlacements(createInMemoryComponentTemplateCatalog({ templates: [published] }))
       .place("708К.4", "КБ1", placementBody(published, loaded.revision)).catch((reason) => reason);
     expect(failure).toMatchObject({ code: CONFLICT_CODE });

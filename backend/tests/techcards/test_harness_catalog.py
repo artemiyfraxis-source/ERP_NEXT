@@ -15,6 +15,7 @@ from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.references.load_mirror import BUNDLED_MIRROR, load_mirror, read_mirror
 from app.modules.techcards.harness_catalog import (
     COAX_CABLES, COAX_TERMINATIONS, CONNECTORS, DATABASE, TERMINALS, WIRES, build_harness_catalog, number,
+    reference_book,
 )
 from app.shared.persistence import create_schema
 
@@ -168,6 +169,21 @@ def test_connector_families_with_patterns_and_aliases(catalog):
     aliases = {r["sourceKey"]: r["payload"] for r in records if r["entityType"] == "connector-alias"}
     assert aliases["LP-12"]["replacement"] == "LP-12-C02PE"
     assert aliases[r"^BL2018P-0*(\d+)"]["replacement"] == "SMP-0$1V-BC"
+
+
+def test_reference_book_holds_what_the_pickers_offer(catalog, mirror_tables):
+    """A drawing may reference what the editor's pickers offer: the save checks new references against this."""
+    book = reference_book(mirror_tables)
+    assert {"UL1061 28AWG", "ПВВС 4×0,35", "RF 1.13"} <= book.wires
+    assert "MCX-male RG-174" in book.strips
+    terminal = _snapshot(catalog, TERMINALS)["records"][0]
+    assert terminal["sourceKey"] in book.terminals
+    assert {terminal["payload"].get("reelArticle"), terminal["payload"].get("bagArticle")} - {None} <= book.terminals
+    covering = next(record for record in _snapshot(catalog, DATABASE)["records"]
+                    if record["entityType"] == "protective-covering")
+    assert covering["sourceKey"] in book.coverings
+    assert book.missing({("wire", "ul1061  28awg"): "Провод 1", ("wire", "НЕТ ТАКОГО"): "Провод 2"}) == [
+        "Провод 2: провода «НЕТ ТАКОГО» нет в БД.ПРОВ"]
 
 
 def test_number_reads_sheet_cells():
