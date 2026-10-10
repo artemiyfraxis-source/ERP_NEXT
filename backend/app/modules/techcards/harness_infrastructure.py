@@ -238,6 +238,10 @@ class SqlAlchemyHarnessComponentRepository:
         return self._one(_Row.template_id == template_id, _Row.revision == revision,
                          _Row.version_sha256 == version_sha256)
 
+    def by_ref(self, connector_ref: str) -> ComponentTemplate | None:
+        """The newest revision held under a connector reference key (whichever template holds it)."""
+        return self._one(_Row.connector_ref == connector_ref)
+
     def by_content(self, content_sha256: str) -> ComponentTemplate | None:
         return self._one(_Row.content_sha256 == content_sha256)
 
