@@ -29,6 +29,7 @@ from app.modules.procurement.domain import (
     project_key,
 )
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
+from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
 from app.modules.requests.api import moscow_now
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
@@ -99,6 +100,7 @@ def env():
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     procurement = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+    app.state.procurement_stock_uow_factory = lambda: SqlAlchemyProcurementStockUnitOfWork(sessions)
     app.state.procurement_uow_factory = procurement
     app.state.warehouse_uow_factory = lambda: SqlAlchemyWarehouseUnitOfWork(sessions)
     app.state.fulfillment_uow_factory = lambda: SqlAlchemyFulfillmentUnitOfWork(sessions)
@@ -107,7 +109,7 @@ def env():
     yield TestClient(app), sessions
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
-    for name in ("procurement_uow_factory", "warehouse_uow_factory", "fulfillment_uow_factory"):
+    for name in ("procurement_uow_factory", "procurement_stock_uow_factory", "warehouse_uow_factory", "fulfillment_uow_factory"):
         delattr(app.state, name)
     engine.dispose()
 

@@ -73,6 +73,7 @@ jobs:
         working-directory: backend
     env:
       PG_ROOT: postgresql+psycopg://erp:erp@localhost:5432
+      ERP_TEST_POSTGRES_URL: postgresql+psycopg://erp:erp@localhost:5432/erp_stock_test
       SNAPSHOTS: ${{ github.workspace }}/db-snapshots
     steps:
       - uses: actions/checkout@v4
@@ -90,9 +91,14 @@ jobs:
           from sqlalchemy import create_engine, text
           engine = create_engine(os.environ['PG_ROOT'] + '/erp', isolation_level='AUTOCOMMIT')
           with engine.connect() as connection:
-              for name in ('erp_fresh', 'erp_seeded'):
+              for name in ('erp_fresh', 'erp_seeded', 'erp_stock_test'):
                   connection.execute(text(f'CREATE DATABASE {name}'))
           "
+      - name: PostgreSQL stock-cover transactions and concurrent HTTP commands
+        run: |
+          : "${ERP_TEST_POSTGRES_URL:?PostgreSQL stock tests require ERP_TEST_POSTGRES_URL}"
+          python -m pytest tests/procurement/test_stock_cover_postgres.py tests/procurement/test_stock_versions_postgres.py \
+            -q --junitxml="$SNAPSHOTS/stock-pg.xml"
       - name: Empty database up to head
         run: |
           export ERP_DATABASE_URL="$PG_ROOT/erp_fresh"

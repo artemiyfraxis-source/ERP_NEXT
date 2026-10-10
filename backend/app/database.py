@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .modules.requests.application import UnitOfWork
 from .modules.requests.infrastructure import SqlAlchemyUnitOfWork
-from .modules.procurement.application import UnitOfWork as ProcurementUnitOfWork
+from .modules.procurement.application import (
+    StockCoverUnitOfWork,
+    UnitOfWork as ProcurementUnitOfWork,
+)
 from .modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
 from .modules.identity.application import UnitOfWork as IdentityUnitOfWork
 from .modules.identity.infrastructure import SqlAlchemyIdentityUnitOfWork
@@ -32,6 +35,7 @@ from .workflows.kitset_names import KitsetNameQueue
 from .workflows.project_registry import PlanSnapshotProjectRegistry
 from .workflows.receiving_stock import WarehouseStockBalanceLookup
 from .workflows.procurement_stage import ProcurementLineStageLookup
+from .workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
 from .workflows.request_purpose import RequestPurposeLookup
 from .workflows.supplier_directory import ReferencesSupplierDirectory
 from .shared.warehouse_location import set_rack_layout_loader
@@ -54,6 +58,13 @@ def build_procurement_uow_factory(
 ) -> Callable[[], ProcurementUnitOfWork]:
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     return lambda: SqlAlchemyProcurementUnitOfWork(sessions)
+
+
+def build_procurement_stock_uow_factory(
+    engine: Engine,
+) -> Callable[[], StockCoverUnitOfWork]:
+    sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    return lambda: SqlAlchemyProcurementStockUnitOfWork(sessions)
 
 
 def build_identity_uow_factory(engine: Engine) -> Callable[[], IdentityUnitOfWork]:
@@ -106,6 +117,7 @@ def configure_database(app: FastAPI, database_url: str) -> Engine:
     app.state.database_engine = engine
     app.state.uow_factory = build_uow_factory(engine)
     app.state.procurement_uow_factory = build_procurement_uow_factory(engine)
+    app.state.procurement_stock_uow_factory = build_procurement_stock_uow_factory(engine)
     app.state.identity_uow_factory = build_identity_uow_factory(engine)
     app.state.receiving_uow_factory = build_receiving_uow_factory(engine)
     app.state.warehouse_uow_factory = build_warehouse_uow_factory(engine)

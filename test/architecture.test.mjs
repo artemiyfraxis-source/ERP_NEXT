@@ -121,6 +121,21 @@ test("procurement owns its status machine and records its port provenance", asyn
   assert.match(procurementDomain, /revision(?:\s*:\s*str)?\s*=\s*"A"/);
 });
 
+test("procurement reaches warehouse stock only through its workflow port", async () => {
+  const moduleRoot = join(root, "backend", "app", "modules", "procurement");
+  for (const file of ["application.py", "api.py", "infrastructure.py", "stock_port.py"]) {
+    const source = await readFile(join(moduleRoot, file), "utf8");
+    assert.equal(
+      source.includes("app.modules.warehouse"),
+      false,
+      `procurement ${file} must not import the warehouse module directly`,
+    );
+  }
+  const workflow = await readFile(join(root, "backend", "app", "workflows", "procurement_stock.py"), "utf8");
+  assert.equal(workflow.includes("SqlAlchemyWarehouseRepository"), true);
+  assert.equal(workflow.includes("StockReservationPort"), true);
+});
+
 test("identity records its port provenance and avoids legacy token storage", async () => {
   const moduleRoot = join(root, "backend", "app", "modules", "identity");
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
